@@ -1,0 +1,81 @@
+package org.riptide.flows;
+
+import com.codahale.metrics.MetricRegistry;
+import jakarta.annotation.PreDestroy;
+import org.riptide.dns.api.DnsResolver;
+import org.riptide.flows.dispatcher.AsyncDispatcherImpl;
+import org.riptide.flows.dispatcher.AsyncPolicy;
+import org.riptide.flows.dispatcher.BlockableSyncDispatcher;
+import org.riptide.flows.listeners.UdpListener;
+import org.riptide.flows.listeners.UdpParser;
+import org.riptide.flows.parser.IpfixUdpParser;
+import org.riptide.flows.parser.Netflow5UdpParser;
+import org.riptide.flows.parser.Netflow9UdpParser;
+import org.riptide.flows.pipeline.FlowException;
+import org.riptide.flows.pipeline.Pipeline;
+import org.riptide.flows.pipeline.WithSource;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.stereotype.Component;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
+import java.util.function.Consumer;
+
+@Component
+public class Daemon implements ApplicationRunner {
+
+    private final UdpListener listener;
+
+    public Daemon(final DnsResolver dnsResolver,
+                  final Pipeline pipeline,
+                  final MetricRegistry metricRegistry) {
+
+        final var location = "Cloudcuckooland";
+
+        final Consumer<WithSource<Flow>> dispatcher = flow -> {
+            try {
+                pipeline.process(flow.withValue(Collections.singletonList(flow.value())));
+            } catch (final FlowException e) {
+                // TODO fooker: real error handling
+                throw new RuntimeException(e);
+            }
+        };
+
+        final List<UdpParser> parsers = List.of(
+                new Netflow5UdpParser("default-netflow5",
+                        dispatcher,
+                        location,
+                        dnsResolver,
+                        metricRegistry),
+                new Netflow9UdpParser("default-netflow9",
+                        dispatcher,
+                        location,
+                        dnsResolver,
+                        metricRegistry),
+                new IpfixUdpParser("default-ipfix",
+                        dispatcher,
+                        location,
+                        dnsResolver,
+                        metricRegistry)
+        );
+
+        this.listener = new UdpListener("default",
+                parsers,
+                metricRegistry);
+        this.listener.setPort(9999);
+    }
+
+    @PreDestroy
+    public void stop() {
+        this.listener.stop();
+
+    }
+
+    @Override
+    public void run(ApplicationArguments args) {
+        this.listener.start();
+    }
+}

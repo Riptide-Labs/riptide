@@ -1,0 +1,104 @@
+package org.riptide.flows.parser.ie.values;
+
+import com.google.common.base.MoreObjects;
+import io.netty.buffer.ByteBuf;
+import org.riptide.flows.parser.ie.InformationElement;
+import org.riptide.flows.parser.ie.Semantics;
+import org.riptide.flows.parser.ie.Value;
+import org.riptide.flows.parser.session.Session;
+
+import java.util.Objects;
+import java.util.Optional;
+
+import static org.riptide.flows.utils.BufferUtils.uint;
+
+public class FloatValue extends Value<Double> {
+    private final double value;
+
+    public FloatValue(final String name,
+                      final Semantics semantics,
+                      final double value) {
+        super(name, semantics);
+        this.value = Objects.requireNonNull(value);
+    }
+
+    public FloatValue(final String name, final double value) {
+        this(name, null, value);
+    }
+
+    @Override
+    public String toString() {
+        return MoreObjects.toStringHelper(this)
+                .add("name", getName())
+                .add("value", value)
+                .toString();
+    }
+
+    public static InformationElement parserWith32Bit(final String name, final Semantics semantics) {
+        return new InformationElement() {
+            @Override
+            public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) {
+                return new FloatValue(name, semantics, Float.intBitsToFloat(uint(buffer, buffer.readableBytes()).intValue()));
+            }
+
+            @Override
+            public String getName() {
+                return name;
+            }
+
+            @Override
+            public int getMinimumFieldLength() {
+                return 0;
+            }
+
+            @Override
+            public int getMaximumFieldLength() {
+                return 4;
+            }
+        };
+    }
+
+    public static InformationElement parserWith64Bit(final String name, final Semantics semantics) {
+        return new InformationElement() {
+            @Override
+            public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) {
+                return new FloatValue(name, semantics, Double.longBitsToDouble(uint(buffer, buffer.readableBytes()).longValue()));
+            }
+
+            @Override
+            public String getName() {
+                return name;
+            }
+
+            @Override
+            public int getMinimumFieldLength() {
+                return 0;
+            }
+
+            @Override
+            public int getMaximumFieldLength() {
+                return 8;
+            }
+        };
+    }
+
+    @Override
+    public Double getValue() {
+        return this.value;
+    }
+
+    @Override
+    public void visit(final Visitor visitor) {
+        visitor.accept(this);
+    }
+
+    @Override
+    public Typed typed() {
+        return new Typed() {
+            @Override
+            public Optional<FloatValue> asFloatValue() {
+                return Optional.of(FloatValue.this);
+            }
+        };
+    }
+}

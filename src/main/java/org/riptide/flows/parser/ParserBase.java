@@ -1,0 +1,418 @@
+package org.riptide.flows.parser;
+
+import com.codahale.metrics.Counter;
+import com.codahale.metrics.Meter;
+import com.codahale.metrics.MetricRegistry;
+import com.codahale.metrics.Timer;
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
+import com.google.common.collect.Lists;
+import org.riptide.dns.api.DnsResolver;
+import org.riptide.flows.Flow;
+import org.riptide.flows.parser.ie.RecordProvider;
+import org.riptide.flows.parser.session.SequenceNumberTracker;
+import org.riptide.flows.parser.session.Session;
+import org.riptide.flows.parser.transport.FlowBuilder;
+import org.riptide.flows.pipeline.WithSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.*;
+import java.util.function.Consumer;
+
+public abstract class ParserBase implements Parser {
+    private static final Logger LOG = LoggerFactory.getLogger(ParserBase.class);
+
+//    private final RateLimitedLog SEQUENCE_ERRORS_LOGGER = RateLimitedLog
+//            .withRateLimit(LOG)
+//            .maxRate(5).every(Duration.ofSeconds(30))
+//            .build();
+
+    private static final int DEFAULT_NUM_THREADS = Runtime.getRuntime().availableProcessors() * 2;
+
+    //private static final long DEFAULT_CLOCK_SKEW_EVENT_RATE_SECONDS = TimeUnit.HOURS.toSeconds(1);
+
+    //private static final long DEFAULT_ILLEGAL_FLOW_EVENT_RATE_SECONDS = TimeUnit.HOURS.toSeconds(1);
+
+    private final Protocol protocol;
+
+    private final String name;
+
+    private final Consumer<WithSource<Flow>> dispatcher;
+
+    //private final EventForwarder eventForwarder;
+
+    //private final Identity identity;
+
+    private final String location;
+
+    private final DnsResolver dnsResolver;
+
+    private final Meter recordsReceived;
+
+    private final Meter recordsScheduled;
+
+    private final Meter recordsDispatched;
+
+    private final Meter recordsCompleted;
+
+    private final Counter recordEnrichmentErrors;
+
+    private final Counter recordDispatchErrors;
+
+    private final Meter invalidFlows;
+
+    private final Timer recordEnrichmentTimer;
+
+    private final Counter sequenceErrors;
+
+    private int threads = DEFAULT_NUM_THREADS;
+
+    private long maxClockSkew = 0;
+
+    private long clockSkewEventRate = 0;
+
+    private long illegalFlowEventRate = 0;
+
+    private int sequenceNumberPatience = 32;
+
+    private boolean dnsLookupsEnabled = true;
+
+    private LoadingCache<InetAddress, Optional<Instant>> clockSkewEventCache;
+
+    private LoadingCache<InetAddress, Optional<Instant>> illegalFlowEventCache;
+
+    private ExecutorService executor;
+
+    public ParserBase(final Protocol protocol,
+                      final String name,
+                      final Consumer<WithSource<Flow>> dispatcher,
+                      //final EventForwarder eventForwarder,
+                      //final Identity identity,
+                      final String location,
+                      final DnsResolver dnsResolver,
+                      final MetricRegistry metricRegistry) {
+        this.protocol = Objects.requireNonNull(protocol);
+        this.name = Objects.requireNonNull(name);
+        this.dispatcher = Objects.requireNonNull(dispatcher);
+        //this.eventForwarder = Objects.requireNonNull(eventForwarder);
+        //this.identity = Objects.requireNonNull(identity);
+        this.location = Objects.requireNonNull(location);
+        this.dnsResolver = Objects.requireNonNull(dnsResolver);
+
+        // Create a thread factory that sets a thread local variable when the thread is created
+        // This variable is used to identify the thread as one that belongs to this class
+//        final LogPreservingThreadFactory logPreservingThreadFactory = new LogPreservingThreadFactory("Telemetryd-" + protocol + "-" + name, Integer.MAX_VALUE);
+//        threadFactory = new ThreadFactory() {
+//            @Override
+//            public Thread newThread(Runnable r) {
+//                return logPreservingThreadFactory.newThread(() -> {
+//                    isParserThread.set(true);
+//                    r.run();
+//                });
+//            }
+//        };
+
+        this.recordsReceived = metricRegistry.meter(MetricRegistry.name("parsers",  name, "recordsReceived"));
+        this.recordsDispatched = metricRegistry.meter(MetricRegistry.name("parsers",  name, "recordsDispatched"));
+        this.recordEnrichmentTimer = metricRegistry.timer(MetricRegistry.name("parsers",  name, "recordEnrichment"));
+        this.recordEnrichmentErrors = metricRegistry.counter(MetricRegistry.name("parsers",  name, "recordEnrichmentErrors"));
+        this.invalidFlows = metricRegistry.meter(MetricRegistry.name("parsers",  name, "invalidFlows"));
+        this.recordsScheduled = metricRegistry.meter(MetricRegistry.name("parsers",  name, "recordsScheduled"));
+        this.recordsCompleted = metricRegistry.meter(MetricRegistry.name("parsers",  name, "recordsCompleted"));
+        this.recordDispatchErrors = metricRegistry.counter(MetricRegistry.name("parsers",  name, "recordDispatchErrors"));
+        this.sequenceErrors = metricRegistry.counter(MetricRegistry.name("parsers", name, "sequenceErrors"));
+
+        // Call setters since these also perform additional handling
+        //setClockSkewEventRate(DEFAULT_CLOCK_SKEW_EVENT_RATE_SECONDS);
+        //setIllegalFlowEventRate(DEFAULT_ILLEGAL_FLOW_EVENT_RATE_SECONDS);
+        setThreads(DEFAULT_NUM_THREADS);
+    }
+
+    protected abstract FlowBuilder getFlowBulder();
+
+    @Override
+    public void start(ScheduledExecutorService executorService) {
+        this.executor = new ThreadPoolExecutor(
+                // corePoolSize must be > 0 since we use the RejectedExecutionHandler to block when the queue is full
+                1, this.threads,
+                60L, TimeUnit.SECONDS,
+                new SynchronousQueue<>(),
+                (r, executor) -> {
+                    // We enter this block when the queue is full and the caller is attempting to submit additional tasks
+                    try {
+                        // If we're not shutdown, then block until there's room in the queue
+                        if (!executor.isShutdown()) {
+                            executor.getQueue().put(r);
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new RejectedExecutionException("Executor interrupted while waiting for capacity in the work queue.", e);
+                    }
+                });
+    }
+
+    @Override
+    public void stop() {
+        executor.shutdown();
+    }
+
+    @Override
+    public String getName() {
+        return this.name;
+    }
+
+    @Override
+    public String getDescription() {
+        return this.protocol.description;
+    }
+
+    public void setMaxClockSkew(final long maxClockSkew) {
+        this.maxClockSkew = maxClockSkew;
+    }
+
+    public long getMaxClockSkew() {
+        return this.maxClockSkew;
+    }
+
+    public long getClockSkewEventRate() {
+        return clockSkewEventRate;
+    }
+
+    public void setClockSkewEventRate(final long clockSkewEventRate) {
+        this.clockSkewEventRate = clockSkewEventRate;
+
+        this.clockSkewEventCache = CacheBuilder.newBuilder().expireAfterWrite(this.clockSkewEventRate, TimeUnit.SECONDS).build(new CacheLoader<InetAddress, Optional<Instant>>() {
+            @Override
+            public Optional<Instant> load(InetAddress key) throws Exception {
+                return Optional.empty();
+            }
+        });
+    }
+
+    public void setIllegalFlowEventRate(final long illegalFlowEventRate) {
+        this.illegalFlowEventRate = illegalFlowEventRate;
+
+        this.illegalFlowEventCache = CacheBuilder.newBuilder().expireAfterWrite(this.illegalFlowEventRate, TimeUnit.SECONDS).build(new CacheLoader<InetAddress, Optional<Instant>>() {
+            @Override
+            public Optional<Instant> load(InetAddress key) throws Exception {
+                return Optional.empty();
+            }
+        });
+    }
+
+    public long getIllegalFlowEventRate() {
+        return illegalFlowEventRate;
+    }
+
+    public int getSequenceNumberPatience() {
+        return this.sequenceNumberPatience;
+    }
+
+    public void setSequenceNumberPatience(final int sequenceNumberPatience) {
+        this.sequenceNumberPatience = sequenceNumberPatience;
+    }
+
+    public boolean getDnsLookupsEnabled() {
+        return dnsLookupsEnabled;
+    }
+
+    public void setDnsLookupsEnabled(boolean dnsLookupsEnabled) {
+        this.dnsLookupsEnabled = dnsLookupsEnabled;
+    }
+
+    public int getThreads() {
+        return threads;
+    }
+
+    public void setThreads(int threads) {
+        if (threads < 1) {
+            throw new IllegalArgumentException("Threads must be >= 1");
+        }
+        this.threads = threads;
+    }
+
+    protected CompletableFuture<?> transmit(final RecordProvider packet,
+                                            final Session session,
+                                            final InetSocketAddress remoteAddress) {
+        // Verify that flows sequences are in order
+        if (!session.verifySequenceNumber(packet.getObservationDomainId(), packet.getSequenceNumber())) {
+            LOG.warn("Error in flow sequence detected: from {}", session.getRemoteAddress());
+            this.sequenceErrors.inc();
+        }
+
+        // The packets are coming in hot - performance here is critical
+        // Perform the record enrichment and serialization in a thread pool allowing these to be parallelized
+        final var futureOfFutures = CompletableFuture.supplyAsync(() -> {
+            return packet.getRecords().map(record -> {
+                this.recordsReceived.mark();
+
+                final CompletableFuture<Void> future = new CompletableFuture<>();
+                final Timer.Context timerContext = this.recordEnrichmentTimer.time();
+                // Trigger record enrichment (performing DNS reverse lookups for example)
+                final RecordEnricher recordEnricher = new RecordEnricher(this.dnsResolver, getDnsLookupsEnabled());
+                recordEnricher.enrich(record).whenComplete((enrichment, ex) -> {
+                    timerContext.close();
+                    if (ex != null) {
+                        this.recordEnrichmentErrors.inc();
+
+                        // Enrichment failed
+                        future.completeExceptionally(ex);
+                        return;
+                    }
+                    // Enrichment was successful
+
+                    // We're currently in the callback thread from the enrichment process
+                    // We want the remainder of the serialization and dispatching to be performed
+                    // from one of our executor threads so that we can put back-pressure on the listener
+                    // if we can't keep up
+                    final Runnable dispatch = () -> {
+                        // Let's serialize
+                        final Flow flow;
+                        try {
+                            flow = this.getFlowBulder().buildFlow(Instant.now(), record, enrichment);
+                        } catch (final  Exception e) {
+                            throw new RuntimeException(e);
+                        }
+
+                        // Check if the flow is valid (and maybe correct it)
+                        final List<String> corrections = this.correctFlow(flow);
+                        if (!corrections.isEmpty()) {
+                            this.invalidFlows.mark();
+
+                            final Optional<Instant> instant = this.illegalFlowEventCache.getUnchecked(session.getRemoteAddress());
+
+                            if (instant.isEmpty() || Duration.between(instant.get(), Instant.now()).getSeconds() > getIllegalFlowEventRate()) {
+                                illegalFlowEventCache.put(session.getRemoteAddress(), Optional.of(Instant.now()));
+
+                                // TODO fooker: Log me
+//                                eventForwarder.sendNow(new EventBuilder()
+//                                        .setUei(ILLEGAL_FLOW_EVENT_UEI)
+//                                        .setTime(new Date())
+//                                        .setSource(getName())
+//                                        .setInterface(session.getRemoteAddress())
+//                                        .setDistPoller(identity.getId())
+//                                        .addParam("monitoringSystemId", identity.getId())
+//                                        .addParam("monitoringSystemLocation", identity.getLocation())
+//                                        .setParam("cause", Joiner.on('\n').join(corrections))
+//                                        .setParam("protocol", protocol.name())
+//                                        .setParam("illegalFlowEventRate", (int) getIllegalFlowEventRate())
+//                                        .getEvent());
+
+                                for (final String correction : corrections) {
+                                    LOG.warn("Illegal flow detected from exporter {}: \n{}", session.getRemoteAddress().getAddress(), correction);
+                                }
+                            }
+                        }
+
+                        LOG.trace("Received flow: {}", flow);
+
+                        // Dispatch
+                        this.dispatcher.accept(new WithSource<>(this.location, session.getRemoteAddress(), flow));
+
+                        this.recordsDispatched.mark();
+                    };
+
+                    // TODO fooker: We need this?
+                    // It's possible that the callback thread is already a thread from the pool, if that's the case
+                    // execute within the current thread. This helps avoid deadlocks.
+//                    if (Boolean.TRUE.equals(isParserThread.get())) {
+//                        dispatch.run();
+//                    } else {
+                        // We're not in one of the parsers threads, execute the dispatch in the pool
+                        this.executor.execute(dispatch);
+//                    }
+
+                    this.recordsScheduled.mark();
+                });
+                return future;
+            }).toArray(CompletableFuture[]::new);
+        }, executor);
+
+        // Return a future which is completed when all records are finished dispatching (i.e. written to Kafka)
+        final CompletableFuture<Void> future = new CompletableFuture<>();
+        futureOfFutures.whenComplete((futures,ex) -> {
+            if (ex != null) {
+                LOG.warn("Error preparing records for dispatch.", ex);
+                future.completeExceptionally(ex);
+                return;
+            }
+            // Dispatch was triggered for all the records, now wait for the dispatching to complete
+            CompletableFuture.allOf(futures).whenComplete((any,exx) -> {
+                if (exx != null) {
+                    LOG.warn("One or more of the records were not successfully dispatched.", exx);
+                    future.completeExceptionally(exx);
+                    return;
+                }
+                // All of the records have been successfully dispatched
+                future.complete(any);
+            });
+        });
+        return future;
+    }
+
+    protected void detectClockSkew(final long packetTimestampMs,
+                                   final InetAddress remoteAddress) {
+        if (this.getMaxClockSkew() > 0) {
+            long deltaMs = Math.abs(packetTimestampMs - System.currentTimeMillis());
+            if (deltaMs > this.getMaxClockSkew() * 1000L) {
+                final Optional<Instant> instant = this.clockSkewEventCache.getUnchecked(remoteAddress);
+                if (instant.isEmpty() || Duration.between(instant.get(), Instant.now()).getSeconds() > this.getClockSkewEventRate()) {
+                    this.clockSkewEventCache.put(remoteAddress, Optional.of(Instant.now()));
+
+                    // TODO fooker: Log me
+//                    eventForwarder.sendNow(new EventBuilder()
+//                            .setUei(CLOCK_SKEW_EVENT_UEI)
+//                            .setTime(new Date())
+//                            .setSource(getName())
+//                            .setInterface(remoteAddress)
+//                            .setDistPoller(identity.getId())
+//                            .addParam("monitoringSystemId", identity.getId())
+//                            .addParam("monitoringSystemLocation", identity.getLocation())
+//                            .setParam("delta", (int) deltaMs)
+//                            .setParam("clockSkewEventRate", (int) getClockSkewEventRate())
+//                            .setParam("maxClockSkew", (int) getMaxClockSkew())
+//                            .getEvent());
+                }
+
+            }
+        }
+    }
+
+    private List<String> correctFlow(final Flow flow) {
+        final List<String> corrections = Lists.newArrayList();
+
+        // TODO fooker: Re-enable
+//        if (flow.getFirstSwitched().getValue() > flow.getLastSwitched().getValue()) {
+//            corrections.add(String.format("Malformed flow: lastSwitched must be greater than firstSwitched: srcAddress=%s, dstAddress=%s, firstSwitched=%d, lastSwitched=%d, duration=%d",
+//                                  flow.getSrcAddress(),
+//                                  flow.getDstAddress(),
+//                                  flow.getFirstSwitched().getValue(),
+//                                  flow.getLastSwitched().getValue(),
+//                                  flow.getLastSwitched().getValue() - flow.getFirstSwitched().getValue()));
+//
+//            // Re-calculate a (somewhat) valid timout from the flow timestamps
+//            final long timeout = (flow.hasDeltaSwitched() && flow.getDeltaSwitched().getValue() != flow.getFirstSwitched().getValue())
+//                    ? (flow.getLastSwitched().getValue() - flow.getDeltaSwitched().getValue())
+//                    : 0L;
+//
+//            flow.getLastSwitchedBuilder().setValue(flow.getTimestamp());
+//            flow.getFirstSwitchedBuilder().setValue(flow.getTimestamp() - timeout);
+//            flow.getDeltaSwitchedBuilder().setValue(flow.getTimestamp() - timeout);
+//        }
+
+        return corrections;
+    }
+
+    protected SequenceNumberTracker sequenceNumberTracker() {
+        return new SequenceNumberTracker(this.sequenceNumberPatience);
+    }
+}
