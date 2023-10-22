@@ -68,14 +68,13 @@ public class Daemon implements ApplicationRunner {
         this.listener.setPort(9999);
     }
 
-    @PreDestroy
-    public void stop() {
-        this.listener.stop();
-
-    }
-
     @Override
     public void run(ApplicationArguments args) {
         this.listener.start();
+    }
+
+    @PreDestroy
+    public void stop() {
+        this.listener.stop();
     }
 }

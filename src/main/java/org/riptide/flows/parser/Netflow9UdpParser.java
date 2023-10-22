@@ -43,7 +43,8 @@ public class Netflow9UdpParser extends UdpParserBase implements UdpParser, Dispa
     }
 
     @Override
-    protected RecordProvider parse(Session session, ByteBuf buffer) throws Exception {
+    protected RecordProvider parse(final Session session,
+                                   final ByteBuf buffer) throws Exception {
         final Header header = new Header(slice(buffer, Header.SIZE));
         final Packet packet = new Packet(session, header, buffer);
 

@@ -70,7 +70,7 @@ public final class Packet implements Iterable<FlowSet<?>>, RecordProvider {
                                 // Remove all templates
                                 session.removeAllTemplate(this.header.sourceId, Template.Type.TEMPLATE);
 
-                            } else if (record.header.fieldCount == 0) {
+                            } else {
                                 // Empty template means revocation
                                 session.removeTemplate(this.header.sourceId, record.header.templateId);
                             }
@@ -124,7 +124,7 @@ public final class Packet implements Iterable<FlowSet<?>>, RecordProvider {
                     break;
                 }
 
-                default: {
+                case null, default: {
                     throw new InvalidPacketException(buffer, "Invalid Set ID: %d", setHeader.setId);
                 }
             }

@@ -5,6 +5,7 @@ import com.codahale.metrics.Gauge;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import io.netty.buffer.ByteBuf;
+import org.apache.commons.logging.Log;
 import org.riptide.dns.api.DnsResolver;
 import org.riptide.flows.Flow;
 import org.riptide.flows.listeners.UdpParser;
@@ -12,6 +13,8 @@ import org.riptide.flows.parser.ie.RecordProvider;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.UdpSessionManager;
 import org.riptide.flows.pipeline.WithSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
 import java.time.Duration;
@@ -23,6 +26,8 @@ import java.util.function.Consumer;
 
 public abstract class UdpParserBase extends ParserBase implements UdpParser {
     public final static long HOUSEKEEPING_INTERVAL = 60000;
+
+    private static final Logger LOG = LoggerFactory.getLogger(UdpParserBase.class);
 
     private final Meter packetsReceived;
     private final Counter parserErrors;
@@ -47,7 +52,7 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
 
         String sessionCountGauge = MetricRegistry.name("parsers",  name, "sessionCount");
         // Register only if it's not already there in the registry.
-        if (!metricRegistry.getGauges().keySet().contains(sessionCountGauge)) {
+        if (!metricRegistry.getGauges().containsKey(sessionCountGauge)) {
             metricRegistry.register(sessionCountGauge, (Gauge<Integer>) () -> (this.sessionManager != null) ? this.sessionManager.count() : null);
         }
     }
@@ -65,7 +70,10 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
         final Session session = this.sessionManager.getSession(sessionKey);
 
         try {
-            return this.transmit(this.parse(session, buffer), session, remoteAddress);
+            final var parsed = this.parse(session, buffer);
+            LOG.trace("Parsed packet: {}", parsed);
+
+            return this.transmit(parsed, session, remoteAddress);
         } catch (Exception e) {
             this.sessionManager.drop(sessionKey);
             this.parserErrors.inc();

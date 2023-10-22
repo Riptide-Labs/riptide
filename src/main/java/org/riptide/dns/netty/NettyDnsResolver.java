@@ -13,6 +13,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+import jakarta.annotation.PostConstruct;
 import org.riptide.dns.api.DnsResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,6 +35,7 @@ import io.netty.resolver.dns.DnsServerAddressStreamProvider;
 import io.netty.resolver.dns.DnsServerAddressStreamProviders;
 import io.netty.resolver.dns.SequentialDnsServerAddressStreamProvider;
 import io.netty.util.internal.SocketUtils;
+import org.springframework.stereotype.Component;
 
 /**
  * Asynchronous DNS resolution using Netty.
@@ -43,9 +45,8 @@ import io.netty.util.internal.SocketUtils;
  *
  * Uses a circuit breaker in order to ensure that callers do not continue to be bogged down
  * if resolution fails.
- *
- * @author jwhite
  */
+@Component
 public class NettyDnsResolver implements DnsResolver {
     private static final Logger LOG = LoggerFactory.getLogger(NettyDnsResolver.class);
 
@@ -89,6 +90,7 @@ public class NettyDnsResolver implements DnsResolver {
         metrics.register("maxAllowedConcurrentCalls", (Gauge<Integer>) () -> this.bulkhead.getMetrics().getMaxAllowedConcurrentCalls());
     }
 
+    @PostConstruct
     public void init() {
         numContexts = Math.max(0, numContexts);
         if (numContexts == 0) {
