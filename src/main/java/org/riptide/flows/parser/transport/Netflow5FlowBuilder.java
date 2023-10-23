@@ -39,7 +39,7 @@ public class Netflow5FlowBuilder implements FlowBuilder {
 
             @Override
             public Instant getTimestamp() {
-                return null;
+                return timeStamp;
             }
 
             @Override

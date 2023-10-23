@@ -46,7 +46,7 @@ public class Netflow9FlowBuilder implements FlowBuilder {
 
             @Override
             public Instant getTimestamp() {
-                return null;
+                return unixSecs;
             }
 
             @Override
