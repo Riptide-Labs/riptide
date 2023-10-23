@@ -1,4 +1,4 @@
-package org.riptide.flows.parser;
+package org.riptide.flows.parser.netflow5;
 
 import com.codahale.metrics.MetricRegistry;
 import io.netty.buffer.ByteBuf;
@@ -6,12 +6,14 @@ import org.riptide.dns.api.DnsResolver;
 import org.riptide.flows.Flow;
 import org.riptide.flows.listeners.Dispatchable;
 import org.riptide.flows.listeners.UdpParser;
+import org.riptide.flows.parser.Protocol;
+import org.riptide.flows.parser.UdpParserBase;
 import org.riptide.flows.parser.ie.RecordProvider;
 import org.riptide.flows.parser.netflow5.proto.Header;
 import org.riptide.flows.parser.netflow5.proto.Packet;
+import org.riptide.flows.parser.netflow9.Netflow9UdpParser;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.UdpSessionManager;
-import org.riptide.flows.parser.transport.Netflow5FlowBuilder;
 import org.riptide.pipeline.WithSource;
 import org.riptide.flows.utils.BufferUtils;
 

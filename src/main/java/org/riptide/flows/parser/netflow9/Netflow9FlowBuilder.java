@@ -1,8 +1,10 @@
-package org.riptide.flows.parser.transport;
+package org.riptide.flows.parser.netflow9;
 
 import org.riptide.flows.Flow;
 import org.riptide.flows.parser.RecordEnrichment;
 import org.riptide.flows.parser.ie.Value;
+import org.riptide.flows.parser.transport.FlowBuilder;
+import org.riptide.flows.parser.transport.Timeout;
 
 import java.net.InetAddress;
 import java.time.Duration;
@@ -104,14 +106,14 @@ public class Netflow9FlowBuilder implements FlowBuilder {
 
             @Override
             public Instant getDeltaSwitched() {
-                final Timeout timeout = new Timeout(
-                        first(Netflow9FlowBuilder.this.flowActiveTimeoutFallback, flowActiveTimeout),
-                        first(Netflow9FlowBuilder.this.flowInactiveTimeoutFallback, flowInactiveTimeout));
-                timeout.setFirstSwitched(this.getFirstSwitched());
-                timeout.setLastSwitched(this.getLastSwitched());
-                timeout.setNumBytes(this.getNumBytes());
-                timeout.setNumPackets(this.getNumPackets());
-                return timeout.getDeltaSwitched();
+                return new Timeout()
+                        .withActiveTimeout(first(Netflow9FlowBuilder.this.flowActiveTimeoutFallback, flowActiveTimeout))
+                        .withInactiveTimeout(first(Netflow9FlowBuilder.this.flowInactiveTimeoutFallback, flowInactiveTimeout))
+                        .withFirstSwitched(this.getFirstSwitched())
+                        .withLastSwitched(this.getLastSwitched())
+                        .withNumBytes(this.getNumBytes())
+                        .withNumPackets(this.getNumPackets())
+                        .calculateDeltaSwitched();
             }
 
             @Override

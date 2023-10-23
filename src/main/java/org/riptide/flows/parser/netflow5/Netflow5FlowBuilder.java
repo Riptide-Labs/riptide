@@ -1,9 +1,10 @@
-package org.riptide.flows.parser.transport;
+package org.riptide.flows.parser.netflow5;
 
 
 import org.riptide.flows.Flow;
 import org.riptide.flows.parser.RecordEnrichment;
 import org.riptide.flows.parser.ie.Value;
+import org.riptide.flows.parser.transport.FlowBuilder;
 
 import java.net.InetAddress;
 import java.time.Duration;

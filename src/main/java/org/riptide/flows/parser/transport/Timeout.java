@@ -5,36 +5,45 @@ import java.time.Instant;
 
 public class Timeout {
 
-    private final Duration flowActiveTimeout;
-    private final Duration flowInactiveTimeout;
+    private Duration flowActiveTimeout;
+    private Duration flowInactiveTimeout;
 
     private Long numBytes;
     private Long numPackets;
     private Instant firstSwitched;
     private Instant lastSwitched;
 
-    public Timeout(final Duration active, final Duration inactive) {
-        this.flowActiveTimeout = active;
-        this.flowInactiveTimeout = inactive;
+    public Timeout withActiveTimeout(final Duration activeTimeout) {
+        this.flowActiveTimeout = activeTimeout;
+        return this;
     }
 
-    public void setNumBytes(final Long numBytes) {
+    public Timeout withInactiveTimeout(final Duration inactiveTimeout) {
+        this.flowInactiveTimeout = inactiveTimeout;
+        return this;
+    }
+
+    public Timeout withNumBytes(final Long numBytes) {
         this.numBytes = numBytes;
+        return this;
     }
 
-    public void setNumPackets(final Long numPackets) {
+    public Timeout withNumPackets(final Long numPackets) {
         this.numPackets = numPackets;
+        return this;
     }
 
-    public void setFirstSwitched(final Instant firstSwitched) {
+    public Timeout withFirstSwitched(final Instant firstSwitched) {
         this.firstSwitched = firstSwitched;
+        return this;
     }
 
-    public void setLastSwitched(final Instant lastSwitched) {
+    public Timeout withLastSwitched(final Instant lastSwitched) {
         this.lastSwitched = lastSwitched;
+        return this;
     }
 
-    public Instant getDeltaSwitched() {
+    public Instant calculateDeltaSwitched() {
         if (this.flowActiveTimeout == null || this.flowInactiveTimeout == null) {
             return this.firstSwitched;
         }

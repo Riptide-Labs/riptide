@@ -1,4 +1,4 @@
-package org.riptide.flows.parser;
+package org.riptide.flows.parser.netflow9;
 
 import com.codahale.metrics.MetricRegistry;
 import com.google.common.base.MoreObjects;
@@ -8,12 +8,13 @@ import org.riptide.dns.api.DnsResolver;
 import org.riptide.flows.Flow;
 import org.riptide.flows.listeners.Dispatchable;
 import org.riptide.flows.listeners.UdpParser;
+import org.riptide.flows.parser.Protocol;
+import org.riptide.flows.parser.UdpParserBase;
 import org.riptide.flows.parser.ie.RecordProvider;
-import org.riptide.flows.parser.ipfix.proto.Header;
-import org.riptide.flows.parser.ipfix.proto.Packet;
+import org.riptide.flows.parser.netflow9.proto.Header;
+import org.riptide.flows.parser.netflow9.proto.Packet;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.UdpSessionManager;
-import org.riptide.flows.parser.transport.IpFixFlowBuilder;
 import org.riptide.pipeline.WithSource;
 
 import java.net.InetAddress;
@@ -24,21 +25,21 @@ import java.util.function.Consumer;
 import static org.riptide.flows.utils.BufferUtils.slice;
 import static org.riptide.flows.utils.BufferUtils.uint16;
 
-public class IpfixUdpParser extends UdpParserBase implements UdpParser, Dispatchable {
+public class Netflow9UdpParser extends UdpParserBase implements UdpParser, Dispatchable {
 
-    private final IpFixFlowBuilder flowBuilder = new IpFixFlowBuilder();
+    private final Netflow9FlowBuilder flowBuilder = new Netflow9FlowBuilder();
 
-    public IpfixUdpParser(final String name,
-                          final Consumer<WithSource<Flow>> dispatcher,
-//                          final EventForwarder eventForwarder,
-//                          final Identity identity,
-                          final String location,
-                          final DnsResolver dnsResolver,
-                          final MetricRegistry metricRegistry) {
-        super(Protocol.IPFIX, name, dispatcher, /*eventForwarder, identity,*/ location, dnsResolver, metricRegistry);
+    public Netflow9UdpParser(final String name,
+                             final Consumer<WithSource<Flow>> dispatcher,
+//                             final EventForwarder eventForwarder,
+//                             final Identity identity,
+                             final String location,
+                             final DnsResolver dnsResolver,
+                             final MetricRegistry metricRegistry) {
+        super(Protocol.NETFLOW9, name, dispatcher, /*eventForwarder, identity,*/ location, dnsResolver, metricRegistry);
     }
 
-    public IpFixFlowBuilder getFlowBulder() {
+    public Netflow9FlowBuilder getFlowBulder() {
         return this.flowBuilder;
     }
 
@@ -46,9 +47,9 @@ public class IpfixUdpParser extends UdpParserBase implements UdpParser, Dispatch
     protected RecordProvider parse(final Session session,
                                    final ByteBuf buffer) throws Exception {
         final Header header = new Header(slice(buffer, Header.SIZE));
-        final Packet packet = new Packet(session, header, slice(buffer, header.payloadLength()));
+        final Packet packet = new Packet(session, header, buffer);
 
-        detectClockSkew(header.exportTime * 1000L, session.getRemoteAddress());
+        detectClockSkew(header.unixSecs * 1000L, session.getRemoteAddress());
 
         return packet;
     }
@@ -60,14 +61,14 @@ public class IpfixUdpParser extends UdpParserBase implements UdpParser, Dispatch
 
     @Override
     protected UdpSessionManager.SessionKey buildSessionKey(final InetSocketAddress remoteAddress, final InetSocketAddress localAddress) {
-        return new SessionKey(remoteAddress, localAddress);
+        return new SessionKey(remoteAddress.getAddress(), localAddress);
     }
 
     public static class SessionKey implements UdpSessionManager.SessionKey {
-        private final InetSocketAddress remoteAddress;
+        private final InetAddress remoteAddress;
         private final InetSocketAddress localAddress;
 
-        public SessionKey(final InetSocketAddress remoteAddress, final InetSocketAddress localAddress) {
+        public SessionKey(final InetAddress remoteAddress, final InetSocketAddress localAddress) {
             this.remoteAddress = remoteAddress;
             this.localAddress = localAddress;
         }
@@ -96,14 +97,13 @@ public class IpfixUdpParser extends UdpParserBase implements UdpParser, Dispatch
 
         @Override
         public String getDescription() {
-            return String.format("%s:%s", this.remoteAddress.getHostString(), this.remoteAddress.getPort());
+            return this.remoteAddress.getHostAddress();
         }
 
         @Override
         public InetAddress getRemoteAddress() {
-            return this.remoteAddress.getAddress();
+            return this.remoteAddress;
         }
-
     }
 
     public Duration getFlowActiveTimeoutFallback() {

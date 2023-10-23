@@ -1,9 +1,11 @@
-package org.riptide.flows.parser.transport;
+package org.riptide.flows.parser.ipfix;
 
 import com.google.common.primitives.UnsignedLong;
 import org.riptide.flows.Flow;
 import org.riptide.flows.parser.RecordEnrichment;
 import org.riptide.flows.parser.ie.Value;
+import org.riptide.flows.parser.transport.FlowBuilder;
+import org.riptide.flows.parser.transport.Timeout;
 
 import java.net.InetAddress;
 import java.time.Duration;
@@ -113,12 +115,14 @@ public class IpFixFlowBuilder implements FlowBuilder {
                         durationValue(values, "flowInactiveTimeout", ChronoUnit.SECONDS),
                         IpFixFlowBuilder.this.flowInactiveTimeoutFallback);
 
-                final var timeout = new Timeout(flowActiveTimeout, flowInactiveTimeout);
-                timeout.setFirstSwitched(this.getFirstSwitched());
-                timeout.setLastSwitched(this.getLastSwitched());
-                timeout.setNumBytes(this.getNumBytes());
-                timeout.setNumPackets(this.getNumPackets());
-                return timeout.getDeltaSwitched();
+                return new Timeout()
+                        .withActiveTimeout(flowActiveTimeout)
+                        .withInactiveTimeout(flowInactiveTimeout)
+                        .withFirstSwitched(this.getFirstSwitched())
+                        .withLastSwitched(this.getLastSwitched())
+                        .withNumBytes(this.getNumBytes())
+                        .withNumPackets(this.getNumPackets())
+                        .calculateDeltaSwitched();
             }
 
             @Override
