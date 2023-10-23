@@ -7,7 +7,7 @@ import com.codahale.metrics.Timer;
 import com.google.common.collect.Maps;
 import org.riptide.classification.ClassificationEngine;
 import org.riptide.classification.ClassificationRequest;
-import org.riptide.flows.Flow;
+import org.riptide.flows.parser.data.Flow;
 import org.riptide.repository.FlowRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

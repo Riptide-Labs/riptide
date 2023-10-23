@@ -4,7 +4,7 @@ import com.codahale.metrics.MetricRegistry;
 import com.google.common.collect.Sets;
 import io.netty.buffer.ByteBuf;
 import org.riptide.dns.api.DnsResolver;
-import org.riptide.flows.Flow;
+import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.listeners.TcpParser;
 import org.riptide.flows.parser.ParserBase;
 import org.riptide.flows.parser.Protocol;

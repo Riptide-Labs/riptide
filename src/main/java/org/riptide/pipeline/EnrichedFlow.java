@@ -1,6 +1,6 @@
 package org.riptide.pipeline;
 
-import org.riptide.flows.Flow;
+import org.riptide.flows.parser.data.Flow;
 
 import java.net.InetAddress;
 import java.time.Duration;

@@ -1,4 +1,4 @@
-package org.riptide.flows.parser.transport;
+package org.riptide.flows.parser.data;
 
 import java.time.Duration;
 import java.time.Instant;

@@ -1,4 +1,4 @@
-package org.riptide.flows;
+package org.riptide.flows.parser.data;
 
 import java.net.InetAddress;
 import java.time.Instant;

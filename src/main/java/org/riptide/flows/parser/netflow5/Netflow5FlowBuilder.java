@@ -1,10 +1,11 @@
 package org.riptide.flows.parser.netflow5;
 
 
-import org.riptide.flows.Flow;
+import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.RecordEnrichment;
 import org.riptide.flows.parser.ie.Value;
-import org.riptide.flows.parser.transport.FlowBuilder;
+import org.riptide.flows.parser.data.FlowBuilder;
+import org.riptide.flows.parser.data.Values;
 
 import java.net.InetAddress;
 import java.time.Duration;
@@ -13,7 +14,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.Optional;
 
-import static org.riptide.flows.parser.transport.MessageUtils.*;
+import static org.riptide.flows.parser.data.Values.*;
 
 public class Netflow5FlowBuilder implements FlowBuilder {
     @Override
@@ -21,16 +22,15 @@ public class Netflow5FlowBuilder implements FlowBuilder {
                           final Map<String, Value<?>> values,
                           final RecordEnrichment enrichment) {
 
-        final var timeStamp = Instant.now().plus(Duration.ofSeconds(
-                longValue(values, "@unixSecs"),
-                longValue(values, "@unixNSecs")));
+        final var sysUpTime = durationValue("@sysUpTime", ChronoUnit.MILLIS);
+        final var timestamp = Values.both(
+                        longValue("@unixSecs"),
+                        longValue("@unixNSecs"),
+                        Duration::ofSeconds)
+                .map(Instant.now()::plus);
 
-        final var sysUpTime = durationValue(values, "@sysUptime", ChronoUnit.MILLIS);
+        final var bootTime = Values.both(timestamp, sysUpTime, Instant::minus);
 
-        final var bootTime = timeStamp.minus(sysUpTime);
-
-        final var first = bootTime.plus(durationValue(values, "first", ChronoUnit.MILLIS));
-        final var last = bootTime.plus(durationValue(values, "last", ChronoUnit.MILLIS));
 
         return new Flow() {
             @Override
@@ -40,24 +40,24 @@ public class Netflow5FlowBuilder implements FlowBuilder {
 
             @Override
             public Instant getTimestamp() {
-                return timeStamp;
+                return timestamp.getOrNull(values);
             }
 
             @Override
             public Long getNumBytes() {
-                return longValue(values, "dOctets");
+                return longValue("dOctets").getOrNull(values);
             }
 
             @Override
             public Direction getDirection() {
-                return booleanValue(values, "egress")
+                return booleanValue("egress").getOrNull(values)
                         ? Direction.EGRESS
                         : Direction.INGRESS;
             }
 
             @Override
             public InetAddress getDstAddr() {
-                return inetAddressValue(values, "dstAddr");
+                return inetAddressValue("dstAddr").getOrNull(values);
             }
 
             @Override
@@ -67,27 +67,27 @@ public class Netflow5FlowBuilder implements FlowBuilder {
 
             @Override
             public Long getDstAs() {
-                return longValue(values, "dstAs");
+                return longValue("dstAs").getOrNull(values);
             }
 
             @Override
             public Integer getDstMaskLen() {
-                return intValue(values, "dstMask");
+                return intValue("dstMask").getOrNull(values);
             }
 
             @Override
             public Integer getDstPort() {
-                return intValue(values, "dstPort");
+                return intValue("dstPort").getOrNull(values);
             }
 
             @Override
             public Integer getEngineId() {
-                return intValue(values, "@engineId");
+                return intValue("@engineId").getOrNull(values);
             }
 
             @Override
             public Integer getEngineType() {
-                return intValue(values, "@engineType");
+                return intValue("@engineType").getOrNull(values);
             }
 
             @Override
@@ -97,22 +97,22 @@ public class Netflow5FlowBuilder implements FlowBuilder {
 
             @Override
             public Instant getFirstSwitched() {
-                return first;
+                return bootTime.and(durationValue("first", ChronoUnit.MILLIS), Instant::plus).getOrNull(values);
             }
 
             @Override
             public int getFlowRecords() {
-                return intValue(values, "@count");
+                return intValue("@count").getOrNull(values);
             }
 
             @Override
             public long getFlowSeqNum() {
-                return longValue(values, "@flowSequence");
+                return longValue("@flowSequence").getOrNull(values);
             }
 
             @Override
             public Integer getInputSnmp() {
-                return intValue(values, "input");
+                return intValue("input").getOrNull(values);
             }
 
             @Override
@@ -122,12 +122,12 @@ public class Netflow5FlowBuilder implements FlowBuilder {
 
             @Override
             public Instant getLastSwitched() {
-                return last;
+                return bootTime.and(durationValue("last", ChronoUnit.MILLIS), Instant::plus).getOrNull(values);
             }
 
             @Override
             public InetAddress getNextHop() {
-                return inetAddressValue(values, "nextHop");
+                return inetAddressValue("nextHop").getOrNull(values);
             }
 
             @Override
@@ -137,22 +137,22 @@ public class Netflow5FlowBuilder implements FlowBuilder {
 
             @Override
             public Integer getOutputSnmp() {
-                return intValue(values, "output");
+                return intValue("output").getOrNull(values);
             }
 
             @Override
             public Long getNumPackets() {
-                return longValue(values, "dPkts");
+                return longValue("dPkts").getOrNull(values);
             }
 
             @Override
             public Integer getProtocol() {
-                return intValue(values, "proto");
+                return intValue("proto").getOrNull(values);
             }
 
             @Override
             public SamplingAlgorithm getSamplingAlgorithm() {
-                final var saValue = intValue(values, "@samplingAlgorithm");
+                final var saValue = intValue("@samplingAlgorithm").getOrNull(values);
                 return switch (saValue) {
                     case 1 -> Flow.SamplingAlgorithm.SystematicCountBasedSampling;
                     case 2 -> Flow.SamplingAlgorithm.RandomNOutOfNSampling;
@@ -162,12 +162,12 @@ public class Netflow5FlowBuilder implements FlowBuilder {
 
             @Override
             public Double getSamplingInterval() {
-                return doubleValue(values, "@samplingInterval", Double.NaN);
+                return doubleValue("@samplingInterval", Double.NaN).getOrNull(values);
             }
 
             @Override
             public InetAddress getSrcAddr() {
-                return inetAddressValue(values, "srcAddr");
+                return inetAddressValue("srcAddr").getOrNull(values);
             }
 
             @Override
@@ -177,27 +177,27 @@ public class Netflow5FlowBuilder implements FlowBuilder {
 
             @Override
             public Long getSrcAs() {
-                return longValue(values, "srcAs");
+                return longValue("srcAs").getOrNull(values);
             }
 
             @Override
             public Integer getSrcMaskLen() {
-                return intValue(values, "srcMask");
+                return intValue("srcMask").getOrNull(values);
             }
 
             @Override
             public Integer getSrcPort() {
-                return intValue(values, "srcPort");
+                return intValue("srcPort").getOrNull(values);
             }
 
             @Override
             public Integer getTcpFlags() {
-                return intValue(values, "tcpFlags");
+                return intValue("tcpFlags").getOrNull(values);
             }
 
             @Override
             public Integer getTos() {
-                return intValue(values, "tos");
+                return intValue("tos").getOrNull(values);
             }
 
             @Override

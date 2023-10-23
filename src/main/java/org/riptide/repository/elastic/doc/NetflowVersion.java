@@ -1,7 +1,7 @@
 package org.riptide.repository.elastic.doc;
 
 import com.google.gson.annotations.SerializedName;
-import org.riptide.flows.Flow;
+import org.riptide.flows.parser.data.Flow;
 
 public enum NetflowVersion {
     @SerializedName("Netflow v5")

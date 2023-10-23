@@ -4,7 +4,7 @@ import java.util.LinkedList;
 import java.util.List;
 
 import com.google.gson.annotations.SerializedName;
-import org.riptide.flows.Flow;
+import org.riptide.flows.parser.data.Flow;
 
 public class NodeDocument {
     @SerializedName("foreign_source")

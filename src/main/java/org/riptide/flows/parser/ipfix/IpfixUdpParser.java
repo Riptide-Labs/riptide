@@ -5,7 +5,7 @@ import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
 import io.netty.buffer.ByteBuf;
 import org.riptide.dns.api.DnsResolver;
-import org.riptide.flows.Flow;
+import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.listeners.Dispatchable;
 import org.riptide.flows.listeners.UdpParser;
 import org.riptide.flows.parser.Protocol;

@@ -3,7 +3,7 @@ package org.riptide.repository.elastic.doc;
 import java.util.Objects;
 
 import com.google.gson.annotations.SerializedName;
-import org.riptide.flows.Flow;
+import org.riptide.flows.parser.data.Flow;
 
 public enum Locality {
     @SerializedName("public")

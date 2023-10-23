@@ -5,6 +5,7 @@ import jakarta.annotation.PreDestroy;
 import org.riptide.dns.api.DnsResolver;
 import org.riptide.flows.listeners.UdpListener;
 import org.riptide.flows.listeners.UdpParser;
+import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.ipfix.IpfixUdpParser;
 import org.riptide.flows.parser.netflow5.Netflow5UdpParser;
 import org.riptide.flows.parser.netflow9.Netflow9UdpParser;

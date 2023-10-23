@@ -1,6 +1,5 @@
-package org.riptide.flows.parser.transport;
+package org.riptide.flows.parser.data;
 
-import org.riptide.flows.Flow;
 import org.riptide.flows.parser.RecordEnrichment;
 import org.riptide.flows.parser.ie.Value;
 

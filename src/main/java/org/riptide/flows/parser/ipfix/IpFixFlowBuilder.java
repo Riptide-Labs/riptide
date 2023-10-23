@@ -1,11 +1,12 @@
 package org.riptide.flows.parser.ipfix;
 
 import com.google.common.primitives.UnsignedLong;
-import org.riptide.flows.Flow;
+import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.RecordEnrichment;
 import org.riptide.flows.parser.ie.Value;
-import org.riptide.flows.parser.transport.FlowBuilder;
-import org.riptide.flows.parser.transport.Timeout;
+import org.riptide.flows.parser.data.FlowBuilder;
+import org.riptide.flows.parser.data.Timeout;
+import org.riptide.flows.parser.data.Values;
 
 import java.net.InetAddress;
 import java.time.Duration;
@@ -14,7 +15,8 @@ import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.Optional;
 
-import static org.riptide.flows.parser.transport.MessageUtils.*;
+
+import static org.riptide.flows.parser.data.Values.*;
 
 public class IpFixFlowBuilder implements FlowBuilder {
 
@@ -32,6 +34,13 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
         // TODO fooker: What about @observationDomainId
 
+        // TODO: Structurize meta info
+        final var timestamp = Values.<Instant>first(values)
+                .with(timeValue("@exportTime"))
+                .getOrNull();
+
+        final var systemInitTime = timeValue("systemInitTimeMilliseconds");
+
         return new Flow() {
             @Override
             public Instant getReceivedAt() {
@@ -40,27 +49,28 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
             @Override
             public Instant getTimestamp() {
-                // TODO: Structurize meta info
-                return timeValue(values, "@exportTime");
+                return timestamp;
             }
 
             public Long getNumBytes() {
-                return first(
-                        longValue(values, "octetDeltaCount"),
-                        longValue(values, "postOctetDeltaCount"),
-                        longValue(values, "layer2OctetDeltaCount"),
-                        longValue(values, "postLayer2OctetDeltaCount"),
-                        longValue(values, "transportOctetDeltaCount"));
+                return Values.<Long>first(values)
+                        .with(longValue("octetDeltaCount"))
+                        .with(longValue("postOctetDeltaCount"))
+                        .with(longValue("layer2OctetDeltaCount"))
+                        .with(longValue("postLayer2OctetDeltaCount"))
+                        .with(longValue("transportOctetDeltaCount"))
+                        .getOrNull();
             }
 
             @Override
             public Direction getDirection() {
-                final var direction = longValue(values, "flowDirection");
+                final var direction = Values.<Integer>first(values)
+                        .with(intValue("flowDirection")).getOrNull();
                 if (direction == null) {
                     return Direction.UNKNOWN;
                 }
 
-                return switch (direction.intValue()) {
+                return switch (direction) {
                     case 0 -> Direction.INGRESS;
                     case 1 -> Direction.EGRESS;
                     default -> Direction.UNKNOWN;
@@ -69,9 +79,10 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
             @Override
             public InetAddress getDstAddr() {
-                return first(
-                        inetAddressValue(values, "destinationIPv6Address"),
-                        inetAddressValue(values, "destinationIPv4Address"));
+                return Values.<InetAddress>first(values)
+                        .with(inetAddressValue("destinationIPv6Address"))
+                        .with(inetAddressValue("destinationIPv4Address"))
+                        .getOrNull();
             }
 
             @Override
@@ -81,39 +92,51 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
             @Override
             public Long getDstAs() {
-                return longValue(values, "bgpDestinationAsNumber");
+                return Values.<Long>first(values)
+                        .with(longValue("bgpDestinationAsNumber"))
+                        .getOrNull();
             }
 
             @Override
             public Integer getDstMaskLen() {
-                return first(
-                        intValue(values, "destinationIPv6PrefixLength"),
-                        intValue(values, "destinationIPv4PrefixLength"));
+                return Values.<Integer>first(values)
+                        .with(intValue("destinationIPv6PrefixLength"))
+                        .with(intValue("destinationIPv4PrefixLength"))
+                        .getOrNull();
             }
 
             @Override
             public Integer getDstPort() {
-                return intValue(values, "destinationTransportPort");
+                return Values.<Integer>first(values)
+                        .with(intValue("destinationTransportPort"))
+                        .getOrNull();
             }
 
             @Override
             public Integer getEngineId() {
-                return intValue(values, "engineId");
+                return Values.<Integer>first(values)
+                        .with(intValue("engineId"))
+                        .getOrNull();
             }
 
             @Override
             public Integer getEngineType() {
-                return intValue(values, "engineType");
+                return Values.<Integer>first(values)
+                        .with(intValue("engineType"))
+                        .getOrNull();
             }
 
             @Override
             public Instant getDeltaSwitched() {
-                final var flowActiveTimeout = first(
-                        durationValue(values, "flowActiveTimeout", ChronoUnit.SECONDS),
-                        IpFixFlowBuilder.this.flowActiveTimeoutFallback);
-                final var flowInactiveTimeout = first(
-                        durationValue(values, "flowInactiveTimeout", ChronoUnit.SECONDS),
-                        IpFixFlowBuilder.this.flowInactiveTimeoutFallback);
+                final var flowActiveTimeout = Values.<Duration>first(values)
+                        .with(durationValue("flowActiveTimeout", ChronoUnit.SECONDS))
+                        .with(IpFixFlowBuilder.this.flowActiveTimeoutFallback)
+                        .getOrNull();
+
+                final var flowInactiveTimeout = Values.<Duration>first(values)
+                        .with(durationValue("flowInactiveTimeout", ChronoUnit.SECONDS))
+                        .with(IpFixFlowBuilder.this.flowInactiveTimeoutFallback)
+                        .getOrNull();
 
                 return new Timeout()
                         .withActiveTimeout(flowActiveTimeout)
@@ -127,81 +150,69 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
             @Override
             public Instant getFirstSwitched() {
-                final var flowStartDelta = Optional.ofNullable(longValue(values, "flowStartDeltaMicroseconds"))
-                        .map(d -> this.getTimestamp().plus(d, ChronoUnit.MICROS));
-
-                final var systemInitTime = Optional.ofNullable(timeValue(values, "systemInitTimeMilliseconds"));
-
-                final var flowStartSysUpTime = Optional.ofNullable(longValue(values, "flowStartSysUpTime"))
-                        .map(Duration::ofMillis)
-                        .flatMap(offset -> systemInitTime.map(init -> init.plus(offset)));
-
-                final var firstSwitchedInMilli = first(timestampValue(values, "flowStartSeconds", ChronoUnit.SECONDS),
-                        timestampValue(values, "flowStartMilliseconds", ChronoUnit.MILLIS),
-                        timestampValue(values, "flowStartMicroseconds", ChronoUnit.MICROS),
-                        timestampValue(values, "flowStartNanoseconds", ChronoUnit.NANOS));
-
-                return first(
-                        Optional.ofNullable(firstSwitchedInMilli),
-                        flowStartDelta,
-                        flowStartSysUpTime
-                ).orElse(null);
+                return Values.<Instant>first(values)
+                        .with(timestampValue("flowStartSeconds", ChronoUnit.SECONDS))
+                        .with(timestampValue("flowStartMilliseconds", ChronoUnit.MILLIS))
+                        .with(timestampValue("flowStartMicroseconds", ChronoUnit.MICROS))
+                        .with(timestampValue("flowStartNanoseconds", ChronoUnit.NANOS))
+                        .with(durationValue("flowStartDeltaMicroseconds", ChronoUnit.MICROS).map(timestamp::plus))
+                        .with(durationValue("flowStartSysUpTime", ChronoUnit.MILLIS)
+                                .and(systemInitTime, (offset, init) -> init.plus(offset)))
+                        .getOrNull();
             }
 
             @Override
             public Instant getLastSwitched() {
-                final var flowEndDelta = Optional.ofNullable(longValue(values, "flowEndDeltaMicroseconds"))
-                        .map(d -> this.getTimestamp().plus(d, ChronoUnit.MICROS));
-
-                final var systemInitTime = Optional.ofNullable(timeValue(values, "systemInitTimeMilliseconds"));
-
-                final var flowEndSysUpTime = Optional.ofNullable(longValue(values, "flowEndSysUpTime"))
-                        .map(Duration::ofMillis)
-                        .flatMap(offset -> systemInitTime.map(init -> init.plus(offset)));
-
-                final var lastSwitchedInMilli = first(timestampValue(values, "flowEndSeconds", ChronoUnit.SECONDS),
-                        timestampValue(values, "flowEndMilliseconds", ChronoUnit.MILLIS),
-                        timestampValue(values, "flowEndMicroseconds", ChronoUnit.MICROS),
-                        timestampValue(values, "flowEndNanoseconds", ChronoUnit.NANOS));
-
-                return first(
-                        Optional.ofNullable(lastSwitchedInMilli),
-                        flowEndDelta,
-                        flowEndSysUpTime
-                ).orElse(null);
+                return Values.<Instant>first(values)
+                        .with(timestampValue("flowEndSeconds", ChronoUnit.SECONDS))
+                        .with(timestampValue("flowEndMilliseconds", ChronoUnit.MILLIS))
+                        .with(timestampValue("flowEndMicroseconds", ChronoUnit.MICROS))
+                        .with(timestampValue("flowEndNanoseconds", ChronoUnit.NANOS))
+                        .with(durationValue("flowEndDeltaMicroseconds", ChronoUnit.MICROS).map(timestamp::plus))
+                        .with(durationValue("flowEndSysUpTime", ChronoUnit.MILLIS)
+                                .and(systemInitTime, (offset, init) -> init.plus(offset)))
+                        .getOrNull();
             }
 
             @Override
             public int getFlowRecords() {
                 // TODO: Structurize meta info
-                return intValue(values, "@recordCount");
+                return Values.<Integer>first(values)
+                        .with(intValue("@recordCount"))
+                        .getOrNull();
             }
 
             @Override
             public long getFlowSeqNum() {
                 // TODO: Structurize meta info
-                return longValue(values, "@sequenceNumber");
+                return Values.<Long>first(values)
+                        .with(longValue("@sequenceNumber"))
+                        .getOrNull();
             }
 
             @Override
             public Integer getInputSnmp() {
-                return first(
-                        intValue(values, "ingressPhysicalInterface"),
-                        intValue(values, "ingressInterface"));
+                return Values.<Integer>first(values)
+                        .with(intValue("ingressPhysicalInterface"))
+                        .with(intValue("ingressInterface"))
+                        .getOrNull();
             }
 
             @Override
             public Integer getIpProtocolVersion() {
-                return intValue(values, "ipVersion");
+                return Values.<Integer>first(values)
+                        .with(intValue("ipVersion"))
+                        .getOrNull();
             }
 
             @Override
             public InetAddress getNextHop() {
-                return first(
-                        inetAddressValue(values, "ipNextHopIPv6Address"),
-                        inetAddressValue(values, "ipNextHopIPv4Address"),
-                        inetAddressValue(values, "bgpNextHopIPv6Address"),
-                        inetAddressValue(values, "bgpNextHopIPv4Address"));
+                return Values.<InetAddress>first(values)
+                        .with(inetAddressValue("ipNextHopIPv6Address"))
+                        .with(inetAddressValue("ipNextHopIPv4Address"))
+                        .with(inetAddressValue("bgpNextHopIPv6Address"))
+                        .with(inetAddressValue("bgpNextHopIPv4Address"))
+                        .getOrNull();
             }
 
             @Override
@@ -211,29 +222,33 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
             @Override
             public Integer getOutputSnmp() {
-                return first(
-                        intValue(values, "egressPhysicalInterface"),
-                        intValue(values, "egressInterface"));
+                return Values.<Integer>first(values)
+                        .with(intValue("egressPhysicalInterface"))
+                        .with(intValue("egressInterface"))
+                        .getOrNull();
             }
 
             @Override
             public Long getNumPackets() {
-                return first(
-                        longValue(values, "packetDeltaCount"),
-                        longValue(values, "postPacketDeltaCount"),
-                        longValue(values, "transportPacketDeltaCount"));
+                return Values.<Long>first(values)
+                        .with(longValue("packetDeltaCount"))
+                        .with(longValue("postPacketDeltaCount"))
+                        .with(longValue("transportPacketDeltaCount"))
+                        .getOrNull();
             }
 
             @Override
             public Integer getProtocol() {
-                return intValue(values, "protocolIdentifier");
+                return Values.<Integer>first(values)
+                        .with(intValue("protocolIdentifier"))
+                        .getOrNull();
             }
 
             @Override
             public SamplingAlgorithm getSamplingAlgorithm() {
-                final Integer deprecatedSamplingAlgorithm = first(
-                        intValue(values, "samplingAlgorithm"),
-                        intValue(values, "samplerMode"));
+                final Integer deprecatedSamplingAlgorithm = Values.<Integer>first(values).with(
+                        intValue("samplingAlgorithm")).with(
+                        intValue("samplerMode")).getOrNull();
                 if (deprecatedSamplingAlgorithm != null) {
                     if (deprecatedSamplingAlgorithm == 1) {
                         return Flow.SamplingAlgorithm.SystematicCountBasedSampling;
@@ -243,7 +258,9 @@ public class IpFixFlowBuilder implements FlowBuilder {
                     }
                 }
 
-                final var selectorAlgorithm = intValue(values, "selectorAlgorithm");
+                final var selectorAlgorithm = Values.<Integer>first(values)
+                        .with(intValue("selectorAlgorithm"))
+                        .getOrNull();
                 return switch (selectorAlgorithm) {
                     case 0 -> SamplingAlgorithm.Unassigned;
                     case 1 -> SamplingAlgorithm.SystematicCountBasedSampling;
@@ -259,42 +276,46 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
             @Override
             public Double getSamplingInterval() {
-                final Double deprecatedSamplingInterval = first(
-                        doubleValue(values, "samplingInterval"),
-                        doubleValue(values, "samplerRandomInterval"));
+                final Double deprecatedSamplingInterval = Values.<Double>first(values)
+                        .with(doubleValue("samplingInterval"))
+                        .with(doubleValue("samplerRandomInterval"))
+                        .getOrNull();
                 if (deprecatedSamplingInterval != null) {
                     return deprecatedSamplingInterval;
                 }
 
-                final var selectorAlgorithm = intValue(values, "selectorAlgorithm");
+                final var selectorAlgorithm = Values.<Integer>first(values)
+                        .with(intValue("selectorAlgorithm"))
+                        .getOrNull();
                 switch (selectorAlgorithm) {
                     case 0, 8, 9 -> {
                         return Double.NaN;
                     }
-                    case 1 -> {
-                        final var interval = doubleValue(values, "samplingFlowInterval", 1.0);
-                        final var spacing = doubleValue(values, "samplingFlowSpacing", 0.0);
-                        return interval + spacing / interval;
-                    }
-                    case 2 -> {
-                        final var interval = doubleValue(values, "flowSamplingTimeInterval", 1.0);
-                        final var spacing = doubleValue(values, "flowSamplingTimeSpacing", 0.0);
+                    case 1, 2 -> {
+                        final var interval = Values.<Double>first(values)
+                                .with(doubleValue("samplingFlowInterval", 1.0))
+                                .with(doubleValue("flowSamplingTimeInterval", 1.0))
+                                .getOrNull();
+                        final var spacing = Values.<Double>first(values)
+                                .with(doubleValue("samplingFlowSpacing", 0.0))
+                                .with(doubleValue("flowSamplingTimeSpacing", 0.0))
+                                .getOrNull();
                         return interval + spacing / interval;
                     }
                     case 3 -> {
-                        final var size = doubleValue(values, "samplingSize", 1.0);
-                        final var population = doubleValue(values, "samplingPopulation", 1.0);
+                        final var size = doubleValue("samplingSize", 1.0).getOrNull(values);
+                        final var population = doubleValue("samplingPopulation", 1.0).getOrNull(values);
                         return population / size;
                     }
                     case 4 -> {
-                        final var probability = doubleValue(values, "samplingProbability", 1.0);
+                        final var probability = doubleValue("samplingProbability", 1.0).getOrNull(values);
                         return 1.0 / probability;
                     }
                     case 5, 6, 7 -> {
-                        final var selectedRangeMin = unsignedLongValue(values, "hashSelectedRangeMin", UnsignedLong.ZERO);
-                        final var selectedRangeMax = unsignedLongValue(values, "hashSelectedRangeMax", UnsignedLong.MAX_VALUE);
-                        final var outputRangeMin = unsignedLongValue(values, "hashOutputRangeMin", UnsignedLong.ZERO);
-                        final var outputRangeMax = unsignedLongValue(values, "hashOutputRangeMax", UnsignedLong.MAX_VALUE);
+                        final var selectedRangeMin = unsignedLongValue("hashSelectedRangeMin", UnsignedLong.ZERO).getOrNull(values);
+                        final var selectedRangeMax = unsignedLongValue("hashSelectedRangeMax", UnsignedLong.MAX_VALUE).getOrNull(values);
+                        final var outputRangeMin = unsignedLongValue("hashOutputRangeMin", UnsignedLong.ZERO).getOrNull(values);
+                        final var outputRangeMax = unsignedLongValue("hashOutputRangeMax", UnsignedLong.MAX_VALUE).getOrNull(values);
                         return (outputRangeMax.minus(outputRangeMin)).dividedBy(selectedRangeMax.minus(selectedRangeMin)).doubleValue();
                     }
                     case null, default -> {
@@ -305,9 +326,9 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
             @Override
             public InetAddress getSrcAddr() {
-                return first(
-                        inetAddressValue(values, "sourceIPv6Address"),
-                        inetAddressValue(values, "sourceIPv4Address"));
+                return Values.<InetAddress>first(values).with(
+                        inetAddressValue("sourceIPv6Address")).with(
+                        inetAddressValue("sourceIPv4Address")).getOrNull();
             }
 
             @Override
@@ -317,29 +338,37 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
             @Override
             public Long getSrcAs() {
-                return longValue(values, "bgpSourceAsNumber");
+                return Values.<Long>first(values)
+                        .with(longValue("bgpSourceAsNumber"))
+                        .getOrNull();
             }
 
             @Override
             public Integer getSrcMaskLen() {
-                return first(
-                        intValue(values, "sourceIPv6PrefixLength"),
-                        intValue(values, "sourceIPv4PrefixLength"));
+                return Values.<Integer>first(values).with(
+                        intValue("sourceIPv6PrefixLength")).with(
+                        intValue("sourceIPv4PrefixLength")).getOrNull();
             }
 
             @Override
             public Integer getSrcPort() {
-                return intValue(values, "sourceTransportPort");
+                return Values.<Integer>first(values)
+                        .with(intValue("sourceTransportPort"))
+                        .getOrNull();
             }
 
             @Override
             public Integer getTcpFlags() {
-                return intValue(values, "tcpControlBits");
+                return Values.<Integer>first(values)
+                        .with(intValue("tcpControlBits"))
+                        .getOrNull();
             }
 
             @Override
             public Integer getTos() {
-                return intValue(values, "ipClassOfService");
+                return Values.<Integer>first(values)
+                        .with(intValue("ipClassOfService"))
+                        .getOrNull();
             }
 
             @Override
@@ -349,13 +378,13 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
             @Override
             public Integer getVlan() {
-                return first(
-                        intValue(values, "vlanId"),
-                        intValue(values, "postVlanId"),
-                        intValue(values, "dot1qVlanId"),
-                        intValue(values, "dot1qCustomerVlanId"),
-                        intValue(values, "postDot1qVlanId"),
-                        intValue(values, "postDot1qCustomerVlanId"));
+                return Values.<Integer>first(values).with(
+                        intValue("vlanId")).with(
+                        intValue("postVlanId")).with(
+                        intValue("dot1qVlanId")).with(
+                        intValue("dot1qCustomerVlanId")).with(
+                        intValue("postDot1qVlanId")).with(
+                        intValue("postDot1qCustomerVlanId")).getOrNull();
             }
         };
     }
