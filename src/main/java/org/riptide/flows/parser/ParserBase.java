@@ -14,7 +14,7 @@ import org.riptide.flows.parser.ie.RecordProvider;
 import org.riptide.flows.parser.session.SequenceNumberTracker;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.transport.FlowBuilder;
-import org.riptide.flows.pipeline.WithSource;
+import org.riptide.pipeline.WithSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

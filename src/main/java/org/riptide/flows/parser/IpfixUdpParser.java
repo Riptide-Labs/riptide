@@ -14,7 +14,7 @@ import org.riptide.flows.parser.ipfix.proto.Packet;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.UdpSessionManager;
 import org.riptide.flows.parser.transport.IpFixFlowBuilder;
-import org.riptide.flows.pipeline.WithSource;
+import org.riptide.pipeline.WithSource;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;

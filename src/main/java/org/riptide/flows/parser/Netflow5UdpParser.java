@@ -12,7 +12,7 @@ import org.riptide.flows.parser.netflow5.proto.Packet;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.UdpSessionManager;
 import org.riptide.flows.parser.transport.Netflow5FlowBuilder;
-import org.riptide.flows.pipeline.WithSource;
+import org.riptide.pipeline.WithSource;
 import org.riptide.flows.utils.BufferUtils;
 
 import java.net.InetSocketAddress;

@@ -189,17 +189,6 @@ public interface Flow {
      */
     Integer getVlan();
 
-//    /**
-//     * Method to get node lookup identifier.
-//     *
-//     * This field can be used as an alternate means to identify the
-//     * exporter node when the source address of the packets are altered
-//     * due to address translation.
-//     *
-//     * * @return the identifier
-//     */
-//    String getNodeIdentifier();
-
     enum Locality {
         PUBLIC, PRIVATE
     }
@@ -238,49 +227,5 @@ public interface Flow {
         PropertyMatchFiltering,
         HashBasedFiltering,
         FlowStateDependentIntermediateFlowSelectionProcess;
-    }
-
-    class Switched {
-        public final Instant firstSwitched;
-        public final Instant lastSwitched;
-        public final Instant deltaSwitched;
-
-        private Switched(final Builder builder) {
-            this.firstSwitched = Objects.requireNonNull(builder.firstSwitched);
-            this.lastSwitched = Objects.requireNonNull(builder.lastSwitched);
-            this.deltaSwitched = Objects.requireNonNull(builder.deltaSwitched);
-        }
-
-        public static class Builder {
-            private Instant firstSwitched;
-            private Instant lastSwitched;
-            private Instant deltaSwitched;
-
-            private Builder() {}
-
-            public Builder withFirstSwitched(final Instant firstSwitched) {
-                this.firstSwitched = firstSwitched;
-                return this;
-            }
-
-            public Builder withLastSwitched(final Instant lastSwitched) {
-                this.lastSwitched = lastSwitched;
-                return this;
-            }
-
-            public Builder withDeltaSwitched(final Instant deltaSwitched) {
-                this.deltaSwitched = deltaSwitched;
-                return this;
-            }
-
-            public Switched build() {
-                return new Switched(this);
-            }
-        }
-
-        public static Builder builder() {
-            return new Builder();
-        }
-
     }
 }

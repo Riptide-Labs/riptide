@@ -5,14 +5,13 @@ import com.codahale.metrics.Gauge;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import io.netty.buffer.ByteBuf;
-import org.apache.commons.logging.Log;
 import org.riptide.dns.api.DnsResolver;
 import org.riptide.flows.Flow;
 import org.riptide.flows.listeners.UdpParser;
 import org.riptide.flows.parser.ie.RecordProvider;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.UdpSessionManager;
-import org.riptide.flows.pipeline.WithSource;
+import org.riptide.pipeline.WithSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

@@ -11,7 +11,7 @@ import org.riptide.flows.parser.ipfix.proto.Packet;
 import org.riptide.flows.parser.session.TcpSession;
 import org.riptide.flows.parser.state.ParserState;
 import org.riptide.flows.parser.transport.IpFixFlowBuilder;
-import org.riptide.flows.pipeline.WithSource;
+import org.riptide.pipeline.WithSource;
 
 import java.net.InetSocketAddress;
 import java.time.Duration;
