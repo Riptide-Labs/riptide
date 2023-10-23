@@ -5,6 +5,9 @@ import com.codahale.metrics.Histogram;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
 import com.google.common.collect.Maps;
+import org.riptide.classification.ClassificationEngine;
+import org.riptide.classification.ClassificationRequest;
+import org.riptide.classification.Protocols;
 import org.riptide.flows.Flow;
 import org.riptide.flows.repository.FlowRepository;
 import org.slf4j.Logger;
@@ -24,9 +27,8 @@ public class Pipeline {
 
     private static final Logger LOG = LoggerFactory.getLogger(Pipeline.class);
 
-    /**
-     * Time taken to enrich the flows in a log
-     */
+    private final Timer logClassificationTimer;
+
     private final Timer logEnrichementTimer;
 
     /**
@@ -49,7 +51,7 @@ public class Pipeline {
      */
     private final Counter emptyFlows;
 
-    private final MetricRegistry metricRegistry;
+    private final ClassificationEngine classificationEngine;
 
     // private final DocumentEnricherImpl documentEnricher;
 
@@ -59,12 +61,14 @@ public class Pipeline {
 
     private final Map<String, Persister> persisters;
 
-    public Pipeline(final MetricRegistry metricRegistry,
+    public Pipeline(final ClassificationEngine classificationEngine,
 //                    final DocumentEnricherImpl documentEnricher,
 //                    final InterfaceMarkerImpl interfaceMarker,
 //                    final FlowThresholdingImpl thresholding,
-                    final Map<String, FlowRepository> repositories
+                    final Map<String, FlowRepository> repositories,
+                    final MetricRegistry metricRegistry
     ) {
+        this.classificationEngine = Objects.requireNonNull(classificationEngine);
 //        this.documentEnricher = Objects.requireNonNull(documentEnricher);
 //        this.interfaceMarker = Objects.requireNonNull(interfaceMarker);
 //        this.thresholding = Objects.requireNonNull(thresholding);
@@ -72,14 +76,13 @@ public class Pipeline {
         this.emptyFlows = metricRegistry.counter("emptyFlows");
         this.flowsPerLog = metricRegistry.histogram("flowsPerLog");
 
+        this.logClassificationTimer = metricRegistry.timer("logClassification");
         this.logEnrichementTimer = metricRegistry.timer("logEnrichment");
         this.logMarkingTimer = metricRegistry.timer("logMarking");
         this.logThresholdingTimer = metricRegistry.timer("logThresholding");
 
-        this.metricRegistry = Objects.requireNonNull(metricRegistry);
-
         this.persisters = Maps.transformEntries(repositories, (pid, repository) -> {
-            final var timer = this.metricRegistry.timer(MetricRegistry.name("logPersisting", pid));
+            final var timer = metricRegistry.timer(MetricRegistry.name("logPersisting", pid));
             return new Persister(repository, timer);
         });
     }
@@ -95,15 +98,35 @@ public class Pipeline {
             return;
         }
 
+        final List<EnrichedFlow> enrichedFlows = flows.value().stream()
+                .map(EnrichedFlow::from)
+                .collect(Collectors.toList());
+
+        // Classify flows
+        try (final Timer.Context ctx  = this.logClassificationTimer.time()) {
+            for (final var flow: enrichedFlows) {
+                final var request = ClassificationRequest.builder()
+                        .withExporterAddress(flows.source())
+                        .withLocation(flows.location())
+                        .withProtocol(flow.getProtocol())
+                        .withSrcAddress(flow.getSrcAddr())
+                        .withSrcPort(flow.getSrcPort())
+                        .withDstAddress(flow.getDstAddr())
+                        .withDstPort(flow.getDstPort())
+                        .build();
+
+                final var application = this.classificationEngine.classify(request);
+                if (application != null) {
+                    flow.setApplication(application);
+                }
+            }
+        }
+
         // Enrich with model data
         LOG.debug("Enriching {} flow documents.", flows.value().size());
-        final List<EnrichedFlow> enrichedFlows;
         try (final Timer.Context ctx = this.logEnrichementTimer.time()) {
             //enrichedFlows = documentEnricher.enrich(flows, source);
             // TODO fooker: Can I haz real enrichment?
-            enrichedFlows = flows.value().stream()
-                    .map(EnrichedFlow::from)
-                    .collect(Collectors.toList());
         } catch (final Exception e) {
             throw new FlowException("Failed to enrich one or more flows.", e);
         }
@@ -126,42 +149,16 @@ public class Pipeline {
         }
     }
 
-//    @SuppressWarnings("rawtypes")
-//    public synchronized void onBind(final FlowRepository repository, final Map properties) {
-//        if (properties.get(REPOSITORY_ID) == null) {
-//            LOG.error("Flow repository has no repository ID defined. Ignoring...");
-//            return;
-//        }
-//
-//        final String pid = Objects.toString(properties.get(REPOSITORY_ID));
-//        this.persisters.put(pid, new Persister(repository,
-//                this.metricRegistry.timer(MetricRegistry.name("logPersisting", pid))));
-//    }
-//
-//    @SuppressWarnings("rawtypes")
-//    public synchronized void onUnbind(final FlowRepository repository, final Map properties) {
-//        if (properties.get(REPOSITORY_ID) == null) {
-//            LOG.error("Flow repository has no repository ID defined. Ignoring...");
-//            return;
-//        }
-//
-//        final String pid = Objects.toString(properties.get(REPOSITORY_ID));
-//        this.persisters.remove(pid);
-//    }
+    private record Persister(FlowRepository repository, Timer logTimer) {
+            private Persister(final FlowRepository repository, final Timer logTimer) {
+                this.repository = Objects.requireNonNull(repository);
+                this.logTimer = Objects.requireNonNull(logTimer);
+            }
 
-    private static class Persister {
-        public final FlowRepository repository;
-        public final Timer logTimer;
-
-        public Persister(final FlowRepository repository, final Timer logTimer) {
-            this.repository = Objects.requireNonNull(repository);
-            this.logTimer = Objects.requireNonNull(logTimer);
-        }
-
-        public void persist(final Collection<EnrichedFlow> flows) throws FlowException {
-            try (final var ctx = this.logTimer.time()) {
-                this.repository.persist(flows);
+            public void persist(final Collection<EnrichedFlow> flows) throws FlowException {
+                try (final var ctx = this.logTimer.time()) {
+                    this.repository.persist(flows);
+                }
             }
         }
-    }
 }

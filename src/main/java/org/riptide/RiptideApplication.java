@@ -4,16 +4,18 @@ import com.codahale.metrics.MetricRegistry;
 import io.searchbox.client.JestClient;
 import io.searchbox.client.JestClientFactory;
 import io.searchbox.client.config.HttpClientConfig;
-import io.searchbox.client.http.JestHttpClient;
 import org.apache.http.auth.AuthScope;
 import org.apache.http.auth.UsernamePasswordCredentials;
 import org.apache.http.conn.ssl.NoopHostnameVerifier;
 import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
 import org.apache.http.impl.client.BasicCredentialsProvider;
 import org.apache.http.ssl.SSLContextBuilder;
-import org.apache.http.ssl.TrustStrategy;
-import org.riptide.dns.api.DnsResolver;
-import org.riptide.dns.netty.NettyDnsResolver;
+import org.riptide.classification.ClassificationEngine;
+import org.riptide.classification.ClassificationRuleProvider;
+import org.riptide.classification.internal.AsyncReloadingClassificationEngine;
+import org.riptide.classification.internal.DefaultClassificationEngine;
+import org.riptide.classification.internal.TimingClassificationEngine;
+import org.riptide.classification.internal.csv.CsvImporter;
 import org.riptide.flows.repository.FlowRepository;
 import org.riptide.flows.repository.elastic.ElasticFlowRepository;
 import org.riptide.flows.repository.elastic.IndexSettings;
@@ -25,14 +27,11 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 
-import javax.net.ssl.HostnameVerifier;
-import javax.net.ssl.SSLContext;
+import java.io.IOException;
 import java.security.KeyManagementException;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
-import java.security.cert.X509Certificate;
 import java.util.Map;
-import java.util.Set;
 
 @SpringBootApplication
 public class RiptideApplication {
@@ -92,5 +91,22 @@ public class RiptideApplication {
     @Bean
     public Map<String, FlowRepository> flowRepositories(final ListableBeanFactory beanFactory) {
         return beanFactory.getBeansOfType(FlowRepository.class);
+    }
+
+    @Bean
+    public ClassificationRuleProvider classificationRuleProvider() throws IOException {
+        final var rules = CsvImporter.parse(RiptideApplication.class.getResourceAsStream("/classification-rules.csv"), true);
+
+        return ClassificationRuleProvider.forList(rules);
+    }
+
+    @Bean
+    public ClassificationEngine classificationEngine(final ClassificationRuleProvider classificationRuleProvider,
+                                                     final MetricRegistry metricRegistry) throws InterruptedException {
+        final var engine = new DefaultClassificationEngine(classificationRuleProvider, false);
+        final var timingEngine = new TimingClassificationEngine(metricRegistry, engine);
+        final var reloadingEngine = new AsyncReloadingClassificationEngine(timingEngine);
+
+        return reloadingEngine;
     }
 }
