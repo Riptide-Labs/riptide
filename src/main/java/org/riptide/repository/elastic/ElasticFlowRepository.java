@@ -10,7 +10,7 @@ import io.searchbox.core.Bulk;
 import io.searchbox.core.Index;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
-import org.riptide.repository.FlowRepository;
+import org.riptide.repository.Repository;
 import org.riptide.repository.elastic.bulk.BulkException;
 import org.riptide.repository.elastic.bulk.BulkRequest;
 import org.riptide.repository.elastic.bulk.BulkWrapper;
@@ -28,7 +28,7 @@ import java.util.Objects;
 import java.util.TimerTask;
 import java.util.concurrent.locks.ReentrantLock;
 
-public class ElasticFlowRepository implements FlowRepository {
+public class ElasticFlowRepository implements Repository {
 
     public static final String TRACER_FLOW_MODULE = "ElasticFlow";
 

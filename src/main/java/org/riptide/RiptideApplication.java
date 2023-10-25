@@ -16,7 +16,7 @@ import org.riptide.classification.internal.AsyncReloadingClassificationEngine;
 import org.riptide.classification.internal.DefaultClassificationEngine;
 import org.riptide.classification.internal.TimingClassificationEngine;
 import org.riptide.classification.internal.csv.CsvImporter;
-import org.riptide.repository.FlowRepository;
+import org.riptide.repository.Repository;
 import org.riptide.repository.elastic.ElasticFlowRepository;
 import org.riptide.repository.elastic.IndexSettings;
 import org.riptide.repository.elastic.IndexStrategy;
@@ -74,8 +74,8 @@ public class RiptideApplication {
     }
 
     @Bean
-    public FlowRepository elasticFlowRepository(final JestClient jestClient,
-                                                final MetricRegistry metricRegistry) {
+    public Repository elasticFlowRepository(final JestClient jestClient,
+                                            final MetricRegistry metricRegistry) {
         final var indexSettings = new IndexSettings();
         indexSettings.setIndexPrefix("riptide-");
         indexSettings.setNumberOfReplicas(1);
@@ -89,8 +89,8 @@ public class RiptideApplication {
     }
 
     @Bean
-    public Map<String, FlowRepository> flowRepositories(final ListableBeanFactory beanFactory) {
-        return beanFactory.getBeansOfType(FlowRepository.class);
+    public Map<String, Repository> flowRepositories(final ListableBeanFactory beanFactory) {
+        return beanFactory.getBeansOfType(Repository.class);
     }
 
     @Bean

@@ -8,11 +8,12 @@ import com.google.common.collect.Maps;
 import org.riptide.classification.ClassificationEngine;
 import org.riptide.classification.ClassificationRequest;
 import org.riptide.flows.parser.data.Flow;
-import org.riptide.repository.FlowRepository;
+import org.riptide.repository.Repository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -64,7 +65,7 @@ public class Pipeline {
 //                    final DocumentEnricherImpl documentEnricher,
 //                    final InterfaceMarkerImpl interfaceMarker,
 //                    final FlowThresholdingImpl thresholding,
-                    final Map<String, FlowRepository> repositories,
+                    final Map<String, Repository> repositories,
                     final MetricRegistry metricRegistry
     ) {
         this.classificationEngine = Objects.requireNonNull(classificationEngine);
@@ -80,8 +81,8 @@ public class Pipeline {
         this.logMarkingTimer = metricRegistry.timer("logMarking");
         this.logThresholdingTimer = metricRegistry.timer("logThresholding");
 
-        this.persisters = Maps.transformEntries(repositories, (pid, repository) -> {
-            final var timer = metricRegistry.timer(MetricRegistry.name("logPersisting", pid));
+        this.persisters = Maps.transformEntries(repositories, (name, repository) -> {
+            final var timer = metricRegistry.timer(MetricRegistry.name("logPersisting", name));
             return new Persister(repository, timer);
         });
     }
@@ -144,17 +145,21 @@ public class Pipeline {
 
         // Push flows to persistence
         for (final var persister : this.persisters.entrySet()) {
-            persister.getValue().persist(enrichedFlows);
+            try {
+                persister.getValue().persist(enrichedFlows);
+            } catch (final IOException e) {
+                LOG.error("Failed to persist flows to {}", persister.getKey(), e);
+            }
         }
     }
 
-    private record Persister(FlowRepository repository, Timer logTimer) {
-            private Persister(final FlowRepository repository, final Timer logTimer) {
+    private record Persister(Repository repository, Timer logTimer) {
+            private Persister(final Repository repository, final Timer logTimer) {
                 this.repository = Objects.requireNonNull(repository);
                 this.logTimer = Objects.requireNonNull(logTimer);
             }
 
-            public void persist(final Collection<EnrichedFlow> flows) throws FlowException {
+            public void persist(final Collection<EnrichedFlow> flows) throws FlowException, IOException {
                 try (final var ctx = this.logTimer.time()) {
                     this.repository.persist(flows);
                 }
