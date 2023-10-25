@@ -11,6 +11,7 @@ import org.opensearch.client.opensearch._types.Refresh;
 import org.opensearch.client.opensearch._types.mapping.TypeMapping;
 import org.opensearch.client.opensearch.core.bulk.BulkOperation;
 import org.opensearch.client.transport.httpclient5.ApacheHttpClient5TransportBuilder;
+import org.riptide.config.OpensearchConfig;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
 import org.riptide.repository.Repository;
@@ -19,21 +20,25 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.Collection;
+import java.util.Objects;
 
 public class OpensearchRepository implements Repository {
 
     private static final Logger LOG = LoggerFactory.getLogger(OpensearchRepository.class);
 
-    public static final String INDEX_NAME = "riptide-netflow";
     public static final JacksonJsonpMapper JSON_MAPPER = new JacksonJsonpMapper();
+
+    private final String index;
     private final OpenSearchClient client;
 
-    public OpensearchRepository() {
-        final var host = new HttpHost("https", "localhost", 9200);
+    public OpensearchRepository(final OpensearchConfig config) {
+        this.index = Objects.requireNonNull(config.index);
+
+        final var host = new HttpHost("https", config.host, config.port);
 
         final var credentialsProvider = new BasicCredentialsProvider();
         credentialsProvider.setCredentials(new AuthScope(host),
-                new UsernamePasswordCredentials("admin", "admin".toCharArray()));
+                new UsernamePasswordCredentials(config.username, config.password.toCharArray()));
 
         final var connectionManager = PoolingAsyncClientConnectionManagerBuilder
                 .create()
@@ -55,14 +60,14 @@ public class OpensearchRepository implements Repository {
 
         final var ops = flows.stream()
                 .map(flow -> new BulkOperation.Builder().index(index -> index
-                                .index(INDEX_NAME)
+                                .index(OpensearchRepository.this.index)
                                 .document(flow)
                                 .requireAlias(true))
                         .build())
                 .toList();
 
         final var response = this.client.bulk(bulk -> bulk
-                .index(INDEX_NAME)
+                .index(index)
                 .requireAlias(true)
                 .operations(ops)
                 .refresh(Refresh.WaitFor));
@@ -77,7 +82,7 @@ public class OpensearchRepository implements Repository {
     }
 
     private void ensureTemplate() throws IOException {
-        if (this.client.indices().existsTemplate(builder -> builder.name(INDEX_NAME)).value()) {
+        if (this.client.indices().existsTemplate(builder -> builder.name(index)).value()) {
             return;
         }
 
@@ -86,10 +91,10 @@ public class OpensearchRepository implements Repository {
                 TypeMapping.class);
 
         this.client.indices().putIndexTemplate(indexTemplate -> indexTemplate
-                .name(INDEX_NAME)
-                .indexPatterns(String.format("%s-*", INDEX_NAME))
+                .name(index)
+                .indexPatterns(String.format("%s-*", index))
                 .template(template -> template
-                        .aliases(INDEX_NAME, alias -> alias)
+                        .aliases(index, alias -> alias)
                         .settings(indexSettings -> indexSettings
                                 .numberOfReplicas("1")
                                 .numberOfShards("1"))
