@@ -126,6 +126,29 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
+            <plugin>
+                <groupId>com.google.cloud.tools</groupId>
+                <artifactId>jib-maven-plugin</artifactId>
+                <configuration>
+                    <from>
+                        <image>openjdk:alpine</image>
+                    </from>
+                    <to>
+                        <image>pikkalabs/riptide</image>
+                        <tags>
+                            <tag>latest</tag>
+                            <tag>bleeding</tag>
+                        </tags>
+                    </to>
+                    <container>
+                        <ports>
+                            <!-- TODO MVR what is the correct port, or do we even have one statically? -->
+                            <port>9000</port>
+                        </ports>
+                        <format>OCI</format>
+                    </container>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 </project>
