@@ -35,3 +35,5 @@ build/
 ### direnv ###
 .envrc
 .direnv/
+src/main/resources/application-local.properties
+src/test/resources/application-local.properties
