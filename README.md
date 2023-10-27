@@ -8,7 +8,7 @@ Riptide is an open source monitoring tool focused on network traffic.
 You are very welcome to join us to make this project a better place.
 You can find us at:
 
-* [Riptide Chat](https://matrix.to/#/!aNAsSnrIzdmzCXLRmj:gitter.im?via=gitter.im&via=maglab.space&via=synod.im)
+* [Riptide Chat](https://matrix.to/#/#riptide:gitter.im)
 
 # 👮 Contribution Guidelines
 
