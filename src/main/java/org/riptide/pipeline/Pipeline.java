@@ -7,6 +7,8 @@ import com.codahale.metrics.Timer;
 import com.google.common.collect.Maps;
 import org.riptide.classification.ClassificationEngine;
 import org.riptide.classification.ClassificationRequest;
+import org.riptide.classification.IpAddr;
+import org.riptide.classification.Protocols;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.repository.Repository;
 import org.slf4j.Logger;
@@ -106,12 +108,12 @@ public class Pipeline {
         try (final Timer.Context ctx  = this.logClassificationTimer.time()) {
             for (final var flow: enrichedFlows) {
                 final var request = ClassificationRequest.builder()
-                        .withExporterAddress(flows.source())
+                        .withExporterAddress(IpAddr.of(flows.source()))
                         .withLocation(flows.location())
-                        .withProtocol(flow.getProtocol())
-                        .withSrcAddress(flow.getSrcAddr())
+                        .withProtocol(Protocols.getProtocol(flow.getProtocol()))
+                        .withSrcAddress(IpAddr.of(flow.getSrcAddr()))
                         .withSrcPort(flow.getSrcPort())
-                        .withDstAddress(flow.getDstAddr())
+                        .withDstAddress(IpAddr.of(flow.getDstAddr()))
                         .withDstPort(flow.getDstPort())
                         .build();
 

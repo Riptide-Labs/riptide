@@ -1,5 +1,7 @@
 package org.riptide.classification.internal.decision;
 
+import lombok.AllArgsConstructor;
+import lombok.ToString;
 import org.riptide.classification.ClassificationRequest;
 import org.riptide.classification.internal.matcher.*;
 
@@ -17,6 +19,7 @@ import java.util.function.Function;
  * some of their rule's conditions may already have been covered by thresholds along the path through the
  * decision tree. Classifiers have the same sort ordered as their underlying rules.
  */
+@ToString
 public class Classifier implements Comparable<Classifier> {
 
     private static <RV> void addMatcher(List<Matcher> matchers, RV ruleValue, Function<RV, Matcher> matcherCreator) {
@@ -85,29 +88,11 @@ public class Classifier implements Comparable<Classifier> {
                                                       position < o.position ? -1 : position > o.position ? 1 : 0;
     }
 
-    @Override
-    public String toString() {
-        return "Classifier{" +
-               "result='" + result + '\'' +
-               ", groupPosition=" + groupPosition +
-               ", position=" + position +
-               '}';
-    }
-
+    @ToString
+    @AllArgsConstructor
     public static class Result {
         // used to break ties in case that several classifiers with the same priority match
         public final int matchedAspects;
         public final String name;
-        public Result(int matchedAspects, String name) {
-            this.matchedAspects = matchedAspects;
-            this.name = name;
-        }
-        @Override
-        public String toString() {
-            return "Result{" +
-                   "matchedAspects=" + matchedAspects +
-                   ", name='" + name + '\'' +
-                   '}';
-        }
     }
 }
