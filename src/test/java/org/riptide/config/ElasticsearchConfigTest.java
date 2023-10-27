@@ -1,0 +1,29 @@
+package org.riptide.config;
+
+import org.assertj.core.api.Assertions;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
+
+@SpringBootTest(properties = {
+        "riptide.elastic.enabled=true",
+        "riptide.elastic.username=user",
+        "riptide.elastic.password=password"
+})
+class ElasticsearchConfigTest {
+
+    @Autowired
+    private ApplicationContext springContext;
+
+    @Test
+    void verifyElasticsearchConfigurationIsAvailable() {
+        Assertions.assertThat(springContext.getBeansOfType(ElasticsearchConfig.class)).isNotEmpty();
+    }
+
+    @Test
+    void verifyOpensearchConfigurationIsUnavailable() {
+        Assertions.assertThat(springContext.getBeansOfType(OpensearchConfig.class)).isEmpty();
+    }
+
+}

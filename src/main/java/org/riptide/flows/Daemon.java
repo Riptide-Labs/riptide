@@ -2,6 +2,8 @@ package org.riptide.flows;
 
 import com.codahale.metrics.MetricRegistry;
 import jakarta.annotation.PreDestroy;
+import lombok.extern.slf4j.Slf4j;
+import org.riptide.config.DaemonConfig;
 import org.riptide.dns.api.DnsResolver;
 import org.riptide.flows.listeners.UdpListener;
 import org.riptide.flows.listeners.UdpParser;
@@ -12,6 +14,8 @@ import org.riptide.flows.parser.netflow9.Netflow9UdpParser;
 import org.riptide.pipeline.FlowException;
 import org.riptide.pipeline.Pipeline;
 import org.riptide.pipeline.WithSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
@@ -21,13 +25,16 @@ import java.util.List;
 import java.util.function.Consumer;
 
 @Component
+@Slf4j
 public class Daemon implements ApplicationRunner {
 
     private final UdpListener listener;
 
     public Daemon(final DnsResolver dnsResolver,
                   final Pipeline pipeline,
-                  final MetricRegistry metricRegistry) {
+                  final MetricRegistry metricRegistry,
+                  final DaemonConfig config
+    ) {
 
         final var location = "Cloudcuckooland";
 
@@ -61,7 +68,8 @@ public class Daemon implements ApplicationRunner {
         this.listener = new UdpListener("default",
                 parsers,
                 metricRegistry);
-        this.listener.setPort(9999);
+        log.info("Using port {} to listen for flows \\o/", config.port());
+        this.listener.setPort(config.port());
     }
 
     @Override
