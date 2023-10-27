@@ -1,7 +1,7 @@
 #  🚀 Welcome to Riptide 🌊
 
 Our project goal is to give people working in IT operations the best experience to optimize and troubleshoot IT networks.
-Riptide is an open source monitoring tool focused on network traffic.
+Riptide is an open-source monitoring tool focused on network traffic.
 
 # 👋 Say hello
 
@@ -9,6 +9,7 @@ You are very welcome to join us to make this project a better place.
 You can find us at:
 
 * [Riptide Chat](https://matrix.to/#/#riptide:gitter.im)
+* [Riptide Meetup Calendar](https://calendar.google.com/calendar/embed?src=7353b4b1be84c2378387cc5380c27aa48aee6cc4f8cc025cf2083b2bf34cbc67%40group.calendar.google.com&ctz=Europe%2FBerlin)
 
 # 👮 Contribution Guidelines
 
