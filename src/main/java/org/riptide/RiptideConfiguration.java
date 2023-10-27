@@ -27,7 +27,6 @@ import org.riptide.repository.opensearch.OpensearchRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ListableBeanFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -41,7 +40,7 @@ import java.util.Map;
 @Configuration
 public class RiptideConfiguration {
 
-    private static final Logger LOG = LoggerFactory.getLogger(RiptideApplication.class);
+    private static final Logger LOG = LoggerFactory.getLogger(RiptideConfiguration.class);
 
     @Bean
     public Config config() throws IOException {
