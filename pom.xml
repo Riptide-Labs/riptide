@@ -133,7 +133,7 @@
                 <artifactId>jib-maven-plugin</artifactId>
                 <configuration>
                     <from>
-                        <image>openjdk:alpine</image>
+                        <image>eclipse-temurin:21-jre-alpine</image>
                     </from>
                     <to>
                         <image>pikkalabs/riptide</image>
