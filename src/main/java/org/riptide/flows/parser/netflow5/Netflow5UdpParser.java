@@ -3,8 +3,7 @@ package org.riptide.flows.parser.netflow5;
 import com.codahale.metrics.MetricRegistry;
 import io.netty.buffer.ByteBuf;
 import org.riptide.dns.api.DnsResolver;
-import org.riptide.flows.listeners.Dispatchable;
-import org.riptide.flows.listeners.UdpParser;
+import org.riptide.flows.listeners.multi.DispatchableUdpParser;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.UdpParserBase;
 import org.riptide.flows.parser.data.Flow;
@@ -23,7 +22,7 @@ import java.util.function.BiConsumer;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
 
-public class Netflow5UdpParser extends UdpParserBase implements UdpParser, Dispatchable {
+public class Netflow5UdpParser extends UdpParserBase implements DispatchableUdpParser {
 
     private final Netflow5FlowBuilder flowBuilder = new Netflow5FlowBuilder();
 

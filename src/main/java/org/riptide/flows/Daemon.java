@@ -6,7 +6,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.riptide.config.DaemonConfig;
 import org.riptide.dns.api.DnsResolver;
 import org.riptide.flows.listeners.UdpListener;
-import org.riptide.flows.listeners.UdpParser;
+import org.riptide.flows.listeners.multi.DispatchableUdpParser;
+import org.riptide.flows.listeners.multi.DispatchingUdpParser;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.ipfix.IpfixUdpParser;
 import org.riptide.flows.parser.netflow5.Netflow5UdpParser;
@@ -19,8 +20,8 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
 import java.util.Collections;
-import java.util.List;
 import java.util.function.BiConsumer;
+import java.util.Set;
 
 @Component
 @Slf4j
@@ -45,7 +46,7 @@ public class Daemon implements ApplicationRunner {
             }
         };
 
-        final List<UdpParser> parsers = List.of(
+        final Set<DispatchableUdpParser> parsers = Set.of(
                 new Netflow5UdpParser("default-netflow5",
                         dispatcher,
                         location,
@@ -64,7 +65,7 @@ public class Daemon implements ApplicationRunner {
         );
 
         this.listener = new UdpListener("default",
-                parsers,
+                new DispatchingUdpParser("default", parsers),
                 metricRegistry);
         log.info("Using port {} to listen for flows \\o/", config.port());
         this.listener.setPort(config.port());

@@ -18,21 +18,17 @@ import io.netty.channel.socket.DatagramPacket;
 import io.netty.channel.socket.nio.NioDatagramChannel;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.internal.SocketUtils;
-import org.riptide.flows.parser.Parser;
-import org.riptide.flows.utils.BufferUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
-import java.util.Collection;
-import java.util.List;
 import java.util.Objects;
 
 public class UdpListener implements Listener {
     private static final Logger LOG = LoggerFactory.getLogger(UdpListener.class);
 
     private final String name;
-    private final List<UdpParser> parsers;
+    private final UdpParser parser;
 
     private final Meter packetsReceived;
 
@@ -44,21 +40,12 @@ public class UdpListener implements Listener {
     private int maxPacketSize = 8096;
 
     public UdpListener(final String name,
-                       final List<UdpParser> parsers,
+                       final UdpParser parser,
                        final MetricRegistry metrics) {
         this.name = Objects.requireNonNull(name);
-        this.parsers = Objects.requireNonNull(parsers);
+        this.parser = Objects.requireNonNull(parser);
 
-        if (this.parsers.isEmpty()) {
-            throw new IllegalArgumentException("At least 1 parsers must be defined");
-        }
-        if (this.parsers.size() > 1) {
-            if (this.parsers.stream().filter(p -> p instanceof Dispatchable).count() != this.parsers.size()) {
-                throw new IllegalArgumentException("If more than 1 parser is defined, all parsers must be Dispatchable");
-            }
-        }
-
-        packetsReceived = metrics.meter(MetricRegistry.name("listeners", name, "packetsReceived"));
+        this.packetsReceived = metrics.meter(MetricRegistry.name("listeners", name, "packetsReceived"));
     }
 
     public void start() {
@@ -67,7 +54,7 @@ public class UdpListener implements Listener {
                 .setNameFormat("telemetryd-nio-" + name + "-%d")
                 .build());
 
-        this.parsers.forEach(parser -> parser.start(this.bossGroup));
+        this.parser.start(this.bossGroup);
 
         final InetSocketAddress address = this.host != null
                 ? SocketUtils.socketAddress(this.host, this.port)
@@ -93,7 +80,7 @@ public class UdpListener implements Listener {
             }
         }
 
-        this.parsers.forEach(Parser::stop);
+        this.parser.stop();
 
         LOG.info("Closing boss group...");
         if (this.bossGroup != null) {
@@ -136,37 +123,15 @@ public class UdpListener implements Listener {
         return String.format("UDP %s:%s", this.host != null ? this.host : "*", this.port);
     }
 
-    @Override
-    public Collection<? extends Parser> getParsers() {
-        return this.parsers;
-    }
-
     private class DefaultChannelInitializer extends ChannelInitializer<DatagramChannel> {
 
         @Override
-        protected void initChannel(DatagramChannel ch) {
+        protected void initChannel(final DatagramChannel ch) {
             // Accounting
             ch.pipeline().addFirst(new AccountingHandler());
 
-            if (parsers.size() == 1) {
-                final UdpParser parser = parsers.get(0);
-                // If only one parser is defined, we can directly use the handler
-                ch.pipeline().addLast(new SingleDatagramPacketParserHandler(parser));
-            } else {
-                // Otherwise dispatch
-                ch.pipeline().addLast(new SimpleChannelInboundHandler<DatagramPacket>() {
-                    @Override
-                    protected void channelRead0(final ChannelHandlerContext ctx, final DatagramPacket msg) throws Exception {
-                        for (final UdpParser parser : parsers) {
-                            if (BufferUtils.peek(msg.content(), ((Dispatchable) parser)::handles)) {
-                                new SingleDatagramPacketParserHandler(parser).channelRead0(ctx, msg);
-                                return;
-                            }
-                        }
-                        LOG.warn("Unhandled packet from {}", msg.sender());
-                    }
-                });
-            }
+            // Call the parser
+            ch.pipeline().addLast(new SingleDatagramPacketParserHandler(UdpListener.this.parser));
 
             // Add error handling
             ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {

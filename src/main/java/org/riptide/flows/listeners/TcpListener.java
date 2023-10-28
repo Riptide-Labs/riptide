@@ -19,13 +19,10 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.util.concurrent.GlobalEventExecutor;
 import io.netty.util.internal.SocketUtils;
-import org.riptide.flows.parser.Parser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
-import java.util.Collection;
-import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -172,11 +169,6 @@ public class TcpListener implements Listener {
     @Override
     public String getDescription() {
         return String.format("TCP %s:%s",  this.host != null ? this.host : "*", this.port);
-    }
-
-    @Override
-    public Collection<? extends Parser> getParsers() {
-        return Collections.singleton(this.parser);
     }
 
     public String getHost() {
