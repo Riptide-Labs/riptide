@@ -4,6 +4,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NonNull;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.ie.values.NullValue;
 
