@@ -1,4 +1,4 @@
-package org.riptide.flows.listeners;
+package org.riptide.flows.listeners.multi;
 
 import io.netty.buffer.ByteBuf;
 

@@ -4,8 +4,7 @@ import com.codahale.metrics.MetricRegistry;
 import com.google.common.base.MoreObjects;
 import io.netty.buffer.ByteBuf;
 import org.riptide.dns.api.DnsResolver;
-import org.riptide.flows.listeners.Dispatchable;
-import org.riptide.flows.listeners.UdpParser;
+import org.riptide.flows.listeners.multi.DispatchableUdpParser;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.UdpParserBase;
 import org.riptide.flows.parser.data.Flow;
@@ -25,7 +24,7 @@ import java.util.function.BiConsumer;
 import static org.riptide.flows.utils.BufferUtils.slice;
 import static org.riptide.flows.utils.BufferUtils.uint16;
 
-public class IpfixUdpParser extends UdpParserBase implements UdpParser, Dispatchable {
+public class IpfixUdpParser extends UdpParserBase implements DispatchableUdpParser {
 
     private final IpFixFlowBuilder flowBuilder = new IpFixFlowBuilder();
 
