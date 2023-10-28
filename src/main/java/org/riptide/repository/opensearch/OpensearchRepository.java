@@ -14,7 +14,7 @@ import org.opensearch.client.transport.httpclient5.ApacheHttpClient5TransportBui
 import org.riptide.config.OpensearchConfig;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
-import org.riptide.repository.Repository;
+import org.riptide.repository.FlowRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -22,7 +22,7 @@ import java.io.IOException;
 import java.util.Collection;
 import java.util.Objects;
 
-public class OpensearchRepository implements Repository {
+public class OpensearchRepository implements FlowRepository {
 
     private static final Logger LOG = LoggerFactory.getLogger(OpensearchRepository.class);
 

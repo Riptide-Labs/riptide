@@ -11,7 +11,7 @@ import java.util.Collection;
  *
  * After parsing and processing of received flows, the result is passed to all exposed instances of this interface.
  */
-public interface Repository {
+public interface FlowRepository {
 
     /**
      * Persist a batch of flows.
