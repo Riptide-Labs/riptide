@@ -3,7 +3,7 @@ package org.riptide.repository.elastic;
 import io.searchbox.client.JestClient;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
-import org.riptide.repository.Repository;
+import org.riptide.repository.FlowRepository;
 import org.riptide.repository.elastic.template.DefaultTemplateInitializer;
 
 import java.io.IOException;
@@ -14,23 +14,23 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * This {@link Repository} wrapper will ensure that the repository has
+ * This {@link FlowRepository} wrapper will ensure that the repository has
  * been initialized before any *write* calls are made to the given delegate.
  */
-public class InitializingElasticFlowRepository implements Repository {
+public class InitializingElasticFlowRepository implements FlowRepository {
 
     private final List<DefaultTemplateInitializer> initializers;
-    private final Repository delegate;
+    private final FlowRepository delegate;
     private final AtomicBoolean initialized = new AtomicBoolean(false);
 
-    public InitializingElasticFlowRepository(final Repository delegate,
+    public InitializingElasticFlowRepository(final FlowRepository delegate,
                                              final JestClient client,
                                              final IndexSettings rawIndexSettings/*,
                                       final IndexSettings aggIndexSettings*/) {
         this(delegate, new RawIndexInitializer(client, rawIndexSettings)/*, new AggregateIndexInitializer(bundleContext, client, aggIndexSettings)*/);
     }
 
-    private InitializingElasticFlowRepository(final Repository delegate, final DefaultTemplateInitializer... initializers) {
+    private InitializingElasticFlowRepository(final FlowRepository delegate, final DefaultTemplateInitializer... initializers) {
         this.delegate = Objects.requireNonNull(delegate);
         this.initializers = Arrays.asList(initializers);
     }

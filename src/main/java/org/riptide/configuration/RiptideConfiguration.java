@@ -9,9 +9,7 @@ import org.riptide.classification.internal.AsyncReloadingClassificationEngine;
 import org.riptide.classification.internal.DefaultClassificationEngine;
 import org.riptide.classification.internal.TimingClassificationEngine;
 import org.riptide.classification.internal.csv.CsvImporter;
-import org.riptide.repository.Repository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.riptide.repository.FlowRepository;
 import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -30,8 +28,8 @@ public class RiptideConfiguration {
 
     // TODO MVR using Map<String, Repository> seems weird
     @Bean
-    public Map<String, Repository> flowRepositories(final ListableBeanFactory beanFactory) {
-        final var repositories = beanFactory.getBeansOfType(Repository.class);
+    public Map<String, FlowRepository> flowRepositories(final ListableBeanFactory beanFactory) {
+        final var repositories = beanFactory.getBeansOfType(FlowRepository.class);
         if (repositories.isEmpty()) {
             log.error("No flow persistence repository configured");
         }

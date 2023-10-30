@@ -10,7 +10,7 @@ import org.riptide.classification.ClassificationRequest;
 import org.riptide.classification.IpAddr;
 import org.riptide.classification.Protocols;
 import org.riptide.flows.parser.data.Flow;
-import org.riptide.repository.Repository;
+import org.riptide.repository.FlowRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -67,7 +67,7 @@ public class Pipeline {
 //                    final DocumentEnricherImpl documentEnricher,
 //                    final InterfaceMarkerImpl interfaceMarker,
 //                    final FlowThresholdingImpl thresholding,
-                    final Map<String, Repository> repositories,
+                    final Map<String, FlowRepository> repositories,
                     final MetricRegistry metricRegistry
     ) {
         this.classificationEngine = Objects.requireNonNull(classificationEngine);
@@ -155,8 +155,8 @@ public class Pipeline {
         }
     }
 
-    private record Persister(Repository repository, Timer logTimer) {
-            private Persister(final Repository repository, final Timer logTimer) {
+    private record Persister(FlowRepository repository, Timer logTimer) {
+            private Persister(final FlowRepository repository, final Timer logTimer) {
                 this.repository = Objects.requireNonNull(repository);
                 this.logTimer = Objects.requireNonNull(logTimer);
             }

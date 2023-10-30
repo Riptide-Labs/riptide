@@ -11,7 +11,7 @@ import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
 import org.apache.http.impl.client.BasicCredentialsProvider;
 import org.apache.http.ssl.SSLContextBuilder;
 import org.riptide.config.ElasticsearchConfig;
-import org.riptide.repository.Repository;
+import org.riptide.repository.FlowRepository;
 import org.riptide.repository.elastic.ElasticFlowRepository;
 import org.riptide.repository.elastic.IndexSettings;
 import org.riptide.repository.elastic.IndexStrategy;
@@ -54,9 +54,9 @@ public class ElasticsearchConfiguration {
     }
 
     @Bean
-    public Repository elasticFlowRepository(final ElasticsearchConfig config,
-                                            final JestClient jestClient,
-                                            final MetricRegistry metricRegistry) {
+    public FlowRepository elasticFlowRepository(final ElasticsearchConfig config,
+                                                final JestClient jestClient,
+                                                final MetricRegistry metricRegistry) {
         final var indexSettings = new IndexSettings();
         indexSettings.setIndexPrefix(config.indexPrefix);
         indexSettings.setNumberOfReplicas(config.numberOfReplicas);

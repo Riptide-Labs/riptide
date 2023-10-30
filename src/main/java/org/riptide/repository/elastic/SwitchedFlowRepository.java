@@ -6,7 +6,7 @@ import java.util.Objects;
 
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
-import org.riptide.repository.Repository;
+import org.riptide.repository.FlowRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -15,15 +15,15 @@ import org.slf4j.LoggerFactory;
  *
  * Whether the flows are forwarded can be controlled by a property.
  */
-public class SwitchedFlowRepository implements Repository {
+public class SwitchedFlowRepository implements FlowRepository {
 
     private static final Logger LOG = LoggerFactory.getLogger(SwitchedFlowRepository.class);
 
-    private final Repository delegate;
+    private final FlowRepository delegate;
 
     private boolean enabled = true;
 
-    public SwitchedFlowRepository(final Repository delegate) {
+    public SwitchedFlowRepository(final FlowRepository delegate) {
         this.delegate = Objects.requireNonNull(delegate);
     }
 
