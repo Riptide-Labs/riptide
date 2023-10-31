@@ -8,15 +8,14 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.Lists;
+import lombok.extern.slf4j.Slf4j;
 import org.riptide.dns.api.DnsResolver;
 import org.riptide.flows.parser.data.Flow;
+import org.riptide.flows.parser.data.FlowBuilder;
 import org.riptide.flows.parser.ie.RecordProvider;
 import org.riptide.flows.parser.session.SequenceNumberTracker;
 import org.riptide.flows.parser.session.Session;
-import org.riptide.flows.parser.data.FlowBuilder;
 import org.riptide.pipeline.WithSource;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -25,11 +24,18 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.function.Consumer;
 
+import static java.util.concurrent.TimeUnit.SECONDS;
+
+@Slf4j
 public abstract class ParserBase implements Parser {
-    private static final Logger LOG = LoggerFactory.getLogger(ParserBase.class);
 
 //    private final RateLimitedLog SEQUENCE_ERRORS_LOGGER = RateLimitedLog
 //            .withRateLimit(LOG)
@@ -144,7 +150,7 @@ public abstract class ParserBase implements Parser {
         this.executor = new ThreadPoolExecutor(
                 // corePoolSize must be > 0 since we use the RejectedExecutionHandler to block when the queue is full
                 1, this.threads,
-                60L, TimeUnit.SECONDS,
+                60L, SECONDS,
                 new SynchronousQueue<>(),
                 (r, executor) -> {
                     // We enter this block when the queue is full and the caller is attempting to submit additional tasks
@@ -190,7 +196,7 @@ public abstract class ParserBase implements Parser {
     public void setClockSkewEventRate(final long clockSkewEventRate) {
         this.clockSkewEventRate = clockSkewEventRate;
 
-        this.clockSkewEventCache = CacheBuilder.newBuilder().expireAfterWrite(this.clockSkewEventRate, TimeUnit.SECONDS).build(new CacheLoader<InetAddress, Optional<Instant>>() {
+        this.clockSkewEventCache = CacheBuilder.newBuilder().expireAfterWrite(this.clockSkewEventRate, SECONDS).build(new CacheLoader<InetAddress, Optional<Instant>>() {
             @Override
             public Optional<Instant> load(InetAddress key) throws Exception {
                 return Optional.empty();
@@ -201,7 +207,7 @@ public abstract class ParserBase implements Parser {
     public void setIllegalFlowEventRate(final long illegalFlowEventRate) {
         this.illegalFlowEventRate = illegalFlowEventRate;
 
-        this.illegalFlowEventCache = CacheBuilder.newBuilder().expireAfterWrite(this.illegalFlowEventRate, TimeUnit.SECONDS).build(new CacheLoader<InetAddress, Optional<Instant>>() {
+        this.illegalFlowEventCache = CacheBuilder.newBuilder().expireAfterWrite(this.illegalFlowEventRate, SECONDS).build(new CacheLoader<InetAddress, Optional<Instant>>() {
             @Override
             public Optional<Instant> load(InetAddress key) throws Exception {
                 return Optional.empty();
@@ -245,7 +251,7 @@ public abstract class ParserBase implements Parser {
                                             final InetSocketAddress remoteAddress) {
         // Verify that flows sequences are in order
         if (!session.verifySequenceNumber(packet.getObservationDomainId(), packet.getSequenceNumber())) {
-            LOG.warn("Error in flow sequence detected: from {}", session.getRemoteAddress());
+            log.warn("Error in flow sequence detected: from {}", session.getRemoteAddress());
             this.sequenceErrors.inc();
         }
 
@@ -308,12 +314,12 @@ public abstract class ParserBase implements Parser {
 //                                        .getEvent());
 
                                 for (final String correction : corrections) {
-                                    LOG.warn("Illegal flow detected from exporter {}: \n{}", session.getRemoteAddress().getAddress(), correction);
+                                    log.warn("Illegal flow detected from exporter {}: \n{}", session.getRemoteAddress().getAddress(), correction);
                                 }
                             }
                         }
 
-                        LOG.trace("Received flow: {}", flow);
+                        log.trace("Received flow: {}", flow);
 
                         // Dispatch
                         this.dispatcher.accept(new WithSource<>(this.location, session.getRemoteAddress(), flow));
@@ -339,16 +345,16 @@ public abstract class ParserBase implements Parser {
 
         // Return a future which is completed when all records are finished dispatching (i.e. written to Kafka)
         final CompletableFuture<Void> future = new CompletableFuture<>();
-        futureOfFutures.whenComplete((futures,ex) -> {
+        futureOfFutures.whenComplete((futures, ex) -> {
             if (ex != null) {
-                LOG.warn("Error preparing records for dispatch.", ex);
+                log.warn("Error preparing records for dispatch.", ex);
                 future.completeExceptionally(ex);
                 return;
             }
             // Dispatch was triggered for all the records, now wait for the dispatching to complete
-            CompletableFuture.allOf(futures).whenComplete((any,exx) -> {
+            CompletableFuture.allOf(futures).whenComplete((any, exx) -> {
                 if (exx != null) {
-                    LOG.warn("One or more of the records were not successfully dispatched.", exx);
+                    log.warn("One or more of the records were not successfully dispatched.", exx);
                     future.completeExceptionally(exx);
                     return;
                 }

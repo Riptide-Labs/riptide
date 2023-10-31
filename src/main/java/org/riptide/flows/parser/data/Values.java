@@ -2,7 +2,14 @@ package org.riptide.flows.parser.data;
 
 import com.google.common.primitives.UnsignedLong;
 import org.riptide.flows.parser.ie.Value;
-import org.riptide.flows.parser.ie.values.*;
+import org.riptide.flows.parser.ie.values.BooleanValue;
+import org.riptide.flows.parser.ie.values.DateTimeValue;
+import org.riptide.flows.parser.ie.values.FloatValue;
+import org.riptide.flows.parser.ie.values.IPv4AddressValue;
+import org.riptide.flows.parser.ie.values.IPv6AddressValue;
+import org.riptide.flows.parser.ie.values.SignedValue;
+import org.riptide.flows.parser.ie.values.StringValue;
+import org.riptide.flows.parser.ie.values.UnsignedValue;
 
 import java.net.InetAddress;
 import java.time.Duration;
@@ -15,7 +22,7 @@ import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
-public class Values<T> {
+public final class Values<T> {
 
     private final Map<String, Value<?>> values;
 
@@ -70,7 +77,7 @@ public class Values<T> {
 
     @FunctionalInterface
     public interface Getter<T> {
-        Optional<T> get(final Map<String, Value<?>> values);
+        Optional<T> get(Map<String, Value<?>> values);
 
         default <R> Getter<R> map(final Function<T, R> mapper) {
             return (values) -> this.get(values).map(mapper);

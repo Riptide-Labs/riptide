@@ -1,12 +1,12 @@
 package org.riptide.classification;
 
-import java.net.InetAddress;
-import java.net.UnknownHostException;
-import java.util.Objects;
-
 import com.google.common.net.InetAddresses;
 import com.google.common.primitives.Ints;
 import com.google.common.primitives.Longs;
+
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.util.Objects;
 
 public abstract class IpAddr implements Comparable<IpAddr> {
 
@@ -100,9 +100,9 @@ public abstract class IpAddr implements Comparable<IpAddr> {
                 return 1;
             }
             var o = (Ip6Addr) other;
-            return high != o.high ?
-                   Long.compareUnsigned(high, o.high) :
-                   Long.compareUnsigned(low, o.low);
+            return high != o.high
+                    ? Long.compareUnsigned(high, o.high)
+                    : Long.compareUnsigned(low, o.low);
 
         }
 
@@ -122,7 +122,7 @@ public abstract class IpAddr implements Comparable<IpAddr> {
         public String toString() {
             final var bytes = new byte[16];
             System.arraycopy(bytes, 0, Longs.toByteArray(high), 0, 8);
-            System.arraycopy(bytes, 0, Longs.toByteArray(low) , 8, 8);
+            System.arraycopy(bytes, 0, Longs.toByteArray(low), 8, 8);
 
             try {
                 return InetAddress.getByAddress(bytes).getHostAddress();

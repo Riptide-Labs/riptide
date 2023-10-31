@@ -78,8 +78,8 @@ public class IpfixUdpParser extends UdpParserBase implements UdpParser, Dispatch
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
             final SessionKey that = (SessionKey) o;
-            return Objects.equal(this.localAddress, that.localAddress) &&
-                    Objects.equal(this.remoteAddress, that.remoteAddress);
+            return Objects.equal(this.localAddress, that.localAddress)
+                    && Objects.equal(this.remoteAddress, that.remoteAddress);
         }
 
         @Override

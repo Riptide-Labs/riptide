@@ -1,7 +1,16 @@
 package org.riptide.dns.netty;
 
-import static io.netty.util.internal.ObjectUtil.checkNotNull;
-import static io.netty.util.internal.ObjectUtil.checkPositiveOrZero;
+import com.codahale.metrics.Gauge;
+import com.codahale.metrics.Meter;
+import com.codahale.metrics.Metric;
+import com.codahale.metrics.MetricRegistry;
+import com.google.common.base.MoreObjects;
+import com.google.common.base.Preconditions;
+import io.netty.channel.EventLoop;
+import io.netty.handler.codec.dns.DnsPtrRecord;
+import io.netty.handler.codec.dns.DnsRecord;
+import io.netty.resolver.dns.DnsCacheEntry;
+import io.netty.util.internal.StringUtil;
 
 import java.net.InetAddress;
 import java.util.Collection;
@@ -12,18 +21,8 @@ import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
-import com.codahale.metrics.Gauge;
-import com.codahale.metrics.Meter;
-import com.codahale.metrics.Metric;
-import com.codahale.metrics.MetricRegistry;
-import com.google.common.base.MoreObjects;
-import com.google.common.base.Preconditions;
-
-import io.netty.channel.EventLoop;
-import io.netty.handler.codec.dns.DnsPtrRecord;
-import io.netty.handler.codec.dns.DnsRecord;
-import io.netty.resolver.dns.DnsCacheEntry;
-import io.netty.util.internal.StringUtil;
+import static io.netty.util.internal.ObjectUtil.checkNotNull;
+import static io.netty.util.internal.ObjectUtil.checkPositiveOrZero;
 
 /**
  * DNS cache implementation largely copied from Netty's
@@ -260,7 +259,7 @@ public class CaffeineDnsCache implements ExtendedDnsCache {
             this.hostnameFromPtrRecord = null;
         }
 
-        public DefaultExtendedDnsCacheEntry(String hostname, DnsPtrRecord ptrRecord) {
+        DefaultExtendedDnsCacheEntry(String hostname, DnsPtrRecord ptrRecord) {
             this.hostname = hostname;
             this.hostnameFromPtrRecord = ptrRecord.hostname();
             this.address = null;
@@ -302,10 +301,10 @@ public class CaffeineDnsCache implements ExtendedDnsCache {
             if (this == o) return true;
             if (!(o instanceof DefaultExtendedDnsCacheEntry)) return false;
             DefaultExtendedDnsCacheEntry that = (DefaultExtendedDnsCacheEntry) o;
-            return Objects.equals(hostname, that.hostname) &&
-                    Objects.equals(hostnameFromPtrRecord, that.hostnameFromPtrRecord) &&
-                    Objects.equals(address, that.address) &&
-                    Objects.equals(cause, that.cause);
+            return Objects.equals(hostname, that.hostname)
+                    && Objects.equals(hostnameFromPtrRecord, that.hostnameFromPtrRecord)
+                    && Objects.equals(address, that.address)
+                    && Objects.equals(cause, that.cause);
         }
 
         @Override

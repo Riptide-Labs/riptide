@@ -1,13 +1,13 @@
 package org.riptide.classification.internal;
 
-import java.util.List;
-import java.util.Objects;
-
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
 import org.riptide.classification.ClassificationEngine;
 import org.riptide.classification.ClassificationRequest;
 import org.riptide.classification.Rule;
+
+import java.util.List;
+import java.util.Objects;
 
 public class TimingClassificationEngine implements ClassificationEngine {
 
@@ -25,21 +25,21 @@ public class TimingClassificationEngine implements ClassificationEngine {
     
     @Override
     public String classify(ClassificationRequest classificationRequest) {
-        try (final Timer.Context ctx = classifyTimer.time()) {
+        try (Timer.Context ctx = classifyTimer.time()) {
             return delegate.classify(classificationRequest);
         }
     }
 
     @Override
     public void reload() throws InterruptedException {
-        try (final Timer.Context ctx = reloadTimer.time()) {
+        try (Timer.Context ctx = reloadTimer.time()) {
             delegate.reload();
         }
     }
 
     @Override
     public List<Rule> getInvalidRules() {
-        try (final Timer.Context ctx = getInvalidRulesTimer.time()) {
+        try (Timer.Context ctx = getInvalidRulesTimer.time()) {
             return delegate.getInvalidRules();
         }
     }

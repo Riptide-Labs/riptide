@@ -94,14 +94,13 @@ public class SequenceNumberTracker {
     /**
      * A ring buffer where the elements are stored at {@code index % size}.
      */
-    private static class Ring {
+    private static final class Ring {
         private final boolean[] values;
 
         private Ring(final int size) {
             if (size < 0) {
                 throw new IllegalArgumentException("ring size must be >= 1");
             }
-
             this.values = new boolean[size];
         }
 

@@ -6,7 +6,9 @@ import com.google.gson.JsonParser;
 
 public abstract class BulkUtils {
 
-    private BulkUtils() {}
+    private BulkUtils() {
+
+    }
 
     protected static Exception convertToException(String error) {
         // Read error data

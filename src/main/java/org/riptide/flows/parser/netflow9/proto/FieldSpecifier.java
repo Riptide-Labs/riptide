@@ -2,8 +2,6 @@ package org.riptide.flows.parser.netflow9.proto;
 
 import static org.riptide.flows.utils.BufferUtils.uint16;
 
-import java.util.Optional;
-
 import org.riptide.flows.parser.InvalidPacketException;
 import org.riptide.flows.parser.MissingTemplateException;
 import org.riptide.flows.parser.Protocol;
@@ -31,7 +29,7 @@ public final class FieldSpecifier implements Field {
      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     */
 
-    public final static int SIZE = 4;
+    public static final int SIZE = 4;
 
     public final int fieldType; // uint16
     public final int fieldLength; // uint16

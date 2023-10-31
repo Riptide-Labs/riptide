@@ -10,25 +10,21 @@ import java.util.List;
 public interface Session {
 
     interface Resolver {
-        Template lookupTemplate(final int templateId) throws MissingTemplateException;
-        List<Value<?>> lookupOptions(final List<Value<?>> values);
+        Template lookupTemplate(int templateId) throws MissingTemplateException;
+        List<Value<?>> lookupOptions(List<Value<?>> values);
     }
 
-    void addTemplate(final long observationDomainId, final Template template);
+    void addTemplate(long observationDomainId, Template template);
 
-    void removeTemplate(final long observationDomainId, final int templateId);
+    void removeTemplate(long observationDomainId, int templateId);
 
-    void removeAllTemplate(final long observationDomainId, final Template.Type type);
+    void removeAllTemplate(long observationDomainId, Template.Type type);
 
-    void addOptions(final long observationDomainId,
-                    final int templateId,
-                    final Collection<Value<?>> scopes,
-                    final List<Value<?>> values);
+    void addOptions(long observationDomainId, int templateId, Collection<Value<?>> scopes, List<Value<?>> values);
 
-    Resolver getResolver(final long observationDomainId);
+    Resolver getResolver(long observationDomainId);
 
     InetAddress getRemoteAddress();
 
-    boolean verifySequenceNumber(final long observationDomainId,
-                                 final long sequenceNumber);
+    boolean verifySequenceNumber(long observationDomainId, long sequenceNumber);
 }

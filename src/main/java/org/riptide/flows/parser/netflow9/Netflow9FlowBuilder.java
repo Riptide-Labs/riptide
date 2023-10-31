@@ -14,7 +14,12 @@ import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.Optional;
 
-import static org.riptide.flows.parser.data.Values.*;
+import static org.riptide.flows.parser.data.Values.durationValue;
+import static org.riptide.flows.parser.data.Values.longValue;
+import static org.riptide.flows.parser.data.Values.intValue;
+import static org.riptide.flows.parser.data.Values.inetAddressValue;
+import static org.riptide.flows.parser.data.Values.timestampValue;
+import static org.riptide.flows.parser.data.Values.doubleValue;
 
 public class Netflow9FlowBuilder implements FlowBuilder {
 

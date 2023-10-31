@@ -51,7 +51,7 @@ public final class Template implements Iterable<Field> {
         return StreamSupport.stream(this.spliterator(), false);
     }
 
-    public static class Builder {
+    public static final class Builder {
         private final int id;
         private final Type type;
 

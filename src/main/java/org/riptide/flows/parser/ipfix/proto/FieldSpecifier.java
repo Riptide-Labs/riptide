@@ -3,8 +3,6 @@ package org.riptide.flows.parser.ipfix.proto;
 import static org.riptide.flows.utils.BufferUtils.uint16;
 import static org.riptide.flows.utils.BufferUtils.uint32;
 
-import java.util.Optional;
-
 import org.riptide.flows.parser.InvalidPacketException;
 import org.riptide.flows.parser.MissingTemplateException;
 import org.riptide.flows.parser.Protocol;

@@ -35,7 +35,7 @@ public final class ScopeFieldSpecifier implements Field, Scope {
      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     */
 
-    public final static int SIZE = 4;
+    public static final int SIZE = 4;
 
     public final int fieldType; // uint16
     public final int fieldLength; // uint16

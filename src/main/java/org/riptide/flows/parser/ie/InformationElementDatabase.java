@@ -1,18 +1,14 @@
 package org.riptide.flows.parser.ie;
 
+import com.google.common.collect.ImmutableMap;
+import org.riptide.flows.parser.Protocol;
+import org.riptide.flows.parser.ie.values.NullValue;
+
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NonNull;
-import org.riptide.flows.parser.Protocol;
-import org.riptide.flows.parser.ie.values.NullValue;
-
-import com.google.common.collect.ImmutableMap;
-
-public class InformationElementDatabase {
+public final class InformationElementDatabase {
     public static class Key {
         private final Protocol protocol;
         private final Long enterpriseNumber;
@@ -31,9 +27,9 @@ public class InformationElementDatabase {
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
             Key that = (Key) o;
-            return Objects.equals(this.protocol, that.protocol) &&
-                    Objects.equals(this.enterpriseNumber, that.enterpriseNumber) &&
-                    Objects.equals(this.informationElementIdentifier, that.informationElementIdentifier);
+            return Objects.equals(this.protocol, that.protocol)
+                    && Objects.equals(this.enterpriseNumber, that.enterpriseNumber)
+                    && Objects.equals(this.informationElementIdentifier, that.informationElementIdentifier);
         }
 
         @Override
@@ -44,32 +40,32 @@ public class InformationElementDatabase {
 
     @FunctionalInterface
     public interface ValueParserFactory {
-        InformationElement parser(final String name, final Semantics semantics);
+        InformationElement parser(String name, Semantics semantics);
     }
 
     public interface Adder {
-        void add(final InformationElementDatabase.Key key, final InformationElement element);
+        void add(InformationElementDatabase.Key key, InformationElement element);
 
-        default void add(final Protocol protocol,
-                         final Long enterpriseNumber,
-                         final int informationElementNumber,
-                         final ValueParserFactory parserFactory,
-                         final String name,
-                         final Semantics semantics) {
+        default void add(Protocol protocol,
+                         Long enterpriseNumber,
+                         int informationElementNumber,
+                         ValueParserFactory parserFactory,
+                         String name,
+                         Semantics semantics) {
             this.add(new InformationElementDatabase.Key(protocol, enterpriseNumber, informationElementNumber), parserFactory.parser(name, semantics));
         }
 
-        default void add(final Protocol protocol,
-                         final int informationElementNumber,
-                         final ValueParserFactory parserFactory,
-                         final String name,
-                         final Semantics semantics) {
+        default void add(Protocol protocol,
+                         int informationElementNumber,
+                         ValueParserFactory parserFactory,
+                         String name,
+                         Semantics semantics) {
             this.add(protocol, null, informationElementNumber, parserFactory, name, semantics);
         }
     }
 
     public interface Provider {
-        void load(final Adder adder);
+        void load(Adder adder);
     }
 
     public static final InformationElementDatabase instance = new InformationElementDatabase(

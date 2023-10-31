@@ -1,21 +1,22 @@
 package org.riptide.flows.parser.netflow5.proto;
 
-import static org.riptide.flows.utils.BufferUtils.slice;
-
-import java.util.*;
-import java.util.function.Function;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
-
+import com.google.common.base.MoreObjects;
 import com.google.common.collect.Streams;
+import io.netty.buffer.ByteBuf;
 import org.riptide.flows.parser.InvalidPacketException;
 import org.riptide.flows.parser.ie.RecordProvider;
 import org.riptide.flows.parser.ie.Value;
 
-import com.google.common.base.MoreObjects;
-import com.google.common.collect.Iterables;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
-import io.netty.buffer.ByteBuf;
+import static org.riptide.flows.utils.BufferUtils.slice;
 
 public final class Packet implements Iterable<Record>, RecordProvider {
 
@@ -27,7 +28,7 @@ public final class Packet implements Iterable<Record>, RecordProvider {
                   final ByteBuf buffer) throws InvalidPacketException {
         this.header = Objects.requireNonNull(header);
 
-        final List<Record> records = new LinkedList();
+        final List<Record> records = new LinkedList<>();
 
         while (buffer.isReadable(Record.SIZE)
                 && records.size() < this.header.count) {

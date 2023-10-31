@@ -3,7 +3,12 @@ package org.riptide.classification.internal.decision;
 import lombok.AllArgsConstructor;
 import lombok.ToString;
 import org.riptide.classification.ClassificationRequest;
-import org.riptide.classification.internal.matcher.*;
+import org.riptide.classification.internal.matcher.Matcher;
+import org.riptide.classification.internal.matcher.DstPortMatcher;
+import org.riptide.classification.internal.matcher.ProtocolMatcher;
+import org.riptide.classification.internal.matcher.SrcPortMatcher;
+import org.riptide.classification.internal.matcher.SrcAddressMatcher;
+import org.riptide.classification.internal.matcher.DstAddressMatcher;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -84,8 +89,8 @@ public class Classifier implements Comparable<Classifier> {
 
     @Override
     public int compareTo(Classifier o) {
-        return groupPosition < o.groupPosition ? -1 : groupPosition > o.groupPosition ? 1 :
-                                                      position < o.position ? -1 : position > o.position ? 1 : 0;
+        return groupPosition < o.groupPosition ? -1 : groupPosition > o.groupPosition
+                ? 1 : position < o.position ? -1 : position > o.position ? 1 : 0;
     }
 
     @ToString

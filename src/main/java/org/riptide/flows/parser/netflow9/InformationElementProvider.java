@@ -3,9 +3,12 @@ package org.riptide.flows.parser.netflow9;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.ie.InformationElementDatabase;
 import org.riptide.flows.parser.ie.Semantics;
-import org.riptide.flows.parser.ie.values.*;
-
-import java.util.Optional;
+import org.riptide.flows.parser.ie.values.IPv4AddressValue;
+import org.riptide.flows.parser.ie.values.IPv6AddressValue;
+import org.riptide.flows.parser.ie.values.MacAddressValue;
+import org.riptide.flows.parser.ie.values.OctetArrayValue;
+import org.riptide.flows.parser.ie.values.StringValue;
+import org.riptide.flows.parser.ie.values.UnsignedValue;
 
 public class InformationElementProvider implements InformationElementDatabase.Provider {
 

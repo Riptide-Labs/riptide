@@ -4,5 +4,5 @@ import org.riptide.classification.ClassificationRequest;
 
 @FunctionalInterface
 public interface Matcher {
-    boolean matches(final ClassificationRequest request);
+    boolean matches(ClassificationRequest request);
 }

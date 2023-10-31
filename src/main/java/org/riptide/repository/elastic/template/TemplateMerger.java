@@ -35,7 +35,7 @@ public class TemplateMerger {
                 JsonArray indexPatterns = template.getAsJsonArray("index_patterns");
                 if (indexPatterns == null) {
                     indexPatterns = new JsonArray();
-                    indexPatterns.add(indexSettings.getIndexPrefix()+ "*");
+                    indexPatterns.add(indexSettings.getIndexPrefix() + "*");
                     template.add("index_patterns", indexPatterns);
                 } else {
                     for (int i = 0; i < indexPatterns.size(); i++) {

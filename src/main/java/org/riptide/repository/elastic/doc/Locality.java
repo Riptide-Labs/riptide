@@ -13,7 +13,7 @@ public enum Locality {
 
     private final String value;
 
-    private Locality(String value) {
+    Locality(String value) {
         this.value = Objects.requireNonNull(value);
     }
 

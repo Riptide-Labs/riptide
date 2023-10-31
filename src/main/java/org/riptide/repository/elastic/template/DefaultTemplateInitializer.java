@@ -4,9 +4,8 @@ import java.io.IOException;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import lombok.extern.slf4j.Slf4j;
 import org.riptide.repository.elastic.IndexSettings;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -16,10 +15,9 @@ import io.searchbox.client.JestResult;
 import io.searchbox.core.Ping;
 import io.searchbox.indices.template.PutTemplate;
 
+@Slf4j
 public class DefaultTemplateInitializer implements TemplateInitializer {
-    private static final Logger LOG = LoggerFactory.getLogger(DefaultTemplateInitializer.class);
-
-    private static final long[] COOL_DOWN_TIMES_IN_MS = { 250, 500, 1000, 5000, 10000, 60000 };
+    private static final long[] COOL_DOWN_TIMES_IN_MS = {250, 500, 1000, 5000, 10000, 60000};
 
     private final AtomicInteger retryCount = new AtomicInteger(0);
     private final JestClient client;
@@ -49,15 +47,15 @@ public class DefaultTemplateInitializer implements TemplateInitializer {
 
     @Override
     public synchronized void initialize() {
-        while(!initialized && !Thread.interrupted()) {
+        while (!initialized && !Thread.interrupted()) {
             try {
-                LOG.debug("Template {} is not initialized. Initializing...", templateName);
+                log.debug("Template {} is not initialized. Initializing...", templateName);
                 doInitialize();
                 initialized = true;
             } catch (Exception ex) {
-                LOG.error("An error occurred while initializing template {}: {}.", templateName, ex.getMessage(), ex);
+                log.error("An error occurred while initializing template {}: {}.", templateName, ex.getMessage(), ex);
                 long coolDownTimeInMs = COOL_DOWN_TIMES_IN_MS[retryCount.get()];
-                LOG.debug("Retrying in {} ms", coolDownTimeInMs);
+                log.debug("Retrying in {} ms", coolDownTimeInMs);
                 waitBeforeRetrying(coolDownTimeInMs);
                 if (retryCount.get() != COOL_DOWN_TIMES_IN_MS.length - 1) {
                     retryCount.incrementAndGet();
@@ -75,7 +73,7 @@ public class DefaultTemplateInitializer implements TemplateInitializer {
         try {
             Thread.sleep(cooldown);
         } catch (InterruptedException e) {
-            LOG.warn("Sleep was interrupted", e);
+            log.warn("Sleep was interrupted", e);
         }
     }
 

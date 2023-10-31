@@ -4,7 +4,7 @@ import java.util.List;
 
 import com.google.common.collect.ImmutableList;
 
-public class ParserState {
+public final class ParserState {
 
     public final List<ExporterState> exporters;
 
@@ -16,7 +16,7 @@ public class ParserState {
         return new Builder();
     }
 
-    public static class Builder {
+    public static final class Builder {
         private final ImmutableList.Builder<ExporterState> exporters = ImmutableList.builder();
 
         private Builder() {

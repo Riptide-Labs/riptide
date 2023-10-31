@@ -1,13 +1,9 @@
 package org.riptide.flows.parser.netflow9.proto;
 
-import static org.riptide.flows.utils.BufferUtils.slice;
-
-import java.util.*;
-import java.util.function.Function;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
-
+import com.google.common.base.MoreObjects;
+import com.google.common.collect.Iterators;
 import com.google.common.collect.Streams;
+import io.netty.buffer.ByteBuf;
 import org.riptide.flows.parser.InvalidPacketException;
 import org.riptide.flows.parser.MissingTemplateException;
 import org.riptide.flows.parser.ie.RecordProvider;
@@ -18,12 +14,17 @@ import org.riptide.flows.parser.session.Template;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.base.MoreObjects;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterables;
-import com.google.common.collect.Iterators;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
-import io.netty.buffer.ByteBuf;
+import static org.riptide.flows.utils.BufferUtils.slice;
 
 public final class Packet implements Iterable<FlowSet<?>>, RecordProvider {
     private static final Logger LOG = LoggerFactory.getLogger(Packet.class);

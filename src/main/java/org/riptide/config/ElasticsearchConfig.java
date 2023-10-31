@@ -5,7 +5,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "riptide.elastic")
-@ConditionalOnProperty(name="riptide.elastic.enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(name = "riptide.elastic.enabled", havingValue = "true", matchIfMissing = true)
 @Data
 public final class ElasticsearchConfig {
     public boolean enabled;

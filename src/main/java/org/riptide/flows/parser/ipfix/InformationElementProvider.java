@@ -3,12 +3,27 @@ package org.riptide.flows.parser.ipfix;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
 import jakarta.xml.bind.JAXB;
-import jakarta.xml.bind.annotation.*;
+import jakarta.xml.bind.annotation.XmlAccessType;
+import jakarta.xml.bind.annotation.XmlAccessorType;
+import jakarta.xml.bind.annotation.XmlAttribute;
+import jakarta.xml.bind.annotation.XmlElement;
+import jakarta.xml.bind.annotation.XmlElementWrapper;
+import jakarta.xml.bind.annotation.XmlRootElement;
 import lombok.Data;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.ie.InformationElementDatabase;
 import org.riptide.flows.parser.ie.Semantics;
-import org.riptide.flows.parser.ie.values.*;
+import org.riptide.flows.parser.ie.values.BooleanValue;
+import org.riptide.flows.parser.ie.values.DateTimeValue;
+import org.riptide.flows.parser.ie.values.FloatValue;
+import org.riptide.flows.parser.ie.values.IPv4AddressValue;
+import org.riptide.flows.parser.ie.values.IPv6AddressValue;
+import org.riptide.flows.parser.ie.values.ListValue;
+import org.riptide.flows.parser.ie.values.MacAddressValue;
+import org.riptide.flows.parser.ie.values.OctetArrayValue;
+import org.riptide.flows.parser.ie.values.SignedValue;
+import org.riptide.flows.parser.ie.values.StringValue;
+import org.riptide.flows.parser.ie.values.UnsignedValue;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -65,7 +80,7 @@ public class InformationElementProvider implements InformationElementDatabase.Pr
 
     @Override
     public void load(final InformationElementDatabase.Adder adder) {
-        try (final var is = getClass().getResourceAsStream(XML_FILE_LOCATION)) {
+        try (var is = getClass().getResourceAsStream(XML_FILE_LOCATION)) {
             if (is == null) {
                 throw new IllegalStateException("Could not find xml file %s".formatted(XML_FILE_LOCATION));
             }
@@ -107,10 +122,10 @@ class Registry {
     @XmlElement(namespace = NAMESPACE, required = true)
     private List<String> note;
 
-    @XmlElement(namespace = NAMESPACE, required = true, name="registry")
+    @XmlElement(namespace = NAMESPACE, required = true, name = "registry")
     private List<Registry> registries;
 
-    @XmlElement(namespace = NAMESPACE, required = true, name="record")
+    @XmlElement(namespace = NAMESPACE, required = true, name = "record")
     private List<Record> records;
 
     @XmlElementWrapper(namespace = NAMESPACE, name = "people")

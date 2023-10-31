@@ -56,8 +56,8 @@ public class CachingTemplateLoader implements TemplateLoader {
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
             TemplateKey that = (TemplateKey) o;
-            return Objects.equals(serverVersion, that.serverVersion) &&
-                    Objects.equals(resource, that.resource);
+            return Objects.equals(serverVersion, that.serverVersion)
+                    && Objects.equals(resource, that.resource);
         }
 
         @Override

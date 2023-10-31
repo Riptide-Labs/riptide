@@ -8,22 +8,22 @@ package org.riptide.classification.internal.decision;
 public abstract class Bound<T extends Comparable<T>> {
 
     /** Restricts this bound such that it includes only values that are less than the given value. */
-    public abstract Bound<T> lt(final T value);
+    public abstract Bound<T> lt(T value);
 
     /** Restricts this bound such that it includes only the given value. */
-    public abstract Bound<T> eq(final T value);
+    public abstract Bound<T> eq(T value);
 
     /** Restricts this bound such that it includes only values that are greater than the given value. */
-    public abstract Bound<T> gt(final T value);
+    public abstract Bound<T> gt(T value);
 
     /** Checks if this bound includes the given value. */
-    public abstract boolean includes(final T value);
+    public abstract boolean includes(T value);
 
     /** Checks if this bound can be restricted by the given value. */
-    public abstract boolean canBeRestrictedBy(final T value);
+    public abstract boolean canBeRestrictedBy(T value);
 
     /** Checks if this bound overlaps with the given range. Begin and end are inclusive. */
-    public abstract boolean overlaps(final T begin, final T end);
+    public abstract boolean overlaps(T begin, T end);
 
     public static <T extends Comparable<T>> Any<T> any() { return new Any<>(); }
 

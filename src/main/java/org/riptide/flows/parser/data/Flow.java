@@ -3,7 +3,6 @@ package org.riptide.flows.parser.data;
 import java.net.InetAddress;
 import java.time.Instant;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 
 public interface Flow {

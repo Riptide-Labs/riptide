@@ -4,7 +4,7 @@ import java.util.List;
 
 public interface ClassificationEngine {
     interface ClassificationRulesReloadedListener {
-        void classificationRulesReloaded(final List<Rule> rules);
+        void classificationRulesReloaded(List<Rule> rules);
     }
 
     String classify(ClassificationRequest classificationRequest);
@@ -13,7 +13,7 @@ public interface ClassificationEngine {
 
     void reload() throws InterruptedException;
 
-    void addClassificationRulesReloadedListener(final ClassificationRulesReloadedListener classificationRulesReloadedListener);
+    void addClassificationRulesReloadedListener(ClassificationRulesReloadedListener classificationRulesReloadedListener);
 
-    void removeClassificationRulesReloadedListener(final ClassificationRulesReloadedListener classificationRulesReloadedListener);
+    void removeClassificationRulesReloadedListener(ClassificationRulesReloadedListener classificationRulesReloadedListener);
 }

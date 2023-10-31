@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-@ConditionalOnProperty(name="riptide.opensearch.enabled", havingValue = "true")
+@ConditionalOnProperty(name = "riptide.opensearch.enabled", havingValue = "true")
 public class OpensearchConfiguration {
     @Bean
     public FlowRepository opensearchRepository(final OpensearchConfig config) {

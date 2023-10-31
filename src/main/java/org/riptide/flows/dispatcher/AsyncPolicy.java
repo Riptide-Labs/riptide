@@ -5,7 +5,7 @@ package org.riptide.flows.dispatcher;
  *
  * @author jwhite
  */
-public class AsyncPolicy {
+public final class AsyncPolicy {
 
     private final int queueSize;
     private final int numThreads;
@@ -49,7 +49,7 @@ public class AsyncPolicy {
      */
     public boolean isBlockWhenFull() { return this.blockWhenFull; }
 
-    public static class Builder {
+    public static final class Builder {
         private int queueSize = 1000;
         private int numThreads = 10;
         private boolean blockWhenFull = false;

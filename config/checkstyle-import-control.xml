@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<!DOCTYPE import-control PUBLIC
+        "-//Checkstyle//DTD ImportControl Configuration 1.4//EN"
+        "https://checkstyle.org/dtds/import_control_1_4.dtd">
+
+<import-control pkg="org.riptide.*" regex="true" strategyOnMismatch="allowed">
+    <!-- Prevent the usage of some guava specifics, where java replacements exist -->
+    <disallow pkg="com.google.common.base.Objects" />
+    <disallow pkg="com.google.common.base.Predicate" />
+    <disallow pkg="com.google.common.base.Function" />
+    <disallow pkg="com.google.common.base.Functions" />
+    <disallow pkg="com.google.common.collect.Lists" />
+
+    <!-- Prevent Junit 4 as a precaution, as sometimes IntelliJ adds it -->
+    <disallow pkg="org.junit" exact-match="true" />
+</import-control>

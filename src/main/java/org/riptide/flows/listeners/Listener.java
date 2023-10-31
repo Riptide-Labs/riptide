@@ -3,7 +3,6 @@ package org.riptide.flows.listeners;
 import org.riptide.flows.parser.Parser;
 
 import java.util.Collection;
-import java.util.concurrent.Future;
 
 /**
  * Interface used by the daemon to manage listeners.
@@ -15,9 +14,7 @@ import java.util.concurrent.Future;
 public interface Listener {
     String getName();
     String getDescription();
-
     Collection<? extends Parser> getParsers();
-
     void start();
     void stop();
 }

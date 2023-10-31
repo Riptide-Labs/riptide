@@ -9,6 +9,5 @@ import io.netty.buffer.ByteBuf;
 public interface Field {
     int length();
 
-    Value<?> parse(final Session.Resolver resolver,
-                   final ByteBuf buffer) throws InvalidPacketException, MissingTemplateException;
+    Value<?> parse(Session.Resolver resolver, ByteBuf buffer) throws InvalidPacketException, MissingTemplateException;
 }

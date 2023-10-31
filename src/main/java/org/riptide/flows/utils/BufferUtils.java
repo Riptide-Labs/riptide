@@ -166,6 +166,6 @@ public final class BufferUtils {
 
     @FunctionalInterface
     public interface Parser<T, E extends Exception> {
-        T parse(final ByteBuf buffer) throws E;
+        T parse(ByteBuf buffer) throws E;
     }
 }

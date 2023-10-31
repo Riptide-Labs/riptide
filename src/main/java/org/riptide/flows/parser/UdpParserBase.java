@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 public abstract class UdpParserBase extends ParserBase implements UdpParser {
-    public final static long HOUSEKEEPING_INTERVAL = 60000;
+    public static final long HOUSEKEEPING_INTERVAL = 60000;
 
     private static final Logger LOG = LoggerFactory.getLogger(UdpParserBase.class);
 
@@ -56,9 +56,9 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
         }
     }
 
-    protected abstract RecordProvider parse(final Session session, final ByteBuf buffer) throws Exception;
+    protected abstract RecordProvider parse(Session session, ByteBuf buffer) throws Exception;
 
-    protected abstract UdpSessionManager.SessionKey buildSessionKey(final InetSocketAddress remoteAddress, final InetSocketAddress localAddress);
+    protected abstract UdpSessionManager.SessionKey buildSessionKey(InetSocketAddress remoteAddress, InetSocketAddress localAddress);
 
     public final CompletableFuture<?> parse(final ByteBuf buffer,
                                             final InetSocketAddress remoteAddress,

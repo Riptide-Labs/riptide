@@ -11,10 +11,8 @@ public interface TcpParser extends Parser {
     interface Handler {
         void inactive();
         void active();
-
-        Optional<CompletableFuture<?>> parse(final ByteBuf buffer) throws Exception;
+        Optional<CompletableFuture<?>> parse(ByteBuf buffer) throws Exception;
     }
 
-    Handler accept(final InetSocketAddress remoteAddress,
-                   final InetSocketAddress localAddress);
+    Handler accept(InetSocketAddress remoteAddress, InetSocketAddress localAddress);
 }

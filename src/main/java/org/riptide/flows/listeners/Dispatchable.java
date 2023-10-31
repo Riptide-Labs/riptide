@@ -18,5 +18,5 @@ public interface Dispatchable {
      * @param buffer Representing the incoming data
      * @return true if the implementor can handle the data, otherwise false.
      */
-    boolean handles(final ByteBuf buffer);
+    boolean handles(ByteBuf buffer);
 }

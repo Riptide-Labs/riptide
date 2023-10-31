@@ -4,7 +4,13 @@ import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
-import io.netty.channel.*;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOption;
+import io.netty.channel.EventLoopGroup;
+import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.group.ChannelGroup;
 import io.netty.channel.group.DefaultChannelGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
@@ -14,7 +20,6 @@ import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.util.concurrent.GlobalEventExecutor;
 import io.netty.util.internal.SocketUtils;
 import org.riptide.flows.parser.Parser;
-import org.riptide.flows.utils.NettyEventListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,24 +28,18 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
 
 public class TcpListener implements Listener {
     private static final Logger LOG = LoggerFactory.getLogger(TcpListener.class);
-
     private final String name;
     private final TcpParser parser;
-
     private final Meter packetsReceived;
-
     private String host = null;
     private int port = 50000;
-
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
-
     private ChannelFuture socketFuture;
-
     private final ChannelGroup channels = new DefaultChannelGroup(GlobalEventExecutor.INSTANCE);
 
     public TcpListener(final String name,
@@ -48,7 +47,6 @@ public class TcpListener implements Listener {
                        final MetricRegistry metrics) {
         this.name = Objects.requireNonNull(name);
         this.parser = Objects.requireNonNull(parser);
-
         this.packetsReceived = metrics.meter(MetricRegistry.name("listeners", name, "packetsReceived"));
     }
 

@@ -95,7 +95,7 @@ public class UdpSessionManager {
         InetAddress getRemoteAddress();
     }
 
-    private final static class DomainKey {
+    private static final class DomainKey {
         public final SessionKey sessionKey;
         public final long observationDomainId;
 
@@ -114,8 +114,8 @@ public class UdpSessionManager {
                 return false;
             }
 
-            return Objects.equals(this.observationDomainId, that.observationDomainId) &&
-                   Objects.equals(this.sessionKey, that.sessionKey);
+            return Objects.equals(this.observationDomainId, that.observationDomainId)
+                    && Objects.equals(this.sessionKey, that.sessionKey);
         }
 
         @Override
@@ -124,11 +124,11 @@ public class UdpSessionManager {
         }
     }
 
-    private final static class TemplateKey {
+    private static final class TemplateKey {
         public final DomainKey observationDomainId;
         public final int templateId;
 
-        TemplateKey(final SessionKey sessionKey,
+        private TemplateKey(final SessionKey sessionKey,
                     final long observationDomainId,
                     final int templateId) {
             this.observationDomainId = new DomainKey(sessionKey, observationDomainId);
@@ -144,8 +144,8 @@ public class UdpSessionManager {
                 return false;
             }
 
-            return Objects.equals(this.observationDomainId, that.observationDomainId) &&
-                    Objects.equals(this.templateId, that.templateId);
+            return Objects.equals(this.observationDomainId, that.observationDomainId)
+                    && Objects.equals(this.templateId, that.templateId);
         }
 
         @Override
@@ -154,7 +154,7 @@ public class UdpSessionManager {
         }
     }
 
-    public final static class TimeWrapper<T> {
+    public static final class TimeWrapper<T> {
         public final Instant time;
         public final T wrapped;
 
@@ -164,16 +164,15 @@ public class UdpSessionManager {
         }
     }
 
-    public static class TemplateOptions {
+    public static final class TemplateOptions {
         public final Template template;
         public final Map<Set<Value<?>>, TimeWrapper<List<Value<?>>>> options;
 
-        public TemplateOptions(final Template template) {
-            this.template = Objects.requireNonNull(template);
-            this.options = Maps.newConcurrentMap();
+        private TemplateOptions(final Template template) {
+            this(template, Maps.newConcurrentMap());
         }
 
-        public TemplateOptions(final Template template, Map<Set<Value<?>>, TimeWrapper<List<Value<?>>>> options) {
+        private TemplateOptions(final Template template, Map<Set<Value<?>>, TimeWrapper<List<Value<?>>>> options) {
             this.template = Objects.requireNonNull(template);
             this.options = Objects.requireNonNull(options);
         }
@@ -182,7 +181,7 @@ public class UdpSessionManager {
     private final class UdpSession implements Session {
         private final SessionKey sessionKey;
 
-        public UdpSession(final SessionKey sessionKey) {
+        private UdpSession(final SessionKey sessionKey) {
             this.sessionKey = Objects.requireNonNull(sessionKey);
         }
 
@@ -267,8 +266,8 @@ public class UdpSessionManager {
                 final Set<String> scoped = values.stream().map(Value::getName).collect(Collectors.toSet());
 
                 for (final var e : Iterables.filter(UdpSessionManager.this.templates.entrySet(),
-                        e -> Objects.equals(e.getKey().observationDomainId.sessionKey, UdpSession.this.sessionKey) &&
-                                Objects.equals(e.getKey().observationDomainId.observationDomainId, this.observationDomainId))) {
+                        e -> Objects.equals(e.getKey().observationDomainId.sessionKey, UdpSession.this.sessionKey)
+                                && Objects.equals(e.getKey().observationDomainId.observationDomainId, this.observationDomainId))) {
 
                     final Template template = e.getValue().wrapped.template;
 

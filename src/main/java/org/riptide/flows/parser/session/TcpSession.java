@@ -15,7 +15,6 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import com.google.common.net.InetAddresses;
 import org.riptide.flows.parser.MissingTemplateException;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.state.ExporterState;
@@ -74,7 +73,7 @@ public class TcpSession implements Session {
         }
     }
 
-    private final static class TemplateKey {
+    private static final class TemplateKey {
         public final long observationDomainId;
         public final int templateId;
 
@@ -90,8 +89,8 @@ public class TcpSession implements Session {
             if (o.getClass() != TemplateKey.class) return false;
 
             final TemplateKey that = (TemplateKey) o;
-            return this.observationDomainId == that.observationDomainId &&
-                    this.templateId == that.templateId;
+            return this.observationDomainId == that.observationDomainId
+                    && this.templateId == that.templateId;
         }
 
         @Override

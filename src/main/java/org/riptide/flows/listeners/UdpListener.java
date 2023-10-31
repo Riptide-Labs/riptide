@@ -4,7 +4,14 @@ import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import io.netty.bootstrap.Bootstrap;
-import io.netty.channel.*;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOption;
+import io.netty.channel.EventLoopGroup;
+import io.netty.channel.FixedRecvByteBufAllocator;
+import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.DatagramChannel;
 import io.netty.channel.socket.DatagramPacket;
@@ -13,7 +20,6 @@ import io.netty.util.ReferenceCountUtil;
 import io.netty.util.internal.SocketUtils;
 import org.riptide.flows.parser.Parser;
 import org.riptide.flows.utils.BufferUtils;
-import org.riptide.flows.utils.NettyEventListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,10 +27,6 @@ import java.net.InetSocketAddress;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 public class UdpListener implements Listener {
     private static final Logger LOG = LoggerFactory.getLogger(UdpListener.class);
@@ -186,7 +188,7 @@ public class UdpListener implements Listener {
     }
 
     // Invokes parse of the provided parsers and also adds some error handling
-    private static class SingleDatagramPacketParserHandler extends SimpleChannelInboundHandler<DatagramPacket> {
+    private static final class SingleDatagramPacketParserHandler extends SimpleChannelInboundHandler<DatagramPacket> {
 
         final UdpParser parser;
 

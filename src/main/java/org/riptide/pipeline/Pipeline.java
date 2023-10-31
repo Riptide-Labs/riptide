@@ -105,7 +105,7 @@ public class Pipeline {
                 .collect(Collectors.toList());
 
         // Classify flows
-        try (final Timer.Context ctx  = this.logClassificationTimer.time()) {
+        try (Timer.Context ctx  = this.logClassificationTimer.time()) {
             for (final var flow: enrichedFlows) {
                 final var request = ClassificationRequest.builder()
                         .withExporterAddress(IpAddr.of(flows.source()))
@@ -126,7 +126,7 @@ public class Pipeline {
 
         // Enrich with model data
         LOG.debug("Enriching {} flow documents.", flows.value().size());
-        try (final Timer.Context ctx = this.logEnrichementTimer.time()) {
+        try (Timer.Context ctx = this.logEnrichementTimer.time()) {
             //enrichedFlows = documentEnricher.enrich(flows, source);
             // TODO fooker: Can I haz real enrichment?
         } catch (final Exception e) {
@@ -162,7 +162,7 @@ public class Pipeline {
             }
 
             public void persist(final Collection<EnrichedFlow> flows) throws FlowException, IOException {
-                try (final var ctx = this.logTimer.time()) {
+                try (var ctx = this.logTimer.time()) {
                     this.repository.persist(flows);
                 }
             }

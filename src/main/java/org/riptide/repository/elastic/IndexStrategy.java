@@ -46,7 +46,7 @@ public enum IndexStrategy {
         return sb.toString();
     }
 
-    public String getPattern(){
+    public String getPattern() {
         return this.pattern;
     }
 }
