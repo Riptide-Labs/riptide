@@ -59,6 +59,11 @@ public class IpValue implements RuleValue<IpAddr, IpValue> {
         this.ranges = ranges;
     }
 
+    public boolean isInRange(final String address) {
+        Objects.requireNonNull(address);
+        return isInRange(IpAddr.of(address));
+    }
+
     public boolean isInRange(final IpAddr address) {
         for (var r: ranges) {
             if (r.contains(address)) {
