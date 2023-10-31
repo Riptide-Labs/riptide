@@ -218,7 +218,7 @@ public final class Values<T> {
         };
     }
 
-    public static Values.Getter<Instant> timeValue(final String name) {
+    public static Values.Getter<Instant> timestampValue(final String name) {
         return (values) -> {
             final var raw = values.get(name);
 

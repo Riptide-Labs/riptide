@@ -28,10 +28,9 @@ public class Netflow5FlowBuilder implements FlowBuilder {
                           final RecordEnrichment enrichment) {
 
         final var timestamp = Values.both(
-                        longValue("@unixSecs"),
-                        longValue("@unixNSecs"),
-                        Duration::ofSeconds)
-                .map(Instant.EPOCH::plus);
+                longValue("@unixSecs"),
+                longValue("@unixNSecs"),
+                Instant::ofEpochSecond);
 
         final var bootTime = Values.both(timestamp, durationValue("@sysUptime", ChronoUnit.MILLIS), Instant::minus);
 
@@ -94,17 +93,12 @@ public class Netflow5FlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public Instant getDeltaSwitched() {
-                return null;
-            }
-
-            @Override
             public Instant getFirstSwitched() {
                 return bootTime.and(durationValue("first", ChronoUnit.MILLIS), Instant::plus).getOrNull(values);
             }
 
             @Override
-            public int getFlowRecords() {
+            public int getFlowRecordNum() {
                 return intValue("@count").getOrNull(values);
             }
 

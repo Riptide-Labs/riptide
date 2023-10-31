@@ -1,4 +1,4 @@
-package org.riptide.flows.adapter.netflow9;
+package org.riptide.flows.netflow9;
 
 
 import java.time.Instant;

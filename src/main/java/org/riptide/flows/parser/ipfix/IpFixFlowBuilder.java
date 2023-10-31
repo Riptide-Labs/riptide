@@ -20,9 +20,9 @@ import static org.riptide.flows.parser.data.Values.durationValue;
 import static org.riptide.flows.parser.data.Values.inetAddressValue;
 import static org.riptide.flows.parser.data.Values.intValue;
 import static org.riptide.flows.parser.data.Values.longValue;
-import static org.riptide.flows.parser.data.Values.timeValue;
 import static org.riptide.flows.parser.data.Values.timestampValue;
 import static org.riptide.flows.parser.data.Values.unsignedLongValue;
+
 
 public class IpFixFlowBuilder implements FlowBuilder {
 
@@ -40,12 +40,10 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
         // TODO fooker: What about @observationDomainId
 
-        // TODO fooker: Structurize meta info
-        final var timestamp = Values.<Instant>first(values)
-                .with(timeValue("@exportTime"))
-                .getOrNull();
+        // TODO: Structurize meta info
+        final var timestamp = timestampValue("@exportTime");
 
-        final var systemInitTime = timeValue("systemInitTimeMilliseconds");
+        final var systemInitTime = timestampValue("systemInitTimeMilliseconds");
 
         return new Flow() {
             @Override
@@ -55,7 +53,7 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
             @Override
             public Instant getTimestamp() {
-                return timestamp;
+                return timestamp.getOrNull(values);
             }
 
             public Long getNumBytes() {
@@ -157,11 +155,11 @@ public class IpFixFlowBuilder implements FlowBuilder {
             @Override
             public Instant getFirstSwitched() {
                 return Values.<Instant>first(values)
-                        .with(timestampValue("flowStartSeconds", ChronoUnit.SECONDS))
-                        .with(timestampValue("flowStartMilliseconds", ChronoUnit.MILLIS))
-                        .with(timestampValue("flowStartMicroseconds", ChronoUnit.MICROS))
-                        .with(timestampValue("flowStartNanoseconds", ChronoUnit.NANOS))
-                        .with(durationValue("flowStartDeltaMicroseconds", ChronoUnit.MICROS).map(timestamp::plus))
+                        .with(timestampValue("flowStartSeconds"))
+                        .with(timestampValue("flowStartMilliseconds"))
+                        .with(timestampValue("flowStartMicroseconds"))
+                        .with(timestampValue("flowStartNanoseconds"))
+                        .with(durationValue("flowStartDeltaMicroseconds", ChronoUnit.MICROS).and(timestamp, (delta, export) -> export.plus(delta)))
                         .with(durationValue("flowStartSysUpTime", ChronoUnit.MILLIS)
                                 .and(systemInitTime, (offset, init) -> init.plus(offset)))
                         .getOrNull();
@@ -170,19 +168,19 @@ public class IpFixFlowBuilder implements FlowBuilder {
             @Override
             public Instant getLastSwitched() {
                 return Values.<Instant>first(values)
-                        .with(timestampValue("flowEndSeconds", ChronoUnit.SECONDS))
-                        .with(timestampValue("flowEndMilliseconds", ChronoUnit.MILLIS))
-                        .with(timestampValue("flowEndMicroseconds", ChronoUnit.MICROS))
-                        .with(timestampValue("flowEndNanoseconds", ChronoUnit.NANOS))
-                        .with(durationValue("flowEndDeltaMicroseconds", ChronoUnit.MICROS).map(timestamp::plus))
+                        .with(timestampValue("flowEndSeconds"))
+                        .with(timestampValue("flowEndMilliseconds"))
+                        .with(timestampValue("flowEndMicroseconds"))
+                        .with(timestampValue("flowEndNanoseconds"))
+                        .with(durationValue("flowEndDeltaMicroseconds", ChronoUnit.MICROS).and(timestamp, (delta, export) -> export.plus(delta)))
                         .with(durationValue("flowEndSysUpTime", ChronoUnit.MILLIS)
                                 .and(systemInitTime, (offset, init) -> init.plus(offset)))
                         .getOrNull();
             }
 
             @Override
-            public int getFlowRecords() {
-                // TODO fooker: Structurize meta info
+            public int getFlowRecordNum() {
+                // TODO: Structurize meta info
                 return Values.<Integer>first(values)
                         .with(intValue("@recordCount"))
                         .getOrNull();
@@ -190,7 +188,7 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
             @Override
             public long getFlowSeqNum() {
-                // TODO fooker: Structurize meta info
+                // TODO: Structurize meta info
                 return Values.<Long>first(values)
                         .with(longValue("@sequenceNumber"))
                         .getOrNull();

@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 public class ValueTest {
 
-    // TODO: Test BasicList, SubTemplateList, SubTemplateMultiList
+    // TODO fooker: Test BasicList, SubTemplateList, SubTemplateMultiList
 
     @Test
     void verifyParsingBooleanValue() throws Exception {

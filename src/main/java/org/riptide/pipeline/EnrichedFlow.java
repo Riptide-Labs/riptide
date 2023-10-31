@@ -220,7 +220,7 @@ public class EnrichedFlow implements Flow {
     }
 
     @Override
-    public int getFlowRecords() {
+    public int getFlowRecordNum() {
         return this.flowRecords;
     }
 
@@ -491,7 +491,7 @@ public class EnrichedFlow implements Flow {
         enriched.setEngineType(flow.getEngineType());
         enriched.setDeltaSwitched(flow.getDeltaSwitched());
         enriched.setFirstSwitched(flow.getFirstSwitched());
-        enriched.setFlowRecords(flow.getFlowRecords());
+        enriched.setFlowRecords(flow.getFlowRecordNum());
         enriched.setFlowSeqNum(flow.getFlowSeqNum());
         enriched.setInputSnmp(flow.getInputSnmp());
         enriched.setIpProtocolVersion(flow.getIpProtocolVersion());

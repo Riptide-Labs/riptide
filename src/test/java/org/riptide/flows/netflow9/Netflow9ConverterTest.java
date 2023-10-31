@@ -1,4 +1,4 @@
-package org.riptide.flows.adapter.netflow9;
+package org.riptide.flows.netflow9;
 
 import org.assertj.core.api.Assertions;
 import io.netty.buffer.ByteBuf;

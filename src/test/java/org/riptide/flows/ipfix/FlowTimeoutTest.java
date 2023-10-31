@@ -1,4 +1,4 @@
-package org.riptide.flows.adapter.ipfix;
+package org.riptide.flows.ipfix;
 
 import java.time.Instant;
 import java.util.Optional;
@@ -20,9 +20,9 @@ public class FlowTimeoutTest {
 
         final var flow = new IpFixFlowBuilder().buildFlow(Instant.EPOCH, record.values(), (address -> Optional.empty()));
 
-        Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(123000L);
-        Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo(123000L); // Timeout is same as first
-        Assertions.assertThat(flow.getLastSwitched()).isEqualTo(987000L);
+        Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(123000L));
+        Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo(Instant.ofEpochMilli(123000L)); // Timeout is same as first
+        Assertions.assertThat(flow.getLastSwitched()).isEqualTo(Instant.ofEpochMilli(987000L));
     }
 
     @Test
@@ -37,9 +37,9 @@ public class FlowTimeoutTest {
 
         final var flow = new IpFixFlowBuilder().buildFlow(Instant.EPOCH, record.values(), (address -> Optional.empty()));
 
-        Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(123000L);
-        Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo(987000L - 10000L);
-        Assertions.assertThat(flow.getLastSwitched()).isEqualTo(987000L);
+        Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(123000L));
+        Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo(Instant.ofEpochMilli(987000L - 10000L));
+        Assertions.assertThat(flow.getLastSwitched()).isEqualTo(Instant.ofEpochMilli(987000L));
     }
 
     @Test
@@ -53,9 +53,9 @@ public class FlowTimeoutTest {
                 .add(new UnsignedValue("flowInactiveTimeout", 300));
         final var flow = new IpFixFlowBuilder().buildFlow(Instant.EPOCH, record.values(), (address -> Optional.empty()));
 
-        Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(123000L);
-        Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo(987000L - 300000L);
-        Assertions.assertThat(flow.getLastSwitched()).isEqualTo(987000L);
+        Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(123000L));
+        Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo(Instant.ofEpochMilli(987000L - 300000L));
+        Assertions.assertThat(flow.getLastSwitched()).isEqualTo(Instant.ofEpochMilli(987000L));
     }
 
     @Test
@@ -66,9 +66,9 @@ public class FlowTimeoutTest {
 
         final var flowMessage = new IpFixFlowBuilder().buildFlow(Instant.EPOCH, record.values(), (address -> Optional.empty()));
 
-        Assertions.assertThat(flowMessage.getFirstSwitched()).isEqualTo(123000L);
-        Assertions.assertThat(flowMessage.getDeltaSwitched()).isEqualTo(123000L);
-        Assertions.assertThat(flowMessage.getLastSwitched()).isEqualTo(987000L);
+        Assertions.assertThat(flowMessage.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(123000L));
+        Assertions.assertThat(flowMessage.getDeltaSwitched()).isEqualTo(Instant.ofEpochMilli(123000L));
+        Assertions.assertThat(flowMessage.getLastSwitched()).isEqualTo(Instant.ofEpochMilli(987000L));
 
         record = new RecordBuilder()
                 .add(new DateTimeValue("systemInitTimeMilliseconds", Instant.ofEpochMilli(100000)))
@@ -76,8 +76,8 @@ public class FlowTimeoutTest {
                 .add(new UnsignedValue("flowEndSysUpTime", 4000000));
         final var flow = new IpFixFlowBuilder().buildFlow(Instant.EPOCH, record.values(), (address -> Optional.empty()));
 
-        Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(2000000L + 100000L);
-        Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo(2000000L + 100000L);
-        Assertions.assertThat(flow.getLastSwitched()).isEqualTo(4100000L);
+        Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(2000000L + 100000L));
+        Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo(Instant.ofEpochMilli(2000000L + 100000L));
+        Assertions.assertThat(flow.getLastSwitched()).isEqualTo(Instant.ofEpochMilli(4100000L));
     }
 }

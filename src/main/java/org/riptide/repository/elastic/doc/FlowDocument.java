@@ -709,7 +709,7 @@ public class FlowDocument {
         doc.setEngineId(flow.getEngineId());
         doc.setEngineType(flow.getEngineType());
         doc.setFirstSwitched(flow.getFirstSwitched() != null ? flow.getFirstSwitched().toEpochMilli() : 0);
-        doc.setFlowRecords(flow.getFlowRecords());
+        doc.setFlowRecords(flow.getFlowRecordNum());
         doc.setFlowSeqNum(flow.getFlowSeqNum());
         doc.setInputSnmp(flow.getInputSnmp());
         doc.setIpProtocolVersion(flow.getIpProtocolVersion());

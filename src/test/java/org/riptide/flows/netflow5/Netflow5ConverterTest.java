@@ -1,4 +1,4 @@
-package org.riptide.flows.adapter.netflow5;
+package org.riptide.flows.netflow5;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -32,7 +32,7 @@ public class Netflow5ConverterTest {
 
         final var flow = flows.get(0);
         Assertions.assertThat(flow.getNetflowVersion()).isEqualTo(Flow.NetflowVersion.V5);
-        Assertions.assertThat(flow.getFlowRecords()).isEqualTo(2);
+        Assertions.assertThat(flow.getFlowRecordNum()).isEqualTo(2);
         Assertions.assertThat(flow.getFlowSeqNum()).isEqualTo(0L);
         Assertions.assertThat(flow.getEngineId()).isEqualTo(0);
         Assertions.assertThat(flow.getEngineType()).isEqualTo(0);
@@ -51,9 +51,9 @@ public class Netflow5ConverterTest {
         Assertions.assertThat(flow.getNumBytes()).isEqualTo(230L);
         Assertions.assertThat(flow.getInputSnmp()).isEqualTo(0);
         Assertions.assertThat(flow.getOutputSnmp()).isEqualTo(0);
-        Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(1430608661859L));
-        Assertions.assertThat(flow.getLastSwitched()).isEqualTo(Instant.ofEpochMilli(1434870077556L));
-        Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo(Instant.ofEpochMilli(1430608661859L));
+        Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(Instant.parse("2015-06-21T11:40:52.194328Z"));
+        Assertions.assertThat(flow.getLastSwitched()).isEqualTo((Instant.parse("2015-05-02T18:38:07.476328Z")));
+        Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo((Instant.parse("2015-06-21T11:40:52.194328Z")));
         Assertions.assertThat(flow.getNumPackets()).isEqualTo(5L);
         Assertions.assertThat(flow.getDirection()).isEqualTo(Flow.Direction.INGRESS);
         Assertions.assertThat(flow.getNextHop().getHostAddress()).isEqualTo("0.0.0.0");
