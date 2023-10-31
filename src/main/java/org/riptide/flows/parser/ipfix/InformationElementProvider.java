@@ -1,33 +1,30 @@
 package org.riptide.flows.parser.ipfix;
 
-import com.google.common.base.Throwables;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
-import org.apache.commons.csv.CSVFormat;
-import org.apache.commons.csv.CSVRecord;
+import jakarta.xml.bind.JAXB;
+import jakarta.xml.bind.annotation.*;
+import lombok.Data;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.ie.InformationElementDatabase;
 import org.riptide.flows.parser.ie.Semantics;
 import org.riptide.flows.parser.ie.values.*;
 
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.Reader;
+import java.io.UncheckedIOException;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.stream.Collectors;
+
+import static org.riptide.flows.parser.ipfix.Registry.NAMESPACE;
 
 public class InformationElementProvider implements InformationElementDatabase.Provider {
-    private static final String COLUMN_ID = "ElementID";
-    private static final String COLUMN_NAME = "Name";
-    private static final String COLUMN_TYPE = "Abstract Data Type";
-    private static final String COLUMN_SEMANTICS = "Data Type Semantics";
 
-    private static final CSVFormat CSV_FORMAT = CSVFormat.Builder.create()
-            .setDelimiter(',')
-            .setQuote('"')
-            .setEscape('\\')
-            .setHeader()
-            .setSkipHeaderRecord(true)
-            .build();
-
+    @VisibleForTesting
+    static final String XML_FILE_LOCATION = "/ipfix-information-elements.xml";
     private static final Map<String, Semantics> SEMANTICS_LOOKUP = ImmutableMap.<String, Semantics>builder()
             .put("default", Semantics.DEFAULT)
             .put("quantity", Semantics.QUANTITY)
@@ -68,30 +65,98 @@ public class InformationElementProvider implements InformationElementDatabase.Pr
 
     @Override
     public void load(final InformationElementDatabase.Adder adder) {
-        try (final Reader r = new InputStreamReader(this.getClass().getResourceAsStream("/ipfix-information-elements.csv"))) {
-            for (final CSVRecord record : CSV_FORMAT.parse(r)) {
-                final int id;
-                try {
-                    id = Integer.valueOf(record.get(COLUMN_ID));
-                } catch (final NumberFormatException e) {
-                    continue;
-                }
-
-                final String name = record.get(COLUMN_NAME);
-                final InformationElementDatabase.ValueParserFactory valueParserFactory = TYPE_LOOKUP.get(record.get(COLUMN_TYPE));
-
-                if (valueParserFactory == null) {
-                    // TODO: Log me
-                    continue;
-                }
-
-                final Semantics semantics = SEMANTICS_LOOKUP.get(record.get(COLUMN_SEMANTICS));
-
-                adder.add(Protocol.IPFIX, id, valueParserFactory, name, semantics);
+        try (final var is = getClass().getResourceAsStream(XML_FILE_LOCATION)) {
+            if (is == null) {
+                throw new IllegalStateException("Could not find xml file %s".formatted(XML_FILE_LOCATION));
             }
-        } catch (final IOException e) {
-            // TODO: Log me
-            Throwables.throwIfUnchecked(e);
+            final var registry = JAXB.unmarshal(is, Registry.class);
+            final var elementRegistry = registry.getRegistryById("ipfix-information-elements"); // the elements we want to parse/read
+            elementRegistry.getRecords().stream()
+                    .filter(record -> record.getElementId() != null)
+                    .filter(record -> TYPE_LOOKUP.containsKey(record.getDataType()))
+                    .forEach(record -> {
+                        final var valueParserFactory = TYPE_LOOKUP.get(record.getDataType());
+                        final var semantics = SEMANTICS_LOOKUP.get(record.getDataTypeSemantics());
+                        adder.add(Protocol.IPFIX, record.getElementId(), valueParserFactory, record.getName(), semantics);
+                    });
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
         }
     }
 }
+
+@XmlRootElement(namespace = NAMESPACE, name = "registry")
+@XmlAccessorType(XmlAccessType.NONE)
+@Data
+class Registry {
+    
+    public static final String NAMESPACE = "http://www.iana.org/assignments";
+    
+    @XmlAttribute(required = true)
+    private String id;
+
+    @XmlElement(namespace = NAMESPACE, required = true)
+    public String title;
+
+    @XmlElement(namespace = NAMESPACE, required = true)
+    private LocalDate created;
+
+    @XmlElement(namespace = NAMESPACE, required = true)
+    private LocalDate updated;
+
+    @XmlElement(namespace = NAMESPACE, required = true)
+    private List<String> note;
+
+    @XmlElement(namespace = NAMESPACE, required = true, name="registry")
+    private List<Registry> registries;
+
+    @XmlElement(namespace = NAMESPACE, required = true, name="record")
+    private List<Record> records;
+
+    @XmlElementWrapper(namespace = NAMESPACE, name = "people")
+    @XmlElement(namespace = NAMESPACE, name = "person")
+    private List<Person> people = new ArrayList<>();
+
+    public Registry getRegistryById(String registryId) {
+        return registries.stream()
+                .filter(it -> it.getId().equals(registryId))
+                .findFirst()
+                .orElseThrow(() -> new NoSuchElementException("Could not find a registry with id '%s'. Available registries are: [%s]".formatted(registryId, registries.stream().map(Registry::getId).collect(Collectors.joining(", ")))));
+    }
+}
+
+
+@XmlRootElement(name = "registry", namespace = NAMESPACE)
+@XmlAccessorType(XmlAccessType.NONE)
+@Data
+class Record {
+    @XmlElement(namespace = NAMESPACE)
+    private Integer elementId;
+
+    @XmlElement(namespace = NAMESPACE)
+    private String name;
+
+    @XmlElement(namespace = NAMESPACE)
+    private String dataType;
+
+    @XmlElement(namespace = NAMESPACE)
+    private String dataTypeSemantics;
+}
+
+@XmlRootElement(namespace = NAMESPACE)
+@XmlAccessorType(XmlAccessType.NONE)
+@Data
+class Person {
+    @XmlAttribute
+    private String id;
+
+    @XmlElement(namespace = NAMESPACE)
+    private String name;
+
+    @XmlElement(namespace = NAMESPACE)
+    private String uri;
+
+    @XmlElement(namespace = NAMESPACE)
+    private String updated;
+}
+
