@@ -6,6 +6,7 @@ import org.riptide.flows.parser.session.Session;
 
 import io.netty.buffer.ByteBuf;
 
+// TODO fooker: genericalize the parser output
 public interface InformationElement {
 
     Value<?> parse(Session.Resolver resolver, ByteBuf buffer) throws InvalidPacketException, MissingTemplateException;

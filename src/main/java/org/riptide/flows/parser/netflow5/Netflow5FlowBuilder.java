@@ -27,15 +27,13 @@ public class Netflow5FlowBuilder implements FlowBuilder {
                           final Map<String, Value<?>> values,
                           final RecordEnrichment enrichment) {
 
-        final var sysUpTime = durationValue("@sysUpTime", ChronoUnit.MILLIS);
         final var timestamp = Values.both(
                         longValue("@unixSecs"),
                         longValue("@unixNSecs"),
                         Duration::ofSeconds)
-                .map(Instant.now()::plus);
+                .map(Instant.EPOCH::plus);
 
-        final var bootTime = Values.both(timestamp, sysUpTime, Instant::minus);
-
+        final var bootTime = Values.both(timestamp, durationValue("@sysUptime", ChronoUnit.MILLIS), Instant::minus);
 
         return new Flow() {
             @Override

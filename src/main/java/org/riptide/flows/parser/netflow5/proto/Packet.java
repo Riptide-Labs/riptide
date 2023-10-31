@@ -50,11 +50,10 @@ public final class Packet implements Iterable<Record>, RecordProvider {
 
     @Override
     public Stream<Map<String, Value<?>>> getRecords() {
-        final Stream<Value<?>> header = this.header.asValues();
 
         return this.records.stream()
                 .map(Record::asValues)
-                .map(record -> Streams.concat(header, record)
+                .map(record -> Streams.concat(this.header.asValues(), record)
                         .collect(Collectors.toUnmodifiableMap(Value::getName, Function.identity())));
     }
 
