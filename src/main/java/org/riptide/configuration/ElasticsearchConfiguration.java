@@ -16,7 +16,7 @@ import org.riptide.repository.elastic.ElasticFlowRepository;
 import org.riptide.repository.elastic.IndexSettings;
 import org.riptide.repository.elastic.IndexStrategy;
 import org.riptide.repository.elastic.InitializingElasticFlowRepository;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -25,7 +25,7 @@ import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 
 @Configuration
-@ConditionalOnBean(ElasticsearchConfig.class)
+@ConditionalOnProperty(name="riptide.elastic.enabled", havingValue = "true", matchIfMissing = true)
 public class ElasticsearchConfiguration {
     @Bean
     public JestClient jestClient(ElasticsearchConfig config) throws NoSuchAlgorithmException, KeyStoreException, KeyManagementException {
