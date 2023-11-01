@@ -42,8 +42,8 @@ public class SequenceNumberTrackerTest {
     void verifyOutOfOrder() {
         final var tracker = new SequenceNumberTracker(32);
         for (int x = 0; x <= tracker.getPatience() * 2; x += 2) {
-            Assertions.assertThat(tracker.verify(x + 2)).describedAs( "x=" + (x + 2)).isTrue();
-            Assertions.assertThat(tracker.verify(x + 1)).describedAs( "x=" + (x + 1)).isTrue();
+            Assertions.assertThat(tracker.verify(x + 2)).describedAs("x=" + (x + 2)).isTrue();
+            Assertions.assertThat(tracker.verify(x + 1)).describedAs("x=" + (x + 1)).isTrue();
         }
     }
 

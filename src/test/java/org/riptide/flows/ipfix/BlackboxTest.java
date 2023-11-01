@@ -1,7 +1,14 @@
 package org.riptide.flows.ipfix;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.riptide.flows.utils.BufferUtils.slice;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.riptide.flows.parser.ipfix.proto.Header;
+import org.riptide.flows.parser.ipfix.proto.Packet;
+import org.riptide.flows.parser.session.SequenceNumberTracker;
+import org.riptide.flows.parser.session.Session;
+import org.riptide.flows.parser.session.TcpSession;
 
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
@@ -11,19 +18,11 @@ import java.nio.file.Paths;
 import java.util.List;
 import java.util.stream.Stream;
 
-import org.junit.jupiter.params.ParameterizedTest;
-
-import io.netty.buffer.ByteBuf;
-import io.netty.buffer.Unpooled;
-import org.junit.jupiter.params.provider.MethodSource;
-import org.riptide.flows.parser.session.SequenceNumberTracker;
-import org.riptide.flows.parser.session.Session;
-import org.riptide.flows.parser.session.TcpSession;
-import org.riptide.flows.parser.ipfix.proto.Header;
-import org.riptide.flows.parser.ipfix.proto.Packet;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.riptide.flows.utils.BufferUtils.slice;
 
 public class BlackboxTest {
-    private final static Path FOLDER = Paths.get("src/test/resources/flows");
+    private static final Path FOLDER = Paths.get("src/test/resources/flows");
 
     private static Stream<List<String>> files() {
         return Stream.of(
@@ -41,7 +40,7 @@ public class BlackboxTest {
         final Session session = new TcpSession(InetAddress.getLoopbackAddress(), () -> new SequenceNumberTracker(32));
 
         for (final String file : files) {
-            try (final FileChannel channel = FileChannel.open(FOLDER.resolve(file))) {
+            try (FileChannel channel = FileChannel.open(FOLDER.resolve(file))) {
                 final ByteBuffer buffer = ByteBuffer.allocate((int) channel.size());
                 channel.read(buffer);
                 buffer.flip();

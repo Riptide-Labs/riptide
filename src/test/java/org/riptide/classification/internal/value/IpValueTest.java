@@ -48,8 +48,8 @@ public class IpValueTest {
     Stream<DynamicTest> verifyParseCIDR() {
         return Stream.of(
                 Tuple.of("192.168.23.0/24", IpRange.of("192.168.23.0", "192.168.23.255")),
-                Tuple.of("192.168.42.23/22", IpRange.of("192.168.40.0", "192.168.43.255")) ,
-                Tuple.of ("192.168.23.42/31", IpRange.of("192.168.23.42", "192.168.23.43")),
+                Tuple.of("192.168.42.23/22", IpRange.of("192.168.40.0", "192.168.43.255")),
+                Tuple.of("192.168.23.42/31", IpRange.of("192.168.23.42", "192.168.23.43")),
                 Tuple.of("192.168.23.42/32", IpRange.of("192.168.23.42", "192.168.23.42")),
                 Tuple.of("fe80::243d:e3ff:fe31:7660/64", IpRange.of("fe80::", "fe80::ffff:ffff:ffff:ffff"))
         ).map(tuple -> DynamicTest.dynamicTest("Verify %s (CIDR) is in range of %s".formatted(tuple.first(), tuple.second()),
@@ -82,7 +82,7 @@ public class IpValueTest {
         Assertions.assertThat(ipValue.isInRange(IpAddr.of("10.0.0.7"))).isEqualTo(false);
         Assertions.assertThat(ipValue.isInRange(IpAddr.of("10.0.0.8"))).isEqualTo(false);
         Assertions.assertThat(ipValue.isInRange(IpAddr.of("10.0.0.9"))).isEqualTo(false);
-        Assertions.assertThat(ipValue.isInRange(IpAddr.of( "10.0.0.10"))).isEqualTo(false);
+        Assertions.assertThat(ipValue.isInRange(IpAddr.of("10.0.0.10"))).isEqualTo(false);
     }
 
     @Test
@@ -143,7 +143,7 @@ public class IpValueTest {
         for (var ipAddress : IpRange.of("2001:0DB8:0:CD30::0", "2001:0DB8:0:CD30::FF")) {
             Assertions.assertThat(value.isInRange(ipAddress)).isTrue();
         }
-        Assertions.assertThat(value.isInRange(IpAddr.of("192.168.0.1"))).isFalse();; // incompatible, should be false
+        Assertions.assertThat(value.isInRange(IpAddr.of("192.168.0.1"))).isFalse(); // incompatible, should be false
     }
 
     @Test

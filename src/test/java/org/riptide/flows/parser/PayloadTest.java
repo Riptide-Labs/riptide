@@ -44,7 +44,7 @@ public class PayloadTest {
         Objects.requireNonNull(resourceURL);
 
         try {
-            try (final var channel = FileChannel.open(Paths.get(resourceURL.toURI()))) {
+            try (var channel = FileChannel.open(Paths.get(resourceURL.toURI()))) {
                 final var buffer = ByteBuffer.allocate((int) channel.size());
                 channel.read(buffer);
                 buffer.flip();

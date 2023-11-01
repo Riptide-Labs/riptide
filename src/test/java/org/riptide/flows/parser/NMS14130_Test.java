@@ -66,7 +66,7 @@ public class NMS14130_Test {
     }
 
     private interface FlowMessageFactory {
-        Flow create(final Integer in, final Integer out, final Integer ingress, final Integer egress);
+        Flow create(Integer in, Integer out, Integer ingress, Integer egress);
     }
 
     private static void verifyIfIndex(final FlowMessageFactory flowMessageFactory) {

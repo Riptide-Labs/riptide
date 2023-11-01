@@ -1,16 +1,27 @@
 package org.riptide.flows.parser;
 
 import io.netty.buffer.Unpooled;
-import org.junit.jupiter.api.Test;
 import org.assertj.core.api.Assertions;
-import org.riptide.flows.parser.ie.values.*;
+import org.junit.jupiter.api.Test;
+import org.riptide.flows.parser.ie.values.BooleanValue;
+import org.riptide.flows.parser.ie.values.DateTimeValue;
+import org.riptide.flows.parser.ie.values.FloatValue;
+import org.riptide.flows.parser.ie.values.IPv4AddressValue;
+import org.riptide.flows.parser.ie.values.IPv6AddressValue;
+import org.riptide.flows.parser.ie.values.MacAddressValue;
+import org.riptide.flows.parser.ie.values.OctetArrayValue;
+import org.riptide.flows.parser.ie.values.SignedValue;
+import org.riptide.flows.parser.ie.values.StringValue;
+import org.riptide.flows.parser.ie.values.UnsignedValue;
 
 import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 public class ValueTest {
 
@@ -36,19 +47,19 @@ public class ValueTest {
 
     @Test
     void verifyDateTimeMicrosecondsValue() throws Exception {
-        final var dateTimeMicrosecondsValue1 = (DateTimeValue) DateTimeValue.parserWithMicroseconds("dateTimeMicrosecondsName1", null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 0, 0, 0, 0, 0, 0, 0}));
+        final var dateTimeMicrosecondsValue1 = (DateTimeValue) DateTimeValue.parserWithMicroseconds("dateTimeMicrosecondsName1", null).parse(null, Unpooled.wrappedBuffer(new byte[] {0, 0, 0, 0, 0, 0, 0, 0}));
         assertEquals(Instant.from(ZonedDateTime.of(1900, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC)), dateTimeMicrosecondsValue1.getValue());
         assertEquals("dateTimeMicrosecondsName1", dateTimeMicrosecondsValue1.getName());
 
-        final var dateTimeMicrosecondsName2 = (DateTimeValue) DateTimeValue.parserWithMicroseconds("dateTimeMicrosecondsName2", null).parse(null, Unpooled.buffer(8).writeInt((int)(1509533996L + DateTimeValue.SECONDS_TO_EPOCH)).writeInt(0));
+        final var dateTimeMicrosecondsName2 = (DateTimeValue) DateTimeValue.parserWithMicroseconds("dateTimeMicrosecondsName2", null).parse(null, Unpooled.buffer(8).writeInt((int) (1509533996L + DateTimeValue.SECONDS_TO_EPOCH)).writeInt(0));
         assertEquals(Instant.from(ZonedDateTime.of(2017, 11, 1, 10, 59, 56, 0, ZoneOffset.UTC)), dateTimeMicrosecondsName2.getValue());
         assertEquals("dateTimeMicrosecondsName2", dateTimeMicrosecondsName2.getName());
 
-        final var dateTimeMicrosecondsName3 = (DateTimeValue) DateTimeValue.parserWithMicroseconds("dateTimeMicrosecondsName3", null).parse(null, Unpooled.buffer(8).writeInt((int)(1509533996L + DateTimeValue.SECONDS_TO_EPOCH)).writeInt(16775168));
+        final var dateTimeMicrosecondsName3 = (DateTimeValue) DateTimeValue.parserWithMicroseconds("dateTimeMicrosecondsName3", null).parse(null, Unpooled.buffer(8).writeInt((int) (1509533996L + DateTimeValue.SECONDS_TO_EPOCH)).writeInt(16775168));
         assertEquals(Instant.from(ZonedDateTime.of(2017, 11, 1, 10, 59, 56, 3905773, ZoneOffset.UTC)), dateTimeMicrosecondsName3.getValue());
         assertEquals("dateTimeMicrosecondsName3", dateTimeMicrosecondsName3.getName());
 
-        final var dateTimeMicrosecondsName4 = (DateTimeValue) DateTimeValue.parserWithMicroseconds("dateTimeMicrosecondsName4", null).parse(null, Unpooled.buffer(8).writeInt((int)(1509533996L + DateTimeValue.SECONDS_TO_EPOCH)).writeInt(16775169));
+        final var dateTimeMicrosecondsName4 = (DateTimeValue) DateTimeValue.parserWithMicroseconds("dateTimeMicrosecondsName4", null).parse(null, Unpooled.buffer(8).writeInt((int) (1509533996L + DateTimeValue.SECONDS_TO_EPOCH)).writeInt(16775169));
         assertEquals(Instant.from(ZonedDateTime.of(2017, 11, 1, 10, 59, 56, 3905773, ZoneOffset.UTC)), dateTimeMicrosecondsName4.getValue());
         assertEquals("dateTimeMicrosecondsName4", dateTimeMicrosecondsName4.getName());
     }
@@ -66,15 +77,15 @@ public class ValueTest {
 
     @Test
     void verifyDateTimeNanosecondsValue() throws Exception {
-        final var dateTimeNanosecondsValue1 = (DateTimeValue) DateTimeValue.parserWithNanoseconds("dateTimeNanosecondsName1", null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 0, 0, 0, 0, 0, 0, 0}));
+        final var dateTimeNanosecondsValue1 = (DateTimeValue) DateTimeValue.parserWithNanoseconds("dateTimeNanosecondsName1", null).parse(null, Unpooled.wrappedBuffer(new byte[] {0, 0, 0, 0, 0, 0, 0, 0}));
         assertEquals(Instant.from(ZonedDateTime.of(1900, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC)), dateTimeNanosecondsValue1.getValue());
         assertEquals("dateTimeNanosecondsName1", dateTimeNanosecondsValue1.getName());
 
-        final var dateTimeNanosecondsValue2 = (DateTimeValue) DateTimeValue.parserWithNanoseconds("dateTimeNanosecondsName2", null).parse(null, Unpooled.buffer(8).writeInt((int)(1509533996L + DateTimeValue.SECONDS_TO_EPOCH)).writeInt(0));
+        final var dateTimeNanosecondsValue2 = (DateTimeValue) DateTimeValue.parserWithNanoseconds("dateTimeNanosecondsName2", null).parse(null, Unpooled.buffer(8).writeInt((int) (1509533996L + DateTimeValue.SECONDS_TO_EPOCH)).writeInt(0));
         assertEquals(Instant.from(ZonedDateTime.of(2017, 11, 1, 10, 59, 56, 0, ZoneOffset.UTC)), dateTimeNanosecondsValue2.getValue());
         assertEquals("dateTimeNanosecondsName2", dateTimeNanosecondsValue2.getName());
 
-        final var dateTimeNanosecondsValue3 = (DateTimeValue) DateTimeValue.parserWithNanoseconds("dateTimeNanosecondsName3", null).parse(null, Unpooled.buffer(8).writeInt((int)(1509533996L + DateTimeValue.SECONDS_TO_EPOCH)).writeInt(34509786));
+        final var dateTimeNanosecondsValue3 = (DateTimeValue) DateTimeValue.parserWithNanoseconds("dateTimeNanosecondsName3", null).parse(null, Unpooled.buffer(8).writeInt((int) (1509533996L + DateTimeValue.SECONDS_TO_EPOCH)).writeInt(34509786));
         assertEquals(Instant.from(ZonedDateTime.of(2017, 11, 1, 10, 59, 56, 8034935, ZoneOffset.UTC)), dateTimeNanosecondsValue3.getValue());
         assertEquals("dateTimeNanosecondsName3", dateTimeNanosecondsValue3.getName());
     }
@@ -283,11 +294,11 @@ public class ValueTest {
 
     @Test
     void verifyStringValue() throws Exception {
-        final var v1 = (StringValue) StringValue.parser("name1", null).parse(null, Unpooled.wrappedBuffer("Hello World".getBytes("UTF-8")));
+        final var v1 = (StringValue) StringValue.parser("name1", null).parse(null, Unpooled.wrappedBuffer("Hello World".getBytes(StandardCharsets.UTF_8)));
         assertEquals("Hello World", v1.getValue());
         assertEquals("name1", v1.getName());
 
-        final var v2 = (StringValue) StringValue.parser("name2", null).parse(null, Unpooled.wrappedBuffer("Foo".getBytes("UTF-8")));
+        final var v2 = (StringValue) StringValue.parser("name2", null).parse(null, Unpooled.wrappedBuffer("Foo".getBytes(StandardCharsets.UTF_8)));
         assertEquals("Foo", v2.getValue());
         assertEquals("name2", v2.getName());
 

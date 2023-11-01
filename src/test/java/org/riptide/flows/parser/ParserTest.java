@@ -67,7 +67,7 @@ public class ParserTest {
         Objects.requireNonNull(resourceURL);
 
         try {
-            try (final FileChannel channel = FileChannel.open(Paths.get(resourceURL.toURI()))) {
+            try (FileChannel channel = FileChannel.open(Paths.get(resourceURL.toURI()))) {
                 final ByteBuffer buffer = ByteBuffer.allocate((int) channel.size());
                 channel.read(buffer);
                 buffer.flip();

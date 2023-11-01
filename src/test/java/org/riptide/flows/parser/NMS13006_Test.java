@@ -58,7 +58,7 @@ public class NMS13006_Test {
     void verifyCaptureFile() throws Exception {
         final var filename = "nms-13006.dat";
         final var session = new TcpSession(InetAddress.getLoopbackAddress(), () -> new SequenceNumberTracker(32));
-        try (final FileChannel channel = FileChannel.open(FOLDER.resolve(filename))) {
+        try (FileChannel channel = FileChannel.open(FOLDER.resolve(filename))) {
             final ByteBuffer buffer = ByteBuffer.allocate((int) channel.size());
             channel.read(buffer);
             buffer.flip();

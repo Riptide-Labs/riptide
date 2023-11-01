@@ -43,7 +43,7 @@ public class BufferUtilsTest {
         Assertions.assertThat(UnsignedLong.valueOf(0L)).isEqualTo(uint64(from("0000000000000000")));
         Assertions.assertThat(UnsignedLong.valueOf(1L)).isEqualTo(uint64(from("0000000000000001")));
         Assertions.assertThat(UnsignedLong.valueOf(1024L)).isEqualTo(uint64(from("0000000000000400")));
-        Assertions.assertThat(UnsignedLong.valueOf(65536L -1L)).isEqualTo(uint64(from("000000000000FFFF")));
+        Assertions.assertThat(UnsignedLong.valueOf(65536L - 1L)).isEqualTo(uint64(from("000000000000FFFF")));
         Assertions.assertThat(UnsignedLong.valueOf(65536L * 65536L - 1L)).isEqualTo(uint64(from("00000000FFFFFFFF")));
         Assertions.assertThat(UnsignedLong.MAX_VALUE).isEqualTo(uint64(from("FFFFFFFFFFFFFFFF")));
     }
