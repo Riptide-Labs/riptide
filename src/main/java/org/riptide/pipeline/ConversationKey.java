@@ -2,6 +2,10 @@ package org.riptide.pipeline;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import lombok.AllArgsConstructor;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
+import lombok.ToString;
 
 import java.io.StringWriter;
 import java.util.Objects;
@@ -9,6 +13,10 @@ import java.util.Objects;
 /**
  * Contains all of the fields used to uniquely identify a conversation.
  */
+@ToString
+@EqualsAndHashCode
+@Getter
+@AllArgsConstructor
 public class ConversationKey {
 
     private final String location;
@@ -16,62 +24,6 @@ public class ConversationKey {
     private final String lowerIp;
     private final String upperIp;
     private final String application;
-
-    public ConversationKey(String location, Integer protocol, String lowerIp, String upperIp, String application) {
-        this.location = location;
-        this.protocol = protocol;
-        this.lowerIp = lowerIp;
-        this.upperIp = upperIp;
-        this.application = application;
-    }
-
-    public String getLocation() {
-        return location;
-    }
-
-    public Integer getProtocol() {
-        return protocol;
-    }
-
-    public String getLowerIp() {
-        return lowerIp;
-    }
-
-    public String getUpperIp() {
-        return upperIp;
-    }
-
-    public String getApplication() {
-        return application;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        ConversationKey that = (ConversationKey) o;
-        return Objects.equals(protocol, that.protocol)
-                && Objects.equals(application, that.application)
-                && Objects.equals(location, that.location)
-                && Objects.equals(lowerIp, that.lowerIp)
-                && Objects.equals(upperIp, that.upperIp);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(location, protocol, lowerIp, upperIp, application);
-    }
-
-    @Override
-    public String toString() {
-        return "ConversationKey{"
-                + "location='" + location + '\''
-                + ", protocol=" + protocol
-                + ", lowerIp='" + lowerIp + '\''
-                + ", upperIp='" + upperIp + '\''
-                + ", application='" + application + '\''
-                + '}';
-    }
 
     /**
      * Utility class for building the {@link ConversationKey} and
@@ -86,6 +38,7 @@ public class ConversationKey {
     public static class Utils {
         private static final Gson gson = new GsonBuilder().create();
 
+        // TODO MVR remove gson
         public static ConversationKey fromJsonString(String json) {
             final Object[] array = gson.fromJson(json, Object[].class);
             if (array.length != 5) {

@@ -121,8 +121,8 @@ public abstract class IpAddr implements Comparable<IpAddr> {
         @Override
         public String toString() {
             final var bytes = new byte[16];
-            System.arraycopy(bytes, 0, Longs.toByteArray(high), 0, 8);
-            System.arraycopy(bytes, 0, Longs.toByteArray(low), 8, 8);
+            System.arraycopy(Longs.toByteArray(high), 0, bytes, 0, 8);
+            System.arraycopy(Longs.toByteArray(low), 0, bytes, 8, 8);
 
             try {
                 return InetAddress.getByAddress(bytes).getHostAddress();

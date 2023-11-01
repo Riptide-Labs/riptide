@@ -5,6 +5,8 @@ import org.riptide.classification.IpAddr;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.Objects;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 public class IpRange implements Iterable<IpAddr> {
 
@@ -82,5 +84,9 @@ public class IpRange implements Iterable<IpAddr> {
                 return n;
             }
         };
+    }
+
+    public Stream<IpAddr> stream() {
+        return StreamSupport.stream(spliterator(), false);
     }
 }

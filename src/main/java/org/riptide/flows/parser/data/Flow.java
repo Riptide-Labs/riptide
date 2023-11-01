@@ -66,7 +66,9 @@ public interface Flow {
      * Unix timestamp in ms at which the previous exported packet
      * associated with this flow was switched.
      */
-    Instant getDeltaSwitched();
+    default Instant getDeltaSwitched() {
+        return this.getFirstSwitched();
+    }
 
     /**
      * Unix timestamp in ms at which the first packet
@@ -77,7 +79,7 @@ public interface Flow {
     /**
      * Number of flow records in the associated packet.
      */
-    int getFlowRecords();
+    int getFlowRecordNum();
 
     /**
      * Flow packet sequence number.

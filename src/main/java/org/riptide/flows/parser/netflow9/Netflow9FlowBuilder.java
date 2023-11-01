@@ -129,7 +129,7 @@ public class Netflow9FlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public int getFlowRecords() {
+            public int getFlowRecordNum() {
                 return intValue("@recordCount").getOrNull(values);
             }
 

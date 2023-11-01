@@ -8,7 +8,6 @@ import org.riptide.flows.parser.data.FlowBuilder;
 import org.riptide.flows.parser.data.Values;
 
 import java.net.InetAddress;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
@@ -27,15 +26,12 @@ public class Netflow5FlowBuilder implements FlowBuilder {
                           final Map<String, Value<?>> values,
                           final RecordEnrichment enrichment) {
 
-        final var sysUpTime = durationValue("@sysUpTime", ChronoUnit.MILLIS);
         final var timestamp = Values.both(
-                        longValue("@unixSecs"),
-                        longValue("@unixNSecs"),
-                        Duration::ofSeconds)
-                .map(Instant.now()::plus);
+                longValue("@unixSecs"),
+                longValue("@unixNSecs"),
+                Instant::ofEpochSecond);
 
-        final var bootTime = Values.both(timestamp, sysUpTime, Instant::minus);
-
+        final var bootTime = Values.both(timestamp, durationValue("@sysUptime", ChronoUnit.MILLIS), Instant::minus);
 
         return new Flow() {
             @Override
@@ -96,17 +92,12 @@ public class Netflow5FlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public Instant getDeltaSwitched() {
-                return null;
-            }
-
-            @Override
             public Instant getFirstSwitched() {
                 return bootTime.and(durationValue("first", ChronoUnit.MILLIS), Instant::plus).getOrNull(values);
             }
 
             @Override
-            public int getFlowRecords() {
+            public int getFlowRecordNum() {
                 return intValue("@count").getOrNull(values);
             }
 
