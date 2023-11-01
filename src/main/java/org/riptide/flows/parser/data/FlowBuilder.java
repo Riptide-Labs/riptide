@@ -7,7 +7,5 @@ import java.time.Instant;
 import java.util.Map;
 
 public interface FlowBuilder {
-    Flow buildFlow(final Instant receivedAt,
-                   final Map<String, Value<?>> values,
-                   final RecordEnrichment enrichment);
+    Flow buildFlow(Instant receivedAt, Map<String, Value<?>> values, RecordEnrichment enrichment);
 }

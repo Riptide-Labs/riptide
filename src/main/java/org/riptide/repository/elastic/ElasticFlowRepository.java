@@ -61,7 +61,7 @@ public class ElasticFlowRepository implements FlowRepository {
         private ReentrantLock lock = new ReentrantLock();
         private long lastPersist = 0;
 
-        public FlowBulk() {
+        FlowBulk() {
         }
     }
 
@@ -107,7 +107,7 @@ public class ElasticFlowRepository implements FlowRepository {
                 @Override
                 public void run() {
                     final long currentTimeMillis = System.currentTimeMillis();
-                    for(final Map.Entry<Thread, ElasticFlowRepository.FlowBulk> entry : flowBulks.entrySet()) {
+                    for (final Map.Entry<Thread, ElasticFlowRepository.FlowBulk> entry : flowBulks.entrySet()) {
                         final ElasticFlowRepository.FlowBulk flowBulk = entry.getValue();
                         if (currentTimeMillis - flowBulk.lastPersist > bulkFlushMs) {
                             if (flowBulk.lock.tryLock()) {
@@ -157,7 +157,7 @@ public class ElasticFlowRepository implements FlowRepository {
 
     private void persistBulk(final List<FlowDocument> bulk) throws FlowException {
         LOG.debug("Persisting {} flow documents.", bulk.size());
-        try (final Timer.Context ctx = logPersistingTimer.time()) {
+        try (Timer.Context ctx = logPersistingTimer.time()) {
             final BulkRequest<FlowDocument> bulkRequest = new BulkRequest<>(client, bulk, (documents) -> {
                 final Bulk.Builder bulkBuilder = new Bulk.Builder();
                 for (FlowDocument flowDocument : documents) {
@@ -193,7 +193,7 @@ public class ElasticFlowRepository implements FlowRepository {
 
     public void stop() throws FlowException {
         stopTimer();
-        for(final FlowBulk flowBulk : flowBulks.values()) {
+        for (final FlowBulk flowBulk : flowBulks.values()) {
             persistBulk(flowBulk.documents);
         }
     }

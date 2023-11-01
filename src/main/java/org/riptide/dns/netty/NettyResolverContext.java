@@ -7,7 +7,13 @@ import io.netty.channel.AddressedEnvelope;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioDatagramChannel;
-import io.netty.handler.codec.dns.*;
+import io.netty.handler.codec.dns.DefaultDnsQuestion;
+import io.netty.handler.codec.dns.DnsPtrRecord;
+import io.netty.handler.codec.dns.DnsRecord;
+import io.netty.handler.codec.dns.DnsRecordType;
+import io.netty.handler.codec.dns.DnsResponse;
+import io.netty.handler.codec.dns.DnsResponseCode;
+import io.netty.handler.codec.dns.DnsSection;
 import io.netty.resolver.dns.DnsCacheEntry;
 import io.netty.resolver.dns.DnsNameResolver;
 import io.netty.resolver.dns.DnsNameResolverBuilder;
@@ -81,14 +87,14 @@ public class NettyResolverContext implements DnsResolver {
         final Future<InetAddress> requestFuture = resolver.resolve(hostname);
         requestFuture.addListener(responseFuture -> {
             try {
-                InetAddress addr = (InetAddress)responseFuture.get();
+                InetAddress addr = (InetAddress) responseFuture.get();
                 future.complete(Optional.ofNullable(addr));
             } catch (InterruptedException e) {
                 future.completeExceptionally(e);
             } catch (ExecutionException e) {
                 final DnsNameResolverTimeoutException timeoutException = Throwables.getCausalChain(e).stream()
                         .filter((DnsNameResolverTimeoutException.class)::isInstance)
-                        .map(ex -> (DnsNameResolverTimeoutException)ex)
+                        .map(ex -> (DnsNameResolverTimeoutException) ex)
                         .findFirst()
                         .orElse(null);
 
@@ -126,7 +132,7 @@ public class NettyResolverContext implements DnsResolver {
             // Try and find a hostname, or return an empty optional if none was found
             final Optional<String> cachedHostname = entries.stream()
                     .filter(e -> e instanceof ExtendedDnsCacheEntry)
-                    .map(e -> ((ExtendedDnsCacheEntry)e).hostnameFromPtrRecord())
+                    .map(e -> ((ExtendedDnsCacheEntry) e).hostnameFromPtrRecord())
                     .filter(Objects::nonNull)
                     .findFirst();
             if (cachedHostname.isPresent()) {

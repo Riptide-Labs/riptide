@@ -52,8 +52,8 @@ public interface Rule {
     }
 
     default boolean canBeReversed() {
-        return isOmnidirectional() &&
-                (hasSrcPortDefinition() || hasSrcAddressDefinition() || hasDstPortDefinition() || hasDstAddressDefinition());
+        return isOmnidirectional()
+                && (hasSrcPortDefinition() || hasSrcAddressDefinition() || hasDstPortDefinition() || hasDstAddressDefinition());
     }
 
     default boolean hasDefinition() {

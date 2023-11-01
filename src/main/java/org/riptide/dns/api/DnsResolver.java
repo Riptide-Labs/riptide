@@ -20,7 +20,7 @@ public interface DnsResolver {
      * @param hostname hostname to lookup
      * @return a future
      */
-    CompletableFuture<Optional<InetAddress>> lookup(final String hostname);
+    CompletableFuture<Optional<InetAddress>> lookup(String hostname);
 
     /**
      * Perform a reverse DNS lookup for the given IP address.
@@ -31,6 +31,6 @@ public interface DnsResolver {
      * @param inetAddress IP address to lookup
      * @return a future
      */
-    CompletableFuture<Optional<String>> reverseLookup(final InetAddress inetAddress);
+    CompletableFuture<Optional<String>> reverseLookup(InetAddress inetAddress);
 
 }

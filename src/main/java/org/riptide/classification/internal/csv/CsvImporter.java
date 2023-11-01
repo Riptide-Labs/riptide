@@ -1,12 +1,5 @@
 package org.riptide.classification.internal.csv;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
-
 import com.google.common.base.Strings;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
@@ -14,8 +7,14 @@ import org.apache.commons.csv.CSVRecord;
 import org.riptide.classification.DefaultRule;
 import org.riptide.classification.Rule;
 
-public class CsvImporter {
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 
+public final class CsvImporter {
     public static final String[] HEADERS = {"name", "protocol", "srcAddress", "srcPort", "dstAddress", "dstPort", "exporterFilter", "omnidirectional"};
 
     public static List<Rule> parse(final InputStream inputStream,
@@ -30,7 +29,7 @@ public class CsvImporter {
         final CSVParser parser = csvFormat.parse(new InputStreamReader(inputStream));
         for (CSVRecord record : parser.getRecords()) {
             if (record.size() < HEADERS.length) {
-                throw new IOException("The provided rule ''" + record.toString() + "'' cannot be parsed. Expected columns " + HEADERS.length + " but received " + record.size() + ".");
+                throw new IOException("The provided rule ''" + record + "'' cannot be parsed. Expected columns " + HEADERS.length + " but received " + record.size() + ".");
             }
 
             final String name = record.get(0);
@@ -57,5 +56,9 @@ public class CsvImporter {
         }
 
         return rules;
+    }
+
+    private CsvImporter() {
+
     }
 }

@@ -15,7 +15,7 @@ import java.util.Optional;
 import static org.riptide.flows.utils.BufferUtils.bytes;
 
 public class StringValue extends Value<String> {
-    public final static Charset UTF8_CHARSET = StandardCharsets.UTF_8;
+    public static final Charset UTF8_CHARSET = StandardCharsets.UTF_8;
 
     private final String value;
 

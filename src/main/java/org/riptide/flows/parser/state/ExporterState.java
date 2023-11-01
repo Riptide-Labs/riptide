@@ -22,7 +22,7 @@ public class ExporterState {
         return new Builder(sessionKey);
     }
 
-    public static class Builder {
+    public static final class Builder {
         private final String key;
 
         private final ImmutableList.Builder<TemplateState> templates = ImmutableList.builder();

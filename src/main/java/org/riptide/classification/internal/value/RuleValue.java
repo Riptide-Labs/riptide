@@ -12,5 +12,5 @@ public interface RuleValue<S extends Comparable<S>, T extends RuleValue<S, T>> {
      *
      * @return Returns a shrunk rule value or {@code null} if this rule value is completely covered by the given bound.
      */
-    T shrink(final Bound<S> bound);
+    T shrink(Bound<S> bound);
 }

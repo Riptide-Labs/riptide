@@ -19,7 +19,7 @@ public class TemplateState {
         return new Builder(templateId);
     }
 
-    public static class Builder {
+    public static final class Builder {
         private int templateId;
 
         private Duration age;

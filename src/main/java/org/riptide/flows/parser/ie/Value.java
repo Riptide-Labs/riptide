@@ -1,8 +1,5 @@
 package org.riptide.flows.parser.ie;
 
-import java.util.Objects;
-import java.util.Optional;
-
 import org.riptide.flows.parser.ie.values.BooleanValue;
 import org.riptide.flows.parser.ie.values.DateTimeValue;
 import org.riptide.flows.parser.ie.values.FloatValue;
@@ -16,6 +13,9 @@ import org.riptide.flows.parser.ie.values.SignedValue;
 import org.riptide.flows.parser.ie.values.StringValue;
 import org.riptide.flows.parser.ie.values.UndeclaredValue;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
+
+import java.util.Objects;
+import java.util.Optional;
 
 public abstract class Value<T> {
 
@@ -68,14 +68,14 @@ public abstract class Value<T> {
 
     public abstract T getValue();
 
-    public abstract void visit(final Visitor visitor);
+    public abstract void visit(Visitor visitor);
 
     @Override
     public boolean equals(final Object o) {
         if (this == o) return true;
         if (!(o instanceof Value<?> value)) return false;
-        return Objects.equals(this.name, value.name) &&
-                Objects.equals(this.getValue(), value.getValue());
+        return Objects.equals(this.name, value.name)
+                && Objects.equals(this.getValue(), value.getValue());
     }
 
     @Override

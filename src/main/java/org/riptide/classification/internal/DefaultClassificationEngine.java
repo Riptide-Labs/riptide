@@ -1,32 +1,30 @@
 package org.riptide.classification.internal;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Objects;
-import java.util.concurrent.atomic.AtomicReference;
-
+import com.google.common.collect.Lists;
+import lombok.extern.slf4j.Slf4j;
 import org.riptide.classification.ClassificationEngine;
 import org.riptide.classification.ClassificationRequest;
 import org.riptide.classification.ClassificationRuleProvider;
 import org.riptide.classification.Rule;
 import org.riptide.classification.internal.decision.PreprocessedRule;
 import org.riptide.classification.internal.decision.Tree;
-import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.collect.Lists;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * A classification engine that uses a decision tree to select applicable classification rules.
  * <p>
  * The implementation is thread-safe.
  */
+@Slf4j
 public class DefaultClassificationEngine implements ClassificationEngine {
 
     private List<ClassificationRulesReloadedListener> classificationRulesReloadedListeners = new ArrayList<>();
-
-    private static Logger LOG = LoggerFactory.getLogger(DefaultClassificationEngine.class);
 
     private final AtomicReference<TreeAndInvalidRules> treeAndInvalidRules = new AtomicReference<>(new TreeAndInvalidRules(Tree.EMPTY, Collections.emptyList()));
 
@@ -67,7 +65,7 @@ public class DefaultClassificationEngine implements ClassificationEngine {
         var tree = Tree.of(preprocessedRules);
 
         var elapsed = System.currentTimeMillis() - start;
-        if (LOG.isInfoEnabled()) {
+        if (log.isInfoEnabled()) {
             var sb = new StringBuilder();
             sb
                     .append("calculated flow classification decision tree\n")
@@ -85,7 +83,7 @@ public class DefaultClassificationEngine implements ClassificationEngine {
                     .append("minLeafSize : " + tree.info.minLeafSize).append('\n')
                     .append("maxLeafSize : " + tree.info.maxLeafSize).append('\n')
                     .append("avgLeafSize : " + (double) tree.info.sumLeafSize / tree.info.leaves).append('\n');
-            LOG.info(sb.toString());
+            log.info(sb.toString());
         }
 
         treeAndInvalidRules.set(new TreeAndInvalidRules(tree, invalid));
@@ -94,7 +92,7 @@ public class DefaultClassificationEngine implements ClassificationEngine {
     }
 
     private void fireClassificationReloadedListeners(final List<Rule> rules) {
-        for(final ClassificationRulesReloadedListener classificationRulesReloadedListener : this.classificationRulesReloadedListeners) {
+        for (final ClassificationRulesReloadedListener classificationRulesReloadedListener : this.classificationRulesReloadedListeners) {
             classificationRulesReloadedListener.classificationRulesReloaded(rules);
         }
     }
@@ -113,10 +111,10 @@ public class DefaultClassificationEngine implements ClassificationEngine {
         return treeAndInvalidRules.get().tree.classify(classificationRequest);
     }
 
-    private static class TreeAndInvalidRules {
+    private static final class TreeAndInvalidRules {
         private final Tree tree;
         private final List<Rule> invalidRules;
-        public TreeAndInvalidRules(Tree tree, List<Rule> invalidRules) {
+        private TreeAndInvalidRules(Tree tree, List<Rule> invalidRules) {
             this.tree = tree;
             this.invalidRules = invalidRules;
         }

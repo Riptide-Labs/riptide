@@ -15,8 +15,14 @@ import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.Optional;
 
-
-import static org.riptide.flows.parser.data.Values.*;
+import static org.riptide.flows.parser.data.Values.doubleValue;
+import static org.riptide.flows.parser.data.Values.durationValue;
+import static org.riptide.flows.parser.data.Values.inetAddressValue;
+import static org.riptide.flows.parser.data.Values.intValue;
+import static org.riptide.flows.parser.data.Values.longValue;
+import static org.riptide.flows.parser.data.Values.timeValue;
+import static org.riptide.flows.parser.data.Values.timestampValue;
+import static org.riptide.flows.parser.data.Values.unsignedLongValue;
 
 public class IpFixFlowBuilder implements FlowBuilder {
 
@@ -34,7 +40,7 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
         // TODO fooker: What about @observationDomainId
 
-        // TODO: Structurize meta info
+        // TODO fooker: Structurize meta info
         final var timestamp = Values.<Instant>first(values)
                 .with(timeValue("@exportTime"))
                 .getOrNull();
@@ -176,7 +182,7 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
             @Override
             public int getFlowRecords() {
-                // TODO: Structurize meta info
+                // TODO fooker: Structurize meta info
                 return Values.<Integer>first(values)
                         .with(intValue("@recordCount"))
                         .getOrNull();
@@ -184,7 +190,7 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
             @Override
             public long getFlowSeqNum() {
-                // TODO: Structurize meta info
+                // TODO fooker: Structurize meta info
                 return Values.<Long>first(values)
                         .with(longValue("@sequenceNumber"))
                         .getOrNull();

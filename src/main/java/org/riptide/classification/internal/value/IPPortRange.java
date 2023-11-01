@@ -1,7 +1,10 @@
 package org.riptide.classification.internal.value;
 
+import lombok.ToString;
+
 import java.util.Objects;
 
+@ToString
 public class IPPortRange {
     private final int begin;
     private final int end;
@@ -26,14 +29,6 @@ public class IPPortRange {
 
     public boolean contains(int port) {
         return begin <= port && end >= port;
-    }
-
-    @Override
-    public String toString() {
-        return "IPPortRange{" +
-               "begin=" + begin +
-               ", end=" + end +
-               '}';
     }
 
     @Override

@@ -37,9 +37,9 @@ public class Version {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         Version version = (Version) o;
-        return Objects.equals(major, version.major) &&
-                Objects.equals(minor, version.minor) &&
-                Objects.equals(patch, version.patch);
+        return Objects.equals(major, version.major)
+                && Objects.equals(minor, version.minor)
+                && Objects.equals(patch, version.patch);
     }
 
     @Override

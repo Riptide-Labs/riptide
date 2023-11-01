@@ -1,17 +1,17 @@
 package org.riptide.classification.internal.value;
 
+import com.google.common.net.InetAddresses;
+import org.riptide.classification.IpAddr;
+import org.riptide.classification.internal.decision.Bound;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
-
-import com.google.common.net.InetAddresses;
-import org.riptide.classification.IpAddr;
-import org.riptide.classification.internal.decision.Bound;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class IpValue implements RuleValue<IpAddr, IpValue> {
 
@@ -84,7 +84,7 @@ public class IpValue implements RuleValue<IpAddr, IpValue> {
         // Mask the lower bound with all zero
         final byte[] lower = Arrays.copyOf(address, address.length);
         for (int i = lower.length - 1; i >= mask / 8; i--) {
-            if (i*8 >= mask) {
+            if (i * 8 >= mask) {
                 lower[i] = (byte) 0x00;
             } else {
                 lower[i] &= 0xFF << (8 - (mask - i * 8));
@@ -94,7 +94,7 @@ public class IpValue implements RuleValue<IpAddr, IpValue> {
         // Mask the upper bound with all ones
         final byte[] upper = Arrays.copyOf(address, address.length);
         for (int i = upper.length - 1; i >= mask / 8; i--) {
-            if (i*8 >= mask) {
+            if (i * 8 >= mask) {
                 upper[i] = (byte) 0xFF;
             } else {
                 upper[i] |= 0xFF >> (mask - i * 8);

@@ -8,7 +8,6 @@ import java.util.Objects;
 import org.riptide.flows.parser.ie.Value;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 
 public class OptionState {
     public final int templateId;
@@ -31,7 +30,7 @@ public class OptionState {
         return new Builder(templateId);
     }
 
-    public static class Builder {
+    public static final class Builder {
         private int templateId;
 
         private Duration age;

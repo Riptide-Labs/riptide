@@ -6,7 +6,7 @@ import io.netty.util.concurrent.GenericFutureListener;
 public class NettyEventListener implements GenericFutureListener {
     private String name;
     private boolean isDone = false;
-    public NettyEventListener(String name){
+    public NettyEventListener(String name) {
         this.name = name;
     }
 

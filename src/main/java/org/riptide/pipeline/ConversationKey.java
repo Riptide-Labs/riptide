@@ -50,11 +50,11 @@ public class ConversationKey {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         ConversationKey that = (ConversationKey) o;
-        return Objects.equals(protocol, that.protocol) &&
-                Objects.equals(application, that.application) &&
-                Objects.equals(location, that.location) &&
-                Objects.equals(lowerIp, that.lowerIp) &&
-                Objects.equals(upperIp, that.upperIp);
+        return Objects.equals(protocol, that.protocol)
+                && Objects.equals(application, that.application)
+                && Objects.equals(location, that.location)
+                && Objects.equals(lowerIp, that.lowerIp)
+                && Objects.equals(upperIp, that.upperIp);
     }
 
     @Override
@@ -64,13 +64,13 @@ public class ConversationKey {
 
     @Override
     public String toString() {
-        return "ConversationKey{" +
-                "location='" + location + '\'' +
-                ", protocol=" + protocol +
-                ", lowerIp='" + lowerIp + '\'' +
-                ", upperIp='" + upperIp + '\'' +
-                ", application='" + application + '\'' +
-                '}';
+        return "ConversationKey{"
+                + "location='" + location + '\''
+                + ", protocol=" + protocol
+                + ", lowerIp='" + lowerIp + '\''
+                + ", upperIp='" + upperIp + '\''
+                + ", application='" + application + '\''
+                + '}';
     }
 
     /**
@@ -91,8 +91,8 @@ public class ConversationKey {
             if (array.length != 5) {
                 throw new IllegalArgumentException("Invalid conversation key string: " + json);
             }
-            return new ConversationKey((String)array[0], ((Number)array[1]).intValue(),
-                    (String)array[2], (String)array[3], (String)array[4]);
+            return new ConversationKey((String) array[0], ((Number) array[1]).intValue(),
+                    (String) array[2], (String) array[3], (String) array[4]);
         }
 
         public static String getConvoKeyAsJsonString(final String location,

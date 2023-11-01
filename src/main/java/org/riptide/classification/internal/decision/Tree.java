@@ -1,11 +1,15 @@
 package org.riptide.classification.internal.decision;
 
 import com.google.common.annotations.VisibleForTesting;
+import lombok.ToString;
+import lombok.extern.slf4j.Slf4j;
 import org.riptide.classification.ClassificationRequest;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import java.util.*;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
 import java.util.function.ToLongFunction;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -23,9 +27,8 @@ import java.util.stream.Stream;
  * information. This is handled by having child nodes for 'non-applicable' rules and considering 'non-applicable'
  * orderings when comparing a classification request with thresholds (cf. {@link Threshold#compare(ClassificationRequest)}).
  */
+@Slf4j
 public abstract class Tree {
-
-    private static Logger LOG = LoggerFactory.getLogger(Tree.class);
 
     /**
      * Recursively constructs a decision tree consisting of nodes that split the given rules by thresholds
@@ -42,7 +45,7 @@ public abstract class Tree {
 
         final var ruleSetSize = rules.size();
         if (ruleSetSize <= 1) {
-            LOG.trace("Leaf - depth: " + depth + "; rules: " + ruleSetSize);
+            log.trace("Leaf - depth: " + depth + "; rules: " + ruleSetSize);
             return leaf(rules, bounds);
         }
 
@@ -60,9 +63,9 @@ public abstract class Tree {
                 .orElse(null);
 
         if (entry != null) {
-            LOG.trace("Node - depth: " + depth + "; rules: " + ruleSetSize + "; threshold: " + entry.getKey() + "; maximum child size: " + maximumSize(entry) +
-                               "; lt: " + entry.getValue().lt.size() +
-                               "; eq: " + entry.getValue().eq.size() + "; gt: " + entry.getValue().gt.size() + "; na: " + entry.getValue().na.size());
+            log.trace("Node - depth: " + depth + "; rules: " + ruleSetSize + "; threshold: " + entry.getKey() + "; maximum child size: " + maximumSize(entry)
+                    + "; lt: " + entry.getValue().lt.size()
+                    + "; eq: " + entry.getValue().eq.size() + "; gt: " + entry.getValue().gt.size() + "; na: " + entry.getValue().na.size());
             var lt = of(entry.getValue().lt, entry.getKey().lt(bounds), depth + 1);
             var eq = of(entry.getValue().eq, entry.getKey().eq(bounds), depth + 1);
             var gt = of(entry.getValue().gt, entry.getKey().gt(bounds), depth + 1);
@@ -70,7 +73,7 @@ public abstract class Tree {
 
             return node(entry.getKey(), lt, eq, gt, na);
         } else {
-            LOG.trace("Leaf - depth: " + depth + "; rules: " + ruleSetSize);
+            log.trace("Leaf - depth: " + depth + "; rules: " + ruleSetSize);
             return leaf(rules, bounds);
         }
 
@@ -100,6 +103,7 @@ public abstract class Tree {
     /**
      * Collects statistical information about a decision tree.
      */
+    @ToString
     public static class Info {
 
         public static Info FOR_LEAVE_WITH_0_RULES = new Info(0);
@@ -142,24 +146,6 @@ public abstract class Tree {
         public Info(long leafSize) {
             this(0, 0, 0, leafSize, leafSize, leafSize, 0, 1, 0, 0, 0, 0);
         }
-
-        @Override
-        public String toString() {
-            return "Info{" +
-                   "depth(min/max/avg)=" + minDepth +
-                   "/" + maxDepth +
-                   "/" + String.format("%.2f", (double)sumDepth / leaves) +
-                   ", comp(min/max/avg)=" + minComp +
-                   "/" + maxComp +
-                   "/" + String.format("%.2f", (double)sumComp / leaves) +
-                   ", ruleSetSize(min/max/avg)=" + minLeafSize +
-                   "/" + maxLeafSize +
-                   "/" + String.format("%.2f", (double) sumLeafSize / leaves) +
-                   ", nodes=" + nodes +
-                   ", leaves=" + leaves +
-                   ", choices=" + choices +
-                   '}';
-        }
     }
 
     // smart constructor for nodes
@@ -192,8 +178,8 @@ public abstract class Tree {
             // the na subtree is also traversed for all requests that are lt, eq, or gt than the threshold
             // -> the fraction of these additionally traverses is "nonNaLeaves / leaves"
             // -> boost the sum of comparisons of the na subtree by that factor
-            var naBoost = 1.0 + (double)nonNaLeaves / leaves;
-            var sumComp = leaves + lt.info.sumComp + eq.info.sumComp + gt.info.sumComp + (int)(naBoost * na.info.sumComp);
+            var naBoost = 1.0 + (double) nonNaLeaves / leaves;
+            var sumComp = leaves + lt.info.sumComp + eq.info.sumComp + gt.info.sumComp + (int) (naBoost * na.info.sumComp);
             var info = new Info(
                     1 + Math.min(Math.min(Math.min(lt.info.minDepth, eq.info.minDepth), gt.info.minDepth), na.info.minDepth),
                     1 + Math.max(Math.max(Math.max(lt.info.maxDepth, eq.info.maxDepth), gt.info.maxDepth), na.info.maxDepth),
@@ -274,7 +260,7 @@ public abstract class Tree {
      */
     protected abstract Classifiers classifiers(ClassificationRequest request);
 
-    public static abstract class Node extends Tree {
+    public abstract static class Node extends Tree {
 
         public final Threshold threshold;
 
@@ -288,7 +274,7 @@ public abstract class Tree {
             return false;
         }
 
-        public final static class WithoutChoice extends Node {
+        public static final class WithoutChoice extends Node {
             public final Tree lt, eq, gt;
 
             public WithoutChoice(Info info, Threshold threshold, Tree lt, Tree eq, Tree gt) {
@@ -318,14 +304,14 @@ public abstract class Tree {
 
             @Override
             public String toString() {
-                return "WithoutChoice{" +
-                       "threshold=" + threshold +
-                       ", info=" + info +
-                       '}';
+                return "WithoutChoice{"
+                        + "threshold=" + threshold
+                        + ", info=" + info
+                        + '}';
             }
         }
 
-        public final static class WithChoice extends Node {
+        public static final class WithChoice extends Node {
             public final Tree lt, eq, gt, na;
 
             public WithChoice(Info info, Threshold threshold, Tree lt, Tree eq, Tree gt, Tree na) {
@@ -367,10 +353,10 @@ public abstract class Tree {
 
             @Override
             public String toString() {
-                return "WithChoice{" +
-                       "threshold=" + threshold +
-                       ", info=" + info +
-                       '}';
+                return "WithChoice{"
+                        + "threshold=" + threshold
+                        + ", info=" + info
+                        + '}';
             }
         }
     }
@@ -391,7 +377,7 @@ public abstract class Tree {
         }
     }
 
-    public static abstract class Leaf extends Tree {
+    public abstract static class Leaf extends Tree {
 
         public static final Leaf EMPTY = new Empty();
 
@@ -399,7 +385,7 @@ public abstract class Tree {
             super(info);
         }
 
-        public final static class Empty extends Leaf {
+        public static final class Empty extends Leaf {
             public Empty() {
                 super(Info.forLeaf(0));
             }
@@ -425,7 +411,7 @@ public abstract class Tree {
             }
         }
 
-        public final static class WithClassifiers extends Leaf {
+        public static final class WithClassifiers extends Leaf {
             public final List<Classifier> classifiers;
 
             public WithClassifiers(List<Classifier> classifiers) {
@@ -459,9 +445,9 @@ public abstract class Tree {
 
             @Override
             public String toString() {
-                return "WithClassifiers{" +
-                       "classifiers=" + classifiers +
-                       '}';
+                return "WithClassifiers{"
+                        + "classifiers=" + classifiers
+                        + '}';
             }
         }
 
@@ -489,11 +475,11 @@ public abstract class Tree {
         }
     }
 
-    private static class ListClassifiers implements Classifiers {
+    private static final class ListClassifiers implements Classifiers {
         private final List<Classifier> list;
         private int pos = 0;
 
-        public ListClassifiers(List<Classifier> list) {
+        private ListClassifiers(List<Classifier> list) {
             this.list = list;
         }
 
@@ -503,11 +489,11 @@ public abstract class Tree {
         }
     }
 
-    private static class MergeSortedClassifiers implements Classifiers {
+    private static final class MergeSortedClassifiers implements Classifiers {
         private Classifiers i1, i2;
         private Classifier n1, n2;
 
-        public MergeSortedClassifiers(Classifiers i1, Classifiers i2) {
+        private MergeSortedClassifiers(Classifiers i1, Classifiers i2) {
             this.i1 = i1;
             this.i2 = i2;
         }

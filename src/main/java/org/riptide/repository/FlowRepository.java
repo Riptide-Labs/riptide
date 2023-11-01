@@ -20,5 +20,5 @@ public interface FlowRepository {
      *
      * @throws FlowException on any error happening during processing.
      */
-    void persist(final Collection<EnrichedFlow> flows) throws FlowException, IOException;
+    void persist(Collection<EnrichedFlow> flows) throws FlowException, IOException;
 }

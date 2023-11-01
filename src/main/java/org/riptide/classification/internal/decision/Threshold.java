@@ -1,8 +1,11 @@
 package org.riptide.classification.internal.decision;
 
+import lombok.EqualsAndHashCode;
+import lombok.ToString;
 import org.riptide.classification.ClassificationRequest;
 import org.riptide.classification.IpAddr;
-import org.riptide.classification.internal.value.*;
+import org.riptide.classification.internal.value.IpValue;
+import org.riptide.classification.internal.value.PortValue;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -153,7 +156,9 @@ public abstract class Threshold<T extends Comparable<T>> {
      */
     protected abstract Match match(PreprocessedRule rule, Bounds bounds);
 
-    public final static class Protocol extends Threshold<Integer> {
+    @ToString
+    @EqualsAndHashCode(callSuper = false)
+    public static final class Protocol extends Threshold<Integer> {
 
         private final int protocol;
 
@@ -166,12 +171,12 @@ public abstract class Threshold<T extends Comparable<T>> {
         }
 
         @Override
-        public final Integer getThreshold() {
+        public Integer getThreshold() {
             return protocol;
         }
 
         @Override
-        protected final Match match(PreprocessedRule rule, Bounds bounds) {
+        protected Match match(PreprocessedRule rule, Bounds bounds) {
             if (rule.protocol == null) {
                 return Match.NA;
             } else {
@@ -194,7 +199,7 @@ public abstract class Threshold<T extends Comparable<T>> {
         }
 
         @Override
-        public final Order compare(ClassificationRequest request) {
+        public Order compare(ClassificationRequest request) {
             if (request.getProtocol() != null) {
                 var p = request.getProtocol().getDecimal();
                 return p < protocol ? Order.LT : p == protocol ? Order.EQ : Order.GT;
@@ -203,34 +208,11 @@ public abstract class Threshold<T extends Comparable<T>> {
             }
         }
 
-        @Override
-        public final boolean equals(Object o) {
-            if (this == o) {
-                return true;
-            }
-            if (o == null || getClass() != o.getClass()) {
-                return false;
-            }
-            Protocol protocol1 = (Protocol) o;
-            return protocol == protocol1.protocol;
-        }
-
-        @Override
-        public final int hashCode() {
-            return Objects.hash(protocol);
-        }
-
-        @Override
-        public String toString() {
-            return "Protocol{" +
-                   "protocol=" + protocol +
-                   '}';
-        }
-
     }
 
+    @ToString(onlyExplicitlyIncluded = true)
     public abstract static class Port extends Threshold<Integer> {
-        protected final int port;
+        @ToString.Include protected final int port;
         private final Function<PreprocessedRule, PortValue> getRulePort;
         private final Function<ClassificationRequest, Integer> getRequestPort;
 
@@ -305,7 +287,7 @@ public abstract class Threshold<T extends Comparable<T>> {
         }
     }
 
-    public final static class SrcPort extends Port {
+    public static final class SrcPort extends Port {
         public SrcPort(int port) {
             super(
                     bs -> bs.srcPort,
@@ -315,16 +297,10 @@ public abstract class Threshold<T extends Comparable<T>> {
                     ClassificationRequest::getSrcPort
             );
         }
-
-        @Override
-        public String toString() {
-            return "SrcPort{" +
-                   "port=" + port +
-                   '}';
-        }
     }
 
-    public final static class DstPort extends Port {
+    @ToString
+    public static final class DstPort extends Port {
         public DstPort(int port) {
             super(
                     bs -> bs.dstPort,
@@ -334,16 +310,9 @@ public abstract class Threshold<T extends Comparable<T>> {
                     ClassificationRequest::getDstPort
             );
         }
-
-        @Override
-        public String toString() {
-            return "DstPort{" +
-                   "port=" + port +
-                   '}';
-        }
     }
 
-    public static abstract class Address extends Threshold<IpAddr> {
+    public abstract static class Address extends Threshold<IpAddr> {
         protected final IpAddr address;
         private final Function<PreprocessedRule, IpValue> getRuleAddress;
         private final Function<ClassificationRequest, IpAddr> getRequestAddress;
@@ -420,7 +389,7 @@ public abstract class Threshold<T extends Comparable<T>> {
         }
     }
 
-    public final static class SrcAddress extends Address {
+    public static final class SrcAddress extends Address {
         public SrcAddress(IpAddr address) {
             super(
                     bs -> bs.srcAddr,
@@ -433,13 +402,13 @@ public abstract class Threshold<T extends Comparable<T>> {
 
         @Override
         public String toString() {
-            return "SrcAddress{" +
-                   "address=" + address +
-                   '}';
+            return "SrcAddress{"
+                    + "address=" + address
+                    + '}';
         }
     }
 
-    public final static class DstAddress extends Address {
+    public static final class DstAddress extends Address {
         public DstAddress(IpAddr address) {
             super(
                     bs -> bs.dstAddr,
@@ -452,9 +421,9 @@ public abstract class Threshold<T extends Comparable<T>> {
 
         @Override
         public String toString() {
-            return "DstAddress{" +
-                   "address=" + address +
-                   '}';
+            return "DstAddress{"
+                    + "address=" + address
+                    + '}';
         }
     }
 

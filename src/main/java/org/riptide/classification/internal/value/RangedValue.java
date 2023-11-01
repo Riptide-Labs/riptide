@@ -1,10 +1,10 @@
 package org.riptide.classification.internal.value;
 
-import java.util.List;
-import java.util.Objects;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.List;
+import java.util.Objects;
 
 public class RangedValue {
     private static final Logger LOG = LoggerFactory.getLogger(RangedValue.class);
@@ -60,7 +60,7 @@ public class RangedValue {
         }
 
         // Verify each value is a number value
-        for (int i=0; i<Math.min(range.size(), 2); i++) {
+        for (int i = 0; i < Math.min(range.size(), 2); i++) {
             try {
                 Integer.parseInt(range.get(i).getValue());
             } catch (NumberFormatException ex) {

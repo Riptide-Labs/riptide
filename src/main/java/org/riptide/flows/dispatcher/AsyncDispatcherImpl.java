@@ -3,7 +3,6 @@ package org.riptide.flows.dispatcher;
 import com.codahale.metrics.Counter;
 import com.codahale.metrics.Gauge;
 import com.codahale.metrics.MetricRegistry;
-import com.codahale.metrics.Timer;
 import com.google.common.annotations.VisibleForTesting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,7 +12,13 @@ import java.util.AbstractMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.concurrent.*;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -144,11 +149,11 @@ public class AsyncDispatcherImpl<S, T> implements AsyncDispatcher<S> {
      * This class serves to ensure operations of enqueueing a message and acting on the result of that enqueue are done
      * atomically from the point of view of any thread calling dequeue.
      */
-    private final static class AtomicResultQueue<T> {
+    private static final class AtomicResultQueue<T> {
         private final Map<String, CountDownLatch> resultRecordedMap = new ConcurrentHashMap<>();
         private final DispatchQueue<T> dispatchQueue;
 
-        public AtomicResultQueue(DispatchQueue<T> dispatchQueue) {
+        private AtomicResultQueue(DispatchQueue<T> dispatchQueue) {
             this.dispatchQueue = Objects.requireNonNull(dispatchQueue);
         }
 
@@ -174,7 +179,7 @@ public class AsyncDispatcherImpl<S, T> implements AsyncDispatcher<S> {
                 return messageEntry;
             }
             CountDownLatch resultRecorded = this.resultRecordedMap.remove(messageEntry.getKey());
-            if(resultRecorded != null) {
+            if (resultRecorded != null) {
                 resultRecorded.await();
             }
 
@@ -206,10 +211,10 @@ public class AsyncDispatcherImpl<S, T> implements AsyncDispatcher<S> {
      * This class is intended to be used only when a suitable implementation could not be found at runtime. This should
      * only occur in testing.
      */
-    private static class DefaultQueue<T> implements DispatchQueue<T> {
+    private static final class DefaultQueue<T> implements DispatchQueue<T> {
         private final BlockingQueue<Map.Entry<String, T>> queue;
 
-        public DefaultQueue(int size) {
+        private DefaultQueue(int size) {
             this.queue = new LinkedBlockingQueue<>(size);
         }
 

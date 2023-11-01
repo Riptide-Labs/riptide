@@ -17,7 +17,6 @@ import org.riptide.flows.parser.ie.values.IPv4AddressValue;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
 
 import com.google.common.base.MoreObjects;
-import com.google.common.collect.ImmutableList;
 
 import io.netty.buffer.ByteBuf;
 

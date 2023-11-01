@@ -2,11 +2,8 @@ package org.riptide.classification;
 
 import lombok.Data;
 
-import java.util.Objects;
-
 @Data
 public class DefaultRule implements Rule {
-
     private String name;
     private String dstAddress;
     private String dstPort;

@@ -8,6 +8,6 @@ public interface Parser {
 
     Object dumpInternalState();
 
-    void start(final ScheduledExecutorService executorService);
+    void start(ScheduledExecutorService executorService);
     void stop();
 }

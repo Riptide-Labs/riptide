@@ -25,7 +25,7 @@ import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 
 @Configuration
-@ConditionalOnProperty(name="riptide.elastic.enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(name = "riptide.elastic.enabled", havingValue = "true", matchIfMissing = true)
 public class ElasticsearchConfiguration {
     @Bean
     public JestClient jestClient(ElasticsearchConfig config) throws NoSuchAlgorithmException, KeyStoreException, KeyManagementException {

@@ -15,7 +15,7 @@ import io.searchbox.core.BulkResult;
 
 public class BulkRequest<T> {
 
-    public static long[] SLEEP_TIME = new long[]{ 500, 1000, 5000, 10000, 30000, 60000 };
+    public static long[] SLEEP_TIME = new long[] {500, 1000, 5000, 10000, 30000, 60000};
 
     private static final Logger LOG = LoggerFactory.getLogger(BulkRequest.class);
     private final JestClient client;
@@ -32,10 +32,10 @@ public class BulkRequest<T> {
         this.retryCount = retryCount;
     }
 
-    public BulkResultWrapper execute() throws IOException {
+    public BulkResultWrapper<T> execute() throws IOException {
         do {
             try {
-                final BulkResultWrapper bulkResultWrapper = executeRequest();
+                final BulkResultWrapper<T> bulkResultWrapper = executeRequest();
                 if (bulkResultWrapper.isSucceeded()) {
                     return bulkResultWrapper;
                 }
@@ -68,16 +68,16 @@ public class BulkRequest<T> {
             retries++;
             waitBeforeRetrying(retries);
             LOG.info("Retrying now ...");
-        } while(retries != retryCount);
+        } while (retries != retryCount);
         throw new IllegalStateException("The execution of the bulk request should have failed.");
     }
 
     private boolean canRetry() {
-        return retries < retryCount -1;
+        return retries < retryCount - 1;
     }
 
 
-    private BulkResultWrapper executeRequest() throws IOException {
+    private BulkResultWrapper<T> executeRequest() throws IOException {
         // Create bulk action
         bulkAction = createBulk(bulkAction, documents);
 
@@ -85,13 +85,12 @@ public class BulkRequest<T> {
         // In this case, we do not send any request to elastic, as this would raise an exception
         // Instead we fake an EMPTY / SUCCESS result
         if (bulkAction.isEmpty()) {
-            return new EmptyResult();
+            return new EmptyResult<>();
         }
 
         // Handle bulk execute
         final BulkResult bulkResult = client.execute(bulkAction);
-        final BulkResultWrapper bulkResultWrapper = new DefaultBulkResult<>(bulkResult, documents);
-        return bulkResultWrapper;
+        return new DefaultBulkResult<>(bulkResult, documents);
     }
 
     // This creates a new (smaller) bulk action if the new document list is smaller than the bulk.actions
