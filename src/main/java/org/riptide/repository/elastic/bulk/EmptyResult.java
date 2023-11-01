@@ -1,10 +1,9 @@
 package org.riptide.repository.elastic.bulk;
 
+import org.riptide.repository.elastic.BulkResultWrapper;
+
 import java.util.ArrayList;
 import java.util.List;
-
-import io.searchbox.core.BulkResult;
-import org.riptide.repository.elastic.BulkResultWrapper;
 
 public class EmptyResult<T> implements BulkResultWrapper<T> {
     @Override
@@ -13,18 +12,8 @@ public class EmptyResult<T> implements BulkResultWrapper<T> {
     }
 
     @Override
-    public String getErrorMessage() {
-        return null;
-    }
-
-    @Override
     public List<FailedItem<T>> getFailedItems() {
         return new ArrayList<>();
-    }
-
-    @Override
-    public BulkResult getRawResult() {
-        return null;
     }
 
     @Override

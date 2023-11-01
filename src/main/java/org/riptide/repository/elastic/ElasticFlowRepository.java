@@ -1,19 +1,17 @@
 package org.riptide.repository.elastic;
 
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch.core.BulkRequest;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
-import io.searchbox.client.JestClient;
-import io.searchbox.core.Bulk;
-import io.searchbox.core.Index;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
 import org.riptide.repository.FlowRepository;
 import org.riptide.repository.elastic.bulk.BulkException;
-import org.riptide.repository.elastic.bulk.BulkRequest;
-import org.riptide.repository.elastic.bulk.BulkWrapper;
+import org.riptide.repository.elastic.bulk.BulkExecutor;
 import org.riptide.repository.elastic.doc.FlowDocument;
 import org.riptide.repository.elastic.doc.FlowDocumentMapper;
 import org.slf4j.Logger;
@@ -39,7 +37,7 @@ public class ElasticFlowRepository implements FlowRepository {
 
     private static final String INDEX_NAME = "netflow";
 
-    private final JestClient client;
+    private final ElasticsearchClient client;
 
     private final IndexStrategy indexStrategy;
 
@@ -77,7 +75,7 @@ public class ElasticFlowRepository implements FlowRepository {
     private final FlowDocumentMapper flowDocumentMapper;
 
     public ElasticFlowRepository(final MetricRegistry metricRegistry,
-                                 final JestClient jestClient,
+                                 final ElasticsearchClient jestClient,
                                  final IndexStrategy indexStrategy,
                                  final IndexSettings indexSettings,
                                  final FlowDocumentMapper flowDocumentMapper) {
@@ -92,7 +90,7 @@ public class ElasticFlowRepository implements FlowRepository {
     }
 
     public ElasticFlowRepository(final MetricRegistry metricRegistry,
-                                 final JestClient jestClient,
+                                 final ElasticsearchClient jestClient,
                                  final IndexStrategy indexStrategy,
                                  final IndexSettings indexSettings,
                                  final int bulkSize,
@@ -169,19 +167,20 @@ public class ElasticFlowRepository implements FlowRepository {
     private void persistBulk(final List<FlowDocument> bulk) throws FlowException {
         LOG.debug("Persisting {} flow documents.", bulk.size());
         try (Timer.Context ctx = logPersistingTimer.time()) {
-            final BulkRequest<FlowDocument> bulkRequest = new BulkRequest<>(client, bulk, (documents) -> {
-                final Bulk.Builder bulkBuilder = new Bulk.Builder();
-                for (FlowDocument flowDocument : documents) {
+            final var bulkExecutor = new BulkExecutor<>(client, bulk, (documents) -> {
+                final BulkRequest.Builder builder = new BulkRequest.Builder();
+                for (final var flowDocument : documents) {
                     final String index = indexStrategy.getIndex(indexSettings, INDEX_NAME, Instant.ofEpochMilli(flowDocument.getTimestamp()));
-                    final Index.Builder indexBuilder = new Index.Builder(flowDocument)
-                            .index(index);
-                    bulkBuilder.addAction(indexBuilder.build());
+                    builder.operations(op -> op
+                            .index(idx -> idx
+                                    .index(index)
+                                    .document(flowDocument)));
                 }
-                return new BulkWrapper(bulkBuilder);
+                return builder.build();
             }, bulkRetryCount);
             try {
                 // the bulk request considers retries
-                bulkRequest.execute();
+                bulkExecutor.execute();
             } catch (BulkException ex) {
                 if (ex.getBulkResult() != null) {
                     throw new PersistenceException(ex.getMessage(), ex.getBulkResult().getFailedItems());

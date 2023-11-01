@@ -6,26 +6,29 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Function;
 
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch._types.ElasticsearchException;
+import co.elastic.clients.elasticsearch.core.BulkRequest;
 import org.riptide.repository.elastic.BulkResultWrapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import io.searchbox.client.JestClient;
-import io.searchbox.core.BulkResult;
-
-public class BulkRequest<T> {
+public class BulkExecutor<T> {
 
     public static long[] SLEEP_TIME = new long[] {500, 1000, 5000, 10000, 30000, 60000};
 
-    private static final Logger LOG = LoggerFactory.getLogger(BulkRequest.class);
-    private final JestClient client;
+    private static final Logger LOG = LoggerFactory.getLogger(BulkExecutor.class);
+    private final ElasticsearchClient client;
     private final List<T> documents;
-    private final Function<List<T>, BulkWrapper> transformer;
+    private final Function<List<T>, BulkRequest> transformer;
     private final int retryCount;
     private int retries = 0;
-    private BulkWrapper bulkAction;
+    private BulkRequest bulkRequest;
 
-    public BulkRequest(final JestClient client, final List<T> documents, final Function<List<T>, BulkWrapper> documentToBulkTransformer, int retryCount) {
+    public BulkExecutor(final ElasticsearchClient client,
+                        final List<T> documents,
+                        final Function<List<T>, BulkRequest> documentToBulkTransformer,
+                        final int retryCount) {
         this.client = Objects.requireNonNull(client);
         this.transformer = Objects.requireNonNull(documentToBulkTransformer);
         this.documents = new ArrayList<>(Objects.requireNonNull(documents));
@@ -40,8 +43,13 @@ public class BulkRequest<T> {
                     return bulkResultWrapper;
                 }
                 // Handle errors
-                final List<T> failedDocuments = bulkResultWrapper.getFailedDocuments();
-                logError(bulkResultWrapper.getErrorMessage());
+                final List<T> failedDocuments;
+                try {
+                    failedDocuments = bulkResultWrapper.getFailedDocuments();
+                } catch (final ElasticsearchException e) {
+                    logError(e.getMessage());
+                    continue;
+                }
 
                 // bail if retry is not possible
                 if (!canRetry()) {
@@ -79,24 +87,24 @@ public class BulkRequest<T> {
 
     private BulkResultWrapper<T> executeRequest() throws IOException {
         // Create bulk action
-        bulkAction = createBulk(bulkAction, documents);
+        bulkRequest = createBulk(bulkRequest, documents);
 
         // The bulk action list may be empty.
         // In this case, we do not send any request to elastic, as this would raise an exception
         // Instead we fake an EMPTY / SUCCESS result
-        if (bulkAction.isEmpty()) {
+        if (bulkRequest.operations().isEmpty()) {
             return new EmptyResult<>();
         }
 
         // Handle bulk execute
-        final BulkResult bulkResult = client.execute(bulkAction);
+        final var bulkResult = client.bulk(bulkRequest);
         return new DefaultBulkResult<>(bulkResult, documents);
     }
 
     // This creates a new (smaller) bulk action if the new document list is smaller than the bulk.actions
     // This can only be the case if less than all documents failed.
-    private BulkWrapper createBulk(BulkWrapper bulk, List<T> documents) {
-        if (bulk == null || bulk.size() != documents.size()) {
+    private BulkRequest createBulk(BulkRequest bulk, List<T> documents) {
+        if (bulk == null || bulk.operations().size() != documents.size()) {
             return transformer.apply(documents);
         }
         return bulk;
