@@ -1,6 +1,6 @@
 package org.riptide.repository.elastic;
 
-import io.searchbox.client.JestClient;
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
 import org.riptide.repository.FlowRepository;
@@ -24,7 +24,7 @@ public class InitializingElasticFlowRepository implements FlowRepository {
     private final AtomicBoolean initialized = new AtomicBoolean(false);
 
     public InitializingElasticFlowRepository(final FlowRepository delegate,
-                                             final JestClient client,
+                                             final ElasticsearchClient client,
                                              final IndexSettings rawIndexSettings/*,
                                       final IndexSettings aggIndexSettings*/) {
         this(delegate, new RawIndexInitializer(client, rawIndexSettings)/*, new AggregateIndexInitializer(bundleContext, client, aggIndexSettings)*/);

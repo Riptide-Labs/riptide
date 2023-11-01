@@ -1,15 +1,18 @@
 package org.riptide.configuration;
 
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.json.JsonpMapper;
+import co.elastic.clients.json.jackson.JacksonJsonpMapper;
+import co.elastic.clients.transport.ElasticsearchTransport;
+import co.elastic.clients.transport.rest_client.RestClientTransport;
 import com.codahale.metrics.MetricRegistry;
-import io.searchbox.client.JestClient;
-import io.searchbox.client.JestClientFactory;
-import io.searchbox.client.config.HttpClientConfig;
+import org.apache.http.HttpHost;
 import org.apache.http.auth.AuthScope;
 import org.apache.http.auth.UsernamePasswordCredentials;
 import org.apache.http.conn.ssl.NoopHostnameVerifier;
-import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
 import org.apache.http.impl.client.BasicCredentialsProvider;
 import org.apache.http.ssl.SSLContextBuilder;
+import org.elasticsearch.client.RestClient;
 import org.riptide.config.ElasticsearchConfig;
 import org.riptide.repository.FlowRepository;
 import org.riptide.repository.elastic.ElasticFlowRepository;
@@ -29,7 +32,17 @@ import java.security.NoSuchAlgorithmException;
 @ConditionalOnProperty(name = "riptide.elastic.enabled", havingValue = "true", matchIfMissing = true)
 public class ElasticsearchConfiguration {
     @Bean
-    public JestClient jestClient(ElasticsearchConfig config) throws NoSuchAlgorithmException, KeyStoreException, KeyManagementException {
+    ElasticsearchClient jestClient(final ElasticsearchTransport transport) {
+        return new ElasticsearchClient(transport);
+    }
+
+    @Bean
+    JsonpMapper jsonpMapper() {
+        return new JacksonJsonpMapper();
+    }
+
+    @Bean
+    RestClient restClient(final ElasticsearchConfig config) throws NoSuchAlgorithmException, KeyStoreException, KeyManagementException {
         // TODO fooker: Do not trusts ALL certificates
         final var sslContext = new SSLContextBuilder()
                 .loadTrustMaterial(null, (chain, authType) -> true)
@@ -38,25 +51,28 @@ public class ElasticsearchConfiguration {
         // TODO fooker: Do not skips hostname checks
         final var hostnameVerifier = NoopHostnameVerifier.INSTANCE;
 
-        final var sslSocketFactory = new SSLConnectionSocketFactory(sslContext, hostnameVerifier);
-
         final var basicCredentialsProvider = new BasicCredentialsProvider();
         basicCredentialsProvider.setCredentials(AuthScope.ANY, new UsernamePasswordCredentials(config.username, config.password));
 
-        final var factory = new JestClientFactory();
-        factory.setHttpClientConfig(new HttpClientConfig.Builder(config.url)
-                .credentialsProvider(basicCredentialsProvider)
-                .sslSocketFactory(sslSocketFactory)
-                .multiThreaded(true)
-                .defaultMaxTotalConnectionPerRoute(2)
-                .maxTotalConnection(10)
-                .build());
-        return factory.getObject();
+        return RestClient
+                .builder(HttpHost.create(config.url))
+                .setHttpClientConfigCallback(client -> client
+                        .setDefaultCredentialsProvider(basicCredentialsProvider)
+                        .setMaxConnPerRoute(2)
+                        .setMaxConnTotal(10)
+                        .setSSLHostnameVerifier(hostnameVerifier)
+                        .setSSLContext(sslContext))
+                .build();
     }
 
     @Bean
-    public FlowRepository elasticFlowRepository(final ElasticsearchConfig config,
-                                                final JestClient jestClient,
+    ElasticsearchTransport elasticsearchTransport(final RestClient restClient, final JsonpMapper jsonpMapper) {
+        return new RestClientTransport(restClient, jsonpMapper);
+    }
+
+    @Bean
+    FlowRepository elasticFlowRepository(final ElasticsearchConfig config,
+                                                final ElasticsearchClient elasticsearchClient,
                                                 final MetricRegistry metricRegistry,
                                                 final FlowDocumentMapper flowDocumentMapper) {
         final var indexSettings = new IndexSettings();
@@ -67,9 +83,10 @@ public class ElasticsearchConfiguration {
 
         final var indexStrategy = IndexStrategy.DAILY;
 
-        final var repository = new ElasticFlowRepository(metricRegistry, jestClient, indexStrategy, indexSettings, flowDocumentMapper);
+        final var repository = new ElasticFlowRepository(metricRegistry, elasticsearchClient, indexStrategy, indexSettings, flowDocumentMapper);
+        repository.start();
 
-        return new InitializingElasticFlowRepository(repository, jestClient, indexSettings);
+        return new InitializingElasticFlowRepository(repository, elasticsearchClient, indexSettings);
     }
 
 }
