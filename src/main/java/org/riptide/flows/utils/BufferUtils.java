@@ -1,15 +1,14 @@
 package org.riptide.flows.utils;
 
+import com.google.common.base.Preconditions;
+import com.google.common.primitives.UnsignedLong;
+import io.netty.buffer.ByteBuf;
+
 import java.nio.BufferUnderflowException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.function.Function;
-
-import com.google.common.base.Preconditions;
-import com.google.common.collect.Lists;
-import com.google.common.primitives.UnsignedLong;
-
-import io.netty.buffer.ByteBuf;
 
 public final class BufferUtils {
 
@@ -149,7 +148,7 @@ public final class BufferUtils {
     }
 
     public static <T, E extends Exception> List<T> repeatRemaining(final ByteBuf buffer, final Parser<T, E> parser) throws E {
-        final List<T> elements = Lists.newArrayList();
+        final List<T> elements = new ArrayList<>();
         while (buffer.isReadable()) {
             elements.add(parser.parse(buffer));
         }
@@ -157,7 +156,7 @@ public final class BufferUtils {
     }
 
     public static <T, E extends Exception> List<T> repeatCount(final ByteBuf buffer, final int count, final Parser<T, E> parser) throws E {
-        final List<T> elements = Lists.newArrayList();
+        final List<T> elements = new ArrayList<>();
         for (int i = 0; i < count; i++) {
             elements.add(parser.parse(buffer));
         }

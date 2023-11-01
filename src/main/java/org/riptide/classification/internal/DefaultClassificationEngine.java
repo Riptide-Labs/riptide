@@ -1,6 +1,5 @@
 package org.riptide.classification.internal;
 
-import com.google.common.collect.Lists;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.classification.ClassificationEngine;
 import org.riptide.classification.ClassificationRequest;
@@ -47,7 +46,7 @@ public class DefaultClassificationEngine implements ClassificationEngine {
         var invalid = new ArrayList<Rule>();
 
         // Load all rules and validate them
-        final List<PreprocessedRule> preprocessedRules = Lists.newArrayList();
+        final List<PreprocessedRule> preprocessedRules = new ArrayList<>();
         final var rules = ruleProvider.getRules();
         rules.forEach(rule -> {
             try {

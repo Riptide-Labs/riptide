@@ -1,5 +1,12 @@
 package org.riptide.flows.parser.session;
 
+import com.google.common.collect.Iterables;
+import org.riptide.flows.parser.MissingTemplateException;
+import org.riptide.flows.parser.ie.Value;
+import org.riptide.flows.parser.state.ExporterState;
+import org.riptide.flows.parser.state.OptionState;
+import org.riptide.flows.parser.state.TemplateState;
+
 import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -14,15 +21,6 @@ import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-
-import org.riptide.flows.parser.MissingTemplateException;
-import org.riptide.flows.parser.ie.Value;
-import org.riptide.flows.parser.state.ExporterState;
-import org.riptide.flows.parser.state.OptionState;
-import org.riptide.flows.parser.state.TemplateState;
-
-import com.google.common.collect.Iterables;
-import com.google.common.collect.Maps;
 
 public class TcpSession implements Session {
     private final class Resolver implements Session.Resolver {
@@ -100,9 +98,9 @@ public class TcpSession implements Session {
     }
 
     private final InetAddress remoteAddress;
-    private final Map<TemplateKey, Template> templates = Maps.newHashMap();
-    private final Map<TemplateKey, Map<Set<Value<?>>, List<Value<?>>>> options = Maps.newHashMap();
-    private final Map<Long, SequenceNumberTracker> sequenceNumbers = Maps.newHashMap();
+    private final Map<TemplateKey, Template> templates = new HashMap<>();
+    private final Map<TemplateKey, Map<Set<Value<?>>, List<Value<?>>>> options = new HashMap<>();
+    private final Map<Long, SequenceNumberTracker> sequenceNumbers = new HashMap<>();
 
     private final Supplier<SequenceNumberTracker> sequenceNumberTracker;
 

@@ -21,7 +21,7 @@ class InformationElementProviderTest {
         final var registry = JAXB.unmarshal(getClass().getResourceAsStream(InformationElementProvider.XML_FILE_LOCATION), Registry.class);
         Assertions.assertThat(registry).isNotNull();
         Assertions.assertThat(registry.getId()).isEqualTo(Protocol.IPFIX.description.toLowerCase());
-        Assertions.assertThat(registry.getCreated()).isEqualTo(LocalDate.of(2007,5,10));
+        Assertions.assertThat(registry.getCreated()).isEqualTo(LocalDate.of(2007, 5, 10));
         Assertions.assertThat(registry.getUpdated()).isNotNull();
         Assertions.assertThat(registry.getPeople())
                 .isNotEmpty()

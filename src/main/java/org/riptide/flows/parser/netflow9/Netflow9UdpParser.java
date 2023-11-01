@@ -2,14 +2,13 @@ package org.riptide.flows.parser.netflow9;
 
 import com.codahale.metrics.MetricRegistry;
 import com.google.common.base.MoreObjects;
-import com.google.common.base.Objects;
 import io.netty.buffer.ByteBuf;
 import org.riptide.dns.api.DnsResolver;
-import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.listeners.Dispatchable;
 import org.riptide.flows.listeners.UdpParser;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.UdpParserBase;
+import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.ie.RecordProvider;
 import org.riptide.flows.parser.netflow9.proto.Header;
 import org.riptide.flows.parser.netflow9.proto.Packet;
@@ -20,6 +19,7 @@ import org.riptide.pipeline.WithSource;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.time.Duration;
+import java.util.Objects;
 import java.util.function.Consumer;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
@@ -78,13 +78,13 @@ public class Netflow9UdpParser extends UdpParserBase implements UdpParser, Dispa
             if (this == o) return true;
             if (o == null || getClass() != o.getClass()) return false;
             final SessionKey that = (SessionKey) o;
-            return Objects.equal(this.localAddress, that.localAddress)
-                    && Objects.equal(this.remoteAddress, that.remoteAddress);
+            return Objects.equals(this.localAddress, that.localAddress)
+                    && Objects.equals(this.remoteAddress, that.remoteAddress);
         }
 
         @Override
         public int hashCode() {
-            return Objects.hashCode(this.localAddress, this.remoteAddress);
+            return Objects.hash(this.localAddress, this.remoteAddress);
         }
 
         @Override
