@@ -5,6 +5,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -89,6 +90,10 @@ public class UdpSessionManager {
         return parser.build();
     }
 
+    public Map<TemplateKey, TimeWrapper<TemplateOptions>> getTemplates() {
+        return Collections.unmodifiableMap(this.templates);
+    }
+
     public interface SessionKey {
         String getDescription();
 
@@ -124,11 +129,11 @@ public class UdpSessionManager {
         }
     }
 
-    private static final class TemplateKey {
+    public static final class TemplateKey {
         public final DomainKey observationDomainId;
         public final int templateId;
 
-        private TemplateKey(final SessionKey sessionKey,
+        public TemplateKey(final SessionKey sessionKey,
                     final long observationDomainId,
                     final int templateId) {
             this.observationDomainId = new DomainKey(sessionKey, observationDomainId);
