@@ -42,15 +42,16 @@ public final class CsvImporter {
             final String omnidirectional = record.get(7);
 
             // Set values
-            final var rule = new DefaultRule();
-            rule.setName(Strings.emptyToNull(name));
-            rule.setDstPort(Strings.emptyToNull(dstPort));
-            rule.setDstAddress(Strings.emptyToNull(dstAddress));
-            rule.setSrcPort(Strings.emptyToNull(srcPort));
-            rule.setSrcAddress(Strings.emptyToNull(srcAddress));
-            rule.setProtocol(Strings.emptyToNull(protocol));
-            rule.setExporterFilter(Strings.emptyToNull(exportFilter));
-            rule.setOmnidirectional(Boolean.parseBoolean(omnidirectional));
+            final var rule = DefaultRule.builder()
+                .withName(Strings.emptyToNull(name))
+                .withDstPort(Strings.emptyToNull(dstPort))
+                .withDstAddress(Strings.emptyToNull(dstAddress))
+                .withSrcPort(Strings.emptyToNull(srcPort))
+                .withSrcAddress(Strings.emptyToNull(srcAddress))
+                .withProtocol(Strings.emptyToNull(protocol))
+                .withExporterFilter(Strings.emptyToNull(exportFilter))
+                .withOmnidirectional(Boolean.parseBoolean(omnidirectional))
+                .build();
 
             rules.add(rule);
         }
