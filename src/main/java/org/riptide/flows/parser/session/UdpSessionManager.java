@@ -1,5 +1,13 @@
 package org.riptide.flows.parser.session;
 
+import com.google.common.collect.Iterables;
+import org.riptide.flows.parser.MissingTemplateException;
+import org.riptide.flows.parser.ie.Value;
+import org.riptide.flows.parser.state.ExporterState;
+import org.riptide.flows.parser.state.OptionState;
+import org.riptide.flows.parser.state.ParserState;
+import org.riptide.flows.parser.state.TemplateState;
+
 import java.net.InetAddress;
 import java.time.Duration;
 import java.time.Instant;
@@ -11,25 +19,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
-import org.riptide.flows.parser.MissingTemplateException;
-import org.riptide.flows.parser.ie.Value;
-import org.riptide.flows.parser.state.ExporterState;
-import org.riptide.flows.parser.state.OptionState;
-import org.riptide.flows.parser.state.ParserState;
-import org.riptide.flows.parser.state.TemplateState;
-
-import com.google.common.collect.Iterables;
-import com.google.common.collect.Maps;
-
 public class UdpSessionManager {
-    private final ConcurrentMap<TemplateKey, TimeWrapper<TemplateOptions>> templates = Maps.newConcurrentMap();
+    private final ConcurrentMap<TemplateKey, TimeWrapper<TemplateOptions>> templates = new ConcurrentHashMap<>();
 
-    private final Map<DomainKey, SequenceNumberTracker> sequenceNumbers = Maps.newConcurrentMap();
+    private final Map<DomainKey, SequenceNumberTracker> sequenceNumbers = new ConcurrentHashMap<>();
 
     private final Duration timeout;
 
@@ -169,7 +168,7 @@ public class UdpSessionManager {
         public final Map<Set<Value<?>>, TimeWrapper<List<Value<?>>>> options;
 
         private TemplateOptions(final Template template) {
-            this(template, Maps.newConcurrentMap());
+            this(template, new ConcurrentHashMap<>());
         }
 
         private TemplateOptions(final Template template, Map<Set<Value<?>>, TimeWrapper<List<Value<?>>>> options) {

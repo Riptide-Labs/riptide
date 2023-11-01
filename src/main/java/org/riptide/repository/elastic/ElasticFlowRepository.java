@@ -3,8 +3,6 @@ package org.riptide.repository.elastic;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
 import io.searchbox.client.JestClient;
 import io.searchbox.core.Bulk;
 import io.searchbox.core.Index;
@@ -20,12 +18,14 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TimerTask;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class ElasticFlowRepository implements FlowRepository {
@@ -57,8 +57,8 @@ public class ElasticFlowRepository implements FlowRepository {
     private int bulkFlushMs = 500;
 
     private class FlowBulk {
-        private List<FlowDocument> documents = Lists.newArrayListWithCapacity(ElasticFlowRepository.this.bulkSize);
-        private ReentrantLock lock = new ReentrantLock();
+        private final List<FlowDocument> documents = new ArrayList<>(ElasticFlowRepository.this.bulkSize);
+        private final ReentrantLock lock = new ReentrantLock();
         private long lastPersist = 0;
 
         FlowBulk() {
@@ -68,7 +68,7 @@ public class ElasticFlowRepository implements FlowRepository {
     /**
      * Collect flow documents ready for persistence.
      */
-    private final Map<Thread, FlowBulk> flowBulks = Maps.newConcurrentMap();
+    private final Map<Thread, FlowBulk> flowBulks = new ConcurrentHashMap<>();
     private java.util.Timer flushTimer;
 
     public ElasticFlowRepository(final MetricRegistry metricRegistry,

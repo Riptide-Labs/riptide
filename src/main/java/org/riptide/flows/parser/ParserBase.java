@@ -7,7 +7,6 @@ import com.codahale.metrics.Timer;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
-import com.google.common.collect.Lists;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.dns.api.DnsResolver;
 import org.riptide.flows.parser.data.Flow;
@@ -21,6 +20,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -394,7 +394,7 @@ public abstract class ParserBase implements Parser {
     }
 
     private List<String> correctFlow(final Flow flow) {
-        final List<String> corrections = Lists.newArrayList();
+        final List<String> corrections = new ArrayList<>();
 
         // TODO fooker: Re-enable
 //        if (flow.getFirstSwitched().getValue() > flow.getLastSwitched().getValue()) {
