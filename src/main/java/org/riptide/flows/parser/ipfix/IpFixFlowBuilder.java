@@ -40,7 +40,7 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
         // TODO fooker: What about @observationDomainId
 
-        // TODO: Structurize meta info
+        // TODO fooker: Structurize meta info
         final var timestamp = timestampValue("@exportTime");
 
         final var systemInitTime = timestampValue("systemInitTimeMilliseconds");
@@ -180,7 +180,7 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
             @Override
             public int getFlowRecordNum() {
-                // TODO: Structurize meta info
+                // TODO fooker: Structurize meta info
                 return Values.<Integer>first(values)
                         .with(intValue("@recordCount"))
                         .getOrNull();
@@ -188,7 +188,7 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
             @Override
             public long getFlowSeqNum() {
-                // TODO: Structurize meta info
+                // TODO fooker: Structurize meta info
                 return Values.<Long>first(values)
                         .with(longValue("@sequenceNumber"))
                         .getOrNull();
