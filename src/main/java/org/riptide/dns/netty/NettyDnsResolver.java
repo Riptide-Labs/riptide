@@ -25,7 +25,6 @@ import com.codahale.metrics.Timer;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Strings;
 import com.google.common.net.HostAndPort;
-
 import io.github.resilience4j.bulkhead.Bulkhead;
 import io.github.resilience4j.bulkhead.BulkheadConfig;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
@@ -125,8 +124,8 @@ public class NettyDnsResolver implements DnsResolver {
         final CircuitBreakerConfig circuitBreakerConfig = CircuitBreakerConfig.custom()
                 .failureRateThreshold(breakerFailureRateThreshold)
                 .waitDurationInOpenState(Duration.ofSeconds(breakerWaitDurationInOpenState))
-                .ringBufferSizeInHalfOpenState(breakerRingBufferSizeInHalfOpenState)
-                .ringBufferSizeInClosedState(breakerRingBufferSizeInClosedState)
+                .permittedNumberOfCallsInHalfOpenState(breakerRingBufferSizeInHalfOpenState)
+                .slidingWindow(breakerRingBufferSizeInClosedState, breakerRingBufferSizeInClosedState, CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
                 .recordExceptions(DnsNameResolverTimeoutException.class)
                 .build();
         circuitBreaker = CircuitBreaker.of("nettyDnsResolver", circuitBreakerConfig);
