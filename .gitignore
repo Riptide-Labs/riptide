@@ -4,6 +4,14 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
+### Mac OSX ###
+.DS_Store
+
+### vi swap and temporary files ###
+*~
+*.swp
+*.swo
+
 ### STS ###
 .apt_generated
 .classpath
@@ -37,3 +45,7 @@ build/
 .direnv/
 src/main/resources/application-local.properties
 src/test/resources/application-local.properties
+
+### jenv toolkit ###
+.java-version
+
