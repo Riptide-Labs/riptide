@@ -57,8 +57,18 @@ public class EnrichedFlow implements Flow {
     private NodeInfo dstNodeInfo;
     private NodeInfo exporterNodeInfo;
     private Duration clockCorrection;
+    private String inputSnmpIfName;
+    private String outputSnmpIfName;
 
     public EnrichedFlow() {
+    }
+
+    public String getInputSnmpIfName() {
+        return inputSnmpIfName;
+    }
+
+    public String getOutputSnmpIfName() {
+        return outputSnmpIfName;
     }
 
     public String getApplication() {
@@ -463,6 +473,14 @@ public class EnrichedFlow implements Flow {
 
     public void setVlan(final Integer vlan) {
         this.vlan = vlan;
+    }
+
+    public void setInputSnmpIfName(final String inputSnmpIfName) {
+        this.inputSnmpIfName = inputSnmpIfName;
+    }
+
+    public void setOutputSnmpIfName(final String outputSnmpIfName) {
+        this.outputSnmpIfName = outputSnmpIfName;
     }
 
     public String getConvoKey() {

@@ -1,26 +1,32 @@
 package org.riptide.pipeline;
 
-import com.codahale.metrics.Counter;
-import com.codahale.metrics.Histogram;
-import com.codahale.metrics.MetricRegistry;
-import com.codahale.metrics.Timer;
-import com.google.common.collect.Maps;
+import java.io.IOException;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
+
 import org.riptide.classification.ClassificationEngine;
 import org.riptide.classification.ClassificationRequest;
 import org.riptide.classification.IpAddr;
 import org.riptide.classification.Protocols;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.repository.FlowRepository;
+import org.riptide.snmp.SnmpCache;
+import org.riptide.snmp.SnmpConfiguration;
+import org.riptide.snmp.SnmpEndpoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.stream.Collectors;
+import com.codahale.metrics.Counter;
+import com.codahale.metrics.Histogram;
+import com.codahale.metrics.MetricRegistry;
+import com.codahale.metrics.Timer;
+import com.google.common.collect.Maps;
 
 @Component
 public class Pipeline {
@@ -61,6 +67,9 @@ public class Pipeline {
 
     // private final FlowThresholdingImpl thresholding;
 
+    private final SnmpCache snmpCache;
+
+    private final SnmpConfiguration snmpConfiguration;
     private final Map<String, Persister> persisters;
 
     public Pipeline(final ClassificationEngine classificationEngine,
@@ -68,7 +77,9 @@ public class Pipeline {
 //                    final InterfaceMarkerImpl interfaceMarker,
 //                    final FlowThresholdingImpl thresholding,
                     final Map<String, FlowRepository> repositories,
-                    final MetricRegistry metricRegistry
+                    final MetricRegistry metricRegistry,
+                    final SnmpConfiguration snmpConfiguration,
+                    final SnmpCache snmpCache
     ) {
         this.classificationEngine = Objects.requireNonNull(classificationEngine);
 //        this.documentEnricher = Objects.requireNonNull(documentEnricher);
@@ -82,6 +93,8 @@ public class Pipeline {
         this.logEnrichementTimer = metricRegistry.timer("logEnrichment");
         this.logMarkingTimer = metricRegistry.timer("logMarking");
         this.logThresholdingTimer = metricRegistry.timer("logThresholding");
+        this.snmpConfiguration = snmpConfiguration;
+        this.snmpCache = snmpCache;
 
         this.persisters = Maps.transformEntries(repositories, (name, repository) -> {
             final var timer = metricRegistry.timer(MetricRegistry.name("logPersisting", name));
@@ -105,8 +118,8 @@ public class Pipeline {
                 .collect(Collectors.toList());
 
         // Classify flows
-        try (Timer.Context ctx  = this.logClassificationTimer.time()) {
-            for (final var flow: enrichedFlows) {
+        try (Timer.Context ctx = this.logClassificationTimer.time()) {
+            for (final var flow : enrichedFlows) {
                 final var request = ClassificationRequest.builder()
                         .withExporterAddress(IpAddr.of(flows.source()))
                         .withLocation(flows.location())
@@ -127,6 +140,17 @@ public class Pipeline {
         // Enrich with model data
         LOG.debug("Enriching {} flow documents.", flows.value().size());
         try (Timer.Context ctx = this.logEnrichementTimer.time()) {
+            for (final EnrichedFlow enrichedFlow : enrichedFlows) {
+                final Optional<SnmpEndpoint> snmpEndpoint = snmpConfiguration.lookup(enrichedFlow.getHost());
+                snmpEndpoint.ifPresent(e -> {
+                    try {
+                        snmpCache.getIfName(e, enrichedFlow.getInputSnmp()).ifPresent(enrichedFlow::setInputSnmpIfName);
+                        snmpCache.getIfName(e, enrichedFlow.getOutputSnmp()).ifPresent(enrichedFlow::setOutputSnmpIfName);
+                    } catch (ExecutionException ex) {
+                        throw new RuntimeException(ex);
+                    }
+                });
+            }
             //enrichedFlows = documentEnricher.enrich(flows, source);
             // TODO fooker: Can I haz real enrichment?
         } catch (final Exception e) {
@@ -156,15 +180,15 @@ public class Pipeline {
     }
 
     private record Persister(FlowRepository repository, Timer logTimer) {
-            private Persister(final FlowRepository repository, final Timer logTimer) {
-                this.repository = Objects.requireNonNull(repository);
-                this.logTimer = Objects.requireNonNull(logTimer);
-            }
+        private Persister(final FlowRepository repository, final Timer logTimer) {
+            this.repository = Objects.requireNonNull(repository);
+            this.logTimer = Objects.requireNonNull(logTimer);
+        }
 
-            public void persist(final Collection<EnrichedFlow> flows) throws FlowException, IOException {
-                try (var ctx = this.logTimer.time()) {
-                    this.repository.persist(flows);
-                }
+        public void persist(final Collection<EnrichedFlow> flows) throws FlowException, IOException {
+            try (var ctx = this.logTimer.time()) {
+                this.repository.persist(flows);
             }
         }
+    }
 }
