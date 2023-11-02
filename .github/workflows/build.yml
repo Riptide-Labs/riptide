@@ -4,7 +4,7 @@ on:
   - push
   - workflow_dispatch
 jobs:
-  Build-And-Test:
+  Build-Test-DockerPublish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,3 +19,38 @@ jobs:
         run: mvn --batch-mode --update-snapshots verify
       - name: Docker Build
         run: mvn --batch-mode --update-snapshots jib:dockerBuild
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            quay.io/pikkalabs/riptide
+          flavor: |
+            latest=false
+            suffix=
+            prefix=
+          # generate Docker tags based on the following events/attributes
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=,event=branch
+            type=ref,event=pr
+            type=sha,prefix=,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix=
+            # set latest tag for default branch
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Docker publish
+        env:
+          QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+          QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
+        run:  |
+          TAGS=$(echo ${DOCKER_METADATA_OUTPUT_TAGS//quay.io\/pikkalabs\/riptide:/} | tr ' ' ,)
+          echo "Pushing docker image using the following tags: $TAGS"
+          mvn --batch-mode \
+            -D"jib.to.image=quay.io/pikkalabs/riptide:${GITHUB_SHA::7}" \
+            -D"jib.to.tags=$TAGS" \
+            -D"jib.to.auth.username=$QUAY_USERNAME" \
+            -D"jib.to.auth.password=$QUAY_PASSWORD" \
+            jib:build
