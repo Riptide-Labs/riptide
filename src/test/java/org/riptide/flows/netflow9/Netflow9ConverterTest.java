@@ -33,23 +33,23 @@ public class Netflow9ConverterTest {
         Assertions.assertThat(flows).hasSize(5);
 
         final var flow = flows.get(4);
-        Assertions.assertThat(flow.getNetflowVersion()).isEqualTo(Flow.NetflowVersion.V9);
+        Assertions.assertThat(flow.getFlowProtocol()).isEqualTo(Flow.FlowProtocol.NetflowV9);
         Assertions.assertThat(flow.getSrcAddr().getHostAddress()).isEqualTo("10.1.20.85");
-        Assertions.assertThat(flow.getSrcAddrHostname()).isEqualTo(Optional.empty());
+        Assertions.assertThat(flow.getSrcAddrHostname()).isNull();
         Assertions.assertThat(flow.getSrcPort()).isEqualTo(137);
         Assertions.assertThat(flow.getDstAddr().getHostAddress()).isEqualTo("10.1.20.127");
-        Assertions.assertThat(flow.getDstAddrHostname()).isEmpty();
+        Assertions.assertThat(flow.getDstAddrHostname()).isNull();
         Assertions.assertThat(flow.getDstPort()).isEqualTo(137);
         Assertions.assertThat(flow.getProtocol()).isEqualTo(17); // UDP
-        Assertions.assertThat(flow.getNumBytes()).isEqualTo(156L);
+        Assertions.assertThat(flow.getBytes()).isEqualTo(156L);
         Assertions.assertThat(flow.getInputSnmp()).isEqualTo(369098754);
         Assertions.assertThat(flow.getOutputSnmp()).isEqualTo(0);
         Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(1524773519000L)); // Thu Apr 26 16:11:59 EDT 2018
         Assertions.assertThat(flow.getLastSwitched()).isEqualTo(Instant.ofEpochMilli(1524773527000L)); // Thu Apr 26 16:12:07 EDT 2018
-        Assertions.assertThat(flow.getNumPackets()).isEqualTo(2L);
+        Assertions.assertThat(flow.getPackets()).isEqualTo(2L);
         Assertions.assertThat(flow.getDirection()).isEqualTo(Flow.Direction.INGRESS);
         Assertions.assertThat(flow.getNextHop().getHostAddress()).isEqualTo("0.0.0.0");
-        Assertions.assertThat(flow.getNextHopHostname()).isEqualTo(Optional.empty());
+        Assertions.assertThat(flow.getNextHopHostname()).isNull();
         Assertions.assertThat(flow.getVlan()).isNull();
     }
 

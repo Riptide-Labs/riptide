@@ -13,14 +13,14 @@ import org.riptide.flows.parser.netflow5.Netflow5UdpParser;
 import org.riptide.flows.parser.netflow9.Netflow9UdpParser;
 import org.riptide.pipeline.FlowException;
 import org.riptide.pipeline.Pipeline;
-import org.riptide.pipeline.WithSource;
+import org.riptide.pipeline.Source;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 @Component
 @Slf4j
@@ -36,9 +36,9 @@ public class Daemon implements ApplicationRunner {
 
         final var location = "Cloudcuckooland";
 
-        final Consumer<WithSource<Flow>> dispatcher = flow -> {
+        final BiConsumer<Source, Flow> dispatcher = (source, flow) -> {
             try {
-                pipeline.process(flow.withValue(Collections.singletonList(flow.value())));
+                pipeline.process(source, Collections.singletonList(flow));
             } catch (final FlowException e) {
                 // TODO fooker: real error handling
                 throw new RuntimeException(e);

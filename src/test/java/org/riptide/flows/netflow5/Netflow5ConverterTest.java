@@ -31,33 +31,33 @@ public class Netflow5ConverterTest {
         Assertions.assertThat(flows).hasSize(2);
 
         final var flow = flows.get(0);
-        Assertions.assertThat(flow.getNetflowVersion()).isEqualTo(Flow.NetflowVersion.V5);
-        Assertions.assertThat(flow.getFlowRecordNum()).isEqualTo(2);
+        Assertions.assertThat(flow.getFlowProtocol()).isEqualTo(Flow.FlowProtocol.NetflowV5);
+        Assertions.assertThat(flow.getFlowRecords()).isEqualTo(2);
         Assertions.assertThat(flow.getFlowSeqNum()).isEqualTo(0L);
         Assertions.assertThat(flow.getEngineId()).isEqualTo(0);
         Assertions.assertThat(flow.getEngineType()).isEqualTo(0);
         Assertions.assertThat(flow.getSamplingInterval()).isEqualTo(0.0);
         Assertions.assertThat(flow.getSamplingAlgorithm()).isEqualTo(Flow.SamplingAlgorithm.Unassigned);
         Assertions.assertThat(flow.getSrcAddr().getHostAddress()).isEqualTo("10.0.2.2");
-        Assertions.assertThat(flow.getSrcAddrHostname()).isEmpty();
+        Assertions.assertThat(flow.getSrcAddrHostname()).isNull();
         Assertions.assertThat(flow.getSrcPort()).isEqualTo(54435);
         Assertions.assertThat(flow.getSrcMaskLen()).isEqualTo(0);
         Assertions.assertThat(flow.getDstAddr().getHostAddress()).isEqualTo("10.0.2.15");
-        Assertions.assertThat(flow.getDstAddrHostname()).isEmpty();
+        Assertions.assertThat(flow.getDstAddrHostname()).isNull();
         Assertions.assertThat(flow.getDstPort()).isEqualTo(22);
         Assertions.assertThat(flow.getDstMaskLen()).isEqualTo(0);
         Assertions.assertThat(flow.getTcpFlags()).isEqualTo(16);
         Assertions.assertThat(flow.getProtocol()).isEqualTo(6); // TCP
-        Assertions.assertThat(flow.getNumBytes()).isEqualTo(230L);
+        Assertions.assertThat(flow.getBytes()).isEqualTo(230L);
         Assertions.assertThat(flow.getInputSnmp()).isEqualTo(0);
         Assertions.assertThat(flow.getOutputSnmp()).isEqualTo(0);
         Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(Instant.parse("2015-06-21T11:40:52.194328Z"));
         Assertions.assertThat(flow.getLastSwitched()).isEqualTo((Instant.parse("2015-05-02T18:38:07.476328Z")));
         Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo((Instant.parse("2015-06-21T11:40:52.194328Z")));
-        Assertions.assertThat(flow.getNumPackets()).isEqualTo(5L);
+        Assertions.assertThat(flow.getPackets()).isEqualTo(5L);
         Assertions.assertThat(flow.getDirection()).isEqualTo(Flow.Direction.INGRESS);
         Assertions.assertThat(flow.getNextHop().getHostAddress()).isEqualTo("0.0.0.0");
-        Assertions.assertThat(flow.getNextHopHostname()).isEqualTo(Optional.empty());
+        Assertions.assertThat(flow.getNextHopHostname()).isNull();
         Assertions.assertThat(flow.getVlan()).isNull();
     }
 

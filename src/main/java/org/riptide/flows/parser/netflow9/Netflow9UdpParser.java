@@ -14,13 +14,13 @@ import org.riptide.flows.parser.netflow9.proto.Header;
 import org.riptide.flows.parser.netflow9.proto.Packet;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.UdpSessionManager;
-import org.riptide.pipeline.WithSource;
+import org.riptide.pipeline.Source;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.util.Objects;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
 import static org.riptide.flows.utils.BufferUtils.uint16;
@@ -30,7 +30,7 @@ public class Netflow9UdpParser extends UdpParserBase implements UdpParser, Dispa
     private final Netflow9FlowBuilder flowBuilder = new Netflow9FlowBuilder();
 
     public Netflow9UdpParser(final String name,
-                             final Consumer<WithSource<Flow>> dispatcher,
+                             final BiConsumer<Source, Flow> dispatcher,
 //                             final EventForwarder eventForwarder,
 //                             final Identity identity,
                              final String location,

@@ -1,19 +1,18 @@
 package org.riptide.flows.parser.ipfix;
 
 import com.google.common.primitives.UnsignedLong;
-import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.RecordEnrichment;
-import org.riptide.flows.parser.ie.Value;
+import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.data.FlowBuilder;
 import org.riptide.flows.parser.data.Timeout;
 import org.riptide.flows.parser.data.Values;
+import org.riptide.flows.parser.ie.Value;
 
 import java.net.InetAddress;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.riptide.flows.parser.data.Values.doubleValue;
 import static org.riptide.flows.parser.data.Values.durationValue;
@@ -56,7 +55,7 @@ public class IpFixFlowBuilder implements FlowBuilder {
                 return timestamp.getOrNull(values);
             }
 
-            public Long getNumBytes() {
+            public Long getBytes() {
                 return Values.<Long>first(values)
                         .with(longValue("octetDeltaCount"))
                         .with(longValue("postOctetDeltaCount"))
@@ -90,8 +89,8 @@ public class IpFixFlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public Optional<String> getDstAddrHostname() {
-                return enrichment.getHostnameFor(this.getDstAddr());
+            public String getDstAddrHostname() {
+                return enrichment.getHostnameFor(this.getDstAddr()).orElse(null);
             }
 
             @Override
@@ -147,8 +146,8 @@ public class IpFixFlowBuilder implements FlowBuilder {
                         .withInactiveTimeout(flowInactiveTimeout)
                         .withFirstSwitched(this.getFirstSwitched())
                         .withLastSwitched(this.getLastSwitched())
-                        .withNumBytes(this.getNumBytes())
-                        .withNumPackets(this.getNumPackets())
+                        .withNumBytes(this.getBytes())
+                        .withNumPackets(this.getPackets())
                         .calculateDeltaSwitched();
             }
 
@@ -179,7 +178,7 @@ public class IpFixFlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public int getFlowRecordNum() {
+            public int getFlowRecords() {
                 // TODO fooker: Structurize meta info
                 return Values.<Integer>first(values)
                         .with(intValue("@recordCount"))
@@ -220,8 +219,8 @@ public class IpFixFlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public Optional<String> getNextHopHostname() {
-                return enrichment.getHostnameFor(this.getNextHop());
+            public String getNextHopHostname() {
+                return enrichment.getHostnameFor(this.getNextHop()).orElse(null);
             }
 
             @Override
@@ -233,7 +232,7 @@ public class IpFixFlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public Long getNumPackets() {
+            public Long getPackets() {
                 return Values.<Long>first(values)
                         .with(longValue("packetDeltaCount"))
                         .with(longValue("postPacketDeltaCount"))
@@ -336,8 +335,8 @@ public class IpFixFlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public Optional<String> getSrcAddrHostname() {
-                return enrichment.getHostnameFor(this.getSrcAddr());
+            public String getSrcAddrHostname() {
+                return enrichment.getHostnameFor(this.getSrcAddr()).orElse(null);
             }
 
             @Override
@@ -376,8 +375,8 @@ public class IpFixFlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public NetflowVersion getNetflowVersion() {
-                return NetflowVersion.IPFIX;
+            public FlowProtocol getFlowProtocol() {
+                return FlowProtocol.IPFIX;
             }
 
             @Override
