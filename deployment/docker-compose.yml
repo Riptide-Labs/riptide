@@ -12,7 +12,6 @@ services:
   es01:
     image: docker.elastic.co/elasticsearch/elasticsearch:7.17.9
     environment:
-      TZ: ${TIMEZONE:-Europe/Berlin}
       node.name: es01
       cluster.name: riptide
       discovery.type: single-node
@@ -39,7 +38,6 @@ services:
     depends_on:
       - es01
     environment:
-      TZ: ${TIMEZONE:-Europe/Berlin}
       ELASTICSEARCH_HOSTS: http://es01:9200
     ports:
       - 5601:5601/tcp
@@ -49,7 +47,6 @@ services:
     depends_on:
       - es01
     environment:
-      TZ: ${TIMEZONE:-Europe/Berlin}
       GF_SECURITY_ADMIN_PASSWORD: admin
     volumes:
       - gf-data:/var/lib/grafana
@@ -61,7 +58,6 @@ services:
     depends_on:
       - es01
     environment:
-      TZ: ${TIMEZONE:-Europe/Berlin}
       RIPTIDE_ELASTIC_URL: http://es01:9200
     ports:
       - '9999:9999/udp'
