@@ -7,7 +7,6 @@ import org.riptide.classification.ClassificationRuleProvider;
 import org.riptide.classification.Rule;
 import org.riptide.classification.internal.decision.PreprocessedRule;
 import org.riptide.classification.internal.decision.Tree;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -56,7 +55,7 @@ public class DefaultClassificationEngine implements ClassificationEngine {
                     preprocessedRules.add(preprocessedRule.reverse());
                 }
             } catch (Exception ex) {
-                LoggerFactory.getLogger(getClass()).error("Rule {} is not valid. Ignoring rule.", rule, ex);
+                log.error("Rule {} is not valid. Ignoring rule.", rule, ex);
                 invalid.add(rule);
             }
         });
