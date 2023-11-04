@@ -1,53 +1,25 @@
 package org.riptide.repository.elastic;
 
+import com.google.gson.annotations.SerializedName;
+import lombok.Data;
+
+@Data
 public class IndexSettings {
 
+    @SerializedName("index_prefix")
     private String indexPrefix;
 
+    @SerializedName("number_of_shards")
     private Integer numberOfShards;
 
+    @SerializedName("number_of_replicas")
     private Integer numberOfReplicas;
 
+    @SerializedName("routing_partition_size")
     private Integer routingPartitionSize;
 
+    @SerializedName("refresh_interval")
     private String refreshInterval;
-
-    public String getIndexPrefix() {
-        return this.indexPrefix;
-    }
-
-    public void setIndexPrefix(String indexPrefix) {
-        this.indexPrefix = indexPrefix;
-    }
-
-    public Integer getNumberOfShards() {
-        return this.numberOfShards;
-    }
-
-    public void setNumberOfShards(Integer numberOfShards) {
-        this.numberOfShards = numberOfShards;
-    }
-
-
-    public Integer getNumberOfReplicas() {
-        return this.numberOfReplicas;
-    }
-
-    public void setNumberOfReplicas(Integer numberOfReplicas) {
-        this.numberOfReplicas = numberOfReplicas;
-    }
-
-    public Integer getRoutingPartitionSize() {
-        return this.routingPartitionSize;
-    }
-
-    public void setRoutingPartitionSize(Integer routingPartitionSize) {
-        this.routingPartitionSize = routingPartitionSize;
-    }
-
-    public String getRefreshInterval() {
-        return this.refreshInterval;
-    }
 
     public boolean isEmpty() {
         return this.indexPrefix == null

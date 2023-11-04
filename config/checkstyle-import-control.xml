@@ -11,6 +11,9 @@
     <disallow class="com.google.common.base.Functions" />
     <disallow class="com.google.common.collect.Lists" />
 
+    <!-- We agreed on using Gson instead of ObjectMapper -->
+    <disallow pkg="com.fasterxml.jackson" />
+
     <!-- Prevent Junit 4 as a precaution, as sometimes IntelliJ adds it -->
     <disallow pkg="org.junit" exact-match="true" />
 </import-control>

@@ -466,7 +466,7 @@ public class EnrichedFlow implements Flow {
     }
 
     public String getConvoKey() {
-        return ConversationKey.Utils.getConvoKeyAsJsonString(
+        return Utils.getConvoKeyAsJsonString(
                 this.getLocation(),
                 this.getProtocol(),
                 this.getSrcAddr().getHostAddress(),
