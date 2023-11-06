@@ -1,16 +1,12 @@
 package org.riptide.snmp;
 
-import java.net.InetSocketAddress;
-
+import com.google.common.base.Strings;
+import inet.ipaddr.IPAddressString;
+import lombok.Data;
 import org.snmp4j.fluent.TargetBuilder;
 import org.snmp4j.security.SecurityLevel;
 
-import com.google.common.base.Strings;
-
-import inet.ipaddr.IPAddressString;
-import lombok.Data;
-import lombok.EqualsAndHashCode;
-import lombok.Getter;
+import java.net.InetSocketAddress;
 
 @Data
 public class SnmpDefinition {
@@ -35,20 +31,6 @@ public class SnmpDefinition {
     private IPAddressString subnetAddress;
 
     private int port = 161;
-
-    @EqualsAndHashCode
-    public static final class SnmpEndpoint {
-        @Getter
-        private InetSocketAddress inetSocketAddress;
-
-        @Getter
-        private SnmpDefinition snmpDefinition;
-
-        private SnmpEndpoint(final SnmpDefinition snmpDefinition, final InetSocketAddress inetSocketAddress) {
-            this.snmpDefinition = snmpDefinition;
-            this.inetSocketAddress = inetSocketAddress;
-        }
-    }
 
     public SnmpEndpoint createEndpoint(final IPAddressString ipAddressString) {
         final InetSocketAddress inetSocketAddress = new InetSocketAddress(ipAddressString.getHostAddress().toInetAddress(), getPort());
