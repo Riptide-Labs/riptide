@@ -1,17 +1,16 @@
 package org.riptide.flows.parser.netflow5;
 
 
-import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.RecordEnrichment;
-import org.riptide.flows.parser.ie.Value;
+import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.data.FlowBuilder;
 import org.riptide.flows.parser.data.Values;
+import org.riptide.flows.parser.ie.Value;
 
 import java.net.InetAddress;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.riptide.flows.parser.data.Values.booleanValue;
 import static org.riptide.flows.parser.data.Values.doubleValue;
@@ -45,7 +44,7 @@ public class Netflow5FlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public Long getNumBytes() {
+            public Long getBytes() {
                 return longValue("dOctets").getOrNull(values);
             }
 
@@ -62,8 +61,8 @@ public class Netflow5FlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public Optional<String> getDstAddrHostname() {
-                return enrichment.getHostnameFor(this.getDstAddr());
+            public String getDstAddrHostname() {
+                return enrichment.getHostnameFor(this.getDstAddr()).orElse(null);
             }
 
             @Override
@@ -97,7 +96,7 @@ public class Netflow5FlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public int getFlowRecordNum() {
+            public int getFlowRecords() {
                 return intValue("@count").getOrNull(values);
             }
 
@@ -127,8 +126,8 @@ public class Netflow5FlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public Optional<String> getNextHopHostname() {
-                return enrichment.getHostnameFor(this.getNextHop());
+            public String getNextHopHostname() {
+                return enrichment.getHostnameFor(this.getNextHop()).orElse(null);
             }
 
             @Override
@@ -137,7 +136,7 @@ public class Netflow5FlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public Long getNumPackets() {
+            public Long getPackets() {
                 return longValue("dPkts").getOrNull(values);
             }
 
@@ -167,8 +166,8 @@ public class Netflow5FlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public Optional<String> getSrcAddrHostname() {
-                return enrichment.getHostnameFor(this.getSrcAddr());
+            public String getSrcAddrHostname() {
+                return enrichment.getHostnameFor(this.getSrcAddr()).orElse(null);
             }
 
             @Override
@@ -197,8 +196,8 @@ public class Netflow5FlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public NetflowVersion getNetflowVersion() {
-                return NetflowVersion.V5;
+            public FlowProtocol getFlowProtocol() {
+                return FlowProtocol.NetflowV5;
             }
 
             @Override

@@ -2,8 +2,6 @@ package org.riptide.flows.parser.data;
 
 import java.net.InetAddress;
 import java.time.Instant;
-import java.util.List;
-import java.util.Optional;
 
 public interface Flow {
 
@@ -20,7 +18,7 @@ public interface Flow {
     /**
      * Number of bytes transferred in the flow.
      */
-    Long getNumBytes();
+    Long getBytes();
 
     /**
      * Direction of the flow (egress vs ingress)
@@ -35,7 +33,7 @@ public interface Flow {
     /**
      * Destination address hostname.
      */
-    Optional<String> getDstAddrHostname();
+    String getDstAddrHostname();
 
     /**
      * Destination autonomous system (AS).
@@ -79,7 +77,7 @@ public interface Flow {
     /**
      * Number of flow records in the associated packet.
      */
-    int getFlowRecordNum();
+    int getFlowRecords();
 
     /**
      * Flow packet sequence number.
@@ -110,7 +108,7 @@ public interface Flow {
     /**
      * Next hop hostname
      */
-    Optional<String> getNextHopHostname();
+    String getNextHopHostname();
 
     /**
      * SNMP ifIndex
@@ -120,7 +118,7 @@ public interface Flow {
     /**
      * Number of packets in the flow
      */
-    Long getNumPackets();
+    Long getPackets();
 
     /**
      * IP protocol number i.e 6 for TCP, 17 for UDP
@@ -145,7 +143,7 @@ public interface Flow {
     /**
      * Source address hostname.
      */
-    Optional<String> getSrcAddrHostname();
+    String getSrcAddrHostname();
 
     /**
      * Source autonomous system (AS).
@@ -172,18 +170,10 @@ public interface Flow {
      */
     Integer getTos();
 
-    default Integer getDscp() {
-        return getTos() != null ? getTos() >>> 2 : null;
-    }
-
-    default Integer getEcn() {
-        return getTos() != null ? getTos() & 0x03 : null;
-    }
-
     /**
      * Netfow version
      */
-    NetflowVersion getNetflowVersion();
+    FlowProtocol getFlowProtocol();
 
     /**
      * VLAN ID.
@@ -194,21 +184,9 @@ public interface Flow {
         PUBLIC, PRIVATE
     }
 
-    interface NodeInfo {
-        int getInterfaceId();
-
-        int getNodeId();
-
-        String getForeignId();
-
-        String getForeignSource();
-
-        List<String> getCategories();
-    }
-
-    enum NetflowVersion {
-        V5,
-        V9,
+    enum FlowProtocol {
+        NetflowV5,
+        NetflowV9,
         IPFIX,
         SFLOW,
     }

@@ -14,7 +14,7 @@ import org.riptide.flows.parser.data.FlowBuilder;
 import org.riptide.flows.parser.ie.RecordProvider;
 import org.riptide.flows.parser.session.SequenceNumberTracker;
 import org.riptide.flows.parser.session.Session;
-import org.riptide.pipeline.WithSource;
+import org.riptide.pipeline.Source;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -30,7 +30,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 
@@ -52,7 +52,7 @@ public abstract class ParserBase implements Parser {
 
     private final String name;
 
-    private final Consumer<WithSource<Flow>> dispatcher;
+    private final BiConsumer<Source, Flow> dispatcher;
 
     //private final EventForwarder eventForwarder;
 
@@ -100,7 +100,7 @@ public abstract class ParserBase implements Parser {
 
     public ParserBase(final Protocol protocol,
                       final String name,
-                      final Consumer<WithSource<Flow>> dispatcher,
+                      final BiConsumer<Source, Flow> dispatcher,
                       //final EventForwarder eventForwarder,
                       //final Identity identity,
                       final String location,
@@ -322,7 +322,7 @@ public abstract class ParserBase implements Parser {
                         log.trace("Received flow: {}", flow);
 
                         // Dispatch
-                        this.dispatcher.accept(new WithSource<>(this.location, session.getRemoteAddress(), flow));
+                        this.dispatcher.accept(new Source(this.location, session.getRemoteAddress()), flow);
 
                         this.recordsDispatched.mark();
                     };

@@ -4,22 +4,22 @@ import com.codahale.metrics.MetricRegistry;
 import com.google.common.collect.Sets;
 import io.netty.buffer.ByteBuf;
 import org.riptide.dns.api.DnsResolver;
-import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.listeners.TcpParser;
 import org.riptide.flows.parser.ParserBase;
 import org.riptide.flows.parser.Protocol;
+import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.ipfix.proto.Header;
 import org.riptide.flows.parser.ipfix.proto.Packet;
 import org.riptide.flows.parser.session.TcpSession;
 import org.riptide.flows.parser.state.ParserState;
-import org.riptide.pipeline.WithSource;
+import org.riptide.pipeline.Source;
 
 import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
 
@@ -30,7 +30,7 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
     private final Set<TcpSession> sessions = Sets.newConcurrentHashSet();
 
     public IpfixTcpParser(final String name,
-                          final Consumer<WithSource<Flow>> dispatcher,
+                          final BiConsumer<Source, Flow> dispatcher,
 //                          final EventForwarder eventForwarder,
 //                          final Identity identity,
                           final String location,

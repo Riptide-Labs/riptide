@@ -16,6 +16,7 @@ import org.riptide.repository.elastic.ElasticFlowRepository;
 import org.riptide.repository.elastic.IndexSettings;
 import org.riptide.repository.elastic.IndexStrategy;
 import org.riptide.repository.elastic.InitializingElasticFlowRepository;
+import org.riptide.repository.elastic.doc.FlowDocumentMapper;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -56,7 +57,8 @@ public class ElasticsearchConfiguration {
     @Bean
     public FlowRepository elasticFlowRepository(final ElasticsearchConfig config,
                                                 final JestClient jestClient,
-                                                final MetricRegistry metricRegistry) {
+                                                final MetricRegistry metricRegistry,
+                                                final FlowDocumentMapper flowDocumentMapper) {
         final var indexSettings = new IndexSettings();
         indexSettings.setIndexPrefix(config.indexPrefix);
         indexSettings.setNumberOfReplicas(config.numberOfReplicas);
@@ -65,7 +67,7 @@ public class ElasticsearchConfiguration {
 
         final var indexStrategy = IndexStrategy.DAILY;
 
-        final var repository = new ElasticFlowRepository(metricRegistry, jestClient, indexStrategy, indexSettings);
+        final var repository = new ElasticFlowRepository(metricRegistry, jestClient, indexStrategy, indexSettings, flowDocumentMapper);
 
         return new InitializingElasticFlowRepository(repository, jestClient, indexSettings);
     }

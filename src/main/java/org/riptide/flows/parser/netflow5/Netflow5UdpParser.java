@@ -3,23 +3,23 @@ package org.riptide.flows.parser.netflow5;
 import com.codahale.metrics.MetricRegistry;
 import io.netty.buffer.ByteBuf;
 import org.riptide.dns.api.DnsResolver;
-import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.listeners.Dispatchable;
 import org.riptide.flows.listeners.UdpParser;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.UdpParserBase;
+import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.ie.RecordProvider;
 import org.riptide.flows.parser.netflow5.proto.Header;
 import org.riptide.flows.parser.netflow5.proto.Packet;
 import org.riptide.flows.parser.netflow9.Netflow9UdpParser;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.UdpSessionManager;
-import org.riptide.pipeline.WithSource;
 import org.riptide.flows.utils.BufferUtils;
+import org.riptide.pipeline.Source;
 
 import java.net.InetSocketAddress;
 import java.time.Duration;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
 
@@ -28,7 +28,7 @@ public class Netflow5UdpParser extends UdpParserBase implements UdpParser, Dispa
     private final Netflow5FlowBuilder flowBuilder = new Netflow5FlowBuilder();
 
     public Netflow5UdpParser(final String name,
-                             final Consumer<WithSource<Flow>> dispatcher,
+                             final BiConsumer<Source, Flow> dispatcher,
 //                             final EventForwarder eventForwarder,
 //                             final Identity identity,
                              final String location,

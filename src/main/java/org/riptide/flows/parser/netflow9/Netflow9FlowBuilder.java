@@ -1,25 +1,24 @@
 package org.riptide.flows.parser.netflow9;
 
-import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.RecordEnrichment;
-import org.riptide.flows.parser.ie.Value;
+import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.data.FlowBuilder;
 import org.riptide.flows.parser.data.Timeout;
 import org.riptide.flows.parser.data.Values;
+import org.riptide.flows.parser.ie.Value;
 
 import java.net.InetAddress;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
-import java.util.Optional;
 
-import static org.riptide.flows.parser.data.Values.durationValue;
-import static org.riptide.flows.parser.data.Values.longValue;
-import static org.riptide.flows.parser.data.Values.intValue;
-import static org.riptide.flows.parser.data.Values.inetAddressValue;
-import static org.riptide.flows.parser.data.Values.timestampValue;
 import static org.riptide.flows.parser.data.Values.doubleValue;
+import static org.riptide.flows.parser.data.Values.durationValue;
+import static org.riptide.flows.parser.data.Values.inetAddressValue;
+import static org.riptide.flows.parser.data.Values.intValue;
+import static org.riptide.flows.parser.data.Values.longValue;
+import static org.riptide.flows.parser.data.Values.timestampValue;
 
 public class Netflow9FlowBuilder implements FlowBuilder {
 
@@ -48,7 +47,7 @@ public class Netflow9FlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public Long getNumBytes() {
+            public Long getBytes() {
                 return longValue("IN_BYTES").getOrNull(values);
             }
 
@@ -70,8 +69,8 @@ public class Netflow9FlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public Optional<String> getDstAddrHostname() {
-                return enrichment.getHostnameFor(this.getDstAddr());
+            public String getDstAddrHostname() {
+                return enrichment.getHostnameFor(this.getDstAddr()).orElse(null);
             }
 
             @Override
@@ -115,8 +114,8 @@ public class Netflow9FlowBuilder implements FlowBuilder {
                                 .getOrNull())
                         .withFirstSwitched(this.getFirstSwitched())
                         .withLastSwitched(this.getLastSwitched())
-                        .withNumBytes(this.getNumBytes())
-                        .withNumPackets(this.getNumPackets())
+                        .withNumBytes(this.getBytes())
+                        .withNumPackets(this.getPackets())
                         .calculateDeltaSwitched();
             }
 
@@ -129,7 +128,7 @@ public class Netflow9FlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public int getFlowRecordNum() {
+            public int getFlowRecords() {
                 return intValue("@recordCount").getOrNull(values);
             }
 
@@ -170,8 +169,8 @@ public class Netflow9FlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public Optional<String> getNextHopHostname() {
-                return enrichment.getHostnameFor(this.getNextHop());
+            public String getNextHopHostname() {
+                return enrichment.getHostnameFor(this.getNextHop()).orElse(null);
             }
 
             @Override
@@ -183,7 +182,7 @@ public class Netflow9FlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public Long getNumPackets() {
+            public Long getPackets() {
                 return longValue("IN_PKTS").getOrNull(values);
             }
 
@@ -215,8 +214,8 @@ public class Netflow9FlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public Optional<String> getSrcAddrHostname() {
-                return enrichment.getHostnameFor(this.getSrcAddr());
+            public String getSrcAddrHostname() {
+                return enrichment.getHostnameFor(this.getSrcAddr()).orElse(null);
             }
 
             @Override
@@ -248,8 +247,8 @@ public class Netflow9FlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public NetflowVersion getNetflowVersion() {
-                return NetflowVersion.V9;
+            public FlowProtocol getFlowProtocol() {
+                return FlowProtocol.NetflowV9;
             }
 
             @Override

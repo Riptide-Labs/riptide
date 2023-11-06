@@ -6,12 +6,12 @@ import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import io.netty.buffer.ByteBuf;
 import org.riptide.dns.api.DnsResolver;
-import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.listeners.UdpParser;
+import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.ie.RecordProvider;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.UdpSessionManager;
-import org.riptide.pipeline.WithSource;
+import org.riptide.pipeline.Source;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,7 +21,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 public abstract class UdpParserBase extends ParserBase implements UdpParser {
     public static final long HOUSEKEEPING_INTERVAL = 60000;
@@ -38,7 +38,7 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
 
     public UdpParserBase(final Protocol protocol,
                          final String name,
-                         final Consumer<WithSource<Flow>> dispatcher,
+                         final BiConsumer<Source, Flow> dispatcher,
 //                         final EventForwarder eventForwarder,
 //                         final Identity identity,
                          final String location,
