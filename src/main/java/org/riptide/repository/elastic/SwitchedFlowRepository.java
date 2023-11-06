@@ -44,9 +44,17 @@ public class SwitchedFlowRepository implements FlowRepository {
         this.enabled = enabled;
     }
 
-    public boolean isDisabled() { return !this.enabled; }
+    @Override
+    public void start() throws FlowException {
+        if (this.enabled) {
+            this.delegate.start();
+        }
+    }
 
-    public void setDisabled(final boolean disabled) {
-        this.enabled = !disabled;
+    @Override
+    public void stop() throws FlowException {
+        if (this.enabled) {
+            this.delegate.stop();
+        }
     }
 }

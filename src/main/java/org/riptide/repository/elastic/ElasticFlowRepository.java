@@ -196,7 +196,7 @@ public class ElasticFlowRepository implements FlowRepository {
         }
     }
 
-    public void start() {
+    public void start() throws FlowException {
         startTimer();
     }
 

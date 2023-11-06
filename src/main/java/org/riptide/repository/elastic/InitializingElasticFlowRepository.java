@@ -58,4 +58,11 @@ public class InitializingElasticFlowRepository implements FlowRepository {
         initialized.set(true);
     }
 
+    public void start() throws FlowException {
+        this.delegate.start();
+    }
+
+    public void stop() throws FlowException {
+        this.delegate.stop();
+    }
 }

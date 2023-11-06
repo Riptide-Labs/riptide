@@ -101,4 +101,14 @@ public class OpensearchRepository implements FlowRepository {
                         .mappings(mappings)
                 ));
     }
+
+    @Override
+    public void start() throws FlowException {
+
+    }
+
+    @Override
+    public void stop() throws FlowException {
+
+    }
 }

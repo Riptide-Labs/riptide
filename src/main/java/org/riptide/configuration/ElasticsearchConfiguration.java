@@ -11,6 +11,7 @@ import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
 import org.apache.http.impl.client.BasicCredentialsProvider;
 import org.apache.http.ssl.SSLContextBuilder;
 import org.riptide.config.ElasticsearchConfig;
+import org.riptide.pipeline.FlowException;
 import org.riptide.repository.FlowRepository;
 import org.riptide.repository.elastic.ElasticFlowRepository;
 import org.riptide.repository.elastic.IndexSettings;
@@ -58,7 +59,7 @@ public class ElasticsearchConfiguration {
     public FlowRepository elasticFlowRepository(final ElasticsearchConfig config,
                                                 final JestClient jestClient,
                                                 final MetricRegistry metricRegistry,
-                                                final FlowDocumentMapper flowDocumentMapper) {
+                                                final FlowDocumentMapper flowDocumentMapper) throws FlowException {
         final var indexSettings = new IndexSettings();
         indexSettings.setIndexPrefix(config.indexPrefix);
         indexSettings.setNumberOfReplicas(config.numberOfReplicas);
@@ -69,7 +70,9 @@ public class ElasticsearchConfiguration {
 
         final var repository = new ElasticFlowRepository(metricRegistry, jestClient, indexStrategy, indexSettings, flowDocumentMapper);
 
-        return new InitializingElasticFlowRepository(repository, jestClient, indexSettings);
+        final var repo = new InitializingElasticFlowRepository(repository, jestClient, indexSettings);
+        repo.start();
+        return repo;
     }
 
 }

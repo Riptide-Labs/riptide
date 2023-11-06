@@ -331,10 +331,10 @@ public abstract class ParserBase implements Parser {
                     // It's possible that the callback thread is already a thread from the pool, if that's the case
                     // execute within the current thread. This helps avoid deadlocks.
 //                    if (Boolean.TRUE.equals(isParserThread.get())) {
-//                        dispatch.run();
+                        dispatch.run();
 //                    } else {
-                        // We're not in one of the parsers threads, execute the dispatch in the pool
-                        this.executor.execute(dispatch);
+//                        // We're not in one of the parsers threads, execute the dispatch in the pool
+//                        this.executor.execute(dispatch);
 //                    }
 
                     this.recordsScheduled.mark();
