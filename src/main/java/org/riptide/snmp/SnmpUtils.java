@@ -71,12 +71,12 @@ public final class SnmpUtils {
         return snmpInterfaceMap;
     }
 
-    public static Map<Integer, String> getSnmpInterfaceMap(final SnmpEndpoint snmpEndpoint) throws IOException {
-        final SnmpBuilder snmpBuilder = snmpEndpoint.getSnmpVersion().getSnmpBuilder();
+    public static Map<Integer, String> getSnmpInterfaceMap(final SnmpDefinition.SnmpEndpoint snmpEndpoint) throws IOException {
+        final SnmpBuilder snmpBuilder = snmpEndpoint.getSnmpDefinition().getSnmpVersion().getSnmpBuilder();
         final Snmp snmp = snmpBuilder.build();
 
         try {
-            final Target<?> target = snmpEndpoint.getSnmpVersion().getTarget(snmp, snmpBuilder, snmpEndpoint);
+            final Target<?> target = snmpEndpoint.getSnmpDefinition().getSnmpVersion().getTarget(snmp, snmpBuilder, snmpEndpoint);
             Map<Integer, String> snmpInterfaceMap;
             // query ifXTable first, if not available fallback to ifTable
             snmpInterfaceMap = walkTable(snmp, target, IfXTable);

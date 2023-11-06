@@ -25,10 +25,10 @@ import org.springframework.boot.test.context.SpringBootTest;
 import com.codahale.metrics.MetricRegistry;
 
 @SpringBootTest(properties = {
-        "riptide.snmp.config.endpoints[0].ip-address=127.0.0.1",
-        "riptide.snmp.config.endpoints[0].port=12345",
-        "riptide.snmp.config.endpoints[0].snmp-version=v2c",
-        "riptide.snmp.config.endpoints[0].community=" + TestSnmpAgent.COMMUNITY
+        "riptide.snmp.config.definitions[0].subnet-address.=127.0.0.1/24",
+        "riptide.snmp.config.definitions[0].port=12345",
+        "riptide.snmp.config.definitions[0].snmp-version=v2c",
+        "riptide.snmp.config.definitions[0].community=" + TestSnmpAgent.COMMUNITY
 })
 public class SnmpEnrichmentTest {
 

@@ -5,7 +5,6 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
@@ -17,7 +16,6 @@ import org.riptide.flows.parser.data.Flow;
 import org.riptide.repository.FlowRepository;
 import org.riptide.snmp.SnmpCache;
 import org.riptide.snmp.SnmpConfiguration;
-import org.riptide.snmp.SnmpEndpoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -140,17 +138,16 @@ public class Pipeline {
         // Enrich with model data
         LOG.debug("Enriching {} flow documents.", flows.value().size());
         try (Timer.Context ctx = this.logEnrichementTimer.time()) {
-            for (final EnrichedFlow enrichedFlow : enrichedFlows) {
-                final Optional<SnmpEndpoint> snmpEndpoint = snmpConfiguration.lookup(enrichedFlow.getHost());
-                snmpEndpoint.ifPresent(e -> {
+            snmpConfiguration.lookup(flows.source()).ifPresent(snmpEndpoint -> {
+                for (final EnrichedFlow enrichedFlow : enrichedFlows) {
                     try {
-                        snmpCache.getIfName(e, enrichedFlow.getInputSnmp()).ifPresent(enrichedFlow::setInputSnmpIfName);
-                        snmpCache.getIfName(e, enrichedFlow.getOutputSnmp()).ifPresent(enrichedFlow::setOutputSnmpIfName);
+                        snmpCache.getIfName(snmpEndpoint, enrichedFlow.getInputSnmp()).ifPresent(enrichedFlow::setInputSnmpIfName);
+                        snmpCache.getIfName(snmpEndpoint, enrichedFlow.getOutputSnmp()).ifPresent(enrichedFlow::setOutputSnmpIfName);
                     } catch (ExecutionException ex) {
                         throw new RuntimeException(ex);
                     }
-                });
-            }
+                }
+            });
             //enrichedFlows = documentEnricher.enrich(flows, source);
             // TODO fooker: Can I haz real enrichment?
         } catch (final Exception e) {

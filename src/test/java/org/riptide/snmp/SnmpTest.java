@@ -3,7 +3,6 @@ package org.riptide.snmp;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 
 import java.io.IOException;
-import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
@@ -13,7 +12,75 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.snmp4j.fluent.TargetBuilder;
 
+import inet.ipaddr.IPAddressString;
+
 public class SnmpTest {
+
+    public static SnmpDefinition.SnmpEndpoint communityV1(final IPAddressString ipAddressString, final int port, final String community) {
+        final SnmpDefinition snmpDefinition = new SnmpDefinition();
+        snmpDefinition.setPort(port);
+        snmpDefinition.setSnmpVersion(SnmpVersion.v1);
+        snmpDefinition.setCommunity(community);
+        snmpDefinition.setSecurityName(null);
+        snmpDefinition.setAuthProtocol(null);
+        snmpDefinition.setAuthPassphrase(null);
+        snmpDefinition.setPrivProtocol(null);
+        snmpDefinition.setPrivPassphrase(null);
+        return snmpDefinition.createEndpoint(ipAddressString);
+    }
+
+    public static SnmpDefinition.SnmpEndpoint communityV2c(final IPAddressString ipAddressString, final int port, final String community) {
+        final SnmpDefinition snmpDefinition = new SnmpDefinition();
+        snmpDefinition.setPort(port);
+        snmpDefinition.setSnmpVersion(SnmpVersion.v2c);
+        snmpDefinition.setCommunity(community);
+        snmpDefinition.setSecurityName(null);
+        snmpDefinition.setAuthProtocol(null);
+        snmpDefinition.setAuthPassphrase(null);
+        snmpDefinition.setPrivProtocol(null);
+        snmpDefinition.setPrivPassphrase(null);
+        return snmpDefinition.createEndpoint(ipAddressString);
+    }
+
+    public static SnmpDefinition.SnmpEndpoint noAuthNoPriv(final IPAddressString ipAddressString, final int port, final String securityName) {
+        final SnmpDefinition snmpDefinition = new SnmpDefinition();
+        snmpDefinition.setPort(port);
+        snmpDefinition.setSnmpVersion(SnmpVersion.v3);
+        snmpDefinition.setCommunity(null);
+        snmpDefinition.setSecurityName(securityName);
+        snmpDefinition.setAuthProtocol(null);
+        snmpDefinition.setAuthPassphrase(null);
+        snmpDefinition.setPrivProtocol(null);
+        snmpDefinition.setPrivPassphrase(null);
+        return snmpDefinition.createEndpoint(ipAddressString);
+    }
+
+    public static SnmpDefinition.SnmpEndpoint authNoPriv(final IPAddressString ipAddressString, final int port, final String securityName, final TargetBuilder.AuthProtocol authProtocol, final String authPassphrase) {
+        final SnmpDefinition snmpDefinition = new SnmpDefinition();
+        snmpDefinition.setPort(port);
+        snmpDefinition.setSnmpVersion(SnmpVersion.v3);
+        snmpDefinition.setCommunity(null);
+        snmpDefinition.setSecurityName(securityName);
+        snmpDefinition.setAuthProtocol(authProtocol);
+        snmpDefinition.setAuthPassphrase(authPassphrase);
+        snmpDefinition.setPrivProtocol(null);
+        snmpDefinition.setPrivPassphrase(null);
+        return snmpDefinition.createEndpoint(ipAddressString);
+    }
+
+    public static SnmpDefinition.SnmpEndpoint authPriv(final IPAddressString ipAddressString, final int port, final String securityName, final TargetBuilder.AuthProtocol authProtocol, final String authPassphrase, final TargetBuilder.PrivProtocol privProtocol, final String privPassphrase) {
+        final SnmpDefinition snmpDefinition = new SnmpDefinition();
+        snmpDefinition.setPort(port);
+        snmpDefinition.setSnmpVersion(SnmpVersion.v3);
+        snmpDefinition.setCommunity(null);
+        snmpDefinition.setSecurityName(securityName);
+        snmpDefinition.setAuthProtocol(authProtocol);
+        snmpDefinition.setAuthPassphrase(authPassphrase);
+        snmpDefinition.setPrivProtocol(privProtocol);
+        snmpDefinition.setPrivPassphrase(privPassphrase);
+        return snmpDefinition.createEndpoint(ipAddressString);
+    }
+
     @Test
     public void testSnmpV2(@TempDir Path temporaryFolder) throws Exception {
         final TestSnmpAgent snmpAgent = new TestSnmpAgent("127.0.0.1/12345", temporaryFolder);
@@ -21,7 +88,7 @@ public class SnmpTest {
         snmpAgent.registerIfTable();
         snmpAgent.registerIfXTable();
 
-        final SnmpEndpoint snmpEndpoint = SnmpEndpoint.communityV2c(new InetSocketAddress("127.0.0.1", 12345), TestSnmpAgent.COMMUNITY);
+        final SnmpDefinition.SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), 12345, TestSnmpAgent.COMMUNITY);
         final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint);
 
         snmpAgent.stop();
@@ -37,7 +104,7 @@ public class SnmpTest {
         snmpAgent.registerIfTable();
         snmpAgent.registerIfXTable();
 
-        final SnmpEndpoint snmpEndpoint = SnmpEndpoint.noAuthNoPriv(new InetSocketAddress("127.0.0.1", 12345), TestSnmpAgent.NOAUTHNOPRIV_USERNAME);
+        final SnmpDefinition.SnmpEndpoint snmpEndpoint = noAuthNoPriv(new IPAddressString("127.0.0.1"), 12345, TestSnmpAgent.NOAUTHNOPRIV_USERNAME);
         final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint);
 
         snmpAgent.stop();
@@ -52,7 +119,7 @@ public class SnmpTest {
         snmpAgent.start();
         snmpAgent.registerIfTable();
 
-        final SnmpEndpoint snmpEndpoint = SnmpEndpoint.noAuthNoPriv(new InetSocketAddress("127.0.0.1", 12345), TestSnmpAgent.NOAUTHNOPRIV_USERNAME);
+        final SnmpDefinition.SnmpEndpoint snmpEndpoint = noAuthNoPriv(new IPAddressString("127.0.0.1"), 12345, TestSnmpAgent.NOAUTHNOPRIV_USERNAME);
         final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint);
 
         snmpAgent.stop();
@@ -68,7 +135,7 @@ public class SnmpTest {
         snmpAgent.registerIfTable();
         snmpAgent.registerIfXTable();
 
-        final SnmpEndpoint snmpEndpoint = SnmpEndpoint.authNoPriv(new InetSocketAddress("127.0.0.1", 12345), TestSnmpAgent.AUTHNOPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1, TestSnmpAgent.AUTHNOPRIV_AUTH_PASSHRASE);
+        final SnmpDefinition.SnmpEndpoint snmpEndpoint = authNoPriv(new IPAddressString("127.0.0.1"), 12345, TestSnmpAgent.AUTHNOPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1, TestSnmpAgent.AUTHNOPRIV_AUTH_PASSHRASE);
         final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint);
 
         snmpAgent.stop();
@@ -84,7 +151,7 @@ public class SnmpTest {
         snmpAgent.registerIfTable();
         snmpAgent.registerIfXTable();
 
-        final SnmpEndpoint snmpEndpoint = SnmpEndpoint.authPriv(new InetSocketAddress("127.0.0.1", 12345), TestSnmpAgent.AUTHPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1, TestSnmpAgent.AUTHPRIV_AUTH_PASSHRASE, TargetBuilder.PrivProtocol.aes128, TestSnmpAgent.AUTHPRIV_PRIV_PASSHRASE);
+        final SnmpDefinition.SnmpEndpoint snmpEndpoint = authPriv(new IPAddressString("127.0.0.1"), 12345, TestSnmpAgent.AUTHPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1, TestSnmpAgent.AUTHPRIV_AUTH_PASSHRASE, TargetBuilder.PrivProtocol.aes128, TestSnmpAgent.AUTHPRIV_PRIV_PASSHRASE);
         final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint);
 
         snmpAgent.stop();
@@ -96,7 +163,7 @@ public class SnmpTest {
     @Test
     public void testSnmpCache(@TempDir Path temporaryFolder) throws IOException, ExecutionException {
         final SnmpCache snmpCache = new SnmpCache();
-        final SnmpEndpoint snmpEndpoint = SnmpEndpoint.communityV2c(new InetSocketAddress("127.0.0.1", 12345), TestSnmpAgent.COMMUNITY);
+        final SnmpDefinition.SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), 12345, TestSnmpAgent.COMMUNITY);
 
         assertThat(snmpCache.getIfName(snmpEndpoint, 1)).isInstanceOf(Optional.class).isEmpty();
 

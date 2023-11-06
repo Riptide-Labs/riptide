@@ -1,7 +1,6 @@
 package org.riptide.snmp;
 
 import java.io.IOException;
-import java.net.InetAddress;
 import java.net.UnknownHostException;
 
 import org.snmp4j.Snmp;
@@ -24,13 +23,13 @@ enum SnmpVersion {
         }
 
         @Override
-        Target<?> getTarget(final Snmp snmp, final SnmpBuilder snmpBuilder, final SnmpEndpoint snmpEndpoint) throws UnknownHostException {
+        Target<?> getTarget(final Snmp snmp, final SnmpBuilder snmpBuilder, final SnmpDefinition.SnmpEndpoint snmpEndpoint) throws UnknownHostException {
             return snmpBuilder
                     .v1()
                     .target(getTargetAddress(snmpEndpoint))
-                    .community(new OctetString(snmpEndpoint.getCommunity()))
-                    .timeout(snmpEndpoint.getTimeout())
-                    .retries(snmpEndpoint.getRetries())
+                    .community(new OctetString(snmpEndpoint.getSnmpDefinition().getCommunity()))
+                    .timeout(snmpEndpoint.getSnmpDefinition().getTimeout())
+                    .retries(snmpEndpoint.getSnmpDefinition().getRetries())
                     .build();
         }
     },
@@ -46,13 +45,13 @@ enum SnmpVersion {
         }
 
         @Override
-        Target<?> getTarget(final Snmp snmp, final SnmpBuilder snmpBuilder, final SnmpEndpoint snmpEndpoint) throws UnknownHostException {
+        Target<?> getTarget(final Snmp snmp, final SnmpBuilder snmpBuilder, final SnmpDefinition.SnmpEndpoint snmpEndpoint) throws UnknownHostException {
             return snmpBuilder
                     .v2c()
                     .target(getTargetAddress(snmpEndpoint))
-                    .community(new OctetString(snmpEndpoint.getCommunity()))
-                    .timeout(snmpEndpoint.getTimeout())
-                    .retries(snmpEndpoint.getRetries())
+                    .community(new OctetString(snmpEndpoint.getSnmpDefinition().getCommunity()))
+                    .timeout(snmpEndpoint.getSnmpDefinition().getTimeout())
+                    .retries(snmpEndpoint.getSnmpDefinition().getRetries())
                     .build();
         }
     },
@@ -69,18 +68,18 @@ enum SnmpVersion {
         }
 
         @Override
-        Target<?> getTarget(final Snmp snmp, final SnmpBuilder snmpBuilder, final SnmpEndpoint snmpEndpoint) throws UnknownHostException {
+        Target<?> getTarget(final Snmp snmp, final SnmpBuilder snmpBuilder, final SnmpDefinition.SnmpEndpoint snmpEndpoint) throws UnknownHostException {
             final Address targetAddress = getTargetAddress(snmpEndpoint);
             final byte[] targetEngineID = snmp.discoverAuthoritativeEngineID(targetAddress, 1000);
             return snmpBuilder
                     .v3()
                     .target(targetAddress)
-                    .user(snmpEndpoint.getSecurityName(), targetEngineID)
-                    .auth(snmpEndpoint.getAuthProtocol()).authPassphrase(snmpEndpoint.getAuthPassphrase())
-                    .priv(snmpEndpoint.getPrivProtocol()).privPassphrase(snmpEndpoint.getPrivPassphrase())
+                    .user(snmpEndpoint.getSnmpDefinition().getSecurityName(), targetEngineID)
+                    .auth(snmpEndpoint.getSnmpDefinition().getAuthProtocol()).authPassphrase(snmpEndpoint.getSnmpDefinition().getAuthPassphrase())
+                    .priv(snmpEndpoint.getSnmpDefinition().getPrivProtocol()).privPassphrase(snmpEndpoint.getSnmpDefinition().getPrivPassphrase())
                     .done()
-                    .timeout(snmpEndpoint.getTimeout())
-                    .retries(snmpEndpoint.getRetries())
+                    .timeout(snmpEndpoint.getSnmpDefinition().getTimeout())
+                    .retries(snmpEndpoint.getSnmpDefinition().getRetries())
                     .build();
 
         }
@@ -88,9 +87,9 @@ enum SnmpVersion {
 
     abstract SnmpBuilder getSnmpBuilder() throws IOException;
 
-    abstract Target<?> getTarget(Snmp snmp, SnmpBuilder snmpBuilder, SnmpEndpoint snmpEndpoint) throws UnknownHostException;
+    abstract Target<?> getTarget(Snmp snmp, SnmpBuilder snmpBuilder, SnmpDefinition.SnmpEndpoint snmpEndpoint) throws UnknownHostException;
 
-    Address getTargetAddress(SnmpEndpoint snmpEndpoint) throws UnknownHostException {
-        return new UdpAddress(InetAddress.getByName(snmpEndpoint.getIpAddress()), snmpEndpoint.getPort());
+    Address getTargetAddress(SnmpDefinition.SnmpEndpoint snmpEndpoint) throws UnknownHostException {
+        return new UdpAddress(snmpEndpoint.getInetSocketAddress().getAddress(), snmpEndpoint.getInetSocketAddress().getPort());
     }
 }
