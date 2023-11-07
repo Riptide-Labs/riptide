@@ -5,7 +5,6 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
 
 import org.riptide.classification.ClassificationEngine;
@@ -14,8 +13,8 @@ import org.riptide.classification.IpAddr;
 import org.riptide.classification.Protocols;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.repository.FlowRepository;
-import org.riptide.snmp.SnmpCache;
 import org.riptide.snmp.SnmpConfiguration;
+import org.riptide.snmp.SnmpService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -65,7 +64,7 @@ public class Pipeline {
 
     // private final FlowThresholdingImpl thresholding;
 
-    private final SnmpCache snmpCache;
+    private final SnmpService snmpService;
 
     private final SnmpConfiguration snmpConfiguration;
     private final Map<String, Persister> persisters;
@@ -77,7 +76,7 @@ public class Pipeline {
                     final Map<String, FlowRepository> repositories,
                     final MetricRegistry metricRegistry,
                     final SnmpConfiguration snmpConfiguration,
-                    final SnmpCache snmpCache
+                    final SnmpService snmpService
     ) {
         this.classificationEngine = Objects.requireNonNull(classificationEngine);
 //        this.documentEnricher = Objects.requireNonNull(documentEnricher);
@@ -92,7 +91,7 @@ public class Pipeline {
         this.logMarkingTimer = metricRegistry.timer("logMarking");
         this.logThresholdingTimer = metricRegistry.timer("logThresholding");
         this.snmpConfiguration = snmpConfiguration;
-        this.snmpCache = snmpCache;
+        this.snmpService = snmpService;
 
         this.persisters = Maps.transformEntries(repositories, (name, repository) -> {
             final var timer = metricRegistry.timer(MetricRegistry.name("logPersisting", name));
@@ -140,12 +139,8 @@ public class Pipeline {
         try (Timer.Context ctx = this.logEnrichementTimer.time()) {
             snmpConfiguration.lookup(flows.source()).ifPresent(snmpEndpoint -> {
                 for (final EnrichedFlow enrichedFlow : enrichedFlows) {
-                    try {
-                        snmpCache.getIfName(snmpEndpoint, enrichedFlow.getInputSnmp()).ifPresent(enrichedFlow::setInputSnmpIfName);
-                        snmpCache.getIfName(snmpEndpoint, enrichedFlow.getOutputSnmp()).ifPresent(enrichedFlow::setOutputSnmpIfName);
-                    } catch (ExecutionException ex) {
-                        throw new RuntimeException(ex);
-                    }
+                    snmpService.getIfName(snmpEndpoint, enrichedFlow.getInputSnmp()).ifPresent(enrichedFlow::setInputSnmpIfName);
+                    snmpService.getIfName(snmpEndpoint, enrichedFlow.getOutputSnmp()).ifPresent(enrichedFlow::setOutputSnmpIfName);
                 }
             });
             //enrichedFlows = documentEnricher.enrich(flows, source);

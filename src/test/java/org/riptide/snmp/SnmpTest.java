@@ -162,7 +162,10 @@ public class SnmpTest {
 
     @Test
     public void testSnmpCache(@TempDir Path temporaryFolder) throws IOException, ExecutionException {
-        final SnmpCache snmpCache = new SnmpCache();
+        final SnmpCacheConfig snmpCacheConfig = new SnmpCacheConfig();
+        snmpCacheConfig.retentionMs = 600000;
+
+        final SnmpService snmpCache = new CachingSnmpService(new DefaultSnmpService(), snmpCacheConfig);
         final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), 12345, TestSnmpAgent.COMMUNITY);
 
         assertThat(snmpCache.getIfName(snmpEndpoint, 1)).isInstanceOf(Optional.class).isEmpty();

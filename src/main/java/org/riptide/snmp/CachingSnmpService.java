@@ -16,7 +16,6 @@ import java.util.concurrent.TimeUnit;
 @Service
 @Slf4j
 public class CachingSnmpService implements SnmpService {
-
     private final SnmpService delegate;
     private final SnmpCacheConfig cacheConfig;
     private final LoadingCache<Tuple<SnmpEndpoint, Integer>, Optional<String>> ifIndexCache;

@@ -1,12 +1,11 @@
 package org.riptide.snmp;
 
-import com.google.common.base.Strings;
+import java.net.InetSocketAddress;
+
+import org.snmp4j.fluent.TargetBuilder;
+
 import inet.ipaddr.IPAddressString;
 import lombok.Data;
-import org.snmp4j.fluent.TargetBuilder;
-import org.snmp4j.security.SecurityLevel;
-
-import java.net.InetSocketAddress;
 
 @Data
 public class SnmpDefinition {
@@ -35,21 +34,5 @@ public class SnmpDefinition {
     public SnmpEndpoint createEndpoint(final IPAddressString ipAddressString) {
         final InetSocketAddress inetSocketAddress = new InetSocketAddress(ipAddressString.getHostAddress().toInetAddress(), getPort());
         return new SnmpEndpoint(this, inetSocketAddress);
-    }
-
-    public SecurityLevel getSecurityLevel() {
-        if (snmpVersion == SnmpVersion.v3) {
-            if (authProtocol != null && !Strings.isNullOrEmpty(authPassphrase)) {
-                if (privProtocol != null && !Strings.isNullOrEmpty(privPassphrase)) {
-                    return SecurityLevel.authPriv;
-                } else {
-                    return SecurityLevel.authNoPriv;
-                }
-            } else {
-                return SecurityLevel.noAuthNoPriv;
-            }
-        } else {
-            return SecurityLevel.undefined;
-        }
     }
 }

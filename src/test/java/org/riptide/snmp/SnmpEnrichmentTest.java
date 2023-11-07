@@ -42,7 +42,7 @@ public class SnmpEnrichmentTest {
     MetricRegistry metricRegistry;
 
     @Autowired
-    SnmpCache snmpCache;
+    SnmpService snmpService;
 
     @Autowired
     SnmpConfiguration snmpConfiguration;
@@ -69,7 +69,7 @@ public class SnmpEnrichmentTest {
                 assertThat(enrichedFlow.getOutputSnmpIfName()).isEqualTo("lo0-x");
             }
         });
-        final Pipeline pipeline = new Pipeline(classificationEngine, repositories, metricRegistry, snmpConfiguration, snmpCache);
+        final Pipeline pipeline = new Pipeline(classificationEngine, repositories, metricRegistry, snmpConfiguration, snmpService);
 
         final Flow flow = Mockito.mock(Flow.class);
         when(flow.getSrcAddr()).thenReturn(InetAddress.getByName("10.10.10.10"));
