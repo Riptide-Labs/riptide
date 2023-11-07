@@ -69,12 +69,15 @@ public class Pipeline {
     private final SnmpConfiguration snmpConfiguration;
     private final Map<String, Persister> persisters;
 
+    private final EnrichedFlow.FlowMapper flowMapper;
+
     public Pipeline(final ClassificationEngine classificationEngine,
 //                    final DocumentEnricherImpl documentEnricher,
 //                    final InterfaceMarkerImpl interfaceMarker,
 //                    final FlowThresholdingImpl thresholding,
                     final Map<String, FlowRepository> repositories,
                     final MetricRegistry metricRegistry,
+                    final EnrichedFlow.FlowMapper flowMapper,
                     final SnmpConfiguration snmpConfiguration,
                     final SnmpService snmpService
     ) {
@@ -97,29 +100,31 @@ public class Pipeline {
             final var timer = metricRegistry.timer(MetricRegistry.name("logPersisting", name));
             return new Persister(repository, timer);
         });
+
+        this.flowMapper = Objects.requireNonNull(flowMapper);
     }
 
-    public void process(final WithSource<List<Flow>> flows) throws FlowException {
+    public void process(final Source source, final List<Flow> flows) throws FlowException {
         // Track the number of flows per call
-        this.flowsPerLog.update(flows.value().size());
+        this.flowsPerLog.update(flows.size());
 
         // Filter empty logs
-        if (flows.value().isEmpty()) {
+        if (flows.isEmpty()) {
             this.emptyFlows.inc();
-            LOG.info("Received empty flows from {} @ {}. Nothing to do.", flows.source(), flows.location());
+            LOG.info("Received empty flows from {} @ {}. Nothing to do.", source.getExporterAddr(), source.getLocation());
             return;
         }
 
-        final List<EnrichedFlow> enrichedFlows = flows.value().stream()
-                .map(EnrichedFlow::from)
+        final List<EnrichedFlow> enrichedFlows = flows.stream()
+                .map(flow -> this.flowMapper.enrichedFlow(source, flow))
                 .collect(Collectors.toList());
 
         // Classify flows
         try (Timer.Context ctx = this.logClassificationTimer.time()) {
             for (final var flow : enrichedFlows) {
                 final var request = ClassificationRequest.builder()
-                        .withExporterAddress(IpAddr.of(flows.source()))
-                        .withLocation(flows.location())
+                        .withExporterAddress(IpAddr.of(source.getExporterAddr()))
+                        .withLocation(source.getLocation())
                         .withProtocol(Protocols.getProtocol(flow.getProtocol()))
                         .withSrcAddress(IpAddr.of(flow.getSrcAddr()))
                         .withSrcPort(flow.getSrcPort())
@@ -135,9 +140,9 @@ public class Pipeline {
         }
 
         // Enrich with model data
-        LOG.debug("Enriching {} flow documents.", flows.value().size());
+        LOG.debug("Enriching {} flow documents.", flows.size());
         try (Timer.Context ctx = this.logEnrichementTimer.time()) {
-            snmpConfiguration.lookup(flows.source()).ifPresent(snmpEndpoint -> {
+            snmpConfiguration.lookup(source.getExporterAddr()).ifPresent(snmpEndpoint -> {
                 for (final EnrichedFlow enrichedFlow : enrichedFlows) {
                     snmpService.getIfName(snmpEndpoint, enrichedFlow.getInputSnmp()).ifPresent(enrichedFlow::setInputSnmpIfName);
                     snmpService.getIfName(snmpEndpoint, enrichedFlow.getOutputSnmp()).ifPresent(enrichedFlow::setOutputSnmpIfName);

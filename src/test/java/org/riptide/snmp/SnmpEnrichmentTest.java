@@ -16,8 +16,9 @@ import org.mockito.Mockito;
 import org.riptide.classification.ClassificationEngine;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.pipeline.EnrichedFlow;
+import org.riptide.pipeline.EnrichedFlow$FlowMapperImpl;
 import org.riptide.pipeline.Pipeline;
-import org.riptide.pipeline.WithSource;
+import org.riptide.pipeline.Source;
 import org.riptide.repository.FlowRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -69,7 +70,7 @@ public class SnmpEnrichmentTest {
                 assertThat(enrichedFlow.getOutputSnmpIfName()).isEqualTo("lo0-x");
             }
         });
-        final Pipeline pipeline = new Pipeline(classificationEngine, repositories, metricRegistry, snmpConfiguration, snmpService);
+        final Pipeline pipeline = new Pipeline(classificationEngine, repositories, metricRegistry, new EnrichedFlow$FlowMapperImpl(), snmpConfiguration, snmpService);
 
         final Flow flow = Mockito.mock(Flow.class);
         when(flow.getSrcAddr()).thenReturn(InetAddress.getByName("10.10.10.10"));
@@ -77,8 +78,8 @@ public class SnmpEnrichmentTest {
         when(flow.getInputSnmp()).thenReturn(1);
         when(flow.getOutputSnmp()).thenReturn(2);
 
-        final WithSource withSource = new WithSource<>("here", InetAddress.getByName("127.0.0.1"), Lists.list(flow));
-        pipeline.process(withSource);
+        final Source source = new Source("here", InetAddress.getByName("127.0.0.1"));
+        pipeline.process(source, Lists.list(flow));
 
         snmpAgent.stop();
 

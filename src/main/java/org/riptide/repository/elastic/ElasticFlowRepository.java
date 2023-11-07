@@ -13,6 +13,7 @@ import org.riptide.repository.elastic.bulk.BulkException;
 import org.riptide.repository.elastic.bulk.BulkRequest;
 import org.riptide.repository.elastic.bulk.BulkWrapper;
 import org.riptide.repository.elastic.doc.FlowDocument;
+import org.riptide.repository.elastic.doc.FlowDocumentMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -71,16 +72,21 @@ public class ElasticFlowRepository implements FlowRepository {
     private final Map<Thread, FlowBulk> flowBulks = new ConcurrentHashMap<>();
     private java.util.Timer flushTimer;
 
+    private final FlowDocumentMapper flowDocumentMapper;
+
     public ElasticFlowRepository(final MetricRegistry metricRegistry,
                                  final JestClient jestClient,
                                  final IndexStrategy indexStrategy,
-                                 final IndexSettings indexSettings) {
+                                 final IndexSettings indexSettings,
+                                 final FlowDocumentMapper flowDocumentMapper) {
         this.client = Objects.requireNonNull(jestClient);
         this.indexStrategy = Objects.requireNonNull(indexStrategy);
         this.indexSettings = Objects.requireNonNull(indexSettings);
 
         this.flowsPersistedMeter = metricRegistry.meter("flowsPersisted");
         this.logPersistingTimer = metricRegistry.timer("logPersisting");
+
+        this.flowDocumentMapper = Objects.requireNonNull(flowDocumentMapper);
     }
 
     public ElasticFlowRepository(final MetricRegistry metricRegistry,
@@ -88,8 +94,9 @@ public class ElasticFlowRepository implements FlowRepository {
                                  final IndexStrategy indexStrategy,
                                  final IndexSettings indexSettings,
                                  final int bulkSize,
-                                 final int bulkFlushMs) {
-        this(metricRegistry, jestClient, indexStrategy, indexSettings);
+                                 final int bulkFlushMs,
+                                 final FlowDocumentMapper flowDocumentMapper) {
+        this(metricRegistry, jestClient, indexStrategy, indexSettings, flowDocumentMapper);
 
         this.bulkSize = bulkSize;
         this.bulkFlushMs = bulkFlushMs;
@@ -145,7 +152,9 @@ public class ElasticFlowRepository implements FlowRepository {
         final FlowBulk flowBulk = this.flowBulks.computeIfAbsent(Thread.currentThread(), (thread) -> new FlowBulk());
         flowBulk.lock.lock();
         try {
-            flows.stream().map(FlowDocument::from).forEach(flowBulk.documents::add);
+            flows.stream()
+                    .map(this.flowDocumentMapper::flowToDocument)
+                    .forEach(flowBulk.documents::add);
             if (flowBulk.documents.size() >= this.bulkSize) {
                 this.persistBulk(flowBulk.documents);
                 flowBulk.lastPersist = System.currentTimeMillis();

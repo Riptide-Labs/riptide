@@ -1,4 +1,8 @@
-#  🚀 Welcome to Riptide 🌊
+
+![riptide-logo](./artwork/riptide-logo.png)
+
+
+# 🌊 Welcome to Riptide 
 
 Our project goal is to give people working in IT operations the best experience to optimize and troubleshoot IT networks.
 Riptide is an open-source monitoring tool focused on network traffic.

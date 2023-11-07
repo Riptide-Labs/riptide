@@ -19,6 +19,7 @@
         <java.version>21</java.version>
         <resilience4j.version>2.1.0</resilience4j.version>
         <lombok.version>1.18.30</lombok.version>
+        <mapstruct.version>1.5.5.Final</mapstruct.version>
     </properties>
 
     <dependencies>
@@ -119,6 +120,12 @@
             <version>${lombok.version}</version>
             <scope>provided</scope>
         </dependency>
+        <!-- mapstruct -->
+        <dependency>
+            <groupId>org.mapstruct</groupId>
+            <artifactId>mapstruct</artifactId>
+            <version>${mapstruct.version}</version>
+        </dependency>
 
         <!-- SNMP support -->
         <dependency>
@@ -167,16 +174,18 @@
             <plugin>
                 <groupId>com.google.cloud.tools</groupId>
                 <artifactId>jib-maven-plugin</artifactId>
+                <version>3.4.0</version>
                 <configuration>
                     <from>
                         <image>eclipse-temurin:21-jre-alpine</image>
                     </from>
                     <to>
-                        <image>pikkalabs/riptide</image>
-                        <tags>
-                            <tag>latest</tag>
-                            <tag>bleeding</tag>
-                        </tags>
+                        <!-- if :local is omitted, latest is used, which we don't want -->
+                        <image>quay.io/pikkalabs/riptide:local</image>
+                        <!-- sets additional tags. Uncommented on purpose, refer to https://github.com/GoogleContainerTools/jib/issues/2237 for more details -->
+<!--                        <tags>-->
+<!--                            <tag>additional</tag>-->
+<!--                        </tags>-->
                     </to>
                     <container>
                         <ports>
@@ -196,7 +205,20 @@
                             <artifactId>lombok</artifactId>
                             <version>${lombok.version}</version>
                         </path>
+                        <path>
+                            <groupId>org.mapstruct</groupId>
+                            <artifactId>mapstruct-processor</artifactId>
+                            <version>${mapstruct.version}</version>
+                        </path>
                     </annotationProcessorPaths>
+                    <compilerArgs>
+                        <arg>
+                            -Amapstruct.unmappedTargetPolicy=ERROR
+                        </arg>
+                        <arg>
+                            -Amapstruct.unmappedSourcePolicy=ERROR
+                        </arg>
+                    </compilerArgs>
                 </configuration>
             </plugin>
             <!-- some basic checkstyle rules -->
