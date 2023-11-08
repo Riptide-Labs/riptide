@@ -6,6 +6,8 @@ import com.codahale.metrics.Timer;
 import io.searchbox.client.JestClient;
 import io.searchbox.core.Bulk;
 import io.searchbox.core.Index;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
 import org.riptide.repository.FlowRepository;
@@ -196,10 +198,12 @@ public class ElasticFlowRepository implements FlowRepository {
         }
     }
 
+    @PostConstruct
     public void start() {
         startTimer();
     }
 
+    @PreDestroy
     public void stop() throws FlowException {
         stopTimer();
         for (final FlowBulk flowBulk : flowBulks.values()) {
