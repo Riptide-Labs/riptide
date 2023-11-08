@@ -5,13 +5,14 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.net.InetAddress;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
 @Data
 @ConfigurationProperties(prefix = "riptide.snmp.config")
 public class SnmpConfiguration {
-    public List<SnmpDefinition> definitions;
+    public List<SnmpDefinition> definitions = new ArrayList<>();
 
     public Optional<SnmpEndpoint> lookup(final InetAddress host) {
         return lookup(host.getHostAddress());
