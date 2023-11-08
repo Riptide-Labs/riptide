@@ -19,7 +19,7 @@ public class SnmpTest {
     public static SnmpEndpoint communityV1(final IPAddressString ipAddressString, final int port, final String community) {
         final SnmpDefinition snmpDefinition = new SnmpDefinition();
         snmpDefinition.setPort(port);
-        snmpDefinition.setSnmpVersion(new SnmpVersion1());
+        snmpDefinition.setSnmpVersion(SnmpVersion.v1);
         snmpDefinition.setCommunity(community);
         snmpDefinition.setSecurityName(null);
         snmpDefinition.setAuthProtocol(null);
@@ -32,7 +32,7 @@ public class SnmpTest {
     public static SnmpEndpoint communityV2c(final IPAddressString ipAddressString, final int port, final String community) {
         final SnmpDefinition snmpDefinition = new SnmpDefinition();
         snmpDefinition.setPort(port);
-        snmpDefinition.setSnmpVersion(new SnmpVersion2c());
+        snmpDefinition.setSnmpVersion(SnmpVersion.v2c);
         snmpDefinition.setCommunity(community);
         snmpDefinition.setSecurityName(null);
         snmpDefinition.setAuthProtocol(null);
@@ -45,7 +45,7 @@ public class SnmpTest {
     public static SnmpEndpoint noAuthNoPriv(final IPAddressString ipAddressString, final int port, final String securityName) {
         final SnmpDefinition snmpDefinition = new SnmpDefinition();
         snmpDefinition.setPort(port);
-       snmpDefinition.setSnmpVersion(new SnmpVersion3());
+       snmpDefinition.setSnmpVersion(SnmpVersion.v3);
         snmpDefinition.setCommunity(null);
         snmpDefinition.setSecurityName(securityName);
         snmpDefinition.setAuthProtocol(null);
@@ -58,7 +58,7 @@ public class SnmpTest {
     public static SnmpEndpoint authNoPriv(final IPAddressString ipAddressString, final int port, final String securityName, final TargetBuilder.AuthProtocol authProtocol, final String authPassphrase) {
         final SnmpDefinition snmpDefinition = new SnmpDefinition();
         snmpDefinition.setPort(port);
-        snmpDefinition.setSnmpVersion(new SnmpVersion3());
+        snmpDefinition.setSnmpVersion(SnmpVersion.v3);
         snmpDefinition.setCommunity(null);
         snmpDefinition.setSecurityName(securityName);
         snmpDefinition.setAuthProtocol(authProtocol);
@@ -71,7 +71,7 @@ public class SnmpTest {
     public static SnmpEndpoint authPriv(final IPAddressString ipAddressString, final int port, final String securityName, final TargetBuilder.AuthProtocol authProtocol, final String authPassphrase, final TargetBuilder.PrivProtocol privProtocol, final String privPassphrase) {
         final SnmpDefinition snmpDefinition = new SnmpDefinition();
         snmpDefinition.setPort(port);
-        snmpDefinition.setSnmpVersion(new SnmpVersion3());
+        snmpDefinition.setSnmpVersion(SnmpVersion.v3);
         snmpDefinition.setCommunity(null);
         snmpDefinition.setSecurityName(securityName);
         snmpDefinition.setAuthProtocol(authProtocol);

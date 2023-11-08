@@ -1,6 +1,11 @@
 package org.riptide.snmp;
 
-import lombok.extern.slf4j.Slf4j;
+import java.io.IOException;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+
 import org.snmp4j.Snmp;
 import org.snmp4j.Target;
 import org.snmp4j.fluent.SnmpBuilder;
@@ -10,17 +15,13 @@ import org.snmp4j.util.DefaultPDUFactory;
 import org.snmp4j.util.TableEvent;
 import org.snmp4j.util.TableUtils;
 
-import java.io.IOException;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
-
-import static org.riptide.snmp.SnmpTable.IfTable;
-import static org.riptide.snmp.SnmpTable.IfXTable;
+import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 public final class SnmpUtils {
+
+    private static final SnmpIfXTable SNMP_IFX_TABLE = new SnmpIfXTable();
+    private static final SnmpIfTable SNMP_IF_TABLE = new SnmpIfTable();
 
     private SnmpUtils() {
     }
@@ -57,9 +58,9 @@ public final class SnmpUtils {
         try (Snmp snmp = snmpBuilder.build()) {
             final Target<?> target = snmpEndpoint.getSnmpDefinition().getSnmpVersion().getTarget(snmp, snmpBuilder, snmpEndpoint);
             // query ifXTable first, if not available fallback to ifTable
-            final var snmpInterfaceMap = walkTable(snmp, target, IfXTable);
+            final var snmpInterfaceMap = walkTable(snmp, target, SNMP_IFX_TABLE);
             if (snmpInterfaceMap.isEmpty()) {
-                return walkTable(snmp, target, IfTable);
+                return walkTable(snmp, target, SNMP_IF_TABLE);
             }
             return snmpInterfaceMap;
         }
