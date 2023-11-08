@@ -57,6 +57,8 @@ public class EnrichedFlow implements Flow {
     private Locality dstLocality;
     private Locality flowLocality;
     private Duration clockCorrection;
+    private String inputSnmpIfName;
+    private String outputSnmpIfName;
 
     public String getConvoKey() {
         return ConversationKey.Utils.getConvoKeyAsJsonString(
@@ -84,6 +86,9 @@ public class EnrichedFlow implements Flow {
         @Mapping(target = "dstLocality", ignore = true)
         @Mapping(target = "flowLocality", ignore = true)
         @Mapping(target = "clockCorrection", ignore = true)
+        @Mapping(target = "inputSnmpIfName", ignore = true)
+        @Mapping(target = "outputSnmpIfName", ignore = true)
+
         @Mapping(target = ".", source = "source")
         @Mapping(target = ".", source = "flow")
         public abstract EnrichedFlow enrichedFlow(Source source, Flow flow);

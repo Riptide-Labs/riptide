@@ -160,6 +160,12 @@ public class FlowDocument {
     private Integer inputSnmp;
 
     /**
+     * SNMP ifName
+     */
+    @SerializedName("netflow.input_snmpIfName")
+    private String inputSnmpIfName;
+
+    /**
      * IPv4 vs IPv6
      */
     @SerializedName("netflow.ip_protocol_version")
@@ -189,6 +195,12 @@ public class FlowDocument {
      */
     @SerializedName("netflow.output_snmp")
     private Integer outputSnmp;
+
+    /**
+     * SNMP ifName
+     */
+    @SerializedName("netflow.output_snmpIfName")
+    private String outputSnmpIfName;
 
     /**
      * Number of packets in the flow
