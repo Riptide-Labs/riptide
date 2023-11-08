@@ -2,6 +2,12 @@
 
 let
 
+  pyenv = pkgs.python3.withPackages (ps: with ps; [
+    pyshark
+    click
+    tqdm
+  ]);
+
 in pkgs.mkShell {
   buildInputs = with pkgs; [
     bash
@@ -10,5 +16,6 @@ in pkgs.mkShell {
     maven
     protobuf
     just
+    pyenv
   ];
 }
