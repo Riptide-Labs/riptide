@@ -5,7 +5,6 @@ import com.codahale.metrics.Gauge;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import io.netty.buffer.ByteBuf;
-import org.riptide.dns.api.DnsResolver;
 import org.riptide.flows.listeners.UdpParser;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.ie.RecordProvider;
@@ -39,12 +38,9 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
     public UdpParserBase(final Protocol protocol,
                          final String name,
                          final BiConsumer<Source, Flow> dispatcher,
-//                         final EventForwarder eventForwarder,
-//                         final Identity identity,
                          final String location,
-                         final DnsResolver dnsResolver,
                          final MetricRegistry metricRegistry) {
-        super(protocol, name, dispatcher, /*eventForwarder, identity,*/ location, dnsResolver, metricRegistry);
+        super(protocol, name, dispatcher, location, metricRegistry);
 
         this.packetsReceived = metricRegistry.meter(MetricRegistry.name("parsers",  name, "packetsReceived"));
         this.parserErrors = metricRegistry.counter(MetricRegistry.name("parsers",  name, "parserErrors"));

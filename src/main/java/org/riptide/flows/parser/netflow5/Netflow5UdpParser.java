@@ -2,7 +2,6 @@ package org.riptide.flows.parser.netflow5;
 
 import com.codahale.metrics.MetricRegistry;
 import io.netty.buffer.ByteBuf;
-import org.riptide.dns.api.DnsResolver;
 import org.riptide.flows.listeners.multi.DispatchableUdpParser;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.UdpParserBase;
@@ -17,7 +16,6 @@ import org.riptide.flows.utils.BufferUtils;
 import org.riptide.pipeline.Source;
 
 import java.net.InetSocketAddress;
-import java.time.Duration;
 import java.util.function.BiConsumer;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
@@ -28,12 +26,9 @@ public class Netflow5UdpParser extends UdpParserBase implements DispatchableUdpP
 
     public Netflow5UdpParser(final String name,
                              final BiConsumer<Source, Flow> dispatcher,
-//                             final EventForwarder eventForwarder,
-//                             final Identity identity,
                              final String location,
-                             final DnsResolver dnsResolver,
                              final MetricRegistry metricRegistry) {
-        super(Protocol.NETFLOW5, name, dispatcher, /*eventForwarder, identity,*/ location, dnsResolver, metricRegistry);
+        super(Protocol.NETFLOW5, name, dispatcher, location, metricRegistry);
     }
 
     public Netflow5FlowBuilder getFlowBulder() {
@@ -50,8 +45,6 @@ public class Netflow5UdpParser extends UdpParserBase implements DispatchableUdpP
                                    final ByteBuf buffer) throws Exception {
         final Header header = new Header(slice(buffer, Header.SIZE));
         final Packet packet = new Packet(header, buffer);
-
-        detectClockSkew(Duration.ofSeconds(header.unixSecs, header.unixNSecs).toMillis(), session.getRemoteAddress());
 
         return packet;
     }
