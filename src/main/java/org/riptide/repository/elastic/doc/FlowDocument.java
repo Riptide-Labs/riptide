@@ -4,8 +4,6 @@ import com.google.gson.annotations.SerializedName;
 import lombok.Getter;
 import lombok.Setter;
 
-import java.util.LinkedHashSet;
-import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -39,13 +37,6 @@ public class FlowDocument {
      */
     @SerializedName("exporter_addr")
     private String exporterAddr;
-
-    /**
-     * The set of all hosts that are involved in this flow. This should include at a minimum the src and dst IP
-     * addresses and may also include host names for those IPs.
-     */
-    @SerializedName("hosts")
-    private Set<String> hosts = new LinkedHashSet<>();
 
     /**
      * Exported location.
@@ -288,23 +279,17 @@ public class FlowDocument {
     private FlowProtocol flowProtocol;
 
     /**
+     * The set of all hosts that are involved in this flow. This should include at a minimum the src and dst IP
+     * addresses and may also include host names for those IPs.
+     */
+    @SerializedName("hosts")
+    public Set<String> getHosts() {
+        return Set.of(this.srcAddr, this.dstAddr);
+    }
+
+    /**
      * VLAN Name.
      */
     @SerializedName("netflow.vlan")
     private String vlan;
-
-    public void addHost(String host) {
-        Objects.requireNonNull(host);
-        hosts.add(host);
-    }
-
-    public void setDstAddr(String dstAddr) {
-        addHost(dstAddr);
-        this.dstAddr = dstAddr;
-    }
-
-    public void setSrcAddr(String srcAddr) {
-        addHost(srcAddr);
-        this.srcAddr = srcAddr;
-    }
 }
