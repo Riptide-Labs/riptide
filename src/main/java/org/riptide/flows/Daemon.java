@@ -4,7 +4,6 @@ import com.codahale.metrics.MetricRegistry;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.config.DaemonConfig;
-import org.riptide.dns.api.DnsResolver;
 import org.riptide.flows.listeners.UdpListener;
 import org.riptide.flows.listeners.multi.DispatchableUdpParser;
 import org.riptide.flows.listeners.multi.DispatchingUdpParser;
@@ -29,11 +28,9 @@ public class Daemon implements ApplicationRunner {
 
     private final UdpListener listener;
 
-    public Daemon(final DnsResolver dnsResolver,
-                  final Pipeline pipeline,
+    public Daemon(final Pipeline pipeline,
                   final MetricRegistry metricRegistry,
-                  final DaemonConfig config
-    ) {
+                  final DaemonConfig config) {
 
         final var location = "Cloudcuckooland";
 
@@ -50,17 +47,14 @@ public class Daemon implements ApplicationRunner {
                 new Netflow5UdpParser("default-netflow5",
                         dispatcher,
                         location,
-                        dnsResolver,
                         metricRegistry),
                 new Netflow9UdpParser("default-netflow9",
                         dispatcher,
                         location,
-                        dnsResolver,
                         metricRegistry),
                 new IpfixUdpParser("default-ipfix",
                         dispatcher,
                         location,
-                        dnsResolver,
                         metricRegistry)
         );
 
