@@ -8,7 +8,6 @@ import org.riptide.flows.parser.ipfix.IpFixFlowBuilder;
 import org.riptide.flows.parser.netflow9.Netflow9FlowBuilder;
 
 import java.time.Instant;
-import java.util.Optional;
 
 
 public class NMS14130_Test {
@@ -16,7 +15,6 @@ public class NMS14130_Test {
     @Test
     void verifyNetflow9() {
         verifyIfIndex((in, out, ingress, egress) -> {
-            final RecordEnrichment enrichment = (address -> Optional.empty());
             final var record = new RecordBuilder();
             record.add(new UnsignedValue("@unixSecs", 1000));
             record.add(new UnsignedValue("@sysUpTime", 1000));
@@ -35,14 +33,13 @@ public class NMS14130_Test {
             if (egress != null) {
                 record.add(new UnsignedValue("egressPhysicalInterface", egress));
             }
-            return new Netflow9FlowBuilder().buildFlow(Instant.EPOCH, record.values(), enrichment);
+            return new Netflow9FlowBuilder().buildFlow(Instant.EPOCH, record.values());
         });
     }
 
     @Test
     void verifyIPFix() {
         verifyIfIndex((in, out, ingress, egress) -> {
-            final RecordEnrichment enrichment = (address -> Optional.empty());
             final var record = new RecordBuilder();
             record.add(new UnsignedValue("@unixSecs", 1000));
             record.add(new UnsignedValue("@sysUpTime", 1000));
@@ -61,7 +58,7 @@ public class NMS14130_Test {
             if (egress != null) {
                 record.add(new UnsignedValue("egressPhysicalInterface", egress));
             }
-            return new IpFixFlowBuilder().buildFlow(Instant.EPOCH, record.values(), enrichment);
+            return new IpFixFlowBuilder().buildFlow(Instant.EPOCH, record.values());
         });
     }
 

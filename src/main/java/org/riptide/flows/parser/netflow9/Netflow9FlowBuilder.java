@@ -1,6 +1,5 @@
 package org.riptide.flows.parser.netflow9;
 
-import org.riptide.flows.parser.RecordEnrichment;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.data.FlowBuilder;
 import org.riptide.flows.parser.data.Timeout;
@@ -28,8 +27,7 @@ public class Netflow9FlowBuilder implements FlowBuilder {
 
     @Override
     public Flow buildFlow(final Instant receivedAt,
-                          final Map<String, Value<?>> values,
-                          final RecordEnrichment enrichment) {
+                          final Map<String, Value<?>> values) {
         final var sysUpTime = durationValue("@sysUpTime", ChronoUnit.MILLIS);
         final var unixSecs = timestampValue("@unixSecs", ChronoUnit.SECONDS);
 
@@ -66,11 +64,6 @@ public class Netflow9FlowBuilder implements FlowBuilder {
                         .with(inetAddressValue("IPV6_DST_ADDR"))
                         .with(inetAddressValue("IPV4_DST_ADDR"))
                         .getOrNull();
-            }
-
-            @Override
-            public String getDstAddrHostname() {
-                return enrichment.getHostnameFor(this.getDstAddr()).orElse(null);
             }
 
             @Override
@@ -169,11 +162,6 @@ public class Netflow9FlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public String getNextHopHostname() {
-                return enrichment.getHostnameFor(this.getNextHop()).orElse(null);
-            }
-
-            @Override
             public Integer getOutputSnmp() {
                 return Values.<Integer>first(values)
                         .with(intValue("egressPhysicalInterface"))
@@ -211,11 +199,6 @@ public class Netflow9FlowBuilder implements FlowBuilder {
                         .with(inetAddressValue("IPV6_SRC_ADDR"))
                         .with(inetAddressValue("IPV4_SRC_ADDR"))
                         .getOrNull();
-            }
-
-            @Override
-            public String getSrcAddrHostname() {
-                return enrichment.getHostnameFor(this.getSrcAddr()).orElse(null);
             }
 
             @Override

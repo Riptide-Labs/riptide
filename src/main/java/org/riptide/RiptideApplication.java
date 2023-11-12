@@ -8,6 +8,6 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 @ConfigurationPropertiesScan
 public class RiptideApplication {
     public static void main(final String... args) {
-        SpringApplication.run(RiptideApplication.class, args);
+        SpringApplication.run(RiptideApplication.class, args).getApplicationStartup();
     }
 }

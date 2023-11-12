@@ -1,7 +1,6 @@
 package org.riptide.flows.parser.netflow5;
 
 
-import org.riptide.flows.parser.RecordEnrichment;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.data.FlowBuilder;
 import org.riptide.flows.parser.data.Values;
@@ -22,8 +21,7 @@ import static org.riptide.flows.parser.data.Values.longValue;
 public class Netflow5FlowBuilder implements FlowBuilder {
     @Override
     public Flow buildFlow(final Instant receivedAt,
-                          final Map<String, Value<?>> values,
-                          final RecordEnrichment enrichment) {
+                          final Map<String, Value<?>> values) {
 
         final var timestamp = Values.both(
                 longValue("@unixSecs"),
@@ -58,11 +56,6 @@ public class Netflow5FlowBuilder implements FlowBuilder {
             @Override
             public InetAddress getDstAddr() {
                 return inetAddressValue("dstAddr").getOrNull(values);
-            }
-
-            @Override
-            public String getDstAddrHostname() {
-                return enrichment.getHostnameFor(this.getDstAddr()).orElse(null);
             }
 
             @Override
@@ -126,11 +119,6 @@ public class Netflow5FlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public String getNextHopHostname() {
-                return enrichment.getHostnameFor(this.getNextHop()).orElse(null);
-            }
-
-            @Override
             public Integer getOutputSnmp() {
                 return intValue("output").getOrNull(values);
             }
@@ -163,11 +151,6 @@ public class Netflow5FlowBuilder implements FlowBuilder {
             @Override
             public InetAddress getSrcAddr() {
                 return inetAddressValue("srcAddr").getOrNull(values);
-            }
-
-            @Override
-            public String getSrcAddrHostname() {
-                return enrichment.getHostnameFor(this.getSrcAddr()).orElse(null);
             }
 
             @Override

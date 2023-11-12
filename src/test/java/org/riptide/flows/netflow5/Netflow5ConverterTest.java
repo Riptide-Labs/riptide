@@ -17,7 +17,6 @@ import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 import org.assertj.core.api.Assertions;
 import static org.riptide.flows.utils.BufferUtils.slice;
@@ -39,11 +38,9 @@ public class Netflow5ConverterTest {
         Assertions.assertThat(flow.getSamplingInterval()).isEqualTo(0.0);
         Assertions.assertThat(flow.getSamplingAlgorithm()).isEqualTo(Flow.SamplingAlgorithm.Unassigned);
         Assertions.assertThat(flow.getSrcAddr().getHostAddress()).isEqualTo("10.0.2.2");
-        Assertions.assertThat(flow.getSrcAddrHostname()).isNull();
         Assertions.assertThat(flow.getSrcPort()).isEqualTo(54435);
         Assertions.assertThat(flow.getSrcMaskLen()).isEqualTo(0);
         Assertions.assertThat(flow.getDstAddr().getHostAddress()).isEqualTo("10.0.2.15");
-        Assertions.assertThat(flow.getDstAddrHostname()).isNull();
         Assertions.assertThat(flow.getDstPort()).isEqualTo(22);
         Assertions.assertThat(flow.getDstMaskLen()).isEqualTo(0);
         Assertions.assertThat(flow.getTcpFlags()).isEqualTo(16);
@@ -57,7 +54,6 @@ public class Netflow5ConverterTest {
         Assertions.assertThat(flow.getPackets()).isEqualTo(5L);
         Assertions.assertThat(flow.getDirection()).isEqualTo(Flow.Direction.INGRESS);
         Assertions.assertThat(flow.getNextHop().getHostAddress()).isEqualTo("0.0.0.0");
-        Assertions.assertThat(flow.getNextHopHostname()).isNull();
         Assertions.assertThat(flow.getVlan()).isNull();
     }
 
@@ -77,7 +73,7 @@ public class Netflow5ConverterTest {
             final Header header = new Header(slice(buffer, Header.SIZE));
                 final Packet packet = new Packet(header, buffer);
                 packet.getRecords().forEach(rec -> {
-                    final var flowMessage = new Netflow5FlowBuilder().buildFlow(Instant.EPOCH, rec, (address) -> Optional.empty());
+                    final var flowMessage = new Netflow5FlowBuilder().buildFlow(Instant.EPOCH, rec);
                     flows.add(flowMessage);
                 });
         }

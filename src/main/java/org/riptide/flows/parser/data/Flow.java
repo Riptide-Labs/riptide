@@ -31,11 +31,6 @@ public interface Flow {
     InetAddress getDstAddr();
 
     /**
-     * Destination address hostname.
-     */
-    String getDstAddrHostname();
-
-    /**
      * Destination autonomous system (AS).
      */
     Long getDstAs();
@@ -106,11 +101,6 @@ public interface Flow {
     InetAddress getNextHop();
 
     /**
-     * Next hop hostname
-     */
-    String getNextHopHostname();
-
-    /**
      * SNMP ifIndex
      */
     Integer getOutputSnmp();
@@ -139,11 +129,6 @@ public interface Flow {
      * Source address.
      */
     InetAddress getSrcAddr();
-
-    /**
-     * Source address hostname.
-     */
-    String getSrcAddrHostname();
 
     /**
      * Source autonomous system (AS).

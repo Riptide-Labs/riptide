@@ -88,6 +88,9 @@ public class EnrichedFlow implements Flow {
         @Mapping(target = "clockCorrection", ignore = true)
         @Mapping(target = "inputSnmpIfName", ignore = true)
         @Mapping(target = "outputSnmpIfName", ignore = true)
+        @Mapping(target = "srcAddrHostname", ignore = true)
+        @Mapping(target = "dstAddrHostname", ignore = true)
+        @Mapping(target = "nextHopHostname", ignore = true)
 
         @Mapping(target = ".", source = "source")
         @Mapping(target = ".", source = "flow")
