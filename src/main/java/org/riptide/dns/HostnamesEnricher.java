@@ -7,6 +7,7 @@ import org.riptide.dns.api.DnsResolver;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Source;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
@@ -18,7 +19,8 @@ import java.util.stream.Stream;
 @Component
 @RequiredArgsConstructor
 @Slf4j
-public class HostnameEnricher extends Enricher.Streaming {
+@ConditionalOnProperty(name = "riptide.enricher.hostnames.enable", havingValue = "true", matchIfMissing = true)
+public class HostnamesEnricher extends Enricher.Streaming {
 
     @NonNull
     private final DnsResolver dnsResolver;

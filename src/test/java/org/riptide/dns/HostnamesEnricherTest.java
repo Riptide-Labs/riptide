@@ -21,7 +21,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
-public class HostnameEnricherTest {
+public class HostnamesEnricherTest {
 
     private final MetricRegistry metricRegistry = new MetricRegistry();
 
@@ -47,7 +47,7 @@ public class HostnameEnricherTest {
         dnsResolver.setNameservers("127.0.0.1:" + dnsServer.getPort());
         dnsResolver.init();
 
-        final var enrichers = List.<Enricher>of(new HostnameEnricher(dnsResolver));
+        final var enrichers = List.<Enricher>of(new HostnamesEnricher(dnsResolver));
 
         final var repository = new TestRepository();
         final var pipeline = new Pipeline(enrichers, repository.asRepositoriesMap(), this.metricRegistry, this.flowMapper);

@@ -5,12 +5,14 @@ import lombok.RequiredArgsConstructor;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Source;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.CompletableFuture;
 
 @Component
 @RequiredArgsConstructor
+@ConditionalOnProperty(name = "riptide.enricher.classification.enable", havingValue = "true", matchIfMissing = true)
 public class ClassificationEnricher extends Enricher.Single {
 
     @NonNull
