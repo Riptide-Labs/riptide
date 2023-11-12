@@ -3,7 +3,6 @@ package org.riptide.flows.parser.netflow9;
 import com.codahale.metrics.MetricRegistry;
 import com.google.common.base.MoreObjects;
 import io.netty.buffer.ByteBuf;
-import org.riptide.dns.api.DnsResolver;
 import org.riptide.flows.listeners.Dispatchable;
 import org.riptide.flows.listeners.UdpParser;
 import org.riptide.flows.parser.Protocol;
@@ -31,12 +30,9 @@ public class Netflow9UdpParser extends UdpParserBase implements UdpParser, Dispa
 
     public Netflow9UdpParser(final String name,
                              final BiConsumer<Source, Flow> dispatcher,
-//                             final EventForwarder eventForwarder,
-//                             final Identity identity,
                              final String location,
-                             final DnsResolver dnsResolver,
                              final MetricRegistry metricRegistry) {
-        super(Protocol.NETFLOW9, name, dispatcher, /*eventForwarder, identity,*/ location, dnsResolver, metricRegistry);
+        super(Protocol.NETFLOW9, name, dispatcher, location, metricRegistry);
     }
 
     public Netflow9FlowBuilder getFlowBulder() {
@@ -48,8 +44,6 @@ public class Netflow9UdpParser extends UdpParserBase implements UdpParser, Dispa
                                    final ByteBuf buffer) throws Exception {
         final Header header = new Header(slice(buffer, Header.SIZE));
         final Packet packet = new Packet(session, header, buffer);
-
-        detectClockSkew(header.unixSecs * 1000L, session.getRemoteAddress());
 
         return packet;
     }
