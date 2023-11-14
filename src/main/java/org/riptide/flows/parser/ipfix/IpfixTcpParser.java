@@ -3,7 +3,6 @@ package org.riptide.flows.parser.ipfix;
 import com.codahale.metrics.MetricRegistry;
 import com.google.common.collect.Sets;
 import io.netty.buffer.ByteBuf;
-import org.riptide.dns.api.DnsResolver;
 import org.riptide.flows.listeners.TcpParser;
 import org.riptide.flows.parser.ParserBase;
 import org.riptide.flows.parser.Protocol;
@@ -31,12 +30,9 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
 
     public IpfixTcpParser(final String name,
                           final BiConsumer<Source, Flow> dispatcher,
-//                          final EventForwarder eventForwarder,
-//                          final Identity identity,
                           final String location,
-                          final DnsResolver dnsResolver,
                           final MetricRegistry metricRegistry) {
-        super(Protocol.IPFIX, name, dispatcher, /*eventForwarder, identity,*/ location, dnsResolver, metricRegistry);
+        super(Protocol.IPFIX, name, dispatcher, location, metricRegistry);
     }
 
     @Override
@@ -69,8 +65,6 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
                     buffer.resetReaderIndex();
                     return Optional.empty();
                 }
-
-                detectClockSkew(header.exportTime * 1000L, session.getRemoteAddress());
 
                 return Optional.of(IpfixTcpParser.this.transmit(packet, session, remoteAddress));
             }
