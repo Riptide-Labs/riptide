@@ -1,8 +1,8 @@
 package org.riptide.flows.parser;
 
-import org.assertj.core.api.Assertions;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
 import org.riptide.flows.parser.netflow9.Netflow9FlowBuilder;
@@ -17,7 +17,6 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
-import java.util.Optional;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
 
@@ -26,13 +25,12 @@ public class NMS13006_Test {
 
     @Test
     void verifyFirstAndLastSwitched() throws Exception {
-        final RecordEnrichment enrichment = (address -> Optional.empty());
         final var record = new RecordBuilder();
         record.add(new UnsignedValue("@unixSecs", 1000));
         record.add(new UnsignedValue("@sysUpTime", 1000));
         record.add(new UnsignedValue("FIRST_SWITCHED", 2000));
         record.add(new UnsignedValue("LAST_SWITCHED", 3000));
-        final var flowMessage = new Netflow9FlowBuilder().buildFlow(Instant.EPOCH, record.values(), enrichment);
+        final var flowMessage = new Netflow9FlowBuilder().buildFlow(Instant.EPOCH, record.values());
 
         Assertions.assertThat(flowMessage.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(1001000L));
         Assertions.assertThat(flowMessage.getLastSwitched()).isEqualTo(Instant.ofEpochMilli(1002000L));
@@ -41,13 +39,12 @@ public class NMS13006_Test {
 
     @Test
     void verifyFlowStartAndEndMs() throws Exception {
-        final RecordEnrichment enrichment = (address -> Optional.empty());
         final var record = new RecordBuilder();
         record.add(new UnsignedValue("@unixSecs", 1000));
         record.add(new UnsignedValue("@sysUpTime", 1000));
         record.add(new UnsignedValue("flowStartMilliseconds", 2001000));
         record.add(new UnsignedValue("flowEndMilliseconds", 2002000));
-        final var flowMessage = new Netflow9FlowBuilder().buildFlow(Instant.EPOCH, record.values(), enrichment);
+        final var flowMessage = new Netflow9FlowBuilder().buildFlow(Instant.EPOCH, record.values());
 
         Assertions.assertThat(flowMessage.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(2001000L));
         Assertions.assertThat(flowMessage.getLastSwitched()).isEqualTo(Instant.ofEpochMilli(2002000L));
@@ -67,11 +64,10 @@ public class NMS13006_Test {
             do {
                 final Header header = new Header(slice(buf, Header.SIZE));
                 final Packet packet = new Packet(session, header, buf);
-                final RecordEnrichment enrichment = (address -> Optional.empty());
 
                 packet.getRecords().forEach(r -> {
                             final Netflow9FlowBuilder builder = new Netflow9FlowBuilder();
-                            final var flowMessage = builder.buildFlow(Instant.EPOCH, r, enrichment);
+                            final var flowMessage = builder.buildFlow(Instant.EPOCH, r);
                             Assertions.assertThat(flowMessage.getFirstSwitched()).isNotNull();
                             Assertions.assertThat(flowMessage.getLastSwitched()).isNotNull();
                             Assertions.assertThat(flowMessage.getDeltaSwitched()).isNotNull();

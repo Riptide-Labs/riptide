@@ -127,14 +127,14 @@ public abstract class ParserBase implements Parser {
 //            }
 //        };
 
-        this.recordsReceived = metricRegistry.meter(MetricRegistry.name("parsers",  name, "recordsReceived"));
-        this.recordsDispatched = metricRegistry.meter(MetricRegistry.name("parsers",  name, "recordsDispatched"));
-        this.recordEnrichmentTimer = metricRegistry.timer(MetricRegistry.name("parsers",  name, "recordEnrichment"));
-        this.recordEnrichmentErrors = metricRegistry.counter(MetricRegistry.name("parsers",  name, "recordEnrichmentErrors"));
-        this.invalidFlows = metricRegistry.meter(MetricRegistry.name("parsers",  name, "invalidFlows"));
-        this.recordsScheduled = metricRegistry.meter(MetricRegistry.name("parsers",  name, "recordsScheduled"));
-        this.recordsCompleted = metricRegistry.meter(MetricRegistry.name("parsers",  name, "recordsCompleted"));
-        this.recordDispatchErrors = metricRegistry.counter(MetricRegistry.name("parsers",  name, "recordDispatchErrors"));
+        this.recordsReceived = metricRegistry.meter(MetricRegistry.name("parsers", name, "recordsReceived"));
+        this.recordsDispatched = metricRegistry.meter(MetricRegistry.name("parsers", name, "recordsDispatched"));
+        this.recordEnrichmentTimer = metricRegistry.timer(MetricRegistry.name("parsers", name, "recordEnrichment"));
+        this.recordEnrichmentErrors = metricRegistry.counter(MetricRegistry.name("parsers", name, "recordEnrichmentErrors"));
+        this.invalidFlows = metricRegistry.meter(MetricRegistry.name("parsers", name, "invalidFlows"));
+        this.recordsScheduled = metricRegistry.meter(MetricRegistry.name("parsers", name, "recordsScheduled"));
+        this.recordsCompleted = metricRegistry.meter(MetricRegistry.name("parsers", name, "recordsCompleted"));
+        this.recordDispatchErrors = metricRegistry.counter(MetricRegistry.name("parsers", name, "recordDispatchErrors"));
         this.sequenceErrors = metricRegistry.counter(MetricRegistry.name("parsers", name, "sequenceErrors"));
 
         // Call setters since these also perform additional handling
@@ -255,51 +255,33 @@ public abstract class ParserBase implements Parser {
             this.sequenceErrors.inc();
         }
 
-        // The packets are coming in hot - performance here is critical
-        // Perform the record enrichment and serialization in a thread pool allowing these to be parallelized
-        final var futureOfFutures = CompletableFuture.supplyAsync(() -> {
-            return packet.getRecords().map(record -> {
-                this.recordsReceived.mark();
+        final var futures = packet.getRecords().map(record -> {
+            this.recordsReceived.mark();
 
-                final CompletableFuture<Void> future = new CompletableFuture<>();
-                final Timer.Context timerContext = this.recordEnrichmentTimer.time();
-                // Trigger record enrichment (performing DNS reverse lookups for example)
-                final RecordEnricher recordEnricher = new RecordEnricher(this.dnsResolver, getDnsLookupsEnabled());
-                recordEnricher.enrich(record).whenComplete((enrichment, ex) -> {
-                    timerContext.close();
-                    if (ex != null) {
-                        this.recordEnrichmentErrors.inc();
+            // We're currently in the callback thread from the enrichment process
+            // We want the remainder of the serialization and dispatching to be performed
+            // from one of our executor threads so that we can put back-pressure on the listener
+            // if we can't keep up
+            final Runnable dispatch = () -> {
+                // Let's serialize
+                final Flow flow;
+                try {
+                    flow = this.getFlowBulder().buildFlow(Instant.now(), record);
+                } catch (final Exception e) {
+                    throw new RuntimeException(e);
+                }
 
-                        // Enrichment failed
-                        future.completeExceptionally(ex);
-                        return;
-                    }
-                    // Enrichment was successful
+                // Check if the flow is valid (and maybe correct it)
+                final List<String> corrections = this.correctFlow(flow);
+                if (!corrections.isEmpty()) {
+                    this.invalidFlows.mark();
 
-                    // We're currently in the callback thread from the enrichment process
-                    // We want the remainder of the serialization and dispatching to be performed
-                    // from one of our executor threads so that we can put back-pressure on the listener
-                    // if we can't keep up
-                    final Runnable dispatch = () -> {
-                        // Let's serialize
-                        final Flow flow;
-                        try {
-                            flow = this.getFlowBulder().buildFlow(Instant.now(), record, enrichment);
-                        } catch (final  Exception e) {
-                            throw new RuntimeException(e);
-                        }
+                    final Optional<Instant> instant = this.illegalFlowEventCache.getUnchecked(session.getRemoteAddress());
 
-                        // Check if the flow is valid (and maybe correct it)
-                        final List<String> corrections = this.correctFlow(flow);
-                        if (!corrections.isEmpty()) {
-                            this.invalidFlows.mark();
+                    if (instant.isEmpty() || Duration.between(instant.get(), Instant.now()).getSeconds() > getIllegalFlowEventRate()) {
+                        illegalFlowEventCache.put(session.getRemoteAddress(), Optional.of(Instant.now()));
 
-                            final Optional<Instant> instant = this.illegalFlowEventCache.getUnchecked(session.getRemoteAddress());
-
-                            if (instant.isEmpty() || Duration.between(instant.get(), Instant.now()).getSeconds() > getIllegalFlowEventRate()) {
-                                illegalFlowEventCache.put(session.getRemoteAddress(), Optional.of(Instant.now()));
-
-                                // TODO fooker: Log me
+                        // TODO fooker: Log me
 //                                eventForwarder.sendNow(new EventBuilder()
 //                                        .setUei(ILLEGAL_FLOW_EVENT_UEI)
 //                                        .setTime(new Date())
@@ -313,56 +295,35 @@ public abstract class ParserBase implements Parser {
 //                                        .setParam("illegalFlowEventRate", (int) getIllegalFlowEventRate())
 //                                        .getEvent());
 
-                                for (final String correction : corrections) {
-                                    log.warn("Illegal flow detected from exporter {}: \n{}", session.getRemoteAddress().getAddress(), correction);
-                                }
-                            }
+                        for (final String correction : corrections) {
+                            log.warn("Illegal flow detected from exporter {}: \n{}", session.getRemoteAddress().getAddress(), correction);
                         }
-
-                        log.trace("Received flow: {}", flow);
-
-                        // Dispatch
-                        this.dispatcher.accept(new Source(this.location, session.getRemoteAddress()), flow);
-
-                        this.recordsDispatched.mark();
-                    };
-
-                    // TODO fooker: We need this?
-                    // It's possible that the callback thread is already a thread from the pool, if that's the case
-                    // execute within the current thread. This helps avoid deadlocks.
-//                    if (Boolean.TRUE.equals(isParserThread.get())) {
-//                        dispatch.run();
-//                    } else {
-                        // We're not in one of the parsers threads, execute the dispatch in the pool
-                        this.executor.execute(dispatch);
-//                    }
-
-                    this.recordsScheduled.mark();
-                });
-                return future;
-            }).toArray(CompletableFuture[]::new);
-        }, executor);
-
-        // Return a future which is completed when all records are finished dispatching (i.e. written to Kafka)
-        final CompletableFuture<Void> future = new CompletableFuture<>();
-        futureOfFutures.whenComplete((futures, ex) -> {
-            if (ex != null) {
-                log.warn("Error preparing records for dispatch.", ex);
-                future.completeExceptionally(ex);
-                return;
-            }
-            // Dispatch was triggered for all the records, now wait for the dispatching to complete
-            CompletableFuture.allOf(futures).whenComplete((any, exx) -> {
-                if (exx != null) {
-                    log.warn("One or more of the records were not successfully dispatched.", exx);
-                    future.completeExceptionally(exx);
-                    return;
+                    }
                 }
-                // All of the records have been successfully dispatched
-                future.complete(any);
-            });
+
+                log.trace("Received flow: {}", flow);
+
+                // Dispatch
+                this.dispatcher.accept(new Source(this.location, session.getRemoteAddress()), flow);
+
+                this.recordsDispatched.mark();
+            };
+
+            final var future = CompletableFuture.runAsync(dispatch, executor);
+
+            this.recordsScheduled.mark();
+
+            return future;
         });
-        return future;
+
+        return CompletableFuture.allOf(futures.toArray(CompletableFuture<?>[]::new))
+                .exceptionally(ex -> {
+                    if (ex != null) {
+                        log.warn("Error preparing records for dispatch.", ex);
+                    }
+
+                    return null;
+                });
     }
 
     protected void detectClockSkew(final long packetTimestampMs,

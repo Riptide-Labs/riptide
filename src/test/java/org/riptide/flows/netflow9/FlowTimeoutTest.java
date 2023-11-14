@@ -2,7 +2,6 @@ package org.riptide.flows.netflow9;
 
 
 import java.time.Instant;
-import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 import org.riptide.flows.parser.IllegalFlowException;
@@ -21,7 +20,7 @@ public class FlowTimeoutTest {
                 .add(new UnsignedValue("FIRST_SWITCHED", 123000))
                 .add(new UnsignedValue("LAST_SWITCHED", 987000));
 
-        final var flowMessage = new Netflow9FlowBuilder().buildFlow(Instant.EPOCH, record.values(), (address -> Optional.empty()));
+        final var flowMessage = new Netflow9FlowBuilder().buildFlow(Instant.EPOCH, record.values());
         Assertions.assertThat(flowMessage.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(123000L));
         Assertions.assertThat(flowMessage.getDeltaSwitched()).isEqualTo(Instant.ofEpochMilli(123000L));
         Assertions.assertThat(flowMessage.getLastSwitched()).isEqualTo(Instant.ofEpochMilli(987000L));
@@ -40,7 +39,7 @@ public class FlowTimeoutTest {
                 .add(new UnsignedValue("FLOW_ACTIVE_TIMEOUT", 10))
                 .add(new UnsignedValue("FLOW_INACTIVE_TIMEOUT", 300));
 
-        final var flowMessage = new Netflow9FlowBuilder().buildFlow(Instant.EPOCH, record.values(), (address -> Optional.empty()));
+        final var flowMessage = new Netflow9FlowBuilder().buildFlow(Instant.EPOCH, record.values());
         Assertions.assertThat(flowMessage.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(123000L));
         Assertions.assertThat(flowMessage.getDeltaSwitched()).isEqualTo(Instant.ofEpochMilli(987000L - 10000L));
         Assertions.assertThat(flowMessage.getLastSwitched()).isEqualTo(Instant.ofEpochMilli(987000L));
@@ -58,7 +57,7 @@ public class FlowTimeoutTest {
                 .add(new UnsignedValue("FLOW_ACTIVE_TIMEOUT", 10))
                 .add(new UnsignedValue("FLOW_INACTIVE_TIMEOUT", 300));
 
-        final var flowMessage = new Netflow9FlowBuilder().buildFlow(Instant.EPOCH, record.values(), (address -> Optional.empty()));
+        final var flowMessage = new Netflow9FlowBuilder().buildFlow(Instant.EPOCH, record.values());
         Assertions.assertThat(flowMessage.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(123000L));
         Assertions.assertThat(flowMessage.getDeltaSwitched()).isEqualTo(Instant.ofEpochMilli(987000L - 300000L));
         Assertions.assertThat(flowMessage.getLastSwitched()).isEqualTo(Instant.ofEpochMilli(987000L));
