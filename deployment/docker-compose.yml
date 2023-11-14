@@ -1,0 +1,66 @@
+---
+version: '3.8'
+
+volumes:
+  es01-data:
+    driver: local
+  gf-data:
+    driver: local
+
+services:
+
+  es01:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.9
+    environment:
+      node.name: es01
+      cluster.name: riptide
+      discovery.type: single-node
+      search.max_buckets: 250000
+      # ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-changeme}
+      bootstrap.memory_lock: true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    healthcheck:
+      test: curl http://localhost:9200 >/dev/null; if [[ $$? == 52 ]]; then echo 0; else echo 1; fi
+      interval: 5s
+      timeout: 3s
+      retries: 1
+    ports:
+      - "9200:9200/tcp"
+    volumes:
+      - es01-data:/usr/share/elasticsearch/data
+      - ./plugins:/usr/share/elasticsearch/plugins
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.17.9
+    depends_on:
+      es01:
+        condition: service_healthy
+    environment:
+      ELASTICSEARCH_HOSTS: http://es01:9200
+    ports:
+      - "5601:5601/tcp"
+
+  grafana:
+    image: docker.io/grafana/grafana:latest
+    depends_on:
+      es01:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - gf-data:/var/lib/grafana
+    ports:
+      - "3000:3000/tcp"
+
+  riptide:
+    image: quay.io/pikkalabs/riptide:latest
+    depends_on:
+      es01:
+        condition: service_healthy
+    environment:
+      RIPTIDE_ELASTIC_URL: http://es01:9200
+    ports:
+      - '9999:9999/udp'
