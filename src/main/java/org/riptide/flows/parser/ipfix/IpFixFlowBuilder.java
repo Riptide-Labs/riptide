@@ -1,7 +1,6 @@
 package org.riptide.flows.parser.ipfix;
 
 import com.google.common.primitives.UnsignedLong;
-import org.riptide.flows.parser.RecordEnrichment;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.data.FlowBuilder;
 import org.riptide.flows.parser.data.Timeout;
@@ -34,8 +33,7 @@ public class IpFixFlowBuilder implements FlowBuilder {
 
     @Override
     public Flow buildFlow(final Instant receivedAt,
-                          final Map<String, Value<?>> values,
-                          final RecordEnrichment enrichment) {
+                          final Map<String, Value<?>> values) {
 
         // TODO fooker: What about @observationDomainId
 
@@ -86,11 +84,6 @@ public class IpFixFlowBuilder implements FlowBuilder {
                         .with(inetAddressValue("destinationIPv6Address"))
                         .with(inetAddressValue("destinationIPv4Address"))
                         .getOrNull();
-            }
-
-            @Override
-            public String getDstAddrHostname() {
-                return enrichment.getHostnameFor(this.getDstAddr()).orElse(null);
             }
 
             @Override
@@ -219,11 +212,6 @@ public class IpFixFlowBuilder implements FlowBuilder {
             }
 
             @Override
-            public String getNextHopHostname() {
-                return enrichment.getHostnameFor(this.getNextHop()).orElse(null);
-            }
-
-            @Override
             public Integer getOutputSnmp() {
                 return Values.<Integer>first(values)
                         .with(intValue("egressPhysicalInterface"))
@@ -332,11 +320,6 @@ public class IpFixFlowBuilder implements FlowBuilder {
                 return Values.<InetAddress>first(values).with(
                         inetAddressValue("sourceIPv6Address")).with(
                         inetAddressValue("sourceIPv4Address")).getOrNull();
-            }
-
-            @Override
-            public String getSrcAddrHostname() {
-                return enrichment.getHostnameFor(this.getSrcAddr()).orElse(null);
             }
 
             @Override

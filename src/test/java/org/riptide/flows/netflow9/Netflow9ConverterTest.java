@@ -21,7 +21,6 @@ import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
 
@@ -35,10 +34,8 @@ public class Netflow9ConverterTest {
         final var flow = flows.get(4);
         Assertions.assertThat(flow.getFlowProtocol()).isEqualTo(Flow.FlowProtocol.NetflowV9);
         Assertions.assertThat(flow.getSrcAddr().getHostAddress()).isEqualTo("10.1.20.85");
-        Assertions.assertThat(flow.getSrcAddrHostname()).isNull();
         Assertions.assertThat(flow.getSrcPort()).isEqualTo(137);
         Assertions.assertThat(flow.getDstAddr().getHostAddress()).isEqualTo("10.1.20.127");
-        Assertions.assertThat(flow.getDstAddrHostname()).isNull();
         Assertions.assertThat(flow.getDstPort()).isEqualTo(137);
         Assertions.assertThat(flow.getProtocol()).isEqualTo(17); // UDP
         Assertions.assertThat(flow.getBytes()).isEqualTo(156L);
@@ -49,7 +46,6 @@ public class Netflow9ConverterTest {
         Assertions.assertThat(flow.getPackets()).isEqualTo(2L);
         Assertions.assertThat(flow.getDirection()).isEqualTo(Flow.Direction.INGRESS);
         Assertions.assertThat(flow.getNextHop().getHostAddress()).isEqualTo("0.0.0.0");
-        Assertions.assertThat(flow.getNextHopHostname()).isNull();
         Assertions.assertThat(flow.getVlan()).isNull();
     }
 
@@ -70,7 +66,7 @@ public class Netflow9ConverterTest {
             final Header header = new Header(slice(buffer, Header.SIZE));
             final Packet packet = new Packet(session, header, buffer);
             packet.getRecords().forEach(rec -> {
-                flows.add(new Netflow9FlowBuilder().buildFlow(Instant.EPOCH, rec, (address) -> Optional.empty()));
+                flows.add(new Netflow9FlowBuilder().buildFlow(Instant.EPOCH, rec));
             });
         }
         return flows;

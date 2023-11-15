@@ -1,29 +1,22 @@
 package org.riptide.pipeline;
 
+import com.codahale.metrics.Counter;
+import com.codahale.metrics.Histogram;
+import com.codahale.metrics.MetricRegistry;
+import com.codahale.metrics.Timer;
+import com.google.common.collect.Maps;
+import org.riptide.flows.parser.data.Flow;
+import org.riptide.repository.FlowRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
 import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
-
-import org.riptide.classification.ClassificationEngine;
-import org.riptide.classification.ClassificationRequest;
-import org.riptide.classification.IpAddr;
-import org.riptide.classification.Protocols;
-import org.riptide.flows.parser.data.Flow;
-import org.riptide.repository.FlowRepository;
-import org.riptide.snmp.SnmpConfiguration;
-import org.riptide.snmp.SnmpService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
-
-import com.codahale.metrics.Counter;
-import com.codahale.metrics.Histogram;
-import com.codahale.metrics.MetricRegistry;
-import com.codahale.metrics.Timer;
-import com.google.common.collect.Maps;
 
 @Component
 public class Pipeline {
@@ -56,36 +49,16 @@ public class Pipeline {
      */
     private final Counter emptyFlows;
 
-    private final ClassificationEngine classificationEngine;
-
-    // private final DocumentEnricherImpl documentEnricher;
-
-    // private final InterfaceMarkerImpl interfaceMarker;
-
-    // private final FlowThresholdingImpl thresholding;
-
-    private final SnmpService snmpService;
-
-    private final SnmpConfiguration snmpConfiguration;
+    private final List<Enricher> enrichers;
     private final Map<String, Persister> persisters;
 
     private final EnrichedFlow.FlowMapper flowMapper;
 
-    public Pipeline(final ClassificationEngine classificationEngine,
-//                    final DocumentEnricherImpl documentEnricher,
-//                    final InterfaceMarkerImpl interfaceMarker,
-//                    final FlowThresholdingImpl thresholding,
+    public Pipeline(final List<Enricher> enrichers,
                     final Map<String, FlowRepository> repositories,
                     final MetricRegistry metricRegistry,
-                    final EnrichedFlow.FlowMapper flowMapper,
-                    final SnmpConfiguration snmpConfiguration,
-                    final SnmpService snmpService
+                    final EnrichedFlow.FlowMapper flowMapper
     ) {
-        this.classificationEngine = Objects.requireNonNull(classificationEngine);
-//        this.documentEnricher = Objects.requireNonNull(documentEnricher);
-//        this.interfaceMarker = Objects.requireNonNull(interfaceMarker);
-//        this.thresholding = Objects.requireNonNull(thresholding);
-
         this.emptyFlows = metricRegistry.counter("emptyFlows");
         this.flowsPerLog = metricRegistry.histogram("flowsPerLog");
 
@@ -93,8 +66,8 @@ public class Pipeline {
         this.logEnrichementTimer = metricRegistry.timer("logEnrichment");
         this.logMarkingTimer = metricRegistry.timer("logMarking");
         this.logThresholdingTimer = metricRegistry.timer("logThresholding");
-        this.snmpConfiguration = snmpConfiguration;
-        this.snmpService = snmpService;
+
+        this.enrichers = Objects.requireNonNull(enrichers);
 
         this.persisters = Maps.transformEntries(repositories, (name, repository) -> {
             final var timer = metricRegistry.timer(MetricRegistry.name("logPersisting", name));
@@ -115,56 +88,21 @@ public class Pipeline {
             return;
         }
 
-        final List<EnrichedFlow> enrichedFlows = flows.stream()
-                .map(flow -> this.flowMapper.enrichedFlow(source, flow))
-                .collect(Collectors.toList());
-
-        // Classify flows
-        try (Timer.Context ctx = this.logClassificationTimer.time()) {
-            for (final var flow : enrichedFlows) {
-                final var request = ClassificationRequest.builder()
-                        .withExporterAddress(IpAddr.of(source.getExporterAddr()))
-                        .withLocation(source.getLocation())
-                        .withProtocol(Protocols.getProtocol(flow.getProtocol()))
-                        .withSrcAddress(IpAddr.of(flow.getSrcAddr()))
-                        .withSrcPort(flow.getSrcPort())
-                        .withDstAddress(IpAddr.of(flow.getDstAddr()))
-                        .withDstPort(flow.getDstPort())
-                        .build();
-
-                final var application = this.classificationEngine.classify(request);
-                if (application != null) {
-                    flow.setApplication(application);
-                }
-            }
-        }
 
         // Enrich with model data
         LOG.debug("Enriching {} flow documents.", flows.size());
+        final List<EnrichedFlow> enrichedFlows;
         try (Timer.Context ctx = this.logEnrichementTimer.time()) {
-            snmpConfiguration.lookup(source.getExporterAddr()).ifPresent(snmpEndpoint -> {
-                for (final EnrichedFlow enrichedFlow : enrichedFlows) {
-                    snmpService.getIfName(snmpEndpoint, enrichedFlow.getInputSnmp()).ifPresent(enrichedFlow::setInputSnmpIfName);
-                    snmpService.getIfName(snmpEndpoint, enrichedFlow.getOutputSnmp()).ifPresent(enrichedFlow::setOutputSnmpIfName);
-                }
-            });
-            //enrichedFlows = documentEnricher.enrich(flows, source);
-            // TODO fooker: Can I haz real enrichment?
+            enrichedFlows = flows.stream()
+                    .map(flow -> this.flowMapper.enrichedFlow(source, flow))
+                    .collect(Collectors.toList());
+
+            for (final var enricher : this.enrichers) {
+                enricher.enrich(source, enrichedFlows).get();
+            }
         } catch (final Exception e) {
             throw new FlowException("Failed to enrich one or more flows.", e);
         }
-
-        // Mark nodes and interfaces as having associated flows
-//        try (final Timer.Context ctx = this.logMarkingTimer.time()) {
-//            this.interfaceMarker.mark(enrichedFlows);
-//        }
-
-        // Apply thresholding to flows
-//        try (final Timer.Context ctx = this.logThresholdingTimer.time()) {
-//            this.thresholding.threshold(enrichedFlows, processingOptions);
-//        } catch (final ThresholdInitializationException | ExecutionException e) {
-//            throw new FlowException("Failed to threshold one or more flows.", e);
-//        }
 
         // Push flows to persistence
         for (final var persister : this.persisters.entrySet()) {
