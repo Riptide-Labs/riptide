@@ -16,6 +16,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletionException;
 import java.util.stream.Collectors;
 
 @Component
@@ -98,9 +99,9 @@ public class Pipeline {
                     .collect(Collectors.toList());
 
             for (final var enricher : this.enrichers) {
-                enricher.enrich(source, enrichedFlows).get();
+                enricher.enrich(source, enrichedFlows).join();
             }
-        } catch (final Exception e) {
+        } catch (final CompletionException e) {
             throw new FlowException("Failed to enrich one or more flows.", e);
         }
 
