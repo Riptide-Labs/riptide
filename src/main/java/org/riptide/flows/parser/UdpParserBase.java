@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -56,7 +57,8 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
 
     protected abstract UdpSessionManager.SessionKey buildSessionKey(InetSocketAddress remoteAddress, InetSocketAddress localAddress);
 
-    public final CompletableFuture<?> parse(final ByteBuf buffer,
+    public final CompletableFuture<?> parse(final Instant receivedAt,
+                                            final ByteBuf buffer,
                                             final InetSocketAddress remoteAddress,
                                             final InetSocketAddress localAddress) throws Exception {
         this.packetsReceived.mark();
@@ -68,7 +70,7 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
             final var parsed = this.parse(session, buffer);
             LOG.trace("Parsed packet: {}", parsed);
 
-            return this.transmit(parsed, session, remoteAddress);
+            return this.transmit(receivedAt, parsed, session, remoteAddress);
         } catch (Exception e) {
             this.sessionManager.drop(sessionKey);
             this.parserErrors.inc();

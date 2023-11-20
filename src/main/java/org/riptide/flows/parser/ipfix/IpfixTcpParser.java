@@ -15,6 +15,7 @@ import org.riptide.pipeline.Source;
 
 import java.net.InetSocketAddress;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -47,7 +48,7 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
 
         return new Handler() {
             @Override
-            public Optional<CompletableFuture<?>> parse(final ByteBuf buffer) throws Exception {
+            public Optional<CompletableFuture<?>> parse(final Instant receivedAt, final ByteBuf buffer) throws Exception {
                 buffer.markReaderIndex();
 
                 final Header header;
@@ -66,7 +67,7 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
                     return Optional.empty();
                 }
 
-                return Optional.of(IpfixTcpParser.this.transmit(packet, session, remoteAddress));
+                return Optional.of(IpfixTcpParser.this.transmit(receivedAt, packet, session, remoteAddress));
             }
 
             @Override

@@ -126,7 +126,8 @@ public abstract class ParserBase implements Parser {
         this.threads = threads;
     }
 
-    protected CompletableFuture<?> transmit(final RecordProvider packet,
+    protected CompletableFuture<?> transmit(final Instant receivedAt,
+                                            final RecordProvider packet,
                                             final Session session,
                                             final InetSocketAddress remoteAddress) {
         // Verify that flows sequences are in order
@@ -146,7 +147,7 @@ public abstract class ParserBase implements Parser {
                 // Let's serialize
                 final Flow flow;
                 try {
-                    flow = this.getFlowBulder().buildFlow(Instant.now(), record);
+                    flow = this.getFlowBulder().buildFlow(receivedAt, record);
                 } catch (final Exception e) {
                     throw new RuntimeException(e);
                 }

@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -33,12 +34,13 @@ public class DispatchingUdpParser implements UdpParser {
     }
 
     @Override
-    public CompletableFuture<?> parse(final ByteBuf buffer,
+    public CompletableFuture<?> parse(final Instant receivedAt,
+                                      final ByteBuf buffer,
                                       final InetSocketAddress remoteAddress,
                                       final InetSocketAddress localAddress) throws Exception {
         for (final var parser : this.parsers) {
             if (BufferUtils.peek(buffer, parser::handles)) {
-                return parser.parse(buffer, remoteAddress, localAddress);
+                return parser.parse(receivedAt, buffer, remoteAddress, localAddress);
             }
         }
 

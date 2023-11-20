@@ -23,6 +23,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -80,7 +81,7 @@ public class TcpListener implements Listener {
                                     protected void decode(final ChannelHandlerContext ctx,
                                                           final ByteBuf in,
                                                           final List<Object> out) throws Exception {
-                                        session.parse(in).ifPresent(out::add);
+                                        session.parse(Instant.now(), in).ifPresent(out::add);
                                     }
 
                                     @Override

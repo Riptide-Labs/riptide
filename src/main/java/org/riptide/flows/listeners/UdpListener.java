@@ -22,6 +22,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
+import java.time.Instant;
 import java.util.Objects;
 
 public class UdpListener implements Listener {
@@ -164,6 +165,7 @@ public class UdpListener implements Listener {
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, DatagramPacket msg) throws Exception {
             parser.parse(
+                    Instant.now(),
                     ReferenceCountUtil.retain(msg.content()),
                     msg.sender(), msg.recipient()
             ).handle((result, ex) -> {

@@ -88,7 +88,6 @@ public class Pipeline {
             return;
         }
 
-
         // Enrich with model data
         LOG.debug("Enriching {} flow documents.", flows.size());
         final List<EnrichedFlow> enrichedFlows;
