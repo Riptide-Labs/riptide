@@ -8,6 +8,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConditionalOnProperty(name = "riptide.opensearch.enabled", havingValue = "true")
 @Data
 public final class OpensearchConfig {
+        public boolean enabled;
         public String host = "localhost";
         public int port = 9200;
         public String username;

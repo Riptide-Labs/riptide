@@ -9,7 +9,7 @@ import org.riptide.flows.parser.ie.values.DateTimeValue;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
 import org.riptide.flows.parser.ipfix.IpFixFlowBuilder;
 
-public class FlowTimeoutTest {
+public class FlowEntitiyTimeoutTest {
 
     @Test
     void testWithoutTimeout() {

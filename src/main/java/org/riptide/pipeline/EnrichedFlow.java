@@ -51,7 +51,7 @@ public class EnrichedFlow implements Flow {
     private Integer vlan;
 
     private String application;
-    private String exporterAddr;
+    private String exporterAddr; // TODO fooker: why string?
     private String location;
     private Locality srcLocality;
     private Locality dstLocality;

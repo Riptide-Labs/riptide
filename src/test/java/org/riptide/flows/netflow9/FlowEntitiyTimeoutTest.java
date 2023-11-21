@@ -10,7 +10,7 @@ import org.assertj.core.api.Assertions;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
 import org.riptide.flows.parser.netflow9.Netflow9FlowBuilder;
 
-public class FlowTimeoutTest {
+public class FlowEntitiyTimeoutTest {
 
     @Test
     void verifyWithoutTimeout() throws IllegalFlowException {
