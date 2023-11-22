@@ -1,9 +1,9 @@
 package org.riptide.dns;
 
-import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
+import com.codahale.metrics.MetricRegistry;
 import lombok.extern.slf4j.Slf4j;
-import org.riptide.dns.api.DnsResolver;
+import org.riptide.config.enricher.HostnamesConfig;
+import org.riptide.dns.netty.NettyDnsResolver;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Source;
@@ -17,20 +17,25 @@ import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 @Component
-@RequiredArgsConstructor
 @Slf4j
 @ConditionalOnProperty(name = "riptide.enricher.hostnames.enable", havingValue = "true", matchIfMissing = true)
 public class HostnamesEnricher extends Enricher.Streaming {
 
-    @NonNull
-    private final DnsResolver dnsResolver;
+    private final NettyDnsResolver dnsResolver;
+
+    public HostnamesEnricher(final HostnamesConfig config,
+                             final MetricRegistry metricRegistry) {
+        this.dnsResolver = new NettyDnsResolver(metricRegistry);
+        this.dnsResolver.setNameservers(String.join(",", config.getNameservers()));
+        this.dnsResolver.init();
+    }
 
     @Override
     protected Stream<CompletableFuture<Void>> enrich(Source source, EnrichedFlow flow) {
         return Stream.of(
-                dnsResolver.reverseLookup(flow.getSrcAddr()).handle(apply(flow::setSrcAddrHostname)),
-                dnsResolver.reverseLookup(flow.getDstAddr()).handle(apply(flow::setDstAddrHostname)),
-                dnsResolver.reverseLookup(flow.getNextHop()).handle(apply(flow::setNextHopHostname)));
+                this.dnsResolver.reverseLookup(flow.getSrcAddr()).handle(apply(flow::setSrcAddrHostname)),
+                this.dnsResolver.reverseLookup(flow.getDstAddr()).handle(apply(flow::setDstAddrHostname)),
+                this.dnsResolver.reverseLookup(flow.getNextHop()).handle(apply(flow::setNextHopHostname)));
     }
 
     /**

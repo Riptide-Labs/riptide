@@ -1,23 +1,5 @@
 package org.riptide.dns.netty;
 
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
-
-import jakarta.annotation.PostConstruct;
-import org.riptide.dns.api.DnsResolver;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.codahale.metrics.Gauge;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
@@ -34,7 +16,23 @@ import io.netty.resolver.dns.DnsServerAddressStreamProvider;
 import io.netty.resolver.dns.DnsServerAddressStreamProviders;
 import io.netty.resolver.dns.SequentialDnsServerAddressStreamProvider;
 import io.netty.util.internal.SocketUtils;
-import org.springframework.stereotype.Component;
+import jakarta.annotation.PostConstruct;
+import org.riptide.dns.api.DnsResolver;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 /**
  * Asynchronous DNS resolution using Netty.
@@ -45,7 +43,6 @@ import org.springframework.stereotype.Component;
  * Uses a circuit breaker in order to ensure that callers do not continue to be bogged down
  * if resolution fails.
  */
-@Component
 public class NettyDnsResolver implements DnsResolver {
     private static final Logger LOG = LoggerFactory.getLogger(NettyDnsResolver.class);
 
