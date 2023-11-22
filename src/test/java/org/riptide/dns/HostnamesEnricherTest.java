@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
-import org.riptide.dns.netty.NettyDnsResolver;
+import org.riptide.config.enricher.HostnamesConfig;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
@@ -43,11 +43,11 @@ public class HostnamesEnricherTest {
 
     @Test
     public void testEnrichment() throws Exception {
-        final var dnsResolver = new NettyDnsResolver(this.metricRegistry);
-        dnsResolver.setNameservers("127.0.0.1:" + dnsServer.getPort());
-        dnsResolver.init();
+        final var config = new HostnamesConfig();
+        config.setEnable(true);
+        config.setNameservers(List.of(String.format("127.0.0.1:%s", dnsServer.getPort())));
 
-        final var enrichers = List.<Enricher>of(new HostnamesEnricher(dnsResolver));
+        final var enrichers = List.<Enricher>of(new HostnamesEnricher(config, this.metricRegistry));
 
         final var repository = new TestRepository();
         final var pipeline = new Pipeline(enrichers, repository.asRepositoriesMap(), this.metricRegistry, this.flowMapper);
