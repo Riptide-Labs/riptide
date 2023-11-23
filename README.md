@@ -4,8 +4,7 @@
 
 # 🌊 Welcome to Riptide 
 
-Our project goal is to give people working in IT operations the best experience to optimize and troubleshoot IT networks.
-Riptide is an open-source monitoring tool focused on network traffic.
+Give people who love working with IT networks the tools they deserve to optimize and troubleshoot network traffic.
 
 # 👋 Say hello
 
@@ -18,4 +17,4 @@ You can find us at:
 # 👮 Contribution Guidelines
 
 * [Conventional commits](https://www.conventionalcommits.org/en/v1.0.0/)
-  
+
