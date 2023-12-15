@@ -10,7 +10,7 @@ volumes:
 services:
 
   es01:
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.9
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.4
     environment:
       node.name: es01
       cluster.name: riptide
@@ -18,6 +18,7 @@ services:
       search.max_buckets: 250000
       # ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-changeme}
       bootstrap.memory_lock: true
+      xpack.security.enabled: false
     ulimits:
       memlock:
         soft: -1
@@ -31,10 +32,9 @@ services:
       - "9200:9200/tcp"
     volumes:
       - es01-data:/usr/share/elasticsearch/data
-      - ./plugins:/usr/share/elasticsearch/plugins
 
   kibana:
-    image: docker.elastic.co/kibana/kibana:7.17.9
+    image: docker.elastic.co/kibana/kibana:8.10.4
     depends_on:
       es01:
         condition: service_healthy
