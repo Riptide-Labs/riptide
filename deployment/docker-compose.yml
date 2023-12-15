@@ -56,7 +56,7 @@ services:
       - "3000:3000/tcp"
 
   riptide:
-    image: quay.io/pikkalabs/riptide:latest
+    image: quay.io/pikkalabs/riptide:local
     depends_on:
       es01:
         condition: service_healthy
