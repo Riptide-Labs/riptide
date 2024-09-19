@@ -16,9 +16,9 @@ jobs:
           architecture: x64
           cache: maven
       - name: Build & Test
-        run: mvn --batch-mode --update-snapshots verify
+        run: make build
       - name: Docker Build
-        run: mvn --batch-mode --update-snapshots jib:dockerBuild
+        run: make oci
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
@@ -54,3 +54,4 @@ jobs:
             -D"jib.to.auth.username=$QUAY_USERNAME" \
             -D"jib.to.auth.password=$QUAY_PASSWORD" \
             jib:build
+
