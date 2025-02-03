@@ -34,6 +34,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+import static io.github.resilience4j.circuitbreaker.CircuitBreakerConfig.custom;
+import static io.github.resilience4j.circuitbreaker.CircuitBreakerConfig.SlidingWindowType;
+import static io.github.resilience4j.circuitbreaker.CircuitBreakerConfig.SlidingWindowSynchronizationStrategy;
+
 /**
  * Asynchronous DNS resolution using Netty.
  *
@@ -118,11 +122,11 @@ public class NettyDnsResolver implements DnsResolver {
         }
         iterator = new RandomIterator<>(contexts).iterator();
 
-        final CircuitBreakerConfig circuitBreakerConfig = CircuitBreakerConfig.custom()
+        final CircuitBreakerConfig circuitBreakerConfig = custom()
                 .failureRateThreshold(breakerFailureRateThreshold)
                 .waitDurationInOpenState(Duration.ofSeconds(breakerWaitDurationInOpenState))
                 .permittedNumberOfCallsInHalfOpenState(breakerRingBufferSizeInHalfOpenState)
-                .slidingWindow(breakerRingBufferSizeInClosedState, breakerRingBufferSizeInClosedState, CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
+                .slidingWindow(breakerRingBufferSizeInClosedState, breakerRingBufferSizeInClosedState, SlidingWindowType.COUNT_BASED, SlidingWindowSynchronizationStrategy.LOCK_FREE)
                 .recordExceptions(DnsNameResolverTimeoutException.class)
                 .build();
         circuitBreaker = CircuitBreaker.of("nettyDnsResolver", circuitBreakerConfig);

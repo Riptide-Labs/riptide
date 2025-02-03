@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.2.9</version>
+        <version>3.4.2</version>
         <relativePath/>
     </parent>
 
@@ -16,25 +16,26 @@
     <description>NetFlow analysis engine</description>
 
     <properties>
-        <caffeine.version>3.1.8</caffeine.version>
-        <common-csv.version>1.10.0</common-csv.version>
-        <dnsjava.version>3.6.1</dnsjava.version>
-        <elasticsearch-java.version>8.15.1</elasticsearch-java.version>
-        <gson.version>2.10</gson.version>
-        <guava.version>33.2.1-jre</guava.version>
-        <ipaddress.version>5.5.0</ipaddress.version>
+        <caffeine.version>3.2.0</caffeine.version>
+        <common-csv.version>1.13.0</common-csv.version>
+        <dnsjava.version>3.6.3</dnsjava.version>
+        <elasticsearch-java.version>8.17.1</elasticsearch-java.version>
+        <gson.version>2.12.1</gson.version>
+        <guava.version>33.4.0-jre</guava.version>
+        <ipaddress.version>5.5.1</ipaddress.version>
         <jakarta-xml-bind-api.version>4.0.2</jakarta-xml-bind-api.version>
         <java.version>21</java.version>
-        <jib-maven-plugin.version>3.4.0</jib-maven-plugin.version>
-        <lombok.version>1.18.34</lombok.version>
-        <mapstruct.version>1.5.5.Final</mapstruct.version>
-        <maven-checkstyle-plugin.version>3.3.1</maven-checkstyle-plugin.version>
-        <netty-all.version>4.1.111.Final</netty-all.version>
-        <opensearch-java.version>2.11.0</opensearch-java.version>
-        <org-eclipse-persistence-moxy.version>4.0.4</org-eclipse-persistence-moxy.version>
-        <resilience4j.version>2.1.0</resilience4j.version>
+        <jib-maven-plugin.version>3.4.4</jib-maven-plugin.version>
+        <lombok.version>1.18.36</lombok.version>
+        <mapstruct.version>1.6.3</mapstruct.version>
+        <maven-checkstyle-plugin.version>3.6.0</maven-checkstyle-plugin.version>
+        <netty-all.version>4.1.117.Final</netty-all.version>
+        <opensearch-java.version>2.19.0</opensearch-java.version>
+        <org-eclipse-persistence-moxy.version>4.0.5</org-eclipse-persistence-moxy.version>
+        <resilience4j.version>2.3.0</resilience4j.version>
         <snmp4j.version>3.8.2</snmp4j.version>
         <snmp4j-agent.version>3.8.1</snmp4j-agent.version>
+        <dropwizard-metrics.version>4.2.30</dropwizard-metrics.version>
     </properties>
 
     <dependencies>
@@ -56,6 +57,7 @@
         <dependency>
             <groupId>io.dropwizard.metrics</groupId>
             <artifactId>metrics-core</artifactId>
+            <version>${dropwizard-metrics.version}</version>
         </dependency>
         <dependency>
             <groupId>io.netty</groupId>
