@@ -1,12 +1,12 @@
-name: Riptide Build
-run-name: Build and Test the application
+name: Riptide Release
+run-name: Build and version release
 on:
   workflow_dispatch:
   push:
-    tags-ignore:
-  pull_request:
+    tags:
+      - 'v*'
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,11 +17,19 @@ jobs:
           distribution: 'temurin'
           architecture: x64
           cache: maven
-      - name: Set version number, data and short git hash
+      - name: Check if you accidentally want to release a SNAPSHOT version
         run: |
-          echo "VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)" >> ${GITHUB_ENV}
+          POM_VERSION="$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)"
+          if [[ "${VERSION}" == *"SNAPSHOT"* ]]; then
+            echo "Error: Your pom has a SNAPSHOT release. Set the pom to a version number without SNAPSHOT."
+            exit 1
+          else
+            echo "VERSION=${POM_VERSION}" >> ${GITHUB_ENV}
+          fi
+      - name: Set data and short git hash
+        run: |
           echo "SHORT_GIT_SHA=$(git rev-parse --short HEAD)" >> ${GITHUB_ENV}
-          echo "BUILD_DATE"=$(date -u +"%Y-%m-%dT%H:%M:%SZ") >> ${GITHUB_ENV}
+          echo "BUILD_DATE"=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
       - name: Build with tests
         run: |
           make
@@ -35,7 +43,7 @@ jobs:
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Build and push container image to registry
+      - name: Build and push container image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -44,6 +52,8 @@ jobs:
           build-args: |
             DATE=${{ env.BUILD_DATE }}
             GIT_SHORT_HASH=${{ env.SHORT_GIT_SHA }}
-            REGISTRY_REPOSITORY=riptide-dev
+            REGISTRY_REPOSITORY=riptide
             VERSION=${{ env.VERSION }}
-          tags: ${{ vars.OCI_REGISTRY }}/${{ vars.OCI_OWNER }}/riptide-dev:${{ env.SHORT_GIT_SHA }}
+          tags: |
+            ${{ vars.OCI_REGISTRY }}/${{ vars.OCI_OWNER }}/riptide:${{ env.VERSION }}
+            ${{ vars.OCI_REGISTRY }}/${{ vars.OCI_OWNER }}/riptide:latest
