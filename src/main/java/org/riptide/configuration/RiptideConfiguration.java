@@ -37,17 +37,21 @@ public class RiptideConfiguration {
     }
 
     @Bean
-    public ClassificationRuleProvider classificationRuleProvider() throws IOException {
-        final var rules = CsvImporter.parse(RiptideApplication.class.getResourceAsStream("/classification-rules.csv"), true);
+    CsvImporter csvImporter() {
+        return new CsvImporter();
+    }
+
+    @Bean
+    ClassificationRuleProvider classificationRuleProvider(final CsvImporter importer) throws IOException {
+        final var rules = importer.parse(RiptideApplication.class.getResourceAsStream("/classification-rules.csv"), true);
         return ClassificationRuleProvider.forList(rules);
     }
 
     @Bean
-    public ClassificationEngine classificationEngine(final ClassificationRuleProvider classificationRuleProvider,
+    ClassificationEngine classificationEngine(final ClassificationRuleProvider classificationRuleProvider,
                                                      final MetricRegistry metricRegistry) throws InterruptedException {
         final var engine = new DefaultClassificationEngine(classificationRuleProvider, false);
         final var timingEngine = new TimingClassificationEngine(metricRegistry, engine);
-        final var reloadingEngine = new AsyncReloadingClassificationEngine(timingEngine);
-        return reloadingEngine;
+        return new AsyncReloadingClassificationEngine(timingEngine);
     }
 }

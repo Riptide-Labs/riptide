@@ -2,7 +2,6 @@ package org.riptide.classification.internal.csv;
 
 import com.google.common.base.Strings;
 import org.apache.commons.csv.CSVFormat;
-import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
 import org.riptide.classification.DefaultRule;
 import org.riptide.classification.Rule;
@@ -17,19 +16,15 @@ import java.util.Objects;
 public final class CsvImporter {
     public static final String[] HEADERS = {"name", "protocol", "srcAddress", "srcPort", "dstAddress", "dstPort", "exporterFilter", "omnidirectional"};
 
-    public static List<Rule> parse(final InputStream inputStream,
-                            final boolean hasHeader) throws IOException {
+    public List<Rule> parse(final InputStream inputStream, final boolean hasHeader) throws IOException {
         Objects.requireNonNull(inputStream);
 
         final var rules = new ArrayList<Rule>();
-
-        CSVFormat csvFormat = CSVFormat.RFC4180.withDelimiter(';');
-        if (hasHeader) csvFormat = csvFormat.withHeader();
-
-        final CSVParser parser = csvFormat.parse(new InputStreamReader(inputStream));
+        final var format = createFormat(hasHeader);
+        final var parser = format.parse(new InputStreamReader(inputStream));
         for (CSVRecord record : parser.getRecords()) {
             if (record.size() < HEADERS.length) {
-                throw new IOException("The provided rule ''" + record + "'' cannot be parsed. Expected columns " + HEADERS.length + " but received " + record.size() + ".");
+                throw new IOException("The provided rule ''%s'' cannot be parsed. Expected columns %s but received %s.".formatted(record, HEADERS.length, record.size()));
             }
 
             final String name = record.get(0);
@@ -59,7 +54,13 @@ public final class CsvImporter {
         return rules;
     }
 
-    private CsvImporter() {
-
+    private static CSVFormat createFormat(boolean hasHeader) {
+        var builder = CSVFormat.RFC4180
+                .builder()
+                .setDelimiter(';');
+        if (hasHeader) {
+            builder = builder.setHeader();
+        }
+        return builder.get();
     }
 }
