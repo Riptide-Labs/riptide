@@ -7,9 +7,6 @@ import org.riptide.flows.parser.ie.Semantics;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
 
-import java.util.Objects;
-import java.util.Optional;
-
 import static org.riptide.flows.utils.BufferUtils.sint;
 
 public class SignedValue extends Value<Long> {
@@ -19,7 +16,7 @@ public class SignedValue extends Value<Long> {
                        final Semantics semantics,
                        final long value) {
         super(name, semantics);
-        this.value = Objects.requireNonNull(value);
+        this.value = value;
     }
 
     public SignedValue(final String name, final long value) {
@@ -133,20 +130,5 @@ public class SignedValue extends Value<Long> {
     @Override
     public Long getValue() {
         return this.value;
-    }
-
-    @Override
-    public void visit(final Visitor visitor) {
-        visitor.accept(this);
-    }
-
-    @Override
-    public Typed typed() {
-        return new Typed() {
-            @Override
-            public Optional<SignedValue> asSignedValue() {
-                return Optional.of(SignedValue.this);
-            }
-        };
     }
 }

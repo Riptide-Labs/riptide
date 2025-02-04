@@ -11,7 +11,6 @@ import org.riptide.flows.parser.session.Session;
 import java.net.Inet4Address;
 import java.net.UnknownHostException;
 import java.util.Objects;
-import java.util.Optional;
 
 import static org.riptide.flows.utils.BufferUtils.bytes;
 
@@ -68,20 +67,5 @@ public class IPv4AddressValue extends Value<Inet4Address> {
     @Override
     public Inet4Address getValue() {
         return this.value;
-    }
-
-    @Override
-    public void visit(final Visitor visitor) {
-        visitor.accept(this);
-    }
-
-    @Override
-    public Typed typed() {
-        return new Typed() {
-            @Override
-            public Optional<IPv4AddressValue> asIPv4AddressValue() {
-                return Optional.of(IPv4AddressValue.this);
-            }
-        };
     }
 }

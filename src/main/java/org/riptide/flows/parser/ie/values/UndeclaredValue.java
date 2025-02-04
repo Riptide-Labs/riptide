@@ -7,7 +7,6 @@ import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
 
 import java.util.Objects;
-import java.util.Optional;
 
 import static org.riptide.flows.utils.BufferUtils.bytes;
 
@@ -37,11 +36,6 @@ public class UndeclaredValue extends Value<byte[]> {
     @Override
     public byte[] getValue() {
         return this.value;
-    }
-
-    @Override
-    public void visit(final Visitor visitor) {
-        visitor.accept(this);
     }
 
     public static InformationElement parser(final int informationElementId) {
@@ -85,15 +79,5 @@ public class UndeclaredValue extends Value<byte[]> {
         s.append(informationElementId);
         
         return s.toString();
-    }
-
-    @Override
-    public Typed typed() {
-        return new Typed() {
-            @Override
-            public Optional<UndeclaredValue> asUndeclaredValue() {
-                return Optional.of(UndeclaredValue.this);
-            }
-        };
     }
 }

@@ -8,7 +8,6 @@ import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
 
 import java.util.Objects;
-import java.util.Optional;
 
 import static org.riptide.flows.utils.BufferUtils.uint;
 
@@ -85,20 +84,5 @@ public class FloatValue extends Value<Double> {
     @Override
     public Double getValue() {
         return this.value;
-    }
-
-    @Override
-    public void visit(final Visitor visitor) {
-        visitor.accept(this);
-    }
-
-    @Override
-    public Typed typed() {
-        return new Typed() {
-            @Override
-            public Optional<FloatValue> asFloatValue() {
-                return Optional.of(FloatValue.this);
-            }
-        };
     }
 }

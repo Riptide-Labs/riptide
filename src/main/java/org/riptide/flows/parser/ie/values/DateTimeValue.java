@@ -9,7 +9,6 @@ import org.riptide.flows.parser.session.Session;
 
 import java.time.Instant;
 import java.util.Objects;
-import java.util.Optional;
 
 import static org.riptide.flows.utils.BufferUtils.uint32;
 import static org.riptide.flows.utils.BufferUtils.uint64;
@@ -151,20 +150,5 @@ public class DateTimeValue extends Value<Instant> {
     @Override
     public Instant getValue() {
         return this.value;
-    }
-
-    @Override
-    public void visit(final Visitor visitor) {
-        visitor.accept(this);
-    }
-
-    @Override
-    public Typed typed() {
-        return new Typed() {
-            @Override
-            public Optional<DateTimeValue> asDateTimeValue() {
-                return Optional.of(DateTimeValue.this);
-            }
-        };
     }
 }

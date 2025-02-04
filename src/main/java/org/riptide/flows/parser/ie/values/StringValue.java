@@ -10,7 +10,6 @@ import org.riptide.flows.parser.session.Session;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
-import java.util.Optional;
 
 import static org.riptide.flows.utils.BufferUtils.bytes;
 
@@ -65,20 +64,5 @@ public class StringValue extends Value<String> {
     @Override
     public String getValue() {
         return this.value;
-    }
-
-    @Override
-    public void visit(final Visitor visitor) {
-        visitor.accept(this);
-    }
-
-    @Override
-    public Typed typed() {
-        return new Typed() {
-            @Override
-            public Optional<StringValue> asStringValue() {
-                return Optional.of(StringValue.this);
-            }
-        };
     }
 }
