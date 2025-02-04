@@ -24,7 +24,7 @@ public class TestRepository implements FlowRepository {
     }
 
     @Override
-    public void persist(final Collection<EnrichedFlow> flows) {
+    public void persist(final List<EnrichedFlow> flows) {
         this.flows.add(flows);
         this.count.addAndGet(flows.size());
     }

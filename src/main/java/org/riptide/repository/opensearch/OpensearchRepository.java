@@ -19,7 +19,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.util.Collection;
+import java.util.List;
 import java.util.Objects;
 
 public class OpensearchRepository implements FlowRepository {
@@ -55,7 +55,7 @@ public class OpensearchRepository implements FlowRepository {
     }
 
     @Override
-    public void persist(final Collection<EnrichedFlow> flows) throws FlowException, IOException {
+    public void persist(final List<EnrichedFlow> flows) throws FlowException, IOException {
         this.ensureTemplate();
 
         final var ops = flows.stream()

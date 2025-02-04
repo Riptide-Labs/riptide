@@ -8,7 +8,7 @@ import lombok.Getter;
 import org.riptide.repository.FlowRepository;
 
 import java.io.IOException;
-import java.util.Collection;
+import java.util.List;
 import java.util.Objects;
 
 public class FlowPersister {
@@ -26,7 +26,7 @@ public class FlowPersister {
         this.name = name;
     }
 
-    public void persist(final Collection<EnrichedFlow> flows) throws FlowException, IOException {
+    public void persist(final List<EnrichedFlow> flows) throws FlowException, IOException {
         try (var ctx = this.logTimer.time()) {
             this.repository.persist(flows);
         }

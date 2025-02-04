@@ -4,6 +4,7 @@ import com.codahale.metrics.Counter;
 import com.codahale.metrics.Histogram;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
+import lombok.extern.slf4j.Slf4j;
 import org.riptide.flows.parser.data.Flow;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +16,7 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Component
+@Slf4j
 public class Pipeline {
 
     private static final Logger LOG = LoggerFactory.getLogger(Pipeline.class);
@@ -47,6 +49,14 @@ public class Pipeline {
         this.logEnrichementTimer = metricRegistry.timer("logEnrichment");
         this.enrichers = Objects.requireNonNull(enrichers);
         this.persisters = Objects.requireNonNull(persisters);
+
+        log.info("Enabled enrichers: {}", enrichers.stream().map(enricher -> enricher.getClass().getSimpleName()).collect(Collectors.joining(", ")));
+        log.info("Enabled repositories: {}", persisters.stream().map(persister -> persister.getClass().getSimpleName()).collect(Collectors.joining(", ")));
+
+        if (this.persisters.isEmpty()) {
+            log.error("No persisters configured");
+            System.exit(1);
+        }
     }
 
     public void process(final Source source, final List<Flow> flows) throws FlowException {

@@ -20,7 +20,6 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -148,7 +147,7 @@ public class ElasticFlowRepository implements FlowRepository {
     }
 
     @Override
-    public void persist(final Collection<EnrichedFlow> flows) throws FlowException {
+    public void persist(final List<EnrichedFlow> flows) throws FlowException {
         final FlowBulk flowBulk = this.flowBulks.computeIfAbsent(Thread.currentThread(), (thread) -> new FlowBulk());
         flowBulk.lock.lock();
         try {
