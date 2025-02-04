@@ -9,12 +9,13 @@ import org.riptide.classification.internal.AsyncReloadingClassificationEngine;
 import org.riptide.classification.internal.DefaultClassificationEngine;
 import org.riptide.classification.internal.TimingClassificationEngine;
 import org.riptide.classification.internal.csv.CsvImporter;
+import org.riptide.pipeline.FlowPersister;
 import org.riptide.repository.FlowRepository;
-import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 
 @Configuration
@@ -22,18 +23,21 @@ import java.util.Map;
 public class RiptideConfiguration {
 
     @Bean
-    public MetricRegistry metricRegistry() {
+    MetricRegistry metricRegistry() {
         return new MetricRegistry();
     }
 
-    // TODO MVR using Map<String, Repository> seems weird
     @Bean
-    public Map<String, FlowRepository> flowRepositories(final ListableBeanFactory beanFactory) {
-        final var repositories = beanFactory.getBeansOfType(FlowRepository.class);
+    List<FlowPersister> flowRepositories(Map<String, FlowRepository> repositories, MetricRegistry metricRegistry) {
         if (repositories.isEmpty()) {
             log.error("No flow persistence repository configured");
         }
-        return repositories;
+        return repositories.entrySet().stream().map(entry -> {
+            final var name = entry.getKey();
+            final var repository = entry.getValue();
+            final var timer = metricRegistry.timer(MetricRegistry.name("logPersisting", name));
+            return new FlowPersister(name, repository, metricRegistry);
+        }).toList();
     }
 
     @Bean
@@ -49,7 +53,7 @@ public class RiptideConfiguration {
 
     @Bean
     ClassificationEngine classificationEngine(final ClassificationRuleProvider classificationRuleProvider,
-                                                     final MetricRegistry metricRegistry) throws InterruptedException {
+                                              final MetricRegistry metricRegistry) throws InterruptedException {
         final var engine = new DefaultClassificationEngine(classificationRuleProvider, false);
         final var timingEngine = new TimingClassificationEngine(metricRegistry, engine);
         return new AsyncReloadingClassificationEngine(timingEngine);

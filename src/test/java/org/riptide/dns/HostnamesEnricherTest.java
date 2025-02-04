@@ -49,8 +49,8 @@ public class HostnamesEnricherTest {
 
         final var enrichers = List.<Enricher>of(new HostnamesEnricher(config, this.metricRegistry));
 
-        final var repository = new TestRepository();
-        final var pipeline = new Pipeline(enrichers, repository.asRepositoriesMap(), this.metricRegistry, this.flowMapper);
+        final var repository = new TestRepository(metricRegistry);
+        final var pipeline = new Pipeline(enrichers, repository.asPersisters(), this.metricRegistry, this.flowMapper);
 
         final Flow flow = Mockito.mock(Flow.class);
         when(flow.getSrcAddr()).thenReturn(InetAddress.getByName("192.0.2.1"));
