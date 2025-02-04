@@ -6,6 +6,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "riptide.enricher.clock-correction")
 @Data
 public class ClockCorrectionConfiguration {
-    public boolean enabled = true;
-    public long skewThresholdMs = 0;
+    private boolean enabled = true;
+    private long skewThresholdMs = 0;
 }
