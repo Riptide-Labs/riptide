@@ -44,7 +44,7 @@ public class HostnamesEnricherTest {
     @Test
     public void testEnrichment() throws Exception {
         final var config = new HostnamesConfig();
-        config.setEnable(true);
+        config.setEnabled(true);
         config.setNameservers(List.of(String.format("127.0.0.1:%s", dnsServer.getPort())));
 
         final var enrichers = List.<Enricher>of(new HostnamesEnricher(config, this.metricRegistry));

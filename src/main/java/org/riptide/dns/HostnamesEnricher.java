@@ -18,7 +18,7 @@ import java.util.stream.Stream;
 
 @Component
 @Slf4j
-@ConditionalOnProperty(name = "riptide.enricher.hostnames.enable", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(name = "riptide.enricher.hostnames.enabled", havingValue = "true", matchIfMissing = true)
 public class HostnamesEnricher extends Enricher.Streaming {
 
     private final NettyDnsResolver dnsResolver;

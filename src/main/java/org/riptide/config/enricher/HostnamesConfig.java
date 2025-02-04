@@ -9,7 +9,7 @@ import java.util.List;
 @ConfigurationProperties(prefix = "riptide.enricher.hostnames")
 @Data
 public class HostnamesConfig {
-    private boolean enable = true;
+    private boolean enabled = true;
 
     private List<String> nameservers = List.of("127.0.0.1:53");
 }
