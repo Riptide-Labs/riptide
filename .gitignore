@@ -4,6 +4,8 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 
+.jqwik-database
+
 ### Mac OSX ###
 .DS_Store
 

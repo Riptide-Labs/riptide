@@ -8,7 +8,6 @@ import org.riptide.repository.elastic.template.DefaultTemplateInitializer;
 
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -36,7 +35,7 @@ public class InitializingElasticFlowRepository implements FlowRepository {
     }
 
     @Override
-    public void persist(final Collection<EnrichedFlow> flows) throws FlowException, IOException {
+    public void persist(final List<EnrichedFlow> flows) throws FlowException, IOException {
         try {
             ensureInitialized();
         } catch (final Exception ex) {

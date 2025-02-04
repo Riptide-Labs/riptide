@@ -1,38 +1,27 @@
 package org.riptide.bucketize;
 
 import com.google.common.math.LongMath;
-import lombok.Builder;
-import lombok.Value;
+import lombok.Getter;
+import lombok.ToString;
 import org.riptide.pipeline.EnrichedFlow;
 
 import java.math.RoundingMode;
-import java.net.InetAddress;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.TreeMap;
 
-@Value
-@Builder
-public class Bucket {
-    Long srcAs;
-    Long dstAs;
+@Getter
+@ToString
+public final class Bucket {
+    private final double packets;
+    private final double bytes;
 
-    InetAddress srcAddress;
-    InetAddress dstAddress;
-
-    String srcHostname;
-    String dstHostname;
-
-    String application;
-    String exporterAddr;
-    String location;
-
-    String inputSnmpIfName;
-    String outputSnmpIfName;
-
-    double packets;
-    double bytes;
+    private Bucket(final double packets,
+                   final double bytes) {
+        this.packets = packets;
+        this.bytes = bytes;
+    }
 
     public static Map<Instant, Bucket> bucketize(final EnrichedFlow flow, final Duration samplingInterval) {
         if (!samplingInterval.isPositive()) {
@@ -45,19 +34,6 @@ public class Bucket {
 
         final var result = new TreeMap<Instant, Bucket>();
 
-        final var builder = Bucket.builder()
-                .srcAs(flow.getSrcAs())
-                .dstAs(flow.getDstAs())
-                .srcAddress(flow.getSrcAddr())
-                .dstAddress(flow.getDstAddr())
-                .srcHostname(flow.getSrcAddrHostname())
-                .dstHostname(flow.getDstAddrHostname())
-                .application(flow.getApplication())
-                .exporterAddr(flow.getExporterAddr())
-                .location(flow.getLocation())
-                .inputSnmpIfName(flow.getInputSnmpIfName())
-                .outputSnmpIfName(flow.getOutputSnmpIfName());
-
         final var firstBucket = LongMath.divide(flow.getDeltaSwitched().toEpochMilli(), samplingInterval.toMillis(), RoundingMode.FLOOR);
         final var lastBucket = LongMath.divide(flow.getLastSwitched().toEpochMilli(), samplingInterval.toMillis(), RoundingMode.CEILING);
 
@@ -66,10 +42,9 @@ public class Bucket {
             // Flow fits into single bucket
             final var bucket = Instant.ofEpochMilli((firstBucket + 1) * samplingInterval.toMillis());
 
-            return Map.of(bucket, builder
-                    .packets(flow.getPackets())
-                    .bytes(flow.getBytes())
-                    .build());
+            return Map.of(bucket, new Bucket(
+                    flow.getPackets(),
+                    flow.getBytes()));
         }
 
         final var flowDuration = Duration.between(flow.getDeltaSwitched(), flow.getLastSwitched());
@@ -94,10 +69,9 @@ public class Bucket {
                 proportion = (double) samplingInterval.toMillis() / (double) flowDuration.toMillis();
             }
 
-            result.put(bucketEnd, builder
-                    .packets(flow.getPackets() * proportion)
-                    .bytes(flow.getBytes() * proportion)
-                    .build());
+            result.put(bucketEnd, new Bucket(
+                    flow.getPackets() * proportion,
+                    flow.getBytes() * proportion));
         }
 
         return result;

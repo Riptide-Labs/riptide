@@ -4,7 +4,7 @@ import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
 
 import java.io.IOException;
-import java.util.Collection;
+import java.util.List;
 
 /**
  * Persistence interface for flows.
@@ -20,5 +20,5 @@ public interface FlowRepository {
      *
      * @throws FlowException on any error happening during processing.
      */
-    void persist(Collection<EnrichedFlow> flows) throws FlowException, IOException;
+    void persist(List<EnrichedFlow> flows) throws FlowException, IOException;
 }

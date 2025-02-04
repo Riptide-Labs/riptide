@@ -18,6 +18,7 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.Collections;
 import java.util.function.BiConsumer;
 import java.util.Set;
@@ -43,19 +44,25 @@ public class Daemon implements ApplicationRunner {
             }
         };
 
+        final var netflow5UdpParser = new Netflow5UdpParser("default-netflow5",
+                dispatcher,
+                location,
+                metricRegistry);
+
+        final var netflow9UdpParser = new Netflow9UdpParser("default-netflow9",
+                dispatcher,
+                location,
+                metricRegistry);
+
+        final var ipfixUdpParser = new IpfixUdpParser("default-ipfix",
+                dispatcher,
+                location,
+                metricRegistry);
+
         final Set<DispatchableUdpParser> parsers = Set.of(
-                new Netflow5UdpParser("default-netflow5",
-                        dispatcher,
-                        location,
-                        metricRegistry),
-                new Netflow9UdpParser("default-netflow9",
-                        dispatcher,
-                        location,
-                        metricRegistry),
-                new IpfixUdpParser("default-ipfix",
-                        dispatcher,
-                        location,
-                        metricRegistry)
+                netflow5UdpParser,
+                netflow9UdpParser,
+                ipfixUdpParser
         );
 
         this.listener = new UdpListener("default",
