@@ -50,6 +50,7 @@ src/test/resources/application-local.properties
 
 ### jenv toolkit ###
 .java-version
+<<<<<<< HEAD
 
 # riptide files
 application-local.properties
