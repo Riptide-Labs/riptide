@@ -18,7 +18,7 @@ import java.util.concurrent.CompletableFuture;
 @Getter
 @Setter
 @RequiredArgsConstructor
-@ConditionalOnProperty(name = "riptide.enricher.clock-correction.enable", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(name = "riptide.enricher.clock-correction.enabled", havingValue = "true", matchIfMissing = true)
 public class ClockCorrectionEnricher extends Enricher.Single {
 
     @NonNull
@@ -38,9 +38,9 @@ public class ClockCorrectionEnricher extends Enricher.Single {
             flow.setDeltaSwitched(flow.getTimestamp().minus(timeout));
         }
 
-        if (this.configuration.skewThresholdMs != 0) {
+        if (this.configuration.getSkewThresholdMs() != 0) {
             final var skew = Duration.between(flow.getReceivedAt(), flow.getTimestamp());
-            if (skew.abs().toMillis() >= this.configuration.skewThresholdMs) {
+            if (skew.abs().toMillis() >= this.configuration.getSkewThresholdMs()) {
                 // The applied correction is the negative skew
                 flow.setClockCorrection(skew.negated());
 

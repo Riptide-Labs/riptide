@@ -12,7 +12,7 @@ import java.util.concurrent.CompletableFuture;
 
 @Component
 @RequiredArgsConstructor
-@ConditionalOnProperty(name = "riptide.enricher.classification.enable", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(name = "riptide.enricher.classification.enabled", havingValue = "true", matchIfMissing = true)
 public class ClassificationEnricher extends Enricher.Single {
 
     @NonNull

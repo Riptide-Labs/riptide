@@ -4,40 +4,22 @@ import com.codahale.metrics.Counter;
 import com.codahale.metrics.Histogram;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
-import com.google.common.collect.Maps;
 import org.riptide.flows.parser.data.Flow;
-import org.riptide.repository.FlowRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.util.Collection;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Component
 public class Pipeline {
 
-    public static final String REPOSITORY_ID = "flows.repository.id";
-
     private static final Logger LOG = LoggerFactory.getLogger(Pipeline.class);
 
-    private final Timer logClassificationTimer;
-
     private final Timer logEnrichementTimer;
-
-    /**
-     * Time taken to apply thresholding to a log
-     */
-    private final Timer logThresholdingTimer;
-
-    /**
-     * Time taken to mark the flows in a log
-     */
-    private final Timer logMarkingTimer;
 
     /**
      * Number of flows in a log
@@ -50,31 +32,21 @@ public class Pipeline {
     private final Counter emptyFlows;
 
     private final List<Enricher> enrichers;
-    private final Map<String, Persister> persisters;
+    private final List<FlowPersister> persisters;
 
     private final EnrichedFlow.FlowMapper flowMapper;
 
     public Pipeline(final List<Enricher> enrichers,
-                    final Map<String, FlowRepository> repositories,
+                    final List<FlowPersister> persisters,
                     final MetricRegistry metricRegistry,
                     final EnrichedFlow.FlowMapper flowMapper
     ) {
+        this.flowMapper = Objects.requireNonNull(flowMapper);
         this.emptyFlows = metricRegistry.counter("emptyFlows");
         this.flowsPerLog = metricRegistry.histogram("flowsPerLog");
-
-        this.logClassificationTimer = metricRegistry.timer("logClassification");
         this.logEnrichementTimer = metricRegistry.timer("logEnrichment");
-        this.logMarkingTimer = metricRegistry.timer("logMarking");
-        this.logThresholdingTimer = metricRegistry.timer("logThresholding");
-
         this.enrichers = Objects.requireNonNull(enrichers);
-
-        this.persisters = Maps.transformEntries(repositories, (name, repository) -> {
-            final var timer = metricRegistry.timer(MetricRegistry.name("logPersisting", name));
-            return new Persister(repository, timer);
-        });
-
-        this.flowMapper = Objects.requireNonNull(flowMapper);
+        this.persisters = Objects.requireNonNull(persisters);
     }
 
     public void process(final Source source, final List<Flow> flows) throws FlowException {
@@ -104,24 +76,11 @@ public class Pipeline {
         }
 
         // Push flows to persistence
-        for (final var persister : this.persisters.entrySet()) {
+        for (final var persister : this.persisters) {
             try {
-                persister.getValue().persist(enrichedFlows);
+                persister.persist(enrichedFlows);
             } catch (final IOException e) {
-                LOG.error("Failed to persist flows to {}", persister.getKey(), e);
-            }
-        }
-    }
-
-    private record Persister(FlowRepository repository, Timer logTimer) {
-        private Persister(final FlowRepository repository, final Timer logTimer) {
-            this.repository = Objects.requireNonNull(repository);
-            this.logTimer = Objects.requireNonNull(logTimer);
-        }
-
-        public void persist(final Collection<EnrichedFlow> flows) throws FlowException, IOException {
-            try (var ctx = this.logTimer.time()) {
-                this.repository.persist(flows);
+                LOG.error("Failed to persist flows to {}", persister.getName(), e);
             }
         }
     }

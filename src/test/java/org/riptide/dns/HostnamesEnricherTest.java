@@ -44,13 +44,13 @@ public class HostnamesEnricherTest {
     @Test
     public void testEnrichment() throws Exception {
         final var config = new HostnamesConfig();
-        config.setEnable(true);
+        config.setEnabled(true);
         config.setNameservers(List.of(String.format("127.0.0.1:%s", dnsServer.getPort())));
 
         final var enrichers = List.<Enricher>of(new HostnamesEnricher(config, this.metricRegistry));
 
-        final var repository = new TestRepository();
-        final var pipeline = new Pipeline(enrichers, repository.asRepositoriesMap(), this.metricRegistry, this.flowMapper);
+        final var repository = new TestRepository(metricRegistry);
+        final var pipeline = new Pipeline(enrichers, repository.asPersisters(), this.metricRegistry, this.flowMapper);
 
         final Flow flow = Mockito.mock(Flow.class);
         when(flow.getSrcAddr()).thenReturn(InetAddress.getByName("192.0.2.1"));
