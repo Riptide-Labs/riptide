@@ -34,12 +34,12 @@ public class PostgresFlowPreparedStatementSetter implements BatchPreparedStateme
         var index = 1 + offset;
         ps.setTimestamp(index++, nullSafeTimestamp(flow.getReceivedAt()));
         ps.setTimestamp(index++, nullSafeTimestamp(flow.getTimestamp()));
-        ps.setLong(index++, flow.getBytes());
+        ps.setObject(index++, flow.getBytes());
         ps.setString(index++, flow.getDirection() == null ? null : flow.getDirection().name());
         ps.setString(index++, cleanIp(flow.getDstAddr().toString()));
         ps.setString(index++, flow.getDstAddrHostname());
         ps.setObject(index++, flow.getDstMaskLen());
-        ps.setInt(index++, flow.getDstPort());
+        ps.setObject(index++, flow.getDstPort());
         ps.setObject(index++, flow.getEngineId());
         ps.setObject(index++, flow.getEngineType());
         ps.setTimestamp(index++, nullSafeTimestamp(flow.getDeltaSwitched()));
