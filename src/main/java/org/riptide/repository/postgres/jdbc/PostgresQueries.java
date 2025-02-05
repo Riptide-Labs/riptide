@@ -2,12 +2,16 @@ package org.riptide.repository.postgres.jdbc;
 
 public interface PostgresQueries {
     String QUERY_DROP_TABLE_BUCKETS = "drop table if exists buckets";
+    // TODO MVR define numeric(13,4) correct scale, etc?!
     String QUERY_CREATE_TABLE_BUCKETS = """
             create table if not exists buckets as
                         SELECT
                             CAST (NULL AS TIMESTAMP) AS bucket_time,
-                            CAST (NULL AS BIGINT) AS bucket_bytes,
-                            CAST (NULL AS BIGINT) AS bucket_packets,
+                            CAST (NULL AS numeric(13, 4)) AS bucket_bytes,
+                            CAST (NULL AS numeric(13, 4)) AS bucket_packets,
+                            CAST (NULL AS INTEGER) as bucket_duration_seconds,
+                            CAST (NULL AS numeric(13, 4)) as bucket_bytes_per_second,
+                            CAST (NULL AS numeric(13, 4)) as bucket_packets_per_second,
                             *
                         FROM flows
                         WITH NO DATA;
@@ -80,6 +84,7 @@ public interface PostgresQueries {
     String QUERY_INSERT_BUCKETS = """
                 INSERT INTO buckets (
                                    bucket_time, bucket_bytes, bucket_packets,
+                                   bucket_duration_seconds, bucket_bytes_per_second,  bucket_packets_per_second,
                                    received_at, timestamp, bytes, direction,
                                    dst_addr, dst_addr_hostname, dst_mask_length, dst_port, engine_id, engine_type,
                                    delta_switched, first_switched, flow_records, flow_sequence_number,
@@ -91,7 +96,7 @@ public interface PostgresQueries {
                                    src_locality, dst_locality, flow_locality, clock_correction_ms,
                                    input_snmp_ifname, output_snmp_ifname
                                ) 
-                VALUES (?, ?, ?,
+                VALUES (?, ?, ?, ?, ?, ?,
                         ?, ?, ?, ?, ?::INET, ?, ?, ?, ?, ?,
                         ?, ?, ?, ?, ?, ?, ?, ?::INET,
                         ?, ?, ?, ?, ?::INET, ?, ?, ?,
