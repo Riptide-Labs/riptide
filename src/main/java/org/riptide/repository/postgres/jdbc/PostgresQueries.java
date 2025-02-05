@@ -3,7 +3,7 @@ package org.riptide.repository.postgres.jdbc;
 public interface PostgresQueries {
     String QUERY_DROP_TABLE_BUCKETS = "drop table if exists buckets";
     String QUERY_CREATE_TABLE_BUCKETS = """
-            create table buckets as
+            create table if not exists buckets as
                         SELECT
                             CAST (NULL AS TIMESTAMP) AS bucket_time,
                             CAST (NULL AS BIGINT) AS bucket_bytes,
@@ -14,7 +14,7 @@ public interface PostgresQueries {
             """;
     String QUERY_DROP_TABLE_FLOWS = "drop table if exists flows";
     String QUERY_CREATE_TABLE_FLOWS = """
-            create table flows (
+            create table if not exists flows (
                 received_at timestamp without time zone,
                 timestamp timestamp without time zone,
                 bytes bigint,
