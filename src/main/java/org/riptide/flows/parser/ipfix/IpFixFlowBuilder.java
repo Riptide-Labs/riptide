@@ -67,14 +67,10 @@ public class IpFixFlowBuilder implements FlowBuilder {
             public Direction getDirection() {
                 final var direction = Values.<Integer>first(values)
                         .with(intValue("flowDirection")).getOrNull();
-                if (direction == null) {
-                    return Direction.UNKNOWN;
-                }
-
                 return switch (direction) {
                     case 0 -> Direction.INGRESS;
                     case 1 -> Direction.EGRESS;
-                    default -> Direction.UNKNOWN;
+                    case null, default -> Direction.UNKNOWN;
                 };
             }
 

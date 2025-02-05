@@ -7,8 +7,6 @@ import org.riptide.flows.parser.ie.Semantics;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
 
-import java.util.Optional;
-
 public class NullValue extends Value<Void> {
     public NullValue(final String name,
                      final Semantics semantics) {
@@ -55,20 +53,5 @@ public class NullValue extends Value<Void> {
     @Override
     public Void getValue() {
         return null;
-    }
-
-    @Override
-    public void visit(final Visitor visitor) {
-        visitor.accept(this);
-    }
-
-    @Override
-    public Typed typed() {
-        return new Typed() {
-            @Override
-            public Optional<NullValue> asNullValue() {
-                return Optional.of(NullValue.this);
-            }
-        };
     }
 }

@@ -12,7 +12,6 @@ import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.UnknownHostException;
 import java.util.Objects;
-import java.util.Optional;
 
 import static org.riptide.flows.utils.BufferUtils.bytes;
 
@@ -69,20 +68,5 @@ public class IPv6AddressValue extends Value<Inet6Address> {
     @Override
     public Inet6Address getValue() {
         return this.value;
-    }
-
-    @Override
-    public void visit(final Visitor visitor) {
-        visitor.accept(this);
-    }
-
-    @Override
-    public Typed typed() {
-        return new Typed() {
-            @Override
-            public Optional<IPv6AddressValue> asIPv6AddressValue() {
-                return Optional.of(IPv6AddressValue.this);
-            }
-        };
     }
 }

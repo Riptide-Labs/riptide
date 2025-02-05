@@ -48,9 +48,10 @@ public class Netflow5FlowBuilder implements FlowBuilder {
 
             @Override
             public Direction getDirection() {
-                return booleanValue("egress").getOrNull(values)
-                        ? Direction.EGRESS
-                        : Direction.INGRESS;
+                return booleanValue("egress")
+                        .map(value -> value ? Direction.EGRESS : Direction.INGRESS)
+                        .defaultValue(Direction.UNKNOWN)
+                        .getOrNull(values);
             }
 
             @Override

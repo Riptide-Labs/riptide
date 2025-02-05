@@ -1,16 +1,6 @@
 package org.riptide.flows.parser.ie.values;
 
-import static org.riptide.flows.utils.BufferUtils.slice;
-import static org.riptide.flows.utils.BufferUtils.uint16;
-import static org.riptide.flows.utils.BufferUtils.uint8;
-
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
-
+import io.netty.buffer.ByteBuf;
 import org.riptide.flows.parser.InvalidPacketException;
 import org.riptide.flows.parser.MissingTemplateException;
 import org.riptide.flows.parser.ie.InformationElement;
@@ -23,7 +13,15 @@ import org.riptide.flows.parser.session.Field;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.Template;
 
-import io.netty.buffer.ByteBuf;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Objects;
+
+import static org.riptide.flows.utils.BufferUtils.slice;
+import static org.riptide.flows.utils.BufferUtils.uint16;
+import static org.riptide.flows.utils.BufferUtils.uint8;
 
 public class ListValue extends Value<List<List<Value<?>>>> {
 
@@ -259,24 +257,5 @@ public class ListValue extends Value<List<List<Value<?>>>> {
     @Override
     public List<List<Value<?>>> getValue() {
         return this.values;
-    }
-
-    public Semantic getSemantic() {
-        return this.semantic;
-    }
-
-    @Override
-    public void visit(final Visitor visitor) {
-        visitor.accept(this);
-    }
-
-    @Override
-    public Typed typed() {
-        return new Typed() {
-            @Override
-            public Optional<ListValue> asListValue() {
-                return Optional.of(ListValue.this);
-            }
-        };
     }
 }

@@ -8,7 +8,6 @@ import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
 
 import java.util.Objects;
-import java.util.Optional;
 
 import static org.riptide.flows.utils.BufferUtils.bytes;
 
@@ -61,20 +60,5 @@ public class MacAddressValue extends Value<byte[]> {
     @Override
     public byte[] getValue() {
         return this.value;
-    }
-
-    @Override
-    public void visit(final Visitor visitor) {
-        visitor.accept(this);
-    }
-
-    @Override
-    public Typed typed() {
-        return new Typed() {
-            @Override
-            public Optional<MacAddressValue> asMacAddressValue() {
-                return Optional.of(MacAddressValue.this);
-            }
-        };
     }
 }
