@@ -1,4 +1,4 @@
-package org.riptide.repository.postgres;
+package org.riptide.repository.postgres.jdbc;
 
 import org.riptide.bucketize.Bucket;
 import org.riptide.pipeline.EnrichedFlow;
@@ -14,11 +14,9 @@ import java.util.Objects;
 public class PostgresBucketPreparedStatementSetter implements BatchPreparedStatementSetter {
 
     private final List<Tuple<EnrichedFlow, Bucket>> buckets;
-    private final PostgresFlowPreparedStatementSetter flowPreparedSetter;
 
     public PostgresBucketPreparedStatementSetter(List<Tuple<EnrichedFlow, Bucket>> buckets) {
         this.buckets = Objects.requireNonNull(buckets);
-        this.flowPreparedSetter = new PostgresFlowPreparedStatementSetter(3, () -> buckets.stream().map(Tuple::first).toList());
     }
 
     @Override
@@ -28,11 +26,11 @@ public class PostgresBucketPreparedStatementSetter implements BatchPreparedState
         ps.setTimestamp(1, new Timestamp(bucket.getBucketTime().toEpochMilli()));
         ps.setObject(2, bucket.getBytes());
         ps.setObject(3, bucket.getPackets());
-        flowPreparedSetter.setValues(ps, flow);
+        PostgresFlowPreparedStatementSetter.applyValues(ps, flow, 3);
     }
 
     @Override
     public int getBatchSize() {
-        return buckets.size(); // TODO MVR probably try to cache this
+        return buckets.size();
     }
 }

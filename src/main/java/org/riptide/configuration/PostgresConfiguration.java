@@ -18,7 +18,10 @@ public class PostgresConfiguration {
     @Bean
     FlowRepository postgresRepository(final PostgresConfig config,
                                       @Qualifier("postgresDataSource") DataSource dataSource) {
-        return new PostgresRepository(dataSource);
+        if (!config.isPersistFlows() && !config.isPersistBuckets()) {
+            throw new IllegalStateException("Postgres persistence is enabled, but neither flows nor buckets are persisted. Enable either or both");
+        }
+        return new PostgresRepository(config, dataSource);
     }
 
     @Bean("postgresDataSource")

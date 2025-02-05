@@ -1,4 +1,4 @@
-package org.riptide.repository.postgres;
+package org.riptide.repository.postgres.jdbc;
 
 public interface PostgresQueries {
     String QUERY_DROP_TABLE_BUCKETS = "drop table if exists buckets";

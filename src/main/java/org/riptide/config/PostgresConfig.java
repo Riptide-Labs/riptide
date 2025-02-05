@@ -11,5 +11,6 @@ public class PostgresConfig {
     private String jdbcUrl;
     private String username;
     private String password;
-    private int batchSize;
+    private boolean persistFlows;
+    private boolean persistBuckets;
 }

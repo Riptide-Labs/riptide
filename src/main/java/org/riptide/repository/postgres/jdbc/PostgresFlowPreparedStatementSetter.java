@@ -1,4 +1,4 @@
-package org.riptide.repository.postgres;
+package org.riptide.repository.postgres.jdbc;
 
 import org.riptide.pipeline.EnrichedFlow;
 import org.springframework.jdbc.core.BatchPreparedStatementSetter;
@@ -8,34 +8,30 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.List;
 import java.util.Objects;
-import java.util.function.Supplier;
 
 import static org.riptide.repository.postgres.PostgresUtils.cleanIp;
 
 public class PostgresFlowPreparedStatementSetter implements BatchPreparedStatementSetter {
 
-    private final int indexOffset;
-    private final Supplier<List<EnrichedFlow>> flowProvider;
+    private final List<EnrichedFlow> flows;
 
-    public PostgresFlowPreparedStatementSetter(Supplier<List<EnrichedFlow>> flowProvider) {
-        this(0, flowProvider);
-    }
-
-    public PostgresFlowPreparedStatementSetter(int indexOffset, Supplier<List<EnrichedFlow>> flowProvider) {
-        this.indexOffset = indexOffset;
-        this.flowProvider = Objects.requireNonNull(flowProvider);
+    public PostgresFlowPreparedStatementSetter(List<EnrichedFlow> flows) {
+        this.flows = Objects.requireNonNull(flows);
     }
 
     @Override
     public void setValues(PreparedStatement ps, int i) throws SQLException {
-        final var flows = flowProvider.get();
-        if (flows == null) return;
         final var flow = flows.get(i);
-        setValues(ps, flow);
+        applyValues(ps, flow, 0);
     }
 
-    public void setValues(PreparedStatement ps, EnrichedFlow flow) throws SQLException {
-        var index = 1 + indexOffset;
+    @Override
+    public int getBatchSize() {
+        return flows.size();
+    }
+
+    public static void applyValues(PreparedStatement ps, EnrichedFlow flow, int offset) throws SQLException {
+        var index = 1 + offset;
         ps.setTimestamp(index++, new Timestamp(flow.getReceivedAt().toEpochMilli()));
         ps.setTimestamp(index++, new Timestamp(flow.getTimestamp().toEpochMilli()));
         ps.setLong(index++, flow.getBytes());
@@ -88,10 +84,5 @@ public class PostgresFlowPreparedStatementSetter implements BatchPreparedStateme
 
         ps.setString(index++, flow.getInputSnmpIfName());
         ps.setString(index++, flow.getOutputSnmpIfName());
-    }
-
-    @Override
-    public int getBatchSize() {
-        return flowProvider.get().size(); // TODO MVR probably try to cache this
     }
 }
