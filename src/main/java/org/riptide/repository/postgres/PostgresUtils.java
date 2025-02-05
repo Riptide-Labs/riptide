@@ -1,6 +1,8 @@
 package org.riptide.repository.postgres;
 
 import java.net.InetAddress;
+import java.sql.Timestamp;
+import java.time.Instant;
 
 public final class PostgresUtils {
     private PostgresUtils() {
@@ -19,5 +21,12 @@ public final class PostgresUtils {
             return string.substring(1);
         }
         return string;
+    }
+
+    public static Timestamp nullSafeTimestamp(Instant instant) {
+        if (instant == null) {
+            return null;
+        }
+        return new Timestamp(instant.toEpochMilli());
     }
 }

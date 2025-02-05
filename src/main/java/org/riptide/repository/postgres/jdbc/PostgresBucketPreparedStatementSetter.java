@@ -7,9 +7,10 @@ import org.springframework.jdbc.core.BatchPreparedStatementSetter;
 
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
-import java.sql.Timestamp;
 import java.util.List;
 import java.util.Objects;
+
+import static org.riptide.repository.postgres.PostgresUtils.nullSafeTimestamp;
 
 public class PostgresBucketPreparedStatementSetter implements BatchPreparedStatementSetter {
 
@@ -23,7 +24,7 @@ public class PostgresBucketPreparedStatementSetter implements BatchPreparedState
     public void setValues(PreparedStatement ps, int i) throws SQLException {
         final var flow = buckets.get(i).first();
         final var bucket = buckets.get(i).second();
-        ps.setTimestamp(1, new Timestamp(bucket.getBucketTime().toEpochMilli()));
+        ps.setTimestamp(1, nullSafeTimestamp(bucket.getBucketTime()));
         ps.setObject(2, bucket.getBytes());
         ps.setObject(3, bucket.getPackets());
         PostgresFlowPreparedStatementSetter.applyValues(ps, flow, 3);
