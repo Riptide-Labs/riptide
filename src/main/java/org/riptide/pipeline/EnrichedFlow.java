@@ -1,7 +1,7 @@
 package org.riptide.pipeline;
 
-import lombok.Getter;
-import lombok.Setter;
+import lombok.Builder;
+import lombok.Data;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import org.mapstruct.NullValueCheckStrategy;
@@ -12,8 +12,8 @@ import java.time.Duration;
 import java.time.Instant;
 
 
-@Getter
-@Setter
+@Data
+@Builder
 public class EnrichedFlow implements Flow {
     private Instant receivedAt;
     private Instant timestamp;

@@ -36,6 +36,7 @@
         <snmp4j.version>3.8.2</snmp4j.version>
         <snmp4j-agent.version>3.8.1</snmp4j-agent.version>
         <dropwizard-metrics.version>4.2.30</dropwizard-metrics.version>
+        <jquick.version>1.9.1</jquick.version>
     </properties>
 
     <dependencies>
@@ -181,6 +182,12 @@
         <dependency>
             <groupId>org.skyscreamer</groupId>
             <artifactId>jsonassert</artifactId>
+            <scope>test</scope>
+        </dependency>
+            <dependency>
+            <groupId>net.jqwik</groupId>
+            <artifactId>jqwik</artifactId>
+            <version>${jquick.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
