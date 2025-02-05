@@ -1,0 +1,97 @@
+package org.riptide.repository.postgres;
+
+import org.riptide.pipeline.EnrichedFlow;
+import org.springframework.jdbc.core.BatchPreparedStatementSetter;
+
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.util.List;
+import java.util.Objects;
+import java.util.function.Supplier;
+
+import static org.riptide.repository.postgres.PostgresUtils.cleanIp;
+
+public class PostgresFlowPreparedStatementSetter implements BatchPreparedStatementSetter {
+
+    private final int indexOffset;
+    private final Supplier<List<EnrichedFlow>> flowProvider;
+
+    public PostgresFlowPreparedStatementSetter(Supplier<List<EnrichedFlow>> flowProvider) {
+        this(0, flowProvider);
+    }
+
+    public PostgresFlowPreparedStatementSetter(int indexOffset, Supplier<List<EnrichedFlow>> flowProvider) {
+        this.indexOffset = indexOffset;
+        this.flowProvider = Objects.requireNonNull(flowProvider);
+    }
+
+    @Override
+    public void setValues(PreparedStatement ps, int i) throws SQLException {
+        final var flows = flowProvider.get();
+        if (flows == null) return;
+        final var flow = flows.get(i);
+        setValues(ps, flow);
+    }
+
+    public void setValues(PreparedStatement ps, EnrichedFlow flow) throws SQLException {
+        var index = 1 + indexOffset;
+        ps.setTimestamp(index++, new Timestamp(flow.getReceivedAt().toEpochMilli()));
+        ps.setTimestamp(index++, new Timestamp(flow.getTimestamp().toEpochMilli()));
+        ps.setLong(index++, flow.getBytes());
+        ps.setString(index++, flow.getDirection() == null ? null : flow.getDirection().name());
+
+        // Dst
+        ps.setString(index++, cleanIp(flow.getDstAddr().toString()));
+        ps.setString(index++, flow.getDstAddrHostname());
+        ps.setObject(index++, flow.getDstMaskLen());
+        ps.setInt(index++, flow.getDstPort());
+
+        // Engine
+        ps.setObject(index++, flow.getEngineId());
+        ps.setObject(index++, flow.getEngineType());
+
+        ps.setTimestamp(index++, new Timestamp(flow.getDeltaSwitched().toEpochMilli()));
+        ps.setTimestamp(index++, new Timestamp(flow.getFirstSwitched().toEpochMilli()));
+        ps.setObject(index++, flow.getFlowRecords());
+        ps.setObject(index++, flow.getFlowSeqNum());
+
+        ps.setObject(index++, flow.getInputSnmp());
+        ps.setObject(index++, flow.getIpProtocolVersion());
+        ps.setTimestamp(index++, new Timestamp(flow.getLastSwitched().toEpochMilli()));
+        ps.setString(index++, cleanIp(flow.getNextHop()));
+
+        ps.setObject(index++, flow.getOutputSnmp());
+        ps.setObject(index++, flow.getPackets());
+        ps.setObject(index++, flow.getProtocol());
+        ps.setString(index++, flow.getSamplingAlgorithm() == null ? null : flow.getSamplingAlgorithm().name());
+
+        ps.setString(index++, cleanIp(flow.getSrcAddr()));
+        ps.setString(index++, flow.getSrcAddrHostname());
+        ps.setObject(index++, flow.getSrcAs());
+        ps.setObject(index++, flow.getSrcMaskLen());
+
+        ps.setObject(index++, flow.getSrcPort());
+        ps.setObject(index++, flow.getTcpFlags());
+        ps.setObject(index++, flow.getTos());
+        ps.setString(index++, flow.getFlowProtocol() == null ? null : flow.getFlowProtocol().name());
+
+        ps.setObject(index++, flow.getVlan());
+        ps.setString(index++, flow.getApplication());
+        ps.setString(index++, cleanIp(flow.getExporterAddr()));
+        ps.setString(index++, flow.getLocation());
+
+        ps.setString(index++, flow.getSrcLocality() == null ? null : flow.getSrcLocality().name());
+        ps.setString(index++, flow.getDstLocality() == null ? null : flow.getDstLocality().name());
+        ps.setString(index++, flow.getFlowLocality() == null ? null : flow.getFlowLocality().name());
+        ps.setObject(index++, flow.getClockCorrection() == null ? null : flow.getClockCorrection().toMillis());
+
+        ps.setString(index++, flow.getInputSnmpIfName());
+        ps.setString(index++, flow.getOutputSnmpIfName());
+    }
+
+    @Override
+    public int getBatchSize() {
+        return flowProvider.get().size(); // TODO MVR probably try to cache this
+    }
+}

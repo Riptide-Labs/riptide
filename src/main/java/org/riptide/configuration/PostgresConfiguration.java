@@ -18,7 +18,7 @@ public class PostgresConfiguration {
     @Bean
     FlowRepository postgresRepository(final PostgresConfig config,
                                       @Qualifier("postgresDataSource") DataSource dataSource) {
-        return new PostgresRepository(config, dataSource);
+        return new PostgresRepository(dataSource);
     }
 
     @Bean("postgresDataSource")
