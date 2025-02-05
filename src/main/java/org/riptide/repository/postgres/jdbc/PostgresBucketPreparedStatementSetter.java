@@ -27,11 +27,11 @@ public class PostgresBucketPreparedStatementSetter implements BatchPreparedState
         final var flow = buckets.get(i).first();
         final var bucket = buckets.get(i).second();
         ps.setTimestamp(1, nullSafeTimestamp(bucket.getBucketTime()));
-        ps.setBigDecimal(2, BigDecimal.valueOf(bucket.getBytes()).setScale(4, RoundingMode.HALF_EVEN));
-        ps.setBigDecimal(3, BigDecimal.valueOf(bucket.getPackets()).setScale(4, RoundingMode.HALF_EVEN));
+        ps.setBigDecimal(2, BigDecimal.valueOf(bucket.getBytes()).setScale(6, RoundingMode.HALF_UP));
+        ps.setBigDecimal(3, BigDecimal.valueOf(bucket.getPackets()).setScale(6, RoundingMode.HALF_UP));
         ps.setObject(4, bucket.getDuration().toSeconds());
-        ps.setBigDecimal(5, BigDecimal.valueOf(bucket.getBytesPerSecond()).setScale(4, RoundingMode.HALF_UP));
-        ps.setBigDecimal(6, BigDecimal.valueOf(bucket.getPacketsPerSecond()).setScale(4, RoundingMode.HALF_UP));
+        ps.setBigDecimal(5, BigDecimal.valueOf(bucket.getBytesPerSecond()).setScale(6, RoundingMode.HALF_UP));
+        ps.setBigDecimal(6, BigDecimal.valueOf(bucket.getPacketsPerSecond()).setScale(6, RoundingMode.HALF_UP));
         PostgresFlowPreparedStatementSetter.applyValues(ps, flow, 6);
     }
 
