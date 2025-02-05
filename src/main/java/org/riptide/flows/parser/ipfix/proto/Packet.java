@@ -8,12 +8,14 @@ import org.riptide.flows.parser.InvalidPacketException;
 import org.riptide.flows.parser.MissingTemplateException;
 import org.riptide.flows.parser.ie.RecordProvider;
 import org.riptide.flows.parser.ie.Value;
+import org.riptide.flows.parser.ie.values.DateTimeValue;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.Template;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Instant;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedList;
@@ -171,7 +173,7 @@ public final class Packet implements Iterable<FlowSet<?>>, RecordProvider {
                         Stream.of(
                                 new UnsignedValue("@recordCount", recordCount),
                                 new UnsignedValue("@sequenceNumber", this.header.sequenceNumber),
-                                new UnsignedValue("@exportTime", this.header.exportTime),
+                                new DateTimeValue("@exportTime", Instant.ofEpochSecond(this.header.exportTime)),
                                 new UnsignedValue("@observationDomainId", this.header.observationDomainId)),
                         r.fields.stream(),
                         r.options.stream()
