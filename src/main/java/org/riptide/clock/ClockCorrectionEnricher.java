@@ -26,6 +26,10 @@ public class ClockCorrectionEnricher extends Enricher.Single {
 
     @Override
     protected CompletableFuture<Void> enrich(final Source source, final EnrichedFlow flow) {
+        if (flow.getFirstSwitched() == null || flow.getLastSwitched() == null) {
+            return CompletableFuture.completedFuture(null);
+        }
+
         if (flow.getFirstSwitched().isAfter(flow.getLastSwitched())) {
 
             // Re-calculate a (somewhat) valid timout from the flow timestamps

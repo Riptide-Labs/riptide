@@ -38,7 +38,7 @@ public class IpFixFlowBuilder implements FlowBuilder {
         // TODO fooker: What about @observationDomainId
 
         // TODO fooker: Structurize meta info
-        final var timestamp = timestampValue("@exportTime");
+        final var timestamp = timestampValue("@exportTime", ChronoUnit.SECONDS);
 
         final var systemInitTime = timestampValue("systemInitTimeMilliseconds");
 
