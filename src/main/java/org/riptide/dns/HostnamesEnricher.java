@@ -1,15 +1,16 @@
 package org.riptide.dns;
 
-import com.codahale.metrics.MetricRegistry;
 import lombok.extern.slf4j.Slf4j;
-import org.riptide.config.enricher.HostnamesConfig;
-import org.riptide.dns.netty.NettyDnsResolver;
+import org.riptide.dns.api.DnsResolver;
+import org.riptide.dns.netty.NettyDnsConfiguration;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Source;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Import;
 import org.springframework.stereotype.Component;
 
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BiFunction;
@@ -19,15 +20,13 @@ import java.util.stream.Stream;
 @Component
 @Slf4j
 @ConditionalOnProperty(name = "riptide.enricher.hostnames.enabled", havingValue = "true", matchIfMissing = true)
+@Import(NettyDnsConfiguration.class)
 public class HostnamesEnricher extends Enricher.Streaming {
 
-    private final NettyDnsResolver dnsResolver;
+    private final DnsResolver dnsResolver;
 
-    public HostnamesEnricher(final HostnamesConfig config,
-                             final MetricRegistry metricRegistry) {
-        this.dnsResolver = new NettyDnsResolver(metricRegistry);
-        this.dnsResolver.setNameservers(String.join(",", config.getNameservers()));
-        this.dnsResolver.init();
+    public HostnamesEnricher(final DnsResolver dnsResolver) {
+        this.dnsResolver = Objects.requireNonNull(dnsResolver);
     }
 
     @Override
