@@ -5,6 +5,7 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import org.junit.jupiter.api.Test;
 import org.riptide.flows.parser.InvalidPacketException;
+import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.netflow9.Netflow9FlowBuilder;
 import org.riptide.flows.parser.netflow9.proto.Header;
 import org.riptide.flows.parser.netflow9.proto.Packet;

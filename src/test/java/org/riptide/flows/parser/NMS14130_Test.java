@@ -2,6 +2,7 @@ package org.riptide.flows.parser;
 
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
 import org.riptide.flows.parser.ipfix.IpFixFlowBuilder;
 import org.riptide.flows.parser.netflow9.Netflow9FlowBuilder;

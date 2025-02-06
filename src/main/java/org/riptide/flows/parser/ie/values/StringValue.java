@@ -27,6 +27,10 @@ public class StringValue extends Value<String> {
         this.value = Objects.requireNonNull(value);
     }
 
+    public StringValue(final String name, String value) {
+        this(name, null, null, value);
+    }
+
     @Override
     public String toString() {
         return MoreObjects.toStringHelper(this)

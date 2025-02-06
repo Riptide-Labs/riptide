@@ -31,6 +31,10 @@ public class DateTimeValue extends Value<Instant> {
         this.value = Objects.requireNonNull(value);
     }
 
+    public DateTimeValue(final String name, Instant value) {
+        this(name, null, null, value);
+    }
+
     @Override
     public String toString() {
         return MoreObjects.toStringHelper(this)
