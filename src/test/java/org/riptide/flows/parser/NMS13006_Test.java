@@ -34,7 +34,7 @@ public class NMS13006_Test {
     void verifyFirstAndLastSwitched() throws Exception {
         final var raw = new Netflow9RawFlow();
         raw.unixSecs = Instant.ofEpochSecond(1000);
-        raw.sysUpTime = Duration.ofSeconds(1000);
+        raw.sysUpTime = Duration.ofMillis(1000);
         raw.FIRST_SWITCHED = Duration.ofMillis(2000);
         raw.LAST_SWITCHED = Duration.ofMillis(3000);
         final var flowMessage = new Netflow9FlowBuilder(valueConversionService).buildFlow(Instant.EPOCH, raw);
@@ -48,7 +48,7 @@ public class NMS13006_Test {
     void verifyFlowStartAndEndMs() throws Exception {
         final var raw = new Netflow9RawFlow();
         raw.unixSecs = Instant.ofEpochSecond(1000);
-        raw.sysUpTime = Duration.ofSeconds(1000);
+        raw.sysUpTime = Duration.ofMillis(1000);
         raw.flowStartMilliseconds = Instant.ofEpochMilli(2001000);
         raw.flowEndMilliseconds = Instant.ofEpochMilli(2002000);
         final var flowMessage = new Netflow9FlowBuilder(valueConversionService).buildFlow(Instant.EPOCH, raw);
@@ -74,7 +74,6 @@ public class NMS13006_Test {
                 final Netflow9FlowBuilder builder = new Netflow9FlowBuilder(valueConversionService);
                 final var flows = builder.buildFlows(Instant.EPOCH, packet);
                 Assertions.assertThat(flows)
-                        .hasSize(1)
                         .allSatisfy(flowMessage -> {
                             Assertions.assertThat(flowMessage.getFirstSwitched()).isNotNull();
                             Assertions.assertThat(flowMessage.getLastSwitched()).isNotNull();

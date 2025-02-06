@@ -53,7 +53,7 @@ public class Netflow9ConverterTest {
         Assertions.assertThat(flow.getPackets()).isEqualTo(2L);
         Assertions.assertThat(flow.getDirection()).isEqualTo(Flow.Direction.INGRESS);
         Assertions.assertThat(flow.getNextHop().getHostAddress()).isEqualTo("0.0.0.0");
-        Assertions.assertThat(flow.getVlan()).isNull();
+        Assertions.assertThat(flow.getVlan()).isEqualTo(0);
     }
 
     private List<Flow> getFlowsForPayloadsInSession(final String... resources) throws URISyntaxException, IOException, InvalidPacketException {

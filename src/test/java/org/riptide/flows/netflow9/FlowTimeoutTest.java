@@ -39,8 +39,8 @@ public class FlowTimeoutTest {
         final var raw = new Netflow9RawFlow();
         raw.unixSecs = Instant.EPOCH;
         raw.sysUpTime = Duration.ZERO;
-        raw.FIRST_SWITCHED = Duration.ofMillis(123000);
-        raw.LAST_SWITCHED = Duration.ofMillis(987000);
+        raw.FIRST_SWITCHED = Duration.ofMillis(123_000);
+        raw.LAST_SWITCHED = Duration.ofMillis(987_000);
         raw.IN_BYTES = 10L;
         raw.IN_PKTS = 10L;
         raw.FLOW_ACTIVE_TIMEOUT = Duration.ofSeconds(10);
