@@ -24,10 +24,9 @@ import static org.riptide.flows.parser.data.Values.timestampValue;
 public class IpFixFlowBuilder {
 
     private final ValueConversionService conversionService;
-    @Getter @Setter
-    private Duration flowActiveTimeoutFallback;
+    @Getter @Setter private Duration flowActiveTimeoutFallback;
     @Getter @Setter private Duration flowInactiveTimeoutFallback;
-    @Getter @Setter private Long flowSamplingIntervalFallback; // TODO fooker: usage
+    @Getter @Setter private Long flowSamplingIntervalFallback;
 
     public IpFixFlowBuilder(ValueConversionService conversionService) {
         this.conversionService = Objects.requireNonNull(conversionService);
@@ -183,8 +182,11 @@ public class IpFixFlowBuilder {
     private Stream<IpfixRawFlow> createRawFlows(Packet packet) {
         final int recordCount = packet.dataSets.stream()
                 .mapToInt(s -> s.records.size())
-                .sum();;
-        return packet.dataSets.stream().flatMap(ds -> ds.records.stream().map(record -> {
+                .sum();
+
+        return packet.dataSets.stream()
+                .flatMap(ds -> ds.records.stream())
+                .map(record -> {
             final var dummyFlow = new IpfixRawFlow();
             for (var value : record.getValues()) {
                 conversionService.convert(value, dummyFlow);
@@ -194,6 +196,6 @@ public class IpFixFlowBuilder {
             dummyFlow.exportTime = Instant.ofEpochSecond(packet.header.exportTime);
             dummyFlow.observationDomainId = packet.header.observationDomainId;
             return dummyFlow;
-        }));
+        });
     }
 }

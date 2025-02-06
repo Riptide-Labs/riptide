@@ -51,7 +51,7 @@ public class ValueConversionService {
         }
     }
 
-    public void convert(Value<?> source, IpfixRawFlow targetFlow) {
+    public void convert(Value<?> source, Object targetFlow) {
         Objects.requireNonNull(source);
         Objects.requireNonNull(targetFlow);
         final var fieldSet = fieldMaps.get(targetFlow.getClass());

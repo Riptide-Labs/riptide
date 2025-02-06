@@ -1,15 +1,19 @@
 package org.riptide.flows.parser.netflow9;
 
+import lombok.Getter;
+import lombok.Setter;
+import org.riptide.flows.parser.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.data.Optionals;
-import org.riptide.flows.parser.data.Timeout;
-import org.riptide.flows.parser.data.Values;
 import org.riptide.flows.parser.netflow9.proto.Header;
+import org.riptide.flows.parser.netflow9.proto.Packet;
 
 import java.net.InetAddress;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Objects;
+import java.util.stream.Stream;
 
 import static org.riptide.flows.parser.data.Values.doubleValue;
 import static org.riptide.flows.parser.data.Values.durationValue;
@@ -20,9 +24,27 @@ import static org.riptide.flows.parser.data.Values.timestampValue;
 
 public class Netflow9FlowBuilder {
 
+    private final ValueConversionService conversionService;
+
+    @Getter
+    @Setter
     private Duration flowActiveTimeoutFallback;
+    @Getter
+    @Setter
     private Duration flowInactiveTimeoutFallback;
+    @Getter
+    @Setter
     private Long flowSamplingIntervalFallback;
+
+    public Netflow9FlowBuilder(ValueConversionService conversionService) {
+        this.conversionService = Objects.requireNonNull(conversionService);
+    }
+
+    public Stream<Flow> buildFlows(final Instant receivedAt, final Packet packet) {
+        return createRawFlows(packet)
+                .map(rawFlow -> buildFlow(receivedAt, packet.header, rawFlow));
+    }
+
 
     public Flow buildFlow(final Instant receivedAt,
                           final Header header,
@@ -91,27 +113,17 @@ public class Netflow9FlowBuilder {
                 .build();
     }
 
-    public Duration getFlowActiveTimeoutFallback() {
-        return this.flowActiveTimeoutFallback;
-    }
+    private Stream<Netflow9RawFlow> createRawFlows(Packet packet) {
+        return packet.dataSets.stream()
+                .flatMap(ds -> ds.records.stream())
+                .map(record -> {
+                    final var dummyFlow = new Netflow9RawFlow();
 
-    public void setFlowActiveTimeoutFallback(final Duration flowActiveTimeoutFallback) {
-        this.flowActiveTimeoutFallback = flowActiveTimeoutFallback;
-    }
+                    for (var value : record.getValues()) {
+                        this.conversionService.convert(value, dummyFlow);
+                    }
 
-    public Duration getFlowInactiveTimeoutFallback() {
-        return this.flowInactiveTimeoutFallback;
-    }
-
-    public void setFlowInactiveTimeoutFallback(final Duration flowInactiveTimeoutFallback) {
-        this.flowInactiveTimeoutFallback = flowInactiveTimeoutFallback;
-    }
-
-    public Long getFlowSamplingIntervalFallback() {
-        return this.flowSamplingIntervalFallback;
-    }
-
-    public void setFlowSamplingIntervalFallback(final Long flowSamplingIntervalFallback) {
-        this.flowSamplingIntervalFallback = flowSamplingIntervalFallback;
+                    return dummyFlow;
+                });
     }
 }

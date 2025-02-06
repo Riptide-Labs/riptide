@@ -6,6 +6,7 @@ import io.netty.buffer.ByteBuf;
 import org.riptide.flows.listeners.multi.DispatchableUdpParser;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.UdpParserBase;
+import org.riptide.flows.parser.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.ie.FlowPacket;
 import org.riptide.flows.parser.netflow9.proto.Header;
@@ -27,13 +28,15 @@ import static org.riptide.flows.utils.BufferUtils.uint16;
 
 public class Netflow9UdpParser extends UdpParserBase implements DispatchableUdpParser {
 
-    private final Netflow9FlowBuilder flowBuilder = new Netflow9FlowBuilder();
+    private final Netflow9FlowBuilder flowBuilder;
 
     public Netflow9UdpParser(final String name,
                              final BiConsumer<Source, Flow> dispatcher,
                              final String location,
-                             final MetricRegistry metricRegistry) {
+                             final MetricRegistry metricRegistry,
+                             final ValueConversionService valueConversionService) {
         super(Protocol.NETFLOW9, name, dispatcher, location, metricRegistry);
+        this.flowBuilder = new Netflow9FlowBuilder(valueConversionService);
     }
 
     @Override
@@ -45,13 +48,7 @@ public class Netflow9UdpParser extends UdpParserBase implements DispatchableUdpP
         return new FlowPacket() {
             @Override
             public Stream<Flow> buildFlows(final Instant receivedAt) {
-                final var builder = new Netflow9FlowBuilder();
-                builder.setFlowActiveTimeoutFallback(getFlowActiveTimeoutFallback());
-                builder.setFlowInactiveTimeoutFallback(getFlowInactiveTimeoutFallback());
-                builder.setFlowSamplingIntervalFallback(getFlowSamplingIntervalFallback());
-
-                return packet.getRecords()
-                        .map(record -> builder.buildFlow(receivedAt, record));
+                return flowBuilder.buildFlows(receivedAt, packet);
             }
 
             @Override

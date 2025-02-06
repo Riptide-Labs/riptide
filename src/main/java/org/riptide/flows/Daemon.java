@@ -7,6 +7,7 @@ import org.riptide.config.DaemonConfig;
 import org.riptide.flows.listeners.UdpListener;
 import org.riptide.flows.listeners.multi.DispatchableUdpParser;
 import org.riptide.flows.listeners.multi.DispatchingUdpParser;
+import org.riptide.flows.parser.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.ipfix.IpfixUdpParser;
 import org.riptide.flows.parser.netflow5.Netflow5UdpParser;
@@ -30,6 +31,7 @@ public class Daemon implements ApplicationRunner {
 
     public Daemon(final Pipeline pipeline,
                   final MetricRegistry metricRegistry,
+                  final ValueConversionService valueConversionService,
                   final DaemonConfig config) {
 
         final var location = "🤡 Clownworld 🤡";
@@ -51,12 +53,14 @@ public class Daemon implements ApplicationRunner {
         final var netflow9UdpParser = new Netflow9UdpParser("default-netflow9",
                 dispatcher,
                 location,
-                metricRegistry);
+                metricRegistry,
+                valueConversionService);
 
         final var ipfixUdpParser = new IpfixUdpParser("default-ipfix",
                 dispatcher,
                 location,
-                metricRegistry);
+                metricRegistry,
+                valueConversionService);
 
         final Set<DispatchableUdpParser> parsers = Set.of(
                 netflow5UdpParser,

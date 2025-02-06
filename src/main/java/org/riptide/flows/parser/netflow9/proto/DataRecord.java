@@ -73,4 +73,11 @@ public final class DataRecord implements Record {
                 .add("options", this.options)
                 .toString();
     }
+
+    public List<Value<?>> getValues() {
+        final var list = new ArrayList<>(options);
+        list.addAll(fields);
+        list.addAll(scopes);
+        return list;
+    }
 }
