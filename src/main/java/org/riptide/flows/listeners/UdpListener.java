@@ -52,7 +52,7 @@ public class UdpListener implements Listener {
     public void start() {
         // Netty defaults to 2 * num cores when the number of threads is set to 0
         this.bossGroup = new NioEventLoopGroup(0, new ThreadFactoryBuilder()
-                .setNameFormat("telemetryd-nio-" + name + "-%d")
+                .setNameFormat("udp-listener-nio-" + name + "-%d")
                 .build());
 
         this.parser.start(this.bossGroup);
