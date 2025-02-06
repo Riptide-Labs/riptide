@@ -75,7 +75,7 @@ public class ValueConversionService {
         try {
             final var key = source.getName();
             if (fieldSet.contains(key)) {
-                final var field = IpfixRawFlow.class.getDeclaredField(key);
+                final var field = targetFlow.getClass().getDeclaredField(key);
                 final var converterVisitor = visitors.get(field.getType());
                 final var convertedValue = source.accept(converterVisitor);
                 field.setAccessible(true);
