@@ -1,16 +1,19 @@
 package org.riptide.flows.netflow9;
 
-import org.assertj.core.api.Assertions;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.riptide.flows.parser.InvalidPacketException;
+import org.riptide.flows.parser.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.netflow9.Netflow9FlowBuilder;
 import org.riptide.flows.parser.netflow9.proto.Header;
 import org.riptide.flows.parser.netflow9.proto.Packet;
 import org.riptide.flows.parser.session.SequenceNumberTracker;
 import org.riptide.flows.parser.session.TcpSession;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -24,7 +27,11 @@ import java.util.List;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
 
+@SpringBootTest
 public class Netflow9ConverterTest {
+
+    @Autowired
+    private ValueConversionService valueConversionService;
 
     @Test
     void verifyCanParseNetflow9Flows() throws URISyntaxException, IOException, InvalidPacketException {
@@ -65,9 +72,7 @@ public class Netflow9ConverterTest {
             final ByteBuf buffer = Unpooled.wrappedBuffer(payload);
             final Header header = new Header(slice(buffer, Header.SIZE));
             final Packet packet = new Packet(session, header, buffer);
-            packet.buildFlows().forEach(rec -> {
-                flows.add(new Netflow9FlowBuilder().buildFlow(Instant.EPOCH, rec));
-            });
+            flows.addAll(new Netflow9FlowBuilder(valueConversionService).buildFlows(Instant.EPOCH, packet).toList());
         }
         return flows;
     }

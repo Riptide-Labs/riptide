@@ -28,7 +28,7 @@ public class NMS13006_Test {
     private static final Path FOLDER = Paths.get("src/test/resources/flows");
 
     @Autowired
-    private ValueConversionService conversionService;
+    private ValueConversionService valueConversionService;
 
     @Test
     void verifyFirstAndLastSwitched() throws Exception {
@@ -37,7 +37,7 @@ public class NMS13006_Test {
         raw.sysUpTime = Duration.ofSeconds(1000);
         raw.FIRST_SWITCHED = Duration.ofMillis(2000);
         raw.LAST_SWITCHED = Duration.ofMillis(3000);
-        final var flowMessage = new Netflow9FlowBuilder(conversionService).buildFlow(Instant.EPOCH, raw);
+        final var flowMessage = new Netflow9FlowBuilder(valueConversionService).buildFlow(Instant.EPOCH, raw);
 
         Assertions.assertThat(flowMessage.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(1001000L));
         Assertions.assertThat(flowMessage.getLastSwitched()).isEqualTo(Instant.ofEpochMilli(1002000L));
@@ -51,7 +51,7 @@ public class NMS13006_Test {
         raw.sysUpTime = Duration.ofSeconds(1000);
         raw.flowStartMilliseconds = Instant.ofEpochMilli(2001000);
         raw.flowEndMilliseconds = Instant.ofEpochMilli(2002000);
-        final var flowMessage = new Netflow9FlowBuilder(conversionService).buildFlow(Instant.EPOCH, raw);
+        final var flowMessage = new Netflow9FlowBuilder(valueConversionService).buildFlow(Instant.EPOCH, raw);
 
         Assertions.assertThat(flowMessage.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(2001000L));
         Assertions.assertThat(flowMessage.getLastSwitched()).isEqualTo(Instant.ofEpochMilli(2002000L));
@@ -71,7 +71,7 @@ public class NMS13006_Test {
             do {
                 final Header header = new Header(slice(buf, Header.SIZE));
                 final Packet packet = new Packet(session, header, buf);
-                final Netflow9FlowBuilder builder = new Netflow9FlowBuilder(conversionService);
+                final Netflow9FlowBuilder builder = new Netflow9FlowBuilder(valueConversionService);
                 final var flows = builder.buildFlows(Instant.EPOCH, packet);
                 Assertions.assertThat(flows)
                         .hasSize(1)
