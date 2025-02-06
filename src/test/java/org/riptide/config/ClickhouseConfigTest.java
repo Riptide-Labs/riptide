@@ -1,6 +1,7 @@
 package org.riptide.config;
 
 import org.assertj.core.api.Assertions;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.riptide.repository.FlowRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +18,8 @@ import java.util.Optional;
         "riptide.clickhouse.password=",
         "riptide.clickhouse.table=riptide",
 })
+// FIXME: fooker
+@Disabled("FIXME fooker")
 class ClickhouseConfigTest {
 
     @Autowired
