@@ -7,6 +7,11 @@ import java.net.InetAddress;
 
 public class InetAddressVisitor implements ValueVisitor<InetAddress> {
     @Override
+    public Class<InetAddress> targetClass() {
+        return InetAddress.class;
+    }
+
+    @Override
     public InetAddress visit(IPv4AddressValue value) {
         return value.getValue();
     }

@@ -5,6 +5,11 @@ import org.riptide.flows.parser.ie.values.UnsignedValue;
 
 public class LongVisitor implements ValueVisitor<Long> {
     @Override
+    public Class<Long> targetClass() {
+        return Long.class;
+    }
+
+    @Override
     public Long visit(UnsignedValue value) {
         return value.getValue().longValue();
     }

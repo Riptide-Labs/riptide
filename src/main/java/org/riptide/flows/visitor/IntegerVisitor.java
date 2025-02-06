@@ -5,6 +5,10 @@ import org.riptide.flows.parser.ie.values.UnsignedValue;
 
 public class IntegerVisitor implements ValueVisitor<Integer> {
     @Override
+    public Class<Integer> targetClass() {
+        return Integer.class;
+    }
+    @Override
     public Integer visit(SignedValue value) {
         return value.getValue().intValue();
     }

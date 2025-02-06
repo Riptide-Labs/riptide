@@ -9,25 +9,11 @@ import org.riptide.flows.parser.InvalidPacketException;
 import org.riptide.flows.parser.MissingTemplateException;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
-import org.riptide.flows.parser.ipfix.IpfixRawFlow;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.Template;
-import org.riptide.flows.visitor.BooleanVisitor;
-import org.riptide.flows.visitor.DoubleVisitor;
-import org.riptide.flows.visitor.DurationVisitor;
-import org.riptide.flows.visitor.InetAddressVisitor;
-import org.riptide.flows.visitor.InstantVisitor;
-import org.riptide.flows.visitor.IntegerVisitor;
-import org.riptide.flows.visitor.LongVisitor;
-import org.riptide.flows.visitor.StringVisitor;
-import org.riptide.flows.visitor.ValueVisitor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.lang.reflect.Field;
-import java.net.InetAddress;
-import java.time.Instant;
-import java.time.Duration;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedList;
@@ -172,44 +158,6 @@ public final class Packet implements Iterable<FlowSet<?>> {
         return Iterators.concat(this.templateSets.iterator(),
                 this.optionTemplateSets.iterator(),
                 this.dataSets.iterator());
-    }
-
-    public Stream<IpfixRawFlow> getDummyFlows() {
-        final Map<Class<?>, ValueVisitor<?>> visitors = Map.of(
-                Boolean.class, new BooleanVisitor(),
-                Double.class, new DoubleVisitor(),
-                InetAddress.class, new InetAddressVisitor(),
-                Instant.class, new InstantVisitor(),
-                Duration.class, new DurationVisitor(),
-                Integer.class, new IntegerVisitor(),
-                Long.class, new LongVisitor(),
-                String.class, new StringVisitor());
-        final var fieldSet = Stream.of(IpfixRawFlow.class.getDeclaredFields())
-                .map(Field::getName)
-                .collect(Collectors.toSet());
-        return dataSets.stream().flatMap(ds -> ds.records.stream().map(record -> {
-            final var dummyFlow = new IpfixRawFlow();
-            for (var value : record.getValues()) {
-                try {
-                    final var key = value.getName();
-                    if (fieldSet.contains(key)) {
-                        final var field = IpfixRawFlow.class.getDeclaredField(key);
-                        final var converterVisitor = visitors.get(field.getType());
-                        final var convertedValue = value.accept(converterVisitor);
-                        field.setAccessible(true);
-                        if (convertedValue != null) {
-                            field.set(dummyFlow, convertedValue);
-                        }
-                    }
-                } catch (Exception ex) {
-                    log.error("🤡🦄💩: {}", ex.getMessage(), ex);
-                }
-            }
-            dummyFlow.sequenceNumber = this.header.sequenceNumber;
-            dummyFlow.exportTime = header.exportTime;
-            dummyFlow.observationDomainId = header.observationDomainId;
-            return dummyFlow;
-        }));
     }
 
     public Stream<Map<String, Value<?>>> getRecords() {

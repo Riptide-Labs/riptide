@@ -7,6 +7,11 @@ import java.time.Duration;
 
 public class DurationVisitor implements ValueVisitor<Duration> {
     @Override
+    public Class<Duration> targetClass() {
+        return Duration.class;
+    }
+
+    @Override
     public Duration visit(final UnsignedValue value) {
         return switch (value.getUnit().orElse(null)) {
             case "seconds" -> Duration.ofSeconds(value.getValue().longValue());

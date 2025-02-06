@@ -1,40 +1,44 @@
 package org.riptide.flows.parser.ipfix;
 
 import com.google.common.primitives.UnsignedLong;
+import lombok.Getter;
+import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import org.riptide.flows.parser.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.data.Optionals;
 import org.riptide.flows.parser.data.Timeout;
-import org.riptide.flows.parser.data.Values;
-import org.riptide.flows.parser.ie.Value;
+import org.riptide.flows.parser.ipfix.proto.Packet;
 import org.riptide.repository.elastic.doc.SamplingAlgorithm;
 
-import java.net.InetAddress;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Stream;
 
-import static org.riptide.flows.parser.data.Values.doubleValue;
-import static org.riptide.flows.parser.data.Values.inetAddressValue;
-import static org.riptide.flows.parser.data.Values.intValue;
-import static org.riptide.flows.parser.data.Values.longValue;
 import static org.riptide.flows.parser.data.Values.timestampValue;
-import static org.riptide.flows.parser.data.Values.unsignedLongValue;
 
 
 @Slf4j
 public class IpFixFlowBuilder {
 
+    private final ValueConversionService conversionService;
+    @Getter @Setter
     private Duration flowActiveTimeoutFallback;
-    private Duration flowInactiveTimeoutFallback;
-    private Long flowSamplingIntervalFallback; // TODO fooker: usage
+    @Getter @Setter private Duration flowInactiveTimeoutFallback;
+    @Getter @Setter private Long flowSamplingIntervalFallback; // TODO fooker: usage
 
-    public Flow buildFlow(final Instant receivedAt,
-                          final Map<String, Value<?>> values) {
-        final var rawFlow = new IpfixRawFlow();
+    public IpFixFlowBuilder(ValueConversionService conversionService) {
+        this.conversionService = Objects.requireNonNull(conversionService);
+    }
 
+    public Stream<Flow> buildFlows(final Instant receivedAt, final Packet packet) {
+        return createRawFlows(packet)
+                .map(rawFlow -> buildFlow(receivedAt, rawFlow));
+    }
 
+    private Flow buildFlow(Instant receivedAt, IpfixRawFlow rawFlow) {
         // TODO fooker: What about @observationDomainId
 
         // TODO fooker: Structurize meta info
@@ -176,27 +180,20 @@ public class IpFixFlowBuilder {
                 .build();
     }
 
-    public Duration getFlowActiveTimeoutFallback() {
-        return this.flowActiveTimeoutFallback;
-    }
-
-    public void setFlowActiveTimeoutFallback(final Duration flowActiveTimeoutFallback) {
-        this.flowActiveTimeoutFallback = flowActiveTimeoutFallback;
-    }
-
-    public Duration getFlowInactiveTimeoutFallback() {
-        return this.flowInactiveTimeoutFallback;
-    }
-
-    public void setFlowInactiveTimeoutFallback(final Duration flowInactiveTimeoutFallback) {
-        this.flowInactiveTimeoutFallback = flowInactiveTimeoutFallback;
-    }
-
-    public Long getFlowSamplingIntervalFallback() {
-        return this.flowSamplingIntervalFallback;
-    }
-
-    public void setFlowSamplingIntervalFallback(final Long flowSamplingIntervalFallback) {
-        this.flowSamplingIntervalFallback = flowSamplingIntervalFallback;
+    private Stream<IpfixRawFlow> createRawFlows(Packet packet) {
+        final int recordCount = packet.dataSets.stream()
+                .mapToInt(s -> s.records.size())
+                .sum();;
+        return packet.dataSets.stream().flatMap(ds -> ds.records.stream().map(record -> {
+            final var dummyFlow = new IpfixRawFlow();
+            for (var value : record.getValues()) {
+                conversionService.convert(value, dummyFlow);
+            }
+            dummyFlow.recordCount = recordCount;
+            dummyFlow.sequenceNumber = packet.header.sequenceNumber;
+            dummyFlow.exportTime = Instant.ofEpochSecond(packet.header.exportTime);
+            dummyFlow.observationDomainId = packet.header.observationDomainId;
+            return dummyFlow;
+        }));
     }
 }

@@ -16,6 +16,9 @@ import org.riptide.flows.parser.ie.values.UnsignedValue;
 
 public interface ValueVisitor<T> {
 
+    // the class this visitor can map to
+    Class<T> targetClass();
+
     default T visit(BooleanValue value) {
         return null;
     }

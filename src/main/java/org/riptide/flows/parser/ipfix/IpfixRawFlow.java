@@ -11,8 +11,9 @@ import java.time.Instant;
 /// This object is required to make conversion to an actual [org.riptide.flows.parser.data.Flow] easier.
 @Getter
 public class IpfixRawFlow {
+    public int recordCount;
     public long sequenceNumber;
-    public long exportTime;
+    public Instant exportTime;
     public long observationDomainId;
     public Long octetDeltaCount;
     public Long postOctetDeltaCount;

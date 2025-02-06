@@ -7,6 +7,12 @@ import org.riptide.flows.parser.ie.values.UnsignedValue;
 import java.time.Instant;
 
 public class InstantVisitor implements ValueVisitor<Instant> {
+
+    @Override
+    public Class<Instant> targetClass() {
+        return Instant.class;
+    }
+
     @Override
     public Instant visit(final DateTimeValue value) {
         return value.getValue();
