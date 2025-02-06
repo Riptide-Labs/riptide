@@ -21,6 +21,17 @@ import java.util.stream.Stream;
 public class ValueConversionService {
 
     private static final List<Class<?>> RAW_FLOW_TYPES = List.of(IpfixRawFlow.class, Netflow9RawFlow.class);
+    private static final Map<Class<?>, Class<?>> PRIMITIVE_TYPE_MAP = Map.of(
+            void.class, Void.class,
+            boolean.class, Boolean.class,
+            byte.class, Byte.class,
+            char.class, Character.class,
+            short.class, Short.class,
+            int.class, Integer.class,
+            long.class, Long.class,
+            float.class, Float.class,
+            double.class, Double.class);
+
     private final @NotNull Map<Class<?>, ValueVisitor<?>> visitors;
     private final @NotNull Map<Class<?>, Set<String>> fieldMaps;
 
@@ -42,10 +53,16 @@ public class ValueConversionService {
     private void validate(Class<?> type) {
         final var requiredTypes = Stream.of(type.getDeclaredFields())
                 .map(Field::getType)
+                .map(it -> {
+                    if (it.isPrimitive()) {
+                        return PRIMITIVE_TYPE_MAP.get(it);
+                    }
+                    return it;
+                })
                 .distinct()
                 .toList();
         for (Class<?> fieldType : requiredTypes) {
-            if (!visitors.containsKey(type)) {
+            if (!visitors.containsKey(fieldType)) {
                 throw new IllegalStateException("Class %s defined a field of type %s which does not have a fitting %s. Please ensure to implement a %s with targetType = %s".formatted(type, fieldType, ValueVisitor.class, ValueVisitor.class, fieldType));
             }
         }
