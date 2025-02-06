@@ -3,9 +3,11 @@ package org.riptide.flows.parser.ipfix;
 import com.google.common.primitives.UnsignedLong;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.flows.parser.data.Flow;
+import org.riptide.flows.parser.data.Optionals;
 import org.riptide.flows.parser.data.Timeout;
 import org.riptide.flows.parser.data.Values;
 import org.riptide.flows.parser.ie.Value;
+import org.riptide.repository.elastic.doc.SamplingAlgorithm;
 
 import java.net.InetAddress;
 import java.time.Duration;
@@ -14,7 +16,6 @@ import java.time.temporal.ChronoUnit;
 import java.util.Map;
 
 import static org.riptide.flows.parser.data.Values.doubleValue;
-import static org.riptide.flows.parser.data.Values.durationValue;
 import static org.riptide.flows.parser.data.Values.inetAddressValue;
 import static org.riptide.flows.parser.data.Values.intValue;
 import static org.riptide.flows.parser.data.Values.longValue;
@@ -31,8 +32,8 @@ public class IpFixFlowBuilder {
 
     public Flow buildFlow(final Instant receivedAt,
                           final Map<String, Value<?>> values) {
-
         final var rawFlow = new IpfixRawFlow();
+
 
         // TODO fooker: What about @observationDomainId
 
@@ -40,335 +41,139 @@ public class IpFixFlowBuilder {
         final var timestamp = timestampValue("@exportTime", ChronoUnit.SECONDS);
 
         final var systemInitTime = timestampValue("systemInitTimeMilliseconds");
-
-        return new Flow() {
-            @Override
-            public Instant getReceivedAt() {
-                return receivedAt;
-            }
-
-            @Override
-            public Instant getTimestamp() {
-
-                return timestamp.getOrNull(values);
-            }
-
-            public Long getBytes() {
-                return Values.<Long>first(values)
-                        .with(longValue("octetDeltaCount"))
-                        .with(longValue("postOctetDeltaCount"))
-                        .with(longValue("layer2OctetDeltaCount"))
-                        .with(longValue("postLayer2OctetDeltaCount"))
-                        .with(longValue("transportOctetDeltaCount"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Direction getDirection() {
-                final var direction = Values.<Integer>first(values)
-                        .with(intValue("flowDirection")).getOrNull();
-                return switch (direction) {
-                    case 0 -> Direction.INGRESS;
-                    case 1 -> Direction.EGRESS;
-                    case null, default -> Direction.UNKNOWN;
-                };
-            }
-
-            @Override
-            public InetAddress getDstAddr() {
-                return Values.<InetAddress>first(values)
-                        .with(inetAddressValue("destinationIPv6Address"))
-                        .with(inetAddressValue("destinationIPv4Address"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Long getDstAs() {
-                return Values.<Long>first(values)
-                        .with(longValue("bgpDestinationAsNumber"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Integer getDstMaskLen() {
-                return Values.<Integer>first(values)
-                        .with(intValue("destinationIPv6PrefixLength"))
-                        .with(intValue("destinationIPv4PrefixLength"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Integer getDstPort() {
-                return Values.<Integer>first(values)
-                        .with(intValue("destinationTransportPort"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Integer getEngineId() {
-                return Values.<Integer>first(values)
-                        .with(intValue("engineId"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Integer getEngineType() {
-                return Values.<Integer>first(values)
-                        .with(intValue("engineType"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Instant getDeltaSwitched() {
-                final var flowActiveTimeout = Values.<Duration>first(values)
-                        .with(durationValue("flowActiveTimeout", ChronoUnit.SECONDS))
-                        .with(IpFixFlowBuilder.this.flowActiveTimeoutFallback)
-                        .getOrNull();
-
-                final var flowInactiveTimeout = Values.<Duration>first(values)
-                        .with(durationValue("flowInactiveTimeout", ChronoUnit.SECONDS))
-                        .with(IpFixFlowBuilder.this.flowInactiveTimeoutFallback)
-                        .getOrNull();
-
-                return new Timeout()
-                        .withActiveTimeout(flowActiveTimeout)
-                        .withInactiveTimeout(flowInactiveTimeout)
-                        .withFirstSwitched(this.getFirstSwitched())
-                        .withLastSwitched(this.getLastSwitched())
-                        .withNumBytes(this.getBytes())
-                        .withNumPackets(this.getPackets())
-                        .calculateDeltaSwitched();
-            }
-
-            @Override
-            public Instant getFirstSwitched() {
-                return Values.<Instant>first(values)
-                        .with(timestampValue("flowStartSeconds"))
-                        .with(timestampValue("flowStartMilliseconds"))
-                        .with(timestampValue("flowStartMicroseconds"))
-                        .with(timestampValue("flowStartNanoseconds"))
-                        .with(durationValue("flowStartDeltaMicroseconds", ChronoUnit.MICROS).and(timestamp, (delta, export) -> export.plus(delta)))
-                        .with(durationValue("flowStartSysUpTime", ChronoUnit.MILLIS)
-                                .and(systemInitTime, (offset, init) -> init.plus(offset)))
-                        .getOrNull();
-            }
-
-            @Override
-            public Instant getLastSwitched() {
-                return Values.<Instant>first(values)
-                        .with(timestampValue("flowEndSeconds"))
-                        .with(timestampValue("flowEndMilliseconds"))
-                        .with(timestampValue("flowEndMicroseconds"))
-                        .with(timestampValue("flowEndNanoseconds"))
-                        .with(durationValue("flowEndDeltaMicroseconds", ChronoUnit.MICROS).and(timestamp, (delta, export) -> export.plus(delta)))
-                        .with(durationValue("flowEndSysUpTime", ChronoUnit.MILLIS)
-                                .and(systemInitTime, (offset, init) -> init.plus(offset)))
-                        .getOrNull();
-            }
-
-            @Override
-            public int getFlowRecords() {
-                // TODO fooker: Structurize meta info
-                return Values.<Integer>first(values)
-                        .with(intValue("@recordCount"))
-                        .getOrNull();
-            }
-
-            @Override
-            public long getFlowSeqNum() {
-                // TODO fooker: Structurize meta info
-                return Values.<Long>first(values)
-                        .with(longValue("@sequenceNumber"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Integer getInputSnmp() {
-                return Values.<Integer>first(values)
-                        .with(intValue("ingressPhysicalInterface"))
-                        .with(intValue("ingressInterface"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Integer getIpProtocolVersion() {
-                return Values.<Integer>first(values)
-                        .with(intValue("ipVersion"))
-                        .getOrNull();
-            }
-
-            @Override
-            public InetAddress getNextHop() {
-                return Values.<InetAddress>first(values)
-                        .with(inetAddressValue("ipNextHopIPv6Address"))
-                        .with(inetAddressValue("ipNextHopIPv4Address"))
-                        .with(inetAddressValue("bgpNextHopIPv6Address"))
-                        .with(inetAddressValue("bgpNextHopIPv4Address"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Integer getOutputSnmp() {
-                return Values.<Integer>first(values)
-                        .with(intValue("egressPhysicalInterface"))
-                        .with(intValue("egressInterface"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Long getPackets() {
-                return Values.<Long>first(values)
-                        .with(longValue("packetDeltaCount"))
-                        .with(longValue("postPacketDeltaCount"))
-                        .with(longValue("transportPacketDeltaCount"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Integer getProtocol() {
-                return Values.<Integer>first(values)
-                        .with(intValue("protocolIdentifier"))
-                        .getOrNull();
-            }
-
-            @Override
-            public SamplingAlgorithm getSamplingAlgorithm() {
-                final Integer deprecatedSamplingAlgorithm = Values.<Integer>first(values).with(
-                        intValue("samplingAlgorithm")).with(
-                        intValue("samplerMode")).getOrNull();
-                if (deprecatedSamplingAlgorithm != null) {
-                    if (deprecatedSamplingAlgorithm == 1) {
-                        return Flow.SamplingAlgorithm.SystematicCountBasedSampling;
-                    }
-                    if (deprecatedSamplingAlgorithm == 2) {
-                        return Flow.SamplingAlgorithm.RandomNOutOfNSampling;
-                    }
-                }
-
-                final var selectorAlgorithm = Values.<Integer>first(values)
-                        .with(intValue("selectorAlgorithm"))
-                        .getOrNull();
-                return switch (selectorAlgorithm) {
-                    case 0 -> SamplingAlgorithm.Unassigned;
-                    case 1 -> SamplingAlgorithm.SystematicCountBasedSampling;
-                    case 2 -> SamplingAlgorithm.SystematicTimeBasedSampling;
-                    case 3 -> SamplingAlgorithm.RandomNOutOfNSampling;
-                    case 4 -> SamplingAlgorithm.UniformProbabilisticSampling;
-                    case 5 -> SamplingAlgorithm.PropertyMatchFiltering;
-                    case 6, 7, 8 -> SamplingAlgorithm.HashBasedFiltering;
-                    case 9 -> SamplingAlgorithm.FlowStateDependentIntermediateFlowSelectionProcess;
-                    case null, default -> null;
-                };
-            }
-
-            @Override
-            public Double getSamplingInterval() {
-                final Double deprecatedSamplingInterval = Values.<Double>first(values)
-                        .with(doubleValue("samplingInterval"))
-                        .with(doubleValue("samplerRandomInterval"))
-                        .getOrNull();
-                if (deprecatedSamplingInterval != null) {
-                    return deprecatedSamplingInterval;
-                }
-
-                final var selectorAlgorithm = Values.<Integer>first(values)
-                        .with(intValue("selectorAlgorithm"))
-                        .getOrNull();
-                switch (selectorAlgorithm) {
-                    case 0, 8, 9 -> {
-                        return Double.NaN;
-                    }
-                    case 1, 2 -> {
-                        final var interval = Values.<Double>first(values)
-                                .with(doubleValue("samplingFlowInterval", 1.0))
-                                .with(doubleValue("flowSamplingTimeInterval", 1.0))
-                                .getOrNull();
-                        final var spacing = Values.<Double>first(values)
-                                .with(doubleValue("samplingFlowSpacing", 0.0))
-                                .with(doubleValue("flowSamplingTimeSpacing", 0.0))
-                                .getOrNull();
-                        return interval + spacing / interval;
-                    }
-                    case 3 -> {
-                        final var size = doubleValue("samplingSize", 1.0).getOrNull(values);
-                        final var population = doubleValue("samplingPopulation", 1.0).getOrNull(values);
-                        return population / size;
-                    }
-                    case 4 -> {
-                        final var probability = doubleValue("samplingProbability", 1.0).getOrNull(values);
-                        return 1.0 / probability;
-                    }
-                    case 5, 6, 7 -> {
-                        final var selectedRangeMin = unsignedLongValue("hashSelectedRangeMin", UnsignedLong.ZERO).getOrNull(values);
-                        final var selectedRangeMax = unsignedLongValue("hashSelectedRangeMax", UnsignedLong.MAX_VALUE).getOrNull(values);
-                        final var outputRangeMin = unsignedLongValue("hashOutputRangeMin", UnsignedLong.ZERO).getOrNull(values);
-                        final var outputRangeMax = unsignedLongValue("hashOutputRangeMax", UnsignedLong.MAX_VALUE).getOrNull(values);
-                        return (outputRangeMax.minus(outputRangeMin)).dividedBy(selectedRangeMax.minus(selectedRangeMin)).doubleValue();
-                    }
-                    case null, default -> {
-                        return null;
-                    }
-                }
-            }
-
-            @Override
-            public InetAddress getSrcAddr() {
-                return Values.<InetAddress>first(values).with(
-                        inetAddressValue("sourceIPv6Address")).with(
-                        inetAddressValue("sourceIPv4Address")).getOrNull();
-            }
-
-            @Override
-            public Long getSrcAs() {
-                return Values.<Long>first(values)
-                        .with(longValue("bgpSourceAsNumber"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Integer getSrcMaskLen() {
-                return Values.<Integer>first(values).with(
-                        intValue("sourceIPv6PrefixLength")).with(
-                        intValue("sourceIPv4PrefixLength")).getOrNull();
-            }
-
-            @Override
-            public Integer getSrcPort() {
-                return Values.<Integer>first(values)
-                        .with(intValue("sourceTransportPort"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Integer getTcpFlags() {
-                return Values.<Integer>first(values)
-                        .with(intValue("tcpControlBits"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Integer getTos() {
-                return Values.<Integer>first(values)
-                        .with(intValue("ipClassOfService"))
-                        .getOrNull();
-            }
-
-            @Override
-            public FlowProtocol getFlowProtocol() {
-                return FlowProtocol.IPFIX;
-            }
-
-            @Override
-            public Integer getVlan() {
-                return Values.<Integer>first(values).with(
-                        intValue("vlanId")).with(
-                        intValue("postVlanId")).with(
-                        intValue("dot1qVlanId")).with(
-                        intValue("dot1qCustomerVlanId")).with(
-                        intValue("postDot1qVlanId")).with(
-                        intValue("postDot1qCustomerVlanId")).getOrNull();
-            }
+        final var direction = switch (rawFlow.flowDirection) {
+            case 0 -> Flow.Direction.INGRESS;
+            case 1 -> Flow.Direction.EGRESS;
+            case null, default -> Flow.Direction.UNKNOWN;
         };
+
+        final var flowActiveTimeout = Optionals.first(rawFlow.flowActiveTimeout, flowActiveTimeoutFallback).orElse(null);
+        final var flowInactiveTimeout = Optionals.first(rawFlow.flowInactiveTimeout, flowInactiveTimeoutFallback).orElse(null);
+        final var firstSwitched = Optionals.first(
+                rawFlow.flowStartSeconds,
+                rawFlow.flowStartMilliseconds,
+                rawFlow.flowStartMicroseconds,
+                rawFlow.flowStartNanoseconds,
+                // TOOD MVR ...
+//                .with(durationValue("flowStartDeltaMicroseconds", ChronoUnit.MICROS).and(timestamp, (delta, export) -> export.plus(delta)))
+                rawFlow.flowStartDeltaMicroseconds,
+                // TOOD MVR ...
+                rawFlow.flowStartSysUpTime).orElse(null);
+        final var lastSwitched = Optionals.first(
+                rawFlow.flowEndSeconds,
+                rawFlow.flowEndMilliseconds,
+                rawFlow.flowEndMicroseconds,
+                rawFlow.flowEndNanoseconds,
+                // TOOD MVR ...
+//                .with(durationValue("flowEndDeltaMicroseconds", ChronoUnit.MICROS).and(timestamp, (delta, export) -> export.plus(delta)))
+                rawFlow.flowEndDeltaMicroseconds,
+// TOOD MVR ...
+//                .with(durationValue("flowEndSysUpTime", ChronoUnit.MILLIS).and(systemInitTime, (offset, init) -> init.plus(offset)))
+                rawFlow.flowEndSysUpTime).orElse(null);
+
+        final var bytes = Optionals.first(
+                rawFlow.octetDeltaCount,
+                rawFlow.postOctetDeltaCount,
+                rawFlow.layer2OctetDeltaCount,
+                rawFlow.postLayer2OctetDeltaCount,
+                rawFlow.transportOctetDeltaCount).orElse(0L);
+
+        final var packets = Optionals.first(rawFlow.packetDeltaCount, rawFlow.postPacketDeltaCount, rawFlow.transportPacketDeltaCount).orElse(0L);
+
+        final var deltaSwitched = new Timeout()
+                .withActiveTimeout(flowActiveTimeout)
+                .withInactiveTimeout(flowInactiveTimeout)
+                .withFirstSwitched(firstSwitched)
+                .withLastSwitched(lastSwitched)
+                .withNumBytes(bytes)
+                .withNumPackets(packets)
+                .calculateDeltaSwitched();
+        return Flow.builder()
+                .receivedAt(receivedAt)
+                .timestamp(rawFlow.exportTime)
+                .bytes(bytes)
+                .direction(direction)
+                .dstAddr(Optionals.first(rawFlow.destinationIPv6Address, rawFlow.destinationIPv4Address).orElse(null))
+                .dstAs(Optionals.first(rawFlow.bgpDestinationAsNumber).orElse(0L))
+                .dstMaskLen(Optionals.first(rawFlow.destinationIPv6PrefixLength, rawFlow.destinationIPv4PrefixLength).orElse(0))
+                .dstPort(Optionals.first(rawFlow.destinationTransportPort).orElse(0))
+                .engineId(Optionals.first(rawFlow.engineId).orElse(0))
+                .engineType(Optionals.first(rawFlow.engineType).orElse(0))
+                .firstSwitched(firstSwitched)
+                .lastSwitched(lastSwitched)
+                .deltaSwitched(deltaSwitched)
+                .flowRecords(rawFlow.recordCount)
+                .flowSeqNum(rawFlow.sequenceNumber)
+                .inputSnmp(Optionals.first(rawFlow.ingressPhysicalInterface, rawFlow.ingressInterface).orElse(0))
+                .ipProtocolVersion(Optionals.first(rawFlow.ipVersion).orElse(0))
+                .nextHop(Optionals.first(rawFlow.ipNextHopIPv6Address, rawFlow.ipNextHopIPv4Address, rawFlow.bgpNextHopIPv6Address, rawFlow.bgpNextHopIPv4Address).orElse(null))
+                .outputSnmp(Optionals.first(rawFlow.egressPhysicalInterface, rawFlow.egressInterface).orElse(0))
+                .packets(packets)
+                .protocol(Optionals.first(rawFlow.protocolIdentifier).orElse(0))
+                .samplingAlgorithm(
+                        Optionals.first(rawFlow.samplingAlgorithm, rawFlow.samplerMode)
+                                .map(deprecatedSamplingAlgorithm -> {
+                                    if (deprecatedSamplingAlgorithm == 1) {
+                                        return Flow.SamplingAlgorithm.SystematicCountBasedSampling;
+                                    }
+                                    if (deprecatedSamplingAlgorithm == 2) {
+                                        return Flow.SamplingAlgorithm.RandomNOutOfNSampling;
+                                    }
+                                    return switch (rawFlow.selectorAlgorithm) {
+                                        case 0 -> SamplingAlgorithm.Unassigned;
+                                        case 1 -> SamplingAlgorithm.SystematicCountBasedSampling;
+                                        case 2 -> SamplingAlgorithm.SystematicTimeBasedSampling;
+                                        case 3 -> SamplingAlgorithm.RandomNOutOfNSampling;
+                                        case 4 -> SamplingAlgorithm.UniformProbabilisticSampling;
+                                        case 5 -> SamplingAlgorithm.PropertyMatchFiltering;
+                                        case 6, 7, 8 -> SamplingAlgorithm.HashBasedFiltering;
+                                        case 9 -> SamplingAlgorithm.FlowStateDependentIntermediateFlowSelectionProcess;
+                                        case null, default -> null;
+                                    };
+                                }).orElse(null)
+                )
+                .samplingInterval(
+                        Optionals.first(rawFlow.samplingInterval, rawFlow.samplerRandomInterval)
+                                .orElseGet(() -> {
+                                    switch (rawFlow.selectorAlgorithm) {
+                                        case 0, 8, 9 -> {
+                                            return Double.NaN;
+                                        }
+                                        case 1, 2 -> {
+                                            final var interval = Optionals.first(rawFlow.samplingFlowInterval, rawFlow.flowSamplingTimeInterval).orElse(1.0);
+                                            final var spacing = Optionals.first(rawFlow.samplingFlowSpacing, rawFlow.flowSamplingTimeSpacing).orElse(0.0);
+                                            return interval + spacing / interval;
+                                        }
+                                        case 3 -> {
+                                            final var size = Optionals.of(rawFlow.samplingSize).orElse(1.0);
+                                            final var population = Optionals.of(rawFlow.samplingPopulation).orElse(1.0);
+                                            return population / size;
+                                        }
+                                        case 4 -> {
+                                            final var probability = Optionals.of(rawFlow.samplingProbability).orElse(1.0);
+                                            return 1.0 / probability;
+                                        }
+                                        case 5, 6, 7 -> {
+                                            final var selectedRangeMin = Optionals.of(rawFlow.hashSelectedRangeMin).orElse(UnsignedLong.ZERO);
+                                            final var selectedRangeMax = Optionals.of(rawFlow.hashSelectedRangeMax).orElse(UnsignedLong.MAX_VALUE);
+                                            final var outputRangeMin = Optionals.of(rawFlow.hashOutputRangeMin).orElse(UnsignedLong.ZERO);
+                                            final var outputRangeMax = Optionals.of(rawFlow.hashOutputRangeMax).orElse(UnsignedLong.MAX_VALUE);
+                                            return (outputRangeMax.minus(outputRangeMin)).dividedBy(selectedRangeMax.minus(selectedRangeMin)).doubleValue();
+                                        }
+                                        case null, default -> {
+                                            return 0.0;
+                                        }
+                                    }
+                                }))
+                .srcAddr(Optionals.first(rawFlow.sourceIPv6Address, rawFlow.sourceIPv4Address).orElse(null))
+                .srcAs(Optionals.first(rawFlow.bgpSourceAsNumber).orElse(0L))
+                .srcMaskLen(Optionals.first(rawFlow.sourceIPv6PrefixLength, rawFlow.sourceIPv4PrefixLength).orElse(0))
+                .srcPort(Optionals.first(rawFlow.sourceTransportPort).orElse(0))
+                .tcpFlags(Optionals.first(rawFlow.tcpControlBits).orElse(0))
+                .tos(Optionals.first(rawFlow.ipClassOfService).orElse(0))
+                .vlan(Optionals.first(rawFlow.vlanId, rawFlow.postVlanId, rawFlow.dot1qVlanId, rawFlow.dot1qCustomerVlanId, rawFlow.postDot1qVlanId, rawFlow.postDot1qCustomerVlanId).orElse(0))
+                .flowProtocol(Flow.FlowProtocol.IPFIX)
+                .build();
     }
 
     public Duration getFlowActiveTimeoutFallback() {

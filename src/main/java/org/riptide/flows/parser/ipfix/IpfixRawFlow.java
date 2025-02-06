@@ -1,8 +1,10 @@
 package org.riptide.flows.parser.ipfix;
 
+import com.google.common.primitives.UnsignedLong;
 import lombok.Getter;
 
 import java.net.InetAddress;
+import java.time.Duration;
 import java.time.Instant;
 
 /// DTO object for Ipfix flows. This contains all the fields/scopes/options we want to use internally
@@ -26,19 +28,20 @@ public class IpfixRawFlow {
     Integer destinationTransportPort;
     Integer engineId;
     Integer engineType;
-    Long flowActiveTimeout;
-    Long flowInactiveTimeout;
+    Duration flowActiveTimeout;
+    Duration flowInactiveTimeout;
     Instant flowStartSeconds;
     Instant flowStartMilliseconds;
     Instant flowStartMicroseconds;
     Instant flowStartNanoseconds;
-    Long flowStartDeltaMicroseconds;
-    Long flowStartSysUpTime;
+    Instant flowStartDeltaMicroseconds;
+    Instant flowStartSysUpTime;
     Instant flowEndSeconds;
     Instant flowEndMilliseconds;
     Instant flowEndMicroseconds;
-    Long flowEndNanoseconds;
-    Long flowEndSysUpTime;
+    Instant flowEndDeltaMicroseconds;
+    Instant flowEndNanoseconds;
+    Instant flowEndSysUpTime;
     Integer ingressPhysicalInterface;
     Integer ingressInterface;
     Integer ipVersion;
@@ -64,11 +67,10 @@ public class IpfixRawFlow {
     Double samplingSize;
     Double samplingPopulation;
     Double samplingProbability;
-    // TODO MVR
-//    Void hashSelectedRangeMin;
-//    Void hashSelectedRangeMax;
-//    Void hashOutputRangeMin;
-//    Void hashOutputRangeMax;
+    UnsignedLong hashSelectedRangeMin;
+    UnsignedLong hashSelectedRangeMax;
+    UnsignedLong hashOutputRangeMin;
+    UnsignedLong hashOutputRangeMax;
     InetAddress sourceIPv6Address;
     InetAddress sourceIPv4Address;
     Long bgpSourceAsNumber;

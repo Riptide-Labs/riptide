@@ -18,20 +18,20 @@ public class Flow {
     private int flowRecords;
     private long flowSeqNum;
 
-    @NonNull private Instant firstSwitched;
+    private Instant firstSwitched;
     private Instant deltaSwitched;
-    @NonNull private Instant lastSwitched;
+    private Instant lastSwitched;
 
     private int inputSnmp;
     private int outputSnmp;
 
     private long srcAs;
-    @NonNull private InetAddress srcAddr;
+    private InetAddress srcAddr;
     private int srcMaskLen;
     private int srcPort;
 
     private long dstAs;
-    @NonNull private InetAddress dstAddr;
+    private InetAddress dstAddr;
     private int dstMaskLen;
     private int dstPort;
 
@@ -51,7 +51,7 @@ public class Flow {
     private int tcpFlags;
     private int tos;
 
-    @NonNull private SamplingAlgorithm samplingAlgorithm;
+    private SamplingAlgorithm samplingAlgorithm;
     private double samplingInterval;
 
     public Instant getDeltaSwitched() {
