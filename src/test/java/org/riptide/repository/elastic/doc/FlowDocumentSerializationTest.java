@@ -18,7 +18,9 @@ import java.time.Instant;
  * This test ensures that when using the Elastic internal serialization it works as
  * intended, as we were facing issues during development.
  */
-@SpringBootTest
+@SpringBootTest(properties = {
+        "riptide.elastic.enabled=true"
+})
 public class FlowDocumentSerializationTest {
 
     @Test
