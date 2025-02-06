@@ -1,331 +1,114 @@
 package org.riptide.dns.netty;
 
-import com.codahale.metrics.Gauge;
-import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Strings;
-import com.google.common.net.HostAndPort;
-import io.github.resilience4j.bulkhead.Bulkhead;
-import io.github.resilience4j.bulkhead.BulkheadConfig;
-import io.github.resilience4j.circuitbreaker.CircuitBreaker;
-import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
-import io.netty.resolver.dns.DnsNameResolverTimeoutException;
+import com.google.common.base.Preconditions;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
+import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.resolver.dns.DefaultDnsCache;
 import io.netty.resolver.dns.DnsServerAddressStreamProvider;
-import io.netty.resolver.dns.DnsServerAddressStreamProviders;
-import io.netty.resolver.dns.SequentialDnsServerAddressStreamProvider;
-import io.netty.util.internal.SocketUtils;
-import jakarta.annotation.PostConstruct;
+import lombok.extern.slf4j.Slf4j;
+import org.riptide.config.enricher.HostnamesConfig;
 import org.riptide.dns.api.DnsResolver;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.DisposableBean;
+import org.xbill.DNS.ReverseMap;
 
 import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.stream.IntStream;
 
-import static io.github.resilience4j.circuitbreaker.CircuitBreakerConfig.custom;
-import static io.github.resilience4j.circuitbreaker.CircuitBreakerConfig.SlidingWindowType;
-import static io.github.resilience4j.circuitbreaker.CircuitBreakerConfig.SlidingWindowSynchronizationStrategy;
+// TODO MVR add circuit breaker
+@Slf4j
+public class NettyDnsResolver implements DnsResolver, DisposableBean {
 
-/**
- * Asynchronous DNS resolution using Netty.
- *
- * Creates multiple resolvers (aka contexts) (defaults to 2*num cores) against which the queries
- * are randomized in order to improve performance.
- *
- * Uses a circuit breaker in order to ensure that callers do not continue to be bogged down
- * if resolution fails.
- */
-public class NettyDnsResolver implements DnsResolver {
-    private static final Logger LOG = LoggerFactory.getLogger(NettyDnsResolver.class);
-
-    private final MetricRegistry metrics;
+    final DefaultDnsReverseCache reverseCache;
+    final DnsServerAddressStreamProvider dnsNameserverProvider;
+    final DefaultDnsCache nettyCache;
+    final NioEventLoopGroup group;
+    private final List<NettyDnsResolverWorker> workers;
+    private final RoundRobinIterator<NettyDnsResolverWorker> iterator;
     private final Timer lookupTimer;
-    private final Meter lookupsSuccessful;
-    private final Meter lookupsFailed;
-    private final Meter lookupsRejectedByCircuitBreaker;
 
-    private int numContexts = 0;
-    private String nameservers = null;
-    private long queryTimeoutMillis = TimeUnit.SECONDS.toMillis(5);
-    private int minTtlSeconds = -1;
-    private int maxTtlSeconds = -1;
-    private int negativeTtlSeconds = -1;
-    private long maxCacheSize = -1;
-
-    private boolean breakerEnabled = true;
-    private int breakerFailureRateThreshold = 80;
-    private int breakerWaitDurationInOpenState = 15;
-    private int breakerRingBufferSizeInHalfOpenState = 10;
-    private int breakerRingBufferSizeInClosedState = 100;
-
-    private int bulkheadMaxConcurrentCalls = 1000;
-    private long bulkheadMaxWaitDurationMillis = queryTimeoutMillis + 100;
-
-    private List<NettyResolverContext> contexts;
-    private Iterator<NettyResolverContext> iterator;
-    private CaffeineDnsCache cache;
-
-    private Bulkhead bulkhead;
-    private CircuitBreaker circuitBreaker;
-
-    public NettyDnsResolver(final MetricRegistry metrics) {
-        this.metrics = Objects.requireNonNull(metrics);
-        this.lookupTimer = metrics.timer("lookups");
-        this.lookupsSuccessful = metrics.meter("lookupsSuccessful");
-        this.lookupsFailed = metrics.meter("lookupsFailed");
-        this.lookupsRejectedByCircuitBreaker = metrics.meter("lookupsRejectedByCircuitBreaker");
-        metrics.register("availableConcurrentCalls", (Gauge<Integer>) () -> this.bulkhead.getMetrics().getAvailableConcurrentCalls());
-        metrics.register("maxAllowedConcurrentCalls", (Gauge<Integer>) () -> this.bulkhead.getMetrics().getMaxAllowedConcurrentCalls());
-    }
-
-    @PostConstruct
-    public void init() {
-        numContexts = Math.max(0, numContexts);
-        if (numContexts == 0) {
-            numContexts = Runtime.getRuntime().availableProcessors() * 2;
-        }
-        LOG.debug("Initializing Netty resolver with {} contexts and nameservers: {}", numContexts, nameservers);
-
-        // Initialize the cache with the given TTL settings - use defaults if the configured values
-        // are less than 0
-        final CaffeineDnsCache cacheWithDefaults = new CaffeineDnsCache();
-        cache = new CaffeineDnsCache(minTtlSeconds < 0 ? cacheWithDefaults.minTtl() : minTtlSeconds,
-                maxTtlSeconds < 0 ? cacheWithDefaults.maxTtl() : maxTtlSeconds,
-                negativeTtlSeconds < 0 ? cacheWithDefaults.negativeTtl() : negativeTtlSeconds,
-                maxCacheSize < 0 ? cacheWithDefaults.maxSize() : maxCacheSize);
-        cache.registerMetrics(metrics);
-
-        final BulkheadConfig bulkheadConfig = BulkheadConfig.custom()
-                .maxConcurrentCalls(bulkheadMaxConcurrentCalls)
-                .maxWaitDuration(Duration.ofMillis(bulkheadMaxWaitDurationMillis))
-                .build();
-        bulkhead = Bulkhead.of("nettyDnsResolver", bulkheadConfig);
-
-        contexts = new ArrayList<>(numContexts);
-        for (int i = 0; i < numContexts; i++) {
-            // Share the same cache across all of the contexts
-            NettyResolverContext context = new NettyResolverContext(this, cache, bulkhead, i);
-            context.init();
-            contexts.add(context);
-        }
-        iterator = new RandomIterator<>(contexts).iterator();
-
-        final CircuitBreakerConfig circuitBreakerConfig = custom()
-                .failureRateThreshold(breakerFailureRateThreshold)
-                .waitDurationInOpenState(Duration.ofSeconds(breakerWaitDurationInOpenState))
-                .permittedNumberOfCallsInHalfOpenState(breakerRingBufferSizeInHalfOpenState)
-                .slidingWindow(breakerRingBufferSizeInClosedState, breakerRingBufferSizeInClosedState, SlidingWindowType.COUNT_BASED, SlidingWindowSynchronizationStrategy.LOCK_FREE)
-                .recordExceptions(DnsNameResolverTimeoutException.class)
-                .build();
-        circuitBreaker = CircuitBreaker.of("nettyDnsResolver", circuitBreakerConfig);
-
-        circuitBreaker.getEventPublisher()
-                .onStateTransition(e -> {
-                    LOG.warn("DNS circuit breaker state change: {} -> {}",
-                            e.getStateTransition().getFromState(),
-                            e.getStateTransition().getToState());
-                })
-                .onSuccess(e -> {
-                    lookupsSuccessful.mark();
-                })
-                .onError(e -> {
-                    lookupsFailed.mark();
-                })
-                .onCallNotPermitted(e -> {
-                    lookupsRejectedByCircuitBreaker.mark();
-                });
-
-        if (breakerEnabled) {
-            circuitBreaker.transitionToClosedState();
-        } else {
-            circuitBreaker.transitionToDisabledState();
-        }
-    }
-
-    public void destroy() {
-        for (NettyResolverContext context : contexts) {
-            try {
-                context.destroy();
-            } catch (Exception e) {
-                LOG.warn("Error occurred while destroying context.", e);
-            }
-        }
-        contexts.clear();
-        cache.unregisterMetrics(metrics);
-    }
-
-    @Override
-    public CompletableFuture<Optional<InetAddress>> lookup(String hostname) {
-        return circuitBreaker.executeCompletionStage(() -> {
-            final NettyResolverContext resolverContext = iterator.next();
-            final Timer.Context timerContext = lookupTimer.time();
-            return resolverContext.lookup(hostname).whenComplete((res, ex) -> {
-                timerContext.stop();
-            });
-        }).toCompletableFuture();
+    public NettyDnsResolver(MetricRegistry metricRegistry, HostnamesConfig config, DefaultDnsReverseCache cache, DnsServerAddressStreamProvider dnsNameserverProvider) {
+        Objects.requireNonNull(config);
+        Objects.requireNonNull(cache);
+        Objects.requireNonNull(dnsNameserverProvider);
+        Preconditions.checkArgument(config.getMaximumDnsResolverThreads() >= 1, "maximum resolver threads must be >= 1");
+        Preconditions.checkArgument(config.getQueryTimeoutMillis() >= 1, "query timeout must be >= 1");
+        this.reverseCache = Objects.requireNonNull(cache);
+        this.nettyCache = new DefaultDnsCache();
+        this.dnsNameserverProvider = dnsNameserverProvider;
+        this.group = new NioEventLoopGroup(config.getMaximumDnsResolverThreads(), new ThreadFactoryBuilder()
+                .setNameFormat("NettyDnsResolver-NIO-EventLoop-%d")
+                .build());
+        final var queryTimeout = config.getQueryTimeoutMillis();
+        this.workers = IntStream.range(0, config.getMaximumDnsResolverThreads())
+                .mapToObj(i -> new NettyDnsResolverWorker(this, queryTimeout))
+                .toList();
+        this.iterator = new RoundRobinIterator<>(workers);
+        this.lookupTimer = metricRegistry.timer("reverseLookup");
     }
 
     @Override
     public CompletableFuture<Optional<String>> reverseLookup(InetAddress inetAddress) {
-        return circuitBreaker.executeCompletionStage(() -> {
-            final NettyResolverContext resolverContext = iterator.next();
-            final Timer.Context timerContext = lookupTimer.time();
-            return resolverContext.reverseLookup(inetAddress).whenComplete((res, ex) -> {
-                timerContext.stop();
-            });
-        }).toCompletableFuture();
-    }
-
-    @VisibleForTesting
-    CaffeineDnsCache getCache() {
-        return cache;
-    }
-
-    public boolean getBreakerEnabled() {
-        return breakerEnabled;
-    }
-
-    public void setBreakerEnabled(boolean breakerEnabled) {
-        this.breakerEnabled = breakerEnabled;
-    }
-
-    public int getBreakerFailureRateThreshold() {
-        return breakerFailureRateThreshold;
-    }
-
-    public void setBreakerFailureRateThreshold(int breakerFailureRateThreshold) {
-        this.breakerFailureRateThreshold = breakerFailureRateThreshold;
-    }
-
-    public int getBreakerWaitDurationInOpenState() {
-        return breakerWaitDurationInOpenState;
-    }
-
-    public void setBreakerWaitDurationInOpenState(int breakerWaitDurationInOpenState) {
-        this.breakerWaitDurationInOpenState = breakerWaitDurationInOpenState;
-    }
-
-    public int getBreakerRingBufferSizeInHalfOpenState() {
-        return breakerRingBufferSizeInHalfOpenState;
-    }
-
-    public void setBreakerRingBufferSizeInHalfOpenState(int breakerRingBufferSizeInHalfOpenState) {
-        this.breakerRingBufferSizeInHalfOpenState = breakerRingBufferSizeInHalfOpenState;
-    }
-
-    public int getBreakerRingBufferSizeInClosedState() {
-        return breakerRingBufferSizeInClosedState;
-    }
-
-    public void setBreakerRingBufferSizeInClosedState(int breakerRingBufferSizeInClosedState) {
-        this.breakerRingBufferSizeInClosedState = breakerRingBufferSizeInClosedState;
-    }
-
-    public int getBulkheadMaxConcurrentCalls() {
-        return bulkheadMaxConcurrentCalls;
-    }
-
-    public void setBulkheadMaxConcurrentCalls(int bulkheadMaxConcurrentCalls) {
-        this.bulkheadMaxConcurrentCalls = bulkheadMaxConcurrentCalls;
-    }
-
-    public long getBulkheadMaxWaitDurationMillis() {
-        return bulkheadMaxWaitDurationMillis;
-    }
-
-    public void setBulkheadMaxWaitDurationMillis(long bulkheadMaxWaitDurationMillis) {
-        this.bulkheadMaxWaitDurationMillis = bulkheadMaxWaitDurationMillis;
-    }
-
-    public int getNumContexts() {
-        return numContexts;
-    }
-
-    public void setNumContexts(int numContexts) {
-        this.numContexts = numContexts;
-    }
-
-    public String getNameservers() {
-        return nameservers;
-    }
-
-    public void setNameservers(String nameservers) {
-        this.nameservers = nameservers;
-    }
-
-    public long getQueryTimeoutMillis() {
-        return queryTimeoutMillis;
-    }
-
-    public void setQueryTimeoutMillis(long queryTimeoutMillis) {
-        this.queryTimeoutMillis = queryTimeoutMillis;
-    }
-
-    public int getMinTtlSeconds() {
-        return minTtlSeconds;
-    }
-
-    public void setMinTtlSeconds(int minTtlSeconds) {
-        this.minTtlSeconds = minTtlSeconds;
-    }
-
-    public int getMaxTtlSeconds() {
-        return maxTtlSeconds;
-    }
-
-    public void setMaxTtlSeconds(int maxTtlSeconds) {
-        this.maxTtlSeconds = maxTtlSeconds;
-    }
-
-    public int getNegativeTtlSeconds() {
-        return negativeTtlSeconds;
-    }
-
-    public void setNegativeTtlSeconds(int negativeTtlSeconds) {
-        this.negativeTtlSeconds = negativeTtlSeconds;
-    }
-
-    public long getMaxCacheSize() {
-        return maxCacheSize;
-    }
-
-    public void setMaxCacheSize(long maxCacheSize) {
-        this.maxCacheSize = maxCacheSize;
-    }
-
-    public CircuitBreaker getCircuitBreaker() {
-        return circuitBreaker;
-    }
-
-    public DnsServerAddressStreamProvider getNameServerProvider() {
-        if (Strings.isNullOrEmpty(nameservers)) {
-            // Use the platform default
-            return DnsServerAddressStreamProviders.platformDefault();
+        if (inetAddress == null) return CompletableFuture.completedFuture(Optional.empty());
+        final var reverseMapName = ReverseMap.fromAddress(inetAddress).toString();
+        final var cachedEntry = reverseCache.getIfPresent(reverseMapName);
+        if (cachedEntry != null && cachedEntry.isPresent()) {
+            log.info("cache hit for: {}", reverseMapName);
+            return CompletableFuture.completedFuture(Optional.of(cachedEntry.get().getCleanedHostname()));
         }
-        return new SequentialDnsServerAddressStreamProvider(toSocketAddresses(nameservers).toArray(new InetSocketAddress[]{}));
+        return performReverseLookup(reverseMapName);
     }
 
-    public static List<InetSocketAddress> toSocketAddresses(String commaSeparatedAddressesWithPorts) {
-        final String[] servers = commaSeparatedAddressesWithPorts.split(",");
-        return Arrays.stream(servers)
-                .map(s -> {
-                    final HostAndPort hp = HostAndPort.fromString(s.trim())
-                            .withDefaultPort(53)
-                            .requireBracketsForIPv6();
-                    return SocketUtils.socketAddress(hp.getHost(), hp.getPort());
-                })
-                .collect(Collectors.toList());
+    private CompletableFuture<Optional<String>> performReverseLookup(String reverseMapName) {
+        try (var timer = lookupTimer.time()) {
+            return iterator.next().performReverseLookup(reverseMapName);
+        }
+    }
+
+    @Override
+    public void destroy() throws Exception {
+        group.shutdownGracefully();
+        workers.forEach(NettyDnsResolverWorker::destroy);
+        iterator.clear();
+        reverseCache.invalidateAll();
+    }
+
+    static class RoundRobinIterator<T> implements Iterator<T> {
+        private final List<T> delegate;
+        private int currentIndex = 0;
+        private boolean cleared = false;
+
+        RoundRobinIterator(List<T> list) {
+            this.delegate = new CopyOnWriteArrayList<>(list);
+        }
+
+        @Override
+        public boolean hasNext() {
+            return !cleared;
+        }
+
+        @Override
+        public synchronized T next() {
+            if (currentIndex == delegate.size()) {
+                currentIndex = 0;
+            }
+            return delegate.get(currentIndex++);
+        }
+
+        @Override
+        public void remove() {
+            throw new RuntimeException("Removing is not implemented");
+        }
+
+        void clear() {
+            this.cleared = true;
+        }
     }
 }

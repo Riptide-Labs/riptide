@@ -4,33 +4,16 @@ import java.net.InetAddress;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
-/**
- * Asynchronous DNS resolution.
- *
- * @author jwhite
- */
+/// Async DNS resolution.
 public interface DnsResolver {
 
-    /**
-     * Perform a DNS lookup for the given hostname.
-     *
-     * Returns a future that contains the lookup results.
-     * If the optional is empty the lookup was completed but no result was found.
-     *
-     * @param hostname hostname to lookup
-     * @return a future
-     */
-    CompletableFuture<Optional<InetAddress>> lookup(String hostname);
-
-    /**
-     * Perform a reverse DNS lookup for the given IP address.
-     *
-     * Returns a future that contains the lookup results.
-     * If the optional is empty the lookup was completed but no result was found.
-     *
-     * @param inetAddress IP address to lookup
-     * @return a future
-     */
+    /// Performs a reverse DNS lookup for the provided IP address.
+    ///
+    /// The returned future contains the lookup result.
+    /// The optional may be empty if the lookup was successfully, but no result was found
+    ///
+    /// @param inetAddress the IP address to lookup
+    /// @return completable future for aync support
     CompletableFuture<Optional<String>> reverseLookup(InetAddress inetAddress);
 
 }
