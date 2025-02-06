@@ -9,7 +9,7 @@ import org.riptide.flows.parser.ie.InformationElementDatabase;
 import org.riptide.flows.parser.ie.Semantics;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
-import org.riptide.flows.visitor.TheVisitor;
+import org.riptide.flows.visitor.ValueVisitor;
 
 import java.util.Objects;
 
@@ -20,14 +20,10 @@ public class OctetArrayValue extends Value<byte[]> {
 
     public OctetArrayValue(final String name,
                            final Semantics semantics,
+                           final String unit,
                            final byte[] value) {
-        super(name, semantics);
+        super(name, semantics, unit);
         this.value = Objects.requireNonNull(value);
-    }
-
-    public OctetArrayValue(final String name,
-                           final byte[] value) {
-        this(name, null, value);
     }
 
     @Override
@@ -38,15 +34,15 @@ public class OctetArrayValue extends Value<byte[]> {
                 .toString();
     }
 
-    public static InformationElement parser(final String name, final Semantics semantics) {
-        return parserWithLimits(0, 0xFFFF).parser(name, semantics);
+    public static InformationElement parser(final String name, final Semantics semantics, final String unit) {
+        return parserWithLimits(0, 0xFFFF).parser(name, semantics, unit);
     }
 
     public static InformationElementDatabase.ValueParserFactory parserWithLimits(final int minimum, final int maximum) {
-        return (name, semantics) -> new InformationElement() {
+        return (name, semantics, unit) -> new InformationElement() {
             @Override
             public Value<?> parse(Session.Resolver resolver, ByteBuf buffer) throws InvalidPacketException, MissingTemplateException {
-                return new OctetArrayValue(name, semantics, bytes(buffer, buffer.readableBytes()));
+                return new OctetArrayValue(name, semantics, unit, bytes(buffer, buffer.readableBytes()));
             }
 
             @Override
@@ -72,7 +68,7 @@ public class OctetArrayValue extends Value<byte[]> {
     }
 
     @Override
-    public <X> X accept(TheVisitor<X> visitor) {
+    public <X> X accept(ValueVisitor<X> visitor) {
         return Objects.requireNonNull(visitor).visit(this);
     }
 }

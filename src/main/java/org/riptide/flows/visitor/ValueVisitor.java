@@ -14,9 +14,7 @@ import org.riptide.flows.parser.ie.values.StringValue;
 import org.riptide.flows.parser.ie.values.UndeclaredValue;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
 
-public interface TheVisitor<T> {
-
-    TheVisitor<Void> DUMMY = new TheVisitor<>() {};
+public interface ValueVisitor<T> {
 
     default T visit(BooleanValue value) {
         return null;

@@ -7,7 +7,7 @@ import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Semantics;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
-import org.riptide.flows.visitor.TheVisitor;
+import org.riptide.flows.visitor.ValueVisitor;
 
 import java.net.Inet4Address;
 import java.net.UnknownHostException;
@@ -20,13 +20,10 @@ public class IPv4AddressValue extends Value<Inet4Address> {
 
     public IPv4AddressValue(final String name,
                             final Semantics semantics,
+                            final String unit,
                             final Inet4Address value) {
-        super(name, semantics);
+        super(name, semantics, unit);
         this.value = Objects.requireNonNull(value);
-    }
-
-    public IPv4AddressValue(final String name, final Inet4Address value) {
-        this(name, null, value);
     }
 
     @Override
@@ -37,12 +34,12 @@ public class IPv4AddressValue extends Value<Inet4Address> {
                 .toString();
     }
 
-    public static InformationElement parser(final String name, final Semantics semantics) {
+    public static InformationElement parser(final String name, final Semantics semantics, final String unit) {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) throws InvalidPacketException {
                 try {
-                    return new IPv4AddressValue(name, semantics, (Inet4Address) Inet4Address.getByAddress(bytes(buffer, 4)));
+                    return new IPv4AddressValue(name, semantics, unit, (Inet4Address) Inet4Address.getByAddress(bytes(buffer, 4)));
                 } catch (final UnknownHostException e) {
                     throw new InvalidPacketException(buffer, "Error parsing IPv4 value", e);
                 }
@@ -71,7 +68,7 @@ public class IPv4AddressValue extends Value<Inet4Address> {
     }
 
     @Override
-    public <X> X accept(TheVisitor<X> visitor) {
+    public <X> X accept(ValueVisitor<X> visitor) {
         return Objects.requireNonNull(visitor).visit(this);
     }
 }

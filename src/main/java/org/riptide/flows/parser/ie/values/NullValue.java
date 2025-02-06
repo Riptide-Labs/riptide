@@ -6,18 +6,15 @@ import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Semantics;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
-import org.riptide.flows.visitor.TheVisitor;
+import org.riptide.flows.visitor.ValueVisitor;
 
 import java.util.Objects;
 
 public class NullValue extends Value<Void> {
     public NullValue(final String name,
-                     final Semantics semantics) {
-        super(name, semantics);
-    }
-
-    public NullValue(final String name) {
-        this(name, null);
+                     final Semantics semantics,
+                     final String unit) {
+        super(name, semantics, unit);
     }
 
     @Override
@@ -28,12 +25,12 @@ public class NullValue extends Value<Void> {
                 .toString();
     }
 
-    public static InformationElement parser(final String name, final Semantics semantics) {
+    public static InformationElement parser(final String name, final Semantics semantics, final String unit) {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver,
                                   final ByteBuf buffer) {
-                return new NullValue(name, semantics);
+                return new NullValue(name, semantics, unit);
             }
 
             @Override
@@ -59,7 +56,7 @@ public class NullValue extends Value<Void> {
     }
 
     @Override
-    public <X> X accept(TheVisitor<X> visitor) {
+    public <X> X accept(ValueVisitor<X> visitor) {
         return Objects.requireNonNull(visitor).visit(this);
     }
 }

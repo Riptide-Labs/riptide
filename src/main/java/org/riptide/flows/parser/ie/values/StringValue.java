@@ -6,7 +6,7 @@ import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Semantics;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
-import org.riptide.flows.visitor.TheVisitor;
+import org.riptide.flows.visitor.ValueVisitor;
 
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -21,13 +21,10 @@ public class StringValue extends Value<String> {
 
     public StringValue(final String name,
                        final Semantics semantics,
+                       final String unit,
                        final String value) {
-        super(name, semantics);
+        super(name, semantics, unit);
         this.value = Objects.requireNonNull(value);
-    }
-
-    public StringValue(final String name, final String value) {
-        this(name, null, value);
     }
 
     @Override
@@ -38,11 +35,11 @@ public class StringValue extends Value<String> {
                 .toString();
     }
 
-    public static InformationElement parser(final String name, final Semantics semantics) {
+    public static InformationElement parser(final String name, final Semantics semantics, final String unit) {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) {
-                return new StringValue(name, semantics, new String(bytes(buffer, buffer.readableBytes()), UTF8_CHARSET));
+                return new StringValue(name, semantics, unit, new String(bytes(buffer, buffer.readableBytes()), UTF8_CHARSET));
             }
 
             @Override
@@ -68,7 +65,7 @@ public class StringValue extends Value<String> {
     }
 
     @Override
-    public <X> X accept(TheVisitor<X> visitor) {
+    public <X> X accept(ValueVisitor<X> visitor) {
         return Objects.requireNonNull(visitor).visit(this);
     }
 }

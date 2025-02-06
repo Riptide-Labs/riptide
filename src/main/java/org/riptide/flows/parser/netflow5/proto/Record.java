@@ -141,28 +141,4 @@ public class Record {
             throw new InvalidPacketException(buffer, "Error parsing IPv4 value", e);
         }
     }
-
-    public Stream<Value<?>> asValues() {
-        return Stream.of(
-                new IPv4AddressValue("srcAddr", this.srcAddr),
-                new IPv4AddressValue("dstAddr", this.dstAddr),
-                new IPv4AddressValue("nextHop", this.nextHop),
-                new UnsignedValue("input", this.input),
-                new UnsignedValue("output", this.output),
-                new UnsignedValue("dPkts", this.dPkts),
-                new UnsignedValue("dOctets", this.dOctets),
-                new UnsignedValue("first", this.first),
-                new UnsignedValue("last", this.last),
-                new UnsignedValue("srcPort", this.srcPort),
-                new UnsignedValue("dstPort", this.dstPort),
-                new UnsignedValue("tcpFlags", this.tcpFlags),
-                new UnsignedValue("proto", this.proto),
-                new UnsignedValue("srcAs", this.srcAs),
-                new UnsignedValue("dstAs", this.dstAs),
-                new UnsignedValue("tos", this.tos),
-                new UnsignedValue("srcMask", this.srcMask),
-                new UnsignedValue("dstMask", this.dstMask),
-                new BooleanValue("egress", this.egress)
-        );
-    }
 }

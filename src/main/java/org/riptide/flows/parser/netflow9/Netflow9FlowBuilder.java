@@ -3,13 +3,12 @@ package org.riptide.flows.parser.netflow9;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.data.Timeout;
 import org.riptide.flows.parser.data.Values;
-import org.riptide.flows.parser.ie.Value;
+import org.riptide.flows.parser.netflow9.proto.Header;
 
 import java.net.InetAddress;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Map;
 
 import static org.riptide.flows.parser.data.Values.doubleValue;
 import static org.riptide.flows.parser.data.Values.durationValue;
@@ -25,11 +24,64 @@ public class Netflow9FlowBuilder {
     private Long flowSamplingIntervalFallback;
 
     public Flow buildFlow(final Instant receivedAt,
-                          final Map<String, Value<?>> values) {
-        final var sysUpTime = durationValue("@sysUpTime", ChronoUnit.MILLIS);
-        final var unixSecs = timestampValue("@unixSecs", ChronoUnit.SECONDS);
+                          final Header header,
+                          final Netflow9RawFlow raw) {
+        final var sysUpTime = Duration.ofMillis(header.sysUpTime);
+        final var unixSecs = Instant.ofEpochSecond(header.unixSecs);
 
-        final var bootTime = unixSecs.and(sysUpTime, Instant::minus);
+        final var bootTime = unixSecs.minus(sysUpTime);
+
+        return Flow.builder()
+                .receivedAt(receivedAt)
+
+                .timestamp(unixSecs)
+
+                .flowProtocol(Flow.FlowProtocol.NetflowV9)
+                .flowRecords(header.count)
+                .flowSeqNum(header.sequenceNumber)
+
+                .firstSwitched(bootTime.plus(raw.FIRST_SWITCHED, ChronoUnit.MILLIS))
+                .lastSwitched(bootTime.plus(record.last, ChronoUnit.MILLIS))
+
+                .inputSnmp(record.input)
+                .outputSnmp(record.output)
+
+                .srcAs(record.srcAs)
+                .srcAddr(record.srcAddr)
+                .srcMaskLen(record.srcMask)
+                .srcPort(record.srcPort)
+
+                .dstAs(record.dstAs)
+                .dstAddr(record.dstAddr)
+                .dstMaskLen(record.dstMask)
+                .dstPort(record.dstPort)
+
+                .nextHop(record.nextHop)
+
+                .bytes(record.dOctets)
+                .packets(record.dPkts)
+
+                .direction(record.egress
+                        ? Flow.Direction.EGRESS
+                        : Flow.Direction.INGRESS)
+
+                .engineId(header.engineId)
+                .engineType(header.engineType)
+
+                .vlan(0)
+                .ipProtocolVersion(4)
+                .protocol(record.proto)
+                .tcpFlags(record.tcpFlags)
+                .tos(record.tos)
+
+                .samplingAlgorithm(switch (header.samplingAlgorithm) {
+                    case 1 -> Flow.SamplingAlgorithm.SystematicCountBasedSampling;
+                    case 2 -> Flow.SamplingAlgorithm.RandomNOutOfNSampling;
+                    default -> Flow.SamplingAlgorithm.Unassigned;
+                })
+                .samplingInterval(header.samplingInterval)
+
+                .build();
 
         return new Flow() {
             @Override

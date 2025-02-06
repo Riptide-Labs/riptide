@@ -5,7 +5,7 @@ import io.netty.buffer.ByteBuf;
 import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
-import org.riptide.flows.visitor.TheVisitor;
+import org.riptide.flows.visitor.ValueVisitor;
 
 import java.util.Objects;
 
@@ -17,13 +17,8 @@ public class UndeclaredValue extends Value<byte[]> {
     public UndeclaredValue(final Long enterpriseNumber,
                            final int informationElementId,
                            final byte[] value) {
-        super(nameFor(enterpriseNumber, informationElementId), null);
+        super(nameFor(enterpriseNumber, informationElementId), null, null);
         this.value = Objects.requireNonNull(value);
-    }
-
-    public UndeclaredValue(final int informationElementId,
-                           final byte[] value) {
-        this(null, informationElementId, value);
     }
 
     @Override
@@ -83,7 +78,7 @@ public class UndeclaredValue extends Value<byte[]> {
     }
 
     @Override
-    public <X> X accept(TheVisitor<X> visitor) {
+    public <X> X accept(ValueVisitor<X> visitor) {
         return Objects.requireNonNull(visitor).visit(this);
     }
 }

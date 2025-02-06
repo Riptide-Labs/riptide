@@ -4,7 +4,7 @@ import org.riptide.flows.parser.ie.values.FloatValue;
 import org.riptide.flows.parser.ie.values.SignedValue;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
 
-public class DoubleVisitor implements TheVisitor<Double> {
+public class DoubleVisitor implements ValueVisitor<Double> {
 
     @Override
     public Double visit(FloatValue value) {

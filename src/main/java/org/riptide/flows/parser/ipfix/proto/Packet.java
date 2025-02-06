@@ -14,18 +14,20 @@ import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.Template;
 import org.riptide.flows.visitor.BooleanVisitor;
 import org.riptide.flows.visitor.DoubleVisitor;
+import org.riptide.flows.visitor.DurationVisitor;
 import org.riptide.flows.visitor.InetAddressVisitor;
 import org.riptide.flows.visitor.InstantVisitor;
-import org.riptide.flows.visitor.IntVisitor;
+import org.riptide.flows.visitor.IntegerVisitor;
 import org.riptide.flows.visitor.LongVisitor;
 import org.riptide.flows.visitor.StringVisitor;
-import org.riptide.flows.visitor.TheVisitor;
+import org.riptide.flows.visitor.ValueVisitor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.Field;
 import java.net.InetAddress;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedList;
@@ -173,12 +175,13 @@ public final class Packet implements Iterable<FlowSet<?>> {
     }
 
     public Stream<IpfixRawFlow> getDummyFlows() {
-        final Map<Class<?>, TheVisitor<?>> visitors = Map.of(
+        final Map<Class<?>, ValueVisitor<?>> visitors = Map.of(
                 Boolean.class, new BooleanVisitor(),
                 Double.class, new DoubleVisitor(),
                 InetAddress.class, new InetAddressVisitor(),
                 Instant.class, new InstantVisitor(),
-                Integer.class, new IntVisitor(),
+                Duration.class, new DurationVisitor(),
+                Integer.class, new IntegerVisitor(),
                 Long.class, new LongVisitor(),
                 String.class, new StringVisitor());
         final var fieldSet = Stream.of(IpfixRawFlow.class.getDeclaredFields())
@@ -191,7 +194,7 @@ public final class Packet implements Iterable<FlowSet<?>> {
                     final var key = value.getName();
                     if (fieldSet.contains(key)) {
                         final var field = IpfixRawFlow.class.getDeclaredField(key);
-                        final var converterVisitor = visitors.getOrDefault(field.getType(), TheVisitor.DUMMY);
+                        final var converterVisitor = visitors.get(field.getType());
                         final var convertedValue = value.accept(converterVisitor);
                         field.setAccessible(true);
                         if (convertedValue != null) {

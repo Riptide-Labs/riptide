@@ -1,6 +1,6 @@
 package org.riptide.flows.parser.ie;
 
-import org.riptide.flows.visitor.TheVisitor;
+import org.riptide.flows.visitor.ValueVisitor;
 
 import java.util.Objects;
 import java.util.Optional;
@@ -9,11 +9,14 @@ public abstract class Value<T> {
 
     private final String name;
     private final Semantics semantics;
+    private final String unit;
 
     protected Value(final String name,
-                    final Semantics semantics) {
+                    final Semantics semantics,
+                    final String unit) {
         this.name = Objects.requireNonNull(name);
         this.semantics = semantics;
+        this.unit = unit;
     }
 
     public String getName() {
@@ -24,9 +27,11 @@ public abstract class Value<T> {
         return Optional.ofNullable(this.semantics);
     }
 
+    public Optional<String> getUnit() { return Optional.ofNullable(this.unit); }
+
     public abstract T getValue();
 
-    public abstract <X> X accept(TheVisitor<X> visitor);
+    public abstract <X> X accept(ValueVisitor<X> visitor);
 
     @Override
     public boolean equals(final Object o) {

@@ -5,7 +5,7 @@ import org.riptide.flows.parser.ie.values.IPv6AddressValue;
 
 import java.net.InetAddress;
 
-public class InetAddressVisitor implements TheVisitor<InetAddress> {
+public class InetAddressVisitor implements ValueVisitor<InetAddress> {
     @Override
     public InetAddress visit(IPv4AddressValue value) {
         return value.getValue();
