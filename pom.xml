@@ -24,7 +24,7 @@
         <guava.version>33.4.0-jre</guava.version>
         <ipaddress.version>5.5.1</ipaddress.version>
         <jakarta-xml-bind-api.version>4.0.2</jakarta-xml-bind-api.version>
-        <java.version>21</java.version>
+        <java.version>23</java.version>
         <jib-maven-plugin.version>3.4.4</jib-maven-plugin.version>
         <lombok.version>1.18.36</lombok.version>
         <mapstruct.version>1.6.3</mapstruct.version>
@@ -201,7 +201,7 @@
                 <version>${jib-maven-plugin.version}</version>
                 <configuration>
                     <from>
-                        <image>eclipse-temurin:21-jre-alpine</image>
+                        <image>eclipse-temurin:23-jre-alpine</image>
                     </from>
                     <to>
                         <!-- if :local is omitted, latest is used, which we don't want -->
@@ -216,6 +216,7 @@
                             <port>9999</port>
                         </ports>
                         <format>OCI</format>
+                        <mainClass>org.riptide.RiptideApplication</mainClass>
                     </container>
                 </configuration>
             </plugin>
