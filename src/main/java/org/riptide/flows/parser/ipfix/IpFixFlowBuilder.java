@@ -12,13 +12,13 @@ import org.riptide.flows.parser.ipfix.proto.Packet;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-import static org.riptide.flows.parser.data.Flow.*;
-import static org.riptide.flows.parser.data.Values.timestampValue;
+import static org.riptide.flows.parser.data.Flow.Direction;
+import static org.riptide.flows.parser.data.Flow.FlowProtocol;
+import static org.riptide.flows.parser.data.Flow.SamplingAlgorithm;
 
 
 @Slf4j
@@ -93,7 +93,7 @@ public class IpFixFlowBuilder {
                 .withNumBytes(bytes)
                 .withNumPackets(packets)
                 .calculateDeltaSwitched();
-        return builder()
+        return Flow.builder()
                 .receivedAt(receivedAt)
                 .timestamp(rawFlow.exportTime)
                 .bytes(bytes)
