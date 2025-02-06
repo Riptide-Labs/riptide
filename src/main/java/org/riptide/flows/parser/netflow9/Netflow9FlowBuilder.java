@@ -1,6 +1,7 @@
 package org.riptide.flows.parser.netflow9;
 
 import org.riptide.flows.parser.data.Flow;
+import org.riptide.flows.parser.data.Optionals;
 import org.riptide.flows.parser.data.Timeout;
 import org.riptide.flows.parser.data.Values;
 import org.riptide.flows.parser.netflow9.proto.Header;
@@ -40,258 +41,54 @@ public class Netflow9FlowBuilder {
                 .flowRecords(header.count)
                 .flowSeqNum(header.sequenceNumber)
 
-                .firstSwitched(bootTime.plus(raw.FIRST_SWITCHED, ChronoUnit.MILLIS))
-                .lastSwitched(bootTime.plus(record.last, ChronoUnit.MILLIS))
+                .firstSwitched(bootTime.plus(raw.FIRST_SWITCHED))
+                .lastSwitched(bootTime.plus(raw.LAST_SWITCHED))
 
-                .inputSnmp(record.input)
-                .outputSnmp(record.output)
+                .inputSnmp(raw.INPUT_SNMP)
+                .outputSnmp(raw.OUTPUT_SNMP)
 
-                .srcAs(record.srcAs)
-                .srcAddr(record.srcAddr)
-                .srcMaskLen(record.srcMask)
-                .srcPort(record.srcPort)
+                .srcAs(raw.SRC_AS)
+                .srcAddr(Optionals.first(raw.IPV6_SRC_ADDR, raw.IPV4_SRC_ADDR).orElse(null))
+                .srcMaskLen(Optionals.first(raw.IPV6_SRC_MASK, raw.SRC_MASK).orElse(0))
+                .srcPort(raw.L4_SRC_PORT)
 
-                .dstAs(record.dstAs)
-                .dstAddr(record.dstAddr)
-                .dstMaskLen(record.dstMask)
-                .dstPort(record.dstPort)
+                .dstAs(raw.DST_AS)
+                .dstAddr(Optionals.first(raw.IPV6_DST_ADDR, raw.IPV4_DST_ADDR).orElse(null))
+                .dstMaskLen(Optionals.first(raw.IPV6_DST_MASK, raw.DST_MASK).orElse(0))
+                .dstPort(raw.L4_DST_PORT)
 
-                .nextHop(record.nextHop)
+                .nextHop(Optionals.first(raw.IPV6_NEXT_HOP,
+                                raw.IPV4_NEXT_HOP,
+                                raw.BPG_IPV6_NEXT_HOP,
+                                raw.BPG_IPV4_NEXT_HOP)
+                        .orElse(null))
 
-                .bytes(record.dOctets)
-                .packets(record.dPkts)
+                .bytes(raw.IN_BYTES)
+                .packets(raw.IN_PKTS)
 
-                .direction(record.egress
-                        ? Flow.Direction.EGRESS
-                        : Flow.Direction.INGRESS)
-
-                .engineId(header.engineId)
-                .engineType(header.engineType)
-
-                .vlan(0)
-                .ipProtocolVersion(4)
-                .protocol(record.proto)
-                .tcpFlags(record.tcpFlags)
-                .tos(record.tos)
-
-                .samplingAlgorithm(switch (header.samplingAlgorithm) {
-                    case 1 -> Flow.SamplingAlgorithm.SystematicCountBasedSampling;
-                    case 2 -> Flow.SamplingAlgorithm.RandomNOutOfNSampling;
-                    default -> Flow.SamplingAlgorithm.Unassigned;
-                })
-                .samplingInterval(header.samplingInterval)
-
-                .build();
-
-        return new Flow() {
-            @Override
-            public Instant getReceivedAt() {
-                return receivedAt;
-            }
-
-            @Override
-            public Instant getTimestamp() {
-                return unixSecs.getOrNull(values);
-            }
-
-            @Override
-            public Long getBytes() {
-                return longValue("IN_BYTES").getOrNull(values);
-            }
-
-            @Override
-            public Direction getDirection() {
-                return switch (intValue("DIRECTION").getOrNull(values)) {
+                .direction(switch (raw.DIRECTION) {
                     case 0 -> Flow.Direction.INGRESS;
                     case 1 -> Flow.Direction.EGRESS;
                     case null, default -> Flow.Direction.UNKNOWN;
-                };
-            }
+                })
 
-            @Override
-            public InetAddress getDstAddr() {
-                return Values.<InetAddress>first(values)
-                        .with(inetAddressValue("IPV6_DST_ADDR"))
-                        .with(inetAddressValue("IPV4_DST_ADDR"))
-                        .getOrNull();
-            }
+                .engineId(raw.ENGINE_ID)
+                .engineType(raw.ENGINE_TYPE)
 
-            @Override
-            public Long getDstAs() {
-                return longValue("DST_AS").getOrNull(values);
-            }
+                .vlan(Optionals.first(raw.SRC_VLAN, raw.DST_VLAN).orElse(0))
+                .ipProtocolVersion(raw.IP_PROTOCOL_VERSION)
+                .protocol(raw.PROTOCOL)
+                .tcpFlags(raw.TCP_FLAGS)
+                .tos(raw.TOS)
 
-            @Override
-            public Integer getDstMaskLen() {
-                return Values.<Integer>first(values)
-                        .with(intValue("IPV6_DST_MASK"))
-                        .with(intValue("DST_MASK"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Integer getDstPort() {
-                return intValue("L4_DST_PORT").getOrNull(values);
-            }
-
-            @Override
-            public Integer getEngineId() {
-                return intValue("ENGINE_ID").getOrNull(values);
-            }
-
-            @Override
-            public Integer getEngineType() {
-                return intValue("ENGINE_TYPE").getOrNull(values);
-            }
-
-            @Override
-            public Instant getDeltaSwitched() {
-                return new Timeout()
-                        .withActiveTimeout(Values.<Duration>first(values)
-                                .with(durationValue("FLOW_ACTIVE_TIMEOUT", ChronoUnit.SECONDS))
-                                .with(Netflow9FlowBuilder.this.flowActiveTimeoutFallback)
-                                .getOrNull())
-                        .withInactiveTimeout(Values.<Duration>first(values)
-                                .with(durationValue("FLOW_INACTIVE_TIMEOUT", ChronoUnit.SECONDS))
-                                .with(Netflow9FlowBuilder.this.flowInactiveTimeoutFallback)
-                                .getOrNull())
-                        .withFirstSwitched(this.getFirstSwitched())
-                        .withLastSwitched(this.getLastSwitched())
-                        .withNumBytes(this.getBytes())
-                        .withNumPackets(this.getPackets())
-                        .calculateDeltaSwitched();
-            }
-
-            @Override
-            public Instant getFirstSwitched() {
-                return Values.<Instant>first(values)
-                        .with(bootTime.and(durationValue("FIRST_SWITCHED", ChronoUnit.MILLIS), Instant::plus))
-                        .with(timestampValue("flowStartMilliseconds", ChronoUnit.MILLIS))
-                        .getOrNull();
-            }
-
-            @Override
-            public int getFlowRecords() {
-                return intValue("@recordCount").getOrNull(values);
-            }
-
-            @Override
-            public long getFlowSeqNum() {
-                return longValue("@sequenceNumber").getOrNull(values);
-            }
-
-            @Override
-            public Integer getInputSnmp() {
-                return Values.<Integer>first(values)
-                        .with(intValue("ingressPhysicalInterface"))
-                        .with(intValue("INPUT_SNMP"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Integer getIpProtocolVersion() {
-                return intValue("IP_PROTOCOL_VERSION").getOrNull(values);
-            }
-
-            @Override
-            public Instant getLastSwitched() {
-                return Values.<Instant>first(values)
-                        .with(bootTime.and(durationValue("LAST_SWITCHED", ChronoUnit.MILLIS), Instant::plus))
-                        .with(timestampValue("flowEndMilliseconds", ChronoUnit.MILLIS))
-                        .getOrNull();
-            }
-
-            @Override
-            public InetAddress getNextHop() {
-                return Values.<InetAddress>first(values)
-                        .with(inetAddressValue("IPV6_NEXT_HOP"))
-                        .with(inetAddressValue("IPV4_NEXT_HOP"))
-                        .with(inetAddressValue("BPG_IPV6_NEXT_HOP"))
-                        .with(inetAddressValue("BPG_IPV4_NEXT_HOP"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Integer getOutputSnmp() {
-                return Values.<Integer>first(values)
-                        .with(intValue("egressPhysicalInterface"))
-                        .with(intValue("OUTPUT_SNMP"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Long getPackets() {
-                return longValue("IN_PKTS").getOrNull(values);
-            }
-
-            @Override
-            public Integer getProtocol() {
-                return intValue("PROTOCOL").getOrNull(values);
-            }
-
-            @Override
-            public SamplingAlgorithm getSamplingAlgorithm() {
-                return switch (intValue("SAMPLING_ALGORITHM").getOrNull(values)) {
+                .samplingAlgorithm(switch (raw.SAMPLING_ALGORITHM) {
                     case 1 -> Flow.SamplingAlgorithm.SystematicCountBasedSampling;
                     case 2 -> Flow.SamplingAlgorithm.RandomNOutOfNSampling;
                     case null, default -> Flow.SamplingAlgorithm.Unassigned;
-                };
-            }
+                })
+                .samplingInterval(raw.SAMPLING_INTERVAL)
 
-            @Override
-            public Double getSamplingInterval() {
-                return doubleValue("SAMPLING_INTERVAL").getOrNull(values);
-            }
-
-            @Override
-            public InetAddress getSrcAddr() {
-                return Values.<InetAddress>first(values)
-                        .with(inetAddressValue("IPV6_SRC_ADDR"))
-                        .with(inetAddressValue("IPV4_SRC_ADDR"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Long getSrcAs() {
-                return longValue("SRC_AS").getOrNull(values);
-            }
-
-            @Override
-            public Integer getSrcMaskLen() {
-                return Values.<Integer>first(values)
-                        .with(intValue("IPV6_SRC_MASK"))
-                        .with(intValue("SRC_MASK"))
-                        .getOrNull();
-            }
-
-            @Override
-            public Integer getSrcPort() {
-                return intValue("L4_SRC_PORT").getOrNull(values);
-            }
-
-            @Override
-            public Integer getTcpFlags() {
-                return intValue("TCP_FLAGS").getOrNull(values);
-            }
-
-            @Override
-            public Integer getTos() {
-                return intValue("TOS").getOrNull(values);
-            }
-
-            @Override
-            public FlowProtocol getFlowProtocol() {
-                return FlowProtocol.NetflowV9;
-            }
-
-            @Override
-            public Integer getVlan() {
-                return Values.<Integer>first(values)
-                        .with(intValue("SRC_VLAN"))
-                        .with(intValue("DST_VLAN"))
-                        .getOrNull();
-            }
-        };
+                .build();
     }
 
     public Duration getFlowActiveTimeoutFallback() {

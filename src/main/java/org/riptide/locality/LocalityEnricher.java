@@ -1,5 +1,6 @@
 package org.riptide.locality;
 
+import org.riptide.flows.parser.data.Flow;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Source;
@@ -15,20 +16,20 @@ public class LocalityEnricher extends Enricher.Single {
     protected CompletableFuture<Void> enrich(final Source source, final EnrichedFlow flow) {
         if (flow.getSrcAddr() != null) {
             flow.setSrcLocality(isPrivateAddress(flow.getSrcAddr())
-                    ? EnrichedFlow.Locality.PRIVATE
-                    : EnrichedFlow.Locality.PUBLIC);
+                    ? Flow.Locality.PRIVATE
+                    : Flow.Locality.PUBLIC);
         }
 
         if (flow.getDstAddr() != null) {
             flow.setDstLocality(isPrivateAddress(flow.getDstAddr())
-                    ? EnrichedFlow.Locality.PRIVATE
-                    : EnrichedFlow.Locality.PUBLIC);
+                    ? Flow.Locality.PRIVATE
+                    : Flow.Locality.PUBLIC);
         }
 
-        if (EnrichedFlow.Locality.PUBLIC.equals(flow.getDstLocality()) || EnrichedFlow.Locality.PUBLIC.equals(flow.getSrcLocality())) {
-            flow.setFlowLocality(EnrichedFlow.Locality.PUBLIC);
-        } else if (EnrichedFlow.Locality.PRIVATE.equals(flow.getDstLocality()) || EnrichedFlow.Locality.PRIVATE.equals(flow.getSrcLocality())) {
-            flow.setFlowLocality(EnrichedFlow.Locality.PRIVATE);
+        if (Flow.Locality.PUBLIC.equals(flow.getDstLocality()) || Flow.Locality.PUBLIC.equals(flow.getSrcLocality())) {
+            flow.setFlowLocality(Flow.Locality.PUBLIC);
+        } else if (Flow.Locality.PRIVATE.equals(flow.getDstLocality()) || Flow.Locality.PRIVATE.equals(flow.getSrcLocality())) {
+            flow.setFlowLocality(Flow.Locality.PRIVATE);
         }
 
         return CompletableFuture.completedFuture(null);

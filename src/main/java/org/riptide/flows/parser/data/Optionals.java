@@ -12,6 +12,7 @@ public final class Optionals {
         return Optional.ofNullable(a);
     }
 
+    @SafeVarargs
     public static <T> Optional<T> first(T... values) {
         return Stream.of(values).filter(Objects::nonNull).findFirst();
     }
