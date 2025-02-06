@@ -9,53 +9,62 @@ import java.time.Duration;
 
 @Data
 public class ClickhouseFlow {
-    private Timestamp receivedAt;
     private Timestamp timestamp;
-    private long bytes;
-    private byte direction;
-    private Inet6Address dstAddr;
-    private String dstAddrHostname;
-    private long dstAs;
-    private int dstMaskLen;
-    private int dstPort;
-    private int engineId;
-    private int engineType;
-    private Timestamp deltaSwitched;
+
+    private byte flowProtocol;
+
+    private String location;
+    private String exporterAddr;
+
+    private Timestamp receivedAt;
+
     private Timestamp firstSwitched;
-    private int flowRecords;
-    private long flowSeqNum;
-    private int inputSnmp;
-    private int ipProtocolVersion;
+    private Timestamp deltaSwitched;
     private Timestamp lastSwitched;
+
+    private int inputSnmp;
+    private String inputSnmpIfName;
+
+    private int outputSnmp;
+    private String outputSnmpIfName;
+
+    private long srcAs;
+    private Inet6Address srcAddr;
+    private int srcMaskLen;
+    private String srcAddrHostname;
+    private int srcPort;
+
+    private long dstAs;
+    private Inet6Address dstAddr;
+    private int dstMaskLen;
+    private String dstAddrHostname;
+    private int dstPort;
+
     private Inet6Address nextHop;
     private String nextHopHostname;
-    private int outputSnmp;
+
+    private long bytes;
     private long packets;
+
+    private byte direction;
+
+    private int engineId;
+    private int engineType;
+
+    private int vlan;
+    private int ipProtocolVersion;
     private int protocol;
-    private byte samplingAlgorithm = 0;
-    private double samplingInterval = 1.0;
-    private Inet6Address srcAddr;
-    private String srcAddrHostname;
-    private long srcAs;
-    private int srcMaskLen;
-    private int srcPort;
     private int tcpFlags;
     private int tos;
-    private byte flowProtocol;
-    private int vlan;
+
+    private byte samplingAlgorithm;
+    private double samplingInterval = 1.0;
 
     private String application;
-    private String exporterAddr;
-    private String location;
+
     private byte srcLocality;
     private byte dstLocality;
     private byte flowLocality;
+
     private Duration clockCorrection;
-    private String inputSnmpIfName;
-    private String outputSnmpIfName;
-
-    public String convoKey;
-
-    public int dscp;
-    public int ecn;
 }
