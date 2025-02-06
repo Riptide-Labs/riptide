@@ -51,7 +51,7 @@ public class Pipeline {
         this.persisters = Objects.requireNonNull(persisters);
 
         log.info("Enabled enrichers: {}", enrichers.stream().map(enricher -> enricher.getClass().getSimpleName()).collect(Collectors.joining(", ")));
-        log.info("Enabled repositories: {}", persisters.stream().map(persister -> persister.getClass().getSimpleName()).collect(Collectors.joining(", ")));
+        log.info("Enabled repositories: {}", persisters.stream().map(FlowPersister::getName).collect(Collectors.joining(", ")));
 
         if (this.persisters.isEmpty()) {
             throw new IllegalStateException("No persisters configured");

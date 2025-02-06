@@ -69,8 +69,8 @@ public class Netflow9FlowBuilder {
                                 raw.BPG_IPV4_NEXT_HOP)
                         .orElse(null))
 
-                .bytes(raw.IN_BYTES)
-                .packets(raw.IN_PKTS)
+                .bytes(Optionals.of(raw.IN_BYTES).orElse(0L))
+                .packets(Optionals.of(raw.IN_PKTS).orElse(0L))
 
                 .direction(
                         switch (raw.DIRECTION) {
@@ -79,8 +79,8 @@ public class Netflow9FlowBuilder {
                             case null, default -> Flow.Direction.UNKNOWN;
                         })
 
-                .engineId(raw.ENGINE_ID)
-                .engineType(raw.ENGINE_TYPE)
+                .engineId(Optionals.of(raw.ENGINE_ID).orElse(0))
+                .engineType(Optionals.of(raw.ENGINE_TYPE).orElse(0))
 
                 .vlan(Optionals.first(raw.SRC_VLAN, raw.DST_VLAN).orElse(0))
                 .ipProtocolVersion(raw.IP_PROTOCOL_VERSION)
