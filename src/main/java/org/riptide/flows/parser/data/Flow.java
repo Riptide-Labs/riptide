@@ -1,188 +1,83 @@
 package org.riptide.flows.parser.data;
 
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NonNull;
+
 import java.net.InetAddress;
 import java.time.Instant;
 
-public interface Flow {
+@Getter
+@Builder
+public class Flow {
+    @NonNull private Instant receivedAt;
 
-    /**
-     * Time at which the flow was received by listener in milliseconds since epoch UTC.
-     */
-    Instant getReceivedAt();
+    @NonNull private Instant timestamp;
 
-    /**
-     * Flow timestamp in milliseconds.
-     */
-    Instant getTimestamp();
+    @NonNull private FlowProtocol flowProtocol;
+    private int flowRecords;
+    private long flowSeqNum;
 
-    /**
-     * Number of bytes transferred in the flow.
-     */
-    Long getBytes();
+    @NonNull private Instant firstSwitched;
+    private Instant deltaSwitched;
+    @NonNull private Instant lastSwitched;
 
-    /**
-     * Direction of the flow (egress vs ingress)
-     */
-    Direction getDirection();
+    private int inputSnmp;
+    private int outputSnmp;
 
-    /**
-     * Destination address.
-     */
-    InetAddress getDstAddr();
+    private long srcAs;
+    @NonNull private InetAddress srcAddr;
+    private int srcMaskLen;
+    private int srcPort;
 
-    /**
-     * Destination autonomous system (AS).
-     */
-    Long getDstAs();
+    private long dstAs;
+    @NonNull private InetAddress dstAddr;
+    private int dstMaskLen;
+    private int dstPort;
 
-    /**
-     * The number of contiguous bits in the source address subnet mask.
-     */
-    Integer getDstMaskLen();
+    private InetAddress nextHop;
 
-    /**
-     * Destination port.
-     */
-    Integer getDstPort();
+    private long bytes;
+    private long packets;
 
-    /**
-     * Slot number of the flow-switching engine.
-     */
-    Integer getEngineId();
+    @NonNull private Direction direction;
 
-    /**
-     * Type of flow-switching engine.
-     */
-    Integer getEngineType();
+    private int engineId;
+    private int engineType;
 
-    /**
-     * Unix timestamp in ms at which the previous exported packet
-     * associated with this flow was switched.
-     */
-    default Instant getDeltaSwitched() {
-        return this.getFirstSwitched();
+    private int vlan;
+    private int ipProtocolVersion;
+    private int protocol;
+    private int tcpFlags;
+    private int tos;
+
+    @NonNull private SamplingAlgorithm samplingAlgorithm;
+    private double samplingInterval;
+
+    public Instant getDeltaSwitched() {
+        return this.deltaSwitched != null
+                ? this.deltaSwitched
+                : this.firstSwitched;
     }
 
-    /**
-     * Unix timestamp in ms at which the first packet
-     * associated with this flow was switched.
-     */
-    Instant getFirstSwitched();
-
-    /**
-     * Number of flow records in the associated packet.
-     */
-    int getFlowRecords();
-
-    /**
-     * Flow packet sequence number.
-     */
-    long getFlowSeqNum();
-
-    /**
-     * SNMP ifIndex
-     */
-    Integer getInputSnmp();
-
-    /**
-     * IPv4 vs IPv6
-     */
-    Integer getIpProtocolVersion();
-
-    /**
-     * Unix timestamp in ms at which the last packet
-     * associated with this flow was switched.
-     */
-    Instant getLastSwitched();
-
-    /**
-     * Next hop
-     */
-    InetAddress getNextHop();
-
-    /**
-     * SNMP ifIndex
-     */
-    Integer getOutputSnmp();
-
-    /**
-     * Number of packets in the flow
-     */
-    Long getPackets();
-
-    /**
-     * IP protocol number i.e 6 for TCP, 17 for UDP
-     */
-    Integer getProtocol();
-
-    /**
-     * Sampling algorithm ID
-     */
-    SamplingAlgorithm getSamplingAlgorithm();
-
-    /**
-     * Sampling interval
-     */
-    Double getSamplingInterval();
-
-    /**
-     * Source address.
-     */
-    InetAddress getSrcAddr();
-
-    /**
-     * Source autonomous system (AS).
-     */
-    Long getSrcAs();
-
-    /**
-     * The number of contiguous bits in the destination address subnet mask.
-     */
-    Integer getSrcMaskLen();
-
-    /**
-     * Source port.
-     */
-    Integer getSrcPort();
-
-    /**
-     * TCP Flags.
-     */
-    Integer getTcpFlags();
-
-    /**
-     * TOS.
-     */
-    Integer getTos();
-
-    /**
-     * Netfow version
-     */
-    FlowProtocol getFlowProtocol();
-
-    /**
-     * VLAN ID.
-     */
-    Integer getVlan();
-
-    enum Locality {
+    public enum Locality {
         PUBLIC, PRIVATE
     }
 
-    enum FlowProtocol {
+    public enum FlowProtocol {
         NetflowV5,
         NetflowV9,
         IPFIX,
         SFLOW,
     }
 
-    enum Direction {
+    public enum Direction {
         INGRESS,
         EGRESS,
         UNKNOWN,
     }
 
-    enum SamplingAlgorithm {
+    public enum SamplingAlgorithm {
         Unassigned,
         SystematicCountBasedSampling,
         SystematicTimeBasedSampling,

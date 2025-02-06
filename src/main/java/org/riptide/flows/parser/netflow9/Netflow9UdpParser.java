@@ -7,7 +7,7 @@ import org.riptide.flows.listeners.multi.DispatchableUdpParser;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.UdpParserBase;
 import org.riptide.flows.parser.data.Flow;
-import org.riptide.flows.parser.ie.RecordProvider;
+import org.riptide.flows.parser.ie.FlowPacket;
 import org.riptide.flows.parser.netflow9.proto.Header;
 import org.riptide.flows.parser.netflow9.proto.Packet;
 import org.riptide.flows.parser.session.Session;
@@ -17,8 +17,10 @@ import org.riptide.pipeline.Source;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.function.BiConsumer;
+import java.util.stream.Stream;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
 import static org.riptide.flows.utils.BufferUtils.uint16;
@@ -34,17 +36,34 @@ public class Netflow9UdpParser extends UdpParserBase implements DispatchableUdpP
         super(Protocol.NETFLOW9, name, dispatcher, location, metricRegistry);
     }
 
-    public Netflow9FlowBuilder getFlowBulder() {
-        return this.flowBuilder;
-    }
-
     @Override
-    protected RecordProvider parse(final Session session,
-                                   final ByteBuf buffer) throws Exception {
+    protected FlowPacket parse(final Session session,
+                               final ByteBuf buffer) throws Exception {
         final Header header = new Header(slice(buffer, Header.SIZE));
         final Packet packet = new Packet(session, header, buffer);
 
-        return packet;
+        return new FlowPacket() {
+            @Override
+            public Stream<Flow> buildFlows(final Instant receivedAt) {
+                final var builder = new Netflow9FlowBuilder();
+                builder.setFlowActiveTimeoutFallback(getFlowActiveTimeoutFallback());
+                builder.setFlowInactiveTimeoutFallback(getFlowInactiveTimeoutFallback());
+                builder.setFlowSamplingIntervalFallback(getFlowSamplingIntervalFallback());
+
+                return packet.getRecords()
+                        .map(record -> builder.buildFlow(receivedAt, record));
+            }
+
+            @Override
+            public long getObservationDomainId() {
+                return header.sourceId;
+            }
+
+            @Override
+            public long getSequenceNumber() {
+                return header.sequenceNumber;
+            }
+        };
     }
 
     @Override

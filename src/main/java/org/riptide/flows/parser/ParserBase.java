@@ -5,8 +5,7 @@ import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.flows.parser.data.Flow;
-import org.riptide.flows.parser.data.FlowBuilder;
-import org.riptide.flows.parser.ie.RecordProvider;
+import org.riptide.flows.parser.ie.FlowPacket;
 import org.riptide.flows.parser.session.SequenceNumberTracker;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.pipeline.Source;
@@ -69,8 +68,6 @@ public abstract class ParserBase implements Parser {
         setThreads(DEFAULT_NUM_THREADS);
     }
 
-    protected abstract FlowBuilder getFlowBulder();
-
     @Override
     public void start(ScheduledExecutorService executorService) {
         this.executor = new ThreadPoolExecutor(
@@ -127,7 +124,7 @@ public abstract class ParserBase implements Parser {
     }
 
     protected CompletableFuture<?> transmit(final Instant receivedAt,
-                                            final RecordProvider packet,
+                                            final FlowPacket packet,
                                             final Session session,
                                             final InetSocketAddress remoteAddress) {
         // Verify that flows sequences are in order
@@ -136,25 +133,12 @@ public abstract class ParserBase implements Parser {
             this.sequenceErrors.inc();
         }
 
-        final var futures = packet.getRecords().map(record -> {
+        final var futures = packet.buildFlows(receivedAt).map(flow -> {
             this.recordsReceived.mark();
 
-            // We're currently in the callback thread from the enrichment process
-            // We want the remainder of the serialization and dispatching to be performed
-            // from one of our executor threads so that we can put back-pressure on the listener
-            // if we can't keep up
             final Runnable dispatch = () -> {
-                // Let's serialize
-                final Flow flow;
-                try {
-                    flow = this.getFlowBulder().buildFlow(receivedAt, record);
-                } catch (final Exception e) {
-                    throw new RuntimeException(e);
-                }
-
                 log.trace("Received flow: {}", flow);
 
-                // Dispatch
                 this.dispatcher.accept(new Source(this.location, session.getRemoteAddress()), flow);
 
                 this.recordsDispatched.mark();

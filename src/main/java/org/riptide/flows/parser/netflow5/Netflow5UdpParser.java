@@ -6,7 +6,7 @@ import org.riptide.flows.listeners.multi.DispatchableUdpParser;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.UdpParserBase;
 import org.riptide.flows.parser.data.Flow;
-import org.riptide.flows.parser.ie.RecordProvider;
+import org.riptide.flows.parser.ie.FlowPacket;
 import org.riptide.flows.parser.netflow5.proto.Header;
 import org.riptide.flows.parser.netflow5.proto.Packet;
 import org.riptide.flows.parser.netflow9.Netflow9UdpParser;
@@ -41,8 +41,8 @@ public class Netflow5UdpParser extends UdpParserBase implements DispatchableUdpP
     }
 
     @Override
-    protected RecordProvider parse(final Session session,
-                                   final ByteBuf buffer) throws Exception {
+    protected FlowPacket parse(final Session session,
+                               final ByteBuf buffer) throws Exception {
         final Header header = new Header(slice(buffer, Header.SIZE));
         final Packet packet = new Packet(header, buffer);
 

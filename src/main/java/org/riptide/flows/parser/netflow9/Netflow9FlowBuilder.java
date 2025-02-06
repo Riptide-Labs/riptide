@@ -1,7 +1,6 @@
 package org.riptide.flows.parser.netflow9;
 
 import org.riptide.flows.parser.data.Flow;
-import org.riptide.flows.parser.data.FlowBuilder;
 import org.riptide.flows.parser.data.Timeout;
 import org.riptide.flows.parser.data.Values;
 import org.riptide.flows.parser.ie.Value;
@@ -19,13 +18,12 @@ import static org.riptide.flows.parser.data.Values.intValue;
 import static org.riptide.flows.parser.data.Values.longValue;
 import static org.riptide.flows.parser.data.Values.timestampValue;
 
-public class Netflow9FlowBuilder implements FlowBuilder {
+public class Netflow9FlowBuilder {
 
     private Duration flowActiveTimeoutFallback;
     private Duration flowInactiveTimeoutFallback;
     private Long flowSamplingIntervalFallback;
 
-    @Override
     public Flow buildFlow(final Instant receivedAt,
                           final Map<String, Value<?>> values) {
         final var sysUpTime = durationValue("@sysUpTime", ChronoUnit.MILLIS);

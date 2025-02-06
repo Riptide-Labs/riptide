@@ -2,192 +2,71 @@ package org.riptide.flows.parser.netflow5;
 
 
 import org.riptide.flows.parser.data.Flow;
-import org.riptide.flows.parser.data.FlowBuilder;
-import org.riptide.flows.parser.data.Values;
-import org.riptide.flows.parser.ie.Value;
+import org.riptide.flows.parser.netflow5.proto.Header;
+import org.riptide.flows.parser.netflow5.proto.Record;
 
-import java.net.InetAddress;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Map;
 
-import static org.riptide.flows.parser.data.Values.booleanValue;
-import static org.riptide.flows.parser.data.Values.doubleValue;
-import static org.riptide.flows.parser.data.Values.durationValue;
-import static org.riptide.flows.parser.data.Values.inetAddressValue;
-import static org.riptide.flows.parser.data.Values.intValue;
-import static org.riptide.flows.parser.data.Values.longValue;
+public class Netflow5FlowBuilder {
+    public static Flow buildFlow(final Instant receivedAt,
+                                 final Header header,
+                                 final Record record) {
 
-public class Netflow5FlowBuilder implements FlowBuilder {
-    @Override
-    public Flow buildFlow(final Instant receivedAt,
-                          final Map<String, Value<?>> values) {
+        final var timestamp = Instant.ofEpochSecond(header.unixSecs, header.unixNSecs);
 
-        final var timestamp = Values.both(
-                longValue("@unixSecs"),
-                longValue("@unixNSecs"),
-                Instant::ofEpochSecond);
+        final var bootTime = timestamp.minus(header.sysUptime, ChronoUnit.MILLIS);
 
-        final var bootTime = Values.both(timestamp, durationValue("@sysUptime", ChronoUnit.MILLIS), Instant::minus);
+        return Flow.builder()
+                .receivedAt(receivedAt)
 
-        return new Flow() {
-            @Override
-            public Instant getReceivedAt() {
-                return receivedAt;
-            }
+                .timestamp(timestamp)
 
-            @Override
-            public Instant getTimestamp() {
-                return timestamp.getOrNull(values);
-            }
+                .flowProtocol(Flow.FlowProtocol.NetflowV5)
+                .flowRecords(header.count)
+                .flowSeqNum(header.flowSequence)
 
-            @Override
-            public Long getBytes() {
-                return longValue("dOctets").getOrNull(values);
-            }
+                .firstSwitched(bootTime.plus(record.first, ChronoUnit.MILLIS))
+                .lastSwitched(bootTime.plus(record.last, ChronoUnit.MILLIS))
 
-            @Override
-            public Direction getDirection() {
-                return booleanValue("egress")
-                        .map(value -> value ? Direction.EGRESS : Direction.INGRESS)
-                        .defaultValue(Direction.UNKNOWN)
-                        .getOrNull(values);
-            }
+                .inputSnmp(record.input)
+                .outputSnmp(record.output)
 
-            @Override
-            public InetAddress getDstAddr() {
-                return inetAddressValue("dstAddr").getOrNull(values);
-            }
+                .srcAs(record.srcAs)
+                .srcAddr(record.srcAddr)
+                .srcMaskLen(record.srcMask)
+                .srcPort(record.srcPort)
 
-            @Override
-            public Long getDstAs() {
-                return longValue("dstAs").getOrNull(values);
-            }
+                .dstAs(record.dstAs)
+                .dstAddr(record.dstAddr)
+                .dstMaskLen(record.dstMask)
+                .dstPort(record.dstPort)
 
-            @Override
-            public Integer getDstMaskLen() {
-                return intValue("dstMask").getOrNull(values);
-            }
+                .nextHop(record.nextHop)
 
-            @Override
-            public Integer getDstPort() {
-                return intValue("dstPort").getOrNull(values);
-            }
+                .bytes(record.dOctets)
+                .packets(record.dPkts)
 
-            @Override
-            public Integer getEngineId() {
-                return intValue("@engineId").getOrNull(values);
-            }
+                .direction(record.egress
+                        ? Flow.Direction.EGRESS
+                        : Flow.Direction.INGRESS)
 
-            @Override
-            public Integer getEngineType() {
-                return intValue("@engineType").getOrNull(values);
-            }
+                .engineId(header.engineId)
+                .engineType(header.engineType)
 
-            @Override
-            public Instant getFirstSwitched() {
-                return bootTime.and(durationValue("first", ChronoUnit.MILLIS), Instant::plus).getOrNull(values);
-            }
+                .vlan(0)
+                .ipProtocolVersion(4)
+                .protocol(record.proto)
+                .tcpFlags(record.tcpFlags)
+                .tos(record.tos)
 
-            @Override
-            public int getFlowRecords() {
-                return intValue("@count").getOrNull(values);
-            }
-
-            @Override
-            public long getFlowSeqNum() {
-                return longValue("@flowSequence").getOrNull(values);
-            }
-
-            @Override
-            public Integer getInputSnmp() {
-                return intValue("input").getOrNull(values);
-            }
-
-            @Override
-            public Integer getIpProtocolVersion() {
-                return null;
-            }
-
-            @Override
-            public Instant getLastSwitched() {
-                return bootTime.and(durationValue("last", ChronoUnit.MILLIS), Instant::plus).getOrNull(values);
-            }
-
-            @Override
-            public InetAddress getNextHop() {
-                return inetAddressValue("nextHop").getOrNull(values);
-            }
-
-            @Override
-            public Integer getOutputSnmp() {
-                return intValue("output").getOrNull(values);
-            }
-
-            @Override
-            public Long getPackets() {
-                return longValue("dPkts").getOrNull(values);
-            }
-
-            @Override
-            public Integer getProtocol() {
-                return intValue("proto").getOrNull(values);
-            }
-
-            @Override
-            public SamplingAlgorithm getSamplingAlgorithm() {
-                final var saValue = intValue("@samplingAlgorithm").getOrNull(values);
-                return switch (saValue) {
+                .samplingAlgorithm(switch (header.samplingAlgorithm) {
                     case 1 -> Flow.SamplingAlgorithm.SystematicCountBasedSampling;
                     case 2 -> Flow.SamplingAlgorithm.RandomNOutOfNSampling;
-                    case null, default -> Flow.SamplingAlgorithm.Unassigned;
-                };
-            }
+                    default -> Flow.SamplingAlgorithm.Unassigned;
+                })
+                .samplingInterval(header.samplingInterval)
 
-            @Override
-            public Double getSamplingInterval() {
-                return doubleValue("@samplingInterval", Double.NaN).getOrNull(values);
-            }
-
-            @Override
-            public InetAddress getSrcAddr() {
-                return inetAddressValue("srcAddr").getOrNull(values);
-            }
-
-            @Override
-            public Long getSrcAs() {
-                return longValue("srcAs").getOrNull(values);
-            }
-
-            @Override
-            public Integer getSrcMaskLen() {
-                return intValue("srcMask").getOrNull(values);
-            }
-
-            @Override
-            public Integer getSrcPort() {
-                return intValue("srcPort").getOrNull(values);
-            }
-
-            @Override
-            public Integer getTcpFlags() {
-                return intValue("tcpFlags").getOrNull(values);
-            }
-
-            @Override
-            public Integer getTos() {
-                return intValue("tos").getOrNull(values);
-            }
-
-            @Override
-            public FlowProtocol getFlowProtocol() {
-                return FlowProtocol.NetflowV5;
-            }
-
-            @Override
-            public Integer getVlan() {
-                return null;
-            }
-        };
+                .build();
     }
 }

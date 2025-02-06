@@ -7,8 +7,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.intellij.lang.annotations.Language;
 import org.mapstruct.BeanMapping;
 import org.mapstruct.Mapper;
-import org.mapstruct.Mapping;
-import org.mapstruct.Mappings;
 import org.mapstruct.NullValueCheckStrategy;
 import org.riptide.config.ClickhouseConfig;
 import org.riptide.flows.parser.data.Flow;

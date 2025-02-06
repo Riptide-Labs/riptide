@@ -6,7 +6,6 @@ import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
 import org.riptide.classification.ClassificationEngine;
 import org.riptide.classification.ClassificationEnricher;
-import org.riptide.flows.parser.data.Flow;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Pipeline;

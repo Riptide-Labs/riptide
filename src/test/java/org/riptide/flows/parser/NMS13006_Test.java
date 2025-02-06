@@ -65,7 +65,7 @@ public class NMS13006_Test {
                 final Header header = new Header(slice(buf, Header.SIZE));
                 final Packet packet = new Packet(session, header, buf);
 
-                packet.getRecords().forEach(r -> {
+                packet.buildFlows().forEach(r -> {
                             final Netflow9FlowBuilder builder = new Netflow9FlowBuilder();
                             final var flowMessage = builder.buildFlow(Instant.EPOCH, r);
                             Assertions.assertThat(flowMessage.getFirstSwitched()).isNotNull();

@@ -1,24 +1,22 @@
 package org.riptide.flows.parser.netflow5.proto;
 
 import com.google.common.base.MoreObjects;
-import com.google.common.collect.Streams;
 import io.netty.buffer.ByteBuf;
 import org.riptide.flows.parser.InvalidPacketException;
-import org.riptide.flows.parser.ie.RecordProvider;
-import org.riptide.flows.parser.ie.Value;
+import org.riptide.flows.parser.data.Flow;
+import org.riptide.flows.parser.ie.FlowPacket;
+import org.riptide.flows.parser.netflow5.Netflow5FlowBuilder;
 
+import java.time.Instant;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
 
-public final class Packet implements Iterable<Record>, RecordProvider {
+public final class Packet implements Iterable<Record>, FlowPacket {
 
     public final Header header;
 
@@ -49,17 +47,14 @@ public final class Packet implements Iterable<Record>, RecordProvider {
     }
 
     @Override
-    public Stream<Map<String, Value<?>>> getRecords() {
-
+    public Stream<Flow> buildFlows(final Instant receivedAt) {
         return this.records.stream()
-                .map(Record::asValues)
-                .map(record -> Streams.concat(this.header.asValues(), record)
-                        .collect(Collectors.toUnmodifiableMap(Value::getName, Function.identity())));
+                .map(record -> Netflow5FlowBuilder.buildFlow(receivedAt, this.header, record));
     }
 
     @Override
     public long getObservationDomainId() {
-        return this.header.engineType << 8 + this.header.engineId;
+        return ((long) this.header.engineType) << 8L + ((long) this.header.engineId);
     }
 
     @Override

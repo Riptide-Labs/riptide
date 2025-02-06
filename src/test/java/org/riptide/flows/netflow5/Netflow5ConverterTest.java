@@ -4,7 +4,6 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import org.junit.jupiter.api.Test;
 import org.riptide.flows.parser.InvalidPacketException;
-import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.netflow5.Netflow5FlowBuilder;
 import org.riptide.flows.parser.netflow5.proto.Header;
 import org.riptide.flows.parser.netflow5.proto.Packet;
@@ -72,7 +71,7 @@ public class Netflow5ConverterTest {
             final ByteBuf buffer = Unpooled.wrappedBuffer(payload);
             final Header header = new Header(slice(buffer, Header.SIZE));
                 final Packet packet = new Packet(header, buffer);
-                packet.getRecords().forEach(rec -> {
+                packet.buildFlows().forEach(rec -> {
                     final var flowMessage = new Netflow5FlowBuilder().buildFlow(Instant.EPOCH, rec);
                     flows.add(flowMessage);
                 });

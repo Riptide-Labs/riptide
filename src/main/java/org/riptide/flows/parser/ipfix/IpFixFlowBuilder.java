@@ -2,7 +2,6 @@ package org.riptide.flows.parser.ipfix;
 
 import com.google.common.primitives.UnsignedLong;
 import org.riptide.flows.parser.data.Flow;
-import org.riptide.flows.parser.data.FlowBuilder;
 import org.riptide.flows.parser.data.Timeout;
 import org.riptide.flows.parser.data.Values;
 import org.riptide.flows.parser.ie.Value;
@@ -22,16 +21,12 @@ import static org.riptide.flows.parser.data.Values.timestampValue;
 import static org.riptide.flows.parser.data.Values.unsignedLongValue;
 
 
-public class IpFixFlowBuilder implements FlowBuilder {
+public class IpFixFlowBuilder {
 
     private Duration flowActiveTimeoutFallback;
     private Duration flowInactiveTimeoutFallback;
     private Long flowSamplingIntervalFallback; // TODO fooker: usage
 
-    public IpFixFlowBuilder() {
-    }
-
-    @Override
     public Flow buildFlow(final Instant receivedAt,
                           final Map<String, Value<?>> values) {
 
