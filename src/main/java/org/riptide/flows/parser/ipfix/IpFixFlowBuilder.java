@@ -9,14 +9,15 @@ import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.data.Optionals;
 import org.riptide.flows.parser.data.Timeout;
 import org.riptide.flows.parser.ipfix.proto.Packet;
-import org.riptide.repository.elastic.doc.SamplingAlgorithm;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Stream;
 
+import static org.riptide.flows.parser.data.Flow.*;
 import static org.riptide.flows.parser.data.Values.timestampValue;
 
 
@@ -41,38 +42,39 @@ public class IpFixFlowBuilder {
         // TODO fooker: What about @observationDomainId
 
         // TODO fooker: Structurize meta info
-        final var timestamp = timestampValue("@exportTime", ChronoUnit.SECONDS);
-
-        final var systemInitTime = timestampValue("systemInitTimeMilliseconds");
         final var direction = switch (rawFlow.flowDirection) {
-            case 0 -> Flow.Direction.INGRESS;
-            case 1 -> Flow.Direction.EGRESS;
-            case null, default -> Flow.Direction.UNKNOWN;
+            case 0 -> Direction.INGRESS;
+            case 1 -> Direction.EGRESS;
+            case null, default -> Direction.UNKNOWN;
         };
 
         final var flowActiveTimeout = Optionals.first(rawFlow.flowActiveTimeout, flowActiveTimeoutFallback).orElse(null);
         final var flowInactiveTimeout = Optionals.first(rawFlow.flowInactiveTimeout, flowInactiveTimeoutFallback).orElse(null);
         final var firstSwitched = Optionals.first(
-                rawFlow.flowStartSeconds,
-                rawFlow.flowStartMilliseconds,
-                rawFlow.flowStartMicroseconds,
-                rawFlow.flowStartNanoseconds,
-                // TOOD MVR ...
-//                .with(durationValue("flowStartDeltaMicroseconds", ChronoUnit.MICROS).and(timestamp, (delta, export) -> export.plus(delta)))
-                rawFlow.flowStartDeltaMicroseconds,
-                // TOOD MVR ...
-                rawFlow.flowStartSysUpTime).orElse(null);
+                        rawFlow.flowStartSeconds,
+                        rawFlow.flowStartMilliseconds,
+                        rawFlow.flowStartMicroseconds,
+                        rawFlow.flowStartNanoseconds)
+                .or(() ->
+                        Optionals.first(
+                                Optional.ofNullable(rawFlow.flowStartDeltaMicroseconds)
+                                        .map(it -> rawFlow.exportTime.plus(it)),
+                                Optional.ofNullable(rawFlow.flowStartSysUpTime)
+                                        .map(it -> rawFlow.systemInitTimeMilliseconds.plus(it))
+                        ).orElse(Optional.empty()))
+                .orElse(null);
         final var lastSwitched = Optionals.first(
-                rawFlow.flowEndSeconds,
-                rawFlow.flowEndMilliseconds,
-                rawFlow.flowEndMicroseconds,
-                rawFlow.flowEndNanoseconds,
-                // TOOD MVR ...
-//                .with(durationValue("flowEndDeltaMicroseconds", ChronoUnit.MICROS).and(timestamp, (delta, export) -> export.plus(delta)))
-                rawFlow.flowEndDeltaMicroseconds,
-// TOOD MVR ...
-//                .with(durationValue("flowEndSysUpTime", ChronoUnit.MILLIS).and(systemInitTime, (offset, init) -> init.plus(offset)))
-                rawFlow.flowEndSysUpTime).orElse(null);
+                        rawFlow.flowEndSeconds,
+                        rawFlow.flowEndMilliseconds,
+                        rawFlow.flowEndMicroseconds,
+                        rawFlow.flowEndNanoseconds)
+                .or(() -> Optionals.first(
+                        Optional.ofNullable(rawFlow.flowEndDeltaMicroseconds)
+                                .map(it -> rawFlow.exportTime.plus(it)),
+                        Optional.ofNullable(rawFlow.flowEndSysUpTime)
+                                .map(it -> rawFlow.systemInitTimeMilliseconds.plus(it))
+                ).orElse(Optional.empty()))
+                .orElse(null);
 
         final var bytes = Optionals.first(
                 rawFlow.octetDeltaCount,
@@ -91,7 +93,7 @@ public class IpFixFlowBuilder {
                 .withNumBytes(bytes)
                 .withNumPackets(packets)
                 .calculateDeltaSwitched();
-        return Flow.builder()
+        return builder()
                 .receivedAt(receivedAt)
                 .timestamp(rawFlow.exportTime)
                 .bytes(bytes)
@@ -117,10 +119,10 @@ public class IpFixFlowBuilder {
                         Optionals.first(rawFlow.samplingAlgorithm, rawFlow.samplerMode)
                                 .map(deprecatedSamplingAlgorithm -> {
                                     if (deprecatedSamplingAlgorithm == 1) {
-                                        return Flow.SamplingAlgorithm.SystematicCountBasedSampling;
+                                        return SamplingAlgorithm.SystematicCountBasedSampling;
                                     }
                                     if (deprecatedSamplingAlgorithm == 2) {
-                                        return Flow.SamplingAlgorithm.RandomNOutOfNSampling;
+                                        return SamplingAlgorithm.RandomNOutOfNSampling;
                                     }
                                     return switch (rawFlow.selectorAlgorithm) {
                                         case 0 -> SamplingAlgorithm.Unassigned;
@@ -175,7 +177,7 @@ public class IpFixFlowBuilder {
                 .tcpFlags(Optionals.first(rawFlow.tcpControlBits).orElse(0))
                 .tos(Optionals.first(rawFlow.ipClassOfService).orElse(0))
                 .vlan(Optionals.first(rawFlow.vlanId, rawFlow.postVlanId, rawFlow.dot1qVlanId, rawFlow.dot1qCustomerVlanId, rawFlow.postDot1qVlanId, rawFlow.postDot1qCustomerVlanId).orElse(0))
-                .flowProtocol(Flow.FlowProtocol.IPFIX)
+                .flowProtocol(FlowProtocol.IPFIX)
                 .build();
     }
 
@@ -183,10 +185,7 @@ public class IpFixFlowBuilder {
         final int recordCount = packet.dataSets.stream()
                 .mapToInt(s -> s.records.size())
                 .sum();
-
-        return packet.dataSets.stream()
-                .flatMap(ds -> ds.records.stream())
-                .map(record -> {
+        return packet.dataSets.stream().flatMap(ds -> ds.records.stream()).map(record -> {
             final var dummyFlow = new IpfixRawFlow();
             for (var value : record.getValues()) {
                 conversionService.convert(value, dummyFlow);

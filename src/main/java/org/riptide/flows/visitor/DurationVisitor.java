@@ -2,9 +2,11 @@ package org.riptide.flows.visitor;
 
 import org.riptide.flows.parser.ie.values.SignedValue;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
+import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 
+@Service
 public class DurationVisitor implements ValueVisitor<Duration> {
     @Override
     public Class<Duration> targetClass() {

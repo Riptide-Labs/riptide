@@ -35,14 +35,14 @@ public class IpfixRawFlow {
     Instant flowStartMilliseconds;
     Instant flowStartMicroseconds;
     Instant flowStartNanoseconds;
-    Instant flowStartDeltaMicroseconds;
-    Instant flowStartSysUpTime;
+    Duration flowStartDeltaMicroseconds;
+    Duration flowStartSysUpTime;
     Instant flowEndSeconds;
     Instant flowEndMilliseconds;
     Instant flowEndMicroseconds;
-    Instant flowEndDeltaMicroseconds;
     Instant flowEndNanoseconds;
-    Instant flowEndSysUpTime;
+    Duration flowEndDeltaMicroseconds;
+    Duration flowEndSysUpTime;
     Integer ingressPhysicalInterface;
     Integer ingressInterface;
     Integer ipVersion;
@@ -86,4 +86,5 @@ public class IpfixRawFlow {
     Integer dot1qCustomerVlanId;
     Integer postDot1qVlanId;
     Integer postDot1qCustomerVlanId;
+    Instant systemInitTimeMilliseconds;
 }
