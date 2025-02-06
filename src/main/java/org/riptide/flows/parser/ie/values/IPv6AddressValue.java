@@ -7,6 +7,7 @@ import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Semantics;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
+import org.riptide.flows.visitor.TheVisitor;
 
 import java.net.Inet4Address;
 import java.net.Inet6Address;
@@ -68,5 +69,10 @@ public class IPv6AddressValue extends Value<Inet6Address> {
     @Override
     public Inet6Address getValue() {
         return this.value;
+    }
+
+    @Override
+    public <X> X accept(TheVisitor<X> visitor) {
+        return Objects.requireNonNull(visitor).visit(this);
     }
 }

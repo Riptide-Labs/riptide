@@ -7,6 +7,7 @@ import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Semantics;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
+import org.riptide.flows.visitor.TheVisitor;
 
 import java.net.Inet4Address;
 import java.net.UnknownHostException;
@@ -67,5 +68,10 @@ public class IPv4AddressValue extends Value<Inet4Address> {
     @Override
     public Inet4Address getValue() {
         return this.value;
+    }
+
+    @Override
+    public <X> X accept(TheVisitor<X> visitor) {
+        return Objects.requireNonNull(visitor).visit(this);
     }
 }

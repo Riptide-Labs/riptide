@@ -6,6 +6,9 @@ import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Semantics;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
+import org.riptide.flows.visitor.TheVisitor;
+
+import java.util.Objects;
 
 import static org.riptide.flows.utils.BufferUtils.sint;
 
@@ -130,5 +133,10 @@ public class SignedValue extends Value<Long> {
     @Override
     public Long getValue() {
         return this.value;
+    }
+
+    @Override
+    public <X> X accept(TheVisitor<X> visitor) {
+        return Objects.requireNonNull(visitor).visit(this);
     }
 }

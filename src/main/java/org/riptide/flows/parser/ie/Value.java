@@ -1,5 +1,7 @@
 package org.riptide.flows.parser.ie;
 
+import org.riptide.flows.visitor.TheVisitor;
+
 import java.util.Objects;
 import java.util.Optional;
 
@@ -23,6 +25,8 @@ public abstract class Value<T> {
     }
 
     public abstract T getValue();
+
+    public abstract <X> X accept(TheVisitor<X> visitor);
 
     @Override
     public boolean equals(final Object o) {

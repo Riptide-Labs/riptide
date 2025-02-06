@@ -12,6 +12,7 @@ import org.riptide.flows.parser.ipfix.proto.FlowSetHeader;
 import org.riptide.flows.parser.session.Field;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.Template;
+import org.riptide.flows.visitor.TheVisitor;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -257,5 +258,10 @@ public class ListValue extends Value<List<List<Value<?>>>> {
     @Override
     public List<List<Value<?>>> getValue() {
         return this.values;
+    }
+
+    @Override
+    public <X> X accept(TheVisitor<X> visitor) {
+        return Objects.requireNonNull(visitor).visit(this);
     }
 }

@@ -6,6 +6,7 @@ import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Semantics;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
+import org.riptide.flows.visitor.TheVisitor;
 
 import java.time.Instant;
 import java.util.Objects;
@@ -150,5 +151,10 @@ public class DateTimeValue extends Value<Instant> {
     @Override
     public Instant getValue() {
         return this.value;
+    }
+
+    @Override
+    public <X> X accept(TheVisitor<X> visitor) {
+        return Objects.requireNonNull(visitor).visit(this);
     }
 }

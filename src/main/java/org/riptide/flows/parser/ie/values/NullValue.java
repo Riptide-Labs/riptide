@@ -6,6 +6,9 @@ import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Semantics;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
+import org.riptide.flows.visitor.TheVisitor;
+
+import java.util.Objects;
 
 public class NullValue extends Value<Void> {
     public NullValue(final String name,
@@ -53,5 +56,10 @@ public class NullValue extends Value<Void> {
     @Override
     public Void getValue() {
         return null;
+    }
+
+    @Override
+    public <X> X accept(TheVisitor<X> visitor) {
+        return Objects.requireNonNull(visitor).visit(this);
     }
 }

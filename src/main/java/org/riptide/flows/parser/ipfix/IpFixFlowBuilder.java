@@ -1,6 +1,7 @@
 package org.riptide.flows.parser.ipfix;
 
 import com.google.common.primitives.UnsignedLong;
+import lombok.extern.slf4j.Slf4j;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.data.Timeout;
 import org.riptide.flows.parser.data.Values;
@@ -21,6 +22,7 @@ import static org.riptide.flows.parser.data.Values.timestampValue;
 import static org.riptide.flows.parser.data.Values.unsignedLongValue;
 
 
+@Slf4j
 public class IpFixFlowBuilder {
 
     private Duration flowActiveTimeoutFallback;
@@ -29,6 +31,8 @@ public class IpFixFlowBuilder {
 
     public Flow buildFlow(final Instant receivedAt,
                           final Map<String, Value<?>> values) {
+
+        final var rawFlow = new IpfixRawFlow();
 
         // TODO fooker: What about @observationDomainId
 
@@ -45,6 +49,7 @@ public class IpFixFlowBuilder {
 
             @Override
             public Instant getTimestamp() {
+
                 return timestamp.getOrNull(values);
             }
 

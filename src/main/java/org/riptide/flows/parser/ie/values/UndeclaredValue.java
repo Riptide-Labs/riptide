@@ -5,6 +5,7 @@ import io.netty.buffer.ByteBuf;
 import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
+import org.riptide.flows.visitor.TheVisitor;
 
 import java.util.Objects;
 
@@ -79,5 +80,10 @@ public class UndeclaredValue extends Value<byte[]> {
         s.append(informationElementId);
         
         return s.toString();
+    }
+
+    @Override
+    public <X> X accept(TheVisitor<X> visitor) {
+        return Objects.requireNonNull(visitor).visit(this);
     }
 }
