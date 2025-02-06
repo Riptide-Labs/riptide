@@ -22,17 +22,11 @@ import static org.riptide.flows.utils.BufferUtils.slice;
 
 public class Netflow5UdpParser extends UdpParserBase implements DispatchableUdpParser {
 
-    private final Netflow5FlowBuilder flowBuilder = new Netflow5FlowBuilder();
-
     public Netflow5UdpParser(final String name,
                              final BiConsumer<Source, Flow> dispatcher,
                              final String location,
                              final MetricRegistry metricRegistry) {
         super(Protocol.NETFLOW5, name, dispatcher, location, metricRegistry);
-    }
-
-    public Netflow5FlowBuilder getFlowBulder() {
-        return this.flowBuilder;
     }
 
     @Override
@@ -44,9 +38,7 @@ public class Netflow5UdpParser extends UdpParserBase implements DispatchableUdpP
     protected FlowPacket parse(final Session session,
                                final ByteBuf buffer) throws Exception {
         final Header header = new Header(slice(buffer, Header.SIZE));
-        final Packet packet = new Packet(header, buffer);
-
-        return packet;
+        return new Packet(header, buffer);
     }
 
     @Override

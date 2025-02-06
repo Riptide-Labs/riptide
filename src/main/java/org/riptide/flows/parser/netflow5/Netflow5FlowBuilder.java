@@ -8,7 +8,11 @@ import org.riptide.flows.parser.netflow5.proto.Record;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
-public class Netflow5FlowBuilder {
+public final class Netflow5FlowBuilder {
+    private Netflow5FlowBuilder() {
+
+    }
+
     public static Flow buildFlow(final Instant receivedAt,
                                  final Header header,
                                  final Record record) {
@@ -60,11 +64,12 @@ public class Netflow5FlowBuilder {
                 .tcpFlags(record.tcpFlags)
                 .tos(record.tos)
 
-                .samplingAlgorithm(switch (header.samplingAlgorithm) {
-                    case 1 -> Flow.SamplingAlgorithm.SystematicCountBasedSampling;
-                    case 2 -> Flow.SamplingAlgorithm.RandomNOutOfNSampling;
-                    default -> Flow.SamplingAlgorithm.Unassigned;
-                })
+                .samplingAlgorithm(
+                        switch (header.samplingAlgorithm) {
+                            case 1 -> Flow.SamplingAlgorithm.SystematicCountBasedSampling;
+                            case 2 -> Flow.SamplingAlgorithm.RandomNOutOfNSampling;
+                            default -> Flow.SamplingAlgorithm.Unassigned;
+                        })
                 .samplingInterval(header.samplingInterval)
 
                 .build();

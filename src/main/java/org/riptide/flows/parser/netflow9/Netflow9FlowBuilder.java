@@ -8,19 +8,10 @@ import org.riptide.flows.parser.data.Optionals;
 import org.riptide.flows.parser.netflow9.proto.Header;
 import org.riptide.flows.parser.netflow9.proto.Packet;
 
-import java.net.InetAddress;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.Objects;
 import java.util.stream.Stream;
-
-import static org.riptide.flows.parser.data.Values.doubleValue;
-import static org.riptide.flows.parser.data.Values.durationValue;
-import static org.riptide.flows.parser.data.Values.inetAddressValue;
-import static org.riptide.flows.parser.data.Values.intValue;
-import static org.riptide.flows.parser.data.Values.longValue;
-import static org.riptide.flows.parser.data.Values.timestampValue;
 
 public class Netflow9FlowBuilder {
 
@@ -88,11 +79,12 @@ public class Netflow9FlowBuilder {
                 .bytes(raw.IN_BYTES)
                 .packets(raw.IN_PKTS)
 
-                .direction(switch (raw.DIRECTION) {
-                    case 0 -> Flow.Direction.INGRESS;
-                    case 1 -> Flow.Direction.EGRESS;
-                    case null, default -> Flow.Direction.UNKNOWN;
-                })
+                .direction(
+                        switch (raw.DIRECTION) {
+                            case 0 -> Flow.Direction.INGRESS;
+                            case 1 -> Flow.Direction.EGRESS;
+                            case null, default -> Flow.Direction.UNKNOWN;
+                        })
 
                 .engineId(raw.ENGINE_ID)
                 .engineType(raw.ENGINE_TYPE)
@@ -103,11 +95,12 @@ public class Netflow9FlowBuilder {
                 .tcpFlags(raw.TCP_FLAGS)
                 .tos(raw.TOS)
 
-                .samplingAlgorithm(switch (raw.SAMPLING_ALGORITHM) {
-                    case 1 -> Flow.SamplingAlgorithm.SystematicCountBasedSampling;
-                    case 2 -> Flow.SamplingAlgorithm.RandomNOutOfNSampling;
-                    case null, default -> Flow.SamplingAlgorithm.Unassigned;
-                })
+                .samplingAlgorithm(
+                        switch (raw.SAMPLING_ALGORITHM) {
+                            case 1 -> Flow.SamplingAlgorithm.SystematicCountBasedSampling;
+                            case 2 -> Flow.SamplingAlgorithm.RandomNOutOfNSampling;
+                            case null, default -> Flow.SamplingAlgorithm.Unassigned;
+                        })
                 .samplingInterval(raw.SAMPLING_INTERVAL)
 
                 .build();

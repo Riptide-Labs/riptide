@@ -1,24 +1,17 @@
 package org.riptide.flows.parser.netflow5.proto;
 
-import static org.riptide.flows.utils.BufferUtils.bytes;
-import static org.riptide.flows.utils.BufferUtils.uint16;
-import static org.riptide.flows.utils.BufferUtils.uint32;
-import static org.riptide.flows.utils.BufferUtils.uint8;
+import com.google.common.base.MoreObjects;
+import io.netty.buffer.ByteBuf;
+import org.riptide.flows.parser.InvalidPacketException;
 
 import java.net.Inet4Address;
 import java.net.UnknownHostException;
 import java.util.Objects;
-import java.util.stream.Stream;
 
-import org.riptide.flows.parser.InvalidPacketException;
-import org.riptide.flows.parser.ie.Value;
-import org.riptide.flows.parser.ie.values.BooleanValue;
-import org.riptide.flows.parser.ie.values.IPv4AddressValue;
-import org.riptide.flows.parser.ie.values.UnsignedValue;
-
-import com.google.common.base.MoreObjects;
-
-import io.netty.buffer.ByteBuf;
+import static org.riptide.flows.utils.BufferUtils.bytes;
+import static org.riptide.flows.utils.BufferUtils.uint16;
+import static org.riptide.flows.utils.BufferUtils.uint32;
+import static org.riptide.flows.utils.BufferUtils.uint8;
 
 public class Record {
 
