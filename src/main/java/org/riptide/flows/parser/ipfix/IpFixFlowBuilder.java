@@ -13,7 +13,6 @@ import org.riptide.flows.parser.ipfix.proto.Packet;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.stream.Stream;
 
 import static org.riptide.flows.parser.data.Flow.Direction;
@@ -25,9 +24,15 @@ import static org.riptide.flows.parser.data.Flow.SamplingAlgorithm;
 public class IpFixFlowBuilder {
 
     private final ValueConversionService conversionService;
-    @Getter @Setter private Duration flowActiveTimeoutFallback;
-    @Getter @Setter private Duration flowInactiveTimeoutFallback;
-    @Getter @Setter private Long flowSamplingIntervalFallback;
+    @Getter
+    @Setter
+    private Duration flowActiveTimeoutFallback;
+    @Getter
+    @Setter
+    private Duration flowInactiveTimeoutFallback;
+    @Getter
+    @Setter
+    private Long flowSamplingIntervalFallback;
 
     public IpFixFlowBuilder(ValueConversionService conversionService) {
         this.conversionService = Objects.requireNonNull(conversionService);
@@ -55,26 +60,29 @@ public class IpFixFlowBuilder {
                         rawFlow.flowStartMilliseconds,
                         rawFlow.flowStartMicroseconds,
                         rawFlow.flowStartNanoseconds)
-                .or(() ->
-                        Optionals.first(
-                                Optional.ofNullable(rawFlow.flowStartDeltaMicroseconds)
-                                        .map(it -> rawFlow.exportTime.plus(it)),
-                                Optional.ofNullable(rawFlow.flowStartSysUpTime)
-                                        .map(it -> rawFlow.systemInitTimeMilliseconds.plus(it))
-                        ).orElse(Optional.empty()))
-                .orElse(null);
+                .orElseGet(() -> {
+                    if (rawFlow.flowStartDeltaMicroseconds != null) {
+                        return rawFlow.exportTime.plus(rawFlow.flowStartDeltaMicroseconds);
+                    }
+                    if (rawFlow.flowStartSysUpTime != null) {
+                        return rawFlow.systemInitTimeMilliseconds.plus(rawFlow.flowStartSysUpTime);
+                    }
+                    return null;
+                });
         final var lastSwitched = Optionals.first(
                         rawFlow.flowEndSeconds,
                         rawFlow.flowEndMilliseconds,
                         rawFlow.flowEndMicroseconds,
                         rawFlow.flowEndNanoseconds)
-                .or(() -> Optionals.first(
-                        Optional.ofNullable(rawFlow.flowEndDeltaMicroseconds)
-                                .map(it -> rawFlow.exportTime.plus(it)),
-                        Optional.ofNullable(rawFlow.flowEndSysUpTime)
-                                .map(it -> rawFlow.systemInitTimeMilliseconds.plus(it))
-                ).orElse(Optional.empty()))
-                .orElse(null);
+                .orElseGet(() -> {
+                    if (rawFlow.flowEndDeltaMicroseconds != null) {
+                        return rawFlow.exportTime.plus(rawFlow.flowEndDeltaMicroseconds);
+                    }
+                    if (rawFlow.flowEndSysUpTime != null) {
+                        return rawFlow.systemInitTimeMilliseconds.plus(rawFlow.flowEndSysUpTime);
+                    }
+                    return null;
+                });
 
         final var bytes = Optionals.first(
                 rawFlow.octetDeltaCount,

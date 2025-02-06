@@ -19,11 +19,12 @@ public class FlowTimeoutTest {
 
     @Test
     void testWithoutTimeout() {
-        final var rawFlow = new IpfixRawFlow();
-        rawFlow.flowStartSeconds = Instant.ofEpochSecond(123);
-        rawFlow.flowEndSeconds = Instant.ofEpochSecond(987);
+        final var raw = new IpfixRawFlow();
+        raw.exportTime = Instant.EPOCH;
+        raw.flowStartSeconds = Instant.ofEpochSecond(123);
+        raw.flowEndSeconds = Instant.ofEpochSecond(987);
 
-        final var flow = new IpFixFlowBuilder(conversionService).buildFlow(Instant.EPOCH, rawFlow);
+        final var flow = new IpFixFlowBuilder(conversionService).buildFlow(Instant.EPOCH, raw);
 
         Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(123000L));
         Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo(Instant.ofEpochMilli(123000L)); // Timeout is same as first
@@ -33,6 +34,7 @@ public class FlowTimeoutTest {
     @Test
     void testWithActiveTimeout() {
         final var raw = new IpfixRawFlow();
+        raw.exportTime = Instant.EPOCH;
         raw.flowStartSeconds = Instant.ofEpochSecond(123);
         raw.flowEndSeconds = Instant.ofEpochSecond(987);
         raw.octetDeltaCount = 10L;
@@ -50,6 +52,7 @@ public class FlowTimeoutTest {
     @Test
     void testWithInactiveTimeout() {
         final var raw = new IpfixRawFlow();
+        raw.exportTime = Instant.EPOCH;
         raw.flowStartSeconds = Instant.ofEpochSecond(123);
         raw.flowEndSeconds = Instant.ofEpochSecond(987);
         raw.octetDeltaCount = 0L;
@@ -67,6 +70,7 @@ public class FlowTimeoutTest {
     @Test
     void testFirstLastSwitchedValues1() {
         final var raw = new IpfixRawFlow();
+        raw.exportTime = Instant.EPOCH;
         raw.flowStartSeconds = Instant.ofEpochSecond(123);
         raw.flowEndSeconds = Instant.ofEpochSecond(987);
 
@@ -80,9 +84,10 @@ public class FlowTimeoutTest {
     @Test
     void testFirstLastSwitchedValues2() {
         final var raw = new IpfixRawFlow();
+        raw.exportTime = Instant.EPOCH;
         raw.systemInitTimeMilliseconds = Instant.ofEpochMilli(100000);
-        raw.flowStartSysUpTime = Duration.of(2000000, ChronoUnit.MICROS);
-        raw.flowEndSysUpTime = Duration.of(4000000, ChronoUnit.MICROS);
+        raw.flowStartSysUpTime = Duration.of(2000000, ChronoUnit.MILLIS);
+        raw.flowEndSysUpTime = Duration.of(4000000, ChronoUnit.MILLIS);
 
         final var flow = new IpFixFlowBuilder(conversionService).buildFlow(Instant.EPOCH, raw);
 
