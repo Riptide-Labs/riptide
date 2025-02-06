@@ -1,17 +1,18 @@
 package org.riptide.classification.internal;
 
+import jakarta.annotation.PreDestroy;
+import org.riptide.classification.ClassificationEngine;
+import org.riptide.classification.ClassificationRequest;
+import org.riptide.classification.Rule;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-
-import org.riptide.classification.ClassificationEngine;
-import org.riptide.classification.ClassificationRequest;
-import org.riptide.classification.Rule;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * A classification engine that does reloads asynchronously.
@@ -48,6 +49,11 @@ public class AsyncReloadingClassificationEngine implements ClassificationEngine 
         // trigger reload
         // -> blocks classification requests until classification engine is ready
         reload();
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        executorService.shutdownNow();
     }
 
     private void setState(State newState) {

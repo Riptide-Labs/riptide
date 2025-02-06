@@ -19,11 +19,11 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
 import java.util.Collections;
-import java.util.function.BiConsumer;
 import java.util.Set;
+import java.util.function.BiConsumer;
 
-@Component
 @Slf4j
+@Component
 public class Daemon implements ApplicationRunner {
 
     private final UdpListener listener;
