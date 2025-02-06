@@ -6,6 +6,7 @@ import io.netty.buffer.ByteBuf;
 import org.riptide.flows.listeners.TcpParser;
 import org.riptide.flows.parser.ParserBase;
 import org.riptide.flows.parser.Protocol;
+import org.riptide.flows.parser.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.ie.FlowPacket;
 import org.riptide.flows.parser.ipfix.proto.Header;
@@ -27,15 +28,17 @@ import static org.riptide.flows.utils.BufferUtils.slice;
 
 public class IpfixTcpParser extends ParserBase implements TcpParser {
 
-    private final IpFixFlowBuilder flowBuilder = new IpFixFlowBuilder();
+    private final IpFixFlowBuilder flowBuilder;
 
     private final Set<TcpSession> sessions = Sets.newConcurrentHashSet();
 
     public IpfixTcpParser(final String name,
                           final BiConsumer<Source, Flow> dispatcher,
                           final String location,
-                          final MetricRegistry metricRegistry) {
+                          final MetricRegistry metricRegistry,
+                          final ValueConversionService conversionService) {
         super(Protocol.IPFIX, name, dispatcher, location, metricRegistry);
+        this.flowBuilder = new IpFixFlowBuilder(conversionService);
     }
 
     @Override
@@ -67,8 +70,7 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
                 final var flow = new FlowPacket() {
                     @Override
                     public Stream<Flow> buildFlows(Instant receivedAt) {
-                        return packet.getRecords()
-                                .map(record -> flowBuilder.buildFlow(receivedAt, record));
+                        return flowBuilder.buildFlows(receivedAt, packet);
                     }
 
                     @Override
