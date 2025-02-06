@@ -54,8 +54,7 @@ public class Pipeline {
         log.info("Enabled repositories: {}", persisters.stream().map(persister -> persister.getClass().getSimpleName()).collect(Collectors.joining(", ")));
 
         if (this.persisters.isEmpty()) {
-            log.error("No persisters configured");
-            System.exit(1);
+            throw new IllegalStateException("No persisters configured");
         }
     }
 
