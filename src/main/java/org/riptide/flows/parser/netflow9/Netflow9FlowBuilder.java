@@ -5,7 +5,6 @@ import lombok.Setter;
 import org.riptide.flows.parser.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.data.Optionals;
-import org.riptide.flows.parser.netflow9.proto.Header;
 import org.riptide.flows.parser.netflow9.proto.Packet;
 
 import java.time.Duration;
@@ -33,26 +32,20 @@ public class Netflow9FlowBuilder {
 
     public Stream<Flow> buildFlows(final Instant receivedAt, final Packet packet) {
         return createRawFlows(packet)
-                .map(rawFlow -> buildFlow(receivedAt, packet.header, rawFlow));
+                .map(rawFlow -> buildFlow(receivedAt, rawFlow));
     }
 
-
     public Flow buildFlow(final Instant receivedAt,
-                          final Header header,
                           final Netflow9RawFlow raw) {
-        final var sysUpTime = Duration.ofMillis(header.sysUpTime);
-        final var unixSecs = Instant.ofEpochSecond(header.unixSecs);
-
-        final var bootTime = unixSecs.minus(sysUpTime);
-
+        final var bootTime = raw.unixSecs.minus(raw.sysUpTime);
         return Flow.builder()
                 .receivedAt(receivedAt)
 
-                .timestamp(unixSecs)
+                .timestamp(raw.unixSecs)
 
                 .flowProtocol(Flow.FlowProtocol.NetflowV9)
-                .flowRecords(header.count)
-                .flowSeqNum(header.sequenceNumber)
+                .flowRecords(raw.recordCount)
+                .flowSeqNum(raw.sequenceNumber)
 
                 .firstSwitched(bootTime.plus(raw.FIRST_SWITCHED))
                 .lastSwitched(bootTime.plus(raw.LAST_SWITCHED))
@@ -111,11 +104,13 @@ public class Netflow9FlowBuilder {
                 .flatMap(ds -> ds.records.stream())
                 .map(record -> {
                     final var dummyFlow = new Netflow9RawFlow();
-
                     for (var value : record.getValues()) {
                         this.conversionService.convert(value, dummyFlow);
                     }
-
+                    dummyFlow.recordCount = packet.header.count;
+                    dummyFlow.sysUpTime = Duration.ofMillis(packet.header.sysUpTime);
+                    dummyFlow.unixSecs = Instant.ofEpochSecond(packet.header.unixSecs);
+                    dummyFlow.sequenceNumber = packet.header.sequenceNumber;
                     return dummyFlow;
                 });
     }

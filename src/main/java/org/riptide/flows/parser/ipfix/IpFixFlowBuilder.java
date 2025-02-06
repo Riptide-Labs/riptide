@@ -38,7 +38,7 @@ public class IpFixFlowBuilder {
                 .map(rawFlow -> buildFlow(receivedAt, rawFlow));
     }
 
-    private Flow buildFlow(Instant receivedAt, IpfixRawFlow rawFlow) {
+    public Flow buildFlow(Instant receivedAt, IpfixRawFlow rawFlow) {
         // TODO fooker: What about @observationDomainId
 
         // TODO fooker: Structurize meta info

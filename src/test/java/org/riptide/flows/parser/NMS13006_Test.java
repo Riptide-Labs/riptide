@@ -4,33 +4,40 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.riptide.flows.parser.ie.values.UnsignedValue;
 import org.riptide.flows.parser.netflow9.Netflow9FlowBuilder;
+import org.riptide.flows.parser.netflow9.Netflow9RawFlow;
 import org.riptide.flows.parser.netflow9.proto.Header;
 import org.riptide.flows.parser.netflow9.proto.Packet;
 import org.riptide.flows.parser.session.SequenceNumberTracker;
 import org.riptide.flows.parser.session.TcpSession;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
 
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.time.Instant;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
 
+@SpringBootTest
 public class NMS13006_Test {
     private static final Path FOLDER = Paths.get("src/test/resources/flows");
 
+    @Autowired
+    private ValueConversionService conversionService;
+
     @Test
     void verifyFirstAndLastSwitched() throws Exception {
-        final var record = new RecordBuilder();
-        record.add(new UnsignedValue("@unixSecs", 1000));
-        record.add(new UnsignedValue("@sysUpTime", 1000));
-        record.add(new UnsignedValue("FIRST_SWITCHED", 2000));
-        record.add(new UnsignedValue("LAST_SWITCHED", 3000));
-        final var flowMessage = new Netflow9FlowBuilder().buildFlow(Instant.EPOCH, record.values());
+        final var raw = new Netflow9RawFlow();
+        raw.unixSecs = Instant.ofEpochSecond(1000);
+        raw.sysUpTime = Duration.ofSeconds(1000);
+        raw.FIRST_SWITCHED = Duration.ofMillis(2000);
+        raw.LAST_SWITCHED = Duration.ofMillis(3000);
+        final var flowMessage = new Netflow9FlowBuilder(conversionService).buildFlow(Instant.EPOCH, raw);
 
         Assertions.assertThat(flowMessage.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(1001000L));
         Assertions.assertThat(flowMessage.getLastSwitched()).isEqualTo(Instant.ofEpochMilli(1002000L));
@@ -39,12 +46,12 @@ public class NMS13006_Test {
 
     @Test
     void verifyFlowStartAndEndMs() throws Exception {
-        final var record = new RecordBuilder();
-        record.add(new UnsignedValue("@unixSecs", 1000));
-        record.add(new UnsignedValue("@sysUpTime", 1000));
-        record.add(new UnsignedValue("flowStartMilliseconds", 2001000));
-        record.add(new UnsignedValue("flowEndMilliseconds", 2002000));
-        final var flowMessage = new Netflow9FlowBuilder().buildFlow(Instant.EPOCH, record.values());
+        final var raw = new Netflow9RawFlow();
+        raw.unixSecs = Instant.ofEpochSecond(1000);
+        raw.sysUpTime = Duration.ofSeconds(1000);
+        raw.flowStartMilliseconds = Instant.ofEpochMilli(2001000);
+        raw.flowEndMilliseconds = Instant.ofEpochMilli(2002000);
+        final var flowMessage = new Netflow9FlowBuilder(conversionService).buildFlow(Instant.EPOCH, raw);
 
         Assertions.assertThat(flowMessage.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(2001000L));
         Assertions.assertThat(flowMessage.getLastSwitched()).isEqualTo(Instant.ofEpochMilli(2002000L));
@@ -64,16 +71,15 @@ public class NMS13006_Test {
             do {
                 final Header header = new Header(slice(buf, Header.SIZE));
                 final Packet packet = new Packet(session, header, buf);
-
-                packet.buildFlows().forEach(r -> {
-                            final Netflow9FlowBuilder builder = new Netflow9FlowBuilder();
-                            final var flowMessage = builder.buildFlow(Instant.EPOCH, r);
+                final Netflow9FlowBuilder builder = new Netflow9FlowBuilder(conversionService);
+                final var flows = builder.buildFlows(Instant.EPOCH, packet);
+                Assertions.assertThat(flows)
+                        .hasSize(1)
+                        .allSatisfy(flowMessage -> {
                             Assertions.assertThat(flowMessage.getFirstSwitched()).isNotNull();
                             Assertions.assertThat(flowMessage.getLastSwitched()).isNotNull();
                             Assertions.assertThat(flowMessage.getDeltaSwitched()).isNotNull();
-                        }
-                );
-
+                        });
                 Assertions.assertThat(packet.header.versionNumber).isEqualTo(0x0009);
 
             } while (buf.isReadable());

@@ -1,13 +1,14 @@
 package org.riptide.flows.parser.netflow9;
 
-import lombok.Getter;
-
 import java.net.InetAddress;
 import java.time.Duration;
 import java.time.Instant;
 
-@Getter
 public class Netflow9RawFlow {
+    public long sequenceNumber;
+    public Instant unixSecs;
+    public Duration sysUpTime;
+    public int recordCount;
     public Long IN_BYTES;
     public Integer DIRECTION;
     public InetAddress IPV6_DST_ADDR;

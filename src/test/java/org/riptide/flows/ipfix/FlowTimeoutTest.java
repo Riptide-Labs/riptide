@@ -1,23 +1,29 @@
 package org.riptide.flows.ipfix;
 
-import java.time.Instant;
-
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.riptide.flows.parser.RecordBuilder;
-import org.riptide.flows.parser.ie.values.DateTimeValue;
-import org.riptide.flows.parser.ie.values.UnsignedValue;
+import org.riptide.flows.parser.ValueConversionService;
 import org.riptide.flows.parser.ipfix.IpFixFlowBuilder;
+import org.riptide.flows.parser.ipfix.IpfixRawFlow;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+
+@SpringBootTest
 public class FlowTimeoutTest {
+    @Autowired
+    private ValueConversionService conversionService;
 
     @Test
     void testWithoutTimeout() {
-         final var record = new RecordBuilder()
-                .add(new DateTimeValue("flowStartSeconds", Instant.ofEpochSecond(123)))
-                .add(new DateTimeValue("flowEndSeconds", Instant.ofEpochSecond(987)));
+        final var rawFlow = new IpfixRawFlow();
+        rawFlow.flowStartSeconds = Instant.ofEpochSecond(123);
+        rawFlow.flowEndSeconds = Instant.ofEpochSecond(987);
 
-        final var flow = new IpFixFlowBuilder().buildFlow(Instant.EPOCH, record.values());
+        final var flow = new IpFixFlowBuilder(conversionService).buildFlow(Instant.EPOCH, rawFlow);
 
         Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(123000L));
         Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo(Instant.ofEpochMilli(123000L)); // Timeout is same as first
@@ -26,15 +32,15 @@ public class FlowTimeoutTest {
 
     @Test
     void testWithActiveTimeout() {
-        final var record = new RecordBuilder()
-                .add(new DateTimeValue("flowStartSeconds", Instant.ofEpochSecond(123)))
-                .add(new DateTimeValue("flowEndSeconds", Instant.ofEpochSecond(987)))
-                .add(new UnsignedValue("octetDeltaCount", 10))
-                .add(new UnsignedValue("packetDeltaCount", 10))
-                .add(new UnsignedValue("flowActiveTimeout", 10))
-                .add(new UnsignedValue("flowInactiveTimeout", 300));
+        final var raw = new IpfixRawFlow();
+        raw.flowStartSeconds = Instant.ofEpochSecond(123);
+        raw.flowEndSeconds = Instant.ofEpochSecond(987);
+        raw.octetDeltaCount = 10L;
+        raw.packetDeltaCount = 10L;
+        raw.flowActiveTimeout = Duration.ofSeconds(10);
+        raw.flowInactiveTimeout = Duration.ofSeconds(300L);
 
-        final var flow = new IpFixFlowBuilder().buildFlow(Instant.EPOCH, record.values());
+        final var flow = new IpFixFlowBuilder(conversionService).buildFlow(Instant.EPOCH, raw);
 
         Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(123000L));
         Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo(Instant.ofEpochMilli(987000L - 10000L));
@@ -43,14 +49,15 @@ public class FlowTimeoutTest {
 
     @Test
     void testWithInactiveTimeout() {
-        final var record = new RecordBuilder()
-                .add(new DateTimeValue("flowStartSeconds", Instant.ofEpochSecond(123)))
-                .add(new DateTimeValue("flowEndSeconds", Instant.ofEpochSecond(987)))
-                .add(new UnsignedValue("octetDeltaCount", 0))
-                .add(new UnsignedValue("packetDeltaCount", 0))
-                .add(new UnsignedValue("flowActiveTimeout", 10))
-                .add(new UnsignedValue("flowInactiveTimeout", 300));
-        final var flow = new IpFixFlowBuilder().buildFlow(Instant.EPOCH, record.values());
+        final var raw = new IpfixRawFlow();
+        raw.flowStartSeconds = Instant.ofEpochSecond(123);
+        raw.flowEndSeconds = Instant.ofEpochSecond(987);
+        raw.octetDeltaCount = 0L;
+        raw.packetDeltaCount = 0L;
+        raw.flowActiveTimeout = Duration.ofSeconds(10);
+        raw.flowInactiveTimeout = Duration.ofSeconds(300);
+
+        final var flow = new IpFixFlowBuilder(conversionService).buildFlow(Instant.EPOCH, raw);
 
         Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(123000L));
         Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo(Instant.ofEpochMilli(987000L - 300000L));
@@ -58,22 +65,26 @@ public class FlowTimeoutTest {
     }
 
     @Test
-    void testFirstLastSwitchedValues() {
-        var record = new RecordBuilder()
-                .add(new DateTimeValue("flowStartSeconds", Instant.ofEpochSecond(123)))
-                .add(new DateTimeValue("flowEndSeconds", Instant.ofEpochSecond(987)));
+    void testFirstLastSwitchedValues1() {
+        final var raw = new IpfixRawFlow();
+        raw.flowStartSeconds = Instant.ofEpochSecond(123);
+        raw.flowEndSeconds = Instant.ofEpochSecond(987);
 
-        final var flowMessage = new IpFixFlowBuilder().buildFlow(Instant.EPOCH, record.values());
+        final var flowMessage = new IpFixFlowBuilder(conversionService).buildFlow(Instant.EPOCH, raw);
 
         Assertions.assertThat(flowMessage.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(123000L));
         Assertions.assertThat(flowMessage.getDeltaSwitched()).isEqualTo(Instant.ofEpochMilli(123000L));
         Assertions.assertThat(flowMessage.getLastSwitched()).isEqualTo(Instant.ofEpochMilli(987000L));
+    }
 
-        record = new RecordBuilder()
-                .add(new DateTimeValue("systemInitTimeMilliseconds", Instant.ofEpochMilli(100000)))
-                .add(new UnsignedValue("flowStartSysUpTime", 2000000))
-                .add(new UnsignedValue("flowEndSysUpTime", 4000000));
-        final var flow = new IpFixFlowBuilder().buildFlow(Instant.EPOCH, record.values());
+    @Test
+    void testFirstLastSwitchedValues2() {
+        final var raw = new IpfixRawFlow();
+        raw.systemInitTimeMilliseconds = Instant.ofEpochMilli(100000);
+        raw.flowStartSysUpTime = Duration.of(2000000, ChronoUnit.MICROS);
+        raw.flowEndSysUpTime = Duration.of(4000000, ChronoUnit.MICROS);
+
+        final var flow = new IpFixFlowBuilder(conversionService).buildFlow(Instant.EPOCH, raw);
 
         Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(2000000L + 100000L));
         Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo(Instant.ofEpochMilli(2000000L + 100000L));
