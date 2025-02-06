@@ -83,11 +83,11 @@ public final class ScopeFieldSpecifier implements Field, Scope {
 
     private static Optional<InformationElement> from(final int fieldType) {
         return switch (fieldType) {
-            case 0x0001 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_SYSTEM, null));
-            case 0x0002 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_INTERFACE, null));
-            case 0x0003 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_LINE_CARD, null));
-            case 0x0004 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_CACHE, null));
-            case 0x0005 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_TEMPLATE, null));
+            case 0x0001 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_SYSTEM, null, null));
+            case 0x0002 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_INTERFACE, null, null));
+            case 0x0003 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_LINE_CARD, null, null));
+            case 0x0004 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_CACHE, null, null));
+            case 0x0005 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_TEMPLATE, null, null));
             default -> Optional.empty();
         };
     }
