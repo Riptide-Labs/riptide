@@ -1,6 +1,5 @@
-package org.riptide.benchmarks.interpreter;
+package org.riptide.benchmarks.parser.ipfix;
 
-import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -13,6 +12,8 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
+import org.riptide.flows.parser.data.Flow;
+import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.ie.values.visitor.BooleanVisitor;
 import org.riptide.flows.parser.ie.values.visitor.DoubleVisitor;
 import org.riptide.flows.parser.ie.values.visitor.DurationVisitor;
@@ -28,7 +29,6 @@ import org.riptide.flows.parser.ipfix.proto.Header;
 import org.riptide.flows.parser.ipfix.proto.Packet;
 import org.riptide.flows.parser.session.SequenceNumberTracker;
 import org.riptide.flows.parser.session.TcpSession;
-import org.riptide.flows.parser.ie.values.ValueConversionService;
 
 import java.net.InetAddress;
 import java.net.URL;
@@ -67,7 +67,7 @@ public class IpfixInterpreterBenchmark {
 
     @Setup
     public void setup() throws Exception {
-        final URL resourceURL = org.riptide.benchmarks.parser.IpfixParserBenchmark.class.getResource("/ipfix.dat");
+        final URL resourceURL = IpfixParserBenchmark.class.getResource("/flows/ipfix.dat");
         final var bytes = Files.readAllBytes(Paths.get(resourceURL.toURI()));
         final var buffer = Unpooled.wrappedBuffer(bytes);
 
@@ -78,9 +78,9 @@ public class IpfixInterpreterBenchmark {
     }
 
     @Benchmark
-    public void parsePacket(final Blackhole blackhole) throws Exception {
+    public void interpretPacket(final Blackhole blackhole) throws Exception {
         final var bytes = ipFixFlowBuilder.buildFlows(Instant.EPOCH, this.packet)
-                .mapToLong(IpfixRawFlow::getBytes)
+                .mapToLong(Flow::getBytes)
                 .sum();
 
         blackhole.consume(bytes);

@@ -1,4 +1,4 @@
-package org.riptide.benchmarks.parser;
+package org.riptide.benchmarks.parser.ipfix;
 
 
 import io.netty.buffer.ByteBuf;
@@ -39,7 +39,7 @@ public class IpfixParserBenchmark {
 
     @Setup
     public void setup() throws Exception {
-        final URL resourceURL = IpfixParserBenchmark.class.getResource("/ipfix.dat");
+        final URL resourceURL = IpfixParserBenchmark.class.getResource("/flows/ipfix.dat");
         final var bytes = Files.readAllBytes(Paths.get(resourceURL.toURI()));
         this.buffer = Unpooled.wrappedBuffer(bytes);
     }
