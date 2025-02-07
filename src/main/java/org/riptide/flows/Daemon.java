@@ -32,7 +32,7 @@ public class Daemon implements ApplicationRunner {
                   final MetricRegistry metricRegistry,
                   final DaemonConfig config) {
 
-        final var location = "Cloudcuckooland";
+        final var location = "🤡 Clownworld 🤡";
 
         final BiConsumer<Source, Flow> dispatcher = (source, flow) -> {
             try {
