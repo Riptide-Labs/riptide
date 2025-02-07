@@ -15,7 +15,6 @@ import java.util.stream.Stream;
 
 @Slf4j
 public class ValueConversionService {
-    //    private static final List<Class<?>> RAW_FLOW_TYPES = List.of(IpfixRawFlow.class, Netflow9RawFlow.class);
     private static final Map<Class<?>, Class<?>> PRIMITIVE_TYPE_MAP = Map.of(
             void.class, Void.class,
             boolean.class, Boolean.class,
