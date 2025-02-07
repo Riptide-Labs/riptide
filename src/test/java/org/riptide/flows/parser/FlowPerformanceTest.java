@@ -77,8 +77,10 @@ public class FlowPerformanceTest {
         for (var i = 0; i < 1_000_000_000; i++) {
             sum = ipFixFlowBuilder.buildFlows(instant, THE_PACKET).count();
             if (i % 1_000_000 == 0) {
-                System.out.println(".");
+                System.out.print(".");
             }
         }
+
+        System.out.println(sum);
     }
 }
