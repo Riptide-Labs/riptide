@@ -19,6 +19,7 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.Collections;
 import java.util.Set;
 import java.util.function.BiConsumer;
@@ -55,6 +56,8 @@ public class Daemon implements ApplicationRunner {
                 location,
                 metricRegistry,
                 valueConversionService);
+        netflow9UdpParser.setFlowActiveTimeoutFallback(Duration.ofSeconds(10));
+        netflow9UdpParser.setFlowInactiveTimeoutFallback(Duration.ofSeconds(60));
 
         final var ipfixUdpParser = new IpfixUdpParser("default-ipfix",
                 dispatcher,

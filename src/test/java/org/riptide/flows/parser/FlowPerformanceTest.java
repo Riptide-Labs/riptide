@@ -49,6 +49,8 @@ public class FlowPerformanceTest {
             )
     );
 
+    private final IpFixFlowBuilder ipFixFlowBuilder = new IpFixFlowBuilder(converter);
+
     @BeforeAll
     static void setUp() throws Exception {
         final URL resourceURL = FlowPerformanceTest.class.getResource("/flows/ipfix.dat");
@@ -68,10 +70,13 @@ public class FlowPerformanceTest {
     @Test
     void testTheThing() throws Exception {
         final var instant = Instant.now();
-        for (var i = 0; i < 1000000; i++) {
-            System.out.print(new IpFixFlowBuilder(converter).buildFlows(instant, THE_PACKET).toList().size());
-            if (i% 100 == 0) {
-                System.out.println();
+
+        long sum = 0;
+
+        for (var i = 0; i < 1_000_000_000; i++) {
+            sum = ipFixFlowBuilder.buildFlows(instant, THE_PACKET).count();
+            if (i% 1_000_000 == 0) {
+                System.out.println(".");
             }
         }
     }

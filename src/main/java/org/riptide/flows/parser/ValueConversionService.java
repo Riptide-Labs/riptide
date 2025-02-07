@@ -37,13 +37,15 @@ public class ValueConversionService {
     public ValueConversionService(List<ValueVisitor<?>> visitors) {
         Objects.requireNonNull(visitors);
         this.visitors = visitors.stream().collect(Collectors.toMap(ValueVisitor::targetClass, it -> it));
-        this.fieldMaps =
-                RAW_FLOW_TYPES.stream().flatMap(it -> Stream.of(it.getDeclaredFields())).collect(
-                        Collectors.toMap(it -> it.getDeclaringClass().getCanonicalName() + "." + it.getName(),
-                                it -> {
-                                    it.setAccessible(true);
-                                    return it;
-                                }));
+        this.fieldMaps = RAW_FLOW_TYPES.stream()
+                .flatMap(it -> Stream.of(it.getDeclaredFields()))
+                .collect(Collectors.toMap(
+                        it -> it.getDeclaringClass().getCanonicalName() + "." + it.getName(),
+                        it -> {
+                            it.setAccessible(true);
+                            return it;
+                        }));
+
         validate();
     }
 
@@ -75,7 +77,7 @@ public class ValueConversionService {
         Objects.requireNonNull(source);
         Objects.requireNonNull(targetFlow);
         try {
-            final var key = targetFlow.getClass() + "." + source.getName();
+            final var key = targetFlow.getClass().getCanonicalName() + "." + source.getName();
             final var field = fieldMaps.get(key);
             if (field != null) {
                 final var converterVisitor = visitors.get(field.getType());
