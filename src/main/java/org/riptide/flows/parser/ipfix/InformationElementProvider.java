@@ -92,7 +92,7 @@ public class InformationElementProvider implements InformationElementDatabase.Pr
                     .forEach(record -> {
                         final var valueParserFactory = TYPE_LOOKUP.get(record.getDataType());
                         final var semantics = SEMANTICS_LOOKUP.get(record.getDataTypeSemantics());
-                        adder.add(Protocol.IPFIX, record.getElementId(), valueParserFactory, record.getName(), semantics);
+                        adder.add(Protocol.IPFIX, record.getElementId(), valueParserFactory, record.getName(), semantics, record.getUnit());
                     });
         } catch (IOException e) {
             throw new UncheckedIOException(e);
@@ -156,6 +156,9 @@ class Record {
 
     @XmlElement(namespace = NAMESPACE)
     private String dataTypeSemantics;
+
+    @XmlElement(namespace = NAMESPACE)
+    private String unit;
 }
 
 @XmlRootElement(namespace = NAMESPACE)

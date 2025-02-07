@@ -1,24 +1,24 @@
 package org.riptide.flows.parser.ipfix.proto;
 
-import static org.riptide.flows.utils.BufferUtils.slice;
-import static org.riptide.flows.utils.BufferUtils.uint16;
-import static org.riptide.flows.utils.BufferUtils.uint8;
-
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Objects;
-
-import org.riptide.flows.parser.InvalidPacketException;
-import org.riptide.flows.parser.MissingTemplateException;
+import com.google.common.base.MoreObjects;
+import io.netty.buffer.ByteBuf;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
+import org.riptide.flows.parser.exceptions.MissingTemplateException;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Field;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.Template;
 
-import com.google.common.base.MoreObjects;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
+import java.util.function.Function;
+import java.util.stream.Stream;
 
-import io.netty.buffer.ByteBuf;
+import static org.riptide.flows.utils.BufferUtils.slice;
+import static org.riptide.flows.utils.BufferUtils.uint16;
+import static org.riptide.flows.utils.BufferUtils.uint8;
 
 public final class DataRecord implements Record {
 
@@ -114,5 +114,9 @@ public final class DataRecord implements Record {
         }
 
         return field.parse(resolver, slice(buffer, length));
+    }
+
+    public Stream<Value<?>> getValues() {
+        return Stream.of(options.stream(), fields.stream(), scopes.stream()).flatMap(Function.identity());
     }
 }

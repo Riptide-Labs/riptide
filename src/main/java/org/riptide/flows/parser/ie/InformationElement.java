@@ -1,7 +1,7 @@
 package org.riptide.flows.parser.ie;
 
-import org.riptide.flows.parser.InvalidPacketException;
-import org.riptide.flows.parser.MissingTemplateException;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
+import org.riptide.flows.parser.exceptions.MissingTemplateException;
 import org.riptide.flows.parser.session.Session;
 
 import io.netty.buffer.ByteBuf;

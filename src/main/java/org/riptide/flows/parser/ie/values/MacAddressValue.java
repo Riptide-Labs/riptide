@@ -6,6 +6,7 @@ import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Semantics;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
+import org.riptide.flows.parser.ie.values.visitor.ValueVisitor;
 
 import java.util.Objects;
 
@@ -16,13 +17,10 @@ public class MacAddressValue extends Value<byte[]> {
 
     public MacAddressValue(final String name,
                            final Semantics semantics,
+                           final String unit,
                            final byte[] value) {
-        super(name, semantics);
+        super(name, semantics, unit);
         this.value = Objects.requireNonNull(value);
-    }
-
-    public MacAddressValue(final String name, final byte[] value) {
-        this(name, null, value);
     }
 
     @Override
@@ -33,11 +31,11 @@ public class MacAddressValue extends Value<byte[]> {
                 .toString();
     }
 
-    public static InformationElement parser(final String name, final Semantics semantics) {
+    public static InformationElement parser(final String name, final Semantics semantics, final String unit) {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) {
-                return new MacAddressValue(name, semantics, bytes(buffer, 6));
+                return new MacAddressValue(name, semantics, unit, bytes(buffer, 6));
             }
 
             @Override
@@ -60,5 +58,10 @@ public class MacAddressValue extends Value<byte[]> {
     @Override
     public byte[] getValue() {
         return this.value;
+    }
+
+    @Override
+    public <X> X accept(ValueVisitor<X> visitor) {
+        return Objects.requireNonNull(visitor).visit(this);
     }
 }

@@ -45,7 +45,7 @@ public class UdpSessionManagerTest {
 
             @Override
             public Value<?> parse(Session.Resolver resolver, ByteBuf buffer) {
-                return new StringValue(name, null, null);
+                return new StringValue(name, null, null, null);
             }
         };
     }
@@ -59,13 +59,13 @@ public class UdpSessionManagerTest {
 
             @Override
             public Value<?> parse(Session.Resolver resolver, ByteBuf buffer) {
-                return new StringValue(name, null, null);
+                return new StringValue(name, null, null, null);
             }
         };
     }
 
     private Value<?> value(String name, String value) {
-        return new StringValue(name, null, value);
+        return new StringValue(name, value);
     }
 
     private void testNetflow9SessionKeys(final InetSocketAddress remote1, final InetSocketAddress local1, final InetSocketAddress remote2, final InetSocketAddress local2, final boolean shouldMatch) {
@@ -122,8 +122,8 @@ public class UdpSessionManagerTest {
 
         System.out.println("Checking session keys " + sessionKey1 + " and " + sessionKey2);
         assertThat(result).hasSize(shouldMatch ? 2 : 0);
-        assertThat(result.contains(new StringValue("additionalField1", null, "additionalValue1"))).isEqualTo(shouldMatch);
-        assertThat(result.contains(new StringValue("additionalField2", null, "additionalValue2"))).isEqualTo(shouldMatch);
+        assertThat(result.contains(new StringValue("additionalField1", "additionalValue1"))).isEqualTo(shouldMatch);
+        assertThat(result.contains(new StringValue("additionalField2", "additionalValue2"))).isEqualTo(shouldMatch);
     }
 
     /**

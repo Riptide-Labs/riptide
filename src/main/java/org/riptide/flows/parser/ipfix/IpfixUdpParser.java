@@ -6,45 +6,62 @@ import io.netty.buffer.ByteBuf;
 import org.riptide.flows.listeners.multi.DispatchableUdpParser;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.UdpParserBase;
+import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
-import org.riptide.flows.parser.ie.RecordProvider;
+import org.riptide.flows.parser.FlowPacket;
 import org.riptide.flows.parser.ipfix.proto.Header;
 import org.riptide.flows.parser.ipfix.proto.Packet;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.UdpSessionManager;
 import org.riptide.pipeline.Source;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.function.BiConsumer;
+import java.util.stream.Stream;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
 import static org.riptide.flows.utils.BufferUtils.uint16;
 
 public class IpfixUdpParser extends UdpParserBase implements DispatchableUdpParser {
 
-    private final IpFixFlowBuilder flowBuilder = new IpFixFlowBuilder();
+    private final IpFixFlowBuilder flowBuilder;
 
     public IpfixUdpParser(final String name,
                           final BiConsumer<Source, Flow> dispatcher,
                           final String location,
-                          final MetricRegistry metricRegistry) {
+                          final MetricRegistry metricRegistry,
+                          @Qualifier("ipfixValueConversionService") final ValueConversionService conversionService) {
         super(Protocol.IPFIX, name, dispatcher, location, metricRegistry);
-    }
-
-    public IpFixFlowBuilder getFlowBulder() {
-        return this.flowBuilder;
+        this.flowBuilder = new IpFixFlowBuilder(conversionService);
     }
 
     @Override
-    protected RecordProvider parse(final Session session,
-                                   final ByteBuf buffer) throws Exception {
+    protected FlowPacket parse(final Session session,
+                               final ByteBuf buffer) throws Exception {
         final Header header = new Header(slice(buffer, Header.SIZE));
         final Packet packet = new Packet(session, header, slice(buffer, header.payloadLength()));
 
-        return packet;
+        return new FlowPacket() {
+            @Override
+            public Stream<Flow> buildFlows(Instant receivedAt) {
+                return flowBuilder.buildFlows(receivedAt, packet);
+            }
+
+            @Override
+            public long getObservationDomainId() {
+                return header.observationDomainId;
+            }
+
+            @Override
+            public long getSequenceNumber() {
+                return header.sequenceNumber;
+            }
+        };
     }
 
     @Override

@@ -2,13 +2,10 @@ package org.riptide.flows.parser.ipfix.proto;
 
 import com.google.common.base.MoreObjects;
 import com.google.common.collect.Iterators;
-import com.google.common.collect.Streams;
 import io.netty.buffer.ByteBuf;
-import org.riptide.flows.parser.InvalidPacketException;
-import org.riptide.flows.parser.MissingTemplateException;
-import org.riptide.flows.parser.ie.RecordProvider;
-import org.riptide.flows.parser.ie.Value;
-import org.riptide.flows.parser.ie.values.UnsignedValue;
+import lombok.extern.slf4j.Slf4j;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
+import org.riptide.flows.parser.exceptions.MissingTemplateException;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.Template;
 import org.slf4j.Logger;
@@ -18,15 +15,12 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
-import java.util.function.Function;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
 
-public final class Packet implements Iterable<FlowSet<?>>, RecordProvider {
+@Slf4j
+public final class Packet implements Iterable<FlowSet<?>> {
     private static final Logger LOG = LoggerFactory.getLogger(Packet.class);
 
     /*
@@ -155,37 +149,8 @@ public final class Packet implements Iterable<FlowSet<?>>, RecordProvider {
     @Override
     public Iterator<FlowSet<?>> iterator() {
         return Iterators.concat(this.templateSets.iterator(),
-                                this.optionTemplateSets.iterator(),
-                                this.dataSets.iterator());
-    }
-
-    @Override
-    public Stream<Map<String, Value<?>>> getRecords() {
-        final int recordCount = this.dataSets.stream()
-                .mapToInt(s -> s.records.size())
-                .sum();
-
-        return this.dataSets.stream()
-                .flatMap(s -> s.records.stream())
-                .map(r -> Streams.concat(
-                        Stream.of(
-                                new UnsignedValue("@recordCount", recordCount),
-                                new UnsignedValue("@sequenceNumber", this.header.sequenceNumber),
-                                new UnsignedValue("@exportTime", this.header.exportTime),
-                                new UnsignedValue("@observationDomainId", this.header.observationDomainId)),
-                        r.fields.stream(),
-                        r.options.stream()
-                ).collect(Collectors.toUnmodifiableMap(Value::getName, Function.identity())));
-    }
-
-    @Override
-    public long getObservationDomainId() {
-        return this.header.observationDomainId;
-    }
-
-    @Override
-    public long getSequenceNumber() {
-        return this.header.sequenceNumber;
+                this.optionTemplateSets.iterator(),
+                this.dataSets.iterator());
     }
 
     @Override

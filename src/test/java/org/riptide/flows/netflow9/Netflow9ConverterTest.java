@@ -1,16 +1,20 @@
 package org.riptide.flows.netflow9;
 
-import org.assertj.core.api.Assertions;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.riptide.flows.parser.InvalidPacketException;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
+import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.netflow9.Netflow9FlowBuilder;
 import org.riptide.flows.parser.netflow9.proto.Header;
 import org.riptide.flows.parser.netflow9.proto.Packet;
 import org.riptide.flows.parser.session.SequenceNumberTracker;
 import org.riptide.flows.parser.session.TcpSession;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.test.context.SpringBootTest;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -24,7 +28,12 @@ import java.util.List;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
 
+@SpringBootTest
 public class Netflow9ConverterTest {
+
+    @Autowired
+    @Qualifier("netflow9ValueConversionService")
+    private ValueConversionService valueConversionService;
 
     @Test
     void verifyCanParseNetflow9Flows() throws URISyntaxException, IOException, InvalidPacketException {
@@ -46,7 +55,7 @@ public class Netflow9ConverterTest {
         Assertions.assertThat(flow.getPackets()).isEqualTo(2L);
         Assertions.assertThat(flow.getDirection()).isEqualTo(Flow.Direction.INGRESS);
         Assertions.assertThat(flow.getNextHop().getHostAddress()).isEqualTo("0.0.0.0");
-        Assertions.assertThat(flow.getVlan()).isNull();
+        Assertions.assertThat(flow.getVlan()).isEqualTo(0);
     }
 
     private List<Flow> getFlowsForPayloadsInSession(final String... resources) throws URISyntaxException, IOException, InvalidPacketException {
@@ -65,9 +74,7 @@ public class Netflow9ConverterTest {
             final ByteBuf buffer = Unpooled.wrappedBuffer(payload);
             final Header header = new Header(slice(buffer, Header.SIZE));
             final Packet packet = new Packet(session, header, buffer);
-            packet.getRecords().forEach(rec -> {
-                flows.add(new Netflow9FlowBuilder().buildFlow(Instant.EPOCH, rec));
-            });
+            flows.addAll(new Netflow9FlowBuilder(valueConversionService).buildFlows(Instant.EPOCH, packet).toList());
         }
         return flows;
     }

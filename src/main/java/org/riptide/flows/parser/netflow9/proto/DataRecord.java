@@ -7,8 +7,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
-import org.riptide.flows.parser.InvalidPacketException;
-import org.riptide.flows.parser.MissingTemplateException;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
+import org.riptide.flows.parser.exceptions.MissingTemplateException;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Field;
 import org.riptide.flows.parser.session.Session;
@@ -72,5 +72,12 @@ public final class DataRecord implements Record {
                 .add("fields", this.fields)
                 .add("options", this.options)
                 .toString();
+    }
+
+    public List<Value<?>> getValues() {
+        final var list = new ArrayList<>(options);
+        list.addAll(fields);
+        list.addAll(scopes);
+        return list;
     }
 }

@@ -2,8 +2,8 @@ package org.riptide.flows.parser.netflow9.proto;
 
 import static org.riptide.flows.utils.BufferUtils.uint16;
 
-import org.riptide.flows.parser.InvalidPacketException;
-import org.riptide.flows.parser.MissingTemplateException;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
+import org.riptide.flows.parser.exceptions.MissingTemplateException;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.InformationElementDatabase;

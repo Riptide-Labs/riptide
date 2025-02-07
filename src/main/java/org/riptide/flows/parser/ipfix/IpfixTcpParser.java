@@ -6,12 +6,15 @@ import io.netty.buffer.ByteBuf;
 import org.riptide.flows.listeners.TcpParser;
 import org.riptide.flows.parser.ParserBase;
 import org.riptide.flows.parser.Protocol;
+import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
+import org.riptide.flows.parser.FlowPacket;
 import org.riptide.flows.parser.ipfix.proto.Header;
 import org.riptide.flows.parser.ipfix.proto.Packet;
 import org.riptide.flows.parser.session.TcpSession;
 import org.riptide.flows.parser.state.ParserState;
 import org.riptide.pipeline.Source;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 import java.net.InetSocketAddress;
 import java.time.Duration;
@@ -20,25 +23,23 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
+import java.util.stream.Stream;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
 
 public class IpfixTcpParser extends ParserBase implements TcpParser {
 
-    private final IpFixFlowBuilder flowBuilder = new IpFixFlowBuilder();
+    private final IpFixFlowBuilder flowBuilder;
 
     private final Set<TcpSession> sessions = Sets.newConcurrentHashSet();
 
     public IpfixTcpParser(final String name,
                           final BiConsumer<Source, Flow> dispatcher,
                           final String location,
-                          final MetricRegistry metricRegistry) {
+                          final MetricRegistry metricRegistry,
+                      @Qualifier("ipfixValueConversionService") ValueConversionService conversionService) {
         super(Protocol.IPFIX, name, dispatcher, location, metricRegistry);
-    }
-
-    @Override
-    public IpFixFlowBuilder getFlowBulder() {
-        return this.flowBuilder;
+        this.flowBuilder = new IpFixFlowBuilder(conversionService);
     }
 
     @Override
@@ -67,7 +68,24 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
                     return Optional.empty();
                 }
 
-                return Optional.of(IpfixTcpParser.this.transmit(receivedAt, packet, session, remoteAddress));
+                final var flow = new FlowPacket() {
+                    @Override
+                    public Stream<Flow> buildFlows(Instant receivedAt) {
+                        return flowBuilder.buildFlows(receivedAt, packet);
+                    }
+
+                    @Override
+                    public long getObservationDomainId() {
+                        return header.observationDomainId;
+                    }
+
+                    @Override
+                    public long getSequenceNumber() {
+                        return header.sequenceNumber;
+                    }
+                };
+
+                return Optional.of(IpfixTcpParser.this.transmit(receivedAt, flow, session, remoteAddress));
             }
 
             @Override

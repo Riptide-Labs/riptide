@@ -7,6 +7,7 @@ import org.riptide.config.DaemonConfig;
 import org.riptide.flows.listeners.UdpListener;
 import org.riptide.flows.listeners.multi.DispatchableUdpParser;
 import org.riptide.flows.listeners.multi.DispatchingUdpParser;
+import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.ipfix.IpfixUdpParser;
 import org.riptide.flows.parser.netflow5.Netflow5UdpParser;
@@ -14,10 +15,12 @@ import org.riptide.flows.parser.netflow9.Netflow9UdpParser;
 import org.riptide.pipeline.FlowException;
 import org.riptide.pipeline.Pipeline;
 import org.riptide.pipeline.Source;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.Collections;
 import java.util.Set;
 import java.util.function.BiConsumer;
@@ -30,6 +33,8 @@ public class Daemon implements ApplicationRunner {
 
     public Daemon(final Pipeline pipeline,
                   final MetricRegistry metricRegistry,
+                  @Qualifier("ipfixValueConversionService") final ValueConversionService ipfixValueConversionService,
+                  @Qualifier("netflow9ValueConversionService") final ValueConversionService netflow9ValueConversionService,
                   final DaemonConfig config) {
 
         final var location = "🤡 Clownworld 🤡";
@@ -51,12 +56,16 @@ public class Daemon implements ApplicationRunner {
         final var netflow9UdpParser = new Netflow9UdpParser("default-netflow9",
                 dispatcher,
                 location,
-                metricRegistry);
+                metricRegistry,
+                netflow9ValueConversionService);
+        netflow9UdpParser.setFlowActiveTimeoutFallback(Duration.ofSeconds(10));
+        netflow9UdpParser.setFlowInactiveTimeoutFallback(Duration.ofSeconds(60));
 
         final var ipfixUdpParser = new IpfixUdpParser("default-ipfix",
                 dispatcher,
                 location,
-                metricRegistry);
+                metricRegistry,
+                ipfixValueConversionService);
 
         final Set<DispatchableUdpParser> parsers = Set.of(
                 netflow5UdpParser,

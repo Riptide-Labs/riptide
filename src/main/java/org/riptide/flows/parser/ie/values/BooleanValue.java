@@ -2,11 +2,12 @@ package org.riptide.flows.parser.ie.values;
 
 import com.google.common.base.MoreObjects;
 import io.netty.buffer.ByteBuf;
-import org.riptide.flows.parser.InvalidPacketException;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
 import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Semantics;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
+import org.riptide.flows.parser.ie.values.visitor.ValueVisitor;
 
 import java.util.Objects;
 
@@ -17,13 +18,10 @@ public class BooleanValue extends Value<Boolean> {
 
     public BooleanValue(final String name,
                         final Semantics semantics,
+                        final String unit,
                         final boolean value) {
-        super(name, semantics);
+        super(name, semantics, unit);
         this.value = Objects.requireNonNull(value);
-    }
-
-    public BooleanValue(final String name, final boolean value) {
-        this(name, null, value);
     }
 
     @Override
@@ -34,7 +32,7 @@ public class BooleanValue extends Value<Boolean> {
                 .toString();
     }
 
-    public static InformationElement parser(final String name, final Semantics semantics) {
+    public static InformationElement parser(final String name, final Semantics semantics, final String unit) {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver,
@@ -44,7 +42,7 @@ public class BooleanValue extends Value<Boolean> {
                     throw new InvalidPacketException(buffer, "Illegal value '%d' for boolean type (only 1/true and 2/false allowed)", value);
                 }
 
-                return new BooleanValue(name, semantics, value == 1);
+                return new BooleanValue(name, semantics, unit, value == 1);
             }
 
             @Override
@@ -67,5 +65,10 @@ public class BooleanValue extends Value<Boolean> {
     @Override
     public Boolean getValue() {
         return this.value;
+    }
+
+    @Override
+    public <X> X accept(ValueVisitor<X> visitor) {
+        return Objects.requireNonNull(visitor).visit(this);
     }
 }

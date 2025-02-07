@@ -1,10 +1,12 @@
-package org.riptide.flows.parser.ie;
+package org.riptide.flows.parser;
 
-import java.util.Map;
+import org.riptide.flows.parser.data.Flow;
+
+import java.time.Instant;
 import java.util.stream.Stream;
 
-public interface RecordProvider {
-    Stream<Map<String, Value<?>>> getRecords();
+public interface FlowPacket {
+    Stream<Flow> buildFlows(Instant receivedAt);
 
     /** Returns the observation domain ID as specified by the underlying packet used to generate these records.
      *

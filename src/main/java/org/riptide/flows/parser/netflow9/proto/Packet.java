@@ -4,9 +4,8 @@ import com.google.common.base.MoreObjects;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Streams;
 import io.netty.buffer.ByteBuf;
-import org.riptide.flows.parser.InvalidPacketException;
-import org.riptide.flows.parser.MissingTemplateException;
-import org.riptide.flows.parser.ie.RecordProvider;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
+import org.riptide.flows.parser.exceptions.MissingTemplateException;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
 import org.riptide.flows.parser.session.Session;
@@ -26,7 +25,7 @@ import java.util.stream.Stream;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
 
-public final class Packet implements Iterable<FlowSet<?>>, RecordProvider {
+public final class Packet implements Iterable<FlowSet<?>> {
     private static final Logger LOG = LoggerFactory.getLogger(Packet.class);
 
     /*
@@ -143,7 +142,6 @@ public final class Packet implements Iterable<FlowSet<?>>, RecordProvider {
                 this.dataSets.iterator());
     }
 
-    @Override
     public Stream<Map<String, Value<?>>> getRecords() {
         final int recordCount = this.dataSets.stream()
                 .mapToInt(s -> s.records.size())
@@ -161,16 +159,6 @@ public final class Packet implements Iterable<FlowSet<?>>, RecordProvider {
                         r.fields.stream(),
                         r.options.stream()
                 ).collect(Collectors.toUnmodifiableMap(Value::getName, Function.identity())));
-    }
-
-    @Override
-    public long getObservationDomainId() {
-        return this.header.sourceId;
-    }
-
-    @Override
-    public long getSequenceNumber() {
-        return this.header.sequenceNumber;
     }
 
     @Override

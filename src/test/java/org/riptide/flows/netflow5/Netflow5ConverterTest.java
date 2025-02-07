@@ -2,10 +2,10 @@ package org.riptide.flows.netflow5;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.riptide.flows.parser.InvalidPacketException;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
 import org.riptide.flows.parser.data.Flow;
-import org.riptide.flows.parser.netflow5.Netflow5FlowBuilder;
 import org.riptide.flows.parser.netflow5.proto.Header;
 import org.riptide.flows.parser.netflow5.proto.Packet;
 
@@ -18,7 +18,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.assertj.core.api.Assertions;
 import static org.riptide.flows.utils.BufferUtils.slice;
 
 public class Netflow5ConverterTest {
@@ -35,7 +34,7 @@ public class Netflow5ConverterTest {
         Assertions.assertThat(flow.getFlowSeqNum()).isEqualTo(0L);
         Assertions.assertThat(flow.getEngineId()).isEqualTo(0);
         Assertions.assertThat(flow.getEngineType()).isEqualTo(0);
-        Assertions.assertThat(flow.getSamplingInterval()).isEqualTo(0.0);
+        Assertions.assertThat(flow.getSamplingInterval()).isEqualTo(1.0);
         Assertions.assertThat(flow.getSamplingAlgorithm()).isEqualTo(Flow.SamplingAlgorithm.Unassigned);
         Assertions.assertThat(flow.getSrcAddr().getHostAddress()).isEqualTo("10.0.2.2");
         Assertions.assertThat(flow.getSrcPort()).isEqualTo(54435);
@@ -54,7 +53,7 @@ public class Netflow5ConverterTest {
         Assertions.assertThat(flow.getPackets()).isEqualTo(5L);
         Assertions.assertThat(flow.getDirection()).isEqualTo(Flow.Direction.INGRESS);
         Assertions.assertThat(flow.getNextHop().getHostAddress()).isEqualTo("0.0.0.0");
-        Assertions.assertThat(flow.getVlan()).isNull();
+        Assertions.assertThat(flow.getVlan()).isEqualTo(0);
     }
 
     private List<Flow> getFlowsForPayloadsInSession(String... resources) throws InvalidPacketException, URISyntaxException, IOException {
@@ -71,11 +70,8 @@ public class Netflow5ConverterTest {
         for (final var payload : payloads) {
             final ByteBuf buffer = Unpooled.wrappedBuffer(payload);
             final Header header = new Header(slice(buffer, Header.SIZE));
-                final Packet packet = new Packet(header, buffer);
-                packet.getRecords().forEach(rec -> {
-                    final var flowMessage = new Netflow5FlowBuilder().buildFlow(Instant.EPOCH, rec);
-                    flows.add(flowMessage);
-                });
+            final Packet packet = new Packet(header, buffer);
+            flows.addAll(packet.buildFlows(Instant.EPOCH).toList());
         }
         return flows;
     }

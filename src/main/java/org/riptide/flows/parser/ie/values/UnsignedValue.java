@@ -7,6 +7,7 @@ import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Semantics;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
+import org.riptide.flows.parser.ie.values.visitor.ValueVisitor;
 
 import java.util.Objects;
 
@@ -17,14 +18,15 @@ public class UnsignedValue extends Value<UnsignedLong> {
 
     public UnsignedValue(final String name,
                          final Semantics semantics,
+                         final String unit,
                          final UnsignedLong value) {
-        super(name, semantics);
+        super(name, semantics, unit);
         this.value = Objects.requireNonNull(value);
     }
 
     public UnsignedValue(final String name,
                          final long value) {
-        this(name, null, UnsignedLong.valueOf(value));
+        this(name, null, null, UnsignedLong.valueOf(value));
     }
 
     @Override
@@ -35,11 +37,11 @@ public class UnsignedValue extends Value<UnsignedLong> {
                 .toString();
     }
 
-    public static InformationElement parserWith8Bit(final String name, final Semantics semantics) {
+    public static InformationElement parserWith8Bit(final String name, final Semantics semantics, final String unit) {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) {
-                return new UnsignedValue(name, semantics, uint(buffer, 1));
+                return new UnsignedValue(name, semantics, unit, uint(buffer, 1));
             }
 
             @Override
@@ -59,11 +61,11 @@ public class UnsignedValue extends Value<UnsignedLong> {
         };
     }
 
-    public static InformationElement parserWith16Bit(final String name, final Semantics semantics) {
+    public static InformationElement parserWith16Bit(final String name, final Semantics semantics, final String unit) {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) {
-                return new UnsignedValue(name, semantics, uint(buffer, buffer.readableBytes()));
+                return new UnsignedValue(name, semantics, unit, uint(buffer, buffer.readableBytes()));
             }
 
             @Override
@@ -83,11 +85,11 @@ public class UnsignedValue extends Value<UnsignedLong> {
         };
     }
 
-    public static InformationElement parserWith24Bit(final String name, final Semantics semantics) {
+    public static InformationElement parserWith24Bit(final String name, final Semantics semantics, final String unit) {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) {
-                return new UnsignedValue(name, semantics, uint(buffer, buffer.readableBytes()));
+                return new UnsignedValue(name, semantics, unit, uint(buffer, buffer.readableBytes()));
             }
 
             @Override
@@ -107,11 +109,11 @@ public class UnsignedValue extends Value<UnsignedLong> {
         };
     }
 
-    public static InformationElement parserWith32Bit(final String name, final Semantics semantics) {
+    public static InformationElement parserWith32Bit(final String name, final Semantics semantics, final String unit) {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) {
-                return new UnsignedValue(name, semantics, uint(buffer, buffer.readableBytes()));
+                return new UnsignedValue(name, semantics, unit, uint(buffer, buffer.readableBytes()));
             }
 
             @Override
@@ -131,11 +133,11 @@ public class UnsignedValue extends Value<UnsignedLong> {
         };
     }
 
-    public static InformationElement parserWith64Bit(final String name, final Semantics semantics) {
+    public static InformationElement parserWith64Bit(final String name, final Semantics semantics, final String unit) {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) {
-                return new UnsignedValue(name, semantics, uint(buffer, buffer.readableBytes()));
+                return new UnsignedValue(name, semantics, unit, uint(buffer, buffer.readableBytes()));
             }
 
             @Override
@@ -158,5 +160,10 @@ public class UnsignedValue extends Value<UnsignedLong> {
     @Override
     public UnsignedLong getValue() {
         return this.value;
+    }
+
+    @Override
+    public <X> X accept(ValueVisitor<X> visitor) {
+        return Objects.requireNonNull(visitor).visit(this);
     }
 }

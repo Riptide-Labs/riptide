@@ -1,4 +1,4 @@
-package org.riptide.flows.parser;
+package org.riptide.flows.parser.exceptions;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;

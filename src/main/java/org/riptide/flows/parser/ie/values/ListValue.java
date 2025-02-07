@@ -1,8 +1,8 @@
 package org.riptide.flows.parser.ie.values;
 
 import io.netty.buffer.ByteBuf;
-import org.riptide.flows.parser.InvalidPacketException;
-import org.riptide.flows.parser.MissingTemplateException;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
+import org.riptide.flows.parser.exceptions.MissingTemplateException;
 import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Semantics;
 import org.riptide.flows.parser.ie.Value;
@@ -12,6 +12,7 @@ import org.riptide.flows.parser.ipfix.proto.FlowSetHeader;
 import org.riptide.flows.parser.session.Field;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.Template;
+import org.riptide.flows.parser.ie.values.visitor.ValueVisitor;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -60,8 +61,9 @@ public class ListValue extends Value<List<List<Value<?>>>> {
     public ListValue(final String name,
                      final Semantics semantics,
                      final Semantic semantic,
+                     final String unit,
                      final List<List<Value<?>>> values) {
-        super(name, semantics);
+        super(name, semantics, unit);
         this.semantic = Objects.requireNonNull(semantic);
         this.values = Objects.requireNonNull(values);
     }
@@ -79,7 +81,7 @@ public class ListValue extends Value<List<List<Value<?>>>> {
      |                              ...                              |
      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     */
-    public static InformationElement parserWithBasicList(final String name, final Semantics semantics) {
+    public static InformationElement parserWithBasicList(final String name, final Semantics semantics, final String unit) {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) throws InvalidPacketException, MissingTemplateException {
@@ -91,7 +93,7 @@ public class ListValue extends Value<List<List<Value<?>>>> {
                     values.add(Collections.singletonList(DataRecord.parseField(field, resolver, buffer)));
                 }
 
-                return new ListValue(name, semantics, semantic, values);
+                return new ListValue(name, semantics, semantic, unit, values);
             }
 
             @Override
@@ -122,7 +124,7 @@ public class ListValue extends Value<List<List<Value<?>>>> {
      |                              ...                              |
      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     */
-    public static InformationElement parserWithSubTemplateList(final String name, final Semantics semantics) {
+    public static InformationElement parserWithSubTemplateList(final String name, final Semantics semantics, final String unit) {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) throws InvalidPacketException, MissingTemplateException {
@@ -140,7 +142,7 @@ public class ListValue extends Value<List<List<Value<?>>>> {
                     values.add(record);
                 }
 
-                return new ListValue(name, semantics, semantic, values);
+                return new ListValue(name, semantics, semantic, unit, values);
             }
 
             @Override
@@ -209,7 +211,7 @@ public class ListValue extends Value<List<List<Value<?>>>> {
      |      ...      |
      +-+-+-+-+-+-+-+-+
     */
-    public static InformationElement parserWithSubTemplateMultiList(final String name, final Semantics semantics) {
+    public static InformationElement parserWithSubTemplateMultiList(final String name, final Semantics semantics, final String unit) {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) throws InvalidPacketException, MissingTemplateException {
@@ -234,7 +236,7 @@ public class ListValue extends Value<List<List<Value<?>>>> {
                     }
                 }
 
-                return new ListValue(name, semantics, semantic, values);
+                return new ListValue(name, semantics, semantic, unit, values);
             }
 
             @Override
@@ -257,5 +259,10 @@ public class ListValue extends Value<List<List<Value<?>>>> {
     @Override
     public List<List<Value<?>>> getValue() {
         return this.values;
+    }
+
+    @Override
+    public <X> X accept(ValueVisitor<X> visitor) {
+        return Objects.requireNonNull(visitor).visit(this);
     }
 }

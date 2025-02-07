@@ -6,7 +6,7 @@ import org.riptide.flows.listeners.multi.DispatchableUdpParser;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.UdpParserBase;
 import org.riptide.flows.parser.data.Flow;
-import org.riptide.flows.parser.ie.RecordProvider;
+import org.riptide.flows.parser.FlowPacket;
 import org.riptide.flows.parser.netflow5.proto.Header;
 import org.riptide.flows.parser.netflow5.proto.Packet;
 import org.riptide.flows.parser.netflow9.Netflow9UdpParser;
@@ -22,17 +22,11 @@ import static org.riptide.flows.utils.BufferUtils.slice;
 
 public class Netflow5UdpParser extends UdpParserBase implements DispatchableUdpParser {
 
-    private final Netflow5FlowBuilder flowBuilder = new Netflow5FlowBuilder();
-
     public Netflow5UdpParser(final String name,
                              final BiConsumer<Source, Flow> dispatcher,
                              final String location,
                              final MetricRegistry metricRegistry) {
         super(Protocol.NETFLOW5, name, dispatcher, location, metricRegistry);
-    }
-
-    public Netflow5FlowBuilder getFlowBulder() {
-        return this.flowBuilder;
     }
 
     @Override
@@ -41,12 +35,10 @@ public class Netflow5UdpParser extends UdpParserBase implements DispatchableUdpP
     }
 
     @Override
-    protected RecordProvider parse(final Session session,
-                                   final ByteBuf buffer) throws Exception {
+    protected FlowPacket parse(final Session session,
+                               final ByteBuf buffer) throws Exception {
         final Header header = new Header(slice(buffer, Header.SIZE));
-        final Packet packet = new Packet(header, buffer);
-
-        return packet;
+        return new Packet(header, buffer);
     }
 
     @Override

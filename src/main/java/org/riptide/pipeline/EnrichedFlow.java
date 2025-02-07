@@ -6,6 +6,10 @@ import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import org.mapstruct.NullValueCheckStrategy;
 import org.riptide.flows.parser.data.Flow;
+import org.riptide.flows.parser.data.Flow.Direction;
+import org.riptide.flows.parser.data.Flow.FlowProtocol;
+import org.riptide.flows.parser.data.Flow.Locality;
+import org.riptide.flows.parser.data.Flow.SamplingAlgorithm;
 
 import java.net.InetAddress;
 import java.time.Duration;
@@ -14,7 +18,7 @@ import java.time.Instant;
 
 @Data
 @Builder
-public class EnrichedFlow implements Flow {
+public class EnrichedFlow {
     private Instant receivedAt;
     private Instant timestamp;
     private Long bytes;

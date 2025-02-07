@@ -5,8 +5,8 @@ import static org.riptide.flows.utils.BufferUtils.uint16;
 import java.util.List;
 import java.util.Optional;
 
-import org.riptide.flows.parser.InvalidPacketException;
-import org.riptide.flows.parser.MissingTemplateException;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
+import org.riptide.flows.parser.exceptions.MissingTemplateException;
 import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
@@ -83,11 +83,11 @@ public final class ScopeFieldSpecifier implements Field, Scope {
 
     private static Optional<InformationElement> from(final int fieldType) {
         return switch (fieldType) {
-            case 0x0001 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_SYSTEM, null));
-            case 0x0002 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_INTERFACE, null));
-            case 0x0003 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_LINE_CARD, null));
-            case 0x0004 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_CACHE, null));
-            case 0x0005 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_TEMPLATE, null));
+            case 0x0001 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_SYSTEM, null, null));
+            case 0x0002 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_INTERFACE, null, null));
+            case 0x0003 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_LINE_CARD, null, null));
+            case 0x0004 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_CACHE, null, null));
+            case 0x0005 -> Optional.of(UnsignedValue.parserWith64Bit(SCOPE_TEMPLATE, null, null));
             default -> Optional.empty();
         };
     }

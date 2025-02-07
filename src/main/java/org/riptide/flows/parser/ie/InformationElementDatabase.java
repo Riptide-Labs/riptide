@@ -40,27 +40,29 @@ public final class InformationElementDatabase {
 
     @FunctionalInterface
     public interface ValueParserFactory {
-        InformationElement parser(String name, Semantics semantics);
+        InformationElement parser(String name, Semantics semantics, String unit);
     }
 
     public interface Adder {
         void add(InformationElementDatabase.Key key, InformationElement element);
 
-        default void add(Protocol protocol,
-                         Long enterpriseNumber,
-                         int informationElementNumber,
-                         ValueParserFactory parserFactory,
-                         String name,
-                         Semantics semantics) {
-            this.add(new InformationElementDatabase.Key(protocol, enterpriseNumber, informationElementNumber), parserFactory.parser(name, semantics));
+        default void add(final Protocol protocol,
+                         final Long enterpriseNumber,
+                         final int informationElementNumber,
+                         final ValueParserFactory parserFactory,
+                         final String name,
+                         final Semantics semantics,
+                         final String unit) {
+            this.add(new InformationElementDatabase.Key(protocol, enterpriseNumber, informationElementNumber), parserFactory.parser(name, semantics, unit));
         }
 
-        default void add(Protocol protocol,
-                         int informationElementNumber,
-                         ValueParserFactory parserFactory,
-                         String name,
-                         Semantics semantics) {
-            this.add(protocol, null, informationElementNumber, parserFactory, name, semantics);
+        default void add(final Protocol protocol,
+                         final int informationElementNumber,
+                         final ValueParserFactory parserFactory,
+                         final String name,
+                         final Semantics semantics,
+                         final String unit) {
+            this.add(protocol, null, informationElementNumber, parserFactory, name, semantics, unit);
         }
     }
 
@@ -78,8 +80,8 @@ public final class InformationElementDatabase {
         final AdderImpl adder = new AdderImpl();
 
         // Add null element - this derives from the standard but is required by some exporters
-        adder.add(Protocol.NETFLOW9, 0, NullValue::parser, "null", null);
-        adder.add(Protocol.IPFIX, 0, NullValue::parser, "null", null);
+        adder.add(Protocol.NETFLOW9, 0, NullValue::parser, "null", null, null);
+        adder.add(Protocol.IPFIX, 0, NullValue::parser, "null", null, null);
 
         // Load providers
         for (final Provider provider : providers) {

@@ -2,7 +2,7 @@ package org.riptide.flows.parser.netflow9.proto;
 
 import java.util.Objects;
 
-import org.riptide.flows.parser.InvalidPacketException;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
 
 public abstract class FlowSet<R extends Record> implements Iterable<R> {
     public final Packet packet; // Enclosing packet

@@ -5,6 +5,7 @@ import com.clickhouse.client.api.Client;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.intellij.lang.annotations.Language;
+import org.mapstruct.BeanMapping;
 import org.mapstruct.Mapper;
 import org.mapstruct.NullValueCheckStrategy;
 import org.riptide.config.ClickhouseConfig;
@@ -88,17 +89,20 @@ public class ClickhouseRepository implements FlowRepository {
             outputSnmp UInt32,
             outputSnmpIfName Nullable(String),
     
-            srcAddr IPv6,
-            srcAddrHostname Nullable(String),
             srcAs UInt64,
+            srcAddr IPv6,
             srcMaskLen UInt8,
+            srcAddrHostname Nullable(String),
             srcPort UInt16,
     
-            dstAddr IPv6,
-            dstAddrHostname Nullable(String),
             dstAs UInt64,
+            dstAddr IPv6,
             dstMaskLen UInt8,
+            dstAddrHostname Nullable(String),
             dstPort UInt16,
+    
+            nextHop Nullable(IPv6),
+            nextHopHostname Nullable(String),
     
             bytes UInt64,
             packets UInt64,
@@ -107,9 +111,6 @@ public class ClickhouseRepository implements FlowRepository {
     
             engineId UInt16,
             engineType UInt16,
-    
-            nextHop Nullable(IPv6),
-            nextHopHostname Nullable(String),
     
             vlan UInt16,
             ipProtocolVersion UInt8,
@@ -200,6 +201,13 @@ public class ClickhouseRepository implements FlowRepository {
     @Mapper(nullValueCheckStrategy = NullValueCheckStrategy.ALWAYS,
             componentModel = "spring")
     public abstract static class FlowMapper {
+        @BeanMapping(ignoreUnmappedSourceProperties = {
+                "convoKey",
+                "dscp",
+                "ecn",
+                "flowRecords",
+                "flowSeqNum",
+        })
         public abstract ClickhouseFlow flow(EnrichedFlow flow);
 
         protected Timestamp timestamp(final Instant value) {

@@ -3,62 +3,75 @@ package org.riptide.flows.parser;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.riptide.flows.parser.data.Flow;
-import org.riptide.flows.parser.ie.values.UnsignedValue;
+import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.ipfix.IpFixFlowBuilder;
+import org.riptide.flows.parser.ipfix.IpfixRawFlow;
 import org.riptide.flows.parser.netflow9.Netflow9FlowBuilder;
+import org.riptide.flows.parser.netflow9.Netflow9RawFlow;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.test.context.SpringBootTest;
 
+import java.time.Duration;
 import java.time.Instant;
 
-
+@SpringBootTest
 public class NMS14130_Test {
+
+    @Autowired
+    @Qualifier("netflow9ValueConversionService")
+    private ValueConversionService netflow9ConversionService;
+
+    @Autowired
+    @Qualifier("ipfixValueConversionService")
+    private ValueConversionService ipfixConversionService;
 
     @Test
     void verifyNetflow9() {
         verifyIfIndex((in, out, ingress, egress) -> {
-            final var record = new RecordBuilder();
-            record.add(new UnsignedValue("@unixSecs", 1000));
-            record.add(new UnsignedValue("@sysUpTime", 1000));
-
-            record.add(new UnsignedValue("FIRST_SWITCHED", 2000));
-            record.add(new UnsignedValue("LAST_SWITCHED", 3000));
+            final var raw = new Netflow9RawFlow();
+            raw.unixSecs = Instant.ofEpochSecond(1000);
+            raw.sysUpTime = Duration.ofSeconds(1000);
+            raw.FIRST_SWITCHED = Duration.ofSeconds(2000);
+            raw.LAST_SWITCHED = Duration.ofSeconds(3000);
             if (in != null) {
-                record.add(new UnsignedValue("INPUT_SNMP", in));
+                raw.INPUT_SNMP = in;
             }
             if (out != null) {
-                record.add(new UnsignedValue("OUTPUT_SNMP", out));
+                raw.OUTPUT_SNMP = out;
             }
             if (ingress != null) {
-                record.add(new UnsignedValue("ingressPhysicalInterface", ingress));
+                raw.ingressPhysicalInterface = ingress;
             }
             if (egress != null) {
-                record.add(new UnsignedValue("egressPhysicalInterface", egress));
+                raw.egressPhysicalInterface = egress;
             }
-            return new Netflow9FlowBuilder().buildFlow(Instant.EPOCH, record.values());
+            return new Netflow9FlowBuilder(netflow9ConversionService).buildFlow(Instant.EPOCH, raw);
         });
     }
 
     @Test
     void verifyIPFix() {
         verifyIfIndex((in, out, ingress, egress) -> {
-            final var record = new RecordBuilder();
-            record.add(new UnsignedValue("@unixSecs", 1000));
-            record.add(new UnsignedValue("@sysUpTime", 1000));
+            final var raw = new IpfixRawFlow();
+            raw.exportTime = Instant.ofEpochSecond(1000); // @unixSecs
+            raw.systemInitTimeMilliseconds = Instant.ofEpochMilli(1000); // @sysUpTime
 
-            record.add(new UnsignedValue("flowStartSeconds", 2000));
-            record.add(new UnsignedValue("flowEndSeconds", 3000));
+            raw.flowStartSeconds = Instant.ofEpochSecond(2000);
+            raw.flowEndSeconds = Instant.ofEpochSecond(3000);
             if (in != null) {
-                record.add(new UnsignedValue("ingressInterface", in));
+                raw.ingressInterface = in;
             }
             if (out != null) {
-                record.add(new UnsignedValue("egressInterface", out));
+                raw.egressInterface = out;
             }
             if (ingress != null) {
-                record.add(new UnsignedValue("ingressPhysicalInterface", ingress));
+                raw.ingressPhysicalInterface = ingress;
             }
             if (egress != null) {
-                record.add(new UnsignedValue("egressPhysicalInterface", egress));
+                raw.egressPhysicalInterface = egress;
             }
-            return new IpFixFlowBuilder().buildFlow(Instant.EPOCH, record.values());
+            return new IpFixFlowBuilder(ipfixConversionService).buildFlow(Instant.EPOCH, raw);
         });
     }
 

@@ -1,0 +1,51 @@
+package org.riptide.flows.parser.netflow9;
+
+import java.net.InetAddress;
+import java.time.Duration;
+import java.time.Instant;
+
+public class Netflow9RawFlow {
+    public long sequenceNumber;
+    public Instant unixSecs;
+    public Duration sysUpTime;
+    public int recordCount;
+    public Long IN_BYTES;
+    public Integer DIRECTION;
+    public InetAddress IPV6_DST_ADDR;
+    public InetAddress IPV4_DST_ADDR;
+    public Long DST_AS;
+    public Integer IPV6_DST_MASK;
+    public Integer DST_MASK;
+    public Integer L4_DST_PORT;
+    public Integer ENGINE_ID;
+    public Integer ENGINE_TYPE;
+    public Duration FLOW_ACTIVE_TIMEOUT;
+    public Duration FLOW_INACTIVE_TIMEOUT;
+    public Duration FIRST_SWITCHED;
+    public Instant flowStartMilliseconds;
+    public Integer ingressPhysicalInterface;
+    public Integer INPUT_SNMP;
+    public Integer IP_PROTOCOL_VERSION;
+    public Duration LAST_SWITCHED;
+    public Instant flowEndMilliseconds;
+    public InetAddress IPV6_NEXT_HOP;
+    public InetAddress IPV4_NEXT_HOP;
+    public InetAddress BPG_IPV6_NEXT_HOP;
+    public InetAddress BPG_IPV4_NEXT_HOP;
+    public Integer egressPhysicalInterface;
+    public Integer OUTPUT_SNMP;
+    public Long IN_PKTS;
+    public Integer PROTOCOL;
+    public Integer SAMPLING_ALGORITHM;
+    public Double SAMPLING_INTERVAL;
+    public InetAddress IPV6_SRC_ADDR;
+    public InetAddress IPV4_SRC_ADDR;
+    public Long SRC_AS;
+    public Integer IPV6_SRC_MASK;
+    public Integer SRC_MASK;
+    public Integer L4_SRC_PORT;
+    public Integer TCP_FLAGS;
+    public Integer TOS;
+    public Integer SRC_VLAN;
+    public Integer DST_VLAN;
+}

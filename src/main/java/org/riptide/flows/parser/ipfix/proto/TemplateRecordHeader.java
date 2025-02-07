@@ -2,7 +2,7 @@ package org.riptide.flows.parser.ipfix.proto;
 
 import static org.riptide.flows.utils.BufferUtils.uint16;
 
-import org.riptide.flows.parser.InvalidPacketException;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
 
 import com.google.common.base.MoreObjects;
 

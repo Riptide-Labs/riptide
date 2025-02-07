@@ -1,6 +1,6 @@
 package org.riptide.flows.parser.session;
 
-import org.riptide.flows.parser.MissingTemplateException;
+import org.riptide.flows.parser.exceptions.MissingTemplateException;
 import org.riptide.flows.parser.ie.Value;
 
 import java.net.InetAddress;

@@ -2,11 +2,12 @@ package org.riptide.flows.parser.ie.values;
 
 import com.google.common.base.MoreObjects;
 import io.netty.buffer.ByteBuf;
-import org.riptide.flows.parser.InvalidPacketException;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
 import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Semantics;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
+import org.riptide.flows.parser.ie.values.visitor.ValueVisitor;
 
 import java.net.Inet4Address;
 import java.net.Inet6Address;
@@ -20,13 +21,10 @@ public class IPv6AddressValue extends Value<Inet6Address> {
 
     public IPv6AddressValue(final String name,
                             final Semantics semantics,
+                            final String unit,
                             final Inet6Address value) {
-        super(name, semantics);
+        super(name, semantics, unit);
         this.value = Objects.requireNonNull(value);
-    }
-
-    public IPv6AddressValue(final String name, final Inet6Address value) {
-        this(name, null, value);
     }
 
     @Override
@@ -37,12 +35,12 @@ public class IPv6AddressValue extends Value<Inet6Address> {
                 .toString();
     }
 
-    public static InformationElement parser(final String name, final Semantics semantics) {
+    public static InformationElement parser(final String name, final Semantics semantics, final String unit) {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) throws InvalidPacketException {
                 try {
-                    return new IPv6AddressValue(name, semantics, (Inet6Address) Inet4Address.getByAddress(bytes(buffer, 16)));
+                    return new IPv6AddressValue(name, semantics, unit, (Inet6Address) Inet4Address.getByAddress(bytes(buffer, 16)));
                 } catch (UnknownHostException e) {
                     throw new InvalidPacketException(buffer, "Error parsing IPv6 value", e);
                 }
@@ -68,5 +66,10 @@ public class IPv6AddressValue extends Value<Inet6Address> {
     @Override
     public Inet6Address getValue() {
         return this.value;
+    }
+
+    @Override
+    public <X> X accept(ValueVisitor<X> visitor) {
+        return Objects.requireNonNull(visitor).visit(this);
     }
 }

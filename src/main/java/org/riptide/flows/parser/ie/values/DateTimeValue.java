@@ -6,6 +6,7 @@ import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Semantics;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
+import org.riptide.flows.parser.ie.values.visitor.ValueVisitor;
 
 import java.time.Instant;
 import java.util.Objects;
@@ -24,13 +25,14 @@ public class DateTimeValue extends Value<Instant> {
 
     public DateTimeValue(final String name,
                          final Semantics semantics,
+                         final String unit,
                          final Instant value) {
-        super(name, semantics);
+        super(name, semantics, unit);
         this.value = Objects.requireNonNull(value);
     }
 
-    public DateTimeValue(final String name, final Instant value) {
-        this(name, null, value);
+    public DateTimeValue(final String name, Instant value) {
+        this(name, null, null, value);
     }
 
     @Override
@@ -41,11 +43,11 @@ public class DateTimeValue extends Value<Instant> {
                 .toString();
     }
 
-    public static InformationElement parserWithSeconds(final String name, final Semantics semantics) {
+    public static InformationElement parserWithSeconds(final String name, final Semantics semantics, final String unit) {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) {
-                return new DateTimeValue(name, semantics, Instant.ofEpochSecond(uint32(buffer)));
+                return new DateTimeValue(name, semantics, unit, Instant.ofEpochSecond(uint32(buffer)));
             }
 
             @Override
@@ -65,11 +67,11 @@ public class DateTimeValue extends Value<Instant> {
         };
     }
 
-    public static InformationElement parserWithMilliseconds(final String name, final Semantics semantics) {
+    public static InformationElement parserWithMilliseconds(final String name, final Semantics semantics, final String unit) {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) {
-                return new DateTimeValue(name, semantics, Instant.ofEpochMilli(uint64(buffer).longValue()));
+                return new DateTimeValue(name, semantics, unit, Instant.ofEpochMilli(uint64(buffer).longValue()));
             }
 
             @Override
@@ -89,7 +91,7 @@ public class DateTimeValue extends Value<Instant> {
         };
     }
 
-    public static InformationElement parserWithMicroseconds(final String name, final Semantics semantics) {
+    public static InformationElement parserWithMicroseconds(final String name, final Semantics semantics, final String unit) {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) {
@@ -98,7 +100,7 @@ public class DateTimeValue extends Value<Instant> {
 
                 final Instant value = Instant.ofEpochSecond(seconds - SECONDS_TO_EPOCH, fraction * 1_000_000_000L / (1L << 32));
 
-                return new DateTimeValue(name, semantics, value);
+                return new DateTimeValue(name, semantics, unit, value);
             }
 
             @Override
@@ -118,7 +120,7 @@ public class DateTimeValue extends Value<Instant> {
         };
     }
 
-    public static InformationElement parserWithNanoseconds(final String name, final Semantics semantics) {
+    public static InformationElement parserWithNanoseconds(final String name, final Semantics semantics, final String unit) {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) {
@@ -127,7 +129,7 @@ public class DateTimeValue extends Value<Instant> {
 
                 final Instant value = Instant.ofEpochSecond(seconds - SECONDS_TO_EPOCH, fraction * 1_000_000_000L / (1L << 32));
 
-                return new DateTimeValue(name, semantics, value);
+                return new DateTimeValue(name, semantics, unit, value);
             }
 
             @Override
@@ -150,5 +152,10 @@ public class DateTimeValue extends Value<Instant> {
     @Override
     public Instant getValue() {
         return this.value;
+    }
+
+    @Override
+    public <X> X accept(ValueVisitor<X> visitor) {
+        return Objects.requireNonNull(visitor).visit(this);
     }
 }
