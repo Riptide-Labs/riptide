@@ -280,7 +280,6 @@
                             <groupId>org.openjdk.jmh</groupId>
                             <artifactId>jmh-generator-annprocess</artifactId>
                             <version>${jmh.version}</version>
-                            <scope>test</scope>
                         </path>
                     </annotationProcessorPaths>
                     <compilerArgs>
