@@ -16,10 +16,6 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.stream.Stream;
 
-import static org.riptide.flows.parser.data.Flow.Direction;
-import static org.riptide.flows.parser.data.Flow.FlowProtocol;
-import static org.riptide.flows.parser.data.Flow.SamplingAlgorithm;
-
 
 @Slf4j
 public class IpFixFlowBuilder {
@@ -310,9 +306,7 @@ public class IpFixFlowBuilder {
                 .sum();
         return packet.dataSets.stream().flatMap(ds -> ds.records.stream()).map(record -> {
             final var dummyFlow = new IpfixRawFlow();
-            for (var value : record.getValues()) {
-                conversionService.convert(value, dummyFlow);
-            }
+            record.getValues().forEach(value -> conversionService.apply(value, dummyFlow));
             dummyFlow.recordCount = recordCount;
             dummyFlow.sequenceNumber = packet.header.sequenceNumber;
             dummyFlow.exportTime = Instant.ofEpochSecond(packet.header.exportTime);

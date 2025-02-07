@@ -13,6 +13,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Function;
+import java.util.stream.Stream;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
 import static org.riptide.flows.utils.BufferUtils.uint16;
@@ -114,10 +116,7 @@ public final class DataRecord implements Record {
         return field.parse(resolver, slice(buffer, length));
     }
 
-    public List<Value<?>> getValues() {
-        final var list = new ArrayList<>(options);
-        list.addAll(fields);
-        list.addAll(scopes);
-        return list;
+    public Stream<Value<?>> getValues() {
+        return Stream.of(options.stream(), fields.stream(), scopes.stream()).flatMap(Function.identity());
     }
 }

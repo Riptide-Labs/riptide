@@ -234,7 +234,7 @@ public class Netflow9FlowBuilder {
                 .map(record -> {
                     final var dummyFlow = new Netflow9RawFlow();
                     for (var value : record.getValues()) {
-                        this.conversionService.convert(value, dummyFlow);
+                        this.conversionService.apply(value, dummyFlow);
                     }
                     dummyFlow.recordCount = packet.header.count;
                     dummyFlow.sysUpTime = Duration.ofMillis(packet.header.sysUpTime);
