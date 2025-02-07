@@ -1,90 +1,67 @@
 package org.riptide.flows.parser.data;
 
-import lombok.Builder;
-import lombok.Getter;
-import lombok.NonNull;
-
-import java.net.InetAddress;
 import java.time.Instant;
 
-@Getter
-@Builder
-public class Flow {
-    @NonNull private Instant receivedAt;
+public interface Flow {
+    Instant getReceivedAt();
 
-    @NonNull private Instant timestamp;
+    Instant getTimestamp();
 
-    @NonNull private FlowProtocol flowProtocol;
-    private int flowRecords;
-    private long flowSeqNum;
+    FlowProtocol getFlowProtocol();
+    int getFlowRecords();
+    long getFlowSeqNum();
 
-    private Instant firstSwitched;
-    private Instant deltaSwitched;
-    private Instant lastSwitched;
-
-    private int inputSnmp;
-    private int outputSnmp;
-
-    private long srcAs;
-    private InetAddress srcAddr;
-    private int srcMaskLen;
-    private int srcPort;
-
-    private long dstAs;
-    private InetAddress dstAddr;
-    private int dstMaskLen;
-    private int dstPort;
-
-    private InetAddress nextHop;
-
-    private long bytes;
-    private long packets;
-
-    @NonNull private Direction direction;
-
-    private int engineId;
-    private int engineType;
-
-    private int vlan;
-    private int ipProtocolVersion;
-    private int protocol;
-    private int tcpFlags;
-    private int tos;
-
-    private SamplingAlgorithm samplingAlgorithm;
-    private double samplingInterval;
-
-    public Instant getDeltaSwitched() {
-        return this.deltaSwitched != null
-                ? this.deltaSwitched
-                : this.firstSwitched;
+    Instant getFirstSwitched();
+    Instant getLastSwitched();
+    default Instant getDeltaSwitched() {
+        return this.getFirstSwitched();
     }
 
-    public enum Locality {
+    int getInputSnmp();
+    int getOutputSnmp();
+
+    long getSrcAs();
+    java.net.InetAddress getSrcAddr();
+    int getSrcMaskLen();
+    int getSrcPort();
+
+    long getDstAs();
+    java.net.InetAddress getDstAddr();
+    int getDstMaskLen();
+    int getDstPort();
+
+    java.net.InetAddress getNextHop();
+
+    long getBytes();
+    long getPackets();
+
+    Direction getDirection();
+
+    int getEngineId();
+    int getEngineType();
+
+    int getVlan();
+    int getIpProtocolVersion();
+    int getProtocol();
+    int getTcpFlags();
+    int getTos();
+
+    SamplingAlgorithm getSamplingAlgorithm();
+    double getSamplingInterval();
+
+    enum Locality {
         PUBLIC, PRIVATE
     }
 
-    public enum FlowProtocol {
-        NetflowV5,
-        NetflowV9,
-        IPFIX,
-        SFLOW,
+    enum FlowProtocol {
+        NetflowV5, NetflowV9, IPFIX, SFLOW,
     }
 
-    public enum Direction {
-        INGRESS,
-        EGRESS,
-        UNKNOWN,
+    enum Direction {
+        INGRESS, EGRESS, UNKNOWN,
     }
 
-    public enum SamplingAlgorithm {
-        Unassigned,
-        SystematicCountBasedSampling,
-        SystematicTimeBasedSampling,
-        RandomNOutOfNSampling,
-        UniformProbabilisticSampling,
-        PropertyMatchFiltering,
-        HashBasedFiltering,
-        FlowStateDependentIntermediateFlowSelectionProcess;
+    enum SamplingAlgorithm {
+        Unassigned, SystematicCountBasedSampling, SystematicTimeBasedSampling, RandomNOutOfNSampling, UniformProbabilisticSampling, PropertyMatchFiltering, HashBasedFiltering, FlowStateDependentIntermediateFlowSelectionProcess;
     }
 }
