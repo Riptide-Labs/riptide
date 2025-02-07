@@ -1,12 +1,10 @@
-package org.riptide.flows.parser;
+package org.riptide.flows.parser.ie.values;
 
+import com.google.common.annotations.VisibleForTesting;
 import lombok.extern.slf4j.Slf4j;
 import org.jetbrains.annotations.NotNull;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.ie.values.visitor.ValueVisitor;
-import org.riptide.flows.parser.ipfix.IpfixRawFlow;
-import org.riptide.flows.parser.netflow9.Netflow9RawFlow;
-import org.springframework.stereotype.Component;
 
 import java.lang.reflect.Field;
 import java.util.List;
@@ -15,11 +13,9 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-@Component
 @Slf4j
 public class ValueConversionService {
-
-    private static final List<Class<?>> RAW_FLOW_TYPES = List.of(IpfixRawFlow.class, Netflow9RawFlow.class);
+    //    private static final List<Class<?>> RAW_FLOW_TYPES = List.of(IpfixRawFlow.class, Netflow9RawFlow.class);
     private static final Map<Class<?>, Class<?>> PRIMITIVE_TYPE_MAP = Map.of(
             void.class, Void.class,
             boolean.class, Boolean.class,
@@ -31,32 +27,26 @@ public class ValueConversionService {
             float.class, Float.class,
             double.class, Double.class);
 
+    public final @VisibleForTesting Class<?> targetType;
     private final @NotNull Map<Class<?>, ValueVisitor<?>> visitors;
-    private final @NotNull Map<String, Field> fieldMaps;
+    private final @NotNull Map<String, Field> fieldMap;
 
-    public ValueConversionService(List<ValueVisitor<?>> visitors) {
+    public ValueConversionService(Class<?> targetType, List<ValueVisitor<?>> visitors) {
         Objects.requireNonNull(visitors);
+        Objects.requireNonNull(targetType);
+        this.targetType = targetType;
         this.visitors = visitors.stream().collect(Collectors.toMap(ValueVisitor::targetClass, it -> it));
-        this.fieldMaps = RAW_FLOW_TYPES.stream()
-                .flatMap(it -> Stream.of(it.getDeclaredFields()))
-                .collect(Collectors.toMap(
-                        it -> it.getDeclaringClass().getCanonicalName() + "." + it.getName(),
-                        it -> {
-                            it.setAccessible(true);
-                            return it;
-                        }));
-
+        this.fieldMap = Stream.of(targetType.getDeclaredFields()).collect(Collectors.toMap(
+                Field::getName,
+                it -> {
+                    it.setAccessible(true);
+                    return it;
+                }));
         validate();
     }
 
     private void validate() {
-        for (Class<?> eachType : RAW_FLOW_TYPES) {
-            validate(eachType);
-        }
-    }
-
-    private void validate(Class<?> type) {
-        final var requiredTypes = Stream.of(type.getDeclaredFields())
+        final var requiredTypes = Stream.of(targetType.getDeclaredFields())
                 .map(Field::getType)
                 .map(it -> {
                     if (it.isPrimitive()) {
@@ -68,7 +58,9 @@ public class ValueConversionService {
                 .toList();
         for (Class<?> fieldType : requiredTypes) {
             if (!visitors.containsKey(fieldType)) {
-                throw new IllegalStateException("Class %s defined a field of type %s which does not have a fitting %s. Please ensure to implement a %s with targetType = %s".formatted(type, fieldType, ValueVisitor.class, ValueVisitor.class, fieldType));
+                throw new IllegalStateException(
+                        "Class %s defined a field of type %s which does not have a fitting %s. Please ensure to implement a %s with targetType = %s"
+                                .formatted(targetType, fieldType, ValueVisitor.class, ValueVisitor.class, fieldType));
             }
         }
     }
@@ -77,8 +69,8 @@ public class ValueConversionService {
         Objects.requireNonNull(source);
         Objects.requireNonNull(targetFlow);
         try {
-            final var key = targetFlow.getClass().getCanonicalName() + "." + source.getName();
-            final var field = fieldMaps.get(key);
+            final var key = source.getName();
+            final var field = fieldMap.get(key);
             if (field != null) {
                 final var converterVisitor = visitors.get(field.getType());
                 final var convertedValue = source.accept(converterVisitor);

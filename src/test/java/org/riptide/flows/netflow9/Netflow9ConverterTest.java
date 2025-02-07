@@ -5,7 +5,7 @@ import io.netty.buffer.Unpooled;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.riptide.flows.parser.exceptions.InvalidPacketException;
-import org.riptide.flows.parser.ValueConversionService;
+import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.netflow9.Netflow9FlowBuilder;
 import org.riptide.flows.parser.netflow9.proto.Header;
@@ -13,6 +13,7 @@ import org.riptide.flows.parser.netflow9.proto.Packet;
 import org.riptide.flows.parser.session.SequenceNumberTracker;
 import org.riptide.flows.parser.session.TcpSession;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 
 import java.io.IOException;
@@ -31,6 +32,7 @@ import static org.riptide.flows.utils.BufferUtils.slice;
 public class Netflow9ConverterTest {
 
     @Autowired
+    @Qualifier("netflow9ValueConversionService")
     private ValueConversionService valueConversionService;
 
     @Test

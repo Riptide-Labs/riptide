@@ -6,7 +6,7 @@ import io.netty.buffer.ByteBuf;
 import org.riptide.flows.listeners.multi.DispatchableUdpParser;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.UdpParserBase;
-import org.riptide.flows.parser.ValueConversionService;
+import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.FlowPacket;
 import org.riptide.flows.parser.netflow9.proto.Header;

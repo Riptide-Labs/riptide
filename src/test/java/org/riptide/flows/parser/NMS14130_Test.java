@@ -3,11 +3,13 @@ package org.riptide.flows.parser;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.riptide.flows.parser.data.Flow;
+import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.ipfix.IpFixFlowBuilder;
 import org.riptide.flows.parser.ipfix.IpfixRawFlow;
 import org.riptide.flows.parser.netflow9.Netflow9FlowBuilder;
 import org.riptide.flows.parser.netflow9.Netflow9RawFlow;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 
 import java.time.Duration;
@@ -17,7 +19,12 @@ import java.time.Instant;
 public class NMS14130_Test {
 
     @Autowired
-    private ValueConversionService conversionService;
+    @Qualifier("netflow9ValueConversionService")
+    private ValueConversionService netflow9ConversionService;
+
+    @Autowired
+    @Qualifier("ipfixValueConversionService")
+    private ValueConversionService ipfixConversionService;
 
     @Test
     void verifyNetflow9() {
@@ -39,7 +46,7 @@ public class NMS14130_Test {
             if (egress != null) {
                 raw.egressPhysicalInterface = egress;
             }
-            return new Netflow9FlowBuilder(conversionService).buildFlow(Instant.EPOCH, raw);
+            return new Netflow9FlowBuilder(netflow9ConversionService).buildFlow(Instant.EPOCH, raw);
         });
     }
 
@@ -64,7 +71,7 @@ public class NMS14130_Test {
             if (egress != null) {
                 raw.egressPhysicalInterface = egress;
             }
-            return new IpFixFlowBuilder(conversionService).buildFlow(Instant.EPOCH, raw);
+            return new IpFixFlowBuilder(ipfixConversionService).buildFlow(Instant.EPOCH, raw);
         });
     }
 

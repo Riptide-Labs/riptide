@@ -34,7 +34,7 @@ public class Netflow5ConverterTest {
         Assertions.assertThat(flow.getFlowSeqNum()).isEqualTo(0L);
         Assertions.assertThat(flow.getEngineId()).isEqualTo(0);
         Assertions.assertThat(flow.getEngineType()).isEqualTo(0);
-        Assertions.assertThat(flow.getSamplingInterval()).isEqualTo(0.0);
+        Assertions.assertThat(flow.getSamplingInterval()).isEqualTo(1.0);
         Assertions.assertThat(flow.getSamplingAlgorithm()).isEqualTo(Flow.SamplingAlgorithm.Unassigned);
         Assertions.assertThat(flow.getSrcAddr().getHostAddress()).isEqualTo("10.0.2.2");
         Assertions.assertThat(flow.getSrcPort()).isEqualTo(54435);

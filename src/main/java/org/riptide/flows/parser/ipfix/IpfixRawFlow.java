@@ -85,5 +85,4 @@ public class IpfixRawFlow {
     public Integer dot1qCustomerVlanId;
     public Integer postDot1qVlanId;
     public Integer postDot1qCustomerVlanId;
-
 }

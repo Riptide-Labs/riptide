@@ -9,6 +9,10 @@ import org.riptide.classification.internal.AsyncReloadingClassificationEngine;
 import org.riptide.classification.internal.DefaultClassificationEngine;
 import org.riptide.classification.internal.TimingClassificationEngine;
 import org.riptide.classification.internal.csv.CsvImporter;
+import org.riptide.flows.parser.ie.values.ValueConversionService;
+import org.riptide.flows.parser.ie.values.visitor.ValueVisitor;
+import org.riptide.flows.parser.ipfix.IpfixRawFlow;
+import org.riptide.flows.parser.netflow9.Netflow9RawFlow;
 import org.riptide.pipeline.FlowPersister;
 import org.riptide.repository.FlowRepository;
 import org.springframework.context.annotation.Bean;
@@ -25,6 +29,16 @@ public class RiptideConfiguration {
     @Bean
     MetricRegistry metricRegistry() {
         return new MetricRegistry();
+    }
+
+    @Bean
+    ValueConversionService ipfixValueConversionService(List<ValueVisitor<?>> visitors) {
+        return new ValueConversionService(IpfixRawFlow.class, visitors);
+    }
+
+    @Bean
+    ValueConversionService netflow9ValueConversionService(List<ValueVisitor<?>> visitors) {
+        return new ValueConversionService(Netflow9RawFlow.class, visitors);
     }
 
     @Bean

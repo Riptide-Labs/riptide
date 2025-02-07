@@ -6,7 +6,7 @@ import io.netty.buffer.ByteBuf;
 import org.riptide.flows.listeners.TcpParser;
 import org.riptide.flows.parser.ParserBase;
 import org.riptide.flows.parser.Protocol;
-import org.riptide.flows.parser.ValueConversionService;
+import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.FlowPacket;
 import org.riptide.flows.parser.ipfix.proto.Header;
@@ -14,6 +14,7 @@ import org.riptide.flows.parser.ipfix.proto.Packet;
 import org.riptide.flows.parser.session.TcpSession;
 import org.riptide.flows.parser.state.ParserState;
 import org.riptide.pipeline.Source;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 import java.net.InetSocketAddress;
 import java.time.Duration;
@@ -36,7 +37,7 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
                           final BiConsumer<Source, Flow> dispatcher,
                           final String location,
                           final MetricRegistry metricRegistry,
-                          final ValueConversionService conversionService) {
+                      @Qualifier("ipfixValueConversionService") ValueConversionService conversionService) {
         super(Protocol.IPFIX, name, dispatcher, location, metricRegistry);
         this.flowBuilder = new IpFixFlowBuilder(conversionService);
     }

@@ -4,10 +4,11 @@ package org.riptide.flows.netflow9;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.riptide.flows.parser.exceptions.IllegalFlowException;
-import org.riptide.flows.parser.ValueConversionService;
+import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.netflow9.Netflow9FlowBuilder;
 import org.riptide.flows.parser.netflow9.Netflow9RawFlow;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 
 import java.time.Duration;
@@ -17,6 +18,7 @@ import java.time.Instant;
 public class FlowTimeoutTest {
 
     @Autowired
+    @Qualifier("netflow9ValueConversionService")
     private ValueConversionService valueConversionService;
 
     @Test

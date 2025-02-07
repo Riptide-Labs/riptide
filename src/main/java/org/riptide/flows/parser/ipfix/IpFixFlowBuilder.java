@@ -4,7 +4,7 @@ import com.google.common.primitives.UnsignedLong;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
-import org.riptide.flows.parser.ValueConversionService;
+import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.data.Optionals;
 import org.riptide.flows.parser.data.Timeout;
@@ -15,7 +15,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.stream.Stream;
-
 
 @Slf4j
 public class IpFixFlowBuilder {
@@ -60,11 +59,11 @@ public class IpFixFlowBuilder {
             @Override
             public long getBytes() {
                 return Optionals.first(
-                        rawFlow.octetDeltaCount,
-                        rawFlow.postOctetDeltaCount,
-                        rawFlow.layer2OctetDeltaCount,
-                        rawFlow.postLayer2OctetDeltaCount,
-                        rawFlow.transportOctetDeltaCount)
+                                rawFlow.octetDeltaCount,
+                                rawFlow.postOctetDeltaCount,
+                                rawFlow.layer2OctetDeltaCount,
+                                rawFlow.postLayer2OctetDeltaCount,
+                                rawFlow.transportOctetDeltaCount)
                         .orElse(0L);
             }
 

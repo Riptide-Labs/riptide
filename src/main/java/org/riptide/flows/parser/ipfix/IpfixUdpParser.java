@@ -6,7 +6,7 @@ import io.netty.buffer.ByteBuf;
 import org.riptide.flows.listeners.multi.DispatchableUdpParser;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.UdpParserBase;
-import org.riptide.flows.parser.ValueConversionService;
+import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.FlowPacket;
 import org.riptide.flows.parser.ipfix.proto.Header;
@@ -14,6 +14,7 @@ import org.riptide.flows.parser.ipfix.proto.Packet;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.UdpSessionManager;
 import org.riptide.pipeline.Source;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -34,7 +35,7 @@ public class IpfixUdpParser extends UdpParserBase implements DispatchableUdpPars
                           final BiConsumer<Source, Flow> dispatcher,
                           final String location,
                           final MetricRegistry metricRegistry,
-                          final ValueConversionService conversionService) {
+                          @Qualifier("ipfixValueConversionService") final ValueConversionService conversionService) {
         super(Protocol.IPFIX, name, dispatcher, location, metricRegistry);
         this.flowBuilder = new IpFixFlowBuilder(conversionService);
     }

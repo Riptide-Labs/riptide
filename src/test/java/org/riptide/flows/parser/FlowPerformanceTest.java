@@ -4,6 +4,7 @@ import io.netty.buffer.Unpooled;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
+import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.ie.values.visitor.BooleanVisitor;
 import org.riptide.flows.parser.ie.values.visitor.DoubleVisitor;
 import org.riptide.flows.parser.ie.values.visitor.DurationVisitor;
@@ -14,6 +15,7 @@ import org.riptide.flows.parser.ie.values.visitor.LongVisitor;
 import org.riptide.flows.parser.ie.values.visitor.StringVisitor;
 import org.riptide.flows.parser.ie.values.visitor.UnsignedLongVisitor;
 import org.riptide.flows.parser.ipfix.IpFixFlowBuilder;
+import org.riptide.flows.parser.ipfix.IpfixRawFlow;
 import org.riptide.flows.parser.ipfix.proto.Header;
 import org.riptide.flows.parser.ipfix.proto.Packet;
 import org.riptide.flows.parser.session.SequenceNumberTracker;
@@ -35,18 +37,17 @@ public class FlowPerformanceTest {
 
     private static Packet THE_PACKET;
 
-    private final ValueConversionService converter = new ValueConversionService(
-            List.of(
-                    new StringVisitor(),
-                    new BooleanVisitor(),
-                    new DoubleVisitor(),
-                    new DurationVisitor(),
-                    new InetAddressVisitor(),
-                    new InstantVisitor(),
-                    new IntegerVisitor(),
-                    new LongVisitor(),
-                    new UnsignedLongVisitor()
-            )
+    private final ValueConversionService converter = new ValueConversionService(IpfixRawFlow.class, List.of(
+            new StringVisitor(),
+            new BooleanVisitor(),
+            new DoubleVisitor(),
+            new DurationVisitor(),
+            new InetAddressVisitor(),
+            new InstantVisitor(),
+            new IntegerVisitor(),
+            new LongVisitor(),
+            new UnsignedLongVisitor()
+    )
     );
 
     private final IpFixFlowBuilder ipFixFlowBuilder = new IpFixFlowBuilder(converter);
@@ -75,7 +76,7 @@ public class FlowPerformanceTest {
 
         for (var i = 0; i < 1_000_000_000; i++) {
             sum = ipFixFlowBuilder.buildFlows(instant, THE_PACKET).count();
-            if (i% 1_000_000 == 0) {
+            if (i % 1_000_000 == 0) {
                 System.out.println(".");
             }
         }

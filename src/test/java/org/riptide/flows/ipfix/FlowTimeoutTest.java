@@ -2,10 +2,11 @@ package org.riptide.flows.ipfix;
 
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.riptide.flows.parser.ValueConversionService;
+import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.ipfix.IpFixFlowBuilder;
 import org.riptide.flows.parser.ipfix.IpfixRawFlow;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 
 import java.time.Duration;
@@ -15,6 +16,7 @@ import java.time.temporal.ChronoUnit;
 @SpringBootTest
 public class FlowTimeoutTest {
     @Autowired
+    @Qualifier("ipfixValueConversionService")
     private ValueConversionService conversionService;
 
     @Test
