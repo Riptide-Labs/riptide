@@ -5,7 +5,7 @@ import org.jetbrains.annotations.NotNull;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.ipfix.IpfixRawFlow;
 import org.riptide.flows.parser.netflow9.Netflow9RawFlow;
-import org.riptide.flows.visitor.ValueVisitor;
+import org.riptide.flows.parser.ie.values.visitor.ValueVisitor;
 import org.springframework.stereotype.Component;
 
 import java.lang.reflect.Field;

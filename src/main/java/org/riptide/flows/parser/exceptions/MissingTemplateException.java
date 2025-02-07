@@ -1,4 +1,4 @@
-package org.riptide.flows.parser;
+package org.riptide.flows.parser.exceptions;
 
 public class MissingTemplateException extends Exception {
 

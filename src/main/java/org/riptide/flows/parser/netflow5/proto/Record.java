@@ -2,7 +2,7 @@ package org.riptide.flows.parser.netflow5.proto;
 
 import com.google.common.base.MoreObjects;
 import io.netty.buffer.ByteBuf;
-import org.riptide.flows.parser.InvalidPacketException;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
 
 import java.net.Inet4Address;
 import java.net.UnknownHostException;

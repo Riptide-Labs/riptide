@@ -1,4 +1,4 @@
-package org.riptide.flows.visitor;
+package org.riptide.flows.parser.ie.values.visitor;
 
 import org.riptide.flows.parser.ie.values.StringValue;
 import org.springframework.stereotype.Service;

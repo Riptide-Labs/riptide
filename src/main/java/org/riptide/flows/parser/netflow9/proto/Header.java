@@ -3,7 +3,7 @@ package org.riptide.flows.parser.netflow9.proto;
 import static org.riptide.flows.utils.BufferUtils.uint16;
 import static org.riptide.flows.utils.BufferUtils.uint32;
 
-import org.riptide.flows.parser.InvalidPacketException;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
 
 import com.google.common.base.MoreObjects;
 

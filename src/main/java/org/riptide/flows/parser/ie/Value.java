@@ -1,6 +1,6 @@
 package org.riptide.flows.parser.ie;
 
-import org.riptide.flows.visitor.ValueVisitor;
+import org.riptide.flows.parser.ie.values.visitor.ValueVisitor;
 
 import java.util.Objects;
 import java.util.Optional;

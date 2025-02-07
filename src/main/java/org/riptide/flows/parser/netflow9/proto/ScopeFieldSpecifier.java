@@ -5,8 +5,8 @@ import static org.riptide.flows.utils.BufferUtils.uint16;
 import java.util.List;
 import java.util.Optional;
 
-import org.riptide.flows.parser.InvalidPacketException;
-import org.riptide.flows.parser.MissingTemplateException;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
+import org.riptide.flows.parser.exceptions.MissingTemplateException;
 import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.ie.values.UnsignedValue;

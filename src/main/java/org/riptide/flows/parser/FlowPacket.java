@@ -1,4 +1,4 @@
-package org.riptide.flows.parser.ie;
+package org.riptide.flows.parser;
 
 import org.riptide.flows.parser.data.Flow;
 

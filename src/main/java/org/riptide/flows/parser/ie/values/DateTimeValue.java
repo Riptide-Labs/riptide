@@ -6,7 +6,7 @@ import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Semantics;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
-import org.riptide.flows.visitor.ValueVisitor;
+import org.riptide.flows.parser.ie.values.visitor.ValueVisitor;
 
 import java.time.Instant;
 import java.util.Objects;

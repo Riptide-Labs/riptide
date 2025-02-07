@@ -1,4 +1,4 @@
-package org.riptide.flows.visitor;
+package org.riptide.flows.parser.ie.values.visitor;
 
 import com.google.common.primitives.UnsignedLong;
 import org.riptide.flows.parser.ie.values.UnsignedValue;

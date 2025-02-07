@@ -1,7 +1,7 @@
 package org.riptide.flows.parser.session;
 
 import com.google.common.collect.Iterables;
-import org.riptide.flows.parser.MissingTemplateException;
+import org.riptide.flows.parser.exceptions.MissingTemplateException;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.state.ExporterState;
 import org.riptide.flows.parser.state.OptionState;

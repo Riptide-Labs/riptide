@@ -3,7 +3,7 @@ package org.riptide.flows.netflow9;
 
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.riptide.flows.parser.IllegalFlowException;
+import org.riptide.flows.parser.exceptions.IllegalFlowException;
 import org.riptide.flows.parser.ValueConversionService;
 import org.riptide.flows.parser.netflow9.Netflow9FlowBuilder;
 import org.riptide.flows.parser.netflow9.Netflow9RawFlow;

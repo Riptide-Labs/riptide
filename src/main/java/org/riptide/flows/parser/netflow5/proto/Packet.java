@@ -2,9 +2,9 @@ package org.riptide.flows.parser.netflow5.proto;
 
 import com.google.common.base.MoreObjects;
 import io.netty.buffer.ByteBuf;
-import org.riptide.flows.parser.InvalidPacketException;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
 import org.riptide.flows.parser.data.Flow;
-import org.riptide.flows.parser.ie.FlowPacket;
+import org.riptide.flows.parser.FlowPacket;
 import org.riptide.flows.parser.netflow5.Netflow5FlowBuilder;
 
 import java.time.Instant;

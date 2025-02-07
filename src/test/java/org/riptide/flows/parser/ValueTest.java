@@ -3,6 +3,7 @@ package org.riptide.flows.parser;
 import io.netty.buffer.Unpooled;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
 import org.riptide.flows.parser.ie.values.BooleanValue;
 import org.riptide.flows.parser.ie.values.DateTimeValue;
 import org.riptide.flows.parser.ie.values.FloatValue;

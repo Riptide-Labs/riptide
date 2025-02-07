@@ -1,4 +1,4 @@
-package org.riptide.flows.visitor;
+package org.riptide.flows.parser.ie.values.visitor;
 
 import org.riptide.flows.parser.ie.values.IPv4AddressValue;
 import org.riptide.flows.parser.ie.values.IPv6AddressValue;

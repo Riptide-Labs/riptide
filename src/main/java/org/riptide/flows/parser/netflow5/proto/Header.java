@@ -4,7 +4,7 @@ import static org.riptide.flows.utils.BufferUtils.uint16;
 import static org.riptide.flows.utils.BufferUtils.uint32;
 import static org.riptide.flows.utils.BufferUtils.uint8;
 
-import org.riptide.flows.parser.InvalidPacketException;
+import org.riptide.flows.parser.exceptions.InvalidPacketException;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
 

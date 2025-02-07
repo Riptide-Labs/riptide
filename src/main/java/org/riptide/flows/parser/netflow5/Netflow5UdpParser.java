@@ -6,7 +6,7 @@ import org.riptide.flows.listeners.multi.DispatchableUdpParser;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.UdpParserBase;
 import org.riptide.flows.parser.data.Flow;
-import org.riptide.flows.parser.ie.FlowPacket;
+import org.riptide.flows.parser.FlowPacket;
 import org.riptide.flows.parser.netflow5.proto.Header;
 import org.riptide.flows.parser.netflow5.proto.Packet;
 import org.riptide.flows.parser.netflow9.Netflow9UdpParser;

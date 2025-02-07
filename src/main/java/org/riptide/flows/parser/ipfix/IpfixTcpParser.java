@@ -8,7 +8,7 @@ import org.riptide.flows.parser.ParserBase;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
-import org.riptide.flows.parser.ie.FlowPacket;
+import org.riptide.flows.parser.FlowPacket;
 import org.riptide.flows.parser.ipfix.proto.Header;
 import org.riptide.flows.parser.ipfix.proto.Packet;
 import org.riptide.flows.parser.session.TcpSession;

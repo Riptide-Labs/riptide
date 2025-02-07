@@ -7,7 +7,6 @@ import com.codahale.metrics.MetricRegistry;
 import io.netty.buffer.ByteBuf;
 import org.riptide.flows.listeners.UdpParser;
 import org.riptide.flows.parser.data.Flow;
-import org.riptide.flows.parser.ie.FlowPacket;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.UdpSessionManager;
 import org.riptide.pipeline.Source;
