@@ -1,0 +1,60 @@
+---
+volumes:
+  clickhouse-data:
+    driver: local
+  gf-data:
+    driver: local
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    environment:
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_DB: riptide
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse/
+      - ./container-fs/clickhouse/config.xml:/etc/clickhouse-server/config.d/config.xml
+      - ./container-fs/clickhouse/users.xml:/etc/clickhouse-server/users.d/users.xml
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping
+      interval: 2s
+      timeout: 1s
+      retries: 20
+    ports:
+      - "8123:8123/tcp"
+      - "9000:9000/tcp"
+
+  grafana:
+    image: docker.io/grafana/grafana:latest
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
+      GF_FEATURE_TOGGLES_ENABLE: nestedFolders
+    volumes:
+      - gf-data:/var/lib/grafana
+      - ./container-fs/grafana/provisioning:/etc/grafana/provisioning/
+    healthcheck:
+      test: curl --fail -s http://localhost:3000/healthz
+      interval: 2s
+      timeout: 1s
+      retries: 20
+    ports:
+      - "3000:3000/tcp"
+
+  riptide:
+    image: quay.io/pikkalabs/riptide:latest
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      LOGGING_LEVEL_ROOT: WARN
+      RIPTIDE_CLICKHOUSE_ENABLED: true
+      RIPTIDE_CLICKHOUSE_ENDPOINT: http://clickhouse:8123
+      RIPTIDE_CLICKHOUSE_USERNAME: default
+      RIPTIDE_CLICKHOUSE_PASSWORD: ""
+      RIPTIDE_CLICKHOUSE_DATABASE: riptide
+    ports:
+      - '9999:9999/udp'
