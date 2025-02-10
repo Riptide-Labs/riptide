@@ -64,16 +64,6 @@ public class EnrichedFlow {
     private String inputSnmpIfName;
     private String outputSnmpIfName;
 
-    public String getConvoKey() {
-        return ConversationKey.Utils.getConvoKeyAsJsonString(
-                this.getLocation(),
-                this.getProtocol(),
-                this.getSrcAddr() != null ? this.getSrcAddr().getHostAddress() : null,
-                this.getDstAddr() != null ? this.getDstAddr().getHostAddress() : null,
-                this.getApplication()
-        );
-    }
-
     public Integer getDscp() {
         return getTos() != null ? getTos() >>> 2 : null;
     }

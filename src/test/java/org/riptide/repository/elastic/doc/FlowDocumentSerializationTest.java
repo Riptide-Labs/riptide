@@ -64,7 +64,6 @@ public class FlowDocumentSerializationTest {
         flowDocument.setLocation("Cardiff");
         flowDocument.setApplication("Riptide-ftw");
         flowDocument.setBytes(17L);
-        flowDocument.setConvoKey("DUMMY_CONVO_KEY");
         flowDocument.setDirection(Direction.INGRESS);
         flowDocument.setDstAddr("1.1.1.2");
         flowDocument.setDstAs(1337L);

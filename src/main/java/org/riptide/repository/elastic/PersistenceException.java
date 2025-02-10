@@ -24,6 +24,6 @@ public class PersistenceException extends DetailedFlowException {
     @Override
     public List<String> getDetailedLogMessages() {
         return this.failedItems.stream()
-                .map(e -> String.format("Failed to persist item with convoKey '%s' and index %d: %s", e.getItem().getConvoKey(), e.getIndex(), e.getCause().getMessage())).collect(Collectors.toList());
+                .map(e -> String.format("Failed to persist item %s: %s", e, e.getCause().getMessage())).collect(Collectors.toList());
     }
 }

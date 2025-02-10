@@ -202,7 +202,6 @@ public class ClickhouseRepository implements FlowRepository {
             componentModel = "spring")
     public abstract static class FlowMapper {
         @BeanMapping(ignoreUnmappedSourceProperties = {
-                "convoKey",
                 "dscp",
                 "ecn",
                 "flowRecords",
