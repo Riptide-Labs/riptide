@@ -66,13 +66,6 @@ public class FlowDocument {
     private Long bytes;
 
     /**
-     * Key used to group and identify conversations
-     */
-    @SerializedName("netflow.convo_key")
-    @JsonProperty("netflow.convo_key")
-    private String convoKey;
-
-    /**
      * Direction of the flow (egress vs ingress)
      */
     @SerializedName("netflow.direction")
