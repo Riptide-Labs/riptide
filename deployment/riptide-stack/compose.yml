@@ -45,7 +45,7 @@ services:
       - "3000:3000/tcp"
 
   riptide:
-    image: quay.io/pikkalabs/riptide:latest
+    image: quay.io/riptidelabs/riptide:latest
     depends_on:
       clickhouse:
         condition: service_healthy
