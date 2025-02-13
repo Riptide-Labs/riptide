@@ -8,7 +8,6 @@ import io.netty.buffer.ByteBuf;
  *
  * A parser implementing the {@link Dispatchable} interface is capable of making this decision.
  *
- * @author mvrueden
  */
 public interface Dispatchable {
 

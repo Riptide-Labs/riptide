@@ -18,15 +18,18 @@ import io.netty.channel.socket.DatagramPacket;
 import io.netty.channel.socket.nio.NioDatagramChannel;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.internal.SocketUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
 
 import java.net.InetSocketAddress;
 import java.time.Instant;
 import java.util.Objects;
 
-public class UdpListener implements Listener {
-    private static final Logger LOG = LoggerFactory.getLogger(UdpListener.class);
+@Slf4j
+@Getter
+@Setter
+public class UdpListener {
 
     private final String name;
     private final UdpParser parser;
@@ -40,12 +43,9 @@ public class UdpListener implements Listener {
     private int port = 50000;
     private int maxPacketSize = 8096;
 
-    public UdpListener(final String name,
-                       final UdpParser parser,
-                       final MetricRegistry metrics) {
+    public UdpListener(final String name, final UdpParser parser, final MetricRegistry metrics) {
         this.name = Objects.requireNonNull(name);
         this.parser = Objects.requireNonNull(parser);
-
         this.packetsReceived = metrics.meter(MetricRegistry.name("listeners", name, "packetsReceived"));
     }
 
@@ -54,13 +54,10 @@ public class UdpListener implements Listener {
         this.bossGroup = new NioEventLoopGroup(0, new ThreadFactoryBuilder()
                 .setNameFormat("udp-listener-nio-" + name + "-%d")
                 .build());
-
         this.parser.start(this.bossGroup);
-
         final InetSocketAddress address = this.host != null
                 ? SocketUtils.socketAddress(this.host, this.port)
                 : new InetSocketAddress(this.port);
-
         this.socketFuture = new Bootstrap()
                 .group(this.bossGroup)
                 .channel(NioDatagramChannel.class)
@@ -74,7 +71,7 @@ public class UdpListener implements Listener {
 
     public void stop() {
         if (this.socketFuture != null) {
-            LOG.info("Closing channel...");
+            log.info("Closing channel...");
             this.socketFuture.channel().close().syncUninterruptibly();
             if (this.socketFuture.channel().parent() != null) {
                 this.socketFuture.channel().parent().close().syncUninterruptibly();
@@ -82,44 +79,13 @@ public class UdpListener implements Listener {
         }
 
         this.parser.stop();
-
-        LOG.info("Closing boss group...");
+        log.info("Closing boss group...");
         if (this.bossGroup != null) {
             // switch to use even listener rather than sync to prevent shutdown deadlock hang
             this.bossGroup.shutdownGracefully().syncUninterruptibly();
         }
     }
 
-    public String getHost() {
-        return host;
-    }
-
-    public void setHost(String host) {
-        this.host = host;
-    }
-
-    public void setPort(int port) {
-        this.port = port;
-    }
-
-    public int getPort() {
-        return port;
-    }
-
-    public int getMaxPacketSize() {
-        return maxPacketSize;
-    }
-
-    public void setMaxPacketSize(int maxPacketSize) {
-        this.maxPacketSize = maxPacketSize;
-    }
-
-    @Override
-    public String getName() {
-        return name;
-    }
-
-    @Override
     public String getDescription() {
         return String.format("UDP %s:%s", this.host != null ? this.host : "*", this.port);
     }
@@ -138,8 +104,7 @@ public class UdpListener implements Listener {
             ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
                 @Override
                 public void exceptionCaught(final ChannelHandlerContext ctx, final Throwable cause) throws Exception {
-                    LOG.warn("Invalid packet: {}", cause.getMessage());
-                    LOG.debug("", cause);
+                    log.warn("Invalid packet: {}", cause.getMessage(), cause);
                 }
             });
         }

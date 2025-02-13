@@ -111,21 +111,21 @@ public class InformationElementProvider implements InformationElementDatabase.Pr
         adder.add(Protocol.NETFLOW9, 94, StringValue::parser, "APPLICATION DESCRIPTION", Semantics.DEFAULT, null);
         adder.add(Protocol.NETFLOW9, 95, OctetArrayValue::parser, "APPLICATION TAG", Semantics.DEFAULT, null);
         adder.add(Protocol.NETFLOW9, 96, StringValue::parser, "APPLICATION NAME", Semantics.DEFAULT, null);
-        // 97 ?
+        // 97 ...
         adder.add(Protocol.NETFLOW9, 98, UnsignedValue::parserWith8Bit, "postipDiffServCodePoint", Semantics.DEFAULT, null);
         adder.add(Protocol.NETFLOW9, 99, UnsignedValue::parserWith32Bit, "replication factor", Semantics.DEFAULT, null);
         adder.add(Protocol.NETFLOW9, 100, OctetArrayValue::parser, "DEPRECATED", Semantics.DEFAULT, null);
-        // 101 ?
+        // 101 ...
         adder.add(Protocol.NETFLOW9, 102, UnsignedValue::parserWith32Bit, "layer2packetSectionOffset", Semantics.DEFAULT, null);
         adder.add(Protocol.NETFLOW9, 103, UnsignedValue::parserWith32Bit, "layer2packetSectionSize", Semantics.DEFAULT, null);
         adder.add(Protocol.NETFLOW9, 104, OctetArrayValue::parser, "layer2packetSectionData", Semantics.DEFAULT, null);
         // 105-127 reserved for future use by cisco
 
-        // Cisco also supports absolute timestamps on some platforms, see NMS-13006
+        // known vendor specifics ...
+        // Cisco supports absolute timestamps on some platforms
         adder.add(Protocol.NETFLOW9, 152, UnsignedValue::parserWith64Bit, "flowStartMilliseconds", Semantics.DEFAULT, "milliseconds");
         adder.add(Protocol.NETFLOW9, 153, UnsignedValue::parserWith64Bit, "flowEndMilliseconds", Semantics.DEFAULT, "milliseconds");
-
-        // these IEs also appear in some NF9 implementations, see NMS-14130
+        // these IEs appear in some NF9 implementations
         adder.add(Protocol.NETFLOW9, 252, UnsignedValue::parserWith32Bit, "ingressPhysicalInterface", Semantics.DEFAULT, null);
         adder.add(Protocol.NETFLOW9, 253, UnsignedValue::parserWith32Bit, "egressPhysicalInterface", Semantics.DEFAULT, null);
     }
