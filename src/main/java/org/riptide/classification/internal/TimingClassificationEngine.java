@@ -22,7 +22,7 @@ public class TimingClassificationEngine implements ClassificationEngine {
         this.reloadTimer = metricRegistry.timer("reload");
         this.getInvalidRulesTimer = metricRegistry.timer("getInvalidrules");
     }
-    
+
     @Override
     public String classify(ClassificationRequest classificationRequest) {
         try (Timer.Context ctx = classifyTimer.time()) {
@@ -44,11 +44,4 @@ public class TimingClassificationEngine implements ClassificationEngine {
         }
     }
 
-    public void addClassificationRulesReloadedListener(final ClassificationRulesReloadedListener classificationRulesReloadedListener) {
-        this.delegate.addClassificationRulesReloadedListener(classificationRulesReloadedListener);
-    }
-
-    public void removeClassificationRulesReloadedListener(final ClassificationRulesReloadedListener classificationRulesReloadedListener) {
-        this.delegate.removeClassificationRulesReloadedListener(classificationRulesReloadedListener);
-    }
 }

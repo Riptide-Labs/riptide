@@ -22,8 +22,6 @@ import java.util.concurrent.atomic.AtomicReference;
 @Slf4j
 public class DefaultClassificationEngine implements ClassificationEngine {
 
-    private List<ClassificationRulesReloadedListener> classificationRulesReloadedListeners = new ArrayList<>();
-
     private final AtomicReference<TreeAndInvalidRules> treeAndInvalidRules = new AtomicReference<>(new TreeAndInvalidRules(Tree.EMPTY, Collections.emptyList()));
 
     private final ClassificationRuleProvider ruleProvider;
@@ -32,9 +30,9 @@ public class DefaultClassificationEngine implements ClassificationEngine {
         this(ruleProvider, true);
     }
 
-    public DefaultClassificationEngine(final ClassificationRuleProvider ruleProvider, final boolean initialize) throws InterruptedException {
+    public DefaultClassificationEngine(final ClassificationRuleProvider ruleProvider, final boolean shouldInitialize) throws InterruptedException {
         this.ruleProvider = Objects.requireNonNull(ruleProvider);
-        if (initialize) {
+        if (shouldInitialize) {
             this.reload();
         }
     }
@@ -64,35 +62,25 @@ public class DefaultClassificationEngine implements ClassificationEngine {
 
         var elapsed = System.currentTimeMillis() - start;
         if (log.isInfoEnabled()) {
-            var sb = new StringBuilder();
-            sb
-                    .append("calculated flow classification decision tree\n")
-                    .append("time (ms): " + elapsed).append('\n')
-                    .append("rules    : " + rules.size() + " (including reversed rules: " + preprocessedRules.size() + ")").append('\n')
-                    .append("leaves   : " + tree.info.leaves).append('\n')
-                    .append("nodes    : " + tree.info.nodes).append('\n')
-                    .append("choices  : " + tree.info.choices).append(" (nodes with rules that ignore the aspect of the node's threshold)\n")
-                    .append("minDepth : " + tree.info.minDepth).append('\n')
-                    .append("maxDepth : " + tree.info.maxDepth).append('\n')
-                    .append("avgDepth : " + (double) tree.info.sumDepth / tree.info.leaves).append('\n')
-                    .append("minComp  : " + tree.info.minComp).append('\n')
-                    .append("maxComp  : " + tree.info.maxComp).append('\n')
-                    .append("avgComp  : " + (double) tree.info.sumComp / tree.info.leaves).append('\n')
-                    .append("minLeafSize : " + tree.info.minLeafSize).append('\n')
-                    .append("maxLeafSize : " + tree.info.maxLeafSize).append('\n')
-                    .append("avgLeafSize : " + (double) tree.info.sumLeafSize / tree.info.leaves).append('\n');
-            log.info(sb.toString());
+            final var logMessage = "calculated flow classification decision tree\n"
+                    + "time (ms): " + elapsed + '\n'
+                    + "rules    : " + rules.size() + " (including reversed rules: " + preprocessedRules.size() + ")" + '\n'
+                    + "leaves   : " + tree.info.leaves + '\n'
+                    + "nodes    : " + tree.info.nodes + '\n'
+                    + "choices  : " + tree.info.choices + " (nodes with rules that ignore the aspect of the node's threshold)\n"
+                    + "minDepth : " + tree.info.minDepth + '\n'
+                    + "maxDepth : " + tree.info.maxDepth + '\n'
+                    + "avgDepth : " + (double) tree.info.sumDepth / tree.info.leaves + '\n'
+                    + "minComp  : " + tree.info.minComp + '\n'
+                    + "maxComp  : " + tree.info.maxComp + '\n'
+                    + "avgComp  : " + (double) tree.info.sumComp / tree.info.leaves + '\n'
+                    + "minLeafSize : " + tree.info.minLeafSize + '\n'
+                    + "maxLeafSize : " + tree.info.maxLeafSize + '\n'
+                    + "avgLeafSize : " + (double) tree.info.sumLeafSize / tree.info.leaves + '\n';
+            log.info(logMessage);
         }
 
         treeAndInvalidRules.set(new TreeAndInvalidRules(tree, invalid));
-
-        fireClassificationReloadedListeners(Collections.unmodifiableList(rules));
-    }
-
-    private void fireClassificationReloadedListeners(final List<Rule> rules) {
-        for (final ClassificationRulesReloadedListener classificationRulesReloadedListener : this.classificationRulesReloadedListeners) {
-            classificationRulesReloadedListener.classificationRulesReloaded(rules);
-        }
     }
 
     @Override
@@ -100,29 +88,12 @@ public class DefaultClassificationEngine implements ClassificationEngine {
         return Collections.unmodifiableList(treeAndInvalidRules.get().invalidRules);
     }
 
-    public Tree getTree() {
-        return treeAndInvalidRules.get().tree;
-    }
-
     @Override
     public String classify(ClassificationRequest classificationRequest) {
         return treeAndInvalidRules.get().tree.classify(classificationRequest);
     }
 
-    private static final class TreeAndInvalidRules {
-        private final Tree tree;
-        private final List<Rule> invalidRules;
-        private TreeAndInvalidRules(Tree tree, List<Rule> invalidRules) {
-            this.tree = tree;
-            this.invalidRules = invalidRules;
-        }
-    }
+    private record TreeAndInvalidRules(Tree tree, List<Rule> invalidRules) {
 
-    public void addClassificationRulesReloadedListener(final ClassificationRulesReloadedListener classificationRulesReloadedListener) {
-        this.classificationRulesReloadedListeners.add(classificationRulesReloadedListener);
-    }
-
-    public void removeClassificationRulesReloadedListener(final ClassificationRulesReloadedListener classificationRulesReloadedListener) {
-        this.classificationRulesReloadedListeners.remove(classificationRulesReloadedListener);
     }
 }

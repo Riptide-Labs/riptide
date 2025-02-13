@@ -5,7 +5,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.riptide.RiptideApplication;
 import org.riptide.classification.ClassificationEngine;
 import org.riptide.classification.ClassificationRuleProvider;
-import org.riptide.classification.internal.AsyncReloadingClassificationEngine;
 import org.riptide.classification.internal.DefaultClassificationEngine;
 import org.riptide.classification.internal.TimingClassificationEngine;
 import org.riptide.classification.internal.csv.CsvImporter;
@@ -69,7 +68,6 @@ public class RiptideConfiguration {
     ClassificationEngine classificationEngine(final ClassificationRuleProvider classificationRuleProvider,
                                               final MetricRegistry metricRegistry) throws InterruptedException {
         final var engine = new DefaultClassificationEngine(classificationRuleProvider, false);
-        final var timingEngine = new TimingClassificationEngine(metricRegistry, engine);
-        return new AsyncReloadingClassificationEngine(timingEngine);
+        return new TimingClassificationEngine(metricRegistry, engine);
     }
 }
