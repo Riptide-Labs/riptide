@@ -115,27 +115,18 @@ public class Netflow9UdpParser extends UdpParserBase implements DispatchableUdpP
         }
     }
 
-    public Duration getFlowActiveTimeoutFallback() {
-        return this.flowBuilder.getFlowActiveTimeoutFallback();
-    }
-
-    public void setFlowActiveTimeoutFallback(final Duration flowActiveTimeoutFallback) {
+    public Netflow9UdpParser withFlowActiveTimeoutFallback(final Duration flowActiveTimeoutFallback) {
         this.flowBuilder.setFlowActiveTimeoutFallback(flowActiveTimeoutFallback);
+        return this;
     }
 
-    public Duration getFlowInactiveTimeoutFallback() {
-        return this.flowBuilder.getFlowInactiveTimeoutFallback();
-    }
-
-    public void setFlowInactiveTimeoutFallback(final Duration flowInactiveTimeoutFallback) {
+    public Netflow9UdpParser withFlowInactiveTimeoutFallback(final Duration flowInactiveTimeoutFallback) {
         this.flowBuilder.setFlowInactiveTimeoutFallback(flowInactiveTimeoutFallback);
+        return this;
     }
 
-    public Long getFlowSamplingIntervalFallback() {
-        return this.flowBuilder.getFlowSamplingIntervalFallback();
-    }
-
-    public void setFlowSamplingIntervalFallback(final Long flowSamplingIntervalFallback) {
+    public Netflow9UdpParser withFlowSamplingIntervalFallback(final Long flowSamplingIntervalFallback) {
         this.flowBuilder.setFlowSamplingIntervalFallback(flowSamplingIntervalFallback);
+        return this;
     }
 }

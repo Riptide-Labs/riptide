@@ -90,28 +90,19 @@ public class UdpListener implements Listener {
         }
     }
 
-    public String getHost() {
-        return host;
-    }
-
-    public void setHost(String host) {
+    public UdpListener withHost(String host) {
         this.host = host;
+        return this;
     }
 
-    public void setPort(int port) {
+    public UdpListener withPort(int port) {
         this.port = port;
+        return this;
     }
 
-    public int getPort() {
-        return port;
-    }
-
-    public int getMaxPacketSize() {
-        return maxPacketSize;
-    }
-
-    public void setMaxPacketSize(int maxPacketSize) {
+    public UdpListener withMaxPacketSize(int maxPacketSize) {
         this.maxPacketSize = maxPacketSize;
+        return this;
     }
 
     @Override
