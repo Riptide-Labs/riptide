@@ -172,19 +172,13 @@ public class TcpListener implements Listener {
         return String.format("TCP %s:%s",  this.host != null ? this.host : "*", this.port);
     }
 
-    public String getHost() {
-        return this.host;
-    }
-
-    public void setHost(final String host) {
+    public TcpListener withHost(final String host) {
         this.host = host;
+        return this;
     }
 
-    public int getPort() {
-        return this.port;
-    }
-
-    public void setPort(final int port) {
+    public TcpListener withPort(final int port) {
         this.port = port;
+        return this;
     }
 }

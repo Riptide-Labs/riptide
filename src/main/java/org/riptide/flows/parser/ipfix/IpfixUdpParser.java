@@ -117,27 +117,18 @@ public class IpfixUdpParser extends UdpParserBase implements DispatchableUdpPars
 
     }
 
-    public Duration getFlowActiveTimeoutFallback() {
-        return this.flowBuilder.getFlowActiveTimeoutFallback();
-    }
-
-    public void setFlowActiveTimeoutFallback(final Duration flowActiveTimeoutFallback) {
+    public IpfixUdpParser withFlowActiveTimeoutFallback(final Duration flowActiveTimeoutFallback) {
         this.flowBuilder.setFlowActiveTimeoutFallback(flowActiveTimeoutFallback);
+        return this;
     }
 
-    public Duration getFlowInactiveTimeoutFallback() {
-        return this.flowBuilder.getFlowInactiveTimeoutFallback();
-    }
-
-    public void setFlowInactiveTimeoutFallback(final Duration flowInactiveTimeoutFallback) {
+    public IpfixUdpParser withFlowInactiveTimeoutFallback(final Duration flowInactiveTimeoutFallback) {
         this.flowBuilder.setFlowInactiveTimeoutFallback(flowInactiveTimeoutFallback);
+        return this;
     }
 
-    public Long getFlowSamplingIntervalFallback() {
-        return this.flowBuilder.getFlowSamplingIntervalFallback();
-    }
-
-    public void setFlowSamplingIntervalFallback(final Long flowSamplingIntervalFallback) {
+    public IpfixUdpParser withFlowSamplingIntervalFallback(final Long flowSamplingIntervalFallback) {
         this.flowBuilder.setFlowSamplingIntervalFallback(flowSamplingIntervalFallback);
+        return this;
     }
 }
