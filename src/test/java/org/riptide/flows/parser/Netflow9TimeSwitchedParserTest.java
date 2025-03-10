@@ -17,7 +17,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
@@ -26,7 +25,7 @@ import java.time.Instant;
 import static org.riptide.flows.utils.BufferUtils.slice;
 
 @SpringBootTest
-public class NMS13006_Test {
+public class Netflow9TimeSwitchedParserTest {
     private static final Path FOLDER = Paths.get("src/test/resources/flows");
 
     @Autowired
@@ -63,11 +62,12 @@ public class NMS13006_Test {
 
     @Test
     void verifyCaptureFile() throws Exception {
-        final var filename = "nms-13006.dat";
+        final var filename = "/flows/netflow9_test_time_parser_timeswitched.dat";
         final var session = new TcpSession(InetAddress.getLoopbackAddress(), () -> new SequenceNumberTracker(32));
-        try (FileChannel channel = FileChannel.open(FOLDER.resolve(filename))) {
-            final ByteBuffer buffer = ByteBuffer.allocate((int) channel.size());
-            channel.read(buffer);
+        try (final var is = getClass().getResourceAsStream(filename)) {
+            Assertions.assertThat(is).isNotNull();
+            final ByteBuffer buffer = ByteBuffer.allocate(is.available());
+            buffer.put(is.readAllBytes());
             buffer.flip();
 
             final ByteBuf buf = Unpooled.wrappedBuffer(buffer);
@@ -76,13 +76,13 @@ public class NMS13006_Test {
                 final Packet packet = new Packet(session, header, buf);
                 final Netflow9FlowBuilder builder = new Netflow9FlowBuilder(valueConversionService);
                 final var flows = builder.buildFlows(Instant.EPOCH, packet);
+                Assertions.assertThat(packet.header.versionNumber).isEqualTo(0x0009);
                 Assertions.assertThat(flows)
                         .allSatisfy(flowMessage -> {
                             Assertions.assertThat(flowMessage.getFirstSwitched()).isNotNull();
                             Assertions.assertThat(flowMessage.getLastSwitched()).isNotNull();
                             Assertions.assertThat(flowMessage.getDeltaSwitched()).isNotNull();
                         });
-                Assertions.assertThat(packet.header.versionNumber).isEqualTo(0x0009);
 
             } while (buf.isReadable());
         }

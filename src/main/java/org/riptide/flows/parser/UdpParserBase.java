@@ -29,11 +29,10 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
 
     private final Meter packetsReceived;
     private final Counter parserErrors;
+    private final Duration templateTimeout = Duration.ofMinutes(30);
 
     private UdpSessionManager sessionManager;
-
     private ScheduledFuture<?> housekeepingFuture;
-    private Duration templateTimeout = Duration.ofMinutes(30);
 
     public UdpParserBase(final Protocol protocol,
                          final String name,
@@ -91,14 +90,6 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
     public void stop() {
         this.housekeepingFuture.cancel(false);
         super.stop();
-    }
-
-    public Duration getTemplateTimeout() {
-        return this.templateTimeout;
-    }
-
-    public void setTemplateTimeout(final Duration templateTimeout) {
-        this.templateTimeout = templateTimeout;
     }
 
     @Override
