@@ -21,7 +21,7 @@ help:
 	@echo "  clean:        Clean the build artifacts"
 	@echo ""
 
-.PHONY deps-build:
+.PHONY deps-jar:
 deps-jar:
 	@command -v java
 	@command -v javac
@@ -31,14 +31,14 @@ deps-jar:
 	@echo Your Java version
 	@java --version
 	@echo "Test Java $(JAVA_MAJOR_VERSION) requirement"
-	@java --version | grep -E '$(JAVA_MAJOR_VERSION)\.(\d+)\.(\d+)' >/dev/null
+	@java --version | grep '$(JAVA_MAJOR_VERSION)\.[[:digit:]]*\.[[:digit:]]*' >/dev/null
 
 .PHONY deps-oci:
 deps-oci:
 	command -v docker
 
 .PHONY jar:
-jar: deps-build
+jar: deps-jar 
 	mvn --batch-mode --update-snapshots verify
 
 .PHONY oci: jar
@@ -51,5 +51,5 @@ oci: deps-oci
       .
 
 .PHONY clean:
-clean: deps-build
+clean: deps-jar
 	mvn clean
