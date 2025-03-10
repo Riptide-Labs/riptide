@@ -6,6 +6,48 @@
 
 Give people who love working with IT networks the tools they deserve to optimize and troubleshoot network traffic.
 
+# Build from source
+
+```
+git clone https://github.com/Riptide-Labs/riptide.git && cd riptide
+```
+
+Compile from source with tests
+```
+make
+```
+
+Build a container image in your local registry
+
+```
+make oci
+```
+
+# Run the application with Docker Compose
+
+Check out the repository
+```
+git clone https://github.com/Riptide-Labs/riptide.git
+```
+
+Run with a local build OCI image riptide:local
+```
+cd deployment/riptide-stack
+docker compose up -d
+```
+
+Access Grafana http://localhost:3000 with login admin/admin.
+
+Option run a Clickhouse UI
+
+```
+cd deployment/clickhoust-ui
+export CLICKHOUSE_FQDN=<YOUR_DOCKERHOST_IP_OR_FQDN>
+docker compose up -d
+```
+
+Acces the Clickhouse UI with http://localhost:5521.
+
 # 👋 Say hello
 
 You are very welcome to join us to make this project a better place.
