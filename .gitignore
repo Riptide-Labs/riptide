@@ -49,6 +49,9 @@ build/
 ### jenv toolkit ###
 .java-version
 
-# riptide files
+### Release files ###
+pom.xml.versionsBackup
+
+### riptide files ###
 application-local.properties
 
