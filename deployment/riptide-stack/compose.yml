@@ -24,6 +24,18 @@ services:
       - "8123:8123/tcp"
       - "9000:9000/tcp"
 
+  ch-ui:
+    image: ghcr.io/caioricciuti/ch-ui:latest
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      VITE_CLICKHOUSE_URL: http://clickhouse:8123
+      VITE_CLICKHOUSE_USER: default
+      VITE_CLICKHOUSE_PASS: ""
+    ports:
+      - "5521:5521/tcp"
+
   grafana:
     image: docker.io/grafana/grafana:latest
     depends_on:

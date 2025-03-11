@@ -6,7 +6,12 @@
 
 Give people who love working with IT networks the tools they deserve to optimize and troubleshoot network traffic.
 
-# Build from source
+# 👩‍🏭 Build from source
+
+**Requirements:**
+* git
+* Java 23
+* Docker with Docker Compose
 
 ```
 git clone https://github.com/Riptide-Labs/riptide.git && cd riptide
@@ -23,9 +28,15 @@ Build a container image in your local registry
 make oci
 ```
 
-# Run the application with Docker Compose
+# 🕹️ Run on your local system
 
-Check out the repository
+```
+cd target
+java -jar riptide-flows-*.jar
+```
+
+# 🕹️ Run with Docker Compose
+
 ```
 git clone https://github.com/Riptide-Labs/riptide.git
 ```
@@ -36,17 +47,42 @@ cd deployment/riptide-stack
 docker compose up -d
 ```
 
-Access Grafana http://localhost:3000 with login admin/admin.
+* Grafana: http://localhost:3000 with login admin/admin.
+* Clickhouse UI with http://localhost:5521
+* Send flows to your Riptide server on 9999/udp
 
-Option run a Clickhouse UI
+# 👩‍🔧 Configuration
+
+The default configuration is shipped in [application.properties](src/main/resources/application.properties).
+You have two options to customize configuration parameters.
+1. Providing an application.properties next to the jar file, in Docker /app/application.properties
+2. Set environment variables
+
+If you want to use environment variables, you need to convert the configuration key to upper case and underscores.
+Here is an example:
+```
+riptide.clickhouse.enabled -> RIPTIDE_CLICKHOUSE_ENABLED
+```
+You can also bind mount your configuration to `/app/application.properties`.
+
+# 📦 Make a release
+
+Here is an example if you want to release a new version 1.0.0.
 
 ```
-cd deployment/clickhoust-ui
-export CLICKHOUSE_FQDN=<YOUR_DOCKERHOST_IP_OR_FQDN>
-docker compose up -d
+make release RELEASE_VERSION=1.0.0
 ```
 
-Acces the Clickhouse UI with http://localhost:5521.
+The following key functions are provided:
+
+1. Set the release version in the Maven pom.xml
+2. Commit new version in the pom.xml and create a git tag
+3. Set the Maven pom.xml to a new snapshot version
+4. Commit new snapshot version in the pom.xml
+5. Optional: Push commits and tags to the main branch to publish the release, add `PUSH_RELEASE=true`
+
+The CI/CD pipeline to build and publish container images for releases is triggered by pushed git version tags.
+The version number from the pom.xml is driving the container image version tag.
 
 # 👋 Say hello
 
