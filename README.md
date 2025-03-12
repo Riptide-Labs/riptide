@@ -2,7 +2,7 @@
 ![riptide-logo](./artwork/riptide-logo.png)
 
 
-# 🌊 Welcome to Riptide 
+# 🌊 Welcome to Riptide  [![Riptide Build](https://github.com/Riptide-Labs/riptide/actions/workflows/build.yml/badge.svg)](https://github.com/Riptide-Labs/riptide/actions/workflows/build.yml)
 
 Give people who love working with IT networks the tools they deserve to optimize and troubleshoot network traffic.
 
