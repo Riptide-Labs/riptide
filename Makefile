@@ -19,7 +19,7 @@ SKIP                := "[ ⏭️ ]"
 
 $(subst $e ,_,$(ITEM))
 
-.PHONY help:
+.PHONY: help
 help:
 	@echo ""
 	@echo "Build Riptide from source"
@@ -30,7 +30,7 @@ help:
 	@echo "  clean:        Clean the build artifacts"
 	@echo ""
 
-.PHONY deps-jar:
+.PHONY: deps-jar
 deps-jar:
 	@command -v java
 	@command -v javac
@@ -42,16 +42,16 @@ deps-jar:
 	@echo "Test Java $(JAVA_MAJOR_VERSION) requirement"
 	@java --version | grep '$(JAVA_MAJOR_VERSION)\.[[:digit:]]*\.[[:digit:]]*' >/dev/null
 
-.PHONY deps-oci:
+.PHONY: deps-oci
 deps-oci:
 	command -v docker
 
-.PHONY jar:
+.PHONY: jar
 jar: deps-jar
 	mvn --batch-mode --update-snapshots verify
 
-.PHONY oci: jar
-oci: deps-oci
+.PHONY: oci
+oci: deps-oci jar
 	docker build -t $(OCI_TAG) \
       --build-arg="VERSION=$(VERSION)" \
       --build-arg="GIT_SHORT_HASH"=$(GIT_SHORT_HASH) \
@@ -59,7 +59,7 @@ oci: deps-oci
       --build-arg="REGISTRY_REPOSITORY=local-build" \
       .
 
-.PHONY release:
+.PHONY: release
 release:
 	@mkdir -p target
 	@echo ""
@@ -112,6 +112,6 @@ release:
   		echo "Push commits and tags:       $(SKIP)"; \
   	fi;
 
-.PHONY clean:
+.PHONY: clean
 clean: deps-jar
 	mvn clean
