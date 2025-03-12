@@ -5,6 +5,7 @@ VERSION             ?= $(shell mvn help:evaluate -Dexpression=project.version -q
 GIT_BRANCH          := $(shell git branch --show-current)
 GIT_SHORT_HASH      := $(shell git rev-parse --short HEAD)
 RELEASE_VERSION     := UNSET
+PUSH_RELEASE        := false
 MAJOR_VERSION       := $(shell echo $(RELEASE_VERSION) | cut -d. -f1)
 MINOR_VERSION       := $(shell echo $(RELEASE_VERSION) | cut -d. -f2)
 PATCH_VERSION       := $(shell echo $(RELEASE_VERSION) | cut -d. -f3)
@@ -100,16 +101,16 @@ release:
 	@echo -n "Git commit snapshot release: "
 	@git commit --signoff -am "release: Set new snapshot version $(SNAPSHOT_VERSION)" >>$(RELEASE_LOG) 2>&1
 	@echo "$(OK)"
-	@if [ "PUSH_RELEASE" == "true" ]; then \
+	@if [ "$(PUSH_RELEASE)" = "true" ]; then \
 		echo -n "Push commits                     "; \
-  		git push >>$(RELEASE_LOG) 2>&1; \
+  		git push origin v$(RELEASE_VERSION) >>$(RELEASE_LOG) 2>&1; \
 		echo "$(OK)"; \
-		echo -n "Push tags                        "; \
+		echo -n "Push tag                         "; \
   		git push --tags >>$(RELEASE_LOG) 2>&1; \
   		echo "$(OK)"; \
   	else \
   		echo "Push commits and tags:       $(SKIP)"; \
-  	fi
+  	fi;
 
 .PHONY clean:
 clean: deps-jar
