@@ -4,7 +4,7 @@ SHELL               := /bin/bash -o nounset -o pipefail -o errexit
 VERSION             ?= $(shell mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
 GIT_BRANCH          := $(shell git branch --show-current)
 GIT_SHORT_HASH      := $(shell git rev-parse --short HEAD)
-RELEASE_VERSION     := UNSET
+RELEASE_VERSION     := UNSET.0.0
 PUSH_RELEASE        := false
 MAJOR_VERSION       := $(shell echo $(RELEASE_VERSION) | cut -d. -f1)
 MINOR_VERSION       := $(shell echo $(RELEASE_VERSION) | cut -d. -f2)
