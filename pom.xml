@@ -172,7 +172,7 @@
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
-            <version>42.7.5</version> <!-- TODO MVR move to properties -->
+            <version>42.7.7</version> <!-- TODO MVR move to properties -->
         </dependency>
 
         <!-- Clickhouse -->
