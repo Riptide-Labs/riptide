@@ -56,4 +56,4 @@ jobs:
             VERSION=${{ env.VERSION }}
           tags: |
             ghcr.io/riptide-labs/riptide-dev:${{ env.SHORT_GIT_SHA }}
-            ghcr.io/riptide-labs/riptide:snapshot
+            ghcr.io/riptide-labs/riptide-dev:snapshot
