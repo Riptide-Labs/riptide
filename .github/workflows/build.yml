@@ -52,6 +52,8 @@ jobs:
           build-args: |
             DATE=${{ env.BUILD_DATE }}
             GIT_SHORT_HASH=${{ env.SHORT_GIT_SHA }}
-            REGISTRY_REPOSITORY=riptide-dev
+            REGISTRY_REPOSITORY=riptide-labs
             VERSION=${{ env.VERSION }}
-          tags: ghcr.io/${{ vars.OCI_OWNER }}/riptide-dev:${{ env.SHORT_GIT_SHA }}
+          tags: |
+            ghcr.io/riptide-labs/riptide-dev:${{ env.SHORT_GIT_SHA }}
+            ghcr.io/riptide-labs/riptide:snapshot

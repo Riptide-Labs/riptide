@@ -58,11 +58,11 @@ jobs:
           build-args: |
             DATE=${{ env.BUILD_DATE }}
             GIT_SHORT_HASH=${{ env.SHORT_GIT_SHA }}
-            REGISTRY_REPOSITORY=riptide
+            REGISTRY_REPOSITORY=riptide-labs
             VERSION=${{ env.VERSION }}
           tags: |
-            ghcr.io/${{ vars.OCI_OWNER }}/riptide:${{ env.VERSION }}
-            ghcr.io/${{ vars.OCI_OWNER }}/riptide:latest
+            ghcr.io/riptide-labs/riptide:${{ env.VERSION }}
+            ghcr.io/riptide-labs/riptide:latest
       - name: Release ${{ github.ref_name }}
         uses: softprops/action-gh-release@v2
         with:
