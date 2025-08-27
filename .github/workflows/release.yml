@@ -10,10 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up JDK 23 for x64
+      - name: Set up JDK 21 for x64
         uses: actions/setup-java@v3
         with:
-          java-version: '23'
+          java-version: '21'
           distribution: 'temurin'
           architecture: x64
           cache: maven
@@ -33,12 +33,18 @@ jobs:
       - name: Build with tests
         run: |
           make
+      - name: Persist JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: riptide-jar
+          path: |
+            target/*.jar
       - name: Login to Registry
         uses: docker/login-action@v3
         with:
-          registry: ${{ vars.OCI_REGISTRY }}
-          username: ${{ vars.OCI_REGISTRY_USERNAME }}
-          password: ${{ secrets.OCI_REGISTRY_PASS }}
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_PAT }}
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
@@ -55,5 +61,10 @@ jobs:
             REGISTRY_REPOSITORY=riptide
             VERSION=${{ env.VERSION }}
           tags: |
-            ${{ vars.OCI_REGISTRY }}/${{ vars.OCI_OWNER }}/riptide:${{ env.VERSION }}
-            ${{ vars.OCI_REGISTRY }}/${{ vars.OCI_OWNER }}/riptide:latest
+            ghcr.io/${{ vars.OCI_OWNER }}/riptide:${{ env.VERSION }}
+            ghcr.io/${{ vars.OCI_OWNER }}/riptide:latest
+      - name: Release ${{ github.ref_name }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/*.jar

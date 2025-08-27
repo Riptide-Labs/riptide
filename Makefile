@@ -12,10 +12,14 @@ PATCH_VERSION       := $(shell echo $(RELEASE_VERSION) | cut -d. -f3)
 SNAPSHOT_VERSION    := $(MAJOR_VERSION).$(MINOR_VERSION).$(shell expr $(PATCH_VERSION) + 1)-SNAPSHOT
 OCI_TAG             := riptide:local
 DATE                := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ") # Date format RFC3339
-JAVA_MAJOR_VERSION  := 23
+JAVA_MAJOR_VERSION  := 21
 RELEASE_LOG         := target/release.log
 OK                  := "[ 👍 ]"
 SKIP                := "[ ⏭️ ]"
+
+REQUIRED_BINS := java javac mvn
+$(foreach bin,$(REQUIRED_BINS),\
+    $(if $(shell command -v $(bin) 2> /dev/null),$(info Found `$(bin)`),$(error Please install `$(bin)`)))
 
 $(subst $e ,_,$(ITEM))
 
@@ -32,9 +36,6 @@ help:
 
 .PHONY: deps-jar
 deps-jar:
-	@command -v java
-	@command -v javac
-	@command -v mvn
 	@echo Your Maven version
 	@mvn --version
 	@echo Your Java version
