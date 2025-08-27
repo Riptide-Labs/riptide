@@ -57,7 +57,7 @@ services:
       - "3000:3000/tcp"
 
   riptide:
-    image: riptide:local
+    image: ghcr.io/riptide-labs/riptide:latest
     depends_on:
       clickhouse:
         condition: service_healthy
