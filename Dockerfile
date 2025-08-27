@@ -16,7 +16,7 @@ CMD [ "-jar", "/app/riptide.jar" ]
 
 LABEL org.opencontainers.image.created="${DATE}" \
       org.opencontainers.image.authors="https://github.com/Riptide-Labs/riptide/blob/main/CODEOWNERS" \
-      org.opencontainers.image.url="https://quay.io/repository/RiptideLabs/${REGISTRY_REPOSITORY}" \
+      org.opencontainers.image.url="ghcr.io/riptide-labs/${REGISTRY_REPOSITORY}" \
       org.opencontainers.image.source="https://github.com/Riptide-Labs/riptide" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${GIT_SHORT_HASH}" \
