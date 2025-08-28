@@ -36,7 +36,7 @@
         <resilience4j.version>2.3.0</resilience4j.version>
         <snmp4j.version>3.8.2</snmp4j.version>
         <snmp4j-agent.version>3.8.1</snmp4j-agent.version>
-        <dropwizard-metrics.version>4.2.30</dropwizard-metrics.version>
+        <dropwizard-metrics.version>4.2.34</dropwizard-metrics.version>
         <jquick.version>1.9.1</jquick.version>
         <clickhouse.version>0.7.2</clickhouse.version>
         <jmh.version>1.37</jmh.version>
