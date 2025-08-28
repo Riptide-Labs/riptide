@@ -18,7 +18,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <caffeine.version>3.2.2</caffeine.version>
-        <common-csv.version>1.13.0</common-csv.version>
+        <common-csv.version>1.14.1</common-csv.version>
         <dnsjava.version>3.6.3</dnsjava.version>
         <elasticsearch-java.version>8.17.1</elasticsearch-java.version>
         <gson.version>2.12.1</gson.version>
