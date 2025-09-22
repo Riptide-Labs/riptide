@@ -22,7 +22,7 @@
         <dnsjava.version>3.6.3</dnsjava.version>
         <elasticsearch-java.version>8.17.1</elasticsearch-java.version>
         <gson.version>2.12.1</gson.version>
-        <guava.version>33.4.0-jre</guava.version>
+        <guava.version>33.5.0-jre</guava.version>
         <ipaddress.version>5.5.1</ipaddress.version>
         <jakarta-xml-bind-api.version>4.0.2</jakarta-xml-bind-api.version>
         <java.version>21</java.version>
