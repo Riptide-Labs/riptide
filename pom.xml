@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.4.2</version>
+        <version>3.5.8</version>
         <relativePath/>
     </parent>
 
@@ -17,28 +17,28 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <caffeine.version>3.2.2</caffeine.version>
+        <caffeine.version>3.2.3</caffeine.version>
         <common-csv.version>1.14.1</common-csv.version>
         <dnsjava.version>3.6.3</dnsjava.version>
-        <elasticsearch-java.version>8.17.1</elasticsearch-java.version>
-        <gson.version>2.12.1</gson.version>
-        <guava.version>33.4.0-jre</guava.version>
+        <elasticsearch-java.version>8.19.9</elasticsearch-java.version>
+        <gson.version>2.13.2</gson.version>
+        <guava.version>33.5.0-jre</guava.version>
         <ipaddress.version>5.5.1</ipaddress.version>
-        <jakarta-xml-bind-api.version>4.0.2</jakarta-xml-bind-api.version>
+        <jakarta-xml-bind-api.version>4.0.4</jakarta-xml-bind-api.version>
         <java.version>21</java.version>
-        <lombok.version>1.18.36</lombok.version>
+        <lombok.version>1.18.42</lombok.version>
         <mapstruct.version>1.6.3</mapstruct.version>
         <maven-checkstyle-plugin.version>3.6.0</maven-checkstyle-plugin.version>
-        <versions-maven-plugin.version>2.18.0</versions-maven-plugin.version>
-        <netty-all.version>4.1.117.Final</netty-all.version>
-        <opensearch-java.version>2.19.0</opensearch-java.version>
-        <org-eclipse-persistence-moxy.version>4.0.5</org-eclipse-persistence-moxy.version>
+        <versions-maven-plugin.version>2.20.1</versions-maven-plugin.version>
+        <netty-all.version>4.2.9.Final</netty-all.version>
+        <opensearch-java.version>3.4.0</opensearch-java.version>
+        <org-eclipse-persistence-moxy.version>4.0.8</org-eclipse-persistence-moxy.version>
         <resilience4j.version>2.3.0</resilience4j.version>
         <snmp4j.version>3.8.2</snmp4j.version>
-        <snmp4j-agent.version>3.8.1</snmp4j-agent.version>
-        <dropwizard-metrics.version>4.2.34</dropwizard-metrics.version>
-        <jquick.version>1.9.1</jquick.version>
-        <clickhouse.version>0.9.1</clickhouse.version>
+        <snmp4j-agent.version>3.8.3</snmp4j-agent.version>
+        <dropwizard-metrics.version>4.2.37</dropwizard-metrics.version>
+        <jquick.version>1.9.3</jquick.version>
+        <clickhouse.version>0.9.5</clickhouse.version>
         <jmh.version>1.37</jmh.version>
     </properties>
 

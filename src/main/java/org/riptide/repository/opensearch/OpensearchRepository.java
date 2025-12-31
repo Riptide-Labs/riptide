@@ -96,8 +96,8 @@ public class OpensearchRepository implements FlowRepository {
                 .template(template -> template
                         .aliases(index, alias -> alias)
                         .settings(indexSettings -> indexSettings
-                                .numberOfReplicas("1")
-                                .numberOfShards("1"))
+                                .numberOfReplicas(Integer.valueOf("1"))
+                                .numberOfShards(Integer.valueOf("1")))
                         .mappings(mappings)
                 ));
     }
