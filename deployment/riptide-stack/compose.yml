@@ -37,7 +37,7 @@ services:
       - "5521:5521/tcp"
 
   grafana:
-    image: docker.io/grafana/grafana:latest
+    image: docker.io/grafana/grafana-oss:latest
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -69,4 +69,5 @@ services:
       RIPTIDE_CLICKHOUSE_PASSWORD: ""
       RIPTIDE_CLICKHOUSE_DATABASE: riptide
     ports:
-      - '9999:9999/udp'
+      - "9999:9999/udp"
+

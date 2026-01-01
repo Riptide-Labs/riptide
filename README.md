@@ -10,7 +10,7 @@ Give people who love working with networks the tools they deserve to optimize an
 
 **Requirements:**
 * git
-* Java 21
+* Java 25
 * Docker with Docker Compose
 
 ```
