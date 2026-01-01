@@ -28,7 +28,7 @@ import static org.mockito.Mockito.when;
         "riptide.snmp.config.definitions[0].snmp-version=v2c",
         "riptide.snmp.config.definitions[0].community=" + TestSnmpAgent.COMMUNITY
 })
-public class SnmpEnrichmerTest {
+public class SnmpEnricherTest {
 
     private final MetricRegistry metricRegistry = new MetricRegistry();
 

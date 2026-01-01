@@ -16,6 +16,7 @@ JAVA_MAJOR_VERSION  := 25
 RELEASE_LOG         := target/release.log
 OK                  := "[ 👍 ]"
 SKIP                := "[ ⏭️ ]"
+BUILD_OPTS          := "-DskipTests=false"
 
 REQUIRED_BINS := java javac mvn
 $(foreach bin,$(REQUIRED_BINS),\
@@ -49,7 +50,7 @@ deps-oci:
 
 .PHONY: jar
 jar: deps-jar
-	mvn --batch-mode --update-snapshots verify
+	mvn $(BUILD_OPTS) --batch-mode --update-snapshots verify
 
 .PHONY: oci
 oci: deps-oci jar
