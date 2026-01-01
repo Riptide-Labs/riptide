@@ -12,7 +12,7 @@ PATCH_VERSION       := $(shell echo $(RELEASE_VERSION) | cut -d. -f3)
 SNAPSHOT_VERSION    := $(MAJOR_VERSION).$(MINOR_VERSION).$(shell expr $(PATCH_VERSION) + 1)-SNAPSHOT
 OCI_TAG             := riptide:local
 DATE                := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ") # Date format RFC3339
-JAVA_MAJOR_VERSION  := 21
+JAVA_MAJOR_VERSION  := 25
 RELEASE_LOG         := target/release.log
 OK                  := "[ 👍 ]"
 SKIP                := "[ ⏭️ ]"
@@ -116,4 +116,3 @@ release:
 .PHONY: clean
 clean: deps-jar
 	mvn clean
-
