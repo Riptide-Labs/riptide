@@ -1,4 +1,4 @@
-FROM eclipse-temurin:23-alpine
+FROM eclipse-temurin:25-alpine
 
 ARG VERSION
 ARG GIT_SHORT_HASH
@@ -21,7 +21,7 @@ LABEL org.opencontainers.image.created="${DATE}" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${GIT_SHORT_HASH}" \
       org.opencontainers.image.vendor="RiptideLabs" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.licenses=" qGPL-3.0"
 
 ## Runtime information to listen for Flows on UDP port 9999 by default
 
