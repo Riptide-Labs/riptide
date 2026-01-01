@@ -103,10 +103,10 @@ release:
 	@git commit --signoff -am "release: Set new snapshot version $(SNAPSHOT_VERSION)" >>$(RELEASE_LOG) 2>&1
 	@echo "$(OK)"
 	@if [ "$(PUSH_RELEASE)" = "true" ]; then \
-		echo -n "Push commits                     "; \
+		echo -n "Push commits                 "; \
   		git push origin v$(RELEASE_VERSION) >>$(RELEASE_LOG) 2>&1; \
 		echo "$(OK)"; \
-		echo -n "Push tag                         "; \
+		echo -n "Push tag                     "; \
   		git push --tags >>$(RELEASE_LOG) 2>&1; \
   		echo "$(OK)"; \
   	else \
