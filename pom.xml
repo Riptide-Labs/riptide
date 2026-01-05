@@ -35,7 +35,7 @@
         <org-eclipse-persistence-moxy.version>4.0.8</org-eclipse-persistence-moxy.version>
         <postgresql.version>42.7.8</postgresql.version>
         <resilience4j.version>2.3.0</resilience4j.version>
-        <snmp4j.version>3.8.2</snmp4j.version>
+        <snmp4j.version>3.9.6</snmp4j.version>
         <snmp4j-agent.version>3.8.3</snmp4j-agent.version>
         <dropwizard-metrics.version>4.2.37</dropwizard-metrics.version>
         <jquick.version>1.9.3</jquick.version>
