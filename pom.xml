@@ -32,7 +32,7 @@
         <versions-maven-plugin.version>2.21.0</versions-maven-plugin.version>
         <netty-all.version>4.2.9.Final</netty-all.version>
         <opensearch-java.version>3.4.0</opensearch-java.version>
-        <org-eclipse-persistence-moxy.version>4.0.8</org-eclipse-persistence-moxy.version>
+        <org-eclipse-persistence-moxy.version>4.0.9</org-eclipse-persistence-moxy.version>
         <postgresql.version>42.7.8</postgresql.version>
         <resilience4j.version>2.3.0</resilience4j.version>
         <snmp4j.version>3.8.2</snmp4j.version>
