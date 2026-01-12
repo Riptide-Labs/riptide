@@ -20,7 +20,7 @@
         <caffeine.version>3.2.3</caffeine.version>
         <common-csv.version>1.14.1</common-csv.version>
         <dnsjava.version>3.6.3</dnsjava.version>
-        <elasticsearch-java.version>8.19.9</elasticsearch-java.version>
+        <elasticsearch-java.version>9.2.4</elasticsearch-java.version>
         <gson.version>2.13.2</gson.version>
         <guava.version>33.5.0-jre</guava.version>
         <ipaddress.version>5.5.1</ipaddress.version>
