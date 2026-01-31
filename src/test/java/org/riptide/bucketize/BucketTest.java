@@ -137,6 +137,23 @@ class BucketTest {
         assertThat(buckets.get(Instant.ofEpochSecond(205)).getBytes()).isEqualTo(60L);
     }
 
+    @Test
+    void testSingleBucketWithZeroDuration() {
+        final var flow = EnrichedFlow.builder()
+                .firstSwitched(Instant.ofEpochSecond(201))
+                .deltaSwitched(Instant.ofEpochSecond(201))
+                .lastSwitched(Instant.ofEpochSecond(201))
+                .packets(6L)
+                .bytes(60L)
+                .build();
+
+        final var buckets = Bucket.bucketize(flow, Duration.ofSeconds(5));
+
+        assertThat(buckets).containsOnlyKeys(Instant.ofEpochSecond(205));
+
+        assertThat(buckets.get(Instant.ofEpochSecond(205)).getBytes()).isEqualTo(60L);
+    }
+
     @Property
     void sumMatchesTotal(@ForAll("flow") final EnrichedFlow flow,
                          @ForAll("samplingInterval") final Duration samplingInterval) {
@@ -160,7 +177,7 @@ class BucketTest {
     Arbitrary<EnrichedFlow> flow() {
         final var span = Combinators.combine(
                         DateTimes.instants(),
-                        Times.durations().between(Duration.ofSeconds(100), Duration.ofDays(100)))
+                        Times.durations().between(Duration.ofSeconds(0), Duration.ofDays(100)))
                 .as((start, duration) -> Tuple.of(start, start.plus(duration)));
 
         return Builders.withBuilder(EnrichedFlow::builder)
