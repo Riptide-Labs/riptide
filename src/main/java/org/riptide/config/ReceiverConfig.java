@@ -3,6 +3,7 @@ package org.riptide.config;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import org.xbill.DNS.dnssec.R;
 
 import java.time.Duration;
@@ -31,6 +32,7 @@ public abstract sealed class ReceiverConfig {
     public abstract <T> T accept(Cases<T> cases);
 
     @Data
+    @EqualsAndHashCode(callSuper = true)
     public static final class Neflow5Config extends ReceiverConfig {
 
         @Override
@@ -40,6 +42,7 @@ public abstract sealed class ReceiverConfig {
     }
 
     @Data
+    @EqualsAndHashCode(callSuper = true)
     public static final class Neflow9Config extends ReceiverConfig {
         Duration flowActiveTimeoutFallback = null;
         Duration flowInactiveTimeoutFallback = null;
@@ -52,6 +55,7 @@ public abstract sealed class ReceiverConfig {
     }
 
     @Data
+    @EqualsAndHashCode(callSuper = true)
     public static final class IpfixConfig extends ReceiverConfig {
         public enum Transport {
             UDP,
@@ -71,6 +75,7 @@ public abstract sealed class ReceiverConfig {
     }
 
     @Data
+    @EqualsAndHashCode(callSuper = true)
     public static final class MultiConfig extends ReceiverConfig {
         boolean netflow5 = true;
         boolean netflow9 = true;
