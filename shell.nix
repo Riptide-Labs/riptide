@@ -12,7 +12,7 @@ in pkgs.mkShell {
   buildInputs = with pkgs; [
     bash
     git
-    jdk23_headless
+    jdk25_headless
     maven
     protobuf
     just
