@@ -1,36 +1,55 @@
 package org.riptide.repository.elastic;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import com.codahale.metrics.MetricRegistry;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
 import org.riptide.repository.FlowRepository;
+import org.riptide.repository.elastic.doc.FlowDocumentMapper;
 import org.riptide.repository.elastic.template.DefaultTemplateInitializer;
 
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * This {@link FlowRepository} wrapper will ensure that the repository has
  * been initialized before any *write* calls are made to the given delegate.
  */
-public class InitializingElasticFlowRepository implements FlowRepository {
+public class InitializingElasticFlowRepository extends ElasticFlowRepository {
 
     private final List<DefaultTemplateInitializer> initializers;
-    private final FlowRepository delegate;
     private final AtomicBoolean initialized = new AtomicBoolean(false);
 
-    public InitializingElasticFlowRepository(final FlowRepository delegate,
-                                             final ElasticsearchClient client,
-                                             final IndexSettings rawIndexSettings/*,
-                                      final IndexSettings aggIndexSettings*/) {
-        this(delegate, new RawIndexInitializer(client, rawIndexSettings)/*, new AggregateIndexInitializer(bundleContext, client, aggIndexSettings)*/);
+    public InitializingElasticFlowRepository(
+            final MetricRegistry metricRegistry,
+            final ElasticsearchClient jestClient,
+            final IndexStrategy indexStrategy,
+            final IndexSettings indexSettings,
+            final FlowDocumentMapper flowDocumentMapper,
+            final IndexSettings rawIndexSettings) {
+        this(metricRegistry,
+                jestClient,
+                indexStrategy,
+                indexSettings,
+                flowDocumentMapper,
+                new RawIndexInitializer(jestClient, rawIndexSettings));
     }
 
-    private InitializingElasticFlowRepository(final FlowRepository delegate, final DefaultTemplateInitializer... initializers) {
-        this.delegate = Objects.requireNonNull(delegate);
+    private InitializingElasticFlowRepository(
+            final MetricRegistry metricRegistry,
+            final ElasticsearchClient jestClient,
+            final IndexStrategy indexStrategy,
+            final IndexSettings indexSettings,
+            final FlowDocumentMapper flowDocumentMapper,
+            final DefaultTemplateInitializer... initializers) {
+        super(metricRegistry,
+                jestClient,
+                indexStrategy,
+                indexSettings,
+                flowDocumentMapper);
+
         this.initializers = Arrays.asList(initializers);
     }
 
@@ -42,7 +61,7 @@ public class InitializingElasticFlowRepository implements FlowRepository {
             throw new UnrecoverableFlowException(ex.getMessage(), ex);
         }
 
-        delegate.persist(flows);
+        super.persist(flows);
     }
 
     private void ensureInitialized() {

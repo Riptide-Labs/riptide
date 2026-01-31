@@ -22,30 +22,34 @@ import org.riptide.pipeline.Source;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.BiConsumer;
 
 @Slf4j
+@Profile("!test")
 @Component
 public class Daemon implements ApplicationRunner {
 
     private final List<Listener> listeners;
+    private final Pipeline pipeline;
 
     public Daemon(final Pipeline pipeline,
                   final MetricRegistry metricRegistry,
                   @Qualifier("ipfixValueConversionService") final ValueConversionService ipfixValueConversionService,
                   @Qualifier("netflow9ValueConversionService") final ValueConversionService netflow9ValueConversionService,
                   final DaemonConfig config) {
-
         final var location = config.getLocation();
 
+        this.pipeline = Objects.requireNonNull(pipeline);
         final BiConsumer<Source, Flow> dispatcher = (source, flow) -> {
             try {
-                pipeline.process(source, Collections.singletonList(flow));
+                this.pipeline.process(source, Collections.singletonList(flow));
             } catch (final FlowException e) {
                 // TODO fooker: real error handling
                 throw new RuntimeException(e);
@@ -135,12 +139,14 @@ public class Daemon implements ApplicationRunner {
     }
 
     @Override
-    public void run(ApplicationArguments args) {
+    public void run(final ApplicationArguments args) throws Exception {
+        this.pipeline.start();
         this.listeners.forEach(Listener::start);
     }
 
     @PreDestroy
-    public void stop() {
+    public void stop() throws Exception {
+        this.pipeline.stop();
         this.listeners.forEach(Listener::stop);
     }
 }

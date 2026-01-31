@@ -44,11 +44,6 @@ public class ClickhouseRepository implements FlowRepository {
                 .compressClientRequest(true)
                 .compressServerResponse(true)
                 .build();
-
-        this.client.execute(DDL_FLOWS).get();
-        this.client.execute(DDL_SAMPLES).get();
-
-        this.client.register(ClickhouseFlow.class, this.client.getTableSchema("flows"));
     }
 
     @Override
@@ -60,6 +55,15 @@ public class ClickhouseRepository implements FlowRepository {
         } catch (final InterruptedException | ExecutionException e) {
             throw new FlowException(e);
         }
+    }
+
+    @Override
+    @SneakyThrows
+    public void start() {
+        this.client.execute(DDL_FLOWS).get();
+        this.client.execute(DDL_SAMPLES).get();
+
+        this.client.register(ClickhouseFlow.class, this.client.getTableSchema("flows"));
     }
 
     @Language("ClickHouse")

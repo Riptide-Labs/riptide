@@ -31,4 +31,12 @@ public class FlowPersister {
             this.repository.persist(flows);
         }
     }
+
+    public void start() {
+        this.repository.start();
+    }
+
+    public void stop()  {
+        this.repository.stop();
+    }
 }
