@@ -27,4 +27,12 @@ public interface Enricher {
 
         protected abstract CompletableFuture<Void> enrich(Source source, EnrichedFlow flow);
     }
+
+
+
+    default void start() {
+    }
+
+    default void stop() {
+    }
 }

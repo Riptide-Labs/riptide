@@ -50,12 +50,12 @@ public class Pipeline {
         this.enrichers = Objects.requireNonNull(enrichers);
         this.persisters = Objects.requireNonNull(persisters);
 
+        if (this.persisters.isEmpty()) {
+            throw new IllegalStateException("No persisters configured");
+        }
+
         log.info("Enabled enrichers: {}", enrichers.stream().map(enricher -> enricher.getClass().getSimpleName()).collect(Collectors.joining(", ")));
         log.info("Enabled repositories: {}", persisters.stream().map(FlowPersister::getName).collect(Collectors.joining(", ")));
-
-//        if (false && this.persisters.isEmpty()) {
-//            throw new IllegalStateException("No persisters configured");
-//        }
     }
 
     public void process(final Source source, final List<Flow> flows) throws FlowException {
@@ -92,5 +92,15 @@ public class Pipeline {
                 LOG.error("Failed to persist flows to {}", persister.getName(), e);
             }
         }
+    }
+
+    public void start() {
+        this.persisters.forEach(FlowPersister::start);
+        this.enrichers.forEach(Enricher::start);
+    }
+
+    public void stop() {
+        this.persisters.forEach(FlowPersister::stop);
+        this.enrichers.forEach(Enricher::stop);
     }
 }

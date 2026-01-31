@@ -49,7 +49,6 @@ public class RiptideConfiguration {
         return repositories.entrySet().stream().map(entry -> {
             final var name = entry.getKey();
             final var repository = entry.getValue();
-            final var timer = metricRegistry.timer(MetricRegistry.name("logPersisting", name));
             return new FlowPersister(name, repository, metricRegistry);
         }).toList();
     }
