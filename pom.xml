@@ -29,10 +29,10 @@
         <lombok.version>1.18.42</lombok.version>
         <mapstruct.version>1.6.3</mapstruct.version>
         <maven-checkstyle-plugin.version>3.6.0</maven-checkstyle-plugin.version>
-        <versions-maven-plugin.version>2.20.1</versions-maven-plugin.version>
+        <versions-maven-plugin.version>2.21.0</versions-maven-plugin.version>
         <netty-all.version>4.2.9.Final</netty-all.version>
         <opensearch-java.version>3.4.0</opensearch-java.version>
-        <org-eclipse-persistence-moxy.version>4.0.8</org-eclipse-persistence-moxy.version>
+        <org-eclipse-persistence-moxy.version>4.0.9</org-eclipse-persistence-moxy.version>
         <postgresql.version>42.7.8</postgresql.version>
         <resilience4j.version>2.3.0</resilience4j.version>
         <snmp4j.version>3.8.2</snmp4j.version>
