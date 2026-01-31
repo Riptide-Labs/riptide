@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.8</version>
+        <version>4.0.1</version>
         <relativePath/>
     </parent>
 
@@ -126,12 +126,18 @@
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-elasticsearch</artifactId>
+        </dependency>
+
         <!-- parsing of XML (JAXB API) -->
         <dependency>
             <groupId>jakarta.xml.bind</groupId>
             <artifactId>jakarta.xml.bind-api</artifactId>
             <version>${jakarta-xml-bind-api.version}</version>
         </dependency>
+
         <!-- parsing of XML (JAXB Impl) -->
         <dependency>
             <groupId>org.eclipse.persistence</groupId>
@@ -139,6 +145,7 @@
             <version>${org-eclipse-persistence-moxy.version}</version>
             <scope>runtime</scope>
         </dependency>
+
         <!-- support for lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>
@@ -146,6 +153,7 @@
             <version>${lombok.version}</version>
             <scope>provided</scope>
         </dependency>
+
         <!-- mapstruct -->
         <dependency>
             <groupId>org.mapstruct</groupId>
@@ -165,10 +173,15 @@
             <artifactId>ipaddress</artifactId>
             <version>${ipaddress.version}</version>
         </dependency>
+
         <!-- JDBC + friends -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
         </dependency>
         <dependency>
             <groupId>org.postgresql</groupId>
