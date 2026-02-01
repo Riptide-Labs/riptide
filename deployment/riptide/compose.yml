@@ -11,7 +11,6 @@ services:
     environment:
       TZ: UTC
       LOGGING_LEVEL_ROOT: WARN
-      RIPTIDE_CLICKHOUSE_ENABLED: true
       RIPTIDE_CLICKHOUSE_ENDPOINT: http://clickhouse:8123
       RIPTIDE_CLICKHOUSE_USERNAME: default
       RIPTIDE_CLICKHOUSE_PASSWORD: ""
