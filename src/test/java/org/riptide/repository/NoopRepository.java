@@ -8,7 +8,7 @@ import java.io.IOException;
 import java.util.List;
 
 /// NOOP implementation of a FlowRepository, otherwise spring context dies, which we for test purposes
-/// don't want, but in production is the correct behaviour.
+/// don't want, but is in production the correct behavior.
 @Service
 public class NoopRepository implements FlowRepository {
     @Override
