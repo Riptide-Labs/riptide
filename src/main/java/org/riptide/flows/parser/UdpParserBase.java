@@ -89,7 +89,11 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
 
     @Override
     public void stop() {
-        this.housekeepingFuture.cancel(false);
+        if (this.housekeepingFuture != null) {
+            this.housekeepingFuture.cancel(false);
+            this.housekeepingFuture = null;
+        }
+
         super.stop();
     }
 

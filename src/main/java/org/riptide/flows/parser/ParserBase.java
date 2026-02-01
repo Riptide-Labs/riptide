@@ -90,7 +90,10 @@ public abstract class ParserBase implements Parser {
 
     @Override
     public void stop() {
-        executor.shutdown();
+        if (this.executor != null) {
+            this.executor.shutdown();
+            this.executor = null;
+        }
     }
 
     @Override
