@@ -15,7 +15,6 @@ import org.apache.http.ssl.SSLContextBuilder;
 import org.elasticsearch.client.RestClient;
 import org.riptide.config.ElasticsearchConfig;
 import org.riptide.repository.FlowRepository;
-import org.riptide.repository.elastic.ElasticFlowRepository;
 import org.riptide.repository.elastic.IndexSettings;
 import org.riptide.repository.elastic.IndexStrategy;
 import org.riptide.repository.elastic.InitializingElasticFlowRepository;
@@ -29,7 +28,7 @@ import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 
 @Configuration
-@ConditionalOnProperty(name = "riptide.elastic.enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(name = "riptide.elastic.enabled", havingValue = "true")
 public class ElasticsearchConfiguration {
     @Bean
     ElasticsearchClient jestClient(final ElasticsearchTransport transport) {
@@ -83,10 +82,7 @@ public class ElasticsearchConfiguration {
 
         final var indexStrategy = IndexStrategy.DAILY;
 
-        final var repository = new ElasticFlowRepository(metricRegistry, elasticsearchClient, indexStrategy, indexSettings, flowDocumentMapper);
-        repository.start();
-
-        return new InitializingElasticFlowRepository(repository, elasticsearchClient, indexSettings);
+        return new InitializingElasticFlowRepository(metricRegistry, elasticsearchClient, indexStrategy, indexSettings, flowDocumentMapper, indexSettings);
     }
 
 }

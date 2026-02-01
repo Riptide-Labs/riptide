@@ -33,7 +33,6 @@
         <netty-all.version>4.2.9.Final</netty-all.version>
         <opensearch-java.version>3.4.0</opensearch-java.version>
         <org-eclipse-persistence-moxy.version>4.0.9</org-eclipse-persistence-moxy.version>
-        <postgresql.version>42.7.8</postgresql.version>
         <resilience4j.version>2.3.0</resilience4j.version>
         <snmp4j.version>3.9.6</snmp4j.version>
         <snmp4j-agent.version>3.8.3</snmp4j-agent.version>
@@ -172,21 +171,6 @@
             <groupId>com.github.seancfoley</groupId>
             <artifactId>ipaddress</artifactId>
             <version>${ipaddress.version}</version>
-        </dependency>
-
-        <!-- JDBC + friends -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-jdbc</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-jpa</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.postgresql</groupId>
-            <artifactId>postgresql</artifactId>
-            <version>${postgresql.version}</version>
         </dependency>
 
         <!-- Clickhouse -->

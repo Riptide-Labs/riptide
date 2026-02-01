@@ -1,12 +1,10 @@
 package org.riptide.config;
 
 import lombok.Data;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-@ConfigurationProperties(prefix = "riptide.elastic")
-@ConditionalOnProperty(name = "riptide.elastic.enabled", havingValue = "true", matchIfMissing = true)
 @Data
+@ConfigurationProperties(prefix = "riptide.elastic")
 public final class ElasticsearchConfig {
     public boolean enabled;
     public String url;

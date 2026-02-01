@@ -5,8 +5,7 @@ import co.elastic.clients.elasticsearch.core.BulkRequest;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
-import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
+import lombok.SneakyThrows;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
 import org.riptide.repository.FlowRepository;
@@ -29,8 +28,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class ElasticFlowRepository implements FlowRepository {
-
-    public static final String TRACER_FLOW_MODULE = "ElasticFlow";
 
     private static final Logger LOG = LoggerFactory.getLogger(ElasticFlowRepository.class);
 
@@ -147,7 +144,7 @@ public class ElasticFlowRepository implements FlowRepository {
     }
 
     @Override
-    public void persist(final List<EnrichedFlow> flows) throws FlowException {
+    public void persist(final List<EnrichedFlow> flows) throws FlowException, IOException {
         final FlowBulk flowBulk = this.flowBulks.computeIfAbsent(Thread.currentThread(), (thread) -> new FlowBulk());
         flowBulk.lock.lock();
         try {
@@ -196,13 +193,12 @@ public class ElasticFlowRepository implements FlowRepository {
         }
     }
 
-    @PostConstruct
     public void start() {
         startTimer();
     }
 
-    @PreDestroy
-    public void stop() throws FlowException {
+    @SneakyThrows
+    public void stop() {
         stopTimer();
         for (final FlowBulk flowBulk : flowBulks.values()) {
             persistBulk(flowBulk.documents);

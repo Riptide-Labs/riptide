@@ -9,6 +9,7 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:latest
     environment:
+      TZ: UTC
       CLICKHOUSE_USER: default
       CLICKHOUSE_DB: riptide
     volumes:
@@ -30,7 +31,8 @@ services:
       clickhouse:
         condition: service_healthy
     environment:
-      VITE_CLICKHOUSE_URL: http://clickhouse:8123
+      TZ: UTC
+      VITE_CLICKHOUSE_URL: http://localhost:8123
       VITE_CLICKHOUSE_USER: default
       VITE_CLICKHOUSE_PASS: ""
     ports:
@@ -42,6 +44,7 @@ services:
       clickhouse:
         condition: service_healthy
     environment:
+      TZ: UTC
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
       GF_FEATURE_TOGGLES_ENABLE: nestedFolders
@@ -62,6 +65,7 @@ services:
       clickhouse:
         condition: service_healthy
     environment:
+      TZ: UTC
       LOGGING_LEVEL_ROOT: WARN
       RIPTIDE_CLICKHOUSE_ENABLED: true
       RIPTIDE_CLICKHOUSE_ENDPOINT: http://clickhouse:8123
