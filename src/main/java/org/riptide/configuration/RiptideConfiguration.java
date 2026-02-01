@@ -20,7 +20,6 @@ import org.springframework.context.annotation.Configuration;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.Map;
 
 @Configuration
 @Slf4j
@@ -42,15 +41,8 @@ public class RiptideConfiguration {
     }
 
     @Bean
-    List<FlowPersister> flowRepositories(Map<String, FlowRepository> repositories, MetricRegistry metricRegistry) {
-        if (repositories.isEmpty()) {
-            log.error("No flow persistence repository configured");
-        }
-        return repositories.entrySet().stream().map(entry -> {
-            final var name = entry.getKey();
-            final var repository = entry.getValue();
-            return new FlowPersister(name, repository, metricRegistry);
-        }).toList();
+    FlowPersister flowRepositories(FlowRepository repository, MetricRegistry metricRegistry) {
+        return new FlowPersister("persister", repository, metricRegistry);
     }
 
     @Bean

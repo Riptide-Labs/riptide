@@ -41,8 +41,4 @@ public class TestRepository implements FlowRepository {
     public FlowPersister asPersister() {
         return new FlowPersister("test-repository", this, metricRegistry);
     }
-
-    public List<FlowPersister> asPersisters() {
-        return List.of(asPersister());
-    }
 }

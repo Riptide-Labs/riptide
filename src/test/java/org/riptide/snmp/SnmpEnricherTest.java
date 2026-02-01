@@ -49,7 +49,7 @@ public class SnmpEnricherTest {
 
         final var enrichers = List.<Enricher>of(new SnmpEnricher(this.snmpService, this.snmpConfiguration));
         final var repository = new TestRepository(metricRegistry);
-        final var pipeline = new Pipeline(enrichers, repository.asPersisters(), this.metricRegistry, this.flowMapper);
+        final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
 
         final Flow flow = Mockito.mock(Flow.class);
         when(flow.getSrcAddr()).thenReturn(InetAddress.getByName("10.10.10.10"));
