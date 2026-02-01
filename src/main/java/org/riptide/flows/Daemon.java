@@ -22,7 +22,6 @@ import org.riptide.pipeline.Source;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
-import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import java.util.Collections;
@@ -32,7 +31,6 @@ import java.util.Objects;
 import java.util.function.BiConsumer;
 
 @Slf4j
-@Profile("!test")
 @Component
 public class Daemon implements ApplicationRunner {
 

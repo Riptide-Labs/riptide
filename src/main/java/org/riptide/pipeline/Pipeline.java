@@ -5,7 +5,6 @@ import com.codahale.metrics.Histogram;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
 import lombok.extern.slf4j.Slf4j;
-import org.riptide.errors.ConfigError;
 import org.riptide.flows.parser.data.Flow;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,12 +34,12 @@ public class Pipeline {
     private final Counter emptyFlows;
 
     private final List<Enricher> enrichers;
-    private final List<FlowPersister> persisters;
+    private final FlowPersister persister;
 
     private final EnrichedFlow.FlowMapper flowMapper;
 
     public Pipeline(final List<Enricher> enrichers,
-                    final List<FlowPersister> persisters,
+                    final FlowPersister persister,
                     final MetricRegistry metricRegistry,
                     final EnrichedFlow.FlowMapper flowMapper
     ) {
@@ -49,14 +48,9 @@ public class Pipeline {
         this.flowsPerLog = metricRegistry.histogram("flowsPerLog");
         this.logEnrichementTimer = metricRegistry.timer("logEnrichment");
         this.enrichers = Objects.requireNonNull(enrichers);
-        this.persisters = Objects.requireNonNull(persisters);
-
-        if (this.persisters.isEmpty()) {
-            throw new ConfigError("No persisters configured");
-        }
+        this.persister = Objects.requireNonNull(persister);
 
         log.info("Enabled enrichers: {}", enrichers.stream().map(enricher -> enricher.getClass().getSimpleName()).collect(Collectors.joining(", ")));
-        log.info("Enabled repositories: {}", persisters.stream().map(FlowPersister::getName).collect(Collectors.joining(", ")));
     }
 
     public void process(final Source source, final List<Flow> flows) throws FlowException {
@@ -86,22 +80,20 @@ public class Pipeline {
         }
 
         // Push flows to persistence
-        for (final var persister : this.persisters) {
             try {
-                persister.persist(enrichedFlows);
+                this.persister.persist(enrichedFlows);
             } catch (final IOException e) {
-                LOG.error("Failed to persist flows to {}", persister.getName(), e);
+                LOG.error("Failed to persist flows to {}", this.persister.getName(), e);
             }
-        }
     }
 
     public void start() {
-        this.persisters.forEach(FlowPersister::start);
+        this.persister.start();
         this.enrichers.forEach(Enricher::start);
     }
 
     public void stop() {
-        this.persisters.forEach(FlowPersister::stop);
+        this.persister.stop();
         this.enrichers.forEach(Enricher::stop);
     }
 }
