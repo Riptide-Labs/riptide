@@ -6,8 +6,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @Data
 @ConfigurationProperties(prefix = "riptide.clickhouse")
 public final class ClickhouseConfig {
-        public boolean enabled;
-
         public String endpoint = "http://localhost:8123";
 
         public String username;
