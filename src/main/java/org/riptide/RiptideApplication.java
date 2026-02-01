@@ -17,6 +17,6 @@ import org.springframework.boot.elasticsearch.autoconfigure.ElasticsearchRestCli
 @ConfigurationPropertiesScan
 public class RiptideApplication {
     public static void main(final String... args) {
-        SpringApplication.run(RiptideApplication.class, args);
+        System.exit(SpringApplication.exit(SpringApplication.run(RiptideApplication.class, args)));
     }
 }

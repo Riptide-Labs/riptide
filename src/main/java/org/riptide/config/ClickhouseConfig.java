@@ -1,12 +1,10 @@
 package org.riptide.config;
 
 import lombok.Data;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-@ConfigurationProperties(prefix = "riptide.clickhouse")
-@ConditionalOnProperty(name = "riptide.clickhouse.enabled", havingValue = "true")
 @Data
+@ConfigurationProperties(prefix = "riptide.clickhouse")
 public final class ClickhouseConfig {
         public boolean enabled;
 

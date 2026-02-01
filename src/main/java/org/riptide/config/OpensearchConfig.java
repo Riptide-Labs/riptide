@@ -1,12 +1,10 @@
 package org.riptide.config;
 
 import lombok.Data;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-@ConfigurationProperties(prefix = "riptide.opensearch")
-@ConditionalOnProperty(name = "riptide.opensearch.enabled", havingValue = "true")
 @Data
+@ConfigurationProperties(prefix = "riptide.opensearch")
 public final class OpensearchConfig {
         public boolean enabled;
         public String host = "localhost";
