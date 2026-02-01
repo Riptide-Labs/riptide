@@ -11,7 +11,7 @@
 
     <groupId>org.riptide.flows</groupId>
     <artifactId>riptide-flows</artifactId>
-    <version>0.0.3</version>
+    <version>0.0.4-SNAPSHOT</version>
     <name>riptide-flows</name>
     <description>NetFlow analysis engine</description>
 
