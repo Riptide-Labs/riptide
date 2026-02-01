@@ -77,8 +77,12 @@ You can also bind mount your configuration to `/app/application.properties`.
 # 📦 Make a release
 
 Here is an example if you want to release a new version 1.0.0.
+> [!NOTE]
+> The `main` branch is protected and requires a pull request to merge changes. Create a branch named `release` to make release related changes.
+> Send a PR to merge the release branch into `main`.
 
 ```
+git checkout -b release
 make release RELEASE_VERSION=1.0.0
 ```
 
@@ -88,7 +92,7 @@ The following key functions are provided:
 2. Commit new version in the pom.xml and create a git tag
 3. Set the Maven pom.xml to a new snapshot version
 4. Commit new snapshot version in the pom.xml
-5. Optional: Push commits and tags to the main branch to publish the release, add `PUSH_RELEASE=true`
+5. Optional: Push commits and tags to the release branch to publish the release, add `PUSH_RELEASE=true`
 
 The CI/CD pipeline to build and publish container images for releases is triggered by pushed git version tags.
 The version number from the pom.xml is driving the container image version tag.
