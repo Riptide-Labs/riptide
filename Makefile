@@ -70,11 +70,11 @@ release:
 	@echo "Git version tag:          v$(RELEASE_VERSION)"
 	@echo "Release log:              $(RELEASE_LOG)"
 	@echo ""
-	@echo -n "Check main branch:           "
-	@if [ "$(GIT_BRANCH)" != "main" ]; then echo "Releases are made from the main branch, your branch is $(GIT_BRANCH)."; exit 1; fi
+	@echo -n "Check release branch:        "
+	@if [ "$(GIT_BRANCH)" != "release" ]; then echo "Releases are made from the release branch, your branch is $(GIT_BRANCH)."; exit 1; fi
 	@echo "$(OK)"
-	@echo -n "Check main branch in sync    "
-	@if [ "$(git rev-parse HEAD)" != "$(git rev-parse @{u})" ]; then echo "Main branch not in sync with remote origin."; exit 1; fi
+	@echo -n "Check release branch in sync "
+	@if [ "$(git rev-parse HEAD)" != "$(git rev-parse @{u})" ]; then echo "Release branch not in sync with remote origin."; exit 1; fi
 	@echo "$(OK)"
 	@echo -n "Check uncommited changes     "
 	@if git status --porcelain | grep -q .; then echo "There are uncommited changes in your repository."; exit 1; fi
