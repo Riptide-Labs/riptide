@@ -43,13 +43,22 @@ git clone https://github.com/Riptide-Labs/riptide.git
 
 Run with a local build OCI image riptide:local
 ```
-cd deployment/riptide-stack
+cd deployment/riptide
 docker compose up -d
 ```
 
 * Grafana: http://localhost:3000 with login admin/admin.
 * Clickhouse UI with http://localhost:5521
 * Send flows to your Riptide server on 9999/udp
+
+> [!TIP]
+> If you want to run the latest stable version, create a `compose.override.yml` and set the image tag to `ghcr.io/riptide:latest`.
+
+Run just a ClickHouse stack
+```
+cd deployment/clickhouse
+docker compose up -d
+```
 
 # 👩‍🔧 Configuration
 
@@ -61,7 +70,7 @@ You have two options to customize configuration parameters.
 If you want to use environment variables, you need to convert the configuration key to upper case and underscores.
 Here is an example:
 ```
-riptide.clickhouse.enabled -> RIPTIDE_CLICKHOUSE_ENABLED
+riptide.clickhouse.endpoint -> RIPTIDE_CLICKHOUSE_ENDPOINT
 ```
 You can also bind mount your configuration to `/app/application.properties`.
 
