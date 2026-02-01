@@ -20,7 +20,6 @@
         <caffeine.version>3.2.3</caffeine.version>
         <common-csv.version>1.14.1</common-csv.version>
         <dnsjava.version>3.6.3</dnsjava.version>
-        <elasticsearch-java.version>8.19.9</elasticsearch-java.version>
         <gson.version>2.13.2</gson.version>
         <guava.version>33.5.0-jre</guava.version>
         <ipaddress.version>5.5.1</ipaddress.version>
@@ -31,7 +30,6 @@
         <maven-checkstyle-plugin.version>3.6.0</maven-checkstyle-plugin.version>
         <versions-maven-plugin.version>2.21.0</versions-maven-plugin.version>
         <netty-all.version>4.2.9.Final</netty-all.version>
-        <opensearch-java.version>3.4.0</opensearch-java.version>
         <org-eclipse-persistence-moxy.version>4.0.9</org-eclipse-persistence-moxy.version>
         <resilience4j.version>2.3.0</resilience4j.version>
         <snmp4j.version>3.8.2</snmp4j.version>
@@ -104,16 +102,6 @@
             <version>${gson.version}</version>
         </dependency>
         <dependency>
-            <groupId>co.elastic.clients</groupId>
-            <artifactId>elasticsearch-java</artifactId>
-            <version>${elasticsearch-java.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.opensearch.client</groupId>
-            <artifactId>opensearch-java</artifactId>
-            <version>${opensearch-java.version}</version>
-        </dependency>
-        <dependency>
             <groupId>org.apache.httpcomponents.core5</groupId>
             <artifactId>httpcore5</artifactId>
         </dependency>
@@ -124,10 +112,6 @@
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-elasticsearch</artifactId>
         </dependency>
 
         <!-- parsing of XML (JAXB API) -->
