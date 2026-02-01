@@ -3,12 +3,8 @@ package org.riptide;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
-import org.springframework.boot.elasticsearch.autoconfigure.ElasticsearchClientAutoConfiguration;
-import org.springframework.boot.elasticsearch.autoconfigure.ElasticsearchRestClientAutoConfiguration;
 
-@SpringBootApplication(exclude = {
-        ElasticsearchClientAutoConfiguration.class, ElasticsearchRestClientAutoConfiguration.class
-})
+@SpringBootApplication
 @ConfigurationPropertiesScan
 public class RiptideApplication {
     public static void main(final String... args) {

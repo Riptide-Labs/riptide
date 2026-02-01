@@ -13,7 +13,6 @@ import java.util.List;
 @Service
 @ConditionalOnBooleanProperty(havingValue = false, name = {
         "riptide.clickhouse.enabled",
-        "riptide.elastic.enabled",
 })
 public class NoopRepository implements FlowRepository {
     @Override
