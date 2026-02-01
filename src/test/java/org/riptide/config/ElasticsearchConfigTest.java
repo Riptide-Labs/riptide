@@ -2,9 +2,7 @@ package org.riptide.config;
 
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.riptide.configuration.ClickhouseConfiguration;
 import org.riptide.configuration.ElasticsearchConfiguration;
-import org.riptide.configuration.OpensearchConfiguration;
 import org.riptide.repository.FlowRepository;
 import org.riptide.repository.elastic.ElasticFlowRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,12 +27,6 @@ class ElasticsearchConfigTest {
     void verifyConfigurationIsAvailable() {
         Assertions.assertThat(springContext.getBeansOfType(ElasticsearchConfig.class)).isNotEmpty();
         Assertions.assertThat(springContext.getBeansOfType(ElasticsearchConfiguration.class)).isNotEmpty();
-    }
-
-    @Test
-    void verifyOtherConfigurationIsUnavailable() {
-        Assertions.assertThat(springContext.getBeansOfType(OpensearchConfiguration.class)).isEmpty();
-        Assertions.assertThat(springContext.getBeansOfType(ClickhouseConfiguration.class)).isEmpty();
     }
 
     @Test

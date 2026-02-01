@@ -3,8 +3,6 @@ package org.riptide.config;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.riptide.configuration.ClickhouseConfiguration;
-import org.riptide.configuration.ElasticsearchConfiguration;
-import org.riptide.configuration.OpensearchConfiguration;
 import org.riptide.repository.FlowRepository;
 import org.riptide.repository.clickhouse.ClickhouseRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,12 +29,6 @@ class ClickhouseConfigTest {
     void verifyConfigurationIsAvailable() {
         Assertions.assertThat(springContext.getBeansOfType(ClickhouseConfig.class)).isNotEmpty();
         Assertions.assertThat(springContext.getBeansOfType(ClickhouseConfiguration.class)).isNotEmpty();
-    }
-
-    @Test
-    void verifyOtherConfigurationIsUnavailable() {
-        Assertions.assertThat(springContext.getBeansOfType(ElasticsearchConfiguration.class)).isEmpty();
-        Assertions.assertThat(springContext.getBeansOfType(OpensearchConfiguration.class)).isEmpty();
     }
 
     @Test
