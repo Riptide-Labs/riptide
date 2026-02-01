@@ -31,7 +31,6 @@
         <maven-checkstyle-plugin.version>3.6.0</maven-checkstyle-plugin.version>
         <versions-maven-plugin.version>2.21.0</versions-maven-plugin.version>
         <netty-all.version>4.2.9.Final</netty-all.version>
-        <opensearch-java.version>3.4.0</opensearch-java.version>
         <org-eclipse-persistence-moxy.version>4.0.9</org-eclipse-persistence-moxy.version>
         <resilience4j.version>2.3.0</resilience4j.version>
         <snmp4j.version>3.8.2</snmp4j.version>
@@ -107,11 +106,6 @@
             <groupId>co.elastic.clients</groupId>
             <artifactId>elasticsearch-java</artifactId>
             <version>${elasticsearch-java.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.opensearch.client</groupId>
-            <artifactId>opensearch-java</artifactId>
-            <version>${opensearch-java.version}</version>
         </dependency>
         <dependency>
             <groupId>org.apache.httpcomponents.core5</groupId>
