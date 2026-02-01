@@ -15,7 +15,6 @@ import java.util.List;
         "riptide.clickhouse.enabled",
         "riptide.elastic.enabled",
         "riptide.opensearch.enabled",
-        "riptide.postgres.enabled",
 })
 public class NoopRepository implements FlowRepository {
     @Override
