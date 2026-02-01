@@ -9,10 +9,8 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 
 /**
  * A classification engine that does reloads asynchronously.
@@ -32,13 +30,9 @@ public class AsyncReloadingClassificationEngine implements ClassificationEngine 
 
     private final ClassificationEngine delegate;
 
-    // uses at most one additional thread; if the thread is not used for 60 seconds then it is terminated
+    // uses virtual threads which are lightweight and created on-demand
     // -> uses no additional resources while being idle
-    private final ExecutorService executorService = new ThreadPoolExecutor(0, 1,
-            60L, TimeUnit.SECONDS,
-            new LinkedBlockingQueue<>(), // multiple reloads may have been enqueued and cancelled
-            runnable -> new Thread(runnable, "AsyncReloadingClassificationEngine")
-    );
+    private final ExecutorService executorService = Executors.newVirtualThreadPerTaskExecutor();
 
     private State state = State.READY;
     private Throwable reloadException;
@@ -47,7 +41,7 @@ public class AsyncReloadingClassificationEngine implements ClassificationEngine 
     public AsyncReloadingClassificationEngine(ClassificationEngine delegate) {
         this.delegate = delegate;
         // trigger reload
-        // -> blocks classification requests until classification engine is ready
+        // -> blocks classification requests until the classification engine is ready
         reload();
     }
 

@@ -14,18 +14,12 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.SynchronousQueue;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.function.BiConsumer;
-
-import static java.util.concurrent.TimeUnit.SECONDS;
 
 @Slf4j
 public abstract class ParserBase implements Parser {
-
-    private static final int DEFAULT_NUM_THREADS = Runtime.getRuntime().availableProcessors() * 2;
 
     private final Protocol protocol;
 
@@ -42,8 +36,6 @@ public abstract class ParserBase implements Parser {
     private final Meter recordsDispatched;
 
     private final Counter sequenceErrors;
-
-    private int threads = DEFAULT_NUM_THREADS;
 
     private int sequenceNumberPatience = 32;
 
@@ -63,29 +55,11 @@ public abstract class ParserBase implements Parser {
         this.recordsDispatched = metricRegistry.meter(MetricRegistry.name("parsers", name, "recordsDispatched"));
         this.recordsScheduled = metricRegistry.meter(MetricRegistry.name("parsers", name, "recordsScheduled"));
         this.sequenceErrors = metricRegistry.counter(MetricRegistry.name("parsers", name, "sequenceErrors"));
-
-        setThreads(DEFAULT_NUM_THREADS);
     }
 
     @Override
     public void start(ScheduledExecutorService executorService) {
-        this.executor = new ThreadPoolExecutor(
-                // corePoolSize must be > 0 since we use the RejectedExecutionHandler to block when the queue is full
-                1, this.threads,
-                60L, SECONDS,
-                new SynchronousQueue<>(),
-                (r, executor) -> {
-                    // We enter this block when the queue is full and the caller is attempting to submit additional tasks
-                    try {
-                        // If we're not shutdown, then block until there's room in the queue
-                        if (!executor.isShutdown()) {
-                            executor.getQueue().put(r);
-                        }
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        throw new RejectedExecutionException("Executor interrupted while waiting for capacity in the work queue.", e);
-                    }
-                });
+        this.executor = Executors.newVirtualThreadPerTaskExecutor();
     }
 
     @Override
@@ -112,17 +86,6 @@ public abstract class ParserBase implements Parser {
 
     public void setSequenceNumberPatience(final int sequenceNumberPatience) {
         this.sequenceNumberPatience = sequenceNumberPatience;
-    }
-
-    public int getThreads() {
-        return threads;
-    }
-
-    public void setThreads(int threads) {
-        if (threads < 1) {
-            throw new IllegalArgumentException("Threads must be >= 1");
-        }
-        this.threads = threads;
     }
 
     protected CompletableFuture<?> transmit(final Instant receivedAt,
