@@ -37,7 +37,7 @@
         <snmp4j-agent.version>3.8.3</snmp4j-agent.version>
         <dropwizard-metrics.version>4.2.37</dropwizard-metrics.version>
         <jquick.version>1.9.3</jquick.version>
-        <clickhouse.version>0.9.5</clickhouse.version>
+        <clickhouse.version>0.9.6</clickhouse.version>
         <jmh.version>1.37</jmh.version>
     </properties>
 
