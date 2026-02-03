@@ -5,7 +5,7 @@ on:
   push:
     tags-ignore:
   pull_request:
-    branches: [ 'main' ]  # Builds PRs targeting main
+    branches: [ '*' ]  # Builds PRs targeting main
     types: [ opened, synchronize, reopened ]  # Default: covers new pushes to PR
 jobs:
   build:
