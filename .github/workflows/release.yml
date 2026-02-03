@@ -1,5 +1,5 @@
 name: Riptide Release
-run-name: Build and version release
+run-name: Release Workflow
 on:
   workflow_dispatch:
   push:
