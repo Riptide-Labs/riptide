@@ -35,7 +35,7 @@ public class ClassificationEnricherTest {
     public void testEnrichment() throws Exception {
         final var enrichers = List.<Enricher>of(new ClassificationEnricher(this.classificationEngine));
         final var repository = new TestRepository(metricRegistry);
-        final var pipeline = new Pipeline(enrichers, repository.asPersisters(), this.metricRegistry, this.flowMapper);
+        final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
 
         final Flow flow = Mockito.mock(Flow.class);
         when(flow.getSrcPort()).thenReturn(80);

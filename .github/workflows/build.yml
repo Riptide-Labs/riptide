@@ -5,15 +5,15 @@ on:
   push:
     tags-ignore:
   pull_request:
-    branches-ignore:
-      - "*"
+    branches: [ 'main' ]  # Builds PRs targeting main
+    types: [ opened, synchronize, reopened ]  # Default: covers new pushes to PR
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
       - name: Set up JDK 25 for x64
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
           java-version: '25'
           distribution: 'temurin'
@@ -28,32 +28,8 @@ jobs:
         run: |
           make
       - name: Persist JAR artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: riptide-jar
           path: |
             target/*.jar
-      - name: Login to Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GHCR_PAT }}
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Build and push container image to registry
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          build-args: |
-            DATE=${{ env.BUILD_DATE }}
-            GIT_SHORT_HASH=${{ env.SHORT_GIT_SHA }}
-            REGISTRY_REPOSITORY=riptide-labs
-            VERSION=${{ env.VERSION }}
-          tags: |
-            ghcr.io/riptide-labs/riptide-dev:${{ env.SHORT_GIT_SHA }}
-            ghcr.io/riptide-labs/riptide-dev:snapshot

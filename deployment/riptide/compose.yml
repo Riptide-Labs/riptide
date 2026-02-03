@@ -1,0 +1,20 @@
+---
+include:
+  - ../clickhouse/compose.yml
+
+services:
+  riptide:
+    image: riptide:local
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      TZ: UTC
+      LOGGING_LEVEL_ROOT: WARN
+      RIPTIDE_CLICKHOUSE_ENDPOINT: http://clickhouse:8123
+      RIPTIDE_CLICKHOUSE_USERNAME: default
+      RIPTIDE_CLICKHOUSE_PASSWORD: ""
+      RIPTIDE_CLICKHOUSE_DATABASE: riptide
+    ports:
+      - "9999:9999/udp"
+
