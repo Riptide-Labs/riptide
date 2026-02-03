@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.0.1</version>
+        <version>4.0.2</version>
         <relativePath/>
     </parent>
 
@@ -19,7 +19,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <caffeine.version>3.2.3</caffeine.version>
         <common-csv.version>1.14.1</common-csv.version>
-        <dnsjava.version>3.6.3</dnsjava.version>
+        <dnsjava.version>3.6.4</dnsjava.version>
         <gson.version>2.13.2</gson.version>
         <guava.version>33.5.0-jre</guava.version>
         <ipaddress.version>5.5.1</ipaddress.version>
@@ -35,7 +35,7 @@
         <resilience4j.version>2.3.0</resilience4j.version>
         <snmp4j.version>3.8.2</snmp4j.version>
         <snmp4j-agent.version>3.8.3</snmp4j-agent.version>
-        <dropwizard-metrics.version>4.2.37</dropwizard-metrics.version>
+        <dropwizard-metrics.version>4.2.38</dropwizard-metrics.version>
         <jquick.version>1.9.3</jquick.version>
         <clickhouse.version>0.9.6</clickhouse.version>
         <jmh.version>1.37</jmh.version>
