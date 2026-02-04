@@ -8,15 +8,27 @@
   "commitConvention": "angular",
   "contributors": [
     {
+      "login": "fooker",
+      "name": "Dustin Frisch",
+      "avatar_url": "https://avatars.githubusercontent.com/u/405105?v=4",
+      "profile": "http://open-desk.org",
+      "contributions": [
+        "code",
+        "research",
+        "review",
+        "ideas"
+      ]
+    },
+    {
       "login": "indigo423",
       "name": "Ronny Trommer",
       "avatar_url": "https://avatars.githubusercontent.com/u/1095181?v=4",
       "profile": "https://blog.no42.org",
       "contributions": [
-	"code",
+        "code",
         "doc",
         "infra",
-	"maintenance"
+        "maintenance"
       ]
     }
   ],
