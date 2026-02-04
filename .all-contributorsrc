@@ -13,7 +13,10 @@
       "avatar_url": "https://avatars.githubusercontent.com/u/1095181?v=4",
       "profile": "https://blog.no42.org",
       "contributions": [
-        "infra"
+	"code",
+        "doc",
+        "infra",
+	"maintenance"
       ]
     }
   ],
