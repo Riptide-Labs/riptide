@@ -1,4 +1,7 @@
 
+<!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
+[![All Contributors](https://img.shields.io/badge/all_contributors-1-orange.svg?style=flat-square)](#contributors-)
+<!-- ALL-CONTRIBUTORS-BADGE:END -->
 ![riptide-logo](./artwork/riptide-logo.png)
 
 
@@ -109,3 +112,26 @@ You can find us at:
 
 * [Conventional commits](https://www.conventionalcommits.org/en/v1.0.0/)
 
+
+## Contributors ✨
+
+Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="http://open-desk.org"><img src="https://avatars.githubusercontent.com/u/405105?v=4?s=100" width="100px;" alt="Dustin Frisch"/><br /><sub><b>Dustin Frisch</b></sub></a><br /><a href="https://github.com/Riptide-Labs/riptide/commits?author=fooker" title="Code">💻</a> <a href="#research-fooker" title="Research">🔬</a> <a href="https://github.com/Riptide-Labs/riptide/pulls?q=is%3Apr+reviewed-by%3Afooker" title="Reviewed Pull Requests">👀</a> <a href="#ideas-fooker" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://blog.no42.org"><img src="https://avatars.githubusercontent.com/u/1095181?v=4?s=100" width="100px;" alt="Ronny Trommer"/><br /><sub><b>Ronny Trommer</b></sub></a><br /><a href="#infra-indigo423" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+
+<!-- ALL-CONTRIBUTORS-LIST:END -->
+
+This project follows the [all-contributors](https://github.com/all-contributors/all-contributors) specification. Contributions of any kind welcome!
