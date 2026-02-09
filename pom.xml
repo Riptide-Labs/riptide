@@ -23,7 +23,7 @@
         <gson.version>2.13.2</gson.version>
         <guava.version>33.5.0-jre</guava.version>
         <ipaddress.version>5.6.1</ipaddress.version>
-        <jakarta-xml-bind-api.version>4.0.4</jakarta-xml-bind-api.version>
+        <jakarta-xml-bind-api.version>4.0.5</jakarta-xml-bind-api.version>
         <java.version>25</java.version>
         <lombok.version>1.18.42</lombok.version>
         <mapstruct.version>1.6.3</mapstruct.version>
