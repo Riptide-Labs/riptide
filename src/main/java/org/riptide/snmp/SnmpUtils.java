@@ -43,7 +43,7 @@ public final class SnmpUtils {
 
             if (entry == table.getColumn()) {
                 for (final VariableBinding vb : tableEvent.getColumns()) {
-                    if (vb != null && vb.getVariable() != null) {
+                    if (vb != null && vb.getVariable() != null && !vb.getVariable().toString().isEmpty()) {
                         snmpInterfaceMap.put(snmpIfIndex, vb.getVariable().toString());
                     }
                 }
