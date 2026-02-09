@@ -30,7 +30,7 @@
         <maven-checkstyle-plugin.version>3.6.0</maven-checkstyle-plugin.version>
         <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
         <versions-maven-plugin.version>2.21.0</versions-maven-plugin.version>
-        <netty-all.version>4.2.9.Final</netty-all.version>
+        <netty-all.version>4.2.10.Final</netty-all.version>
         <org-eclipse-persistence-moxy.version>4.0.9</org-eclipse-persistence-moxy.version>
         <resilience4j.version>2.3.0</resilience4j.version>
         <snmp4j.version>3.9.6</snmp4j.version>
