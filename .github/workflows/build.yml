@@ -6,7 +6,7 @@ on:
     tags-ignore:
   pull_request:
     branches: [ 'main' ]  # Builds PRs targeting main
-    types: [ opened, synchronize, reopened ]  # Default: covers new pushes to PR
+    types: [ opened, reopened ]  # Default: covers new pushes to PR
 jobs:
   build:
     runs-on: ubuntu-latest
