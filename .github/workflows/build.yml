@@ -4,10 +4,9 @@ on:
   workflow_dispatch:
   push:
     tags-ignore:
-    branches: [ '*' ]
-  pull_request_target:
-    branches: [ '*' ]
-    types: [ opened, synchronize, reopened ]
+  pull_request:
+    branches: [ 'main' ]  # Builds PRs targeting main
+    types: [ opened, synchronize, reopened ]  # Default: covers new pushes to PR
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -29,7 +28,6 @@ jobs:
         run: |
           make
       - name: Persist JAR artifact
-        if: github.event_name != 'pull_request_target'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: riptide-jar
