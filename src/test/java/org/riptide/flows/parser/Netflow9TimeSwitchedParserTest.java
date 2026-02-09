@@ -16,7 +16,7 @@ import java.time.Duration;
 import java.time.Instant;
 
 @SpringBootTest
-public class NMS14130_Test {
+public class Netflow9TimeSwitchedParserTest {
 
     @Autowired
     @Qualifier("netflow9ValueConversionService")

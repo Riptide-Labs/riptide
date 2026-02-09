@@ -47,7 +47,8 @@ public class BlackboxTest {
                 List.of("netflow9_cisco_asr1001x_tpl259.dat"),
                 List.of("netflow9_test_paloalto_panos_tpl.dat", "netflow9_test_paloalto_panos_data.dat"),
                 List.of("netflow9_test_juniper_data_b4_tmpl.dat"),
-                List.of("nms-14130.dat"));
+                List.of("netflow9_test_time_parser_timeswitched.dat"),
+                List.of("netflow9_test_parser_snmpinputoutput.dat"));
     }
 
     @ParameterizedTest
