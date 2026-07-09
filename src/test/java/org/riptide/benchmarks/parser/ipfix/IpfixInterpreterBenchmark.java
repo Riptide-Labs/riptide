@@ -1,3 +1,8 @@
+/*
+ * Copyright 2025 Ronny Trommer <ronny@no42.org>
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 package org.riptide.benchmarks.parser.ipfix;
 
 import io.netty.buffer.Unpooled;

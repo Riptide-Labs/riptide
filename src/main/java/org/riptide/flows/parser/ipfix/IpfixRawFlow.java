@@ -1,3 +1,8 @@
+/*
+ * Copyright 2025 Ronny Trommer <ronny@no42.org>
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 package org.riptide.flows.parser.ipfix;
 
 import com.google.common.primitives.UnsignedLong;
