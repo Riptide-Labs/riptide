@@ -16,10 +16,11 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 
-import java.net.DatagramSocket;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.function.BooleanSupplier;
+
+import static org.riptide.e2e.E2eTestSupport.await;
+import static org.riptide.e2e.E2eTestSupport.freeUdpPort;
 
 /**
  * End-to-end: nl6-simulated devices export NetFlow v5 / v9 / IPFIX over real
@@ -158,23 +159,4 @@ public class Nl6FlowIngestionIT {
         }
     }
 
-    private static void await(final Duration timeout, final String description, final BooleanSupplier condition)
-            throws InterruptedException {
-        final var deadline = Instant.now().plus(timeout);
-        while (Instant.now().isBefore(deadline)) {
-            if (condition.getAsBoolean()) {
-                return;
-            }
-            Thread.sleep(2000);
-        }
-        Assertions.fail("Timed out after %s waiting for %s".formatted(timeout, description));
-    }
-
-    private static int freeUdpPort() {
-        try (var socket = new DatagramSocket(0)) {
-            return socket.getLocalPort();
-        } catch (final Exception e) {
-            throw new IllegalStateException("No free UDP port available", e);
-        }
-    }
 }

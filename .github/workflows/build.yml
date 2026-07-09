@@ -48,6 +48,27 @@ jobs:
       # The nl6 container needs NET_ADMIN + SYS_ADMIN and /dev/net/tun.
       # Testcontainers requests them per container; the runner's root Docker
       # daemon grants them without extra runner configuration.
+      #
+      # Full-mode additionally needs (spike/full-mode-routing runs, July 2026):
+      # - unconfined seccomp/AppArmor on the nl6 container (its netns setup
+      #   runs `mount --make-shared`, denied by default profiles) — requested
+      #   per container by the harness; --privileged is never used
+      # - a host route into the simulated device network so riptide can walk
+      #   SNMP back to the per-device agents
+      - name: Provision full-mode (route into nl6 device network)
+        run: |
+          docker network create --subnet 172.30.42.0/24 nl6-fullmode
+          sudo ip route add 10.42.0.0/16 via 172.30.42.10
+          sudo sysctl -w net.ipv4.conf.all.rp_filter=2
+          sudo sysctl -w net.ipv4.conf.default.rp_filter=2
       - name: Integration and e2e tests
         run: |
           make e2e
+        env:
+          RIPTIDE_E2E_FULL_MODE: "1"
+      - name: Persist coverage report
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: jacoco-report
+          path: target/site/jacoco/
