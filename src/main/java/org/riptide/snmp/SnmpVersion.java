@@ -71,12 +71,20 @@ enum SnmpVersion {
         Target<?> getTarget(final Snmp snmp, final SnmpBuilder snmpBuilder, final SnmpEndpoint snmpEndpoint) throws UnknownHostException {
             final Address targetAddress = getTargetAddress(snmpEndpoint);
             final byte[] targetEngineID = snmp.discoverAuthoritativeEngineID(targetAddress, 1000);
-            return snmpBuilder
+            var userBuilder = snmpBuilder
                     .v3()
                     .target(targetAddress)
-                    .user(snmpEndpoint.getSnmpDefinition().getSecurityName(), targetEngineID)
-                    .auth(snmpEndpoint.getSnmpDefinition().getAuthProtocol()).authPassphrase(snmpEndpoint.getSnmpDefinition().getAuthPassphrase())
-                    .priv(snmpEndpoint.getSnmpDefinition().getPrivProtocol()).privPassphrase(snmpEndpoint.getSnmpDefinition().getPrivPassphrase())
+                    .user(snmpEndpoint.getSnmpDefinition().getSecurityName(), targetEngineID);
+
+            if (snmpEndpoint.getSnmpDefinition().getAuthProtocol() != null && snmpEndpoint.getSnmpDefinition().getAuthPassphrase() != null) {
+                userBuilder = userBuilder.auth(snmpEndpoint.getSnmpDefinition().getAuthProtocol()).authPassphrase(snmpEndpoint.getSnmpDefinition().getAuthPassphrase());
+            }
+
+            if (snmpEndpoint.getSnmpDefinition().getPrivProtocol() != null && snmpEndpoint.getSnmpDefinition().getPrivPassphrase() != null) {
+                userBuilder = userBuilder.priv(snmpEndpoint.getSnmpDefinition().getPrivProtocol()).privPassphrase(snmpEndpoint.getSnmpDefinition().getPrivPassphrase());
+            }
+
+            return userBuilder
                     .done()
                     .timeout(snmpEndpoint.getSnmpDefinition().getTimeout())
                     .retries(snmpEndpoint.getSnmpDefinition().getRetries())

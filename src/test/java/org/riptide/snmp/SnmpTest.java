@@ -7,7 +7,9 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.snmp4j.fluent.TargetBuilder;
@@ -15,6 +17,21 @@ import org.snmp4j.fluent.TargetBuilder;
 import inet.ipaddr.IPAddressString;
 
 public class SnmpTest {
+
+    private static final AtomicInteger PORT_COUNTER = new AtomicInteger(12345);
+    private TestSnmpAgent currentAgent;
+
+    @AfterEach
+    public void cleanup() throws Exception {
+        if (currentAgent != null) {
+            currentAgent.stop();
+            currentAgent = null;
+        }
+    }
+
+    private int getNextPort() {
+        return PORT_COUNTER.getAndIncrement();
+    }
 
     public static SnmpEndpoint communityV1(final IPAddressString ipAddressString, final int port, final String community) {
         final SnmpDefinition snmpDefinition = new SnmpDefinition();
@@ -83,15 +100,14 @@ public class SnmpTest {
 
     @Test
     public void testSnmpV2(@TempDir Path temporaryFolder) throws Exception {
-        final TestSnmpAgent snmpAgent = new TestSnmpAgent("127.0.0.1/12345", temporaryFolder);
-        snmpAgent.start();
-        snmpAgent.registerIfTable();
-        snmpAgent.registerIfXTable();
+        final int port = getNextPort();
+        currentAgent = new TestSnmpAgent("127.0.0.1/" + port, temporaryFolder);
+        currentAgent.start();
+        currentAgent.registerIfTable();
+        currentAgent.registerIfXTable();
 
-        final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), 12345, TestSnmpAgent.COMMUNITY);
+        final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.COMMUNITY);
         final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint);
-
-        snmpAgent.stop();
 
         assertThat(ifMap.get(1)).isEqualTo("eth0-x");
         assertThat(ifMap.get(2)).isEqualTo("lo0-x");
@@ -99,15 +115,14 @@ public class SnmpTest {
 
     @Test
     public void testSnmpV3_noAuthNoPriv(@TempDir Path temporaryFolder) throws Exception {
-        final TestSnmpAgent snmpAgent = new TestSnmpAgent("127.0.0.1/12345", temporaryFolder);
-        snmpAgent.start();
-        snmpAgent.registerIfTable();
-        snmpAgent.registerIfXTable();
+        final int port = getNextPort();
+        currentAgent = new TestSnmpAgent("127.0.0.1/" + port, temporaryFolder);
+        currentAgent.start();
+        currentAgent.registerIfTable();
+        currentAgent.registerIfXTable();
 
-        final SnmpEndpoint snmpEndpoint = noAuthNoPriv(new IPAddressString("127.0.0.1"), 12345, TestSnmpAgent.NOAUTHNOPRIV_USERNAME);
+        final SnmpEndpoint snmpEndpoint = noAuthNoPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.NOAUTHNOPRIV_USERNAME);
         final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint);
-
-        snmpAgent.stop();
 
         assertThat(ifMap.get(1)).isEqualTo("eth0-x");
         assertThat(ifMap.get(2)).isEqualTo("lo0-x");
@@ -115,14 +130,13 @@ public class SnmpTest {
 
     @Test
     public void testIfTableFallback(@TempDir Path temporaryFolder) throws Exception {
-        final TestSnmpAgent snmpAgent = new TestSnmpAgent("127.0.0.1/12345", temporaryFolder);
-        snmpAgent.start();
-        snmpAgent.registerIfTable();
+        final int port = getNextPort();
+        currentAgent = new TestSnmpAgent("127.0.0.1/" + port, temporaryFolder);
+        currentAgent.start();
+        currentAgent.registerIfTable();
 
-        final SnmpEndpoint snmpEndpoint = noAuthNoPriv(new IPAddressString("127.0.0.1"), 12345, TestSnmpAgent.NOAUTHNOPRIV_USERNAME);
+        final SnmpEndpoint snmpEndpoint = noAuthNoPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.NOAUTHNOPRIV_USERNAME);
         final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint);
-
-        snmpAgent.stop();
 
         assertThat(ifMap.get(1)).isEqualTo("eth0");
         assertThat(ifMap.get(2)).isEqualTo("lo0");
@@ -130,15 +144,14 @@ public class SnmpTest {
 
     @Test
     public void testSnmpV3_authNoPriv(@TempDir Path temporaryFolder) throws Exception {
-        final TestSnmpAgent snmpAgent = new TestSnmpAgent("127.0.0.1/12345", temporaryFolder);
-        snmpAgent.start();
-        snmpAgent.registerIfTable();
-        snmpAgent.registerIfXTable();
+        final int port = getNextPort();
+        currentAgent = new TestSnmpAgent("127.0.0.1/" + port, temporaryFolder);
+        currentAgent.start();
+        currentAgent.registerIfTable();
+        currentAgent.registerIfXTable();
 
-        final SnmpEndpoint snmpEndpoint = authNoPriv(new IPAddressString("127.0.0.1"), 12345, TestSnmpAgent.AUTHNOPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1, TestSnmpAgent.AUTHNOPRIV_AUTH_PASSHRASE);
+        final SnmpEndpoint snmpEndpoint = authNoPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.AUTHNOPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1, TestSnmpAgent.AUTHNOPRIV_AUTH_PASSHRASE);
         final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint);
-
-        snmpAgent.stop();
 
         assertThat(ifMap.get(1)).isEqualTo("eth0-x");
         assertThat(ifMap.get(2)).isEqualTo("lo0-x");
@@ -146,15 +159,14 @@ public class SnmpTest {
 
     @Test
     public void testSnmpV3_authPriv(@TempDir Path temporaryFolder) throws Exception {
-        final TestSnmpAgent snmpAgent = new TestSnmpAgent("127.0.0.1/12345", temporaryFolder);
-        snmpAgent.start();
-        snmpAgent.registerIfTable();
-        snmpAgent.registerIfXTable();
+        final int port = getNextPort();
+        currentAgent = new TestSnmpAgent("127.0.0.1/" + port, temporaryFolder);
+        currentAgent.start();
+        currentAgent.registerIfTable();
+        currentAgent.registerIfXTable();
 
-        final SnmpEndpoint snmpEndpoint = authPriv(new IPAddressString("127.0.0.1"), 12345, TestSnmpAgent.AUTHPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1, TestSnmpAgent.AUTHPRIV_AUTH_PASSHRASE, TargetBuilder.PrivProtocol.aes128, TestSnmpAgent.AUTHPRIV_PRIV_PASSHRASE);
+        final SnmpEndpoint snmpEndpoint = authPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.AUTHPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1, TestSnmpAgent.AUTHPRIV_AUTH_PASSHRASE, TargetBuilder.PrivProtocol.aes128, TestSnmpAgent.AUTHPRIV_PRIV_PASSHRASE);
         final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint);
-
-        snmpAgent.stop();
 
         assertThat(ifMap.get(1)).isEqualTo("eth0-x");
         assertThat(ifMap.get(2)).isEqualTo("lo0-x");
@@ -162,24 +174,26 @@ public class SnmpTest {
 
     @Test
     public void testSnmpCache(@TempDir Path temporaryFolder) throws IOException, ExecutionException {
+        final int port = getNextPort();
         final SnmpCacheConfig snmpCacheConfig = new SnmpCacheConfig();
         snmpCacheConfig.retentionMs = 600000;
 
         final SnmpService snmpCache = new CachingSnmpService(new DefaultSnmpService(), snmpCacheConfig);
-        final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), 12345, TestSnmpAgent.COMMUNITY);
+        final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.COMMUNITY);
 
         assertThat(snmpCache.getIfName(snmpEndpoint, 1)).isInstanceOf(Optional.class).isEmpty();
 
-        final TestSnmpAgent snmpAgent = new TestSnmpAgent("127.0.0.1/12345", temporaryFolder);
-        snmpAgent.start();
-        snmpAgent.registerIfTable();
+        currentAgent = new TestSnmpAgent("127.0.0.1/" + port, temporaryFolder);
+        currentAgent.start();
+        currentAgent.registerIfTable();
 
         assertThat(snmpCache.getIfName(snmpEndpoint, 1)).isInstanceOf(Optional.class).isPresent();
         assertThat(snmpCache.getIfName(snmpEndpoint, 1).get()).isEqualTo("eth0");
         assertThat(snmpCache.getIfName(snmpEndpoint, 2)).isInstanceOf(Optional.class).isPresent();
         assertThat(snmpCache.getIfName(snmpEndpoint, 2).get()).isEqualTo("lo0");
 
-        snmpAgent.stop();
+        currentAgent.stop();
+        currentAgent = null;
 
         assertThat(snmpCache.getIfName(snmpEndpoint, 1)).isInstanceOf(Optional.class).isPresent();
         assertThat(snmpCache.getIfName(snmpEndpoint, 1).get()).isEqualTo("eth0");
