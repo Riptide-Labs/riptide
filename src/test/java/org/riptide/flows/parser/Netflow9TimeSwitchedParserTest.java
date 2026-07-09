@@ -1,3 +1,8 @@
+/*
+ * Copyright 2026 Ronny Trommer <ronny@no42.org>
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
+
 package org.riptide.flows.parser;
 
 import io.netty.buffer.ByteBuf;
@@ -26,7 +31,7 @@ import java.time.Instant;
 import static org.riptide.flows.utils.BufferUtils.slice;
 
 @SpringBootTest
-public class NMS13006_Test {
+public class Netflow9TimeSwitchedParserTest {
     private static final Path FOLDER = Paths.get("src/test/resources/flows");
 
     @Autowired
@@ -63,7 +68,7 @@ public class NMS13006_Test {
 
     @Test
     void verifyCaptureFile() throws Exception {
-        final var filename = "nms-13006.dat";
+        final var filename = "netflow9_test_parser_timeswitched.dat";
         final var session = new TcpSession(InetAddress.getLoopbackAddress(), () -> new SequenceNumberTracker(32));
         try (FileChannel channel = FileChannel.open(FOLDER.resolve(filename))) {
             final ByteBuffer buffer = ByteBuffer.allocate((int) channel.size());
