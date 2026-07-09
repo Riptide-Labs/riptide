@@ -25,7 +25,7 @@
         <ipaddress.version>5.6.1</ipaddress.version>
         <jakarta-xml-bind-api.version>4.0.5</jakarta-xml-bind-api.version>
         <java.version>25</java.version>
-        <lombok.version>1.18.42</lombok.version>
+        <lombok.version>1.18.44</lombok.version>
         <mapstruct.version>1.6.3</mapstruct.version>
         <maven-checkstyle-plugin.version>3.6.0</maven-checkstyle-plugin.version>
         <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
