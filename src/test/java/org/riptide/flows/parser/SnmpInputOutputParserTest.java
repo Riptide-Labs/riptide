@@ -1,3 +1,8 @@
+/*
+ * Copyright 2026 Ronny Trommer <ronny@no42.org>
+ * SPDX-License-Identifier: GPL-3.0-only
+ */
+
 package org.riptide.flows.parser;
 
 import org.assertj.core.api.Assertions;
@@ -32,15 +37,16 @@ public class SnmpInputOutputParserTest {
     @ParameterizedTest
     @MethodSource("provideTestInputs")
     void verifyNetflow9(Integer in, Integer out, Integer ingress, Integer egress, Integer expectedInputSnmp, Integer expectedOutputSnmp) {
-        final var flow = createNetflow9TestFlow(in, out, ingress, egress);
-        Assertions.assertThat(flow.getInputSnmp()).isEqualTo(expectedInputSnmp);
-        Assertions.assertThat(flow.getOutputSnmp()).isEqualTo(expectedOutputSnmp);
+        assertSnmpInterfaces(createNetflow9TestFlow(in, out, ingress, egress), expectedInputSnmp, expectedOutputSnmp);
     }
 
     @ParameterizedTest
     @MethodSource("provideTestInputs")
     void verifyIpfix(Integer in, Integer out, Integer ingress, Integer egress, Integer expectedInputSnmp, Integer expectedOutputSnmp) {
-        final var flow = createIpfixTestFlow(in, out, ingress, egress);
+        assertSnmpInterfaces(createIpfixTestFlow(in, out, ingress, egress), expectedInputSnmp, expectedOutputSnmp);
+    }
+
+    private static void assertSnmpInterfaces(Flow flow, Integer expectedInputSnmp, Integer expectedOutputSnmp) {
         Assertions.assertThat(flow.getInputSnmp()).isEqualTo(expectedInputSnmp);
         Assertions.assertThat(flow.getOutputSnmp()).isEqualTo(expectedOutputSnmp);
     }
@@ -51,40 +57,23 @@ public class SnmpInputOutputParserTest {
         raw.sysUpTime = Duration.ofSeconds(1000);
         raw.FIRST_SWITCHED = Duration.ofSeconds(2000);
         raw.LAST_SWITCHED = Duration.ofSeconds(3000);
-        if (in != null) {
-            raw.INPUT_SNMP = in;
-        }
-        if (out != null) {
-            raw.OUTPUT_SNMP = out;
-        }
-        if (ingress != null) {
-            raw.ingressPhysicalInterface = ingress;
-        }
-        if (egress != null) {
-            raw.egressPhysicalInterface = egress;
-        }
+        raw.INPUT_SNMP = in;
+        raw.OUTPUT_SNMP = out;
+        raw.ingressPhysicalInterface = ingress;
+        raw.egressPhysicalInterface = egress;
         return new Netflow9FlowBuilder(netflow9ConversionService).buildFlow(Instant.EPOCH, raw);
     }
 
     private Flow createIpfixTestFlow(Integer in, Integer out, Integer ingress, Integer egress) {
         final var raw = new IpfixRawFlow();
-        raw.exportTime = Instant.ofEpochSecond(1000); // @unixSecs
-        raw.systemInitTimeMilliseconds = Instant.ofEpochMilli(1000); // @sysUpTime
-
+        raw.exportTime = Instant.ofEpochSecond(1000);
+        raw.systemInitTimeMilliseconds = Instant.ofEpochMilli(1000);
         raw.flowStartSeconds = Instant.ofEpochSecond(2000);
         raw.flowEndSeconds = Instant.ofEpochSecond(3000);
-        if (in != null) {
-            raw.ingressInterface = in;
-        }
-        if (out != null) {
-            raw.egressInterface = out;
-        }
-        if (ingress != null) {
-            raw.ingressPhysicalInterface = ingress;
-        }
-        if (egress != null) {
-            raw.egressPhysicalInterface = egress;
-        }
+        raw.ingressInterface = in;
+        raw.egressInterface = out;
+        raw.ingressPhysicalInterface = ingress;
+        raw.egressPhysicalInterface = egress;
         return new IpFixFlowBuilder(ipfixConversionService).buildFlow(Instant.EPOCH, raw);
     }
 
