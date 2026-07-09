@@ -16,8 +16,6 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.Duration;
 import java.util.Map;
@@ -39,7 +37,6 @@ import static org.riptide.e2e.E2eTestSupport.freeUdpPort;
  */
 @SpringBootTest
 @ActiveProfiles("e2e")
-@Testcontainers
 @EnabledIfEnvironmentVariable(named = "RIPTIDE_E2E_FULL_MODE", matches = "1",
         disabledReason = "full-mode e2e needs a Linux host with a route into nl6's device network (see README)")
 public class Nl6SnmpEnrichmentIT {
@@ -50,7 +47,6 @@ public class Nl6SnmpEnrichmentIT {
     private static final String FIRST_DEVICE = "10.42.0.1";
     private static final long MIN_RECORDS = 50;
 
-    @Container
     private static final GenericContainer<?> CLICKHOUSE = new GenericContainer<>("clickhouse/clickhouse-server:25.3")
             .withEnv("CLICKHOUSE_DB", "riptide")
             .withEnv("CLICKHOUSE_USER", "riptide")
@@ -58,13 +54,23 @@ public class Nl6SnmpEnrichmentIT {
             .withExposedPorts(8123)
             .waitingFor(Wait.forHttp("/ping").forPort(8123).forStatusCode(200));
 
-    @Container
     private static final Nl6Container NL6 = new Nl6Container().perDevice(FULL_MODE_NETWORK, NL6_STATIC_IP);
 
     private static final int NETFLOW9_PORT = freeUdpPort();
 
     private static Client queryClient;
     private static Map<Integer, String> groundTruthIfNames;
+
+    static {
+        // Containers must outlive this class's CACHED Spring context (closed only
+        // at JVM exit): stopping them per-class (@Container) leaves the context's
+        // pipeline retrying inserts into a dead ClickHouse and starves later e2e
+        // classes in the same JVM. Started here, reaped by Ryuk at JVM death —
+        // same lifecycle as Nl6FlowIngestionIT. This block never runs when the
+        // class is disabled by the RIPTIDE_E2E_FULL_MODE gate (no class init).
+        CLICKHOUSE.start();
+        NL6.start();
+    }
 
     @DynamicPropertySource
     static void riptideProperties(final DynamicPropertyRegistry registry) {
