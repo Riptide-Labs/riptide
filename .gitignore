@@ -58,3 +58,9 @@ application-local.properties
 ### Docker Compose Override ###
 compose.override.y*ml
 docker-compose.override.y*ml
+
+# AI tools
+_bmad-output/
+_bmad/
+openspec/
+.claude/
