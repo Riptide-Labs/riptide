@@ -32,6 +32,8 @@ help:
 	@echo "  help:         Show this help with explaining the build goals"
 	@echo "  jar:          Compile Riptide from source with tests and generate a runnable jar file in the target directory"
 	@echo "  oci:          Build OCI container image"
+	@echo "  coverage:     Run the unit test suite and render the JaCoCo coverage report"
+	@echo "  e2e:          Run integration and e2e tests (*IT, requires Docker) in addition to the unit suite"
 	@echo "  clean:        Clean the build artifacts"
 	@echo ""
 
@@ -51,6 +53,16 @@ deps-oci:
 .PHONY: jar
 jar: deps-jar
 	mvn $(BUILD_OPTS) --batch-mode --update-snapshots verify
+
+.PHONY: coverage
+coverage: deps-jar
+	mvn $(BUILD_OPTS) --batch-mode test jacoco:report
+	@echo "Coverage report: target/site/jacoco/index.html"
+
+.PHONY: e2e
+e2e: deps-jar deps-oci
+	mvn $(BUILD_OPTS) --batch-mode --update-snapshots verify -Pe2e
+	@echo "Coverage report (incl. e2e): target/site/jacoco/index.html"
 
 .PHONY: oci
 oci: deps-oci jar

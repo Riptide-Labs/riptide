@@ -31,6 +31,21 @@ Build a container image in your local registry
 make oci
 ```
 
+Render a test coverage report (JaCoCo)
+
+```
+make coverage
+```
+
+Run the integration and e2e test tier (requires Docker; drives real NetFlow v5/v9 and IPFIX
+traffic from the [nl6](https://github.com/labmonkeys-space/nl6) simulator through riptide
+into ClickHouse). The nl6 image tag is pinned in `src/test/java/org/riptide/e2e/Nl6Container.java`
+and is bumped deliberately — it is a wire-format contract, not a Dependabot-managed dependency.
+
+```
+make e2e
+```
+
 # 🕹️ Run on your local system
 
 ```
