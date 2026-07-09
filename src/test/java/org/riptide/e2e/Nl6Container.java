@@ -15,6 +15,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -46,6 +47,28 @@ public final class Nl6Container extends GenericContainer<Nl6Container> {
         withExtraHost("host.docker.internal", "host-gateway");
         withCommand("-flow-source-per-device=false", "-flow-template-interval", "5");
         waitingFor(Wait.forHttp("/api/v1/flows/status").forPort(8080).forStatusCode(200));
+    }
+
+    /**
+     * Per-device source-IP mode (full-mode tier): each simulated device sends
+     * flows from its own IP inside the nl6sim namespace and answers SNMP there.
+     *
+     * Requires unconfined seccomp/AppArmor IN ADDITION to the TUN capabilities:
+     * nl6's netns setup runs `mount --make-shared`, which default container
+     * profiles deny (full-mode spike, July 2026). Granular caps stay and
+     * --privileged is deliberately never used (spec e2e-snmp-enrichment-testing,
+     * "Bounded container privileges"). The host needs a route into
+     * 10.42.0.0/16 via this container's static IP.
+     */
+    public Nl6Container perDevice(final String networkName, final String staticIpv4) {
+        withCreateContainerCmdModifier(cmd -> {
+            cmd.getHostConfig()
+                    .withSecurityOpts(List.of("seccomp=unconfined", "apparmor=unconfined"))
+                    .withNetworkMode(networkName);
+            cmd.withIpv4Address(staticIpv4);
+        });
+        withCommand("-flow-source-per-device=true", "-flow-template-interval", "5");
+        return this;
     }
 
     @Override

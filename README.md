@@ -46,6 +46,18 @@ and is bumped deliberately — it is a wire-format contract, not a Dependabot-ma
 make e2e
 ```
 
+The e2e tier includes an optional **full mode** (Linux only): nl6 devices export flows
+from per-device source IPs and riptide's SNMP enrichment walks back to each device's
+simulated agent. It is gated on `RIPTIDE_E2E_FULL_MODE=1` and skipped otherwise
+(e.g. on macOS). To run it on a Linux host:
+
+```
+docker network create --subnet 172.30.42.0/24 nl6-fullmode
+sudo ip route add 10.42.0.0/16 via 172.30.42.10
+sudo sysctl -w net.ipv4.conf.all.rp_filter=2
+RIPTIDE_E2E_FULL_MODE=1 make e2e
+```
+
 # 🕹️ Run on your local system
 
 ```
