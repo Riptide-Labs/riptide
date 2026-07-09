@@ -32,7 +32,7 @@
         <versions-maven-plugin.version>2.21.0</versions-maven-plugin.version>
         <netty-all.version>4.2.10.Final</netty-all.version>
         <org-eclipse-persistence-moxy.version>4.0.9</org-eclipse-persistence-moxy.version>
-        <resilience4j.version>2.3.0</resilience4j.version>
+        <resilience4j.version>2.4.0</resilience4j.version>
         <snmp4j.version>3.9.7</snmp4j.version>
         <snmp4j-agent.version>3.8.3</snmp4j-agent.version>
         <dropwizard-metrics.version>4.2.38</dropwizard-metrics.version>
