@@ -10,9 +10,6 @@ import com.google.common.primitives.UnsignedLong;
 import io.netty.buffer.ByteBuf;
 
 import java.nio.BufferUnderflowException;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
 import java.util.function.Function;
 
 public final class BufferUtils {
@@ -108,22 +105,6 @@ public final class BufferUtils {
               | ((buffer.readUnsignedByte() & 0xFFL) << 0));
     }
 
-    public static Integer sint8(final ByteBuf buffer) {
-        return Integer.valueOf(
-                (buffer.readUnsignedByte() & 0xFF) << 0);
-    }
-
-    public static Integer sint16(final ByteBuf buffer) {
-        return ((buffer.readUnsignedByte() & 0xFF) << 8)
-             | ((buffer.readUnsignedByte() & 0xFF) << 0);
-    }
-
-    public static Integer sint24(final ByteBuf buffer) {
-        return ((buffer.readUnsignedByte() & 0xFF) << 16)
-             | ((buffer.readUnsignedByte() & 0xFF) << 8)
-             | ((buffer.readUnsignedByte() & 0xFF) << 0);
-    }
-
     public static Integer sint32(final ByteBuf buffer) {
         return ((buffer.readUnsignedByte() & 0xFF) << 24)
              | ((buffer.readUnsignedByte() & 0xFF) << 16)
@@ -131,45 +112,9 @@ public final class BufferUtils {
              | ((buffer.readUnsignedByte() & 0xFF) << 0);
     }
 
-    public static Long sint64(final ByteBuf buffer) {
-        return ((buffer.readUnsignedByte() & 0xFFL) << 56)
-             | ((buffer.readUnsignedByte() & 0xFFL) << 48)
-             | ((buffer.readUnsignedByte() & 0xFFL) << 40)
-             | ((buffer.readUnsignedByte() & 0xFFL) << 32)
-             | ((buffer.readUnsignedByte() & 0xFFL) << 24)
-             | ((buffer.readUnsignedByte() & 0xFFL) << 16)
-             | ((buffer.readUnsignedByte() & 0xFFL) << 8)
-             | ((buffer.readUnsignedByte() & 0xFFL) << 0);
-    }
-
     public static byte[] bytes(final ByteBuf buffer, final int size) {
         final byte[] result = new byte[size];
         buffer.readBytes(result);
         return result;
-    }
-
-    public static void skip(final ByteBuf buffer, final int size) {
-        buffer.skipBytes(size);
-    }
-
-    public static <T, E extends Exception> List<T> repeatRemaining(final ByteBuf buffer, final Parser<T, E> parser) throws E {
-        final List<T> elements = new ArrayList<>();
-        while (buffer.isReadable()) {
-            elements.add(parser.parse(buffer));
-        }
-        return Collections.unmodifiableList(elements);
-    }
-
-    public static <T, E extends Exception> List<T> repeatCount(final ByteBuf buffer, final int count, final Parser<T, E> parser) throws E {
-        final List<T> elements = new ArrayList<>();
-        for (int i = 0; i < count; i++) {
-            elements.add(parser.parse(buffer));
-        }
-        return Collections.unmodifiableList(elements);
-    }
-
-    @FunctionalInterface
-    public interface Parser<T, E extends Exception> {
-        T parse(ByteBuf buffer) throws E;
     }
 }

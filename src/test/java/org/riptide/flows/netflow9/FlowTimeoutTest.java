@@ -8,7 +8,6 @@ package org.riptide.flows.netflow9;
 
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.riptide.flows.parser.exceptions.IllegalFlowException;
 import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.netflow9.Netflow9FlowBuilder;
 import org.riptide.flows.parser.netflow9.Netflow9RawFlow;
@@ -27,7 +26,7 @@ public class FlowTimeoutTest {
     private ValueConversionService valueConversionService;
 
     @Test
-    void verifyWithoutTimeout() throws IllegalFlowException {
+    void verifyWithoutTimeout() {
         final var raw = new Netflow9RawFlow();
         raw.unixSecs = Instant.EPOCH;
         raw.sysUpTime = Duration.ZERO;
@@ -42,7 +41,7 @@ public class FlowTimeoutTest {
     }
 
     @Test
-    void verifyWithActiveTimeout() throws IllegalFlowException {
+    void verifyWithActiveTimeout() {
         final var raw = new Netflow9RawFlow();
         raw.unixSecs = Instant.EPOCH;
         raw.sysUpTime = Duration.ZERO;
@@ -60,7 +59,7 @@ public class FlowTimeoutTest {
     }
 
     @Test
-    void verifyWithInactiveTimeout() throws IllegalFlowException {
+    void verifyWithInactiveTimeout() {
         final var raw = new Netflow9RawFlow();
         raw.unixSecs = Instant.EPOCH;
         raw.sysUpTime = Duration.ZERO;

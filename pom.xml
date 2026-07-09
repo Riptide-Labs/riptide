@@ -20,7 +20,6 @@
         <caffeine.version>3.2.3</caffeine.version>
         <common-csv.version>1.14.1</common-csv.version>
         <dnsjava.version>3.6.4</dnsjava.version>
-        <gson.version>2.13.2</gson.version>
         <guava.version>33.5.0-jre</guava.version>
         <ipaddress.version>5.6.1</ipaddress.version>
         <jakarta-xml-bind-api.version>4.0.5</jakarta-xml-bind-api.version>
@@ -79,11 +78,6 @@
             <version>${resilience4j.version}</version>
         </dependency>
         <dependency>
-            <groupId>io.github.resilience4j</groupId>
-            <artifactId>resilience4j-bulkhead</artifactId>
-            <version>${resilience4j.version}</version>
-        </dependency>
-        <dependency>
             <groupId>dnsjava</groupId>
             <artifactId>dnsjava</artifactId>
             <version>${dnsjava.version}</version>
@@ -97,19 +91,6 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-csv</artifactId>
             <version>${common-csv.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>com.google.code.gson</groupId>
-            <artifactId>gson</artifactId>
-            <version>${gson.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.httpcomponents.core5</groupId>
-            <artifactId>httpcore5</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.httpcomponents.client5</groupId>
-            <artifactId>httpclient5</artifactId>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
@@ -182,19 +163,9 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>org.awaitility</groupId>
-            <artifactId>awaitility</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
             <groupId>org.snmp4j</groupId>
             <artifactId>snmp4j-agent</artifactId>
             <version>${snmp4j-agent.version}</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.skyscreamer</groupId>
-            <artifactId>jsonassert</artifactId>
             <scope>test</scope>
         </dependency>
             <dependency>
