@@ -7,6 +7,11 @@
 
 # 🌊 Welcome to Riptide [![Riptide Build](https://github.com/Riptide-Labs/riptide/actions/workflows/build.yml/badge.svg)](https://github.com/Riptide-Labs/riptide/actions/workflows/build.yml)
 
+[![Latest Release](https://img.shields.io/github/v/release/Riptide-Labs/riptide?sort=semver)](https://github.com/Riptide-Labs/riptide/releases)
+[![License](https://img.shields.io/github/license/Riptide-Labs/riptide)](LICENSE)
+[![Container Image](https://img.shields.io/badge/ghcr.io-riptide-blue?logo=docker)](https://github.com/Riptide-Labs/riptide/pkgs/container/riptide)
+[![Java](https://img.shields.io/badge/dynamic/xml?url=https%3A%2F%2Fraw.githubusercontent.com%2FRiptide-Labs%2Friptide%2Fmain%2Fpom.xml&query=%2F%2F*%5Blocal-name()%3D%27java.version%27%5D&label=Java&logo=openjdk)](pom.xml)
+
 Give people who love working with networks the tools they deserve to optimize and troubleshoot network traffic.
 
 # 👩‍🏭 Build from source
