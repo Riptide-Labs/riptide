@@ -7,13 +7,13 @@ package org.riptide.configuration;
 
 import com.codahale.metrics.MetricRegistry;
 import lombok.extern.slf4j.Slf4j;
-import org.riptide.RiptideApplication;
 import org.riptide.classification.ClassificationEngine;
 import org.riptide.classification.ClassificationRuleProvider;
 import org.riptide.classification.internal.AsyncReloadingClassificationEngine;
 import org.riptide.classification.internal.DefaultClassificationEngine;
 import org.riptide.classification.internal.TimingClassificationEngine;
 import org.riptide.classification.internal.csv.CsvImporter;
+import org.riptide.config.ClassificationConfig;
 import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.ie.values.visitor.ValueVisitor;
 import org.riptide.flows.parser.ipfix.IpfixRawFlow;
@@ -24,6 +24,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.List;
 
 @Configuration
@@ -56,9 +57,20 @@ public class RiptideConfiguration {
     }
 
     @Bean
-    ClassificationRuleProvider classificationRuleProvider(final CsvImporter importer) throws IOException {
-        final var rules = importer.parse(RiptideApplication.class.getResourceAsStream("/classification-rules.csv"), true);
-        return ClassificationRuleProvider.forList(rules);
+    ClassificationRuleProvider classificationRuleProvider(final CsvImporter importer,
+                                                          final ClassificationConfig config) {
+        // Re-parse on every call so the reloading engine picks up edits to a
+        // file-based rules resource; a one-shot snapshot would make reload() a no-op.
+        final ClassificationRuleProvider provider = () -> {
+            try (var stream = config.getRules().getInputStream()) {
+                return importer.parse(stream, true);
+            } catch (final IOException e) {
+                throw new UncheckedIOException("Cannot load classification rules from " + config.getRules(), e);
+            }
+        };
+        // Fail fast at startup instead of on the async reload thread.
+        provider.getRules();
+        return provider;
     }
 
     @Bean
