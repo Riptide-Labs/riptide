@@ -7,6 +7,8 @@ package org.riptide.snmp;
 
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.riptide.node.Node;
+import org.riptide.node.NodeRegistry;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Source;
@@ -23,12 +25,12 @@ public class SnmpEnricher implements Enricher {
     private final SnmpService snmpService;
 
     @NonNull
-    private final SnmpConfiguration snmpConfiguration;
+    private final NodeRegistry nodeRegistry;
 
     @Override
     public CompletableFuture<Void> enrich(final Source source, final List<EnrichedFlow> flows) {
         return CompletableFuture.supplyAsync(() -> {
-            this.snmpConfiguration.lookup(source.identity()).ifPresent(snmpEndpoint -> {
+            this.nodeRegistry.lookup(source.identity()).flatMap(Node::snmpEndpoint).ifPresent(snmpEndpoint -> {
                 for (final EnrichedFlow flow : flows) {
                     this.snmpService.getIfName(snmpEndpoint, flow.getInputSnmp()).ifPresent(flow::setInputSnmpIfName);
                     this.snmpService.getIfName(snmpEndpoint, flow.getOutputSnmp()).ifPresent(flow::setOutputSnmpIfName);
