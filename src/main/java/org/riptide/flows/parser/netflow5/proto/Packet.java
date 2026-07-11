@@ -59,7 +59,8 @@ public final class Packet implements Iterable<Record>, FlowPacket {
 
     @Override
     public long getObservationDomainId() {
-        return ((long) this.header.engineType) << 8L + ((long) this.header.engineId);
+        // parenthesized: '+' binds tighter than '<<', which used to shift by (8 + engineId)
+        return (((long) this.header.engineType) << 8) + ((long) this.header.engineId);
     }
 
     @Override

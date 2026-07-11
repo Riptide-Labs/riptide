@@ -7,9 +7,9 @@ package org.riptide.snmp;
 
 import inet.ipaddr.IPAddressString;
 import lombok.Data;
+import org.riptide.pipeline.ExporterIdentity;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -19,17 +19,29 @@ import java.util.Optional;
 public class SnmpConfiguration {
     public List<SnmpDefinition> definitions = new ArrayList<>();
 
-    public Optional<SnmpEndpoint> lookup(final InetAddress host) {
-        return lookup(host.getHostAddress());
-    }
+    /**
+     * Selects the SNMP definition for an exporter. Definitions pinned to the flow's
+     * observation domain win over wildcard definitions (no {@code observation-domain});
+     * within each group the subnet match keeps the existing first-match order.
+     */
+    public Optional<SnmpEndpoint> lookup(final ExporterIdentity identity) {
+        // instanceof instead of an exhaustive switch pattern only because checkstyle 9.3
+        // cannot parse switch record patterns; new ExporterIdentity variants (sFlow, #159)
+        // must be handled here.
+        if (identity instanceof ExporterIdentity.NetflowIpfix netflowIpfix) {
+            final IPAddressString ipAddressString = new IPAddressString(netflowIpfix.source().getHostAddress());
+            final List<SnmpDefinition> subnetMatches = this.definitions.stream()
+                    .filter(definition -> definition.getSubnetAddress().contains(ipAddressString))
+                    .toList();
 
-    public Optional<SnmpEndpoint> lookup(final String host) {
-        final IPAddressString ipAddressString = new IPAddressString(host);
-        for (final SnmpDefinition snmpDefinition : this.definitions) {
-            if (snmpDefinition.getSubnetAddress().contains(ipAddressString)) {
-                return Optional.of(snmpDefinition.createEndpoint(ipAddressString));
-            }
+            return subnetMatches.stream()
+                    .filter(definition -> definition.getObservationDomain() != null && definition.getObservationDomain() == netflowIpfix.observationDomain())
+                    .findFirst()
+                    .or(() -> subnetMatches.stream()
+                            .filter(definition -> definition.getObservationDomain() == null)
+                            .findFirst())
+                    .map(definition -> definition.createEndpoint(ipAddressString));
         }
-        return Optional.empty();
+        throw new IllegalStateException("Unhandled exporter identity: " + identity);
     }
 }
