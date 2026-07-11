@@ -89,6 +89,27 @@ public class NetflowPacketTest {
     }
 
     @Test
+    public void observationDomainIdCombinesEngineTypeAndEngineId() throws InvalidPacketException {
+        final ByteBuf buffer = Unpooled.buffer();
+        buffer.writeShort(0x0005);      // version
+        buffer.writeShort(1);           // count
+        buffer.writeInt(0);             // sysUptime
+        buffer.writeInt(0);             // unixSecs
+        buffer.writeInt(0);             // unixNSecs
+        buffer.writeInt(0);             // flowSequence
+        buffer.writeByte(1);            // engineType
+        buffer.writeByte(1);            // engineId
+        buffer.writeShort(0);           // sampling
+        buffer.writeZero(Record.SIZE);  // one empty record
+
+        final Header header = new Header(buffer);
+        final Packet packet = new Packet(header, buffer);
+
+        // (engineType << 8) + engineId — a precedence bug used to shift by (8 + engineId)
+        assertThat(packet.getObservationDomainId()).isEqualTo(257L);
+    }
+
+    @Test
     public void canReadInvalidNetflow5_01() throws InvalidPacketException {
         Assertions.assertThatThrownBy(() -> {
             execute("/flows/netflow5_test_invalid01.dat", flowPacket -> {

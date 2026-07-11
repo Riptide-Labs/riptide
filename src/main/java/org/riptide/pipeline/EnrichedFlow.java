@@ -7,6 +7,7 @@ package org.riptide.pipeline;
 
 import lombok.Builder;
 import lombok.Data;
+import org.mapstruct.BeanMapping;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import org.mapstruct.NullValueCheckStrategy;
@@ -93,6 +94,8 @@ public class EnrichedFlow {
 
         @Mapping(target = ".", source = "source")
         @Mapping(target = ".", source = "flow")
+        // used for node lookup only; not persisted on the flow (yet)
+        @BeanMapping(ignoreUnmappedSourceProperties = {"observationDomain"})
         public abstract EnrichedFlow enrichedFlow(Source source, Flow flow);
 
         protected String address(final InetAddress address) {

@@ -22,4 +22,15 @@ public class Source {
 
     @NonNull
     private final InetAddress exporterAddr;
+
+    /** Observation domain (IPFIX) / source ID (NetFlow v9); {@code 0} when the protocol has none. */
+    private final long observationDomain;
+
+    public Source(final String location, final InetAddress exporterAddr) {
+        this(location, exporterAddr, 0);
+    }
+
+    public ExporterIdentity identity() {
+        return new ExporterIdentity.NetflowIpfix(this.exporterAddr, this.observationDomain);
+    }
 }

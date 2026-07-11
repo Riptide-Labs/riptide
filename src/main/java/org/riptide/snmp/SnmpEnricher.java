@@ -28,7 +28,7 @@ public class SnmpEnricher implements Enricher {
     @Override
     public CompletableFuture<Void> enrich(final Source source, final List<EnrichedFlow> flows) {
         return CompletableFuture.supplyAsync(() -> {
-            this.snmpConfiguration.lookup(source.getExporterAddr()).ifPresent(snmpEndpoint -> {
+            this.snmpConfiguration.lookup(source.identity()).ifPresent(snmpEndpoint -> {
                 for (final EnrichedFlow flow : flows) {
                     this.snmpService.getIfName(snmpEndpoint, flow.getInputSnmp()).ifPresent(flow::setInputSnmpIfName);
                     this.snmpService.getIfName(snmpEndpoint, flow.getOutputSnmp()).ifPresent(flow::setOutputSnmpIfName);
