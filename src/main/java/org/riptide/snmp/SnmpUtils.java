@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
+import org.riptide.secrets.SecretResolvers;
 import org.snmp4j.Snmp;
 import org.snmp4j.Target;
 import org.snmp4j.fluent.SnmpBuilder;
@@ -58,10 +59,10 @@ public final class SnmpUtils {
         return snmpInterfaceMap;
     }
 
-    public static Map<Integer, String> getSnmpInterfaceMap(final SnmpEndpoint snmpEndpoint) throws IOException {
+    public static Map<Integer, String> getSnmpInterfaceMap(final SnmpEndpoint snmpEndpoint, final SecretResolvers secretResolvers) throws IOException {
         final SnmpBuilder snmpBuilder = snmpEndpoint.getSnmpDefinition().getSnmpVersion().getSnmpBuilder();
         try (Snmp snmp = snmpBuilder.build()) {
-            final Target<?> target = snmpEndpoint.getSnmpDefinition().getSnmpVersion().getTarget(snmp, snmpBuilder, snmpEndpoint);
+            final Target<?> target = snmpEndpoint.getSnmpDefinition().getSnmpVersion().getTarget(snmp, snmpBuilder, snmpEndpoint, secretResolvers);
             // query ifXTable first, if not available fallback to ifTable
             final var snmpInterfaceMap = walkTable(snmp, target, SNMP_IFX_TABLE);
             if (snmpInterfaceMap.isEmpty()) {
