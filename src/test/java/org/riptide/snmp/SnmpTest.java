@@ -17,6 +17,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.riptide.secrets.SecretRef;
+import org.riptide.secrets.SecretResolvers;
 import org.snmp4j.fluent.TargetBuilder;
 
 import inet.ipaddr.IPAddressString;
@@ -24,6 +26,7 @@ import inet.ipaddr.IPAddressString;
 public class SnmpTest {
 
     private static final AtomicInteger PORT_COUNTER = new AtomicInteger(12345);
+    private static final SecretResolvers SECRET_RESOLVERS = SecretResolvers.defaults();
     private TestSnmpAgent currentAgent;
 
     @AfterEach
@@ -42,7 +45,7 @@ public class SnmpTest {
         final SnmpDefinition snmpDefinition = new SnmpDefinition();
         snmpDefinition.setPort(port);
         snmpDefinition.setSnmpVersion(SnmpVersion.v1);
-        snmpDefinition.setCommunity(community);
+        snmpDefinition.setCommunity(SecretRef.of(community));
         snmpDefinition.setSecurityName(null);
         snmpDefinition.setAuthProtocol(null);
         snmpDefinition.setAuthPassphrase(null);
@@ -55,7 +58,7 @@ public class SnmpTest {
         final SnmpDefinition snmpDefinition = new SnmpDefinition();
         snmpDefinition.setPort(port);
         snmpDefinition.setSnmpVersion(SnmpVersion.v2c);
-        snmpDefinition.setCommunity(community);
+        snmpDefinition.setCommunity(SecretRef.of(community));
         snmpDefinition.setSecurityName(null);
         snmpDefinition.setAuthProtocol(null);
         snmpDefinition.setAuthPassphrase(null);
@@ -84,7 +87,7 @@ public class SnmpTest {
         snmpDefinition.setCommunity(null);
         snmpDefinition.setSecurityName(securityName);
         snmpDefinition.setAuthProtocol(authProtocol);
-        snmpDefinition.setAuthPassphrase(authPassphrase);
+        snmpDefinition.setAuthPassphrase(SecretRef.of(authPassphrase));
         snmpDefinition.setPrivProtocol(null);
         snmpDefinition.setPrivPassphrase(null);
         return snmpDefinition.createEndpoint(ipAddressString);
@@ -97,9 +100,9 @@ public class SnmpTest {
         snmpDefinition.setCommunity(null);
         snmpDefinition.setSecurityName(securityName);
         snmpDefinition.setAuthProtocol(authProtocol);
-        snmpDefinition.setAuthPassphrase(authPassphrase);
+        snmpDefinition.setAuthPassphrase(SecretRef.of(authPassphrase));
         snmpDefinition.setPrivProtocol(privProtocol);
-        snmpDefinition.setPrivPassphrase(privPassphrase);
+        snmpDefinition.setPrivPassphrase(SecretRef.of(privPassphrase));
         return snmpDefinition.createEndpoint(ipAddressString);
     }
 
@@ -112,7 +115,7 @@ public class SnmpTest {
         currentAgent.registerIfXTable();
 
         final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.COMMUNITY);
-        final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint);
+        final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint, SECRET_RESOLVERS);
 
         assertThat(ifMap.get(1)).isEqualTo("eth0-x");
         assertThat(ifMap.get(2)).isEqualTo("lo0-x");
@@ -127,7 +130,7 @@ public class SnmpTest {
         currentAgent.registerIfXTable();
 
         final SnmpEndpoint snmpEndpoint = noAuthNoPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.NOAUTHNOPRIV_USERNAME);
-        final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint);
+        final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint, SECRET_RESOLVERS);
 
         assertThat(ifMap.get(1)).isEqualTo("eth0-x");
         assertThat(ifMap.get(2)).isEqualTo("lo0-x");
@@ -141,7 +144,7 @@ public class SnmpTest {
         currentAgent.registerIfTable();
 
         final SnmpEndpoint snmpEndpoint = noAuthNoPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.NOAUTHNOPRIV_USERNAME);
-        final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint);
+        final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint, SECRET_RESOLVERS);
 
         assertThat(ifMap.get(1)).isEqualTo("eth0");
         assertThat(ifMap.get(2)).isEqualTo("lo0");
@@ -156,7 +159,7 @@ public class SnmpTest {
         currentAgent.registerIfXTable();
 
         final SnmpEndpoint snmpEndpoint = authNoPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.AUTHNOPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1, TestSnmpAgent.AUTHNOPRIV_AUTH_PASSHRASE);
-        final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint);
+        final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint, SECRET_RESOLVERS);
 
         assertThat(ifMap.get(1)).isEqualTo("eth0-x");
         assertThat(ifMap.get(2)).isEqualTo("lo0-x");
@@ -171,10 +174,19 @@ public class SnmpTest {
         currentAgent.registerIfXTable();
 
         final SnmpEndpoint snmpEndpoint = authPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.AUTHPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1, TestSnmpAgent.AUTHPRIV_AUTH_PASSHRASE, TargetBuilder.PrivProtocol.aes128, TestSnmpAgent.AUTHPRIV_PRIV_PASSHRASE);
-        final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint);
+        final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint, SECRET_RESOLVERS);
 
         assertThat(ifMap.get(1)).isEqualTo("eth0-x");
         assertThat(ifMap.get(2)).isEqualTo("lo0-x");
+    }
+
+    @Test
+    public void unresolvableSecretRefDegradesToEmptyInsteadOfThrowing() {
+        // a broken secret reference must yield an unenriched flow, never fail the pipeline
+        final SnmpService snmpService = new DefaultSnmpService(SECRET_RESOLVERS);
+        final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), getNextPort(), "env://RIPTIDE_TEST_MISSING_VAR");
+
+        assertThat(snmpService.getIfName(snmpEndpoint, 1)).isInstanceOf(Optional.class).isEmpty();
     }
 
     @Test
@@ -183,7 +195,7 @@ public class SnmpTest {
         final SnmpCacheConfig snmpCacheConfig = new SnmpCacheConfig();
         snmpCacheConfig.retentionMs = 600000;
 
-        final SnmpService snmpCache = new CachingSnmpService(new DefaultSnmpService(), snmpCacheConfig);
+        final SnmpService snmpCache = new CachingSnmpService(new DefaultSnmpService(SECRET_RESOLVERS), snmpCacheConfig);
         final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.COMMUNITY);
 
         assertThat(snmpCache.getIfName(snmpEndpoint, 1)).isInstanceOf(Optional.class).isEmpty();

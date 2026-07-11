@@ -7,6 +7,7 @@ package org.riptide.snmp;
 
 import java.net.InetSocketAddress;
 
+import org.riptide.secrets.SecretRef;
 import org.snmp4j.fluent.TargetBuilder;
 
 import inet.ipaddr.IPAddressString;
@@ -16,13 +17,13 @@ import lombok.Data;
 public class SnmpDefinition {
     private TargetBuilder.AuthProtocol authProtocol;
 
-    private String authPassphrase;
+    private SecretRef authPassphrase;
 
     private TargetBuilder.PrivProtocol privProtocol;
 
-    private String privPassphrase;
+    private SecretRef privPassphrase;
 
-    private String community;
+    private SecretRef community;
 
     private String securityName;
 
