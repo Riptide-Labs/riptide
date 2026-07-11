@@ -74,7 +74,11 @@ public class SnmpEnricherTest {
             assertThat(enrichedFlow.getInputSnmp()).isEqualTo(1);
             assertThat(enrichedFlow.getOutputSnmp()).isEqualTo(2);
             assertThat(enrichedFlow.getInputSnmpIfName()).isEqualTo("eth0-x");
+            assertThat(enrichedFlow.getInputSnmpIfAlias()).isEqualTo("My ethernet interface");
+            assertThat(enrichedFlow.getInputSnmpIfSpeed()).isEqualTo(14L);
             assertThat(enrichedFlow.getOutputSnmpIfName()).isEqualTo("lo0-x");
+            assertThat(enrichedFlow.getOutputSnmpIfAlias()).isEqualTo("My loopback interface");
+            assertThat(enrichedFlow.getOutputSnmpIfSpeed()).isEqualTo(34L);
         });
     }
 }

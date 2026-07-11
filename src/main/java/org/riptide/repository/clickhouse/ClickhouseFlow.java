@@ -29,9 +29,13 @@ public class ClickhouseFlow {
 
     private int inputSnmp;
     private String inputSnmpIfName;
+    private String inputSnmpIfAlias;
+    private Long inputSnmpIfSpeed;
 
     private int outputSnmp;
     private String outputSnmpIfName;
+    private String outputSnmpIfAlias;
+    private Long outputSnmpIfSpeed;
 
     private long srcAs;
     private Inet6Address srcAddr;

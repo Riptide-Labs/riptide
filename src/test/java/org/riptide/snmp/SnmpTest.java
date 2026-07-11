@@ -115,10 +115,14 @@ public class SnmpTest {
         currentAgent.registerIfXTable();
 
         final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.COMMUNITY);
-        final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint, SECRET_RESOLVERS);
+        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS);
 
-        assertThat(ifMap.get(1)).isEqualTo("eth0-x");
-        assertThat(ifMap.get(2)).isEqualTo("lo0-x");
+        assertThat(ifMap.get(1).name()).isEqualTo("eth0-x");
+        assertThat(ifMap.get(1).alias()).isEqualTo("My ethernet interface");
+        assertThat(ifMap.get(1).highSpeed()).isEqualTo(14L);
+        assertThat(ifMap.get(2).name()).isEqualTo("lo0-x");
+        assertThat(ifMap.get(2).alias()).isEqualTo("My loopback interface");
+        assertThat(ifMap.get(2).highSpeed()).isEqualTo(34L);
     }
 
     @Test
@@ -130,10 +134,14 @@ public class SnmpTest {
         currentAgent.registerIfXTable();
 
         final SnmpEndpoint snmpEndpoint = noAuthNoPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.NOAUTHNOPRIV_USERNAME);
-        final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint, SECRET_RESOLVERS);
+        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS);
 
-        assertThat(ifMap.get(1)).isEqualTo("eth0-x");
-        assertThat(ifMap.get(2)).isEqualTo("lo0-x");
+        assertThat(ifMap.get(1).name()).isEqualTo("eth0-x");
+        assertThat(ifMap.get(1).alias()).isEqualTo("My ethernet interface");
+        assertThat(ifMap.get(1).highSpeed()).isEqualTo(14L);
+        assertThat(ifMap.get(2).name()).isEqualTo("lo0-x");
+        assertThat(ifMap.get(2).alias()).isEqualTo("My loopback interface");
+        assertThat(ifMap.get(2).highSpeed()).isEqualTo(34L);
     }
 
     @Test
@@ -144,10 +152,12 @@ public class SnmpTest {
         currentAgent.registerIfTable();
 
         final SnmpEndpoint snmpEndpoint = noAuthNoPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.NOAUTHNOPRIV_USERNAME);
-        final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint, SECRET_RESOLVERS);
+        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS);
 
-        assertThat(ifMap.get(1)).isEqualTo("eth0");
-        assertThat(ifMap.get(2)).isEqualTo("lo0");
+        assertThat(ifMap.get(1).name()).isEqualTo("eth0");
+        assertThat(ifMap.get(1).alias()).isNull();
+        assertThat(ifMap.get(1).highSpeed()).isNull();
+        assertThat(ifMap.get(2).name()).isEqualTo("lo0");
     }
 
     @Test
@@ -159,10 +169,14 @@ public class SnmpTest {
         currentAgent.registerIfXTable();
 
         final SnmpEndpoint snmpEndpoint = authNoPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.AUTHNOPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1, TestSnmpAgent.AUTHNOPRIV_AUTH_PASSHRASE);
-        final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint, SECRET_RESOLVERS);
+        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS);
 
-        assertThat(ifMap.get(1)).isEqualTo("eth0-x");
-        assertThat(ifMap.get(2)).isEqualTo("lo0-x");
+        assertThat(ifMap.get(1).name()).isEqualTo("eth0-x");
+        assertThat(ifMap.get(1).alias()).isEqualTo("My ethernet interface");
+        assertThat(ifMap.get(1).highSpeed()).isEqualTo(14L);
+        assertThat(ifMap.get(2).name()).isEqualTo("lo0-x");
+        assertThat(ifMap.get(2).alias()).isEqualTo("My loopback interface");
+        assertThat(ifMap.get(2).highSpeed()).isEqualTo(34L);
     }
 
     @Test
@@ -174,10 +188,14 @@ public class SnmpTest {
         currentAgent.registerIfXTable();
 
         final SnmpEndpoint snmpEndpoint = authPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.AUTHPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1, TestSnmpAgent.AUTHPRIV_AUTH_PASSHRASE, TargetBuilder.PrivProtocol.aes128, TestSnmpAgent.AUTHPRIV_PRIV_PASSHRASE);
-        final Map<Integer, String> ifMap = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint, SECRET_RESOLVERS);
+        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS);
 
-        assertThat(ifMap.get(1)).isEqualTo("eth0-x");
-        assertThat(ifMap.get(2)).isEqualTo("lo0-x");
+        assertThat(ifMap.get(1).name()).isEqualTo("eth0-x");
+        assertThat(ifMap.get(1).alias()).isEqualTo("My ethernet interface");
+        assertThat(ifMap.get(1).highSpeed()).isEqualTo(14L);
+        assertThat(ifMap.get(2).name()).isEqualTo("lo0-x");
+        assertThat(ifMap.get(2).alias()).isEqualTo("My loopback interface");
+        assertThat(ifMap.get(2).highSpeed()).isEqualTo(34L);
     }
 
     @Test
@@ -186,7 +204,7 @@ public class SnmpTest {
         final SnmpService snmpService = new DefaultSnmpService(SECRET_RESOLVERS);
         final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), getNextPort(), "env://RIPTIDE_TEST_MISSING_VAR");
 
-        assertThat(snmpService.getIfName(snmpEndpoint, 1)).isInstanceOf(Optional.class).isEmpty();
+        assertThat(snmpService.getIfInfo(snmpEndpoint, 1)).isInstanceOf(Optional.class).isEmpty();
     }
 
     @Test
@@ -198,23 +216,23 @@ public class SnmpTest {
         final SnmpService snmpCache = new CachingSnmpService(new DefaultSnmpService(SECRET_RESOLVERS), snmpCacheConfig);
         final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.COMMUNITY);
 
-        assertThat(snmpCache.getIfName(snmpEndpoint, 1)).isInstanceOf(Optional.class).isEmpty();
+        assertThat(snmpCache.getIfInfo(snmpEndpoint, 1)).isInstanceOf(Optional.class).isEmpty();
 
         currentAgent = new TestSnmpAgent("127.0.0.1/" + port, temporaryFolder);
         currentAgent.start();
         currentAgent.registerIfTable();
 
-        assertThat(snmpCache.getIfName(snmpEndpoint, 1)).isInstanceOf(Optional.class).isPresent();
-        assertThat(snmpCache.getIfName(snmpEndpoint, 1).get()).isEqualTo("eth0");
-        assertThat(snmpCache.getIfName(snmpEndpoint, 2)).isInstanceOf(Optional.class).isPresent();
-        assertThat(snmpCache.getIfName(snmpEndpoint, 2).get()).isEqualTo("lo0");
+        assertThat(snmpCache.getIfInfo(snmpEndpoint, 1)).isInstanceOf(Optional.class).isPresent();
+        assertThat(snmpCache.getIfInfo(snmpEndpoint, 1).get().name()).isEqualTo("eth0");
+        assertThat(snmpCache.getIfInfo(snmpEndpoint, 2)).isInstanceOf(Optional.class).isPresent();
+        assertThat(snmpCache.getIfInfo(snmpEndpoint, 2).get().name()).isEqualTo("lo0");
 
         currentAgent.stop();
         currentAgent = null;
 
-        assertThat(snmpCache.getIfName(snmpEndpoint, 1)).isInstanceOf(Optional.class).isPresent();
-        assertThat(snmpCache.getIfName(snmpEndpoint, 1).get()).isEqualTo("eth0");
-        assertThat(snmpCache.getIfName(snmpEndpoint, 2)).isInstanceOf(Optional.class).isPresent();
-        assertThat(snmpCache.getIfName(snmpEndpoint, 2).get()).isEqualTo("lo0");
+        assertThat(snmpCache.getIfInfo(snmpEndpoint, 1)).isInstanceOf(Optional.class).isPresent();
+        assertThat(snmpCache.getIfInfo(snmpEndpoint, 1).get().name()).isEqualTo("eth0");
+        assertThat(snmpCache.getIfInfo(snmpEndpoint, 2)).isInstanceOf(Optional.class).isPresent();
+        assertThat(snmpCache.getIfInfo(snmpEndpoint, 2).get().name()).isEqualTo("lo0");
     }
 }

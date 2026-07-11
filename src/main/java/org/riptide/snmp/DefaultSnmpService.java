@@ -23,9 +23,9 @@ public class DefaultSnmpService implements SnmpService {
     private final SecretResolvers secretResolvers;
 
     @Override
-    public Optional<String> getIfName(final SnmpEndpoint snmpEndpoint, final int ifIndex) {
+    public Optional<IfInfo> getIfInfo(final SnmpEndpoint snmpEndpoint, final int ifIndex) {
         try {
-            final var value = SnmpUtils.getSnmpInterfaceMap(snmpEndpoint, this.secretResolvers).get(ifIndex);
+            final var value = SnmpUtils.getIfInfoMap(snmpEndpoint, this.secretResolvers).get(ifIndex);
             return Optional.ofNullable(value);
         } catch (IOException | IllegalArgumentException e) {
             // IllegalArgumentException: an unresolvable secret reference must degrade to an
@@ -35,5 +35,3 @@ public class DefaultSnmpService implements SnmpService {
         }
     }
 }
-
-

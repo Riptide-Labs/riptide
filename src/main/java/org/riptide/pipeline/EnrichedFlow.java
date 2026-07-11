@@ -68,7 +68,11 @@ public class EnrichedFlow {
     private Locality flowLocality;
     private Duration clockCorrection;
     private String inputSnmpIfName;
+    private String inputSnmpIfAlias;
+    private Long inputSnmpIfSpeed;
     private String outputSnmpIfName;
+    private String outputSnmpIfAlias;
+    private Long outputSnmpIfSpeed;
 
     public Integer getDscp() {
         return getTos() != null ? getTos() >>> 2 : null;
@@ -87,7 +91,11 @@ public class EnrichedFlow {
         @Mapping(target = "flowLocality", ignore = true)
         @Mapping(target = "clockCorrection", ignore = true)
         @Mapping(target = "inputSnmpIfName", ignore = true)
+        @Mapping(target = "inputSnmpIfAlias", ignore = true)
+        @Mapping(target = "inputSnmpIfSpeed", ignore = true)
         @Mapping(target = "outputSnmpIfName", ignore = true)
+        @Mapping(target = "outputSnmpIfAlias", ignore = true)
+        @Mapping(target = "outputSnmpIfSpeed", ignore = true)
         @Mapping(target = "srcAddrHostname", ignore = true)
         @Mapping(target = "dstAddrHostname", ignore = true)
         @Mapping(target = "nextHopHostname", ignore = true)
