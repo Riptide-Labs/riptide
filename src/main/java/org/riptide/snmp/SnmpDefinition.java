@@ -29,14 +29,9 @@ public class SnmpDefinition {
 
     private SnmpVersion snmpVersion;
 
-    /** Restricts this definition to one observation domain / source ID; {@code null} matches any. */
-    private Long observationDomain;
-
     private int timeout = 500;
 
     private int retries = 1;
-
-    private IPAddressString subnetAddress;
 
     private int port = 161;
 

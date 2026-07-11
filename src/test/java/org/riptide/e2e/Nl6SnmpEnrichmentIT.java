@@ -83,10 +83,10 @@ public class Nl6SnmpEnrichmentIT {
         registry.add("riptide.receivers.nf9.host", () -> "0.0.0.0");
         registry.add("riptide.receivers.nf9.port", () -> NETFLOW9_PORT);
 
-        registry.add("riptide.snmp.config.definitions[0].subnet-address", () -> "10.42.0.0/16");
-        registry.add("riptide.snmp.config.definitions[0].port", () -> 161);
-        registry.add("riptide.snmp.config.definitions[0].snmp-version", () -> "v2c");
-        registry.add("riptide.snmp.config.definitions[0].community", () -> "public");
+        registry.add("riptide.nodes[0].subnet-address", () -> "10.42.0.0/16");
+        registry.add("riptide.nodes[0].snmp.port", () -> 161);
+        registry.add("riptide.nodes[0].snmp.snmp-version", () -> "v2c");
+        registry.add("riptide.nodes[0].snmp.community", () -> "public");
     }
 
     @BeforeAll

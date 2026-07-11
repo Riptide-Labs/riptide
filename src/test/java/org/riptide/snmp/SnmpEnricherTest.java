@@ -12,6 +12,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
 import org.riptide.flows.parser.data.Flow;
+import org.riptide.node.NodeRegistry;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Pipeline;
@@ -28,10 +29,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 @SpringBootTest(properties = {
-        "riptide.snmp.config.definitions[0].subnet-address.=127.0.0.1/24",
-        "riptide.snmp.config.definitions[0].port=12345",
-        "riptide.snmp.config.definitions[0].snmp-version=v2c",
-        "riptide.snmp.config.definitions[0].community=" + TestSnmpAgent.COMMUNITY
+        "riptide.nodes[0].subnet-address=127.0.0.1/24",
+        "riptide.nodes[0].snmp.port=12345",
+        "riptide.nodes[0].snmp.snmp-version=v2c",
+        "riptide.nodes[0].snmp.community=" + TestSnmpAgent.COMMUNITY
 })
 public class SnmpEnricherTest {
 
@@ -41,7 +42,7 @@ public class SnmpEnricherTest {
     SnmpService snmpService;
 
     @Autowired
-    SnmpConfiguration snmpConfiguration;
+    NodeRegistry nodeRegistry;
 
     private final EnrichedFlow.FlowMapper flowMapper = Mappers.getMapper(EnrichedFlow.FlowMapper.class);
 
@@ -52,7 +53,7 @@ public class SnmpEnricherTest {
         snmpAgent.registerIfTable();
         snmpAgent.registerIfXTable();
 
-        final var enrichers = List.<Enricher>of(new SnmpEnricher(this.snmpService, this.snmpConfiguration));
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(this.snmpService, this.nodeRegistry));
         final var repository = new TestRepository(metricRegistry);
         final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
 
