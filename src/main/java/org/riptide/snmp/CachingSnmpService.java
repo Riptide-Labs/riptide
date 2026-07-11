@@ -5,16 +5,17 @@
 
 package org.riptide.snmp;
 
+import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
-import com.google.common.cache.CacheLoader;
-import com.google.common.cache.LoadingCache;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.utils.Tuple;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Service;
 
+import java.net.InetSocketAddress;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 @Primary
@@ -23,28 +24,36 @@ import java.util.concurrent.TimeUnit;
 public class CachingSnmpService implements SnmpService {
     private final SnmpService delegate;
     private final SnmpCacheConfig cacheConfig;
-    private final LoadingCache<Tuple<SnmpEndpoint, Integer>, Optional<String>> ifIndexCache;
+
+    // Keyed by the poll address, NOT the SnmpEndpoint: SnmpEndpoint's equality spans the
+    // mutable SnmpDefinition including credential references, so endpoint-keyed entries
+    // would silently miss whenever credentials change representation.
+    // expireAfterWrite (not Access) bounds staleness absolutely — the TTL backstop for
+    // ifIndex reassignment after device reboots (RFC 2863).
+    private final Cache<Tuple<InetSocketAddress, Integer>, Optional<IfInfo>> ifIndexCache;
 
     public CachingSnmpService(final SnmpService delegate, final SnmpCacheConfig cacheConfig) {
         this.delegate = Objects.requireNonNull(delegate);
         this.cacheConfig = Objects.requireNonNull(cacheConfig);
         ifIndexCache = CacheBuilder.newBuilder()
-                .expireAfterAccess(cacheConfig.retentionMs, TimeUnit.MILLISECONDS)
-                .build(new CacheLoader<>() {
-                    public Optional<String> load(final Tuple<SnmpEndpoint, Integer> key) {
-                        return delegate.getIfName(key.first(), key.second());
-                    }
-                });
+                .expireAfterWrite(cacheConfig.retentionMs, TimeUnit.MILLISECONDS)
+                .build();
     }
 
     @Override
-    public Optional<String> getIfName(SnmpEndpoint snmpEndpoint, int ifIndex) {
-        final var key = Tuple.of(snmpEndpoint, ifIndex);
-        final Optional<String> ifNameOptional = ifIndexCache.getUnchecked(key);
-        if (ifNameOptional.isEmpty()) {
-            ifIndexCache.invalidate(key);
-            log.warn("Cannot determine ifName for ifIndex {} for endpoint {}", ifIndex, snmpEndpoint);
+    public Optional<IfInfo> getIfInfo(final SnmpEndpoint snmpEndpoint, final int ifIndex) {
+        final var key = Tuple.of(snmpEndpoint.getInetSocketAddress(), ifIndex);
+        final Optional<IfInfo> ifInfo;
+        try {
+            ifInfo = ifIndexCache.get(key, () -> this.delegate.getIfInfo(snmpEndpoint, ifIndex));
+        } catch (ExecutionException e) {
+            // the delegate degrades all failures to Optional.empty and never throws
+            throw new IllegalStateException(e);
         }
-        return ifNameOptional;
+        if (ifInfo.isEmpty()) {
+            ifIndexCache.invalidate(key);
+            log.warn("Cannot determine interface info for ifIndex {} for endpoint {}", ifIndex, snmpEndpoint);
+        }
+        return ifInfo;
     }
 }

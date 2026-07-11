@@ -94,9 +94,13 @@ public class ClickhouseRepository implements FlowRepository {
     
             inputSnmp UInt32,
             inputSnmpIfName Nullable(String),
+            inputSnmpIfAlias Nullable(String),
+            inputSnmpIfSpeed Nullable(UInt32),
     
             outputSnmp UInt32,
             outputSnmpIfName Nullable(String),
+            outputSnmpIfAlias Nullable(String),
+            outputSnmpIfSpeed Nullable(UInt32),
     
             srcAs UInt64,
             srcAddr IPv6,

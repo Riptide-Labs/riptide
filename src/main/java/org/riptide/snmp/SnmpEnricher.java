@@ -32,8 +32,16 @@ public class SnmpEnricher implements Enricher {
         return CompletableFuture.supplyAsync(() -> {
             this.nodeRegistry.lookup(source.identity()).flatMap(Node::snmpEndpoint).ifPresent(snmpEndpoint -> {
                 for (final EnrichedFlow flow : flows) {
-                    this.snmpService.getIfName(snmpEndpoint, flow.getInputSnmp()).ifPresent(flow::setInputSnmpIfName);
-                    this.snmpService.getIfName(snmpEndpoint, flow.getOutputSnmp()).ifPresent(flow::setOutputSnmpIfName);
+                    this.snmpService.getIfInfo(snmpEndpoint, flow.getInputSnmp()).ifPresent(ifInfo -> {
+                        flow.setInputSnmpIfName(ifInfo.name());
+                        flow.setInputSnmpIfAlias(ifInfo.alias());
+                        flow.setInputSnmpIfSpeed(ifInfo.highSpeed());
+                    });
+                    this.snmpService.getIfInfo(snmpEndpoint, flow.getOutputSnmp()).ifPresent(ifInfo -> {
+                        flow.setOutputSnmpIfName(ifInfo.name());
+                        flow.setOutputSnmpIfAlias(ifInfo.alias());
+                        flow.setOutputSnmpIfSpeed(ifInfo.highSpeed());
+                    });
                 }
             });
 
