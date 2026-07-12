@@ -29,6 +29,19 @@ Build a container image into your local registry:
 make oci
 ```
 
+## Container images
+
+Published images live at `ghcr.io/riptide-labs/riptide` (linux/amd64 + linux/arm64):
+
+| Tag | Meaning |
+|---|---|
+| `:<version>`, `:latest` | releases (`v*` tags) |
+| `:rc` | floating — rebuilt from every merge to `main` |
+
+```bash
+docker pull ghcr.io/riptide-labs/riptide:rc
+```
+
 Render a test coverage report (JaCoCo):
 
 ```bash

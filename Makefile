@@ -84,7 +84,6 @@ oci: deps-oci jar
       --build-arg="VERSION=$(VERSION)" \
       --build-arg="GIT_SHORT_HASH"=$(GIT_SHORT_HASH) \
       --build-arg="DATE=$(DATE)" \
-      --build-arg="REGISTRY_REPOSITORY=local-build" \
       .
 
 .PHONY: release
