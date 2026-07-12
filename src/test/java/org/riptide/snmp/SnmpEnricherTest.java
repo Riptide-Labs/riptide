@@ -29,10 +29,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 @SpringBootTest(properties = {
-        "riptide.nodes[0].subnet-address=127.0.0.1/24",
-        "riptide.nodes[0].snmp.port=12345",
-        "riptide.nodes[0].snmp.snmp-version=v2c",
-        "riptide.nodes[0].snmp.community=" + TestSnmpAgent.COMMUNITY
+        "riptide.nodes.test-agent.subnet-address=127.0.0.1/24",
+        "riptide.nodes.test-agent.snmp.port=12345",
+        "riptide.nodes.test-agent.snmp.snmp-version=v2c",
+        "riptide.nodes.test-agent.snmp.community=" + TestSnmpAgent.COMMUNITY
 })
 public class SnmpEnricherTest {
 

@@ -24,7 +24,7 @@ UDP/TCP ingest (NetFlow v5 · NetFlow v9 · IPFIX)
 - **Flow protocols:** NetFlow v5, NetFlow v9, and IPFIX (UDP; IPFIX also via TCP).
   sFlow support is planned for v0.2.0
   ([#159](https://github.com/Riptide-Labs/riptide/issues/159)).
-- **Node model:** a thin registry (`riptide.nodes[]`) matches exporters by subnet —
+- **Node model:** a thin registry (`riptide.nodes.<name>`) matches exporters by subnet —
   optionally pinned to one observation domain — and carries the SNMP agent
   configuration used to enrich that device's flows. See
   [Nodes & SNMP](configuration/nodes-and-snmp.md).

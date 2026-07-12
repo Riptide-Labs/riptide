@@ -13,15 +13,16 @@ import org.riptide.snmp.SnmpDefinition;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 public class NodeRegistryTest {
 
-    private static NodeDefinition node(final String label, final String subnet, final Long observationDomain, final String community) {
+    private static NodeDefinition node(final String subnet, final Long observationDomain, final String community) {
         final NodeDefinition node = new NodeDefinition();
-        node.setLabel(label);
         node.setSubnetAddress(new IPAddressString(subnet));
         node.setObservationDomain(observationDomain);
         if (community != null) {
@@ -36,25 +37,56 @@ public class NodeRegistryTest {
         return new ExporterIdentity.NetflowIpfix(InetAddress.getByName(host), observationDomain);
     }
 
-    private static NodeRegistry registry(final NodeDefinition... nodes) {
+    @SafeVarargs
+    private static NodeRegistry registry(final Map.Entry<String, NodeDefinition>... nodes) {
+        final Map<String, NodeDefinition> map = new LinkedHashMap<>();
+        for (final var entry : nodes) {
+            map.put(entry.getKey(), entry.getValue());
+        }
         final NodeRegistry registry = new NodeRegistry();
-        registry.setNodes(List.of(nodes));
+        registry.setNodes(map);
+        registry.validate();
         return registry;
     }
 
     @Test
     public void observationDomainPinnedNodeWinsOverWildcard() throws Exception {
         final NodeRegistry registry = registry(
-                node("wildcard", "10.0.0.0/24", null, "wildcard"),
-                node("pinned", "10.0.0.0/24", 42L, "pinned"));
+                Map.entry("wildcard", node("10.0.0.0/24", null, "wildcard")),
+                Map.entry("pinned", node("10.0.0.0/24", 42L, "pinned")));
 
         assertThat(registry.lookup(identity("10.0.0.1", 42))).map(Node::label).hasValue("pinned");
         assertThat(registry.lookup(identity("10.0.0.1", 7))).map(Node::label).hasValue("wildcard");
     }
 
     @Test
+    public void longestPrefixWinsInEitherDeclarationOrder() throws Exception {
+        final NodeRegistry coarseFirst = registry(
+                Map.entry("coarse", node("10.20.0.0/16", null, "a")),
+                Map.entry("fine", node("10.20.30.0/24", null, "b")));
+        final NodeRegistry fineFirst = registry(
+                Map.entry("fine", node("10.20.30.0/24", null, "b")),
+                Map.entry("coarse", node("10.20.0.0/16", null, "a")));
+
+        assertThat(coarseFirst.lookup(identity("10.20.30.5", 0))).map(Node::label).hasValue("fine");
+        assertThat(fineFirst.lookup(identity("10.20.30.5", 0))).map(Node::label).hasValue("fine");
+        // outside the /24, the /16 still matches
+        assertThat(coarseFirst.lookup(identity("10.20.99.5", 0))).map(Node::label).hasValue("coarse");
+    }
+
+    @Test
+    public void bareHostAddressIsMostSpecific() throws Exception {
+        final NodeRegistry registry = registry(
+                Map.entry("subnet", node("10.0.0.0/24", null, "a")),
+                Map.entry("host", node("10.0.0.7", null, "b")));
+
+        assertThat(registry.lookup(identity("10.0.0.7", 0))).map(Node::label).hasValue("host");
+        assertThat(registry.lookup(identity("10.0.0.8", 0))).map(Node::label).hasValue("subnet");
+    }
+
+    @Test
     public void pinnedOnlyRegistryDoesNotMatchOtherDomains() throws Exception {
-        final NodeRegistry registry = registry(node("pinned", "10.0.0.0/24", 42L, "pinned"));
+        final NodeRegistry registry = registry(Map.entry("pinned", node("10.0.0.0/24", 42L, "pinned")));
 
         assertThat(registry.lookup(identity("10.0.0.1", 42))).isPresent();
         assertThat(registry.lookup(identity("10.0.0.1", 7))).isEmpty();
@@ -62,33 +94,47 @@ public class NodeRegistryTest {
 
     @Test
     public void subnetMissYieldsEmpty() throws Exception {
-        final NodeRegistry registry = registry(node("wildcard", "10.0.0.0/24", null, "wildcard"));
+        final NodeRegistry registry = registry(Map.entry("wildcard", node("10.0.0.0/24", null, "wildcard")));
 
         assertThat(registry.lookup(identity("192.168.1.1", 0))).isEmpty();
     }
 
     @Test
-    public void firstSubnetMatchOrderIsKeptWithinAGroup() throws Exception {
-        final NodeRegistry registry = registry(
-                node("first", "10.0.0.0/16", null, "first"),
-                node("second", "10.0.0.0/24", null, "second"));
+    public void trueTieFailsValidation() {
+        assertThatThrownBy(() -> registry(
+                Map.entry("site-a", node("10.20.30.0/24", null, "a")),
+                Map.entry("backup", node("10.20.30.0/24", null, "b"))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("site-a")
+                .hasMessageContaining("backup");
+    }
 
-        assertThat(registry.lookup(identity("10.0.0.1", 0))).map(Node::label).hasValue("first");
+    @Test
+    public void samePinnedDomainSameSubnetFailsValidation() {
+        assertThatThrownBy(() -> registry(
+                Map.entry("one", node("10.20.30.0/24", 42L, "a")),
+                Map.entry("two", node("10.20.30.0/24", 42L, "b"))))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    public void sameSubnetDifferentPinningIsNotATie() throws Exception {
+        final NodeRegistry registry = registry(
+                Map.entry("pinned", node("10.20.30.0/24", 42L, "a")),
+                Map.entry("wildcard", node("10.20.30.0/24", null, "b")),
+                Map.entry("other-domain", node("10.20.30.0/24", 7L, "c")));
+
+        assertThat(registry.lookup(identity("10.20.30.5", 42))).map(Node::label).hasValue("pinned");
+        assertThat(registry.lookup(identity("10.20.30.5", 7))).map(Node::label).hasValue("other-domain");
+        assertThat(registry.lookup(identity("10.20.30.5", 1))).map(Node::label).hasValue("wildcard");
     }
 
     @Test
     public void nodeWithoutSnmpConfigHasNoEndpoint() throws Exception {
-        final NodeRegistry registry = registry(node("bare", "10.0.0.0/24", null, null));
+        final NodeRegistry registry = registry(Map.entry("bare", node("10.0.0.0/24", null, null)));
 
         final var match = registry.lookup(identity("10.0.0.1", 0));
         assertThat(match).isPresent();
         assertThat(match.get().snmpEndpoint()).isEmpty();
-    }
-
-    @Test
-    public void labelDefaultsToSubnet() throws Exception {
-        final NodeRegistry registry = registry(node(null, "10.0.0.0/24", null, "c"));
-
-        assertThat(registry.lookup(identity("10.0.0.1", 0))).map(Node::label).hasValue("10.0.0.0/24");
     }
 }

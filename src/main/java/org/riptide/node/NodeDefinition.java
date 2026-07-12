@@ -11,16 +11,14 @@ import org.riptide.snmp.SnmpDefinition;
 
 /**
  * A configured node: how to <em>match</em> an exporter (subnet, optionally pinned to one
- * observation domain) and how to <em>talk</em> to it (optional SNMP agent config).
+ * observation domain) and how to <em>talk</em> to it (optional SNMP agent config). The
+ * node's name is its key in the {@code riptide.nodes} map.
  *
  * <p>Deliberately thin — interface metadata, hostnames, and other enrichment results live in
  * TTL caches keyed by the matched node, never on the node itself.</p>
  */
 @Data
 public class NodeDefinition {
-
-    /** Optional human-readable name; defaults to the subnet when unset. */
-    private String label;
 
     private IPAddressString subnetAddress;
 
@@ -29,8 +27,4 @@ public class NodeDefinition {
 
     /** SNMP agent configuration; {@code null} if this node is not polled. */
     private SnmpDefinition snmp;
-
-    public String label() {
-        return this.label != null ? this.label : String.valueOf(this.subnetAddress);
-    }
 }
