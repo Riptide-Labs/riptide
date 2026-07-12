@@ -10,7 +10,7 @@ import {themes as prismThemes} from 'prism-react-renderer';
 const config: Config = {
   title: 'Riptide',
   tagline: 'Give people who love working with networks the tools they deserve to optimize and troubleshoot network traffic.',
-  favicon: 'img/riptide-logo.png',
+  favicon: 'img/favicon.png',
 
   url: 'https://riptide-labs.github.io',
   baseUrl: '/riptide/',
