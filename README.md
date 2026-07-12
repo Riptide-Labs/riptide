@@ -1,5 +1,6 @@
 
 <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
+[![Riptide Build](https://github.com/Riptide-Labs/riptide/actions/workflows/build.yml/badge.svg)](https://github.com/Riptide-Labs/riptide/actions/workflows/build.yml)
 [![All Contributors](https://img.shields.io/badge/all_contributors-1-orange.svg?style=flat-square)](#contributors-)
 [![Latest Release](https://img.shields.io/github/v/release/Riptide-Labs/riptide?sort=semver)](https://github.com/Riptide-Labs/riptide/releases)
 [![License](https://img.shields.io/github/license/Riptide-Labs/riptide)](LICENSE)
@@ -9,7 +10,7 @@
 
 ![riptide-logo](./artwork/riptide-logo.png)
 
-# 🌊 Welcome to Riptide [![Riptide Build](https://github.com/Riptide-Labs/riptide/actions/workflows/build.yml/badge.svg)](https://github.com/Riptide-Labs/riptide/actions/workflows/build.yml)
+# 🌊 Welcome to Riptide
 
 Give people who love working with networks the tools they deserve to optimize and troubleshoot network traffic.
 
