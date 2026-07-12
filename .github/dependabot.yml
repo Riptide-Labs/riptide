@@ -5,6 +5,15 @@
 
 version: 2
 updates:
+  - package-ecosystem: "github-actions" # keeps SHA pins + semver comments current
+    directory: "/"
+    target-branch: "main"
+    labels:
+      - "dependency update"
+    commit-message:
+      prefix: "ci"
+    schedule:
+      interval: "weekly"
   - package-ecosystem: "maven" # See documentation for possible values
     directory: "/" # Location of package manifests
     target-branch: "main"
