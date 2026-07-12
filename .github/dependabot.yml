@@ -15,11 +15,6 @@ updates:
       include: "scope"
     schedule:
       interval: "weekly"
-    ignore:
-      # Testcontainers 2.x is a module/API migration (see the migration issue);
-      # majors are ignored until it lands.
-      - dependency-name: "org.testcontainers:*"
-        update-types: ["version-update:semver-major"]
   - package-ecosystem: "npm" # Docusaurus documentation site
     directory: "/docs"
     target-branch: "main"
