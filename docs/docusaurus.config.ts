@@ -53,6 +53,8 @@ const config: Config = {
   ],
 
   themeConfig: {
+    // og:image / social card for links shared to Slack, Mastodon, …
+    image: 'img/favicon.png',
     navbar: {
       // no text title — the logo already carries the "Riptide" wordmark
       logo: {
