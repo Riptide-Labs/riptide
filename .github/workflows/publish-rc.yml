@@ -1,12 +1,22 @@
-name: Riptide Release
-run-name: Release Workflow
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+name: Publish RC
+run-name: Publish floating rc container image from main
 on:
   workflow_dispatch:
   push:
-    tags:
-      - 'v*'
+    branches: [ 'main' ]
+    paths-ignore: [ 'docs/**' ]
+
+permissions:
+  contents: read
+  packages: write
+
 jobs:
-  release:
+  publish:
+    # :rc always reflects main — also guards manual dispatches from other refs
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -17,39 +27,25 @@ jobs:
           distribution: 'temurin'
           architecture: x64
           cache: maven
-      - name: Check if you accidentally want to release a SNAPSHOT version
+      - name: Set version, date and short git hash
         run: |
-          POM_VERSION="$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)"
-          if [[ "${VERSION}" == *"SNAPSHOT"* ]]; then
-            echo "Error: Your pom has a SNAPSHOT release. Set the pom to a version number without SNAPSHOT."
-            exit 1
-          else
-            echo "VERSION=${POM_VERSION}" >> ${GITHUB_ENV}
-          fi
-      - name: Set data and short git hash
-        run: |
+          echo "VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)" >> ${GITHUB_ENV}
           echo "SHORT_GIT_SHA=$(git rev-parse --short HEAD)" >> ${GITHUB_ENV}
-          echo "BUILD_DATE"=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> ${GITHUB_ENV}
       - name: Build with tests
         run: |
           make
-      - name: Persist JAR artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: riptide-jar
-          path: |
-            target/*.jar
       - name: Login to Registry
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.GHCR_PAT }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-      - name: Build and push container image
+      - name: Build and push floating rc image
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
@@ -60,10 +56,14 @@ jobs:
             GIT_SHORT_HASH=${{ env.SHORT_GIT_SHA }}
             VERSION=${{ env.VERSION }}
           tags: |
-            ghcr.io/riptide-labs/riptide:${{ env.VERSION }}
-            ghcr.io/riptide-labs/riptide:latest
-      - name: Release ${{ github.ref_name }}
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+            ghcr.io/riptide-labs/riptide:rc
+      # Deletes the untagged versions orphaned by the moving :rc tag. Multi-arch
+      # aware: per-arch manifests referenced by tagged manifest lists are kept;
+      # validate checks all tagged images stay intact afterwards.
+      - name: Clean up untagged package versions
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:
-          files: |
-            target/*.jar
+          token: ${{ secrets.GITHUB_TOKEN }}
+          package: riptide
+          delete-untagged: true
+          validate: true
