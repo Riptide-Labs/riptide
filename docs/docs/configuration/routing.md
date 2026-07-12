@@ -27,9 +27,13 @@ riptide:
   `srcAsOrg`/`dstAsOrg`.
 - **`as-names`** names whatever AS number the flow ends up with — exporter-provided or
   prefix-filled. It never overwrites an org the prefix table already set.
-- Longest prefix wins, IPv4 and IPv6 alike; duplicate prefixes are impossible (map keys).
+- Longest prefix wins, IPv4 and IPv6 alike. Keys are canonicalized to their prefix
+  block at startup (`10.0.0.5/24` means `10.0.0.0/24`); two keys resolving to the same
+  block fail startup with both keys named.
 - An invalid prefix fails startup with the offending key named.
 - With neither map configured the enricher is a no-op.
+- In `.properties` form, prefix keys contain dots and need bracket escaping:
+  `riptide.routing.prefixes.[203.0.113.0/24].asn=64500` — prefer YAML for this section.
 
 Use `prefixes` when your exporters don't fill AS fields; use `as-names` when they do and
 you just want readable names in dashboards.
