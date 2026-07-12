@@ -34,6 +34,8 @@ help:
 	@echo "  oci:          Build OCI container image"
 	@echo "  coverage:     Run the unit test suite and render the JaCoCo coverage report"
 	@echo "  e2e:          Run integration and e2e tests (*IT, requires Docker) in addition to the unit suite"
+	@echo "  docs:         Build the Docusaurus documentation site into docs/build"
+	@echo "  docs-serve:   Run the documentation site locally with live reload"
 	@echo "  clean:        Clean the build artifacts"
 	@echo ""
 
@@ -63,6 +65,18 @@ coverage: deps-jar
 e2e: deps-jar deps-oci
 	mvn $(BUILD_OPTS) --batch-mode --update-snapshots verify -Pe2e
 	@echo "Coverage report (incl. e2e): target/site/jacoco/index.html"
+
+.PHONY: deps-docs
+deps-docs:
+	command -v npm
+
+.PHONY: docs
+docs: deps-docs
+	cd docs && npm ci && npm run build
+
+.PHONY: docs-serve
+docs-serve: deps-docs
+	cd docs && npm ci && npm run start
 
 .PHONY: oci
 oci: deps-oci jar

@@ -13,6 +13,8 @@
 
 Give people who love working with networks the tools they deserve to optimize and troubleshoot network traffic.
 
+📖 **Documentation:** https://riptide-labs.github.io/riptide/
+
 # 👩‍🏭 Build from source
 
 **Requirements:**
