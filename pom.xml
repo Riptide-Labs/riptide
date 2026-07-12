@@ -40,7 +40,7 @@
         <jquick.version>1.9.3</jquick.version>
         <clickhouse.version>0.9.7</clickhouse.version>
         <jmh.version>1.37</jmh.version>
-        <jacoco-maven-plugin.version>0.8.13</jacoco-maven-plugin.version>
+        <jacoco-maven-plugin.version>0.8.15</jacoco-maven-plugin.version>
         <testcontainers.version>1.21.3</testcontainers.version>
     </properties>
 
