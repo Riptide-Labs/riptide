@@ -28,7 +28,7 @@ public class SnmpConfigMigrationWarning {
     void warnAboutLegacyConfiguration() {
         if (!this.definitions.isEmpty()) {
             log.error("riptide.snmp.config.definitions has moved and is IGNORED: configure nodes via "
-                    + "riptide.nodes[].{label,subnet-address,observation-domain,snmp.*} instead "
+                    + "riptide.nodes.<name>.{subnet-address,observation-domain,snmp.*} instead "
                     + "(see the NODES EXAMPLE in application.properties). SNMP enrichment is NOT "
                     + "active for the {} legacy definition(s).", this.definitions.size());
         }

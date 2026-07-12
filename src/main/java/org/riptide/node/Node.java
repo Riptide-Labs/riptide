@@ -11,13 +11,13 @@ import org.riptide.snmp.SnmpEndpoint;
 import java.util.Optional;
 
 /**
- * A matched node: the {@link NodeDefinition} an exporter identity resolved to, bound to the
- * concrete exporter address of the flow.
+ * A matched node: the {@link NodeDefinition} an exporter identity resolved to, bound to
+ * the concrete exporter address of the flow. {@code name} is the configuration map key.
  */
-public record Node(NodeDefinition definition, IPAddressString address) {
+public record Node(String name, NodeDefinition definition, IPAddressString address) {
 
     public String label() {
-        return this.definition.label();
+        return this.name;
     }
 
     /** The SNMP endpoint to poll this node, if it has SNMP agent configuration. */

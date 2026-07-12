@@ -46,11 +46,12 @@ binding): uppercase, dots and dashes become underscores, list indexes become `_0
 |---|---|
 | `riptide.clickhouse.endpoint` | `RIPTIDE_CLICKHOUSE_ENDPOINT` |
 | `riptide.receivers.ipfix.port` | `RIPTIDE_RECEIVERS_IPFIX_PORT` |
-| `riptide.nodes[0].subnet-address` | `RIPTIDE_NODES_0_SUBNETADDRESS` |
-| `riptide.nodes[0].snmp.community` | `RIPTIDE_NODES_0_SNMP_COMMUNITY` |
+| `riptide.nodes.core-router.subnet-address` | `RIPTIDE_NODES_COREROUTER_SUBNETADDRESS` |
+| `riptide.nodes.core-router.snmp.community` | `RIPTIDE_NODES_COREROUTER_SNMP_COMMUNITY` |
 
 Environment variables suit flat settings and containerized deployments (the compose stack
-configures ClickHouse this way); prefer the config file for larger node lists.
+configures ClickHouse this way). Prefer the config file for nodes — Spring flattens map
+keys arriving from the environment (case and dashes are lost).
 
 Secret references (`env://`, `file://`, `vault://`, `sops://`) work the same in both —
 see [Secret references](../configuration/secret-references.md).
