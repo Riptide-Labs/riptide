@@ -1,0 +1,9 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Developer override: run the locally built image (`make oci`) instead of the
+# published one:  docker compose -f compose.yml -f compose.override.dev.yml up
+---
+services:
+  riptide:
+    image: riptide:local

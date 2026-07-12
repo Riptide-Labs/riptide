@@ -1,0 +1,9 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Track main: run the floating rc image (rebuilt on every merge to main):
+#   docker compose -f compose.yml -f compose.override.rc.yml up
+---
+services:
+  riptide:
+    image: ghcr.io/riptide-labs/riptide:rc

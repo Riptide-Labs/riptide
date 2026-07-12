@@ -5,79 +5,29 @@ title: Getting started
 
 # Getting started
 
-## Requirements
+Two paths, depending on what you're here for:
 
-- git
-- Java 25
-- Docker with Docker Compose (for the container image and the e2e test tier)
+## 🚀 I want to run Riptide
 
-## Build from source
+Deploy the published image or jar — no build toolchain needed.
 
-```bash
-git clone https://github.com/Riptide-Labs/riptide.git && cd riptide
-```
+- [**Docker Compose**](deploy/docker-compose.md) — full stack (Riptide + ClickHouse +
+  UI + Grafana) in one `docker compose up`
+- [**Plain JAR**](deploy/plain-jar.md) — `java -jar` with file- or env-var-based
+  configuration
+- [Operations notes](deploy/operations.md) — image tags, restarts, upgrades
 
-Compile with tests and produce a runnable jar in `target/`:
+## 🛠 I want to work on Riptide
 
-```bash
-make
-```
+Build from source, debug locally, send a pull request.
 
-Build a container image into your local registry:
+- [**Environment**](develop/environment.md) — clone, `make`, IDE setup
+- [**Run & debug**](develop/run-and-debug.md) — Riptide under a debugger with real flow
+  traffic (pcap replay, nl6 simulator)
+- [Testing](develop/testing.md) — unit / e2e / full-mode tiers
+- [Pull requests](develop/pull-requests.md) — quality gates, DCO, commit conventions
 
-```bash
-make oci
-```
-
-## Container images
-
-Published images live at `ghcr.io/riptide-labs/riptide` (linux/amd64 + linux/arm64):
-
-| Tag | Meaning |
-|---|---|
-| `:<version>`, `:latest` | releases (`v*` tags) |
-| `:rc` | floating — rebuilt from every merge to `main` |
-
-```bash
-docker pull ghcr.io/riptide-labs/riptide:rc
-```
-
-Render a test coverage report (JaCoCo):
-
-```bash
-make coverage
-```
-
-## Integration and e2e tests
-
-The e2e tier drives real NetFlow v5/v9 and IPFIX traffic from the
-[nl6](https://github.com/labmonkeys-space/nl6) simulator through Riptide into ClickHouse
-(requires Docker):
-
-```bash
-make e2e
-```
-
-An optional **full mode** (Linux only) lets nl6 devices export flows from per-device
-source IPs while Riptide's SNMP enrichment walks back to each device's simulated agent:
-
-```bash
-docker network create --subnet 172.30.42.0/24 nl6-fullmode
-sudo ip route add 10.42.0.0/16 via 172.30.42.10
-RIPTIDE_E2E_FULL_MODE=1 make e2e
-```
-
-## Configuration
-
-Riptide is a Spring Boot application. Besides `application.properties`, it loads an
-optional external configuration file:
-
-```properties
-spring.config.additional-location=optional:file:/etc/riptide/config.yaml
-```
-
-The configuration chapters describe [receivers](configuration/receivers.md),
-[nodes & SNMP](configuration/nodes-and-snmp.md),
+Both paths share the [configuration reference](configuration/receivers.md) —
+receivers, [nodes & SNMP](configuration/nodes-and-snmp.md),
 [secret references](configuration/secret-references.md), and
-[ClickHouse](configuration/clickhouse.md). By default no receivers are configured —
-the daemon starts no listeners until you define them.
+[ClickHouse](configuration/clickhouse.md).
