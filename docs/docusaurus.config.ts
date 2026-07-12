@@ -12,8 +12,8 @@ const config: Config = {
   tagline: 'Give people who love working with networks the tools they deserve to optimize and troubleshoot network traffic.',
   favicon: 'img/favicon.png',
 
-  url: 'https://riptide-labs.github.io',
-  baseUrl: '/riptide/',
+  url: 'https://riptide.space',
+  baseUrl: '/docs/',
 
   organizationName: 'Riptide-Labs',
   projectName: 'riptide',
