@@ -122,6 +122,31 @@ public class RoutingEnricherTest {
     }
 
     @Test
+    public void hostFormPrefixMatchesItsWholeBlock() throws Exception {
+        // interface notation pasted from a router config: 10.0.0.5/24 means the /24 block
+        final RoutingConfig config = config(
+                Map.of("10.0.0.5/24", new PrefixInfo(64500L, "Pasted From Router")), Map.of());
+        final EnrichedFlow flow = flow("10.0.0.7", 0L);
+
+        enrich(config, flow);
+
+        assertThat(flow.getSrcAs()).isEqualTo(64500L);
+        assertThat(flow.getSrcAsOrg()).isEqualTo("Pasted From Router");
+    }
+
+    @Test
+    public void duplicateBlocksFailStartupNamingBothKeys() {
+        final Map<String, PrefixInfo> prefixes = new LinkedHashMap<>();
+        prefixes.put("10.0.0.0/24", new PrefixInfo(64500L, "a"));
+        prefixes.put("10.0.0.5/24", new PrefixInfo(64501L, "b"));
+
+        assertThatThrownBy(() -> config(prefixes, Map.of()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("10.0.0.0/24")
+                .hasMessageContaining("10.0.0.5/24");
+    }
+
+    @Test
     public void invalidPrefixFailsStartup() {
         assertThatThrownBy(() -> config(Map.of("not-a-prefix!", new PrefixInfo(1L, "x")), Map.of()))
                 .isInstanceOf(IllegalStateException.class)
