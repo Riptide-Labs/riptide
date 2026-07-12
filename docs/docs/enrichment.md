@@ -78,6 +78,12 @@ riptide.enricher.hostnames.enabled=true
 The enricher is on unless disabled; the bundled `application.properties` ships with it
 set to `false`.
 
+## AS numbers and names
+
+The static [routing mapping](configuration/routing.md) fills `srcAs`/`dstAs` when the
+exporter sent zeros (nonzero exporter values always win) and resolves AS names/orgs
+into `srcAsOrg`/`dstAsOrg`.
+
 ## Classification
 
 Flows are classified by a rule engine (application naming). The rule source is any
