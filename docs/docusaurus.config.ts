@@ -54,7 +54,7 @@ const config: Config = {
 
   themeConfig: {
     navbar: {
-      title: 'Riptide',
+      // no text title — the logo already carries the "Riptide" wordmark
       logo: {
         alt: 'Riptide logo',
         src: 'img/riptide-logo.png',
