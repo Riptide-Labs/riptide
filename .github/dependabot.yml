@@ -15,3 +15,17 @@ updates:
       include: "scope"
     schedule:
       interval: "weekly"
+  - package-ecosystem: "npm" # Docusaurus documentation site
+    directory: "/docs"
+    target-branch: "main"
+    labels:
+      - "dependency update"
+    commit-message:
+      prefix: "build"
+      include: "scope"
+    schedule:
+      interval: "weekly"
+    groups:
+      docusaurus:
+        patterns:
+          - "@docusaurus/*"
