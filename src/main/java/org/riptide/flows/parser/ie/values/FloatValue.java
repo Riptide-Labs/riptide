@@ -25,7 +25,7 @@ public class FloatValue extends Value<Double> {
                       final String unit,
                       final double value) {
         super(name, semantics, unit);
-        this.value = Objects.requireNonNull(value);
+        this.value = value;
     }
 
     @Override

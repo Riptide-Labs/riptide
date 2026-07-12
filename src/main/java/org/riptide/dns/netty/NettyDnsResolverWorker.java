@@ -56,7 +56,7 @@ class NettyDnsResolverWorker {
                 }
                 try {
                     final var dnsResponse = envelope.content();
-                    if (dnsResponse.code() == DnsResponseCode.NOERROR) {
+                    if (DnsResponseCode.NOERROR.equals(dnsResponse.code())) {
                         final DnsPtrRecord ptrRecord = dnsResponse.recordAt(DnsSection.ANSWER);
                         if (ptrRecord != null) {
                             log.warn("Result received for {}: {}", reverseMapName, ptrRecord);

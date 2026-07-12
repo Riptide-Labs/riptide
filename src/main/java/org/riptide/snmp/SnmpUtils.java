@@ -7,7 +7,6 @@ package org.riptide.snmp;
 
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -47,7 +46,7 @@ public final class SnmpUtils {
         for (final TableEvent tableEvent : tableEvents) {
             if (tableEvent.isError()) {
                 log.warn("Error querying {} for target {}: {}", columns[0], target, tableEvent.getErrorMessage());
-                return Collections.emptyMap();
+                return new TreeMap<>();
             }
             if (tableEvent.getIndex() == null || tableEvent.getColumns() == null) {
                 continue;

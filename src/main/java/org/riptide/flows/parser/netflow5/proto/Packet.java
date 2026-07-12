@@ -14,7 +14,7 @@ import org.riptide.flows.parser.netflow5.Netflow5FlowBuilder;
 
 import java.time.Instant;
 import java.util.Iterator;
-import java.util.LinkedList;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Stream;
@@ -31,7 +31,7 @@ public final class Packet implements Iterable<Record>, FlowPacket {
                   final ByteBuf buffer) throws InvalidPacketException {
         this.header = Objects.requireNonNull(header);
 
-        final List<Record> records = new LinkedList<>();
+        final List<Record> records = new ArrayList<>();
 
         while (buffer.isReadable(Record.SIZE)
                 && records.size() < this.header.count) {
