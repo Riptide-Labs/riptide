@@ -7,7 +7,7 @@ package org.riptide.flows.parser.netflow9.proto;
 
 import java.util.Collections;
 import java.util.Iterator;
-import java.util.LinkedList;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -39,7 +39,7 @@ public final class DataSet extends FlowSet<DataRecord> {
         final int minimumRecordLength = template.stream()
                 .mapToInt(f -> f.length()).sum();
 
-        final List<DataRecord> records = new LinkedList();
+        final List<DataRecord> records = new ArrayList<>();
         while (buffer.isReadable(minimumRecordLength)) {
             records.add(new DataRecord(this, resolver, template, buffer));
         }

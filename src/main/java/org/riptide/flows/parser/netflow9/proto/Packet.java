@@ -20,7 +20,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Collections;
 import java.util.Iterator;
-import java.util.LinkedList;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -54,9 +54,9 @@ public final class Packet implements Iterable<FlowSet<?>> {
                   final ByteBuf buffer) throws InvalidPacketException {
         this.header = Objects.requireNonNull(header);
 
-        final List<TemplateSet> templateSets = new LinkedList<>();
-        final List<OptionsTemplateSet> optionTemplateSets = new LinkedList<>();
-        final List<DataSet> dataSets = new LinkedList<>();
+        final List<TemplateSet> templateSets = new ArrayList<>();
+        final List<OptionsTemplateSet> optionTemplateSets = new ArrayList<>();
+        final List<DataSet> dataSets = new ArrayList<>();
         while (buffer.isReadable()) {
             // We ignore header.counter here, because different exporters interpret it as flowset count or record count
 

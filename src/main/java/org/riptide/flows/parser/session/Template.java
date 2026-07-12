@@ -6,7 +6,7 @@
 package org.riptide.flows.parser.session;
 
 import java.util.Iterator;
-import java.util.LinkedList;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -60,8 +60,8 @@ public final class Template implements Iterable<Field> {
         private final int id;
         private final Type type;
 
-        private final List<Scope> scopes = new LinkedList<>();
-        private final List<Field> fields = new LinkedList<>();
+        private final List<Scope> scopes = new ArrayList<>();
+        private final List<Field> fields = new ArrayList<>();
 
         private Builder(final int id,
                         final Type type) {

@@ -21,7 +21,6 @@ import org.riptide.flows.parser.ie.values.visitor.ValueVisitor;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Objects;
 
@@ -93,7 +92,7 @@ public class ListValue extends Value<List<List<Value<?>>>> {
                 final Semantic semantic = Semantic.parse(buffer, uint8(buffer));
                 final FieldSpecifier field = new FieldSpecifier(buffer);
 
-                final List<List<Value<?>>> values = new LinkedList<>();
+                final List<List<Value<?>>> values = new ArrayList<>();
                 while (buffer.isReadable()) {
                     values.add(Collections.singletonList(DataRecord.parseField(field, resolver, buffer)));
                 }
@@ -138,7 +137,7 @@ public class ListValue extends Value<List<List<Value<?>>>> {
 
                 final Template template = resolver.lookupTemplate(templateId);
 
-                final List<List<Value<?>>> values = new LinkedList<>();
+                final List<List<Value<?>>> values = new ArrayList<>();
                 while (buffer.isReadable()) {
                     final List<Value<?>> record = new ArrayList<>(template.count());
                     for (final Field field : template) {
@@ -222,7 +221,7 @@ public class ListValue extends Value<List<List<Value<?>>>> {
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) throws InvalidPacketException, MissingTemplateException {
                 final Semantic semantic = Semantic.parse(buffer, uint8(buffer));
 
-                final List<List<Value<?>>> values = new LinkedList<>();
+                final List<List<Value<?>>> values = new ArrayList<>();
                 while (buffer.isReadable()) {
                     final FlowSetHeader header = new FlowSetHeader(buffer);
                     if (header.setId <= 255) {

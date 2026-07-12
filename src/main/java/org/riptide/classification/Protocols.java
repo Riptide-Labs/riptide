@@ -172,7 +172,7 @@ public final class Protocols {
             decimalProtocolMap.put(eachProtocol.getDecimal(), eachProtocol);
             // some protocols have an empty keyword, e.g. "99, ANY PRIVATE ENCRYPTION SCHEME". We skip those
             if (!Strings.isNullOrEmpty(eachProtocol.getKeyword())) {
-                keywordProtocolMap.put(eachProtocol.getKeyword().toUpperCase(), eachProtocol);
+                keywordProtocolMap.put(eachProtocol.getKeyword().toUpperCase(java.util.Locale.ROOT), eachProtocol);
             }
         }
     }
@@ -186,7 +186,7 @@ public final class Protocols {
             throw new IllegalArgumentException("Cannot determine protocol for empty or null keyword");
         }
 
-        return keywordProtocolMap.get(keyword.toUpperCase());
+        return keywordProtocolMap.get(keyword.toUpperCase(java.util.Locale.ROOT));
     }
 
     public static Protocol getProtocol(Integer decimal) {

@@ -38,7 +38,7 @@ public class ClockCorrectionEnricher extends Enricher.Single {
         if (flow.getFirstSwitched().isAfter(flow.getLastSwitched())) {
 
             // Re-calculate a (somewhat) valid timout from the flow timestamps
-            final var timeout = (flow.getDeltaSwitched() != null && flow.getDeltaSwitched() != flow.getFirstSwitched())
+            final var timeout = (flow.getDeltaSwitched() != null && !flow.getDeltaSwitched().equals(flow.getFirstSwitched()))
                     ? Duration.between(flow.getDeltaSwitched(), flow.getLastSwitched())
                     : Duration.ZERO;
 

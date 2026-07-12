@@ -7,7 +7,7 @@ package org.riptide.flows.parser.ipfix.proto;
 
 import java.util.Collections;
 import java.util.Iterator;
-import java.util.LinkedList;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.riptide.flows.parser.exceptions.InvalidPacketException;
@@ -24,7 +24,7 @@ public class OptionsTemplateSet extends FlowSet<OptionsTemplateRecord> {
                               final ByteBuf buffer) throws InvalidPacketException {
         super(packet, header);
 
-        final List<OptionsTemplateRecord> records = new LinkedList<>();
+        final List<OptionsTemplateRecord> records = new ArrayList<>();
         while (buffer.isReadable(OptionsTemplateRecordHeader.SIZE)) {
             final OptionsTemplateRecordHeader recordHeader = new OptionsTemplateRecordHeader(buffer);
             records.add(new OptionsTemplateRecord(recordHeader, buffer));

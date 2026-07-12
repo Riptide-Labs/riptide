@@ -6,7 +6,7 @@
 package org.riptide.flows.parser.netflow9.proto;
 
 import java.util.Collections;
-import java.util.LinkedList;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -32,7 +32,7 @@ public final class OptionsTemplateRecord implements Record {
 
         this.header = Objects.requireNonNull(header);
 
-        final List<ScopeFieldSpecifier> scopeFields = new LinkedList<>();
+        final List<ScopeFieldSpecifier> scopeFields = new ArrayList<>();
         for (int i = 0; i < this.header.optionScopeLength; i += ScopeFieldSpecifier.SIZE) {
             final ScopeFieldSpecifier scopeField = new ScopeFieldSpecifier(buffer);
 
@@ -44,7 +44,7 @@ public final class OptionsTemplateRecord implements Record {
             scopeFields.add(scopeField);
         }
 
-        final List<FieldSpecifier> fields = new LinkedList<>();
+        final List<FieldSpecifier> fields = new ArrayList<>();
         for (int i = 0; i < this.header.optionLength; i += FieldSpecifier.SIZE) {
             final FieldSpecifier field = new FieldSpecifier(buffer);
             fields.add(field);

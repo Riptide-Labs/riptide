@@ -7,7 +7,7 @@ package org.riptide.flows.parser.netflow9.proto;
 
 import java.util.Collections;
 import java.util.Iterator;
-import java.util.LinkedList;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.riptide.flows.parser.exceptions.InvalidPacketException;
@@ -25,7 +25,7 @@ public final class TemplateSet extends FlowSet<TemplateRecord> {
                        final ByteBuf buffer) throws InvalidPacketException {
         super(packet, header);
 
-        final List<TemplateRecord> records = new LinkedList<>();
+        final List<TemplateRecord> records = new ArrayList<>();
         while (buffer.isReadable(TemplateRecordHeader.SIZE)) {
             final TemplateRecordHeader recordHeader = new TemplateRecordHeader(buffer);
             records.add(new TemplateRecord(this, recordHeader, buffer));

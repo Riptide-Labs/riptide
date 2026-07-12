@@ -7,7 +7,7 @@ package org.riptide.flows.parser.ipfix.proto;
 
 import java.util.Collections;
 import java.util.Iterator;
-import java.util.LinkedList;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -39,7 +39,7 @@ public class DataSet extends FlowSet<DataRecord> {
         final int minimumRecordLength = this.template.stream()
                 .mapToInt(f -> f.length() != DataRecord.VARIABLE_SIZED ? f.length() : 1).sum();
 
-        final List<DataRecord> records = new LinkedList<>();
+        final List<DataRecord> records = new ArrayList<>();
         while (buffer.isReadable(minimumRecordLength)) {
             records.add(new DataRecord(this, resolver1, this.template, buffer));
         }

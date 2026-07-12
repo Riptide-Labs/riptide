@@ -26,7 +26,7 @@ public class BooleanValue extends Value<Boolean> {
                         final String unit,
                         final boolean value) {
         super(name, semantics, unit);
-        this.value = Objects.requireNonNull(value);
+        this.value = value;
     }
 
     @Override

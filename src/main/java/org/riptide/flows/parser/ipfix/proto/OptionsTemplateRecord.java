@@ -6,7 +6,7 @@
 package org.riptide.flows.parser.ipfix.proto;
 
 import java.util.Collections;
-import java.util.LinkedList;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -27,14 +27,14 @@ public final class OptionsTemplateRecord implements Record {
                                  final ByteBuf buffer) throws InvalidPacketException {
         this.header = Objects.requireNonNull(header);
 
-        final List<FieldSpecifier> scopes = new LinkedList<>();
+        final List<FieldSpecifier> scopes = new ArrayList<>();
         for (int i = 0; i < this.header.scopeFieldCount; i++) {
             final FieldSpecifier scopeField = new FieldSpecifier(buffer);
 
             scopes.add(scopeField);
         }
 
-        final List<FieldSpecifier> fields = new LinkedList<>();
+        final List<FieldSpecifier> fields = new ArrayList<>();
         for (int i = this.header.scopeFieldCount; i < this.header.fieldCount; i++) {
             final FieldSpecifier field = new FieldSpecifier(buffer);
 
