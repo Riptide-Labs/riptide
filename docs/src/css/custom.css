@@ -1,0 +1,27 @@
+/*
+ * Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+:root {
+  --ifm-color-primary: #1668a5;
+  --ifm-color-primary-dark: #145e94;
+  --ifm-color-primary-darker: #13588c;
+  --ifm-color-primary-darkest: #0f4973;
+  --ifm-color-primary-light: #1872b6;
+  --ifm-color-primary-lighter: #1978be;
+  --ifm-color-primary-lightest: #2287d3;
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #4db2ff;
+  --ifm-color-primary-dark: #2ea4ff;
+  --ifm-color-primary-darker: #1e9dff;
+  --ifm-color-primary-darkest: #0086ec;
+  --ifm-color-primary-light: #6cc0ff;
+  --ifm-color-primary-lighter: #7cc7ff;
+  --ifm-color-primary-lightest: #abdcff;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+}
