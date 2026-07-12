@@ -32,6 +32,7 @@ public class EnrichedFlow {
     private InetAddress dstAddr;
     private String dstAddrHostname;
     private Long dstAs;
+    private String dstAsOrg;
     private Integer dstMaskLen;
     private Integer dstPort;
     private Integer engineId;
@@ -53,6 +54,7 @@ public class EnrichedFlow {
     private InetAddress srcAddr;
     private String srcAddrHostname;
     private Long srcAs;
+    private String srcAsOrg;
     private Integer srcMaskLen;
     private Integer srcPort;
     private Integer tcpFlags;
@@ -96,6 +98,8 @@ public class EnrichedFlow {
         @Mapping(target = "outputSnmpIfName", ignore = true)
         @Mapping(target = "outputSnmpIfAlias", ignore = true)
         @Mapping(target = "outputSnmpIfSpeed", ignore = true)
+        @Mapping(target = "srcAsOrg", ignore = true)
+        @Mapping(target = "dstAsOrg", ignore = true)
         @Mapping(target = "srcAddrHostname", ignore = true)
         @Mapping(target = "dstAddrHostname", ignore = true)
         @Mapping(target = "nextHopHostname", ignore = true)

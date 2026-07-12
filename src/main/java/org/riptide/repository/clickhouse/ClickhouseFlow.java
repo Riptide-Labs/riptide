@@ -38,12 +38,14 @@ public class ClickhouseFlow {
     private Long outputSnmpIfSpeed;
 
     private long srcAs;
+    private String srcAsOrg;
     private Inet6Address srcAddr;
     private int srcMaskLen;
     private String srcAddrHostname;
     private int srcPort;
 
     private long dstAs;
+    private String dstAsOrg;
     private Inet6Address dstAddr;
     private int dstMaskLen;
     private String dstAddrHostname;
