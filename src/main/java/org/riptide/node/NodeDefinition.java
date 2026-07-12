@@ -7,7 +7,11 @@ package org.riptide.node;
 
 import inet.ipaddr.IPAddressString;
 import lombok.Data;
+import org.riptide.snmp.IfInfo;
 import org.riptide.snmp.SnmpDefinition;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * A configured node: how to <em>match</em> an exporter (subnet, optionally pinned to one
@@ -27,4 +31,11 @@ public class NodeDefinition {
 
     /** SNMP agent configuration; {@code null} if this node is not polled. */
     private SnmpDefinition snmp;
+
+    /**
+     * Static interface mapping (ifIndex → name/alias/high-speed) — the enrichment
+     * ladder's middle rung. Fields set here pin over live SNMP values; SNMP fills the
+     * rest. Works without any {@code snmp} block.
+     */
+    private Map<Integer, IfInfo> interfaces = new HashMap<>();
 }

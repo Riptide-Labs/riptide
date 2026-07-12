@@ -30,7 +30,21 @@ riptide.nodes.core-router.snmp.retries=1          # default 1
 3. a **true tie** — two nodes with the same subnet and the same pinning — fails startup
    with both node names; declaration order never decides anything
 
-A node without an `snmp` block matches flows but is not polled.
+A node without an `snmp` block matches flows but is not polled — it can still enrich
+interfaces statically via the `interfaces` map (see below).
+
+## Static interface mapping
+
+Nodes may pin interface metadata without (or in addition to) SNMP:
+
+```properties
+riptide.nodes.core-router.interfaces.10.name=eth0
+riptide.nodes.core-router.interfaces.10.alias=Uplink to AS64500
+riptide.nodes.core-router.interfaces.10.high-speed=10000
+```
+
+Fields set here **override** live SNMP values per field; SNMP fills the rest
+([enrichment ladder](../enrichment.md#the-enrichment-ladder)).
 
 :::tip Keep the inventory in its own file
 
