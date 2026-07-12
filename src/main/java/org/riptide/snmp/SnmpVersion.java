@@ -22,6 +22,9 @@ enum SnmpVersion {
         @Override
         SnmpBuilder getSnmpBuilder() throws IOException {
             return new SnmpBuilder()
+                    // SNMP4J 3.10+ forbids reusing the builder after build() without this;
+                    // getTarget() configures the target on the built builder (see SnmpUtils)
+                    .allowIncrementalConfigAfterBuild()
                     .securityProtocols(SecurityProtocols.SecurityProtocolSet.maxCompatibility)
                     .udp()
                     .v1()
@@ -44,6 +47,9 @@ enum SnmpVersion {
         @Override
         SnmpBuilder getSnmpBuilder() throws IOException {
             return new SnmpBuilder()
+                    // SNMP4J 3.10+ forbids reusing the builder after build() without this;
+                    // getTarget() configures the target on the built builder (see SnmpUtils)
+                    .allowIncrementalConfigAfterBuild()
                     .securityProtocols(SecurityProtocols.SecurityProtocolSet.maxCompatibility)
                     .udp()
                     .v2c()
@@ -66,6 +72,9 @@ enum SnmpVersion {
         @Override
         SnmpBuilder getSnmpBuilder() throws IOException {
             return new SnmpBuilder()
+                    // SNMP4J 3.10+ forbids reusing the builder after build() without this;
+                    // getTarget() configures the target on the built builder (see SnmpUtils)
+                    .allowIncrementalConfigAfterBuild()
                     .securityProtocols(SecurityProtocols.SecurityProtocolSet.maxCompatibility)
                     .udp()
                     .v3()

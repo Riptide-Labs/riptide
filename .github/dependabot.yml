@@ -15,6 +15,11 @@ updates:
       include: "scope"
     schedule:
       interval: "weekly"
+    ignore:
+      # Testcontainers 2.x is a module/API migration (see the migration issue);
+      # majors are ignored until it lands.
+      - dependency-name: "org.testcontainers:*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "npm" # Docusaurus documentation site
     directory: "/docs"
     target-branch: "main"
@@ -29,3 +34,8 @@ updates:
       docusaurus:
         patterns:
           - "@docusaurus/*"
+    ignore:
+      # TS 7 removed baseUrl, which @docusaurus/tsconfig still sets; blocked
+      # until the Docusaurus toolchain supports TypeScript 7 (see PR #171).
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
