@@ -5,10 +5,8 @@
 
 package org.riptide.snmp;
 
-
 import com.codahale.metrics.MetricRegistry;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
 import org.riptide.flows.parser.data.Flow;
@@ -22,21 +20,23 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
 import java.net.InetAddress;
-import java.nio.file.Path;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
+/**
+ * The enrichment ladder's middle rung on its own: a node with a static interface map
+ * and no SNMP block enriches without any reachable agent.
+ */
 @SpringBootTest(properties = {
-        "riptide.nodes.test-agent.subnet-address=127.0.0.1/24",
-        "riptide.nodes.test-agent.snmp.port=12345",
-        "riptide.nodes.test-agent.snmp.snmp-version=v2c",
-        "riptide.nodes.test-agent.snmp.community=" + TestSnmpAgent.COMMUNITY,
-        // enrichment-ladder per-field pin: static alias overrides SNMP, rest is live
-        "riptide.nodes.test-agent.interfaces.1.alias=Uplink pinned by file"
+        "riptide.nodes.static-only.subnet-address=127.0.0.1/24",
+        "riptide.nodes.static-only.interfaces.1.name=eth0",
+        "riptide.nodes.static-only.interfaces.1.alias=Uplink to AS64500",
+        "riptide.nodes.static-only.interfaces.1.high-speed=10000",
+        "riptide.nodes.static-only.interfaces.2.name=lo0"
 })
-public class SnmpEnricherTest {
+public class StaticInterfaceEnricherTest {
 
     private final MetricRegistry metricRegistry = new MetricRegistry();
 
@@ -49,12 +49,7 @@ public class SnmpEnricherTest {
     private final EnrichedFlow.FlowMapper flowMapper = Mappers.getMapper(EnrichedFlow.FlowMapper.class);
 
     @Test
-    public void testEnrichment(@TempDir Path temporaryFolder) throws Exception {
-        final TestSnmpAgent snmpAgent = new TestSnmpAgent("127.0.0.1/12345", temporaryFolder);
-        snmpAgent.start();
-        snmpAgent.registerIfTable();
-        snmpAgent.registerIfXTable();
-
+    public void staticMappingEnrichesWithoutSnmp() throws Exception {
         final var enrichers = List.<Enricher>of(new SnmpEnricher(this.snmpService, this.nodeRegistry));
         final var repository = new TestRepository(metricRegistry);
         final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
@@ -65,23 +60,15 @@ public class SnmpEnricherTest {
         when(flow.getInputSnmp()).thenReturn(1);
         when(flow.getOutputSnmp()).thenReturn(2);
 
-        final var source = new Source("here", InetAddress.getByName("127.0.0.1"));
-
-        pipeline.process(source, List.of(flow));
-
-        snmpAgent.stop();
+        pipeline.process(new Source("here", InetAddress.getByName("127.0.0.1")), List.of(flow));
 
         assertThat(repository.count()).isEqualTo(1);
         assertThat(repository.flows()).allSatisfy(enrichedFlow -> {
-            assertThat(enrichedFlow.getInputSnmp()).isEqualTo(1);
-            assertThat(enrichedFlow.getOutputSnmp()).isEqualTo(2);
-            assertThat(enrichedFlow.getInputSnmpIfName()).isEqualTo("eth0-x");
-            assertThat(enrichedFlow.getInputSnmpIfAlias()).isEqualTo("Uplink pinned by file");
-            assertThat(enrichedFlow.getInputSnmpIfSpeed()).isEqualTo(14L);
-            assertThat(enrichedFlow.getOutputSnmpIfName()).isEqualTo("lo0-x");
-            assertThat(enrichedFlow.getOutputSnmpIfAlias()).isEqualTo("My loopback interface");
-            assertThat(enrichedFlow.getOutputSnmpIfSpeed()).isEqualTo(34L);
+            assertThat(enrichedFlow.getInputSnmpIfName()).isEqualTo("eth0");
+            assertThat(enrichedFlow.getInputSnmpIfAlias()).isEqualTo("Uplink to AS64500");
+            assertThat(enrichedFlow.getInputSnmpIfSpeed()).isEqualTo(10000L);
+            assertThat(enrichedFlow.getOutputSnmpIfName()).isEqualTo("lo0");
+            assertThat(enrichedFlow.getOutputSnmpIfAlias()).isNull();
         });
     }
 }
-
