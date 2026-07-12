@@ -41,7 +41,8 @@ Java 25 · Spring Boot · Netty · SNMP4J · ClickHouse. Licensed
 
 ## Where to go next
 
-- [Getting started](getting-started.md) — build and run from source
+- 🚀 [Deploy Riptide](deploy/docker-compose.md) — run the published image (Compose or plain JAR)
+- 🛠 [Develop & Contribute](develop/environment.md) — build, debug, test, send PRs
 - [Receivers](configuration/receivers.md) — configure flow listeners
 - [Nodes & SNMP](configuration/nodes-and-snmp.md) — the node model and SNMP v1/v2c/v3
 - [Secret references](configuration/secret-references.md) — Vault, SOPS, env, file
