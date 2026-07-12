@@ -89,7 +89,7 @@ public class TcpSession implements Session {
         @Override
         public boolean equals(final Object o) {
             if (this == o) return true;
-            if (o.getClass() != TemplateKey.class) return false;
+            if (o == null || o.getClass() != TemplateKey.class) return false;
 
             final TemplateKey that = (TemplateKey) o;
             return this.observationDomainId == that.observationDomainId

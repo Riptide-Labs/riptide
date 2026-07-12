@@ -42,10 +42,10 @@ public class ClickhouseRepository implements FlowRepository {
         this.flowMapper = Objects.requireNonNull(flowMapper);
 
         this.client = new Client.Builder()
-                .addEndpoint(config.endpoint)
-                .setUsername(config.username)
-                .setPassword(config.password)
-                .setDefaultDatabase(config.database)
+                .addEndpoint(config.getEndpoint())
+                .setUsername(config.getUsername())
+                .setPassword(config.getPassword())
+                .setDefaultDatabase(config.getDatabase())
                 .compressClientRequest(true)
                 .compressServerResponse(true)
                 .build();

@@ -87,7 +87,7 @@ public class Record {
         this.srcPort = uint16(buffer);
         this.dstPort = uint16(buffer);
 
-        final int padding1 = uint8(buffer);
+        uint8(buffer); // padding1 is skipped
 
         this.tcpFlags = uint8(buffer);
 
