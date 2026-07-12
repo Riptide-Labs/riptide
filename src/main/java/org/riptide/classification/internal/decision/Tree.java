@@ -111,10 +111,10 @@ public abstract class Tree {
     @ToString
     public static class Info {
 
-        public static Info FOR_LEAVE_WITH_0_RULES = new Info(0);
-        public static Info FOR_LEAVE_WITH_1_RULE = new Info(1);
-        public static Info FOR_LEAVE_WITH_2_RULES = new Info(2);
-        public static Info FOR_LEAVE_WITH_3_RULES = new Info(3);
+        public static final Info FOR_LEAVE_WITH_0_RULES = new Info(0);
+        public static final Info FOR_LEAVE_WITH_1_RULE = new Info(1);
+        public static final Info FOR_LEAVE_WITH_2_RULES = new Info(2);
+        public static final Info FOR_LEAVE_WITH_3_RULES = new Info(3);
 
         public static Info forLeaf(int ruleSetSize) {
             switch (ruleSetSize) {

@@ -11,10 +11,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @Data
 @ConfigurationProperties(prefix = "riptide.clickhouse")
 public final class ClickhouseConfig {
-        public String endpoint = "http://localhost:8123";
+        private String endpoint = "http://localhost:8123";
 
-        public String username;
-        public String password;
+        private String username;
+        private String password;
 
-        public String database = "riptide";
+        private String database = "riptide";
 }

@@ -14,7 +14,7 @@ import org.riptide.classification.IpAddr;
  */
 public class Bounds {
 
-    public static Bounds ANY = new Bounds(Bound.any(), Bound.any(), Bound.any(), Bound.any(), Bound.any());
+    public static final Bounds ANY = new Bounds(Bound.any(), Bound.any(), Bound.any(), Bound.any(), Bound.any());
 
     public final Bound<Integer> protocol;
     public final Bound<Integer> srcPort, dstPort;

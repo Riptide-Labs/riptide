@@ -43,18 +43,18 @@ public class ClickhouseRepositoryIT {
     @BeforeAll
     static void setUp() {
         final var config = new ClickhouseConfig();
-        config.endpoint = "http://" + CLICKHOUSE.getHost() + ":" + CLICKHOUSE.getMappedPort(8123);
-        config.username = "riptide";
-        config.password = "riptide";
+        config.setEndpoint("http://" + CLICKHOUSE.getHost() + ":" + CLICKHOUSE.getMappedPort(8123));
+        config.setUsername("riptide");
+        config.setPassword("riptide");
 
         repository = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config);
         repository.start();
 
         queryClient = new Client.Builder()
-                .addEndpoint(config.endpoint)
-                .setUsername(config.username)
-                .setPassword(config.password)
-                .setDefaultDatabase(config.database)
+                .addEndpoint(config.getEndpoint())
+                .setUsername(config.getUsername())
+                .setPassword(config.getPassword())
+                .setDefaultDatabase(config.getDatabase())
                 .build();
     }
 

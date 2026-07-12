@@ -132,7 +132,7 @@ public abstract class Bound<T extends Comparable<T>> {
 
         @Override
         public boolean includes(final T value) {
-            return value.compareTo(value) == 0;
+            return value.compareTo(this.value) == 0;
         }
 
         @Override

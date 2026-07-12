@@ -88,7 +88,7 @@ public class NettyDnsResolver implements DnsResolver, DisposableBean {
     static class RoundRobinIterator<T> implements Iterator<T> {
         private final List<T> delegate;
         private int currentIndex = 0;
-        private boolean cleared = false;
+        private volatile boolean cleared = false;
 
         RoundRobinIterator(List<T> list) {
             this.delegate = new CopyOnWriteArrayList<>(list);

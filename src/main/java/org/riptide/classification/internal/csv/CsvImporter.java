@@ -19,7 +19,7 @@ import java.util.List;
 import java.util.Objects;
 
 public final class CsvImporter {
-    public static final String[] HEADERS = {"name", "protocol", "srcAddress", "srcPort", "dstAddress", "dstPort", "exporterFilter", "omnidirectional"};
+    private static final String[] HEADERS = {"name", "protocol", "srcAddress", "srcPort", "dstAddress", "dstPort", "exporterFilter", "omnidirectional"};
 
     public List<Rule> parse(final InputStream inputStream, final boolean hasHeader) throws IOException {
         Objects.requireNonNull(inputStream);

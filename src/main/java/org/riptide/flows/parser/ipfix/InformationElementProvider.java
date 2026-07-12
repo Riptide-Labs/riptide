@@ -116,7 +116,7 @@ class Registry {
     private String id;
 
     @XmlElement(namespace = NAMESPACE, required = true)
-    public String title;
+    private String title;
 
     @XmlElement(namespace = NAMESPACE, required = true)
     private LocalDate created;

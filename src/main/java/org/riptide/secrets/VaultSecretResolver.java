@@ -76,10 +76,11 @@ public class VaultSecretResolver implements SecretResolver {
             // contract of IllegalArgumentException so enrichment degrades instead of failing
             throw new IllegalArgumentException("Cannot resolve secret ref " + ref + " from Vault: " + e.getMessage(), e);
         }
-        if (response == null || response.getData() == null) {
+        final java.util.Map<String, Object> data = response != null ? response.getData() : null;
+        if (data == null) {
             throw new IllegalArgumentException("No secret found for ref " + ref);
         }
-        final Object value = response.getData().get(ref.getKey());
+        final Object value = data.get(ref.getKey());
         if (value == null) {
             throw new IllegalArgumentException("Key '" + ref.getKey() + "' not found for secret ref " + ref);
         }

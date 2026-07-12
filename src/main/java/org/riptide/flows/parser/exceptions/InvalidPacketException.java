@@ -27,6 +27,6 @@ public class InvalidPacketException extends Exception {
         // Compute the offset for which this exception had occurred
         final int offset = buffer.readerIndex() + delta;
 
-        return String.format("%s, Offset: [0x%04X], Payload:\n%s", message, offset, ByteBufUtil.prettyHexDump(unwrappedBuffer));
+        return String.format("%s, Offset: [0x%04X], Payload:%n%s", message, offset, ByteBufUtil.prettyHexDump(unwrappedBuffer));
     }
 }

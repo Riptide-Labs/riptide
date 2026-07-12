@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+ Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+ SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<FindBugsFilter>
+    <!-- MapStruct-generated mapper implementations -->
+    <Match>
+        <Class name="~.*MapperImpl.*"/>
+    </Match>
+
+    <!-- Guards against finalizer attacks on partially-constructed objects; finalization is
+         deprecated for removal since Java 18 and this codebase's parser constructors throw
+         InvalidPacketException by design (66 findings, all of this shape). -->
+    <Match>
+        <Bug pattern="CT_CONSTRUCTOR_THROW"/>
+    </Match>
+
+    <!-- Lombok @Data-style config/value classes intentionally expose mutable fields via
+         generated accessors; internal objects, not API surface. -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+    </Match>
+
+    <!-- Baseline (pre-existing, deliberate):
+         Classifier is sorted by rule position; identity equality is intended and instances
+         are never used as map/set keys mixed with compareTo semantics. -->
+    <Match>
+        <Class name="org.riptide.classification.internal.decision.Classifier"/>
+        <Bug pattern="EQ_COMPARETO_USE_OBJECT_EQUALS"/>
+    </Match>
+
+    <!-- Baseline (pre-existing, deliberate):
+         Tree.EMPTY references subclass Leaf during static init. The Tree/Leaf class pair is
+         always initialized on the same thread (Spring context startup); restructuring the
+         classification tree API is out of scope for gate introduction. -->
+    <Match>
+        <Class name="org.riptide.classification.internal.decision.Tree"/>
+        <Bug pattern="IC_SUPERCLASS_USES_SUBCLASS_DURING_INITIALIZATION"/>
+    </Match>
+</FindBugsFilter>
