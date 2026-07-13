@@ -233,4 +233,21 @@ public class UdpSessionManagerTest {
         manager.drop(sessionKey);
         assertThat(manager.sequenceTrackerCount()).isZero();
     }
+
+    @Test
+    public void addOptionsNotifiesTheOptionListener() throws Exception {
+        final var sessionKey = new Netflow9UdpParser.SessionKey(remoteAddress1.getAddress(), localAddress1);
+        final var seen = new ArrayList<ExporterIdentity>();
+        final var manager = new UdpSessionManager(Duration.ofMinutes(30), () -> new SequenceNumberTracker(32),
+                (identity, scopes, values) -> seen.add(identity));
+        final var session = manager.getSession(sessionKey);
+
+        final var template = Template.builder(templateId1, Template.Type.OPTIONS_TEMPLATE)
+                .withFields(List.of(field("f"))).withScopes(List.of(scope("s"))).build();
+        session.addTemplate(observationId1, template);
+        session.addOptions(observationId1, templateId1, List.of(value("s", "sv")), List.of(value("f", "fv")));
+
+        assertThat(seen).containsExactly(
+                new ExporterIdentity.NetflowIpfix(remoteAddress1.getAddress(), observationId1));
+    }
 }
