@@ -19,6 +19,17 @@ import java.net.InetAddress;
  */
 public sealed interface ExporterIdentity {
 
+    /**
+     * The address identifying the device — payload-derived where the protocol says so
+     * (sFlow agent address), the UDP source otherwise. Used for classification,
+     * logging, and persistence; node matching uses the full identity.
+     */
+    InetAddress deviceAddress();
+
     record NetflowIpfix(InetAddress source, long observationDomain) implements ExporterIdentity {
+        @Override
+        public InetAddress deviceAddress() {
+            return this.source;
+        }
     }
 }

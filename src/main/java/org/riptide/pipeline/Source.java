@@ -5,32 +5,38 @@
 
 package org.riptide.pipeline;
 
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.NonNull;
-import lombok.Setter;
-
 import java.net.InetAddress;
+import java.util.Objects;
 
-// TODO fooker: Do we need to source by SocketAddr?
-@Getter
-@Setter
-@AllArgsConstructor
 public class Source {
-    @NonNull
     private final String location;
 
-    @NonNull
-    private final InetAddress exporterAddr;
+    private final ExporterIdentity identity;
 
-    /** Observation domain (IPFIX) / source ID (NetFlow v9); {@code 0} when the protocol has none. */
-    private final long observationDomain;
+    public Source(final String location, final ExporterIdentity identity) {
+        this.location = Objects.requireNonNull(location);
+        this.identity = Objects.requireNonNull(identity);
+    }
 
+    /** Convenience for protocols (and tests) without an observation-domain concept. */
     public Source(final String location, final InetAddress exporterAddr) {
-        this(location, exporterAddr, 0);
+        this(location, new ExporterIdentity.NetflowIpfix(exporterAddr, 0));
+    }
+
+    public String getLocation() {
+        return this.location;
     }
 
     public ExporterIdentity identity() {
-        return new ExporterIdentity.NetflowIpfix(this.exporterAddr, this.observationDomain);
+        return this.identity;
+    }
+
+    /**
+     * Derived from the identity's device address. Kept as a bean getter on purpose:
+     * {@code EnrichedFlow.FlowMapper} maps {@code Source} properties by name, so this
+     * accessor is what populates the persisted {@code exporterAddr} column.
+     */
+    public InetAddress getExporterAddr() {
+        return this.identity.deviceAddress();
     }
 }
