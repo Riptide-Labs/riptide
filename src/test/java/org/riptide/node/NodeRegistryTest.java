@@ -137,4 +137,26 @@ public class NodeRegistryTest {
         assertThat(match).isPresent();
         assertThat(match.get().snmpEndpoint()).isEmpty();
     }
+
+    @Test
+    public void sflowMatchesByAgentAddress() throws Exception {
+        final NodeRegistry registry = registry(
+                Map.entry("switch-a", node("10.1.0.0/16", null, "a")));
+
+        final var identity = new ExporterIdentity.Sflow(InetAddress.getByName("10.1.1.1"), 0);
+
+        assertThat(registry.lookup(identity)).map(Node::label).hasValue("switch-a");
+    }
+
+    @Test
+    public void sflowSubAgentPinsViaObservationDomainKey() throws Exception {
+        final NodeRegistry registry = registry(
+                Map.entry("wildcard", node("10.1.0.0/16", null, "w")),
+                Map.entry("pinned", node("10.1.0.0/16", 7L, "p")));
+
+        assertThat(registry.lookup(new ExporterIdentity.Sflow(InetAddress.getByName("10.1.1.1"), 7)))
+                .map(Node::label).hasValue("pinned");
+        assertThat(registry.lookup(new ExporterIdentity.Sflow(InetAddress.getByName("10.1.1.1"), 3)))
+                .map(Node::label).hasValue("wildcard");
+    }
 }

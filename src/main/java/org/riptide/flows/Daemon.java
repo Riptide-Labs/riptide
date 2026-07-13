@@ -20,6 +20,7 @@ import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.ipfix.IpfixTcpParser;
 import org.riptide.flows.parser.ipfix.IpfixUdpParser;
 import org.riptide.flows.parser.netflow5.Netflow5UdpParser;
+import org.riptide.flows.parser.sflow.SflowUdpParser;
 import org.riptide.flows.parser.netflow9.Netflow9UdpParser;
 import org.riptide.pipeline.FlowException;
 import org.riptide.pipeline.Pipeline;
@@ -109,11 +110,24 @@ public class Daemon implements ApplicationRunner {
                     }
 
                     @Override
+                    public Listener match(final ReceiverConfig.SflowConfig config) {
+                        final var parser = new SflowUdpParser(e.getKey(), dispatcher, location, metricRegistry);
+
+                        return new UdpListener(e.getKey(), parser, metricRegistry)
+                                .withPort(config.getPort())
+                                .withHost(config.getHost());
+                    }
+
+                    @Override
                     public Listener match(final ReceiverConfig.MultiConfig config) {
                         final var parsers = new HashSet<DispatchableUdpParser>();
 
                         if (config.isNetflow5()) {
                             parsers.add(new Netflow5UdpParser(e.getKey() + ":netflow5", dispatcher, location, metricRegistry));
+                        }
+
+                        if (config.isSflow()) {
+                            parsers.add(new SflowUdpParser(e.getKey() + ":sflow", dispatcher, location, metricRegistry));
                         }
 
                         if (config.isNetflow9()) {
