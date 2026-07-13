@@ -44,7 +44,11 @@ distinguish the nodes by subnet instead.
 :::
 
 A node without an `snmp` block matches flows but is not polled — it can still enrich
-interfaces statically via the `interfaces` map (see below).
+interfaces statically via the `interfaces` map (see below), and from **exporter-pushed
+option records** (e.g. Cisco `option interface-table`) with zero configuration. SNMP
+stays worth configuring even then: option records carry names/descriptions but never
+ifAlias or ifHighSpeed, and a real SNMP ifAlias outranks an option-record description
+(see [Enrichment](../enrichment.md)).
 
 ## Static interface mapping
 

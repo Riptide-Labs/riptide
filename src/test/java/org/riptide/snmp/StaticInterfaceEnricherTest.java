@@ -50,7 +50,7 @@ public class StaticInterfaceEnricherTest {
 
     @Test
     public void staticMappingEnrichesWithoutSnmp() throws Exception {
-        final var enrichers = List.<Enricher>of(new SnmpEnricher(this.snmpService, this.nodeRegistry));
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(this.snmpService, this.nodeRegistry, emptyInterfaceTable()));
         final var repository = new TestRepository(metricRegistry);
         final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
 
@@ -70,5 +70,11 @@ public class StaticInterfaceEnricherTest {
             assertThat(enrichedFlow.getOutputSnmpIfName()).isEqualTo("lo0");
             assertThat(enrichedFlow.getOutputSnmpIfAlias()).isNull();
         });
+    }
+
+    private static ExporterInterfaceTable emptyInterfaceTable() {
+        final SnmpCacheConfig cacheConfig = new SnmpCacheConfig();
+        cacheConfig.setRetentionMs(60_000);
+        return new ExporterInterfaceTable(cacheConfig, new MetricRegistry());
     }
 }
