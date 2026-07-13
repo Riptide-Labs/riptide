@@ -146,7 +146,7 @@ public abstract class ParserBase implements Parser {
             final Runnable dispatch = () -> {
                 log.trace("Received flow: {}", flow);
 
-                this.dispatcher.accept(new Source(this.location, session.getRemoteAddress(), packet.getObservationDomainId()), flow);
+                this.dispatcher.accept(new Source(this.location, packet.identity(session.getRemoteAddress())), flow);
 
                 this.recordsDispatched.mark();
             };
