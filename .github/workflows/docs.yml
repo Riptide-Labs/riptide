@@ -29,6 +29,24 @@ jobs:
       - name: Build documentation
         run: |
           make docs
+      # The Docusaurus site lives under /docs (baseUrl must match); the domain root
+      # redirects there until a landing page exists. 404.html must sit at the
+      # artifact root — GitHub Pages only serves it from there — and gets a
+      # redirector so pre-move deep links (riptide.space/X and legacy
+      # riptide-labs.github.io/riptide/X, which GitHub forwards path-preserving)
+      # land on /docs/X instead of a dead end. Real 404s under /docs/ still
+      # render the Docusaurus page.
+      - name: Stage site under /docs with root redirect
+        run: |
+          mkdir -p site/docs
+          cp -R docs/build/. site/docs/
+          REDIRECT='<script>(function(){var p=location.pathname;if(p.indexOf("/docs")!==0){location.replace("/docs"+p+location.search+location.hash)}})()</script>'
+          sed "s|<head>|<head>${REDIRECT}|" docs/build/404.html > site/404.html
+          cat > site/index.html <<'EOF'
+          <!DOCTYPE html>
+          <meta http-equiv="refresh" content="0; url=/docs/">
+          <link rel="canonical" href="https://riptide.space/docs/">
+          EOF
       - name: Configure GitHub Pages
         if: github.event_name != 'pull_request'
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
@@ -36,7 +54,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
-          path: docs/build
+          path: site
 
   deploy:
     if: github.event_name != 'pull_request'
