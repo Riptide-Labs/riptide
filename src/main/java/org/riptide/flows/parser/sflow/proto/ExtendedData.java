@@ -8,9 +8,8 @@ package org.riptide.flows.parser.sflow.proto;
 import io.netty.buffer.ByteBuf;
 
 import java.net.InetAddress;
-import java.net.UnknownHostException;
 
-import static org.riptide.flows.utils.BufferUtils.bytes;
+import static org.riptide.flows.utils.BufferUtils.inetAddress;
 import static org.riptide.flows.utils.BufferUtils.uint32;
 
 /**
@@ -83,11 +82,6 @@ public final class ExtendedData {
         if (size < 0 || b.readableBytes() < size) {
             return null;
         }
-        try {
-            return InetAddress.getByAddress(bytes(b, size));
-        } catch (final UnknownHostException e) {
-            // unreachable: length is always 4 or 16
-            throw new IllegalStateException(e);
-        }
+        return inetAddress(b, size);
     }
 }

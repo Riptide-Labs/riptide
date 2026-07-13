@@ -19,7 +19,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 
-import static org.riptide.flows.utils.BufferUtils.slice;
 import static org.riptide.flows.utils.BufferUtils.uint32;
 
 /**
@@ -53,34 +52,23 @@ public final class Datagram implements FlowPacket {
         if (this.agentAddress == null) {
             throw new InvalidPacketException(buffer, "Invalid agent address");
         }
+        if (buffer.readableBytes() < 16) {
+            throw new InvalidPacketException(buffer, "Truncated datagram header");
+        }
         this.subAgentId = uint32(buffer);
         this.sequence = uint32(buffer);
         this.uptime = uint32(buffer);
 
-        final long count = uint32(buffer);
         final List<FlowSample> samples = new ArrayList<>();
-        for (long i = 0; i < count; i++) {
-            if (buffer.readableBytes() < 8) {
-                throw new InvalidPacketException(buffer, "Truncated sample %d of %d", i + 1, count);
-            }
-            final long sampleType = uint32(buffer);
-            final int length = (int) uint32(buffer);
-            if (length < 0 || length > buffer.readableBytes()) {
-                throw new InvalidPacketException(buffer, "Invalid sample length: %d", length);
-            }
-            final ByteBuf sample = slice(buffer, length);
-
-            if ((sampleType >>> 12) != 0) {
-                continue; // vendor-specific sample: skip by length
-            }
-            switch ((int) (sampleType & 0xFFF)) {
+        Xdr.walk(buffer, uint32(buffer), "sample", (format, sample) -> {
+            switch (format) {
                 case SAMPLE_FLOW -> samples.add(new FlowSample(sample, false));
                 case SAMPLE_FLOW_EXPANDED -> samples.add(new FlowSample(sample, true));
                 default -> {
                     // counter samples and anything else: skip by length
                 }
             }
-        }
+        });
         this.samples = samples;
     }
 
@@ -97,7 +85,8 @@ public final class Datagram implements FlowPacket {
 
     @Override
     public long getObservationDomainId() {
-        // scopes sequence tracking per sub-agent, mirroring observation domains
+        // informational only: sequence tracking is scoped by identity(), which this
+        // class overrides with the full (agent address, sub-agent) payload identity
         return this.subAgentId;
     }
 

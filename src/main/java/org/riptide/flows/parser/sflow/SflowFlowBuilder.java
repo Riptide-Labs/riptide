@@ -141,7 +141,9 @@ public final class SflowFlowBuilder {
 
             @Override
             public int getEngineId() {
-                return (int) datagram.subAgentId;
+                // sub_agent_id is a full uint32; clamp instead of casting negative —
+                // the persisted engineId column rejects out-of-range values batch-wide
+                return (int) Math.min(datagram.subAgentId, Integer.MAX_VALUE);
             }
 
             @Override

@@ -124,7 +124,7 @@ public class ClickhouseRepository implements FlowRepository {
     
             direction Enum8('INGRESS' = 1, 'EGRESS' = 2, 'UNKNOWN' = 3),
     
-            engineId UInt16,
+            engineId UInt32,
             engineType UInt16,
     
             vlan UInt16,
@@ -134,14 +134,14 @@ public class ClickhouseRepository implements FlowRepository {
             tos UInt8,
     
             samplingAlgorithm Enum8(
-                'Unassigned' = 0,
-                'SystematicCountBasedSampling' = 1,
-                'SystematicTimeBasedSampling' = 2,
-                'RandomNOutOfNSampling' = 3,
-                'UniformProbabilisticSampling' = 4,
-                'PropertyMatchFiltering' = 5,
-                'HashBasedFiltering' = 6,
-                'FlowStateDependentIntermediateFlowSelectionProcess' = 7
+                'Unassigned' = 1,
+                'SystematicCountBasedSampling' = 2,
+                'SystematicTimeBasedSampling' = 3,
+                'RandomNOutOfNSampling' = 4,
+                'UniformProbabilisticSampling' = 5,
+                'PropertyMatchFiltering' = 6,
+                'HashBasedFiltering' = 7,
+                'FlowStateDependentIntermediateFlowSelectionProcess' = 8
             ),\s
             samplingInterval Float64,
     

@@ -11,6 +11,7 @@ import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.state.ExporterState;
 import org.riptide.flows.parser.state.OptionState;
 import org.riptide.flows.parser.state.TemplateState;
+import org.riptide.pipeline.ExporterIdentity;
 
 import java.net.InetAddress;
 import java.util.ArrayList;
@@ -105,7 +106,7 @@ public class TcpSession implements Session {
     private final InetAddress remoteAddress;
     private final Map<TemplateKey, Template> templates = new HashMap<>();
     private final Map<TemplateKey, Map<Set<Value<?>>, List<Value<?>>>> options = new HashMap<>();
-    private final Map<Long, SequenceNumberTracker> sequenceNumbers = new HashMap<>();
+    private final Map<ExporterIdentity, SequenceNumberTracker> sequenceNumbers = new HashMap<>();
 
     private final Supplier<SequenceNumberTracker> sequenceNumberTracker;
 
@@ -149,8 +150,8 @@ public class TcpSession implements Session {
     }
 
     @Override
-    public boolean verifySequenceNumber(long observationDomainId, final long sequenceNumber) {
-        final SequenceNumberTracker tracker = this.sequenceNumbers.computeIfAbsent(observationDomainId, (k) -> this.sequenceNumberTracker.get());
+    public boolean verifySequenceNumber(final ExporterIdentity scope, final long sequenceNumber) {
+        final SequenceNumberTracker tracker = this.sequenceNumbers.computeIfAbsent(scope, (k) -> this.sequenceNumberTracker.get());
         return tracker.verify(sequenceNumber);
     }
 

@@ -24,8 +24,9 @@ import java.util.function.BiConsumer;
 
 /**
  * sFlow v5 (sflow.org spec; not RFC 3176 v4). Stateless on the wire — no templates —
- * but the session still tracks datagram sequence numbers per sub-agent via
- * {@link Datagram#getObservationDomainId()}.
+ * but datagram sequence numbers are still tracked, scoped by the full payload identity
+ * ({@code agent_address} + {@code sub_agent_id}) via
+ * {@link org.riptide.flows.parser.session.Session#verifySequenceNumber}.
  */
 public class SflowUdpParser extends UdpParserBase implements DispatchableUdpParser {
 
