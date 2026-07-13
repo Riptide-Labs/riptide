@@ -32,4 +32,15 @@ public sealed interface ExporterIdentity {
             return this.source;
         }
     }
+
+    /**
+     * sFlow v5: identity is carried inside the datagram — {@code agent_address} plus
+     * {@code sub_agent_id} — and may legitimately differ from the UDP source address.
+     */
+    record Sflow(InetAddress agentAddress, long subAgentId) implements ExporterIdentity {
+        @Override
+        public InetAddress deviceAddress() {
+            return this.agentAddress;
+        }
+    }
 }

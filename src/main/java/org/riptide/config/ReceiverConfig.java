@@ -21,6 +21,7 @@ import java.time.Duration;
         @JsonSubTypes.Type(value = ReceiverConfig.Neflow5Config.class, name = "netflow5"),
         @JsonSubTypes.Type(value = ReceiverConfig.Neflow9Config.class, name = "netflow9"),
         @JsonSubTypes.Type(value = ReceiverConfig.IpfixConfig.class, name = "ipfix"),
+        @JsonSubTypes.Type(value = ReceiverConfig.SflowConfig.class, name = "sflow"),
         @JsonSubTypes.Type(value = ReceiverConfig.MultiConfig.class, name = "multi"),
 })
 @Data
@@ -80,10 +81,21 @@ public abstract sealed class ReceiverConfig {
 
     @Data
     @EqualsAndHashCode(callSuper = true)
+    public static final class SflowConfig extends ReceiverConfig {
+
+        @Override
+        public <T> T accept(final Cases<T> cases) {
+            return cases.match(this);
+        }
+    }
+
+    @Data
+    @EqualsAndHashCode(callSuper = true)
     public static final class MultiConfig extends ReceiverConfig {
         boolean netflow5 = true;
         boolean netflow9 = true;
         boolean ipfix = true;
+        boolean sflow = true;
 
         Duration flowActiveTimeoutFallback = null;
         Duration flowInactiveTimeoutFallback = null;
@@ -101,6 +113,8 @@ public abstract sealed class ReceiverConfig {
         R match(Neflow9Config config);
 
         R match(IpfixConfig config);
+
+        R match(SflowConfig config);
 
         R match(MultiConfig config);
     }

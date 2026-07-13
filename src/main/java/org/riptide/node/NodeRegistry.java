@@ -11,6 +11,7 @@ import lombok.Data;
 import org.riptide.pipeline.ExporterIdentity;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.net.InetAddress;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -35,27 +36,36 @@ public class NodeRegistry {
      */
     public Optional<Node> lookup(final ExporterIdentity identity) {
         // instanceof instead of an exhaustive switch pattern only because checkstyle 9.3
-        // cannot parse switch record patterns; new ExporterIdentity variants (sFlow, #159)
-        // must be handled here.
+        // cannot parse switch record patterns; new ExporterIdentity variants must be
+        // handled here.
         if (identity instanceof ExporterIdentity.NetflowIpfix netflowIpfix) {
-            final IPAddressString ipAddressString = new IPAddressString(netflowIpfix.source().getHostAddress());
-            final List<Map.Entry<String, NodeDefinition>> subnetMatches = this.nodes.entrySet().stream()
-                    .filter(node -> node.getValue().getSubnetAddress().contains(ipAddressString))
-                    .toList();
-
-            final List<Map.Entry<String, NodeDefinition>> pinned = subnetMatches.stream()
-                    .filter(node -> node.getValue().getObservationDomain() != null
-                            && node.getValue().getObservationDomain() == netflowIpfix.observationDomain())
-                    .toList();
-            final List<Map.Entry<String, NodeDefinition>> pool = !pinned.isEmpty()
-                    ? pinned
-                    : subnetMatches.stream().filter(node -> node.getValue().getObservationDomain() == null).toList();
-
-            return pool.stream()
-                    .max(Comparator.comparingInt(node -> prefixLength(node.getValue().getSubnetAddress())))
-                    .map(node -> new Node(node.getKey(), node.getValue(), ipAddressString));
+            return lookup(netflowIpfix.source(), netflowIpfix.observationDomain());
+        }
+        if (identity instanceof ExporterIdentity.Sflow sflow) {
+            // agent address from the payload, sub-agent ID pins via the same
+            // observation-domain node key
+            return lookup(sflow.agentAddress(), sflow.subAgentId());
         }
         throw new IllegalStateException("Unhandled exporter identity: " + identity);
+    }
+
+    private Optional<Node> lookup(final InetAddress address, final long domain) {
+        final IPAddressString ipAddressString = new IPAddressString(address.getHostAddress());
+        final List<Map.Entry<String, NodeDefinition>> subnetMatches = this.nodes.entrySet().stream()
+                .filter(node -> node.getValue().getSubnetAddress().contains(ipAddressString))
+                .toList();
+
+        final List<Map.Entry<String, NodeDefinition>> pinned = subnetMatches.stream()
+                .filter(node -> node.getValue().getObservationDomain() != null
+                        && node.getValue().getObservationDomain() == domain)
+                .toList();
+        final List<Map.Entry<String, NodeDefinition>> pool = !pinned.isEmpty()
+                ? pinned
+                : subnetMatches.stream().filter(node -> node.getValue().getObservationDomain() == null).toList();
+
+        return pool.stream()
+                .max(Comparator.comparingInt(node -> prefixLength(node.getValue().getSubnetAddress())))
+                .map(node -> new Node(node.getKey(), node.getValue(), ipAddressString));
     }
 
     /**
