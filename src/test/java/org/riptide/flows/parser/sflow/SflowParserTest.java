@@ -344,4 +344,43 @@ public class SflowParserTest {
         truncated.setInt(24, 1); // num_samples word for an IPv4 agent datagram
         assertThatThrownBy(() -> new Datagram(truncated)).isInstanceOf(InvalidPacketException.class);
     }
+
+    @Test
+    public void hugeHeaderLengthStaysLenient() throws Exception {
+        // header_length 0xFFFFFFFF must not abort the datagram (a negative int cast
+        // used to turn slice() into an unchecked throw); decode what is readable
+        final var frame = ethernetIpv4Tcp();
+        final var record = buf();
+        u32(record, 1, 1500, 4, 0xFFFFFFFFL); // header_protocol, frame_length, stripped, header_length
+        record.writeBytes(frame);
+        final var body = flowSampleBody(2, 1, 1, record(1, record));
+
+        final var flow = flows(datagram("10.1.1.1", 0, sample(1, body))).getFirst();
+
+        assertThat(flow.getSrcAddr()).isEqualTo(InetAddress.getByName("192.0.2.1"));
+        assertThat(flow.getBytes()).isEqualTo(3000);
+    }
+
+    @Test
+    public void undersizedSampleLengthThrowsInvalidPacket() throws Exception {
+        final var stub = buf();
+        u32(stub, 42, 1); // 8 bytes, far below the 32-byte flow_sample fixed header
+        final var d = datagram("10.1.1.1", 0, sample(1, stub));
+
+        assertThatThrownBy(() -> new Datagram(d))
+                .isInstanceOf(InvalidPacketException.class)
+                .hasMessageContaining("Truncated flow sample header");
+    }
+
+    @Test
+    public void engineIdClampsInsteadOfCastingNegative() throws Exception {
+        final var body = flowSampleBody(1, 1, 1);
+        final var d = new Datagram(datagram("10.1.1.1", 0x80000001L, sample(1, body)));
+
+        final var flow = d.buildFlows(NOW).toList().getFirst();
+
+        assertThat(flow.getEngineId()).isEqualTo(Integer.MAX_VALUE); // clamped, not negative
+        assertThat(d.identity(InetAddress.getByName("192.0.2.9")))
+                .isEqualTo(new ExporterIdentity.Sflow(InetAddress.getByName("10.1.1.1"), 0x80000001L)); // identity keeps the real value
+    }
 }

@@ -35,6 +35,14 @@ domain (source ID). For **sFlow** both come from the datagram payload: subnets m
 the `agent_address` — which may differ from the UDP source — and `observation-domain`
 pins the `sub_agent_id`.
 
+:::warning The pin key is shared across protocols
+`observation-domain: 0` pins *both* NetFlow v5 exporters with engine type/ID 0 (their
+domain maps to `0`) *and* sFlow agents with the near-universal default
+`sub_agent_id = 0` — and a matching pin beats every wildcard node, even a
+more-specific one. If a subnet mixes NetFlow v5 and sFlow devices, avoid pinning `0`;
+distinguish the nodes by subnet instead.
+:::
+
 A node without an `snmp` block matches flows but is not polled — it can still enrich
 interfaces statically via the `interfaces` map (see below).
 

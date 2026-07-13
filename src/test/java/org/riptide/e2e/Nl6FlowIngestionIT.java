@@ -136,6 +136,12 @@ public class Nl6FlowIngestionIT {
         reconcile("sflow", "SFLOW", 0.0);
         verifyTimestampsSane("SFLOW");
 
+        final var algorithms = queryClient.queryAll(
+                "SELECT DISTINCT samplingAlgorithm FROM flows WHERE flowProtocol = 'SFLOW'");
+        Assertions.assertThat(algorithms).hasSize(1);
+        Assertions.assertThat(algorithms.getFirst().getString("samplingAlgorithm"))
+                .isEqualTo("RandomNOutOfNSampling");
+
         final var exporters = queryClient.queryAll(
                 "SELECT DISTINCT exporterAddr FROM flows WHERE flowProtocol = 'SFLOW'");
         Assertions.assertThat(exporters).isNotEmpty().allSatisfy(row ->

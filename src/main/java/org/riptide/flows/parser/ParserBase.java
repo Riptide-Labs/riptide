@@ -134,9 +134,13 @@ public abstract class ParserBase implements Parser {
                                             final FlowPacket packet,
                                             final Session session,
                                             final InetSocketAddress remoteAddress) {
+        // one identity per packet: it scopes sequence tracking (below) and every
+        // dispatched flow's Source
+        final Source source = new Source(this.location, packet.identity(session.getRemoteAddress()));
+
         // Verify that flows sequences are in order
-        if (!session.verifySequenceNumber(packet.getObservationDomainId(), packet.getSequenceNumber())) {
-            log.warn("Error in flow sequence detected: from {}", session.getRemoteAddress());
+        if (!session.verifySequenceNumber(source.identity(), packet.getSequenceNumber())) {
+            log.warn("Error in flow sequence detected: from {}", source.identity());
             this.sequenceErrors.inc();
         }
 
@@ -146,7 +150,7 @@ public abstract class ParserBase implements Parser {
             final Runnable dispatch = () -> {
                 log.trace("Received flow: {}", flow);
 
-                this.dispatcher.accept(new Source(this.location, packet.identity(session.getRemoteAddress())), flow);
+                this.dispatcher.accept(source, flow);
 
                 this.recordsDispatched.mark();
             };

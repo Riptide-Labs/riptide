@@ -7,6 +7,7 @@ package org.riptide.flows.parser.session;
 
 import org.riptide.flows.parser.exceptions.MissingTemplateException;
 import org.riptide.flows.parser.ie.Value;
+import org.riptide.pipeline.ExporterIdentity;
 
 import java.net.InetAddress;
 import java.util.Collection;
@@ -31,5 +32,10 @@ public interface Session {
 
     InetAddress getRemoteAddress();
 
-    boolean verifySequenceNumber(long observationDomainId, long sequenceNumber);
+    /**
+     * Sequence streams are scoped by the full exporter identity, not just the
+     * observation domain: sFlow agents with distinct payload agent addresses may share
+     * one UDP source, and their independent streams must not interleave in one tracker.
+     */
+    boolean verifySequenceNumber(ExporterIdentity scope, long sequenceNumber);
 }

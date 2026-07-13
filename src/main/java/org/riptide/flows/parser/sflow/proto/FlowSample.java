@@ -9,10 +9,7 @@ import com.google.common.base.MoreObjects;
 import io.netty.buffer.ByteBuf;
 import org.riptide.flows.parser.exceptions.InvalidPacketException;
 
-import java.net.InetAddress;
-import java.net.UnknownHostException;
-
-import static org.riptide.flows.utils.BufferUtils.bytes;
+import static org.riptide.flows.utils.BufferUtils.inetAddress;
 import static org.riptide.flows.utils.BufferUtils.slice;
 import static org.riptide.flows.utils.BufferUtils.uint32;
 
@@ -68,6 +65,9 @@ public final class FlowSample {
     }
 
     public FlowSample(final ByteBuf buffer, final boolean expanded) throws InvalidPacketException {
+        if (buffer.readableBytes() < (expanded ? 44 : 32)) {
+            throw new InvalidPacketException(buffer, "Truncated flow sample header");
+        }
         this.sequence = uint32(buffer);
         if (expanded) {
             uint32(buffer); // source_id type
@@ -86,26 +86,11 @@ public final class FlowSample {
             this.output = InterfaceValue.compact(uint32(buffer));
         }
 
-        final long records = uint32(buffer);
-        for (long i = 0; i < records; i++) {
-            if (buffer.readableBytes() < 8) {
-                throw new InvalidPacketException(buffer, "Truncated flow record %d of %d", i + 1, records);
-            }
-            final long dataFormat = uint32(buffer);
-            final int length = (int) uint32(buffer);
-            if (length < 0 || length > buffer.readableBytes()) {
-                throw new InvalidPacketException(buffer, "Invalid flow record length: %d", length);
-            }
-            this.record(dataFormat, slice(buffer, length));
-        }
+        Xdr.walk(buffer, uint32(buffer), "flow record", this::record);
     }
 
-    private void record(final long dataFormat, final ByteBuf b) {
-        final long enterprise = dataFormat >>> 12;
-        if (enterprise != 0) {
-            return; // vendor-specific record: skip by length
-        }
-        switch ((int) (dataFormat & 0xFFF)) {
+    private void record(final int format, final ByteBuf b) {
+        switch (format) {
             case RECORD_SAMPLED_HEADER -> {
                 if (b.readableBytes() < 16) {
                     return;
@@ -113,9 +98,11 @@ public final class FlowSample {
                 final int headerProtocol = (int) uint32(b);
                 this.frameLength = uint32(b);
                 uint32(b); // stripped octets
-                final int headerLength = (int) uint32(b);
+                // min in long domain: header_length is uint32 and must not go negative
+                // through an int cast (a crafted value would turn slice() into a throw)
+                final long headerLength = uint32(b);
                 this.packet = HeaderDecoder.decode(headerProtocol,
-                        slice(b, Math.min(headerLength, b.readableBytes())));
+                        slice(b, (int) Math.min(headerLength, b.readableBytes())));
             }
             case RECORD_SAMPLED_IPV4 -> this.sampledIp(b, 4);
             case RECORD_SAMPLED_IPV6 -> this.sampledIp(b, 6);
@@ -144,22 +131,13 @@ public final class FlowSample {
         info.ipVersion = version;
         this.frameLength = uint32(b);
         info.protocol = (int) uint32(b);
-        info.srcAddr = rawAddress(b, addressSize);
-        info.dstAddr = rawAddress(b, addressSize);
+        info.srcAddr = inetAddress(b, addressSize);
+        info.dstAddr = inetAddress(b, addressSize);
         info.srcPort = (int) uint32(b);
         info.dstPort = (int) uint32(b);
         info.tcpFlags = (int) uint32(b);
         info.tos = (int) uint32(b); // priority for IPv6 — same slot
         this.packet = info;
-    }
-
-    private static InetAddress rawAddress(final ByteBuf b, final int size) {
-        try {
-            return InetAddress.getByAddress(bytes(b, size));
-        } catch (final UnknownHostException e) {
-            // unreachable: length is always 4 or 16
-            throw new IllegalStateException(e);
-        }
     }
 
     @Override

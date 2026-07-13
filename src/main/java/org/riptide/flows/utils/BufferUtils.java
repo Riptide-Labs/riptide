@@ -9,6 +9,8 @@ import com.google.common.base.Preconditions;
 import com.google.common.primitives.UnsignedLong;
 import io.netty.buffer.ByteBuf;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.nio.BufferUnderflowException;
 import java.util.function.Function;
 
@@ -116,5 +118,16 @@ public final class BufferUtils {
         final byte[] result = new byte[size];
         buffer.readBytes(result);
         return result;
+    }
+
+    /** Reads {@code octets} bytes (4 or 16) as an address. */
+    public static InetAddress inetAddress(final ByteBuf buffer, final int octets) {
+        Preconditions.checkArgument(octets == 4 || octets == 16);
+        try {
+            return InetAddress.getByAddress(bytes(buffer, octets));
+        } catch (final UnknownHostException e) {
+            // unreachable: getByAddress only rejects lengths other than 4 and 16
+            throw new IllegalStateException(e);
+        }
     }
 }

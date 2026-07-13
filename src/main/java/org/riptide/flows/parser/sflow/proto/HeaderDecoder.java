@@ -7,10 +7,7 @@ package org.riptide.flows.parser.sflow.proto;
 
 import io.netty.buffer.ByteBuf;
 
-import java.net.InetAddress;
-import java.net.UnknownHostException;
-
-import static org.riptide.flows.utils.BufferUtils.bytes;
+import static org.riptide.flows.utils.BufferUtils.inetAddress;
 import static org.riptide.flows.utils.BufferUtils.uint16;
 import static org.riptide.flows.utils.BufferUtils.uint32;
 import static org.riptide.flows.utils.BufferUtils.uint8;
@@ -93,8 +90,8 @@ public final class HeaderDecoder {
         b.skipBytes(1); // ttl
         info.protocol = uint8(b);
         b.skipBytes(2); // checksum
-        info.srcAddr = address(bytes(b, 4));
-        info.dstAddr = address(bytes(b, 4));
+        info.srcAddr = inetAddress(b, 4);
+        info.dstAddr = inetAddress(b, 4);
 
         final int options = headerLength - 20;
         if (options < 0 || b.readableBytes() < options) {
@@ -121,8 +118,8 @@ public final class HeaderDecoder {
         b.skipBytes(2); // payload length
         int next = uint8(b);
         b.skipBytes(1); // hop limit
-        info.srcAddr = address(bytes(b, 16));
-        info.dstAddr = address(bytes(b, 16));
+        info.srcAddr = inetAddress(b, 16);
+        info.dstAddr = inetAddress(b, 16);
 
         for (int i = 0; i < MAX_IPV6_EXTENSIONS; i++) {
             if (next == 0 || next == 43 || next == 60) { // hop-by-hop, routing, dest-opts
@@ -169,12 +166,4 @@ public final class HeaderDecoder {
         }
     }
 
-    private static InetAddress address(final byte[] octets) {
-        try {
-            return InetAddress.getByAddress(octets);
-        } catch (final UnknownHostException e) {
-            // unreachable: length is always 4 or 16
-            throw new IllegalStateException(e);
-        }
-    }
 }
