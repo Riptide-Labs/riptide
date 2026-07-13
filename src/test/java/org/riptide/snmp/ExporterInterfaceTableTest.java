@@ -119,4 +119,46 @@ public class ExporterInterfaceTableTest {
 
         assertThat(shortLived.lookup(identity, 3)).isEmpty();
     }
+
+    @Test
+    public void splitTablesMergePerField() throws Exception {
+        // exporter sends name and description in separate option tables — arrival
+        // order must not clobber the other field
+        final var identity = identity("10.0.0.1", 1);
+        this.table.accept(identity, List.of(new UnsignedValue("SCOPE:INTERFACE", 4)),
+                List.of(new StringValue("IF_NAME", "Eth4")));
+        this.table.accept(identity, List.of(new UnsignedValue("SCOPE:SYSTEM", 1)),
+                List.of(new UnsignedValue("INPUT_SNMP", 4), new StringValue("IF_DESC", "backbone")));
+
+        assertThat(this.table.lookup(identity, 4)).contains(new IfInfo("Eth4", "backbone", null));
+
+        // and the fresher record wins per field
+        this.table.accept(identity, List.of(new UnsignedValue("SCOPE:INTERFACE", 4)),
+                List.of(new StringValue("IF_NAME", "Eth4-renamed")));
+        assertThat(this.table.lookup(identity, 4)).contains(new IfInfo("Eth4-renamed", "backbone", null));
+    }
+
+    @Test
+    public void zeroScopeValueFallsThroughToTheFieldIfIndex() throws Exception {
+        final var identity = identity("10.0.0.1", 1);
+        this.table.accept(identity,
+                List.of(new UnsignedValue("SCOPE:INTERFACE", 0)),
+                List.of(new UnsignedValue("INPUT_SNMP", 11), new StringValue("IF_NAME", "via-field")));
+
+        assertThat(this.table.lookup(identity, 11)).map(IfInfo::name).contains("via-field");
+    }
+
+    @Test
+    public void egressKeyedRecordsAreAccepted() throws Exception {
+        final var identity = identity("10.0.0.1", 1);
+        this.table.accept(identity,
+                List.of(new UnsignedValue("egressInterface", 12)),
+                List.of(new StringValue("interfaceName", "egress-if")));
+        this.table.accept(identity,
+                List.of(new UnsignedValue("SCOPE:SYSTEM", 1)),
+                List.of(new UnsignedValue("OUTPUT_SNMP", 13), new StringValue("IF_DESC", "out-desc")));
+
+        assertThat(this.table.lookup(identity, 12)).map(IfInfo::name).contains("egress-if");
+        assertThat(this.table.lookup(identity, 13)).map(IfInfo::alias).contains("out-desc");
+    }
 }

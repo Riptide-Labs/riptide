@@ -44,6 +44,9 @@ public class SnmpEnricher implements Enricher {
             // exporter-pushed option data enriches even without a configured node —
             // it is keyed by exporter identity, not by node
             final Optional<Node> node = this.nodeRegistry.lookup(source.identity());
+            if (node.isEmpty() && this.exporterInterfaceTable.isEmpty()) {
+                return null; // nothing could contribute — keep the hot path free
+            }
             final Optional<SnmpEndpoint> snmpEndpoint = node.flatMap(Node::snmpEndpoint);
             for (final EnrichedFlow flow : flows) {
                 apply(node, snmpEndpoint, source, flow.getInputSnmp(), ifInfo -> {

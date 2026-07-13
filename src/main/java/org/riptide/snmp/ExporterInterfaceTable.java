@@ -11,6 +11,8 @@ import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.primitives.UnsignedLong;
 import org.riptide.flows.parser.ie.Value;
+import org.riptide.flows.parser.ie.values.visitor.StringVisitor;
+import org.riptide.flows.parser.ie.values.visitor.UnsignedLongVisitor;
 import org.riptide.flows.parser.session.OptionListener;
 import org.riptide.pipeline.ExporterIdentity;
 import org.riptide.utils.Tuple;
@@ -42,8 +44,9 @@ public class ExporterInterfaceTable implements OptionListener {
 
     private static final List<String> NAME_FIELDS = List.of("IF_NAME", "interfaceName");
     private static final List<String> DESCRIPTION_FIELDS = List.of("IF_DESC", "interfaceDescription");
-    private static final List<String> IFINDEX_SCOPES = List.of("SCOPE:INTERFACE", "ingressInterface");
-    private static final List<String> IFINDEX_FIELDS = List.of("INPUT_SNMP", "ingressInterface");
+    // the table is direction-neutral, so egress-keyed variants are accepted too
+    private static final List<String> IFINDEX_SCOPES = List.of("SCOPE:INTERFACE", "ingressInterface", "egressInterface");
+    private static final List<String> IFINDEX_FIELDS = List.of("INPUT_SNMP", "ingressInterface", "OUTPUT_SNMP", "egressInterface");
 
     private final Cache<Tuple<ExporterIdentity, Integer>, IfInfo> table;
 
@@ -52,7 +55,11 @@ public class ExporterInterfaceTable implements OptionListener {
 
     public ExporterInterfaceTable(final SnmpCacheConfig cacheConfig, final MetricRegistry metrics) {
         this.table = CacheBuilder.newBuilder()
-                .expireAfterWrite(cacheConfig.getRetentionMs(), TimeUnit.MILLISECONDS)
+                // 2x the poll-cache retention: exporters re-send option tables at
+                // roughly the same cadence (Cisco default 600 s == our default
+                // retention), so a 1x TTL would race every refresh and one lost
+                // option packet would unenrich flows for a full cycle
+                .expireAfterWrite(2 * cacheConfig.getRetentionMs(), TimeUnit.MILLISECONDS)
                 .build();
         this.recordsConsumed = metrics.meter(MetricRegistry.name("enrichment", "optionInterfaces", "consumed"));
         this.recordsSkipped = metrics.meter(MetricRegistry.name("enrichment", "optionInterfaces", "skipped"));
@@ -67,7 +74,8 @@ public class ExporterInterfaceTable implements OptionListener {
         }
 
         Integer ifIndex = unsigned(scopes, IFINDEX_SCOPES);
-        if (ifIndex == null) {
+        if (ifIndex == null || ifIndex == 0) {
+            // a zero scope value is as good as none: fall through to the fields
             ifIndex = unsigned(values, IFINDEX_FIELDS);
         }
         if (ifIndex == null || ifIndex == 0) {
@@ -75,8 +83,17 @@ public class ExporterInterfaceTable implements OptionListener {
             return;
         }
 
-        this.table.put(Tuple.of(identity, ifIndex), new IfInfo(name, description, null));
+        // per-field merge: exporters may split name and description over separate
+        // option tables (e.g. an interface-scoped table plus the IOS-XR style one);
+        // the fresh record pins its fields, the existing entry fills the rest
+        final Tuple<ExporterIdentity, Integer> key = Tuple.of(identity, ifIndex);
+        this.table.put(key, IfInfo.merge(new IfInfo(name, description, null), this.table.getIfPresent(key)));
         this.recordsConsumed.mark();
+    }
+
+    /** Approximate and cheap; exactly {@code true} when nothing was ever inserted. */
+    public boolean isEmpty() {
+        return this.table.size() == 0;
     }
 
     public Optional<IfInfo> lookup(final ExporterIdentity identity, final int ifIndex) {
@@ -85,10 +102,13 @@ public class ExporterInterfaceTable implements OptionListener {
 
     private static String string(final Collection<Value<?>> values, final List<String> names) {
         for (final Value<?> value : values) {
-            // v9 strings are fixed-width and NUL-padded on the wire
-            if (names.contains(value.getName()) && value.getValue() instanceof String s) {
-                final String trimmed = s.replace("\0", "").trim();
-                return trimmed.isEmpty() ? null : trimmed;
+            if (names.contains(value.getName())) {
+                final String s = value.accept(new StringVisitor());
+                if (s != null) {
+                    // v9 strings are fixed-width and NUL-padded on the wire
+                    final String trimmed = s.replace("\0", "").trim();
+                    return trimmed.isEmpty() ? null : trimmed;
+                }
             }
         }
         return null;
@@ -96,8 +116,11 @@ public class ExporterInterfaceTable implements OptionListener {
 
     private static Integer unsigned(final Collection<Value<?>> values, final List<String> names) {
         for (final Value<?> value : values) {
-            if (names.contains(value.getName()) && value.getValue() instanceof UnsignedLong u) {
-                return u.intValue();
+            if (names.contains(value.getName())) {
+                final UnsignedLong u = value.accept(new UnsignedLongVisitor());
+                if (u != null) {
+                    return u.intValue();
+                }
             }
         }
         return null;
