@@ -16,7 +16,7 @@ identity in logs and error messages (kebab-case: letters, digits, dashes):
 
 ```properties
 riptide.nodes.core-router.subnet-address=10.20.30.0/24
-riptide.nodes.core-router.observation-domain=42   # optional pin; omit = matches any domain
+riptide.nodes.core-router.observation-domain=42   # optional pin (observation domain / sFlow sub-agent ID); omit = matches any
 riptide.nodes.core-router.snmp.port=161           # default 161
 riptide.nodes.core-router.snmp.timeout=500        # ms, default 500
 riptide.nodes.core-router.snmp.retries=1          # default 1
@@ -29,6 +29,11 @@ riptide.nodes.core-router.snmp.retries=1          # default 1
    a bare host address is most specific)
 3. a **true tie** — two nodes with the same subnet and the same pinning — fails startup
    with both node names; declaration order never decides anything
+
+For NetFlow/IPFIX the matched address is the UDP source and the pin is the observation
+domain (source ID). For **sFlow** both come from the datagram payload: subnets match
+the `agent_address` — which may differ from the UDP source — and `observation-domain`
+pins the `sub_agent_id`.
 
 A node without an `snmp` block matches flows but is not polled — it can still enrich
 interfaces statically via the `interfaces` map (see below).

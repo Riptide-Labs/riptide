@@ -25,6 +25,11 @@ value; live sources fill the fields the file doesn't set; packet data is the flo
 For AS numbers, a **nonzero exporter-provided value always wins** — the routing mapping
 only fills zeros.
 
+The floor extends into parsing: an sFlow sample whose raw packet header cannot be
+decoded (truncated by the sampler, non-IP payload) still becomes a flow carrying the
+sample-level data — bytes, packets, interfaces — with the undecodable fields simply
+absent. Undecodable is not an error.
+
 ## Static interface mapping
 
 A node may carry its own interface table — the middle rung, for devices without
