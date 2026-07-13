@@ -29,15 +29,6 @@ jobs:
       - name: Build documentation
         run: |
           make docs
-      - name: Stage site under /docs with root redirect
-        run: |
-          mkdir -p site/docs
-          cp -R docs/build/. site/docs/
-          cat > site/index.html <<'EOF'
-          <!DOCTYPE html>
-          <meta http-equiv="refresh" content="0; url=/docs/">
-          <link rel="canonical" href="https://riptide.space/docs/">
-          EOF
       - name: Configure GitHub Pages
         if: github.event_name != 'pull_request'
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
