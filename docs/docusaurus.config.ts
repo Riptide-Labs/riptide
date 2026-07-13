@@ -13,7 +13,7 @@ const config: Config = {
   favicon: 'img/favicon.png',
 
   url: 'https://riptide.space',
-  baseUrl: '/docs/',
+  baseUrl: '/',
 
   organizationName: 'Riptide-Labs',
   projectName: 'riptide',
