@@ -30,4 +30,24 @@ public record IfInfo(String name, String alias, Long highSpeed) {
                 pinned.alias != null ? pinned.alias : fallback.alias,
                 pinned.highSpeed != null ? pinned.highSpeed : fallback.highSpeed);
     }
+
+    /**
+     * Per-field authority between exporter-pushed option data and live SNMP:
+     * {@code name} prefers options (IE 82 is exactly ifName, and pushed data is
+     * fresher than a poll); {@code alias} prefers SNMP (ifAlias is definitionally the
+     * operator alias, while IE 83 is maybe-ifDescr and only fills when SNMP can't);
+     * {@code highSpeed} exists only in SNMP. Either side may be {@code null}.
+     */
+    public static IfInfo optionsThenSnmp(final IfInfo options, final IfInfo snmp) {
+        if (options == null) {
+            return snmp;
+        }
+        if (snmp == null) {
+            return options;
+        }
+        return new IfInfo(
+                options.name != null ? options.name : snmp.name,
+                snmp.alias != null ? snmp.alias : options.alias,
+                snmp.highSpeed);
+    }
 }

@@ -41,9 +41,18 @@ public class UdpSessionManager {
 
     private final Supplier<SequenceNumberTracker> sequenceNumberTracker;
 
+    private final OptionListener optionListener;
+
     public UdpSessionManager(final Duration timeout, final Supplier<SequenceNumberTracker> sequenceNumberTracker) {
+        this(timeout, sequenceNumberTracker, OptionListener.NONE);
+    }
+
+    public UdpSessionManager(final Duration timeout,
+                             final Supplier<SequenceNumberTracker> sequenceNumberTracker,
+                             final OptionListener optionListener) {
         this.timeout = timeout;
         this.sequenceNumberTracker = Objects.requireNonNull(sequenceNumberTracker);
+        this.optionListener = Objects.requireNonNull(optionListener);
     }
 
     public void doHousekeeping() {
@@ -250,6 +259,10 @@ public class UdpSessionManager {
                                final List<Value<?>> values) {
             final TemplateKey key = new TemplateKey(this.sessionKey, observationDomainId, templateId);
             UdpSessionManager.this.templates.get(key).wrapped.options.put(new HashSet<>(scopes), new TimeWrapper<>(values));
+
+            UdpSessionManager.this.optionListener.accept(
+                    new ExporterIdentity.NetflowIpfix(this.sessionKey.getRemoteAddress(), observationDomainId),
+                    scopes, values);
         }
 
         @Override

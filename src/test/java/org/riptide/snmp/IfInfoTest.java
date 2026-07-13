@@ -43,4 +43,22 @@ public class IfInfoTest {
 
         assertThat(IfInfo.merge(pinned, live)).isEqualTo(pinned);
     }
+
+    @Test
+    public void optionsThenSnmpAppliesPerFieldAuthority() {
+        final IfInfo options = new IfInfo("opt-name", "opt-desc", null);
+        final IfInfo snmp = new IfInfo("snmp-name", "snmp-alias", 100L);
+
+        assertThat(IfInfo.optionsThenSnmp(options, snmp))
+                .isEqualTo(new IfInfo("opt-name", "snmp-alias", 100L));
+    }
+
+    @Test
+    public void optionsDescriptionFillsAliasOnlyWithoutSnmp() {
+        final IfInfo options = new IfInfo(null, "opt-desc", null);
+
+        assertThat(IfInfo.optionsThenSnmp(options, null)).isEqualTo(new IfInfo(null, "opt-desc", null));
+        assertThat(IfInfo.optionsThenSnmp(null, null)).isNull();
+        assertThat(IfInfo.optionsThenSnmp(null, new IfInfo("s", "a", 1L))).isEqualTo(new IfInfo("s", "a", 1L));
+    }
 }

@@ -110,9 +110,18 @@ public class TcpSession implements Session {
 
     private final Supplier<SequenceNumberTracker> sequenceNumberTracker;
 
+    private final OptionListener optionListener;
+
     public TcpSession(final InetAddress remoteAddress, final Supplier<SequenceNumberTracker> sequenceNumberTracker) {
+        this(remoteAddress, sequenceNumberTracker, OptionListener.NONE);
+    }
+
+    public TcpSession(final InetAddress remoteAddress,
+                      final Supplier<SequenceNumberTracker> sequenceNumberTracker,
+                      final OptionListener optionListener) {
         this.remoteAddress = Objects.requireNonNull(remoteAddress);
         this.sequenceNumberTracker = Objects.requireNonNull(sequenceNumberTracker);
+        this.optionListener = Objects.requireNonNull(optionListener);
     }
 
     @Override
@@ -137,6 +146,10 @@ public class TcpSession implements Session {
                            final List<Value<?>> values) {
         final TemplateKey key = new TemplateKey(observationDomainId, templateId);
         this.options.computeIfAbsent(key, (k) -> new HashMap<>()).put(new HashSet<>(scopes), values);
+
+        this.optionListener.accept(
+                new ExporterIdentity.NetflowIpfix(this.remoteAddress, observationDomainId),
+                scopes, values);
     }
 
     @Override

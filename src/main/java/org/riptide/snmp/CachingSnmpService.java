@@ -36,7 +36,7 @@ public class CachingSnmpService implements SnmpService {
         this.delegate = Objects.requireNonNull(delegate);
         this.cacheConfig = Objects.requireNonNull(cacheConfig);
         ifIndexCache = CacheBuilder.newBuilder()
-                .expireAfterWrite(cacheConfig.retentionMs, TimeUnit.MILLISECONDS)
+                .expireAfterWrite(cacheConfig.getRetentionMs(), TimeUnit.MILLISECONDS)
                 .build();
     }
 
