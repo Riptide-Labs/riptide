@@ -50,7 +50,7 @@ public class Daemon implements ApplicationRunner {
                   @Qualifier("netflow9ValueConversionService") final ValueConversionService netflow9ValueConversionService,
                   final ExporterInterfaceTable exporterInterfaceTable,
                   final DaemonConfig config) {
-        final var location = config.getLocation();
+        final var identity = config.resolveIdentity();
 
         this.pipeline = Objects.requireNonNull(pipeline);
         final BiConsumer<Source, Flow> dispatcher = (source, flow) -> {
@@ -66,7 +66,7 @@ public class Daemon implements ApplicationRunner {
                 .map(e -> e.getValue().accept(new ReceiverConfig.Cases<Listener>() {
                     @Override
                     public Listener match(final ReceiverConfig.Neflow5Config config) {
-                        final var parser = new Netflow5UdpParser(e.getKey(), dispatcher, location, metricRegistry);
+                        final var parser = new Netflow5UdpParser(e.getKey(), dispatcher, identity, metricRegistry);
 
                         return new UdpListener(e.getKey(), parser, metricRegistry)
                                 .withPort(config.getPort())
@@ -75,7 +75,7 @@ public class Daemon implements ApplicationRunner {
 
                     @Override
                     public Listener match(final ReceiverConfig.Neflow9Config config) {
-                        final var parser = new Netflow9UdpParser(e.getKey(), dispatcher, location, metricRegistry, netflow9ValueConversionService)
+                        final var parser = new Netflow9UdpParser(e.getKey(), dispatcher, identity, metricRegistry, netflow9ValueConversionService)
                                 .withFlowActiveTimeoutFallback(config.getFlowActiveTimeoutFallback())
                                 .withFlowInactiveTimeoutFallback(config.getFlowInactiveTimeoutFallback())
                                 .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback());
@@ -90,7 +90,7 @@ public class Daemon implements ApplicationRunner {
                     public Listener match(final ReceiverConfig.IpfixConfig config) {
                         return switch (config.getTransport()) {
                             case UDP -> {
-                                final var parser = new IpfixUdpParser(e.getKey(), dispatcher, location, metricRegistry, ipfixValueConversionService)
+                                final var parser = new IpfixUdpParser(e.getKey(), dispatcher, identity, metricRegistry, ipfixValueConversionService)
                                         .withFlowActiveTimeoutFallback(config.getFlowActiveTimeoutFallback())
                                         .withFlowInactiveTimeoutFallback(config.getFlowInactiveTimeoutFallback())
                                         .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback());
@@ -102,7 +102,7 @@ public class Daemon implements ApplicationRunner {
                                         .withHost(config.getHost());
                             }
                             case TCP -> {
-                                final var parser = new IpfixTcpParser(e.getKey(), dispatcher, location, metricRegistry, ipfixValueConversionService)
+                                final var parser = new IpfixTcpParser(e.getKey(), dispatcher, identity, metricRegistry, ipfixValueConversionService)
                                         .withFlowActiveTimeoutFallback(config.getFlowActiveTimeoutFallback())
                                         .withFlowInactiveTimeoutFallback(config.getFlowInactiveTimeoutFallback())
                                         .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback());
@@ -118,7 +118,7 @@ public class Daemon implements ApplicationRunner {
 
                     @Override
                     public Listener match(final ReceiverConfig.SflowConfig config) {
-                        final var parser = new SflowUdpParser(e.getKey(), dispatcher, location, metricRegistry);
+                        final var parser = new SflowUdpParser(e.getKey(), dispatcher, identity, metricRegistry);
 
                         return new UdpListener(e.getKey(), parser, metricRegistry)
                                 .withPort(config.getPort())
@@ -130,15 +130,15 @@ public class Daemon implements ApplicationRunner {
                         final var parsers = new HashSet<DispatchableUdpParser>();
 
                         if (config.isNetflow5()) {
-                            parsers.add(new Netflow5UdpParser(e.getKey() + ":netflow5", dispatcher, location, metricRegistry));
+                            parsers.add(new Netflow5UdpParser(e.getKey() + ":netflow5", dispatcher, identity, metricRegistry));
                         }
 
                         if (config.isSflow()) {
-                            parsers.add(new SflowUdpParser(e.getKey() + ":sflow", dispatcher, location, metricRegistry));
+                            parsers.add(new SflowUdpParser(e.getKey() + ":sflow", dispatcher, identity, metricRegistry));
                         }
 
                         if (config.isNetflow9()) {
-                            final var netflow9 = new Netflow9UdpParser(e.getKey() + ":netflow9", dispatcher, location, metricRegistry, netflow9ValueConversionService)
+                            final var netflow9 = new Netflow9UdpParser(e.getKey() + ":netflow9", dispatcher, identity, metricRegistry, netflow9ValueConversionService)
                                     .withFlowActiveTimeoutFallback(config.getFlowActiveTimeoutFallback())
                                     .withFlowInactiveTimeoutFallback(config.getFlowInactiveTimeoutFallback())
                                     .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback());
@@ -147,7 +147,7 @@ public class Daemon implements ApplicationRunner {
                         }
 
                         if (config.isIpfix()) {
-                            final var ipfix = new IpfixUdpParser(e.getKey() + ":ipfix", dispatcher, location, metricRegistry, ipfixValueConversionService)
+                            final var ipfix = new IpfixUdpParser(e.getKey() + ":ipfix", dispatcher, identity, metricRegistry, ipfixValueConversionService)
                                     .withFlowActiveTimeoutFallback(config.getFlowActiveTimeoutFallback())
                                     .withFlowInactiveTimeoutFallback(config.getFlowInactiveTimeoutFallback())
                                     .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback());

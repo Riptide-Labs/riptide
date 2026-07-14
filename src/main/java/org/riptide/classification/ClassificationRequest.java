@@ -11,7 +11,7 @@ import lombok.Data;
 @Data
 @Builder(builderClassName = "Builder", setterPrefix = "with")
 public class ClassificationRequest {
-    private final String location;
+    private final String zone;
     private final Protocol protocol;
     private final Integer dstPort;
     private final IpAddr dstAddress;
@@ -24,7 +24,7 @@ public class ClassificationRequest {
                 .withSrcPort(source.srcPort)
                 .withDstPort(source.dstPort)
                 .withProtocol(source.protocol)
-                .withLocation(source.location)
+                .withZone(source.zone)
                 .withDstAddress(source.dstAddress)
                 .withSrcAddress(source.srcAddress)
                 .withExporterAddress(source.exporterAddress);

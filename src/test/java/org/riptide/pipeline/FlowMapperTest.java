@@ -16,21 +16,50 @@ import static org.mockito.Mockito.mock;
 
 /**
  * Pins the name-driven MapStruct mapping of {@link Source} properties into
- * {@link EnrichedFlow}: {@code exporterAddr} and {@code location} are populated via
+ * {@link EnrichedFlow}: {@code exporterAddr} and the four identity columns
+ * ({@code tenant}, {@code organisation}, {@code zone}, {@code system}) are populated via
  * property-name matching, so a rename on {@link Source} would otherwise fail silently
- * (NULL exporterAddr in ClickHouse) instead of loudly.
+ * (NULL columns in ClickHouse) instead of loudly.
  */
 public class FlowMapperTest {
 
+    private final EnrichedFlow.FlowMapper mapper = Mappers.getMapper(EnrichedFlow.FlowMapper.class);
+
     @Test
     public void sourcePropertiesMapByName() throws Exception {
-        final var mapper = Mappers.getMapper(EnrichedFlow.FlowMapper.class);
         final var source = new Source("here", InetAddress.getByName("203.0.113.9"));
 
         final var enriched = mapper.enrichedFlow(source, mock(Flow.class));
 
         assertThat(enriched.getExporterAddr()).isEqualTo("203.0.113.9");
-        assertThat(enriched.getLocation()).isEqualTo("here");
+        assertThat(enriched.getZone()).isEqualTo("here");
+    }
+
+    @Test
+    public void identityDefaultsPopulate() throws Exception {
+        // The 2-arg convenience constructor defaults the non-zone identity dimensions.
+        final var source = new Source("default", InetAddress.getByName("203.0.113.9"));
+
+        final var enriched = mapper.enrichedFlow(source, mock(Flow.class));
+
+        assertThat(enriched.getTenant()).isEqualTo("default");
+        assertThat(enriched.getOrganisation()).isEqualTo("default");
+        assertThat(enriched.getZone()).isEqualTo("default");
+        assertThat(enriched.getSystem()).isEqualTo("default");
+    }
+
+    @Test
+    public void configuredIdentityIsStamped() throws Exception {
+        final var identity = new Identity("acme", "acme-eu", "dmz", "collector-01");
+        final var source = new Source(identity, new ExporterIdentity.NetflowIpfix(
+                InetAddress.getByName("203.0.113.9"), 7));
+
+        final var enriched = mapper.enrichedFlow(source, mock(Flow.class));
+
+        assertThat(enriched.getTenant()).isEqualTo("acme");
+        assertThat(enriched.getOrganisation()).isEqualTo("acme-eu");
+        assertThat(enriched.getZone()).isEqualTo("dmz");
+        assertThat(enriched.getSystem()).isEqualTo("collector-01");
     }
 
     @Test

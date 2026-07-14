@@ -14,6 +14,7 @@ import org.riptide.flows.parser.exceptions.InvalidPacketException;
 import org.riptide.flows.parser.sflow.proto.Datagram;
 import org.riptide.flows.parser.sflow.proto.InterfaceValue;
 import org.riptide.pipeline.ExporterIdentity;
+import org.riptide.pipeline.Identity;
 
 import java.net.InetAddress;
 import java.time.Instant;
@@ -326,7 +327,8 @@ public class SflowParserTest {
 
     @Test
     public void handlesPeeksTheXdrVersionWord() {
-        final var parser = new SflowUdpParser("test", (source, flow) -> { }, "here", new MetricRegistry());
+        final var parser = new SflowUdpParser("test", (source, flow) -> { },
+                new Identity("default", "default", "here", "default"), new MetricRegistry());
 
         assertThat(parser.handles(u32(buf(), 5))).isTrue();
         assertThat(parser.handles(buf().writeShort(0x0005))).isFalse();  // NetFlow v5
