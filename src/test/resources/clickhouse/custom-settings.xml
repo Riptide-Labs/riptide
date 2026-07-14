@@ -1,0 +1,11 @@
+<!--
+  Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+  SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<clickhouse>
+    <!--
+      Allow custom user settings with the SQL_ prefix so a writer credential can pin its tenant/org
+      as CONST settings and the flows CHECK constraints can read them via getSetting('SQL_tenant').
+    -->
+    <custom_settings_prefixes>SQL_</custom_settings_prefixes>
+</clickhouse>

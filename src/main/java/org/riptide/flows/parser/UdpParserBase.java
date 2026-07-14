@@ -15,6 +15,7 @@ import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.OptionListener;
 import org.riptide.flows.parser.session.UdpSessionManager;
+import org.riptide.pipeline.Identity;
 import org.riptide.pipeline.Source;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,9 +47,9 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
     public UdpParserBase(final Protocol protocol,
                          final String name,
                          final BiConsumer<Source, Flow> dispatcher,
-                         final String location,
+                         final Identity identity,
                          final MetricRegistry metricRegistry) {
-        super(protocol, name, dispatcher, location, metricRegistry);
+        super(protocol, name, dispatcher, identity, metricRegistry);
 
         this.packetsReceived = metricRegistry.meter(MetricRegistry.name("parsers",  name, "packetsReceived"));
         this.parserErrors = metricRegistry.counter(MetricRegistry.name("parsers",  name, "parserErrors"));

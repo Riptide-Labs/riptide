@@ -15,6 +15,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -32,7 +33,7 @@ import java.util.Map;
  */
 public final class Nl6Container extends GenericContainer<Nl6Container> {
 
-    private static final String IMAGE = "ghcr.io/labmonkeys-space/nl6:v0.15.1";
+    private static final String IMAGE = "ghcr.io/labmonkeys-space/nl6:v0.16.0";
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newHttpClient();
@@ -93,15 +94,27 @@ public final class Nl6Container extends GenericContainer<Nl6Container> {
 
     /** Creates a batch of devices exporting flows to the given host port on the Docker host. */
     public void createDevices(final String startIp, final int count, final String protocol, final int collectorHostPort) throws Exception {
+        createDevices(startIp, count, protocol, collectorHostPort, Map.of());
+    }
+
+    /**
+     * As above, with extra keys merged into the {@code flow} block — e.g.
+     * {@code sub_agent_id} (sFlow, nl6 ≥ v0.16.0) or {@code options_interface_table}
+     * ({@code "if-scoped"}/{@code "system-scoped"}, NetFlow v9 / IPFIX).
+     */
+    public void createDevices(final String startIp, final int count, final String protocol,
+                              final int collectorHostPort, final Map<String, Object> flowExtras) throws Exception {
+        final var flow = new HashMap<String, Object>(Map.of(
+                "collector", "host.docker.internal:" + collectorHostPort,
+                "protocol", protocol,
+                "tick_interval", "2s",
+                "active_timeout", "5s",
+                "inactive_timeout", "5s"));
+        flow.putAll(flowExtras);
         final var body = objectMapper.writeValueAsString(Map.of(
                 "start_ip", startIp,
                 "device_count", count,
-                "flow", Map.of(
-                        "collector", "host.docker.internal:" + collectorHostPort,
-                        "protocol", protocol,
-                        "tick_interval", "2s",
-                        "active_timeout", "5s",
-                        "inactive_timeout", "5s")));
+                "flow", flow));
 
         final var request = HttpRequest.newBuilder(URI.create(apiBase() + "/devices"))
                 .header("Content-Type", "application/json")

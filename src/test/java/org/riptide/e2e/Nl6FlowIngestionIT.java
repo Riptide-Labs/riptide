@@ -18,6 +18,7 @@ import org.testcontainers.containers.wait.strategy.Wait;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 
 import static org.riptide.e2e.E2eTestSupport.await;
 import static org.riptide.e2e.E2eTestSupport.freeUdpPort;
@@ -90,6 +91,15 @@ public class Nl6FlowIngestionIT {
         registry.add("riptide.nodes.sflow-agents.subnet-address", () -> "10.42.3.0/24");
         registry.add("riptide.nodes.sflow-agents.interfaces.1.name", () -> "sfl-in");
         registry.add("riptide.nodes.sflow-agents.interfaces.2.name", () -> "sfl-out");
+
+        // Two nodes on one subnet to prove sFlow sub-agent pinning: the pinned node
+        // (observation-domain = the sub_agent_id) beats the wildcard. Distinct static
+        // interface names let the query tell which node matched.
+        registry.add("riptide.nodes.sflow-pinned.subnet-address", () -> "10.42.6.0/24");
+        registry.add("riptide.nodes.sflow-pinned.observation-domain", () -> "7");
+        registry.add("riptide.nodes.sflow-pinned.interfaces.1.name", () -> "pinned-in");
+        registry.add("riptide.nodes.sflow-wild.subnet-address", () -> "10.42.6.0/24");
+        registry.add("riptide.nodes.sflow-wild.interfaces.1.name", () -> "wild-in");
     }
 
     @BeforeAll
@@ -105,6 +115,18 @@ public class Nl6FlowIngestionIT {
         NL6.createDevices("10.42.1.1", 3, "netflow9", NETFLOW9_PORT);
         NL6.createDevices("10.42.2.1", 3, "ipfix", IPFIX_PORT);
         NL6.createDevices("10.42.3.1", 3, "sflow", SFLOW_PORT);
+
+        // Interface option records (nl6 v0.16.0) — SNMP-less enrichment, both wire shapes:
+        // if-scoped emits IE 82+83 (name via scope), system-scoped emits IE 83 only
+        // (description via the INPUT_SNMP field fallback — the real IOS-XR shape).
+        // These add flow data to the v9/ipfix reconcile counts (fine — both sides grow);
+        // nl6 excludes option records from sent_records, so the ledger stays clean.
+        NL6.createDevices("10.42.4.1", 2, "netflow9", NETFLOW9_PORT, Map.of("options_interface_table", "if-scoped"));
+        NL6.createDevices("10.42.5.1", 2, "ipfix", IPFIX_PORT, Map.of("options_interface_table", "system-scoped"));
+
+        // sFlow sub-agent pinning — a device group per sub_agent_id on one subnet.
+        NL6.createDevices("10.42.6.1", 2, "sflow", SFLOW_PORT, Map.of("sub_agent_id", 7));    // → sflow-pinned
+        NL6.createDevices("10.42.6.21", 2, "sflow", SFLOW_PORT, Map.of("sub_agent_id", 3));   // → sflow-wild
     }
 
     @Test
@@ -142,14 +164,62 @@ public class Nl6FlowIngestionIT {
         Assertions.assertThat(algorithms.getFirst().getString("samplingAlgorithm"))
                 .isEqualTo("RandomNOutOfNSampling");
 
+        // every sFlow exporter is a device address (10.42.x), never the shared-socket
+        // container IP — the payload-derived-attribution proof
         final var exporters = queryClient.queryAll(
                 "SELECT DISTINCT exporterAddr FROM flows WHERE flowProtocol = 'SFLOW'");
         Assertions.assertThat(exporters).isNotEmpty().allSatisfy(row ->
+                Assertions.assertThat(row.getString("exporterAddr")).startsWith("10.42."));
+        Assertions.assertThat(exporters).anySatisfy(row ->
                 Assertions.assertThat(row.getString("exporterAddr")).startsWith("10.42.3."));
 
         await(Duration.ofMinutes(1), "sFlow rows enriched via the agent-address-matched node",
                 () -> queryClient.queryAll(
                         "SELECT count() AS c FROM flows WHERE flowProtocol = 'SFLOW' AND inputSnmpIfName = 'sfl-in'")
+                        .getFirst().getLong("c") > 0);
+    }
+
+    /**
+     * sFlow sub-agent pinning (nl6 v0.16.0 configurable {@code sub_agent_id}): two nodes
+     * share subnet 10.42.6.0/24, one pinned to observation-domain 7. Devices sending
+     * {@code sub_agent_id} 7 must attribute to the pinned node, others to the wildcard —
+     * proving {@code NodeRegistry} keys sFlow by {@code (agent_address, sub_agent_id)}.
+     */
+    @Test
+    void verifySflowSubAgentPinning() throws Exception {
+        await(Duration.ofMinutes(2), "sub_agent_id 7 devices attribute to the pinned node",
+                () -> queryClient.queryAll(
+                        "SELECT count() AS c FROM flows WHERE flowProtocol = 'SFLOW' "
+                        + "AND exporterAddr IN ('10.42.6.1','10.42.6.2') AND inputSnmpIfName = 'pinned-in'")
+                        .getFirst().getLong("c") > 0);
+
+        await(Duration.ofMinutes(2), "other sub_agent_id devices attribute to the wildcard node",
+                () -> queryClient.queryAll(
+                        "SELECT count() AS c FROM flows WHERE flowProtocol = 'SFLOW' "
+                        + "AND exporterAddr IN ('10.42.6.21','10.42.6.22') AND inputSnmpIfName = 'wild-in'")
+                        .getFirst().getLong("c") > 0);
+    }
+
+    /**
+     * Interface enrichment from v9/IPFIX option records (nl6 v0.16.0), with no SNMP and
+     * no node configured — pure option-table enrichment. The if-scoped shape carries
+     * IE 82 (name); the system-scoped shape carries IE 83 only (description → alias),
+     * exercising riptide's scope-resolution and field-fallback paths respectively.
+     */
+    @Test
+    void verifyOptionRecordEnrichmentWithoutSnmp() throws Exception {
+        // if-scoped (NetFlow v9): IE 82 present → interface NAME enriched
+        await(Duration.ofMinutes(2), "netflow9 flows enriched with an interface name from option records",
+                () -> queryClient.queryAll(
+                        "SELECT count() AS c FROM flows WHERE flowProtocol = 'NetflowV9' "
+                        + "AND inputSnmpIfName IS NOT NULL AND inputSnmpIfName != ''")
+                        .getFirst().getLong("c") > 0);
+
+        // system-scoped (IPFIX): IE 83 only → interface ALIAS enriched, name absent
+        await(Duration.ofMinutes(2), "ipfix flows enriched with an interface alias (description-only) from option records",
+                () -> queryClient.queryAll(
+                        "SELECT count() AS c FROM flows WHERE flowProtocol = 'IPFIX' "
+                        + "AND inputSnmpIfAlias IS NOT NULL AND inputSnmpIfAlias != ''")
                         .getFirst().getLong("c") > 0);
     }
 

@@ -27,7 +27,7 @@ public class ClassificationEnricher extends Enricher.Single {
     protected CompletableFuture<Void> enrich(Source source, EnrichedFlow flow) {
         final var request = ClassificationRequest.builder()
                 .withExporterAddress(IpAddr.of(source.getExporterAddr()))
-                .withLocation(source.getLocation())
+                .withZone(source.getZone())
                 .withProtocol(Protocols.getProtocol(flow.getProtocol()))
                 .withSrcAddress(IpAddr.of(flow.getSrcAddr()))
                 .withSrcPort(flow.getSrcPort())

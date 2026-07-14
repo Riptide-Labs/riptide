@@ -17,6 +17,7 @@ import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.UdpSessionManager;
 import org.riptide.flows.parser.sflow.proto.Datagram;
 import org.riptide.flows.utils.BufferUtils;
+import org.riptide.pipeline.Identity;
 import org.riptide.pipeline.Source;
 
 import java.net.InetSocketAddress;
@@ -32,9 +33,9 @@ public class SflowUdpParser extends UdpParserBase implements DispatchableUdpPars
 
     public SflowUdpParser(final String name,
                           final BiConsumer<Source, Flow> dispatcher,
-                          final String location,
+                          final Identity identity,
                           final MetricRegistry metricRegistry) {
-        super(Protocol.SFLOW, name, dispatcher, location, metricRegistry);
+        super(Protocol.SFLOW, name, dispatcher, identity, metricRegistry);
     }
 
     @Override

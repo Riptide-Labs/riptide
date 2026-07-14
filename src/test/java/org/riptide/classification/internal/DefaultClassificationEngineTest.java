@@ -68,7 +68,7 @@ public class DefaultClassificationEngineTest {
                 DefaultRule.builder().withName("XXX").withDstAddress("192.168.2.1").build()
         ));
         final var classificationRequest = ClassificationRequest.builder()
-                .withLocation("Default")
+                .withZone("Default")
                 .withSrcPort(0)
                 .withDstAddress("192.168.2.1")
                 .withDstPort(80)
@@ -76,7 +76,7 @@ public class DefaultClassificationEngineTest {
                 .build();
         assertThat(engine.classify(classificationRequest)).isEqualTo("XXX");
         assertThat(engine.classify(ClassificationRequest.builder()
-                .withLocation("Default")
+                .withZone("Default")
                 .withProtocol(ProtocolType.TCP)
                 .withSrcAddress("192.168.2.1").withSrcPort(4789)
                 .withDstAddress("52.31.45.219").withDstPort(80)
@@ -89,7 +89,7 @@ public class DefaultClassificationEngineTest {
         assertThat(IntStream.range(0, 65535))
                 .allSatisfy((i) -> assertThatCode(() -> {
                     final var request = ClassificationRequest.builder()
-                            .withLocation("Default")
+                            .withZone("Default")
                             .withSrcPort(0)
                             .withDstPort(i)
                             .withDstAddress("127.0.0.1")
@@ -109,7 +109,7 @@ public class DefaultClassificationEngineTest {
         }
         final var engine = new DefaultClassificationEngine(() -> rules);
         final var request = ClassificationRequest.builder()
-                .withLocation("localhost")
+                .withZone("localhost")
                 .withSrcPort(1234)
                 .withSrcAddress("127.0.0.1")
                 .withDstPort(80)

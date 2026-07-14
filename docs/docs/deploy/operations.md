@@ -15,11 +15,19 @@ title: Operations
 
 ## Restarts and data
 
+In manage mode (`riptide.clickhouse.manage-schema=true`, the default), Riptide ensures its
+`flows` table with `CREATE TABLE IF NOT EXISTS` at startup — an existing table is not
+replaced, so **flow data now survives a Riptide restart**. (This fixes the earlier
+`CREATE OR REPLACE` behavior, which recreated the table on every boot and lost all data.)
+
 :::warning
 
-Riptide issues `CREATE OR REPLACE TABLE` for its `flows` table at startup — **flow data
-does not survive a Riptide restart** in the current design. Plan retention accordingly
-(e.g. export/aggregate downstream) until schema migration lands.
+Schema evolution is still not migrated automatically. `CREATE TABLE IF NOT EXISTS` no-ops on
+an existing table, so a schema change between Riptide versions is **not** applied — the
+startup column check fails fast if the on-disk schema is stale, and the operator must **drop
+the `flows` table** (Riptide recreates it in manage mode) or re-provision it in
+`manage-schema=false` mode. This is a deliberate fail-fast until schema migrations land; plan
+retention accordingly if a version upgrade requires dropping the table.
 
 :::
 

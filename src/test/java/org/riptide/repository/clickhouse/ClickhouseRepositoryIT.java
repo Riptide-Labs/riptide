@@ -12,6 +12,8 @@ import org.junit.jupiter.api.Test;
 import org.riptide.config.ClickhouseConfig;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.pipeline.EnrichedFlow;
+import org.riptide.secrets.SecretRef;
+import org.riptide.secrets.SecretResolvers;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
@@ -37,6 +39,8 @@ public class ClickhouseRepositoryIT {
             .withExposedPorts(8123)
             .waitingFor(Wait.forHttp("/ping").forPort(8123).forStatusCode(200));
 
+    private static final SecretResolvers RESOLVERS = SecretResolvers.defaults();
+
     private static ClickhouseRepository repository;
     private static Client queryClient;
 
@@ -44,16 +48,16 @@ public class ClickhouseRepositoryIT {
     static void setUp() {
         final var config = new ClickhouseConfig();
         config.setEndpoint("http://" + CLICKHOUSE.getHost() + ":" + CLICKHOUSE.getMappedPort(8123));
-        config.setUsername("riptide");
-        config.setPassword("riptide");
+        config.setUsername(SecretRef.of("riptide"));
+        config.setPassword(SecretRef.of("riptide"));
 
-        repository = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config);
+        repository = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
         repository.start();
 
         queryClient = new Client.Builder()
                 .addEndpoint(config.getEndpoint())
-                .setUsername(config.getUsername())
-                .setPassword(config.getPassword())
+                .setUsername("riptide")
+                .setPassword("riptide")
                 .setDefaultDatabase(config.getDatabase())
                 .build();
     }
@@ -69,13 +73,102 @@ public class ClickhouseRepositoryIT {
         Assertions.assertThat(count).isEqualTo(2);
 
         final var rows = queryClient.queryAll(
-                "SELECT srcPort, dstPort, bytes, flowProtocol, exporterAddr FROM flows ORDER BY srcPort");
+                "SELECT srcPort, dstPort, bytes, flowProtocol, exporterAddr, "
+                        + "tenant, organisation, zone, system FROM flows ORDER BY srcPort");
         Assertions.assertThat(rows).hasSize(2);
         Assertions.assertThat(rows.getFirst().getInteger("srcPort")).isEqualTo(10001);
         Assertions.assertThat(rows.getFirst().getInteger("dstPort")).isEqualTo(443);
         Assertions.assertThat(rows.getFirst().getLong("bytes")).isEqualTo(1234L);
         Assertions.assertThat(rows.getFirst().getString("flowProtocol")).isEqualTo("IPFIX");
         Assertions.assertThat(rows.getFirst().getString("exporterAddr")).isEqualTo("203.0.113.7");
+        Assertions.assertThat(rows.getFirst().getString("tenant")).isEqualTo("default");
+        Assertions.assertThat(rows.getFirst().getString("organisation")).isEqualTo("default");
+        Assertions.assertThat(rows.getFirst().getString("zone")).isEqualTo("default");
+        Assertions.assertThat(rows.getFirst().getString("system")).isEqualTo("default");
+    }
+
+    @Test
+    void manageModeCreatesAndPreservesDataAcrossRestart() throws Exception {
+        final var database = "manage_restart";
+        queryClient.execute("CREATE DATABASE IF NOT EXISTS " + database).get();
+
+        final var config = configFor(database, true);
+
+        // First boot: manage mode creates the flows table and we persist a row.
+        final var first = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
+        first.start();
+        first.persist(List.of(testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 30001, 443, 4242L)));
+
+        // Simulated restart: a fresh repository runs start() again.
+        final var second = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
+        second.start();
+
+        // CREATE TABLE IF NOT EXISTS no-oped, so the previously inserted row survived the restart.
+        final var count = queryClient.queryAll("SELECT count() AS c FROM " + database + ".flows")
+                .getFirst().getLong("c");
+        Assertions.assertThat(count).isEqualTo(1);
+    }
+
+    @Test
+    void validateModeSucceedsWithProvisionedTable() {
+        final var database = "validate_ok";
+        queryClient.execute("CREATE DATABASE IF NOT EXISTS " + database).join();
+
+        // Provision the schema via a manage-mode start, then a validate-mode start must succeed.
+        new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, true), RESOLVERS).start();
+
+        final var validating = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, false), RESOLVERS);
+        Assertions.assertThatCode(validating::start).doesNotThrowAnyException();
+    }
+
+    @Test
+    void validateModeFailsFastWhenTableAbsent() {
+        final var database = "validate_missing";
+        queryClient.execute("CREATE DATABASE IF NOT EXISTS " + database).join();
+
+        final var validating = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, false), RESOLVERS);
+        Assertions.assertThatThrownBy(validating::start)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("flows table not found")
+                .hasMessageContaining("provision");
+    }
+
+    @Test
+    void columnCheckFailsFastWhenIdentityColumnMissing() throws Exception {
+        final var database = "stale_schema";
+        queryClient.execute("CREATE DATABASE IF NOT EXISTS " + database).get();
+
+        // A pre-existing flows table missing the tenant identity column (stale-upgrade case).
+        queryClient.execute("CREATE TABLE " + database + ".flows ("
+                + "timestamp DateTime64(3), organisation String, zone String, system String) "
+                + "ENGINE = MergeTree() ORDER BY timestamp").get();
+
+        // Manage mode: CREATE TABLE IF NOT EXISTS no-ops over the stale table, then the check trips.
+        final var repository = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, true), RESOLVERS);
+        Assertions.assertThatThrownBy(repository::start)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("tenant");
+    }
+
+    private static ClickhouseConfig configFor(final String database, final boolean manageSchema) {
+        final var config = new ClickhouseConfig();
+        config.setEndpoint("http://" + CLICKHOUSE.getHost() + ":" + CLICKHOUSE.getMappedPort(8123));
+        config.setUsername(SecretRef.of("riptide"));
+        config.setPassword(SecretRef.of("riptide"));
+        config.setDatabase(database);
+        config.setManageSchema(manageSchema);
+        return config;
+    }
+
+    @Test
+    void sortingKeyLeadsWithTenant() {
+        final var sortingKey = queryClient.queryAll(
+                        "SELECT sorting_key FROM system.tables WHERE name = 'flows'")
+                .getFirst().getString("sorting_key");
+
+        // Tenant-led sort key with a rounded-time term; zone/system stay out of it.
+        Assertions.assertThat(sortingKey).startsWith("tenant, organisation, toStartOfHour(timestamp)");
+        Assertions.assertThat(sortingKey).doesNotContain("zone").doesNotContain("system");
     }
 
     private static EnrichedFlow testFlow(final Instant now, final int srcPort, final int dstPort, final long bytes) throws Exception {
@@ -86,7 +179,10 @@ public class ClickhouseRepositoryIT {
                 .deltaSwitched(now.minusSeconds(10))
                 .lastSwitched(now)
                 .flowProtocol(Flow.FlowProtocol.IPFIX)
-                .location("default")
+                .tenant("default")
+                .organisation("default")
+                .zone("default")
+                .system("default")
                 .exporterAddr("203.0.113.7")
                 .srcAddr(InetAddress.getByName("192.0.2.10"))
                 .srcPort(srcPort)
