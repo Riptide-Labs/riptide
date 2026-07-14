@@ -84,6 +84,79 @@ public class ClickhouseRepositoryIT {
     }
 
     @Test
+    void manageModeCreatesAndPreservesDataAcrossRestart() throws Exception {
+        final var database = "manage_restart";
+        queryClient.execute("CREATE DATABASE IF NOT EXISTS " + database).get();
+
+        final var config = configFor(database, true);
+
+        // First boot: manage mode creates the flows table and we persist a row.
+        final var first = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config);
+        first.start();
+        first.persist(List.of(testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 30001, 443, 4242L)));
+
+        // Simulated restart: a fresh repository runs start() again.
+        final var second = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config);
+        second.start();
+
+        // CREATE TABLE IF NOT EXISTS no-oped, so the previously inserted row survived the restart.
+        final var count = queryClient.queryAll("SELECT count() AS c FROM " + database + ".flows")
+                .getFirst().getLong("c");
+        Assertions.assertThat(count).isEqualTo(1);
+    }
+
+    @Test
+    void validateModeSucceedsWithProvisionedTable() {
+        final var database = "validate_ok";
+        queryClient.execute("CREATE DATABASE IF NOT EXISTS " + database).join();
+
+        // Provision the schema via a manage-mode start, then a validate-mode start must succeed.
+        new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, true)).start();
+
+        final var validating = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, false));
+        Assertions.assertThatCode(validating::start).doesNotThrowAnyException();
+    }
+
+    @Test
+    void validateModeFailsFastWhenTableAbsent() {
+        final var database = "validate_missing";
+        queryClient.execute("CREATE DATABASE IF NOT EXISTS " + database).join();
+
+        final var validating = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, false));
+        Assertions.assertThatThrownBy(validating::start)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("flows table not found")
+                .hasMessageContaining("provision");
+    }
+
+    @Test
+    void columnCheckFailsFastWhenIdentityColumnMissing() throws Exception {
+        final var database = "stale_schema";
+        queryClient.execute("CREATE DATABASE IF NOT EXISTS " + database).get();
+
+        // A pre-existing flows table missing the tenant identity column (stale-upgrade case).
+        queryClient.execute("CREATE TABLE " + database + ".flows ("
+                + "timestamp DateTime64(3), organisation String, zone String, system String) "
+                + "ENGINE = MergeTree() ORDER BY timestamp").get();
+
+        // Manage mode: CREATE TABLE IF NOT EXISTS no-ops over the stale table, then the check trips.
+        final var repository = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, true));
+        Assertions.assertThatThrownBy(repository::start)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("tenant");
+    }
+
+    private static ClickhouseConfig configFor(final String database, final boolean manageSchema) {
+        final var config = new ClickhouseConfig();
+        config.setEndpoint("http://" + CLICKHOUSE.getHost() + ":" + CLICKHOUSE.getMappedPort(8123));
+        config.setUsername("riptide");
+        config.setPassword("riptide");
+        config.setDatabase(database);
+        config.setManageSchema(manageSchema);
+        return config;
+    }
+
+    @Test
     void sortingKeyLeadsWithTenant() {
         final var sortingKey = queryClient.queryAll(
                         "SELECT sorting_key FROM system.tables WHERE name = 'flows'")

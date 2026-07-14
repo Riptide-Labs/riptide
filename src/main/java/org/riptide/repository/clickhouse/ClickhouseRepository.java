@@ -17,22 +17,42 @@ import org.riptide.config.ClickhouseConfig;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
+import com.clickhouse.client.api.metadata.TableSchema;
+import com.clickhouse.data.ClickHouseColumn;
 import org.riptide.repository.FlowRepository;
 
 import java.io.IOException;
 import java.net.Inet4Address;
 import java.net.Inet6Address;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.net.InetAddress;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
 
 @Slf4j
 public class ClickhouseRepository implements FlowRepository {
 
+    /**
+     * The columns riptide inserts, derived from the persisted-flow POJO whose field names match
+     * the ClickHouse column names 1:1. The startup schema check requires all of these to be
+     * present; a table missing any is stale or mis-provisioned and fails fast (before the first
+     * insert would fail opaquely).
+     */
+    private static final Set<String> REQUIRED_COLUMNS = Arrays.stream(ClickhouseFlow.class.getDeclaredFields())
+            .filter(field -> !Modifier.isStatic(field.getModifiers()) && !field.isSynthetic())
+            .map(Field::getName)
+            .collect(Collectors.toUnmodifiableSet());
+
     private final FlowMapper flowMapper;
+
+    private final ClickhouseConfig config;
 
     private final Client client;
 
@@ -40,6 +60,7 @@ public class ClickhouseRepository implements FlowRepository {
     public ClickhouseRepository(final FlowMapper flowMapper,
                                 final ClickhouseConfig config) {
         this.flowMapper = Objects.requireNonNull(flowMapper);
+        this.config = Objects.requireNonNull(config);
 
         this.client = new Client.Builder()
                 .addEndpoint(config.getEndpoint())
@@ -65,15 +86,70 @@ public class ClickhouseRepository implements FlowRepository {
     @Override
     @SneakyThrows
     public void start() {
-        this.client.execute(DDL_FLOWS).get();
-        this.client.execute(DDL_SAMPLES).get();
+        if (this.config.isManageSchema()) {
+            // Manage mode: ensure the schema idempotently. IF NOT EXISTS means an existing flows
+            // table is not replaced, so previously persisted data survives a restart; the samples
+            // VIEW holds no data and is always refreshed (OR REPLACE) so it never goes stale.
+            this.client.execute(DDL_FLOWS).get();
+            this.client.execute(DDL_SAMPLES).get();
+        }
 
-        this.client.register(ClickhouseFlow.class, this.client.getTableSchema("flows"));
+        // Both modes: the flows table must exist and carry every column riptide inserts. Fail-fast
+        // guard (no ALTER, no migration): in manage mode it catches a stale table that IF NOT
+        // EXISTS no-oped over; in validate mode it catches an absent or mis-provisioned schema —
+        // before the first insert would fail with an opaque error. Reuses the schema for register.
+        final TableSchema schema = checkSchema();
+
+        this.client.register(ClickhouseFlow.class, schema);
+    }
+
+    /**
+     * Verify the {@code flows} table is present and carries every column riptide inserts, throwing
+     * an actionable {@link IllegalStateException} otherwise. Reads the table's own schema (not the
+     * {@code system} database), so it works for a narrowly-granted writer that can describe its
+     * table but not the server catalog.
+     *
+     * @return the table schema, reused for POJO registration
+     */
+    private TableSchema checkSchema() {
+        final TableSchema schema;
+        try {
+            schema = this.client.getTableSchema("flows");
+        } catch (final RuntimeException e) {
+            throw new IllegalStateException(
+                    "flows table not found in database '" + this.config.getDatabase()
+                            + "' — provision the schema (see the ClickHouse deployment docs) or set "
+                            + "riptide.clickhouse.manage-schema=true to let riptide create it.", e);
+        }
+
+        final Set<String> present = schema.getColumns().stream()
+                .map(ClickHouseColumn::getColumnName)
+                .collect(Collectors.toSet());
+        if (present.isEmpty()) {
+            throw new IllegalStateException(
+                    "flows table not found in database '" + this.config.getDatabase()
+                            + "' — provision the schema (see the ClickHouse deployment docs) or set "
+                            + "riptide.clickhouse.manage-schema=true to let riptide create it.");
+        }
+
+        final var missing = REQUIRED_COLUMNS.stream()
+                .filter(column -> !present.contains(column))
+                .sorted()
+                .toList();
+        if (!missing.isEmpty()) {
+            throw new IllegalStateException(
+                    "flows table in database '" + this.config.getDatabase()
+                            + "' is missing expected column(s) " + missing
+                            + " — the schema is stale or mis-provisioned. Riptide performs no automatic "
+                            + "migration: drop and re-provision the flows table (see the ClickHouse "
+                            + "deployment docs).");
+        }
+        return schema;
     }
 
     @Language("ClickHouse")
     private static final String DDL_FLOWS = """
-        CREATE OR REPLACE TABLE flows (
+        CREATE TABLE IF NOT EXISTS flows (
             timestamp DateTime64(3),
     
             flowProtocol Enum8(
@@ -170,7 +246,7 @@ public class ClickhouseRepository implements FlowRepository {
 
     @Language("ClickHouse")
     private static final String DDL_SAMPLES = """
-        CREATE or REPLACE VIEW samples AS
+        CREATE OR REPLACE VIEW samples AS
         WITH
             toInt64({ival:Int64} * 1e9) AS interval_ns,
     
