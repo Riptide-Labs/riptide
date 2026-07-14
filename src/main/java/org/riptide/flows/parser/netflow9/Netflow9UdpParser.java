@@ -18,6 +18,7 @@ import org.riptide.flows.parser.netflow9.proto.Header;
 import org.riptide.flows.parser.netflow9.proto.Packet;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.UdpSessionManager;
+import org.riptide.pipeline.Identity;
 import org.riptide.pipeline.Source;
 
 import java.net.InetAddress;
@@ -37,10 +38,10 @@ public class Netflow9UdpParser extends UdpParserBase implements DispatchableUdpP
 
     public Netflow9UdpParser(final String name,
                              final BiConsumer<Source, Flow> dispatcher,
-                             final String location,
+                             final Identity identity,
                              final MetricRegistry metricRegistry,
                              final ValueConversionService valueConversionService) {
-        super(Protocol.NETFLOW9, name, dispatcher, location, metricRegistry);
+        super(Protocol.NETFLOW9, name, dispatcher, identity, metricRegistry);
         this.flowBuilder = new Netflow9FlowBuilder(valueConversionService);
     }
 

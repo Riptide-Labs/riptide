@@ -69,13 +69,29 @@ public class ClickhouseRepositoryIT {
         Assertions.assertThat(count).isEqualTo(2);
 
         final var rows = queryClient.queryAll(
-                "SELECT srcPort, dstPort, bytes, flowProtocol, exporterAddr FROM flows ORDER BY srcPort");
+                "SELECT srcPort, dstPort, bytes, flowProtocol, exporterAddr, "
+                        + "tenant, organisation, zone, system FROM flows ORDER BY srcPort");
         Assertions.assertThat(rows).hasSize(2);
         Assertions.assertThat(rows.getFirst().getInteger("srcPort")).isEqualTo(10001);
         Assertions.assertThat(rows.getFirst().getInteger("dstPort")).isEqualTo(443);
         Assertions.assertThat(rows.getFirst().getLong("bytes")).isEqualTo(1234L);
         Assertions.assertThat(rows.getFirst().getString("flowProtocol")).isEqualTo("IPFIX");
         Assertions.assertThat(rows.getFirst().getString("exporterAddr")).isEqualTo("203.0.113.7");
+        Assertions.assertThat(rows.getFirst().getString("tenant")).isEqualTo("default");
+        Assertions.assertThat(rows.getFirst().getString("organisation")).isEqualTo("default");
+        Assertions.assertThat(rows.getFirst().getString("zone")).isEqualTo("default");
+        Assertions.assertThat(rows.getFirst().getString("system")).isEqualTo("default");
+    }
+
+    @Test
+    void sortingKeyLeadsWithTenant() {
+        final var sortingKey = queryClient.queryAll(
+                        "SELECT sorting_key FROM system.tables WHERE name = 'flows'")
+                .getFirst().getString("sorting_key");
+
+        // Tenant-led sort key with a rounded-time term; zone/system stay out of it.
+        Assertions.assertThat(sortingKey).startsWith("tenant, organisation, toStartOfHour(timestamp)");
+        Assertions.assertThat(sortingKey).doesNotContain("zone").doesNotContain("system");
     }
 
     private static EnrichedFlow testFlow(final Instant now, final int srcPort, final int dstPort, final long bytes) throws Exception {
@@ -86,7 +102,10 @@ public class ClickhouseRepositoryIT {
                 .deltaSwitched(now.minusSeconds(10))
                 .lastSwitched(now)
                 .flowProtocol(Flow.FlowProtocol.IPFIX)
-                .location("default")
+                .tenant("default")
+                .organisation("default")
+                .zone("default")
+                .system("default")
                 .exporterAddr("203.0.113.7")
                 .srcAddr(InetAddress.getByName("192.0.2.10"))
                 .srcPort(srcPort)

@@ -46,62 +46,62 @@ public class DefaultClassificationExtendedEngineTest {
     Stream<DynamicTest> verifyBasicExtendedRules() throws InterruptedException {
         return Stream.of(
                 Tuple.of("SSH", ClassificationRequest.builder()
-                        .withLocation("Default")
+                        .withZone("Default")
                         .withSrcPort(0)
                         .withDstPort(22)
                         .withDstAddress("127.0.0.1")
                         .withProtocol(ProtocolType.TCP).build()),
                 Tuple.of("HTTP_CUSTOM", ClassificationRequest.builder()
-                        .withLocation("Default")
+                        .withZone("Default")
                         .withSrcPort(0)
                         .withDstPort(80)
                         .withDstAddress("192.168.0.1")
                         .withProtocol(ProtocolType.TCP).build()),
                 Tuple.of("HTTP", ClassificationRequest.builder()
-                        .withLocation("Default")
+                        .withZone("Default")
                         .withSrcPort(0)
                         .withDstPort(80)
                         .withDstAddress("192.168.0.2")
                         .withProtocol(ProtocolType.TCP).build()),
                 Tuple.of(null, ClassificationRequest.builder()
-                        .withLocation("Default")
+                        .withZone("Default")
                         .withSrcPort(0)
                         .withDstPort(5000)
                         .withDstAddress("localhost")
                         .withProtocol(ProtocolType.UDP).build()),
                 Tuple.of(null, ClassificationRequest.builder()
-                        .withLocation("Default")
+                        .withZone("Default")
                         .withSrcPort(0)
                         .withDstPort(5000)
                         .withDstAddress("localhost")
                         .withProtocol(ProtocolType.TCP).build()),
                 Tuple.of("OpenNMS", ClassificationRequest.builder()
-                        .withLocation("Default")
+                        .withZone("Default")
                         .withSrcPort(0)
                         .withDstPort(8980)
                         .withDstAddress("127.0.0.1")
                         .withProtocol(ProtocolType.TCP).build()),
                 Tuple.of("OpenNMS", ClassificationRequest.builder()
-                        .withLocation("Default")
+                        .withZone("Default")
                         .withSrcPort(0)
                         .withDstPort(8980)
                         .withDstAddress("127.0.0.1")
                         .withProtocol(ProtocolType.UDP).build()),
                 Tuple.of("OpenNMS Monitor", ClassificationRequest.builder()
-                        .withLocation("Default")
+                        .withZone("Default")
                         .withSrcAddress("10.0.0.5")
                         .withSrcPort(5347)
                         .withDstPort(1077)
                         .withProtocol(ProtocolType.TCP).build()),
                 Tuple.of("HTTP", ClassificationRequest.builder()
-                        .withLocation("Default")
+                        .withZone("Default")
                         .withSrcAddress(IpAddr.of("10.0.0.5"))
                         .withSrcPort(5347)
                         .withDstPort(80)
                         .withDstAddress("192.168.0.2")
                         .withProtocol(ProtocolType.TCP).build()),
                 Tuple.of("DUMMY", ClassificationRequest.builder()
-                        .withLocation("Default")
+                        .withZone("Default")
                         .withSrcAddress("127.0.0.1")
                         .withDstAddress("10.10.5.3")
                         .withSrcPort(5213)
@@ -123,7 +123,7 @@ public class DefaultClassificationExtendedEngineTest {
         var ipAddresses = IpRange.of("192.168.1.0", "192.168.1.255");
         for (var ipAddress : ipAddresses) {
             final var classificationRequest = ClassificationRequest.builder()
-                    .withLocation("Default")
+                    .withZone("Default")
                     .withSrcPort(0)
                     .withDstPort(8080)
                     .withDstAddress(ipAddress)
@@ -143,7 +143,7 @@ public class DefaultClassificationExtendedEngineTest {
         // Verify CIDR expression
         for (var ipAddress : IpRange.of("192.168.0.0", "192.168.0.255")) {
             final var classificationRequest = ClassificationRequest.builder()
-                    .withLocation("Default")
+                    .withZone("Default")
                     .withSrcPort(0)
                     .withSrcAddress((IpAddr) null)
                     .withDstPort(8080)
@@ -159,7 +159,7 @@ public class DefaultClassificationExtendedEngineTest {
         assertThat(IntStream.range(7000, 8000))
                 .allSatisfy(i -> {
                     final var request = ClassificationRequest.builder()
-                            .withLocation("Default")
+                            .withZone("Default")
                             .withSrcPort(0)
                             .withDstPort(i)
                             .withDstAddress("192.168.0.2")
@@ -175,7 +175,7 @@ public class DefaultClassificationExtendedEngineTest {
         IntStream.range(7000, 8000).forEach(src -> {
             IntStream.range(7000, 8000).forEach(dst -> {
                 final ClassificationRequest classificationRequest = ClassificationRequest.builder()
-                        .withLocation("Default")
+                        .withZone("Default")
                         .withProtocol(ProtocolType.TCP)
                         .withSrcAddress("10.0.0.1").withSrcPort(src)
                         .withDstAddress("192.168.0.2").withDstPort(dst).build();

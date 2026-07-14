@@ -19,6 +19,7 @@ import org.riptide.flows.parser.ipfix.proto.Packet;
 import org.riptide.flows.parser.session.OptionListener;
 import org.riptide.flows.parser.session.TcpSession;
 import org.riptide.flows.parser.state.ParserState;
+import org.riptide.pipeline.Identity;
 import org.riptide.pipeline.Source;
 import org.springframework.beans.factory.annotation.Qualifier;
 
@@ -48,10 +49,10 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
 
     public IpfixTcpParser(final String name,
                           final BiConsumer<Source, Flow> dispatcher,
-                          final String location,
+                          final Identity identity,
                           final MetricRegistry metricRegistry,
                       @Qualifier("ipfixValueConversionService") ValueConversionService conversionService) {
-        super(Protocol.IPFIX, name, dispatcher, location, metricRegistry);
+        super(Protocol.IPFIX, name, dispatcher, identity, metricRegistry);
         this.flowBuilder = new IpFixFlowBuilder(conversionService);
     }
 

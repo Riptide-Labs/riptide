@@ -83,7 +83,10 @@ public class ClickhouseRepository implements FlowRepository {
                 'SFLOW' = 4
             ),
     
-            location String,
+            tenant String,
+            organisation String,
+            zone String,
+            system String,
             exporterAddr String,
     
             receivedAt DateTime64(9),
@@ -154,10 +157,11 @@ public class ClickhouseRepository implements FlowRepository {
             clockCorrection Nullable(Int64)
         ) ENGINE = MergeTree()
         ORDER BY (
+            tenant, organisation,
+            toStartOfHour(timestamp),
             srcAs, dstAs,
             srcAddr, dstAddr,
-            srcPort, dstPort,
-            toUnixTimestamp(timestamp)
+            srcPort, dstPort
         )
         PARTITION BY toYYYYMMDD(timestamp)
         TTL toDateTime(timestamp) + INTERVAL 30 DAY

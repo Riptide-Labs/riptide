@@ -65,7 +65,7 @@ public class Pipeline {
         // Filter empty logs
         if (flows.isEmpty()) {
             this.emptyFlows.inc();
-            LOG.info("Received empty flows from {} @ {}. Nothing to do.", source.getExporterAddr(), source.getLocation());
+            LOG.info("Received empty flows from {} @ {}. Nothing to do.", source.getExporterAddr(), source.getZone());
             return;
         }
 

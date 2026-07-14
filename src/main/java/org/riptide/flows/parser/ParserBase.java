@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.session.SequenceNumberTracker;
 import org.riptide.flows.parser.session.Session;
+import org.riptide.pipeline.Identity;
 import org.riptide.pipeline.Source;
 
 import java.time.Instant;
@@ -37,7 +38,7 @@ public abstract class ParserBase implements Parser {
 
     private final BiConsumer<Source, Flow> dispatcher;
 
-    private final String location;
+    private final Identity identity;
 
     private final Meter recordsReceived;
 
@@ -56,12 +57,12 @@ public abstract class ParserBase implements Parser {
     public ParserBase(final Protocol protocol,
                       final String name,
                       final BiConsumer<Source, Flow> dispatcher,
-                      final String location,
+                      final Identity identity,
                       final MetricRegistry metricRegistry) {
         this.protocol = Objects.requireNonNull(protocol);
         this.name = Objects.requireNonNull(name);
         this.dispatcher = Objects.requireNonNull(dispatcher);
-        this.location = Objects.requireNonNull(location);
+        this.identity = Objects.requireNonNull(identity);
 
         this.recordsReceived = metricRegistry.meter(MetricRegistry.name("parsers", name, "recordsReceived"));
         this.recordsDispatched = metricRegistry.meter(MetricRegistry.name("parsers", name, "recordsDispatched"));
@@ -134,7 +135,7 @@ public abstract class ParserBase implements Parser {
                                             final Session session) {
         // one identity per packet: it scopes sequence tracking (below) and every
         // dispatched flow's Source
-        final Source source = new Source(this.location, packet.identity(session.getRemoteAddress()));
+        final Source source = new Source(this.identity, packet.identity(session.getRemoteAddress()));
 
         // Verify that flows sequences are in order
         if (!session.verifySequenceNumber(source.identity(), packet.getSequenceNumber())) {

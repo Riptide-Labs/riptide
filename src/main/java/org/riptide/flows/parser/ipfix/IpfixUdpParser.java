@@ -18,6 +18,7 @@ import org.riptide.flows.parser.ipfix.proto.Header;
 import org.riptide.flows.parser.ipfix.proto.Packet;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.UdpSessionManager;
+import org.riptide.pipeline.Identity;
 import org.riptide.pipeline.Source;
 import org.springframework.beans.factory.annotation.Qualifier;
 
@@ -38,10 +39,10 @@ public class IpfixUdpParser extends UdpParserBase implements DispatchableUdpPars
 
     public IpfixUdpParser(final String name,
                           final BiConsumer<Source, Flow> dispatcher,
-                          final String location,
+                          final Identity identity,
                           final MetricRegistry metricRegistry,
                           @Qualifier("ipfixValueConversionService") final ValueConversionService conversionService) {
-        super(Protocol.IPFIX, name, dispatcher, location, metricRegistry);
+        super(Protocol.IPFIX, name, dispatcher, identity, metricRegistry);
         this.flowBuilder = new IpFixFlowBuilder(conversionService);
     }
 

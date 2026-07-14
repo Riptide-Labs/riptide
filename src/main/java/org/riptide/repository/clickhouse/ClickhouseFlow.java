@@ -18,7 +18,10 @@ public class ClickhouseFlow {
 
     private byte flowProtocol;
 
-    private String location;
+    private String tenant;
+    private String organisation;
+    private String zone;
+    private String system;
     private String exporterAddr;
 
     private Timestamp receivedAt;

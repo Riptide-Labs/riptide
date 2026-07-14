@@ -63,7 +63,10 @@ public class EnrichedFlow {
 
     private String application;
     private String exporterAddr;
-    private String location;
+    private String tenant;
+    private String organisation;
+    private String zone;
+    private String system;
     private Locality srcLocality;
     private Locality dstLocality;
     private Locality flowLocality;
