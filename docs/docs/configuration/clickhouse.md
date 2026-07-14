@@ -12,15 +12,35 @@ riptide.clickhouse.endpoint=http://localhost:8123
 riptide.clickhouse.username=default
 riptide.clickhouse.password=
 riptide.clickhouse.database=riptide
+riptide.clickhouse.manage-schema=true
 ```
 
-Riptide owns its schema: at startup it issues `CREATE OR REPLACE TABLE` for the `flows`
-table.
+## Schema ownership
+
+`riptide.clickhouse.manage-schema` (boolean, default `true`) selects who owns the schema:
+
+- **`true` (default, single-tenant)** — riptide ensures the schema idempotently at startup:
+  the `flows` table with `CREATE TABLE IF NOT EXISTS` (an existing table is not replaced, so
+  its data survives), and the `samples` view with `CREATE OR REPLACE VIEW` (a view holds no
+  data, so it is always refreshed and can never go stale). A fresh install is created; a
+  restart keeps the data — so **flow data now survives a Riptide restart**.
+- **`false` (provisioned / multi-tenant)** — riptide creates nothing. It validates that the
+  `flows` table exists and carries every column it inserts and **fails startup with a clear,
+  provisioning-pointing error** if it does not. Use this when an admin owns the schema and
+  RBAC and each riptide process is a narrowly-scoped writer that only uses the table.
+
+In both modes, startup verifies the `flows` table is present and carries every column riptide
+inserts (including the `tenant`/`organisation`/`zone`/`system` identity columns) by reading the
+table's own schema — so the check works even for a narrowly-granted writer without server-catalog
+access, and a stale or mis-provisioned schema fails fast rather than surfacing later as an opaque
+insert error.
 
 :::warning
 
-`CREATE OR REPLACE TABLE` **recreates the flows table on every start** — flow data does
-not survive a Riptide restart in the current design.
+Schema evolution is not migrated automatically. Because manage mode uses
+`CREATE TABLE IF NOT EXISTS`, a schema change between Riptide versions is **not** applied to
+an existing table — the startup column check fails fast and the operator must drop and let
+Riptide recreate the table (or re-provision it) until schema migrations land.
 
 :::
 
