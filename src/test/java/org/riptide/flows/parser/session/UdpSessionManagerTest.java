@@ -11,7 +11,9 @@ import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.ie.values.StringValue;
 import org.riptide.flows.parser.ipfix.IpfixUdpParser;
 import org.riptide.flows.parser.netflow9.Netflow9UdpParser;
+import org.riptide.pipeline.ExporterIdentity;
 
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -194,5 +196,58 @@ public class UdpSessionManagerTest {
         testIpFixSessionKeys(remoteAddress1, localAddress1, remoteAddress3, localAddress2, false);
         testIpFixSessionKeys(remoteAddress1, localAddress1, remoteAddress4, localAddress1, false);
         testIpFixSessionKeys(remoteAddress1, localAddress1, remoteAddress4, localAddress2, false);
+    }
+
+    @Test
+    public void sequenceStreamsAreScopedByExporterIdentity() throws Exception {
+        // two sFlow agents behind ONE UDP source (relay/NAT/shared socket), both
+        // sub_agent_id 0: their independent sequence streams must not interleave in
+        // a single tracker (which flags spurious errors for gaps within patience)
+        final var sessionKey = new Netflow9UdpParser.SessionKey(remoteAddress1.getAddress(), localAddress1);
+        final var manager = new UdpSessionManager(Duration.ofMinutes(30), () -> new SequenceNumberTracker(32));
+        final var session = manager.getSession(sessionKey);
+
+        final var agentA = new ExporterIdentity.Sflow(InetAddress.getByName("10.0.0.1"), 0);
+        final var agentB = new ExporterIdentity.Sflow(InetAddress.getByName("10.0.0.2"), 0);
+
+        assertThat(session.verifySequenceNumber(agentA, 1)).isTrue();
+        assertThat(session.verifySequenceNumber(agentB, 20)).isTrue();
+        assertThat(session.verifySequenceNumber(agentA, 2)).isTrue();
+        assertThat(session.verifySequenceNumber(agentB, 21)).isTrue();
+        assertThat(manager.sequenceTrackerCount()).isEqualTo(2);
+    }
+
+    @Test
+    public void housekeepingAndDropEvictSequenceTrackers() throws Exception {
+        final var sessionKey = new Netflow9UdpParser.SessionKey(remoteAddress1.getAddress(), localAddress1);
+        final var manager = new UdpSessionManager(Duration.ofMinutes(0), () -> new SequenceNumberTracker(32));
+        final var identity = new ExporterIdentity.Sflow(InetAddress.getByName("10.0.0.1"), 0);
+
+        manager.getSession(sessionKey).verifySequenceNumber(identity, 1);
+        assertThat(manager.sequenceTrackerCount()).isEqualTo(1);
+        manager.doHousekeeping();
+        assertThat(manager.sequenceTrackerCount()).isZero();
+
+        manager.getSession(sessionKey).verifySequenceNumber(identity, 2);
+        assertThat(manager.sequenceTrackerCount()).isEqualTo(1);
+        manager.drop(sessionKey);
+        assertThat(manager.sequenceTrackerCount()).isZero();
+    }
+
+    @Test
+    public void addOptionsNotifiesTheOptionListener() throws Exception {
+        final var sessionKey = new Netflow9UdpParser.SessionKey(remoteAddress1.getAddress(), localAddress1);
+        final var seen = new ArrayList<ExporterIdentity>();
+        final var manager = new UdpSessionManager(Duration.ofMinutes(30), () -> new SequenceNumberTracker(32),
+                (identity, scopes, values) -> seen.add(identity));
+        final var session = manager.getSession(sessionKey);
+
+        final var template = Template.builder(templateId1, Template.Type.OPTIONS_TEMPLATE)
+                .withFields(List.of(field("f"))).withScopes(List.of(scope("s"))).build();
+        session.addTemplate(observationId1, template);
+        session.addOptions(observationId1, templateId1, List.of(value("s", "sv")), List.of(value("f", "fv")));
+
+        assertThat(seen).containsExactly(
+                new ExporterIdentity.NetflowIpfix(remoteAddress1.getAddress(), observationId1));
     }
 }

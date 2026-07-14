@@ -276,7 +276,7 @@ public class NetflowPacketTest {
         Objects.requireNonNull(resource);
         Objects.requireNonNull(consumer);
 
-        final URL resourceURL = Objects.requireNonNull(getClass().getResource(resource));
+        final URL resourceURL = Objects.requireNonNull(NetflowPacketTest.class.getResource(resource));
 
         try {
             final byte[] contents = Files.readAllBytes(Paths.get(resourceURL.toURI()));

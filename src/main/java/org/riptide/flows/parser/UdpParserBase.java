@@ -13,6 +13,7 @@ import io.netty.buffer.ByteBuf;
 import org.riptide.flows.listeners.UdpParser;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.session.Session;
+import org.riptide.flows.parser.session.OptionListener;
 import org.riptide.flows.parser.session.UdpSessionManager;
 import org.riptide.pipeline.Source;
 import org.slf4j.Logger;
@@ -21,6 +22,7 @@ import org.slf4j.LoggerFactory;
 import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -39,6 +41,7 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
 
     private ScheduledFuture<?> housekeepingFuture;
     private Duration templateTimeout = Duration.ofMinutes(30);
+    private OptionListener optionListener = OptionListener.NONE;
 
     public UdpParserBase(final Protocol protocol,
                          final String name,
@@ -61,6 +64,7 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
 
     protected abstract UdpSessionManager.SessionKey buildSessionKey(InetSocketAddress remoteAddress, InetSocketAddress localAddress);
 
+    @Override
     public final CompletableFuture<?> parse(final Instant receivedAt,
                                             final ByteBuf buffer,
                                             final InetSocketAddress remoteAddress,
@@ -74,7 +78,7 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
             final var parsed = this.parse(session, buffer);
             LOG.trace("Parsed packet: {}", parsed);
 
-            return this.transmit(receivedAt, parsed, session, remoteAddress);
+            return this.transmit(receivedAt, parsed, session);
         } catch (Exception e) {
             this.sessionManager.drop(sessionKey);
             this.parserErrors.inc();
@@ -82,10 +86,15 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
         }
     }
 
+    /** Must be set before {@link #start}; the session manager is built there. */
+    public void setOptionListener(final OptionListener optionListener) {
+        this.optionListener = Objects.requireNonNull(optionListener);
+    }
+
     @Override
     public void start(final ScheduledExecutorService executorService) {
         super.start(executorService);
-        this.sessionManager = new UdpSessionManager(this.templateTimeout, this::sequenceNumberTracker);
+        this.sessionManager = new UdpSessionManager(this.templateTimeout, this::sequenceNumberTracker, this.optionListener);
         this.housekeepingFuture = executorService.scheduleAtFixedRate(this.sessionManager::doHousekeeping,
                 HOUSEKEEPING_INTERVAL,
                 HOUSEKEEPING_INTERVAL,

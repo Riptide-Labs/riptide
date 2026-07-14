@@ -131,6 +131,7 @@ public class TestSnmpAgent extends BaseAgent {
     protected void registerManagedObjects() {
     }
 
+    @Override
     protected void initTransportMappings() throws IOException {
         transportMappings = new TransportMapping[1];
         transportMappings[0] = TransportMappings.getInstance().createTransportMapping(GenericAddress.parse(address));

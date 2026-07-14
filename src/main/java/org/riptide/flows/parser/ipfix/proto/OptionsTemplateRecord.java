@@ -27,22 +27,22 @@ public final class OptionsTemplateRecord implements Record {
                                  final ByteBuf buffer) throws InvalidPacketException {
         this.header = Objects.requireNonNull(header);
 
-        final List<FieldSpecifier> scopes = new ArrayList<>();
+        final List<FieldSpecifier> parsedScopes = new ArrayList<>();
         for (int i = 0; i < this.header.scopeFieldCount; i++) {
             final FieldSpecifier scopeField = new FieldSpecifier(buffer);
 
-            scopes.add(scopeField);
+            parsedScopes.add(scopeField);
         }
 
-        final List<FieldSpecifier> fields = new ArrayList<>();
+        final List<FieldSpecifier> parsedFields = new ArrayList<>();
         for (int i = this.header.scopeFieldCount; i < this.header.fieldCount; i++) {
             final FieldSpecifier field = new FieldSpecifier(buffer);
 
-            fields.add(field);
+            parsedFields.add(field);
         }
 
-        this.scopes = Collections.unmodifiableList(scopes);
-        this.fields = Collections.unmodifiableList(fields);
+        this.scopes = Collections.unmodifiableList(parsedScopes);
+        this.fields = Collections.unmodifiableList(parsedFields);
     }
 
     @Override

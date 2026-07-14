@@ -54,9 +54,9 @@ public final class Packet implements Iterable<FlowSet<?>> {
                   final ByteBuf buffer) throws InvalidPacketException {
         this.header = Objects.requireNonNull(header);
 
-        final List<TemplateSet> templateSets = new ArrayList<>();
-        final List<OptionsTemplateSet> optionTemplateSets = new ArrayList<>();
-        final List<DataSet> dataSets = new ArrayList<>();
+        final List<TemplateSet> parsedTemplateSets = new ArrayList<>();
+        final List<OptionsTemplateSet> parsedOptionTemplateSets = new ArrayList<>();
+        final List<DataSet> parsedDataSets = new ArrayList<>();
         while (buffer.isReadable()) {
             // We ignore header.counter here, because different exporters interpret it as flowset count or record count
 
@@ -88,7 +88,7 @@ public final class Packet implements Iterable<FlowSet<?>> {
                         }
                     }
 
-                    templateSets.add(templateSet);
+                    parsedTemplateSets.add(templateSet);
                     break;
                 }
 
@@ -103,7 +103,7 @@ public final class Packet implements Iterable<FlowSet<?>> {
                                         .build());
                     }
 
-                    optionTemplateSets.add(optionsTemplateSet);
+                    parsedOptionTemplateSets.add(optionsTemplateSet);
                     break;
                 }
 
@@ -123,7 +123,7 @@ public final class Packet implements Iterable<FlowSet<?>> {
                             session.addOptions(this.header.sourceId, dataSet.template.id, record.scopes, record.fields);
                         }
                     } else {
-                        dataSets.add(dataSet);
+                        parsedDataSets.add(dataSet);
                     }
 
                     break;
@@ -135,9 +135,9 @@ public final class Packet implements Iterable<FlowSet<?>> {
             }
         }
 
-        this.templateSets = Collections.unmodifiableList(templateSets);
-        this.optionTemplateSets = Collections.unmodifiableList(optionTemplateSets);
-        this.dataSets = Collections.unmodifiableList(dataSets);
+        this.templateSets = Collections.unmodifiableList(parsedTemplateSets);
+        this.optionTemplateSets = Collections.unmodifiableList(parsedOptionTemplateSets);
+        this.dataSets = Collections.unmodifiableList(parsedDataSets);
     }
 
     @Override

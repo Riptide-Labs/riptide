@@ -73,6 +73,8 @@ public class AsyncReloadingClassificationEngine implements ClassificationEngine 
                     return;
                 case FAILED:
                     throw new RuntimeException("classification engine can not be used because last reload failed", reloadException);
+                case RELOADING:
+                    break; // fall through to wait() below until the reload settles
             }
             try {
                 wait();
@@ -140,10 +142,12 @@ public class AsyncReloadingClassificationEngine implements ClassificationEngine 
         }
     }
 
+    @Override
     public void addClassificationRulesReloadedListener(final ClassificationRulesReloadedListener classificationRulesReloadedListener) {
         this.delegate.addClassificationRulesReloadedListener(classificationRulesReloadedListener);
     }
 
+    @Override
     public void removeClassificationRulesReloadedListener(final ClassificationRulesReloadedListener classificationRulesReloadedListener) {
         this.delegate.removeClassificationRulesReloadedListener(classificationRulesReloadedListener);
     }

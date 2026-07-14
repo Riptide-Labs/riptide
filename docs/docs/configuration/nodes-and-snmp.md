@@ -16,7 +16,7 @@ identity in logs and error messages (kebab-case: letters, digits, dashes):
 
 ```properties
 riptide.nodes.core-router.subnet-address=10.20.30.0/24
-riptide.nodes.core-router.observation-domain=42   # optional pin; omit = matches any domain
+riptide.nodes.core-router.observation-domain=42   # optional pin (observation domain / sFlow sub-agent ID); omit = matches any
 riptide.nodes.core-router.snmp.port=161           # default 161
 riptide.nodes.core-router.snmp.timeout=500        # ms, default 500
 riptide.nodes.core-router.snmp.retries=1          # default 1
@@ -30,8 +30,29 @@ riptide.nodes.core-router.snmp.retries=1          # default 1
 3. a **true tie** — two nodes with the same subnet and the same pinning — fails startup
    with both node names; declaration order never decides anything
 
+For NetFlow/IPFIX the matched address is the UDP source and the pin is the observation
+domain (source ID). For **sFlow** both come from the datagram payload: subnets match
+the `agent_address` — which may differ from the UDP source — and `observation-domain`
+pins the `sub_agent_id`.
+
+:::warning The pin key is shared across protocols
+`observation-domain: 0` pins *both* NetFlow v5 exporters with engine type/ID 0 (their
+domain maps to `0`) *and* sFlow agents with the near-universal default
+`sub_agent_id = 0` — and a matching pin beats every wildcard node, even a
+more-specific one. If a subnet mixes NetFlow v5 and sFlow devices, avoid pinning `0`;
+distinguish the nodes by subnet instead.
+:::
+
+Changes to this tree apply without a restart when
+[config hot-reload](../deploy/operations.md#config-hot-reload) is enabled — except for
+nodes configured via environment variables, which need a restart.
+
 A node without an `snmp` block matches flows but is not polled — it can still enrich
-interfaces statically via the `interfaces` map (see below).
+interfaces statically via the `interfaces` map (see below), and from **exporter-pushed
+option records** (e.g. Cisco `option interface-table`) with zero configuration. SNMP
+stays worth configuring even then: option records carry names/descriptions but never
+ifAlias or ifHighSpeed, and a real SNMP ifAlias outranks an option-record description
+(see [Enrichment](../enrichment.md)).
 
 ## Static interface mapping
 

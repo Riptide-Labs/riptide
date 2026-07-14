@@ -211,7 +211,7 @@ public class SnmpTest {
     public void testSnmpCache(@TempDir Path temporaryFolder) throws IOException, ExecutionException {
         final int port = getNextPort();
         final SnmpCacheConfig snmpCacheConfig = new SnmpCacheConfig();
-        snmpCacheConfig.retentionMs = 600000;
+        snmpCacheConfig.setRetentionMs(600000);
 
         final SnmpService snmpCache = new CachingSnmpService(new DefaultSnmpService(SECRET_RESOLVERS), snmpCacheConfig);
         final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.COMMUNITY);

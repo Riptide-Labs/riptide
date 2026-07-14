@@ -10,7 +10,8 @@ import java.util.Objects;
 public enum Protocol {
     NETFLOW5(org.riptide.flows.parser.netflow5.proto.Header.VERSION, "Netflow v5"),
     NETFLOW9(org.riptide.flows.parser.netflow9.proto.Header.VERSION, "Netflow v9"),
-    IPFIX(org.riptide.flows.parser.ipfix.proto.Header.VERSION, "IPFix");
+    IPFIX(org.riptide.flows.parser.ipfix.proto.Header.VERSION, "IPFix"),
+    SFLOW(org.riptide.flows.parser.sflow.proto.Datagram.VERSION, "sFlow v5");
 
     public final int version;
     public final String description;

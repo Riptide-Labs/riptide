@@ -23,7 +23,7 @@ import static org.riptide.e2e.E2eTestSupport.await;
 import static org.riptide.e2e.E2eTestSupport.freeUdpPort;
 
 /**
- * End-to-end: nl6-simulated devices export NetFlow v5 / v9 / IPFIX over real
+ * End-to-end: nl6-simulated devices export NetFlow v5 / v9, IPFIX, and sFlow v5 over real
  * UDP into riptide's listeners (running in this JVM), through parsing,
  * enrichment, and classification, into a real ClickHouse. Assertions
  * reconcile ClickHouse row counts against nl6's per-collector ledger.
@@ -49,6 +49,7 @@ public class Nl6FlowIngestionIT {
     private static final int NETFLOW5_PORT = freeUdpPort();
     private static final int NETFLOW9_PORT = freeUdpPort();
     private static final int IPFIX_PORT = freeUdpPort();
+    private static final int SFLOW_PORT = freeUdpPort();
 
     private static final Instant TEST_START = Instant.now();
 
@@ -78,6 +79,17 @@ public class Nl6FlowIngestionIT {
         registry.add("riptide.receivers.ipfix.type", () -> "ipfix");
         registry.add("riptide.receivers.ipfix.host", () -> "0.0.0.0");
         registry.add("riptide.receivers.ipfix.port", () -> IPFIX_PORT);
+
+        registry.add("riptide.receivers.sf.type", () -> "sflow");
+        registry.add("riptide.receivers.sf.host", () -> "0.0.0.0");
+        registry.add("riptide.receivers.sf.port", () -> SFLOW_PORT);
+
+        // A node matching the sFlow devices' agent addresses (payload-derived; the
+        // shared-socket UDP source is the nl6 container, which this subnet does NOT
+        // cover) with static interface names — enrichment proves node attribution.
+        registry.add("riptide.nodes.sflow-agents.subnet-address", () -> "10.42.3.0/24");
+        registry.add("riptide.nodes.sflow-agents.interfaces.1.name", () -> "sfl-in");
+        registry.add("riptide.nodes.sflow-agents.interfaces.2.name", () -> "sfl-out");
     }
 
     @BeforeAll
@@ -92,6 +104,7 @@ public class Nl6FlowIngestionIT {
         NL6.createDevices("10.42.0.1", 3, "netflow5", NETFLOW5_PORT);
         NL6.createDevices("10.42.1.1", 3, "netflow9", NETFLOW9_PORT);
         NL6.createDevices("10.42.2.1", 3, "ipfix", IPFIX_PORT);
+        NL6.createDevices("10.42.3.1", 3, "sflow", SFLOW_PORT);
     }
 
     @Test
@@ -109,6 +122,35 @@ public class Nl6FlowIngestionIT {
     void verifyIpfixReachesClickhouse() throws Exception {
         reconcile("ipfix", "IPFIX", TEMPLATE_EPSILON);
         verifyTimestampsSane("IPFIX");
+    }
+
+    /**
+     * sFlow runs in nl6's shared-socket mode (the container default), so the UDP
+     * source address is the nl6 container — NOT a device. The assertions prove
+     * payload-derived attribution: persisted exporters are the in-datagram agent
+     * addresses, and static interface enrichment fires on the node that only a
+     * device agent address can match.
+     */
+    @Test
+    void verifySflowReachesClickhouseAttributedByAgentAddress() throws Exception {
+        reconcile("sflow", "SFLOW", 0.0);
+        verifyTimestampsSane("SFLOW");
+
+        final var algorithms = queryClient.queryAll(
+                "SELECT DISTINCT samplingAlgorithm FROM flows WHERE flowProtocol = 'SFLOW'");
+        Assertions.assertThat(algorithms).hasSize(1);
+        Assertions.assertThat(algorithms.getFirst().getString("samplingAlgorithm"))
+                .isEqualTo("RandomNOutOfNSampling");
+
+        final var exporters = queryClient.queryAll(
+                "SELECT DISTINCT exporterAddr FROM flows WHERE flowProtocol = 'SFLOW'");
+        Assertions.assertThat(exporters).isNotEmpty().allSatisfy(row ->
+                Assertions.assertThat(row.getString("exporterAddr")).startsWith("10.42.3."));
+
+        await(Duration.ofMinutes(1), "sFlow rows enriched via the agent-address-matched node",
+                () -> queryClient.queryAll(
+                        "SELECT count() AS c FROM flows WHERE flowProtocol = 'SFLOW' AND inputSnmpIfName = 'sfl-in'")
+                        .getFirst().getLong("c") > 0);
     }
 
     /**

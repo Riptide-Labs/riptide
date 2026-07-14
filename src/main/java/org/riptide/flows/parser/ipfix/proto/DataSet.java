@@ -39,16 +39,16 @@ public class DataSet extends FlowSet<DataRecord> {
         final int minimumRecordLength = this.template.stream()
                 .mapToInt(f -> f.length() != DataRecord.VARIABLE_SIZED ? f.length() : 1).sum();
 
-        final List<DataRecord> records = new ArrayList<>();
+        final List<DataRecord> parsedRecords = new ArrayList<>();
         while (buffer.isReadable(minimumRecordLength)) {
-            records.add(new DataRecord(this, resolver1, this.template, buffer));
+            parsedRecords.add(new DataRecord(this, resolver1, this.template, buffer));
         }
 
-        if (records.isEmpty()) {
+        if (parsedRecords.isEmpty()) {
             throw new InvalidPacketException(buffer, "Empty set");
         }
 
-        this.records = Collections.unmodifiableList(records);
+        this.records = Collections.unmodifiableList(parsedRecords);
     }
 
     @Override

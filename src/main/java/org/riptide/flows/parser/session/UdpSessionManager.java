@@ -12,6 +12,7 @@ import org.riptide.flows.parser.state.ExporterState;
 import org.riptide.flows.parser.state.OptionState;
 import org.riptide.flows.parser.state.ParserState;
 import org.riptide.flows.parser.state.TemplateState;
+import org.riptide.pipeline.ExporterIdentity;
 
 import java.net.InetAddress;
 import java.time.Duration;
@@ -34,20 +35,33 @@ import java.util.stream.Collectors;
 public class UdpSessionManager {
     private final ConcurrentMap<TemplateKey, TimeWrapper<TemplateOptions>> templates = new ConcurrentHashMap<>();
 
-    private final Map<DomainKey, SequenceNumberTracker> sequenceNumbers = new ConcurrentHashMap<>();
+    private final Map<TrackerKey, TrackedSequence> sequenceNumbers = new ConcurrentHashMap<>();
 
     private final Duration timeout;
 
     private final Supplier<SequenceNumberTracker> sequenceNumberTracker;
 
+    private final OptionListener optionListener;
+
     public UdpSessionManager(final Duration timeout, final Supplier<SequenceNumberTracker> sequenceNumberTracker) {
+        this(timeout, sequenceNumberTracker, OptionListener.NONE);
+    }
+
+    public UdpSessionManager(final Duration timeout,
+                             final Supplier<SequenceNumberTracker> sequenceNumberTracker,
+                             final OptionListener optionListener) {
         this.timeout = timeout;
         this.sequenceNumberTracker = Objects.requireNonNull(sequenceNumberTracker);
+        this.optionListener = Objects.requireNonNull(optionListener);
     }
 
     public void doHousekeeping() {
         final Instant timeout = Instant.now().minus(this.timeout);
         this.removeTemplateIf(e -> e.getValue().time.isBefore(timeout));
+        // sequence trackers have their own lifecycle: templates are re-announced and
+        // re-inserted, trackers are touched on every datagram — evict idle ones so
+        // churning sources (NAT, roaming agents) don't accumulate trackers forever
+        this.sequenceNumbers.entrySet().removeIf(e -> e.getValue().lastSeen.isBefore(timeout));
     }
 
     private void removeTemplateIf(final Predicate<Map.Entry<TemplateKey, TimeWrapper<TemplateOptions>>> predicate) {
@@ -60,10 +74,15 @@ public class UdpSessionManager {
 
     public void drop(final SessionKey sessionKey) {
         removeTemplateIf(e -> Objects.equals(e.getKey().observationDomainId.sessionKey, sessionKey));
+        this.sequenceNumbers.keySet().removeIf(key -> Objects.equals(key.sessionKey(), sessionKey));
     }
 
     public int count() {
         return this.templates.size();
+    }
+
+    int sequenceTrackerCount() {
+        return this.sequenceNumbers.size();
     }
 
     public Object dumpInternalState() {
@@ -173,6 +192,18 @@ public class UdpSessionManager {
         }
     }
 
+    private record TrackerKey(SessionKey sessionKey, ExporterIdentity scope) {
+    }
+
+    private static final class TrackedSequence {
+        private final SequenceNumberTracker tracker;
+        private volatile Instant lastSeen = Instant.now();
+
+        private TrackedSequence(final SequenceNumberTracker tracker) {
+            this.tracker = tracker;
+        }
+    }
+
     public static final class TemplateOptions {
         public final Template template;
         public final Map<Set<Value<?>>, TimeWrapper<List<Value<?>>>> options;
@@ -228,6 +259,10 @@ public class UdpSessionManager {
                                final List<Value<?>> values) {
             final TemplateKey key = new TemplateKey(this.sessionKey, observationDomainId, templateId);
             UdpSessionManager.this.templates.get(key).wrapped.options.put(new HashSet<>(scopes), new TimeWrapper<>(values));
+
+            UdpSessionManager.this.optionListener.accept(
+                    new ExporterIdentity.NetflowIpfix(this.sessionKey.getRemoteAddress(), observationDomainId),
+                    scopes, values);
         }
 
         @Override
@@ -241,10 +276,12 @@ public class UdpSessionManager {
         }
 
         @Override
-        public boolean verifySequenceNumber(final long observationDomainId, final long sequenceNumber) {
-            final DomainKey key = new DomainKey(this.sessionKey, observationDomainId);
-            final SequenceNumberTracker tracker = UdpSessionManager.this.sequenceNumbers.computeIfAbsent(key, (k) -> UdpSessionManager.this.sequenceNumberTracker.get());
-            return tracker.verify(sequenceNumber);
+        public boolean verifySequenceNumber(final ExporterIdentity scope, final long sequenceNumber) {
+            final TrackerKey key = new TrackerKey(this.sessionKey, scope);
+            final TrackedSequence tracked = UdpSessionManager.this.sequenceNumbers.computeIfAbsent(key,
+                    (k) -> new TrackedSequence(UdpSessionManager.this.sequenceNumberTracker.get()));
+            tracked.lastSeen = Instant.now();
+            return tracked.tracker.verify(sequenceNumber);
         }
 
         private final class Resolver implements Session.Resolver {

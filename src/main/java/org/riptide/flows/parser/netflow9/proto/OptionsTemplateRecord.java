@@ -44,14 +44,14 @@ public final class OptionsTemplateRecord implements Record {
             scopeFields.add(scopeField);
         }
 
-        final List<FieldSpecifier> fields = new ArrayList<>();
+        final List<FieldSpecifier> parsedFields = new ArrayList<>();
         for (int i = 0; i < this.header.optionLength; i += FieldSpecifier.SIZE) {
             final FieldSpecifier field = new FieldSpecifier(buffer);
-            fields.add(field);
+            parsedFields.add(field);
         }
 
         this.scopes = Collections.unmodifiableList(scopeFields);
-        this.fields = Collections.unmodifiableList(fields);
+        this.fields = Collections.unmodifiableList(parsedFields);
     }
 
     @Override

@@ -25,17 +25,17 @@ public final class TemplateSet extends FlowSet<TemplateRecord> {
                        final ByteBuf buffer) throws InvalidPacketException {
         super(packet, header);
 
-        final List<TemplateRecord> records = new ArrayList<>();
+        final List<TemplateRecord> parsedRecords = new ArrayList<>();
         while (buffer.isReadable(TemplateRecordHeader.SIZE)) {
             final TemplateRecordHeader recordHeader = new TemplateRecordHeader(buffer);
-            records.add(new TemplateRecord(this, recordHeader, buffer));
+            parsedRecords.add(new TemplateRecord(this, recordHeader, buffer));
         }
 
-        if (records.isEmpty()) {
+        if (parsedRecords.isEmpty()) {
             throw new InvalidPacketException(buffer, "Empty set");
         }
 
-        this.records = Collections.unmodifiableList(records);
+        this.records = Collections.unmodifiableList(parsedRecords);
     }
 
     @Override

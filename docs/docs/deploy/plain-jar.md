@@ -49,6 +49,10 @@ binding): uppercase, dots and dashes become underscores, list indexes become `_0
 | `riptide.nodes.core-router.subnet-address` | `RIPTIDE_NODES_COREROUTER_SUBNETADDRESS` |
 | `riptide.nodes.core-router.snmp.community` | `RIPTIDE_NODES_COREROUTER_SNMP_COMMUNITY` |
 
+Environment-variable configuration is fixed for the process lifetime — changing it
+means a restart. File-based configuration can
+[hot-reload](operations.md#config-hot-reload) instead.
+
 Environment variables suit flat settings and containerized deployments (the compose stack
 configures ClickHouse this way). Prefer the config file for nodes — Spring flattens map
 keys arriving from the environment (case and dashes are lost).

@@ -11,6 +11,7 @@ import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.state.ExporterState;
 import org.riptide.flows.parser.state.OptionState;
 import org.riptide.flows.parser.state.TemplateState;
+import org.riptide.pipeline.ExporterIdentity;
 
 import java.net.InetAddress;
 import java.util.ArrayList;
@@ -105,13 +106,22 @@ public class TcpSession implements Session {
     private final InetAddress remoteAddress;
     private final Map<TemplateKey, Template> templates = new HashMap<>();
     private final Map<TemplateKey, Map<Set<Value<?>>, List<Value<?>>>> options = new HashMap<>();
-    private final Map<Long, SequenceNumberTracker> sequenceNumbers = new HashMap<>();
+    private final Map<ExporterIdentity, SequenceNumberTracker> sequenceNumbers = new HashMap<>();
 
     private final Supplier<SequenceNumberTracker> sequenceNumberTracker;
 
+    private final OptionListener optionListener;
+
     public TcpSession(final InetAddress remoteAddress, final Supplier<SequenceNumberTracker> sequenceNumberTracker) {
+        this(remoteAddress, sequenceNumberTracker, OptionListener.NONE);
+    }
+
+    public TcpSession(final InetAddress remoteAddress,
+                      final Supplier<SequenceNumberTracker> sequenceNumberTracker,
+                      final OptionListener optionListener) {
         this.remoteAddress = Objects.requireNonNull(remoteAddress);
         this.sequenceNumberTracker = Objects.requireNonNull(sequenceNumberTracker);
+        this.optionListener = Objects.requireNonNull(optionListener);
     }
 
     @Override
@@ -136,6 +146,10 @@ public class TcpSession implements Session {
                            final List<Value<?>> values) {
         final TemplateKey key = new TemplateKey(observationDomainId, templateId);
         this.options.computeIfAbsent(key, (k) -> new HashMap<>()).put(new HashSet<>(scopes), values);
+
+        this.optionListener.accept(
+                new ExporterIdentity.NetflowIpfix(this.remoteAddress, observationDomainId),
+                scopes, values);
     }
 
     @Override
@@ -149,8 +163,8 @@ public class TcpSession implements Session {
     }
 
     @Override
-    public boolean verifySequenceNumber(long observationDomainId, final long sequenceNumber) {
-        final SequenceNumberTracker tracker = this.sequenceNumbers.computeIfAbsent(observationDomainId, (k) -> this.sequenceNumberTracker.get());
+    public boolean verifySequenceNumber(final ExporterIdentity scope, final long sequenceNumber) {
+        final SequenceNumberTracker tracker = this.sequenceNumbers.computeIfAbsent(scope, (k) -> this.sequenceNumberTracker.get());
         return tracker.verify(sequenceNumber);
     }
 

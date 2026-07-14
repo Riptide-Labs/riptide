@@ -17,6 +17,7 @@ gracefully** — in the worst case a flow carries exactly what the packets said:
 | Layer | Source | Needs |
 |---|---|---|
 | 2 — live | SNMP IF-MIB, reverse DNS | reachable agents/resolvers |
+| 1.5 — exporter-pushed | v9/IPFIX interface option records (`option interface-table`) | the exporter sending them — nothing on riptide's side |
 | 1 — static | operator mapping files (node `interfaces`, routing mapping) | a config file |
 | 0 — packet | ifIndex numbers, exporter-sent AS numbers, addresses, next hop | nothing — always available |
 
@@ -24,6 +25,20 @@ gracefully** — in the worst case a flow carries exactly what the packets said:
 value; live sources fill the fields the file doesn't set; packet data is the floor.
 For AS numbers, a **nonzero exporter-provided value always wins** — the routing mapping
 only fills zeros.
+
+For interface fields, exporter-pushed option data and live SNMP share the work with
+**per-field authority** (after any static pin): the interface **name** prefers the
+option record (IE 82 is exactly ifName, and pushed data is fresher than a poll); the
+**alias** prefers SNMP ifAlias — IE 83 (`interfaceDescription`) may carry ifDescr- or
+ifAlias-style content depending on the vendor, so it only fills the alias when SNMP
+can't; the **speed** exists only in SNMP. Cisco IOS-XR exporters send their interface
+table with descriptions only (no IE 82) — those flows get aliases without any SNMP
+configuration.
+
+The floor extends into parsing: an sFlow sample whose raw packet header cannot be
+decoded (truncated by the sampler, non-IP payload) still becomes a flow carrying the
+sample-level data — bytes, packets, interfaces — with the undecodable fields simply
+absent. Undecodable is not an error.
 
 ## Static interface mapping
 

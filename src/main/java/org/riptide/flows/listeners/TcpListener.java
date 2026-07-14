@@ -53,6 +53,7 @@ public class TcpListener implements Listener {
         this.packetsReceived = metrics.meter(MetricRegistry.name("listeners", name, "packetsReceived"));
     }
 
+    @Override
     public void start() {
         this.bossGroup = new NioEventLoopGroup();
         this.workerGroup = new NioEventLoopGroup();
@@ -142,6 +143,7 @@ public class TcpListener implements Listener {
                 .syncUninterruptibly();
     }
 
+    @Override
     public void stop() {
         LOG.info("Disconnecting clients...");
         this.channels.close().awaitUninterruptibly();

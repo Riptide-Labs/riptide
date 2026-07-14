@@ -20,4 +20,10 @@ public final class SnmpEndpoint {
         this.snmpDefinition = snmpDefinition;
         this.inetSocketAddress = inetSocketAddress;
     }
+
+    @Override
+    public String toString() {
+        // log-friendly identity; credentials live behind SecretRefs and stay out
+        return getInetSocketAddress() + " (" + this.snmpDefinition.getSnmpVersion() + ")";
+    }
 }

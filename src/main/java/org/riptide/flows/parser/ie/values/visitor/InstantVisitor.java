@@ -25,6 +25,7 @@ public class InstantVisitor implements ValueVisitor<Instant> {
         return value.getValue();
     }
 
+    @Override
     public Instant visit(final UnsignedValue value) {
         return switch (value.getUnit().orElse(null)) {
             case "seconds" -> Instant.ofEpochSecond(value.getValue().longValue());
@@ -33,6 +34,7 @@ public class InstantVisitor implements ValueVisitor<Instant> {
         };
     }
 
+    @Override
     public Instant visit(final SignedValue value) {
         return switch (value.getUnit().orElse(null)) {
             case "seconds" -> Instant.ofEpochSecond(value.getValue());

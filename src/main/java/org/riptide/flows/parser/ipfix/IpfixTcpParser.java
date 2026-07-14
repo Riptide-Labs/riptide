@@ -16,6 +16,7 @@ import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.FlowPacket;
 import org.riptide.flows.parser.ipfix.proto.Header;
 import org.riptide.flows.parser.ipfix.proto.Packet;
+import org.riptide.flows.parser.session.OptionListener;
 import org.riptide.flows.parser.session.TcpSession;
 import org.riptide.flows.parser.state.ParserState;
 import org.riptide.pipeline.Source;
@@ -24,6 +25,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -38,6 +40,12 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
 
     private final Set<TcpSession> sessions = Sets.newConcurrentHashSet();
 
+    private OptionListener optionListener = OptionListener.NONE;
+
+    public void setOptionListener(final OptionListener optionListener) {
+        this.optionListener = Objects.requireNonNull(optionListener);
+    }
+
     public IpfixTcpParser(final String name,
                           final BiConsumer<Source, Flow> dispatcher,
                           final String location,
@@ -50,7 +58,7 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
     @Override
     public Handler accept(final InetSocketAddress remoteAddress,
                           final InetSocketAddress localAddress) {
-        final TcpSession session = new TcpSession(remoteAddress.getAddress(), this::sequenceNumberTracker);
+        final TcpSession session = new TcpSession(remoteAddress.getAddress(), this::sequenceNumberTracker, this.optionListener);
 
         return new Handler() {
             @Override
@@ -90,7 +98,7 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
                     }
                 };
 
-                return Optional.of(IpfixTcpParser.this.transmit(receivedAt, flow, session, remoteAddress));
+                return Optional.of(IpfixTcpParser.this.transmit(receivedAt, flow, session));
             }
 
             @Override

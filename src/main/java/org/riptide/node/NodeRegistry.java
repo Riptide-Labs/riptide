@@ -7,10 +7,10 @@ package org.riptide.node;
 
 import inet.ipaddr.IPAddressString;
 import jakarta.annotation.PostConstruct;
-import lombok.Data;
 import org.riptide.pipeline.ExporterIdentity;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.net.InetAddress;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -21,12 +21,26 @@ import java.util.Optional;
  * The node model: matches exporter identities to configured {@link NodeDefinition}s.
  * Nodes are configured as a name-keyed map ({@code riptide.nodes.<name>.…}, same idiom
  * as receivers); the key is the node's identity in logs and error messages.
+ *
+ * <p>Bound state and serving state are separate: Spring binds into {@code nodes} at
+ * boot, lookups read the volatile {@code active} snapshot published by
+ * {@link #validate()} — or by {@link #swap(Map)} on config hot-reload. Lookups are
+ * stateless over one snapshot read, so a swap is the whole concurrency story.</p>
  */
-@Data
 @ConfigurationProperties(prefix = "riptide")
 public class NodeRegistry {
 
     private Map<String, NodeDefinition> nodes = new HashMap<>();
+
+    private volatile Map<String, NodeDefinition> active = Map.of();
+
+    public Map<String, NodeDefinition> getNodes() {
+        return this.nodes;
+    }
+
+    public void setNodes(final Map<String, NodeDefinition> nodes) {
+        this.nodes = nodes;
+    }
 
     /**
      * Matching is order-free: nodes pinned to the flow's observation domain beat
@@ -35,38 +49,64 @@ public class NodeRegistry {
      */
     public Optional<Node> lookup(final ExporterIdentity identity) {
         // instanceof instead of an exhaustive switch pattern only because checkstyle 9.3
-        // cannot parse switch record patterns; new ExporterIdentity variants (sFlow, #159)
-        // must be handled here.
+        // cannot parse switch record patterns; new ExporterIdentity variants must be
+        // handled here.
         if (identity instanceof ExporterIdentity.NetflowIpfix netflowIpfix) {
-            final IPAddressString ipAddressString = new IPAddressString(netflowIpfix.source().getHostAddress());
-            final List<Map.Entry<String, NodeDefinition>> subnetMatches = this.nodes.entrySet().stream()
-                    .filter(node -> node.getValue().getSubnetAddress().contains(ipAddressString))
-                    .toList();
-
-            final List<Map.Entry<String, NodeDefinition>> pinned = subnetMatches.stream()
-                    .filter(node -> node.getValue().getObservationDomain() != null
-                            && node.getValue().getObservationDomain() == netflowIpfix.observationDomain())
-                    .toList();
-            final List<Map.Entry<String, NodeDefinition>> pool = !pinned.isEmpty()
-                    ? pinned
-                    : subnetMatches.stream().filter(node -> node.getValue().getObservationDomain() == null).toList();
-
-            return pool.stream()
-                    .max(Comparator.comparingInt(node -> prefixLength(node.getValue().getSubnetAddress())))
-                    .map(node -> new Node(node.getKey(), node.getValue(), ipAddressString));
+            return lookup(netflowIpfix.source(), netflowIpfix.observationDomain());
+        }
+        if (identity instanceof ExporterIdentity.Sflow sflow) {
+            // agent address from the payload, sub-agent ID pins via the same
+            // observation-domain node key
+            return lookup(sflow.agentAddress(), sflow.subAgentId());
         }
         throw new IllegalStateException("Unhandled exporter identity: " + identity);
     }
 
+    private Optional<Node> lookup(final InetAddress address, final long domain) {
+        final Map<String, NodeDefinition> snapshot = this.active;
+        final IPAddressString ipAddressString = new IPAddressString(address.getHostAddress());
+        final List<Map.Entry<String, NodeDefinition>> subnetMatches = snapshot.entrySet().stream()
+                .filter(node -> node.getValue().getSubnetAddress().contains(ipAddressString))
+                .toList();
+
+        final List<Map.Entry<String, NodeDefinition>> pinned = subnetMatches.stream()
+                .filter(node -> node.getValue().getObservationDomain() != null
+                        && node.getValue().getObservationDomain() == domain)
+                .toList();
+        final List<Map.Entry<String, NodeDefinition>> pool = !pinned.isEmpty()
+                ? pinned
+                : subnetMatches.stream().filter(node -> node.getValue().getObservationDomain() == null).toList();
+
+        return pool.stream()
+                .max(Comparator.comparingInt(node -> prefixLength(node.getValue().getSubnetAddress())))
+                .map(node -> new Node(node.getKey(), node.getValue(), ipAddressString));
+    }
+
+    /** Validates the boot-time bind and publishes it as the serving snapshot. */
+    @PostConstruct
+    public void validate() {
+        this.active = validated(this.nodes);
+    }
+
+    /** Atomically replaces the serving snapshot with a validated candidate (hot-reload). */
+    public void swap(final Map<String, NodeDefinition> candidate) {
+        this.active = validated(candidate);
+    }
+
     /**
-     * Fails startup on ambiguous configuration. Equal-length CIDR prefixes are either
+     * Fails on ambiguous configuration. Equal-length CIDR prefixes are either
      * identical or disjoint, so a true tie is exactly two nodes with the same subnet and
      * the same pinning state — detection is complete, not heuristic.
+     *
+     * @return an immutable map of the given definitions. The copy is shallow —
+     *         {@link NodeDefinition} is a mutable bean — so isolation of the serving
+     *         snapshot rests on callers passing freshly bound instances and never
+     *         mutating them after publishing (both the boot bind and the hot-reload
+     *         candidate bind create fresh instances)
      */
-    @PostConstruct
-    void validate() {
+    public static Map<String, NodeDefinition> validated(final Map<String, NodeDefinition> nodes) {
         final Map<String, String> seen = new HashMap<>();
-        for (final Map.Entry<String, NodeDefinition> node : this.nodes.entrySet()) {
+        for (final Map.Entry<String, NodeDefinition> node : nodes.entrySet()) {
             if (node.getValue().getSubnetAddress() == null) {
                 throw new IllegalStateException("Node '%s' has no subnet-address — every node needs one to match exporters."
                         .formatted(node.getKey()));
@@ -81,6 +121,7 @@ public class NodeRegistry {
                         .formatted(other, node.getKey()));
             }
         }
+        return Map.copyOf(nodes);
     }
 
     private static int prefixLength(final IPAddressString subnet) {

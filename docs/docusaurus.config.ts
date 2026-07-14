@@ -53,6 +53,11 @@ const config: Config = {
   ],
 
   themeConfig: {
+    // follow the OS dark/light preference by default; the navbar toggle still
+    // lets visitors override it (persisted in localStorage)
+    colorMode: {
+      respectPrefersColorScheme: true,
+    },
     // og:image / social card for links shared to Slack, Mastodon, …
     image: 'img/favicon.png',
     navbar: {

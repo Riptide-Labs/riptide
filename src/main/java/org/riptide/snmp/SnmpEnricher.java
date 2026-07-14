@@ -21,8 +21,9 @@ import java.util.function.Consumer;
 
 /**
  * Resolves flow interface indexes against the matched node: the static interface
- * mapping pins per field, live SNMP fills the rest (enrichment-ladder semantics).
- * A node without an SNMP block enriches purely statically.
+ * mapping pins per field, exporter-pushed option data and live SNMP fill the rest
+ * with per-field authority (enrichment-ladder semantics). A node without an SNMP
+ * block still enriches from statics and option data.
  */
 @Component
 @RequiredArgsConstructor
@@ -34,36 +35,46 @@ public class SnmpEnricher implements Enricher {
     @NonNull
     private final NodeRegistry nodeRegistry;
 
+    @NonNull
+    private final ExporterInterfaceTable exporterInterfaceTable;
+
     @Override
     public CompletableFuture<Void> enrich(final Source source, final List<EnrichedFlow> flows) {
         return CompletableFuture.supplyAsync(() -> {
-            this.nodeRegistry.lookup(source.identity()).ifPresent(node -> {
-                final Optional<SnmpEndpoint> snmpEndpoint = node.snmpEndpoint();
-                for (final EnrichedFlow flow : flows) {
-                    apply(node, snmpEndpoint, flow.getInputSnmp(), ifInfo -> {
-                        flow.setInputSnmpIfName(ifInfo.name());
-                        flow.setInputSnmpIfAlias(ifInfo.alias());
-                        flow.setInputSnmpIfSpeed(ifInfo.highSpeed());
-                    });
-                    apply(node, snmpEndpoint, flow.getOutputSnmp(), ifInfo -> {
-                        flow.setOutputSnmpIfName(ifInfo.name());
-                        flow.setOutputSnmpIfAlias(ifInfo.alias());
-                        flow.setOutputSnmpIfSpeed(ifInfo.highSpeed());
-                    });
-                }
-            });
+            // exporter-pushed option data enriches even without a configured node —
+            // it is keyed by exporter identity, not by node
+            final Optional<Node> node = this.nodeRegistry.lookup(source.identity());
+            if (node.isEmpty() && this.exporterInterfaceTable.isEmpty()) {
+                return null; // nothing could contribute — keep the hot path free
+            }
+            final Optional<SnmpEndpoint> snmpEndpoint = node.flatMap(Node::snmpEndpoint);
+            for (final EnrichedFlow flow : flows) {
+                apply(node, snmpEndpoint, source, flow.getInputSnmp(), ifInfo -> {
+                    flow.setInputSnmpIfName(ifInfo.name());
+                    flow.setInputSnmpIfAlias(ifInfo.alias());
+                    flow.setInputSnmpIfSpeed(ifInfo.highSpeed());
+                });
+                apply(node, snmpEndpoint, source, flow.getOutputSnmp(), ifInfo -> {
+                    flow.setOutputSnmpIfName(ifInfo.name());
+                    flow.setOutputSnmpIfAlias(ifInfo.alias());
+                    flow.setOutputSnmpIfSpeed(ifInfo.highSpeed());
+                });
+            }
 
             return null;
         });
     }
 
-    private void apply(final Node node, final Optional<SnmpEndpoint> snmpEndpoint, final int ifIndex,
-                       final Consumer<IfInfo> setter) {
-        final IfInfo pinned = node.definition().getInterfaces().get(ifIndex);
+    private void apply(final Optional<Node> node, final Optional<SnmpEndpoint> snmpEndpoint, final Source source,
+                       final int ifIndex, final Consumer<IfInfo> setter) {
+        final IfInfo pinned = node
+                .map(n -> n.definition().getInterfaces().get(ifIndex))
+                .orElse(null);
+        final IfInfo options = this.exporterInterfaceTable.lookup(source.identity(), ifIndex).orElse(null);
         final IfInfo live = snmpEndpoint
                 .flatMap(endpoint -> this.snmpService.getIfInfo(endpoint, ifIndex))
                 .orElse(null);
-        final IfInfo merged = IfInfo.merge(pinned, live);
+        final IfInfo merged = IfInfo.merge(pinned, IfInfo.optionsThenSnmp(options, live));
         if (merged != null) {
             setter.accept(merged);
         }

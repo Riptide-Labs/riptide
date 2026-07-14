@@ -16,7 +16,7 @@ import java.net.InetSocketAddress;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
+import java.time.Duration;
 
 @Primary
 @Service
@@ -36,8 +36,13 @@ public class CachingSnmpService implements SnmpService {
         this.delegate = Objects.requireNonNull(delegate);
         this.cacheConfig = Objects.requireNonNull(cacheConfig);
         ifIndexCache = CacheBuilder.newBuilder()
-                .expireAfterWrite(cacheConfig.retentionMs, TimeUnit.MILLISECONDS)
+                .expireAfterWrite(Duration.ofMillis(cacheConfig.getRetentionMs()))
                 .build();
+    }
+
+    /** Config hot-reload hook: changed nodes may mean changed endpoints or credentials. */
+    public void invalidateAll() {
+        this.ifIndexCache.invalidateAll();
     }
 
     @Override
