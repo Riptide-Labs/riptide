@@ -9,6 +9,7 @@ import jakarta.annotation.PostConstruct;
 import org.springframework.core.env.AbstractEnvironment;
 import org.springframework.core.env.EnumerablePropertySource;
 import org.springframework.core.env.Environment;
+import org.springframework.core.env.PropertySource;
 import org.springframework.stereotype.Component;
 
 import java.util.Objects;
@@ -35,7 +36,12 @@ public class NodesConfigMigrationCheck {
         if (!(this.environment instanceof AbstractEnvironment abstractEnvironment)) {
             return;
         }
-        for (final var source : abstractEnvironment.getPropertySources()) {
+        failOnLegacyIndexedNodes(abstractEnvironment.getPropertySources());
+    }
+
+    /** Reusable against any source stack — config hot-reload runs it on candidates. */
+    public static void failOnLegacyIndexedNodes(final Iterable<PropertySource<?>> sources) {
+        for (final var source : sources) {
             if (source instanceof EnumerablePropertySource<?> enumerable) {
                 for (final String name : enumerable.getPropertyNames()) {
                     if (LEGACY_KEY.matcher(name).find()) {
