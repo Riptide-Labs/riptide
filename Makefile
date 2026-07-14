@@ -16,6 +16,7 @@ JAVA_MAJOR_VERSION  := 25
 RELEASE_LOG         := target/release.log
 OK                  := "[ 👍 ]"
 SKIP                := "[ ⏭️ ]"
+FAIL                := "[ ❌ ]"
 BUILD_OPTS          := "-DskipTests=false"
 
 REQUIRED_BINS := java javac mvn
@@ -99,13 +100,13 @@ release:
 	@if [ "$(GIT_BRANCH)" != "release" ]; then echo "Releases are made from the release branch, your branch is $(GIT_BRANCH)."; exit 1; fi
 	@echo "$(OK)"
 	@echo -n "Check release branch in sync "
-	@if [ "$(git rev-parse HEAD)" != "$(git rev-parse @{u})" ]; then echo "Release branch not in sync with remote origin."; exit 1; fi
+	@if [ "$$(git rev-parse HEAD)" != "$$(git rev-parse @{u})" ]; then echo "Release branch not in sync with remote origin."; exit 1; fi
 	@echo "$(OK)"
 	@echo -n "Check uncommited changes     "
 	@if git status --porcelain | grep -q .; then echo "There are uncommited changes in your repository."; exit 1; fi
 	@echo "$(OK)"
 	@echo -n "Check release version:       "
-	@if [ "$(RELEASE_VERSION)" = "UNSET" ]; then echo "Set a release version, e.g. make release RELEASE_VERSION=1.0.0"; exit 1; fi
+	@if [ "$(RELEASE_VERSION)" = "UNSET.0.0" ]; then echo "Set a release version, e.g. make release RELEASE_VERSION=1.0.0"; exit 1; fi
 	@echo "$(OK)"
 	@echo -n "Check version tag available: "
 	@if git rev-parse v$(RELEASE_VERSION) >$(RELEASE_LOG) 2>&1; then echo "Tag v$(RELEASE_VERSION) already exists"; exit 1; fi
@@ -130,11 +131,9 @@ release:
 	@echo "$(OK)"
 	@if [ "$(PUSH_RELEASE)" = "true" ]; then \
 		echo -n "Push commits                 "; \
-  		git push origin v$(RELEASE_VERSION) >>$(RELEASE_LOG) 2>&1; \
-		echo "$(OK)"; \
+  		{ git push origin HEAD >>$(RELEASE_LOG) 2>&1 && echo "$(OK)"; } || { echo "$(FAIL)"; exit 1; }; \
 		echo -n "Push tag                     "; \
-  		git push --tags >>$(RELEASE_LOG) 2>&1; \
-  		echo "$(OK)"; \
+  		{ git push origin v$(RELEASE_VERSION) >>$(RELEASE_LOG) 2>&1 && echo "$(OK)"; } || { echo "$(FAIL)"; exit 1; }; \
   	else \
   		echo "Push commits and tags:       $(SKIP)"; \
   	fi;
