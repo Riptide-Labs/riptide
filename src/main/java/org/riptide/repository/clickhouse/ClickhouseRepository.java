@@ -20,6 +20,7 @@ import org.riptide.pipeline.FlowException;
 import com.clickhouse.client.api.metadata.TableSchema;
 import com.clickhouse.data.ClickHouseColumn;
 import org.riptide.repository.FlowRepository;
+import org.riptide.secrets.SecretResolvers;
 
 import java.io.IOException;
 import java.net.Inet4Address;
@@ -58,14 +59,27 @@ public class ClickhouseRepository implements FlowRepository {
 
     @SneakyThrows
     public ClickhouseRepository(final FlowMapper flowMapper,
-                                final ClickhouseConfig config) {
+                                final ClickhouseConfig config,
+                                final SecretResolvers secretResolvers) {
         this.flowMapper = Objects.requireNonNull(flowMapper);
         this.config = Objects.requireNonNull(config);
+        Objects.requireNonNull(secretResolvers, "secretResolvers");
+
+        // Resolve the credential SecretRefs once, before the client is built. resolve() is
+        // null-safe; an unset ref falls back to the ClickHouse default user / empty password —
+        // preserving the prior behaviour where an absent/blank config bound the default user (the
+        // client distinguishes an empty password from a null one). An unresolvable scheme://
+        // reference throws here and fails startup — a ClickHouse credential that cannot resolve is
+        // fatal.
+        final String resolvedUsername = secretResolvers.resolve(config.getUsername());
+        final String resolvedPassword = secretResolvers.resolve(config.getPassword());
+        final String username = resolvedUsername != null ? resolvedUsername : "default";
+        final String password = resolvedPassword != null ? resolvedPassword : "";
 
         this.client = new Client.Builder()
                 .addEndpoint(config.getEndpoint())
-                .setUsername(config.getUsername())
-                .setPassword(config.getPassword())
+                .setUsername(username)
+                .setPassword(password)
                 .setDefaultDatabase(config.getDatabase())
                 .compressClientRequest(true)
                 .compressServerResponse(true)
