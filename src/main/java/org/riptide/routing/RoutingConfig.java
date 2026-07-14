@@ -28,6 +28,11 @@ import java.util.Optional;
  * the same block fail startup. {@code as-names} maps AS numbers to names for exporters
  * that already fill AS fields. The two compose: prefix fill first, then names apply to
  * whatever number the flow ends up with.</p>
+ *
+ * <p>Parsing is parse-then-swap: {@link #parse(Map, Map)} validates a candidate into an
+ * opaque {@link Parsed} snapshot without touching serving state; {@link #parsePrefixes()}
+ * publishes the boot-time bind, {@link #swap(Parsed)} publishes a hot-reload candidate.
+ * Lookups read one volatile snapshot — old or new, never a mix.</p>
  */
 @ConfigurationProperties(prefix = "riptide.routing")
 public class RoutingConfig {
@@ -42,7 +47,7 @@ public class RoutingConfig {
     @Setter
     private Map<Long, String> asNames = new HashMap<>();
 
-    private List<ParsedPrefix> parsed = List.of();
+    private volatile Parsed active = new Parsed(List.of(), Map.of());
 
     public record PrefixInfo(Long asn, String org) {
     }
@@ -50,11 +55,33 @@ public class RoutingConfig {
     private record ParsedPrefix(IPAddressString prefix, int prefixLength, PrefixInfo info) {
     }
 
+    /** Validated, immutable routing state; opaque outside this class. */
+    public static final class Parsed {
+        private final List<ParsedPrefix> prefixes;
+        private final Map<Long, String> asNames;
+
+        private Parsed(final List<ParsedPrefix> prefixes, final Map<Long, String> asNames) {
+            this.prefixes = List.copyOf(prefixes);
+            this.asNames = Map.copyOf(asNames);
+        }
+    }
+
+    /** Validates the boot-time bind and publishes it as the serving snapshot. */
     @PostConstruct
-    void parsePrefixes() {
+    public void parsePrefixes() {
+        this.active = parse(this.prefixes, this.asNames);
+    }
+
+    /** Atomically replaces the serving snapshot with a validated candidate (hot-reload). */
+    public void swap(final Parsed candidate) {
+        this.active = candidate;
+    }
+
+    /** Validates a candidate without touching serving state; throws on bad config. */
+    public static Parsed parse(final Map<String, PrefixInfo> prefixes, final Map<Long, String> asNames) {
         final Map<String, String> seenBlocks = new HashMap<>();
-        final List<ParsedPrefix> result = new ArrayList<>(this.prefixes.size());
-        for (final Map.Entry<String, PrefixInfo> entry : this.prefixes.entrySet()) {
+        final List<ParsedPrefix> result = new ArrayList<>(prefixes.size());
+        for (final Map.Entry<String, PrefixInfo> entry : prefixes.entrySet()) {
             final IPAddressString raw = new IPAddressString(entry.getKey());
             if (raw.getAddress() == null) {
                 throw new IllegalStateException("riptide.routing.prefixes: '%s' is not a valid prefix".formatted(entry.getKey()));
@@ -73,22 +100,23 @@ public class RoutingConfig {
             final Integer length = block.getNetworkPrefixLength();
             result.add(new ParsedPrefix(canonical, length != null ? length : block.getBitCount(), entry.getValue()));
         }
-        this.parsed = List.copyOf(result);
+        return new Parsed(result, asNames);
     }
 
     /** Longest-prefix match, same routing-table semantics as node matching. */
     Optional<PrefixInfo> lookupPrefix(final IPAddressString address) {
-        return this.parsed.stream()
+        return this.active.prefixes.stream()
                 .filter(entry -> entry.prefix().contains(address))
                 .max(Comparator.comparingInt(ParsedPrefix::prefixLength))
                 .map(ParsedPrefix::info);
     }
 
     Optional<String> lookupAsName(final Long asn) {
-        return Optional.ofNullable(asn).map(this.asNames::get);
+        return Optional.ofNullable(asn).map(this.active.asNames::get);
     }
 
     boolean isEmpty() {
-        return this.parsed.isEmpty() && this.asNames.isEmpty();
+        final Parsed snapshot = this.active;
+        return snapshot.prefixes.isEmpty() && snapshot.asNames.isEmpty();
     }
 }
