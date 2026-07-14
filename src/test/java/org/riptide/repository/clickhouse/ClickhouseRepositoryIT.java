@@ -12,6 +12,8 @@ import org.junit.jupiter.api.Test;
 import org.riptide.config.ClickhouseConfig;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.pipeline.EnrichedFlow;
+import org.riptide.secrets.SecretRef;
+import org.riptide.secrets.SecretResolvers;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
@@ -37,6 +39,8 @@ public class ClickhouseRepositoryIT {
             .withExposedPorts(8123)
             .waitingFor(Wait.forHttp("/ping").forPort(8123).forStatusCode(200));
 
+    private static final SecretResolvers RESOLVERS = SecretResolvers.defaults();
+
     private static ClickhouseRepository repository;
     private static Client queryClient;
 
@@ -44,16 +48,16 @@ public class ClickhouseRepositoryIT {
     static void setUp() {
         final var config = new ClickhouseConfig();
         config.setEndpoint("http://" + CLICKHOUSE.getHost() + ":" + CLICKHOUSE.getMappedPort(8123));
-        config.setUsername("riptide");
-        config.setPassword("riptide");
+        config.setUsername(SecretRef.of("riptide"));
+        config.setPassword(SecretRef.of("riptide"));
 
-        repository = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config);
+        repository = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
         repository.start();
 
         queryClient = new Client.Builder()
                 .addEndpoint(config.getEndpoint())
-                .setUsername(config.getUsername())
-                .setPassword(config.getPassword())
+                .setUsername("riptide")
+                .setPassword("riptide")
                 .setDefaultDatabase(config.getDatabase())
                 .build();
     }
@@ -91,12 +95,12 @@ public class ClickhouseRepositoryIT {
         final var config = configFor(database, true);
 
         // First boot: manage mode creates the flows table and we persist a row.
-        final var first = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config);
+        final var first = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
         first.start();
         first.persist(List.of(testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 30001, 443, 4242L)));
 
         // Simulated restart: a fresh repository runs start() again.
-        final var second = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config);
+        final var second = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
         second.start();
 
         // CREATE TABLE IF NOT EXISTS no-oped, so the previously inserted row survived the restart.
@@ -111,9 +115,9 @@ public class ClickhouseRepositoryIT {
         queryClient.execute("CREATE DATABASE IF NOT EXISTS " + database).join();
 
         // Provision the schema via a manage-mode start, then a validate-mode start must succeed.
-        new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, true)).start();
+        new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, true), RESOLVERS).start();
 
-        final var validating = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, false));
+        final var validating = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, false), RESOLVERS);
         Assertions.assertThatCode(validating::start).doesNotThrowAnyException();
     }
 
@@ -122,7 +126,7 @@ public class ClickhouseRepositoryIT {
         final var database = "validate_missing";
         queryClient.execute("CREATE DATABASE IF NOT EXISTS " + database).join();
 
-        final var validating = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, false));
+        final var validating = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, false), RESOLVERS);
         Assertions.assertThatThrownBy(validating::start)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("flows table not found")
@@ -140,7 +144,7 @@ public class ClickhouseRepositoryIT {
                 + "ENGINE = MergeTree() ORDER BY timestamp").get();
 
         // Manage mode: CREATE TABLE IF NOT EXISTS no-ops over the stale table, then the check trips.
-        final var repository = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, true));
+        final var repository = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, true), RESOLVERS);
         Assertions.assertThatThrownBy(repository::start)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("tenant");
@@ -149,8 +153,8 @@ public class ClickhouseRepositoryIT {
     private static ClickhouseConfig configFor(final String database, final boolean manageSchema) {
         final var config = new ClickhouseConfig();
         config.setEndpoint("http://" + CLICKHOUSE.getHost() + ":" + CLICKHOUSE.getMappedPort(8123));
-        config.setUsername("riptide");
-        config.setPassword("riptide");
+        config.setUsername(SecretRef.of("riptide"));
+        config.setPassword(SecretRef.of("riptide"));
         config.setDatabase(database);
         config.setManageSchema(manageSchema);
         return config;

@@ -10,9 +10,29 @@ Enriched flows are persisted to ClickHouse:
 ```properties
 riptide.clickhouse.endpoint=http://localhost:8123
 riptide.clickhouse.username=default
-riptide.clickhouse.password=
+#riptide.clickhouse.password=vault://secret/riptide/clickhouse#password
 riptide.clickhouse.database=riptide
 riptide.clickhouse.manage-schema=true
+```
+
+## Credentials
+
+`riptide.clickhouse.username` and `riptide.clickhouse.password` are **secret references**,
+resolved through the same SPI as SNMP credentials:
+
+- a bare literal is used verbatim (plain fallback — existing literal configs keep working);
+- a `scheme://…` reference is resolved from a secret store at startup: `env://VAR`,
+  `file:///path` (optionally `#key` into a properties file), `vault://…`, `sops://…`.
+
+Resolution happens once, when the ClickHouse client is built. An **unresolvable reference fails
+startup** — a database credential that cannot resolve is fatal (unlike an SNMP one, which
+degrades). Leave `password` unset for the default user's empty password; a blank value is not a
+valid reference. Per-tenant writer credentials are sourced this way so no plaintext appears in
+configuration:
+
+```properties
+riptide.clickhouse.username=writer_acme
+riptide.clickhouse.password=vault://secret/riptide/clickhouse/acme#password
 ```
 
 ## Schema ownership
@@ -74,5 +94,86 @@ time-only (`toYYYYMMDD(timestamp)`).
 `zone` replaces the former `riptide.location` key. `riptide.location` is deprecated but
 still accepted for one release (mapped to `zone` with a warning); prefer
 `riptide.identity.zone`.
+
+:::
+
+## Write isolation (multi-tenant)
+
+In provisioned mode (`manage-schema=false`) an admin owns the schema and RBAC, and each riptide
+process connects as a **narrowly-scoped writer** that can only write its own tenant's rows. The
+barrier is enforced entirely by ClickHouse — **riptide never emits a `CHECK` constraint** (that
+would break single-tenant manage mode, which has no `SQL_tenant` setting); it only stamps its
+configured `tenant`/`organisation` (see [Identity columns](#identity-columns)) and inserts.
+
+The mechanism is a per-row `CHECK` constraint that ties each row's `tenant`/`organisation` to a
+`CONST` custom setting pinned on the writer credential. A collector whose config is tampered to
+claim another tenant still carries its own credential, so the server rejects the mismatched row.
+
+### Server requirement
+
+Custom settings with the `SQL_` prefix must be enabled. This is **server config, not an env
+var** — add a `config.d` snippet:
+
+```xml
+<!-- /etc/clickhouse-server/config.d/custom-settings.xml -->
+<clickhouse>
+    <custom_settings_prefixes>SQL_</custom_settings_prefixes>
+</clickhouse>
+```
+
+### Provisioning SQL
+
+Run once per `(tenant, org)` as an admin. The `flows` table is created by a riptide manage-mode
+start (or equivalent DDL); the constraints are then added by `ALTER` (they are only evaluated on
+`INSERT`, so no `SQL_tenant` needs to be defined at DDL time):
+
+```sql
+-- The barrier: each row's tenant/org must equal the writer credential's pinned settings.
+ALTER TABLE riptide.flows
+  ADD CONSTRAINT tenant_pinned CHECK tenant = getSetting('SQL_tenant');
+ALTER TABLE riptide.flows
+  ADD CONSTRAINT org_pinned    CHECK organisation = getSetting('SQL_org');
+
+-- Writer credential for tenant acme / org acme-eu. The SQL_tenant/SQL_org settings are CONST,
+-- so the client cannot override them.
+CREATE USER writer_acme IDENTIFIED WITH sha256_password BY '…'
+  SETTINGS SQL_tenant = 'acme' CONST, SQL_org = 'acme-eu' CONST;
+GRANT INSERT ON riptide.flows TO writer_acme;
+
+-- Optional: bound the writer's ingest rate.
+CREATE QUOTA acme_ingest FOR INTERVAL 1 hour MAX written_rows = 500000000 TO writer_acme;
+
+-- Read isolation: a readonly reader scoped to its own tenant by a row policy.
+CREATE USER reader_acme IDENTIFIED WITH sha256_password BY '…';
+GRANT SELECT ON riptide.flows TO reader_acme;
+CREATE ROW POLICY acme_read ON riptide.flows
+  FOR SELECT USING tenant = 'acme' TO reader_acme;
+```
+
+riptide is then configured with the matching identity and the scoped credential in phase-2
+validate mode:
+
+```properties
+riptide.clickhouse.manage-schema=false
+riptide.clickhouse.username=writer_acme
+riptide.clickhouse.password=vault://secret/riptide/clickhouse/acme#password
+riptide.identity.tenant=acme
+riptide.identity.organisation=acme-eu
+```
+
+### What the barrier guarantees
+
+- **Honest write persists** — riptide's stamped `tenant`/`organisation` match the credential's
+  `CONST` settings, so rows are stored.
+- **Cross-tenant write is rejected** — a tampered config stamping another tenant fails the
+  constraint: `Code: 469 … (VIOLATED_CONSTRAINT)`.
+- **The pin cannot be lifted** — any attempt to override the `CONST` setting (a `SET` or a
+  query-level `SETTINGS SQL_tenant=…`) fails: `Code: 452 … (SETTING_CONSTRAINT_VIOLATION)`.
+- **Reads stay isolated** — the row policy limits each reader to its own tenant's rows.
+
+:::note
+
+This page covers the **write** provisioning only. Query-side users, dashboards, and the full
+operational runbook are a later phase.
 
 :::
