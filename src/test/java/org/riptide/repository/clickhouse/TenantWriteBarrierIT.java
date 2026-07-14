@@ -10,8 +10,6 @@ import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.riptide.config.ClickhouseConfig;
-import org.riptide.flows.parser.data.Flow;
-import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
 import org.testcontainers.containers.GenericContainer;
@@ -20,10 +18,9 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.MountableFile;
 
-import java.net.InetAddress;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
+
+import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
 
 /**
  * The multi-tenant write barrier, proven end to end against a real ClickHouse server.
@@ -200,47 +197,5 @@ public class TenantWriteBarrierIT {
         config.setDatabase(DATABASE);
         config.setManageSchema(manageSchema);
         return config;
-    }
-
-    private static EnrichedFlow flow(final String tenant, final String organisation, final int srcPort) throws Exception {
-        final var now = Instant.now().truncatedTo(ChronoUnit.MILLIS);
-        return EnrichedFlow.builder()
-                .receivedAt(now)
-                .timestamp(now)
-                .firstSwitched(now.minusSeconds(10))
-                .deltaSwitched(now.minusSeconds(10))
-                .lastSwitched(now)
-                .flowProtocol(Flow.FlowProtocol.IPFIX)
-                .tenant(tenant)
-                .organisation(organisation)
-                .zone("default")
-                .system("default")
-                .exporterAddr("203.0.113.7")
-                .srcAddr(InetAddress.getByName("192.0.2.10"))
-                .srcPort(srcPort)
-                .srcAs(64512L)
-                .srcMaskLen(24)
-                .dstAddr(InetAddress.getByName("198.51.100.20"))
-                .dstPort(443)
-                .dstAs(64513L)
-                .dstMaskLen(24)
-                .inputSnmp(1)
-                .outputSnmp(2)
-                .bytes(1234L)
-                .packets(7L)
-                .direction(Flow.Direction.INGRESS)
-                .engineId(0)
-                .engineType(0)
-                .vlan(0)
-                .ipProtocolVersion(4)
-                .protocol(17)
-                .tcpFlags(0)
-                .tos(0)
-                .samplingAlgorithm(Flow.SamplingAlgorithm.Unassigned)
-                .samplingInterval(1.0)
-                .srcLocality(Flow.Locality.PUBLIC)
-                .dstLocality(Flow.Locality.PUBLIC)
-                .flowLocality(Flow.Locality.PUBLIC)
-                .build();
     }
 }

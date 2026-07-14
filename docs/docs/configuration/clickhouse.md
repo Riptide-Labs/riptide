@@ -87,7 +87,8 @@ riptide.identity.system=collector-01
 
 The flows table sorts by `(tenant, organisation, toStartOfHour(timestamp), <flow tuple>)`;
 `zone` and `system` are filter dimensions and stay out of the sort key. Partitioning stays
-time-only (`toYYYYMMDD(timestamp)`).
+time-only (`toYYYYMMDD(timestamp)`). For the full identity model and how `tenant`/`organisation`
+anchor hard isolation, see the [Multi-tenancy runbook](../deploy/multi-tenancy.md#the-identity-model).
 
 :::note
 
@@ -140,8 +141,8 @@ CREATE USER writer_acme IDENTIFIED WITH sha256_password BY '…'
   SETTINGS SQL_tenant = 'acme' CONST, SQL_org = 'acme-eu' CONST;
 GRANT INSERT ON riptide.flows TO writer_acme;
 
--- Optional: bound the writer's ingest rate.
-CREATE QUOTA acme_ingest FOR INTERVAL 1 hour MAX written_rows = 500000000 TO writer_acme;
+-- Optional: bound the writer's ingest volume (written_bytes — written_rows is not a quota metric).
+CREATE QUOTA acme_ingest FOR INTERVAL 1 hour MAX written_bytes = 50000000000 TO writer_acme;
 
 -- Read isolation: a readonly reader scoped to its own tenant by a row policy.
 CREATE USER reader_acme IDENTIFIED WITH sha256_password BY '…';
@@ -173,7 +174,8 @@ riptide.identity.organisation=acme-eu
 
 :::note
 
-This page covers the **write** provisioning only. Query-side users, dashboards, and the full
-operational runbook are a later phase.
+This section covers the **write** provisioning. For the read-side hardening (per-tenant BI
+users + row policies), Grafana topology, the end-to-end onboarding recipe, and the scaling
+ceiling, see the [Multi-tenancy runbook](../deploy/multi-tenancy.md).
 
 :::
