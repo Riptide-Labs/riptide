@@ -64,6 +64,7 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
 
     protected abstract UdpSessionManager.SessionKey buildSessionKey(InetSocketAddress remoteAddress, InetSocketAddress localAddress);
 
+    @Override
     public final CompletableFuture<?> parse(final Instant receivedAt,
                                             final ByteBuf buffer,
                                             final InetSocketAddress remoteAddress,
@@ -77,7 +78,7 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
             final var parsed = this.parse(session, buffer);
             LOG.trace("Parsed packet: {}", parsed);
 
-            return this.transmit(receivedAt, parsed, session, remoteAddress);
+            return this.transmit(receivedAt, parsed, session);
         } catch (Exception e) {
             this.sessionManager.drop(sessionKey);
             this.parserErrors.inc();

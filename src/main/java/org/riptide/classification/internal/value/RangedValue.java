@@ -69,7 +69,7 @@ public class RangedValue {
             try {
                 Integer.parseInt(range.get(i).getValue());
             } catch (NumberFormatException ex) {
-                throw new IllegalArgumentException("Value '" + range.get(i) + "' is not a valid number", ex);
+                throw new IllegalArgumentException("Value '" + range.get(i).getValue() + "' is not a valid number", ex);
             }
         }
         // Check bounds

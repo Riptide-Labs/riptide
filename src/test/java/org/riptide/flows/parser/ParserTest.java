@@ -68,7 +68,7 @@ public class ParserTest {
         Objects.requireNonNull(resource);
         Objects.requireNonNull(consumer);
 
-        final URL resourceURL = getClass().getResource(resource);
+        final URL resourceURL = ParserTest.class.getResource(resource);
         Objects.requireNonNull(resourceURL);
 
         try {

@@ -7,19 +7,30 @@ package org.riptide.classification;
 
 import lombok.Builder;
 import lombok.Data;
+import lombok.Getter;
 
 @Data
 @Builder(builderClassName = "Builder", setterPrefix = "with")
 public class DefaultRule implements Rule {
+    @Getter(onMethod_ = @Override)
     private String name;
+    @Getter(onMethod_ = @Override)
     private String dstAddress;
+    @Getter(onMethod_ = @Override)
     private String dstPort;
+    @Getter(onMethod_ = @Override)
     private String srcPort;
+    @Getter(onMethod_ = @Override)
     private String srcAddress;
+    @Getter(onMethod_ = @Override)
     private String protocol;
+    @Getter(onMethod_ = @Override)
     private String exporterFilter;
+    @Getter(onMethod_ = @Override)
     private int groupPosition;
+    @Getter(onMethod_ = @Override)
     private int position;
+    @Getter(onMethod_ = @Override)
     private boolean omnidirectional;
 
     public static final class Builder {

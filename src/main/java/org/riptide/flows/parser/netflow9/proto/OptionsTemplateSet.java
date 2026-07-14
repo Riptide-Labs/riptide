@@ -25,17 +25,17 @@ public final class OptionsTemplateSet extends FlowSet<OptionsTemplateRecord> {
                               final ByteBuf buffer) throws InvalidPacketException {
         super(packet, header);
 
-        final List<OptionsTemplateRecord> records = new ArrayList<>();
+        final List<OptionsTemplateRecord> parsedRecords = new ArrayList<>();
         while (buffer.isReadable(OptionsTemplateRecordHeader.SIZE)) {
             final OptionsTemplateRecordHeader recordHeader = new OptionsTemplateRecordHeader(buffer);
-            records.add(new OptionsTemplateRecord(this, recordHeader, buffer));
+            parsedRecords.add(new OptionsTemplateRecord(this, recordHeader, buffer));
         }
 
-        if (records.isEmpty()) {
+        if (parsedRecords.isEmpty()) {
             throw new InvalidPacketException(buffer, "Empty set");
         }
 
-        this.records = Collections.unmodifiableList(records);
+        this.records = Collections.unmodifiableList(parsedRecords);
     }
 
     @Override

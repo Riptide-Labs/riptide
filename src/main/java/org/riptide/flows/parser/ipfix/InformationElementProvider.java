@@ -85,7 +85,7 @@ public class InformationElementProvider implements InformationElementDatabase.Pr
 
     @Override
     public void load(final InformationElementDatabase.Adder adder) {
-        try (var is = getClass().getResourceAsStream(XML_FILE_LOCATION)) {
+        try (var is = InformationElementProvider.class.getResourceAsStream(XML_FILE_LOCATION)) {
             if (is == null) {
                 throw new IllegalStateException("Could not find xml file %s".formatted(XML_FILE_LOCATION));
             }

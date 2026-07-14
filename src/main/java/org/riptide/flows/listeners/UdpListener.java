@@ -54,6 +54,7 @@ public class UdpListener implements Listener {
         this.packetsReceived = metrics.meter(MetricRegistry.name("listeners", name, "packetsReceived"));
     }
 
+    @Override
     public void start() {
         // Netty defaults to 2 * num cores when the number of threads is set to 0
         this.bossGroup = new NioEventLoopGroup(0, new ThreadFactoryBuilder()
@@ -77,6 +78,7 @@ public class UdpListener implements Listener {
                 .syncUninterruptibly();
     }
 
+    @Override
     public void stop() {
         if (this.socketFuture != null) {
             LOG.info("Closing channel...");
