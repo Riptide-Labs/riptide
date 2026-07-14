@@ -45,6 +45,15 @@ class ProvisioningCommandTest {
         assertThat(err.toString(StandardCharsets.UTF_8)).contains("unexpected argument: oops");
     }
 
+    @Test
+    void parseQuotaBytesDefaultsAndRejectsNonNumeric() {
+        assertThat(ProvisioningCommand.parseQuotaBytes(null)).isPositive();
+        assertThat(ProvisioningCommand.parseQuotaBytes("500")).isEqualTo(500L);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> ProvisioningCommand.parseQuotaBytes("lots"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("--quota-bytes must be a number");
+    }
+
     private static PrintStream discard() {
         return new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8);
     }

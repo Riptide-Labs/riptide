@@ -84,12 +84,13 @@ public final class TenantProvisioner {
 
     /**
      * Never surface a resolved password in an error. Matches the whole escaped string literal after
-     * {@code IDENTIFIED WITH … BY} — {@code (?:\\.|[^'])*} consumes escaped quotes/backslashes and
-     * any other character (including newlines) so a password with a {@code '} or {@code \n} cannot
-     * leak past a naive {@code '.*?'}.
+     * {@code IDENTIFIED WITH … BY}: {@code \\.} consumes an escaped char and {@code [^'\\]} any
+     * other (including newlines). The two branches are disjoint (the "other" branch excludes the
+     * backslash), so there is no ambiguity that could cause catastrophic backtracking, and a
+     * password with a {@code '} or {@code \n} cannot leak past a naive {@code '.*?'}.
      */
     static String redact(final String sql) {
-        return sql.replaceAll("(?is)(IDENTIFIED WITH \\w+ BY )'(?:\\\\.|[^'])*'", "$1'***'");
+        return sql.replaceAll("(?is)(IDENTIFIED WITH \\w+ BY )'(?:\\\\.|[^'\\\\])*'", "$1'***'");
     }
 
     /** A validated reference to an existing tenant, for teardown. */

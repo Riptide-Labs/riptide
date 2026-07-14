@@ -86,8 +86,7 @@ public final class ProvisioningCommand {
 
     private static int onboard(final Args parsed, final String database, final TenantProvisioner provisioner,
                                final PrintStream out, final PrintStream err) {
-        final long quotaBytes = parsed.get("quota-bytes") == null
-                ? DEFAULT_QUOTA_BYTES : Long.parseLong(parsed.get("quota-bytes"));
+        final long quotaBytes = parseQuotaBytes(parsed.get("quota-bytes"));
         final var spec = new TenantSpec(
                 parsed.require("tenant"),
                 parsed.require("org"),
@@ -114,6 +113,17 @@ public final class ProvisioningCommand {
         provisioner.offboard(ref);
         err.println("Offboarded tenant '" + ref.tenant() + "' (dropped its users and row policy).");
         return 0;
+    }
+
+    static long parseQuotaBytes(final String value) {
+        if (value == null) {
+            return DEFAULT_QUOTA_BYTES;
+        }
+        try {
+            return Long.parseLong(value);
+        } catch (final NumberFormatException e) {
+            throw new IllegalArgumentException("--quota-bytes must be a number, was: " + value);
+        }
     }
 
     private static void usage(final PrintStream err) {
