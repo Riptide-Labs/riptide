@@ -64,58 +64,88 @@ for filtering. All four are riptide-populated columns.
 
 ## Onboard a tenant
 
-Run once per `(tenant, organisation)` as an admin. This is the whole boundary — writer, read-side,
-and quota — in one block. It reuses the write barrier from the
-[ClickHouse page](../configuration/clickhouse.md#write-isolation-multi-tenant); the new part here is
-the **hardened BI reader**.
+Use the `onboard` subcommand — it runs the whole recipe idempotently with one substituted
+`(tenant, org)` and prints the config stanza for the tenant's collector. It runs with **admin**
+credentials passed at invocation (never the collector's scoped credential) and, because it needs no
+Spring context, the running collector never contains any provisioning code.
 
-```sql
--- 1. The write barrier (once per table): each row's tenant/org must equal the
---    writer credential's pinned CONST settings.
-ALTER TABLE riptide.flows ADD CONSTRAINT tenant_pinned CHECK tenant = getSetting('SQL_tenant');
-ALTER TABLE riptide.flows ADD CONSTRAINT org_pinned    CHECK organisation = getSetting('SQL_org');
-
--- 2. Per-(tenant, org) writer. SQL_tenant/SQL_org are CONST — the client cannot override them.
-CREATE USER writer_acme IDENTIFIED WITH sha256_password BY '…'
-  SETTINGS SQL_tenant = 'acme' CONST, SQL_org = 'acme-eu' CONST;
-GRANT INSERT ON riptide.flows TO writer_acme;
--- Bound ingest volume (written_bytes, not written_rows — the latter is not a quota metric).
-CREATE QUOTA acme_ingest FOR INTERVAL 1 hour MAX written_bytes = 50000000000 TO writer_acme;
-
--- 3. Hardened BI reader: read-only, no DDL, scoped to its own tenant by a row policy, with the
---    catalog access a query builder (Grafana) needs. readonly = 2 blocks writes and DDL while
---    still tolerating the read-only settings an HTTP client sends per query; readonly = 1 would
---    reject those and break the connection.
-CREATE USER bi_acme IDENTIFIED WITH sha256_password BY '…'
-  SETTINGS readonly = 2, allow_ddl = 0;
-GRANT SELECT ON riptide.flows      TO bi_acme;
-GRANT SELECT ON system.databases   TO bi_acme;
-GRANT SELECT ON system.tables      TO bi_acme;
-GRANT SELECT ON system.columns     TO bi_acme;
-CREATE ROW POLICY acme_bi ON riptide.flows FOR SELECT USING tenant = 'acme' TO bi_acme;
-CREATE QUOTA acme_read FOR INTERVAL 1 hour MAX execution_time = 3600 TO bi_acme;
+```bash
+java -jar riptide.jar onboard \
+  --admin-url https://clickhouse:8443 --admin-user admin --admin-password env://CH_ADMIN_PW \
+  --tenant acme --org acme-eu \
+  --writer-secret env://ACME_WRITER_PW --reader-secret env://ACME_READER_PW
 ```
 
-Then configure the riptide process for this tenant with the scoped writer credential and matching
-identity (validate mode):
-
-```properties
-riptide.clickhouse.manage-schema=false
+```
+# printed to stdout — paste into the tenant's collector config:
 riptide.clickhouse.username=writer_acme
-riptide.clickhouse.password=vault://secret/riptide/clickhouse/acme#password
+riptide.clickhouse.password=env://ACME_WRITER_PW
 riptide.identity.tenant=acme
 riptide.identity.organisation=acme-eu
-riptide.identity.zone=dmz
 ```
+
+Secret references resolve through the built-in resolvers (`plain`, `env://`, `file://`);
+`--writer-secret`/`--reader-secret` are the passwords for the tenant's writer and BI users. Add
+`riptide.clickhouse.manage-schema=false` and `riptide.identity.zone` to the collector config as
+needed.
+
+`onboard` is safe to re-run: it reconciles the writer/reader **passwords** to the current secret, so
+rotating a secret and re-running updates ClickHouse (the users' `CONST` settings and row policy are
+preserved). To remove a tenant: `offboard --admin-url … --tenant acme --yes` (drops its users and
+row policy; the shared roles/constraints/quota stay).
+
+### What it provisions
+
+The recipe is **role-based**: the grants, the reader hardening, the CHECK barrier, and the quota are
+one-time objects, so per-tenant reduces to the scoped users + role grants + one literal row policy.
+`onboard` ensures the one-time objects on first run and adds the per-tenant part:
+
+```sql
+-- Once per cluster (idempotent): roles carry every per-tenant grant and the reader hardening.
+CREATE ROLE IF NOT EXISTS flow_writer;
+GRANT INSERT ON riptide.flows TO flow_writer;
+CREATE ROLE IF NOT EXISTS flow_reader;
+GRANT SELECT ON riptide.flows TO flow_reader;
+GRANT SELECT ON system.databases TO flow_reader;
+GRANT SELECT ON system.tables    TO flow_reader;
+GRANT SELECT ON system.columns   TO flow_reader;   -- the catalog a query builder needs
+-- readonly = 2 blocks writes and DDL while tolerating the read-only settings an HTTP client sends
+-- per query; readonly = 1 would reject those and break the connection.
+ALTER ROLE flow_reader SETTINGS readonly = 2, allow_ddl = 0;
+-- The write barrier: each row's tenant/org must equal the writer credential's pinned CONST setting.
+ALTER TABLE riptide.flows ADD CONSTRAINT IF NOT EXISTS tenant_pinned CHECK tenant = getSetting('SQL_tenant');
+ALTER TABLE riptide.flows ADD CONSTRAINT IF NOT EXISTS org_pinned    CHECK organisation = getSetting('SQL_org');
+-- One quota keyed by user gives every writer its own bucket (written_bytes — written_rows is not a metric).
+CREATE QUOTA IF NOT EXISTS flow_ingest FOR INTERVAL 1 hour MAX written_bytes = 50000000000
+  KEYED BY user_name TO flow_writer;
+
+-- Per tenant (the residual): two scoped users + role grants + one literal row policy.
+CREATE USER IF NOT EXISTS writer_acme IDENTIFIED WITH sha256_password BY '…'
+  SETTINGS SQL_tenant = 'acme' CONST, SQL_org = 'acme-eu' CONST;
+GRANT flow_writer TO writer_acme;
+CREATE USER IF NOT EXISTS bi_acme IDENTIFIED WITH sha256_password BY '…'
+  SETTINGS SQL_tenant = 'acme' CONST, SQL_org = 'acme-eu' CONST;
+GRANT flow_reader TO bi_acme;
+CREATE ROW POLICY IF NOT EXISTS acme_iso ON riptide.flows FOR SELECT USING tenant = 'acme' TO bi_acme;
+```
+
+:::note
+
+A single shared row policy scoped by `getSetting('SQL_tenant')` does **not** work — ClickHouse
+raises `UNKNOWN_SETTING` whenever a principal without that setting evaluates it. The row policy must
+stay a per-tenant literal.
+
+:::
 
 ### What the reader guarantees
 
-The hardened BI credential is a real boundary, not just a filter (proven by
-`TenantQueryIsolationIT`):
+The hardened BI credential is a real boundary, not just a filter (proven by `TenantQueryIsolationIT`
+and, through the subcommand, `TenantOnboardingIT`):
 
 - **Reads stay in-tenant** — the row policy limits `bi_acme` to `tenant = 'acme'` rows, even
   against a shared table holding every tenant.
-- **Cannot write** — no `INSERT` grant and `readonly` mean a write is rejected (`ACCESS_DENIED`).
+- **Cannot write** — the `flow_reader` role grants no `INSERT` and pins `readonly`, so a write is
+  rejected (`ACCESS_DENIED`).
 - **Cannot change schema** — `allow_ddl = 0` rejects any DDL, so a compromised dashboard credential
   cannot alter or drop the table.
 - **Query builder still works** — the `system.databases/tables/columns` grants let Grafana's query
