@@ -43,6 +43,10 @@ more-specific one. If a subnet mixes NetFlow v5 and sFlow devices, avoid pinning
 distinguish the nodes by subnet instead.
 :::
 
+Changes to this tree apply without a restart when
+[config hot-reload](../deploy/operations.md#config-hot-reload) is enabled — except for
+nodes configured via environment variables, which need a restart.
+
 A node without an `snmp` block matches flows but is not polled — it can still enrich
 interfaces statically via the `interfaces` map (see below), and from **exporter-pushed
 option records** (e.g. Cisco `option interface-table`) with zero configuration. SNMP
