@@ -49,10 +49,12 @@ public class TimingClassificationEngine implements ClassificationEngine {
         }
     }
 
+    @Override
     public void addClassificationRulesReloadedListener(final ClassificationRulesReloadedListener classificationRulesReloadedListener) {
         this.delegate.addClassificationRulesReloadedListener(classificationRulesReloadedListener);
     }
 
+    @Override
     public void removeClassificationRulesReloadedListener(final ClassificationRulesReloadedListener classificationRulesReloadedListener) {
         this.delegate.removeClassificationRulesReloadedListener(classificationRulesReloadedListener);
     }

@@ -14,7 +14,6 @@ import org.riptide.flows.parser.session.SequenceNumberTracker;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.pipeline.Source;
 
-import java.net.InetSocketAddress;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -132,8 +131,7 @@ public abstract class ParserBase implements Parser {
 
     protected CompletableFuture<?> transmit(final Instant receivedAt,
                                             final FlowPacket packet,
-                                            final Session session,
-                                            final InetSocketAddress remoteAddress) {
+                                            final Session session) {
         // one identity per packet: it scopes sequence tracking (below) and every
         // dispatched flow's Source
         final Source source = new Source(this.location, packet.identity(session.getRemoteAddress()));

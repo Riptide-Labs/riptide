@@ -18,10 +18,11 @@ public class IpValueTest {
 
     @TestFactory
     Stream<DynamicTest> verifyRangedValues() {
-        final var ipValue = IpValue.of("10.1.1.1-10.1.1.100");
+        final var range = "10.1.1.1-10.1.1.100";
+        final var ipValue = IpValue.of(range);
         return IpRange.of("10.1.1.1", "10.1.1.100")
                 .stream()
-                .map(ipAddress -> DynamicTest.dynamicTest("Verify ip address %s is in rage of %s".formatted(ipAddress, ipValue),
+                .map(ipAddress -> DynamicTest.dynamicTest("Verify ip address %s is in rage of %s".formatted(ipAddress, range),
                         () -> Assertions.assertThat(ipValue.isInRange(ipAddress)).isTrue()));
     }
 

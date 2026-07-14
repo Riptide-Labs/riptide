@@ -76,18 +76,18 @@ public final class DataRecord implements Record {
 
         this.template = Objects.requireNonNull(template);
 
-        final List<Value<?>> scopes = new ArrayList<>(this.template.scopes.size());
+        final List<Value<?>> parsedScopes = new ArrayList<>(this.template.scopes.size());
         for (final Field scope : this.template.scopes) {
-            scopes.add(parseField(scope, resolver, buffer));
+            parsedScopes.add(parseField(scope, resolver, buffer));
         }
 
-        final List<Value<?>> fields = new ArrayList<>(this.template.fields.size());
+        final List<Value<?>> parsedFields = new ArrayList<>(this.template.fields.size());
         for (final Field field : this.template.fields) {
-            fields.add(parseField(field, resolver, buffer));
+            parsedFields.add(parseField(field, resolver, buffer));
         }
 
-        this.scopes = Collections.unmodifiableList(scopes);
-        this.fields = Collections.unmodifiableList(fields);
+        this.scopes = Collections.unmodifiableList(parsedScopes);
+        this.fields = Collections.unmodifiableList(parsedFields);
 
         // Expand the data record by appending values from
         // TODO fooker: extend fields with packet metadata

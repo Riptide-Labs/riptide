@@ -98,7 +98,7 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
                     }
                 };
 
-                return Optional.of(IpfixTcpParser.this.transmit(receivedAt, flow, session, remoteAddress));
+                return Optional.of(IpfixTcpParser.this.transmit(receivedAt, flow, session));
             }
 
             @Override

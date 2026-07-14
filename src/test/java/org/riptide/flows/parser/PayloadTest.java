@@ -34,7 +34,7 @@ public class PayloadTest {
             Assertions.assertThatThrownBy(() -> {
                 final var session = new TcpSession(InetAddress.getLoopbackAddress(), () -> new SequenceNumberTracker(32));
                 final Header h1 = new Header(slice(buffer, Header.SIZE));
-                final Packet p1 = new Packet(session, h1, buffer);
+                new Packet(session, h1, buffer);
             }).isInstanceOf(InvalidPacketException.class)
                 .hasMessageContaining("Invalid template ID: 8, Offset: [0x001E], Payload:")
                 .hasMessageContaining("|00000000| 00 09 00 01 23 bc 9f 78 5f 1e 2e 03 05 cc 4e f2 |....#..x_.....N.|")
@@ -46,7 +46,7 @@ public class PayloadTest {
         Objects.requireNonNull(resource);
         Objects.requireNonNull(consumer);
 
-        final var resourceURL = getClass().getResource(resource);
+        final var resourceURL = PayloadTest.class.getResource(resource);
         Objects.requireNonNull(resourceURL);
 
         try {

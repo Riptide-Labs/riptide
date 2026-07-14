@@ -21,7 +21,7 @@ import org.springframework.stereotype.Component;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.TimeUnit;
+import java.time.Duration;
 
 /**
  * Interface names pushed by exporters as v9/IPFIX option records — the enrichment
@@ -59,7 +59,7 @@ public class ExporterInterfaceTable implements OptionListener {
                 // roughly the same cadence (Cisco default 600 s == our default
                 // retention), so a 1x TTL would race every refresh and one lost
                 // option packet would unenrich flows for a full cycle
-                .expireAfterWrite(2 * cacheConfig.getRetentionMs(), TimeUnit.MILLISECONDS)
+                .expireAfterWrite(Duration.ofMillis(2 * cacheConfig.getRetentionMs()))
                 .build();
         this.recordsConsumed = metrics.meter(MetricRegistry.name("enrichment", "optionInterfaces", "consumed"));
         this.recordsSkipped = metrics.meter(MetricRegistry.name("enrichment", "optionInterfaces", "skipped"));

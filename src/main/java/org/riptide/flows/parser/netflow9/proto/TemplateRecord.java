@@ -31,13 +31,13 @@ public final class TemplateRecord implements Record {
 
         this.header = Objects.requireNonNull(header);
 
-        final List<FieldSpecifier> fields = new ArrayList<>();
+        final List<FieldSpecifier> parsedFields = new ArrayList<>();
         for (int i = 0; i < this.header.fieldCount; i++) {
             final FieldSpecifier field = new FieldSpecifier(buffer);
-            fields.add(field);
+            parsedFields.add(field);
         }
 
-        this.fields = Collections.unmodifiableList(fields);
+        this.fields = Collections.unmodifiableList(parsedFields);
     }
 
     @Override

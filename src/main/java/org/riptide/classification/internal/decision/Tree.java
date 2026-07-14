@@ -298,6 +298,10 @@ public abstract class Tree {
                         return eq.classifiers(request);
                     case GT:
                         return gt.classifiers(request);
+                    case NA:
+                        // request has no value for this threshold's aspect; preserved
+                        // pre-existing behavior — callers treat null as "no classifiers"
+                        return null;
                 }
                 return null;
             }
@@ -503,6 +507,7 @@ public abstract class Tree {
             this.i2 = i2;
         }
 
+        @Override
         public Classifier next() {
             if (n1 == null && i1 != null) {
                 n1 = i1.next();

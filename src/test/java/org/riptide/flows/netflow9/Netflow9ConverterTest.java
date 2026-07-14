@@ -66,7 +66,7 @@ public class Netflow9ConverterTest {
     private List<Flow> getFlowsForPayloadsInSession(final String... resources) throws URISyntaxException, IOException, InvalidPacketException {
         final var payloads = new ArrayList<byte[]>(resources.length);
         for (String resource : resources) {
-            URL resourceURL = getClass().getResource(resource);
+            URL resourceURL = Netflow9ConverterTest.class.getResource(resource);
             payloads.add(Files.readAllBytes(Paths.get(resourceURL.toURI())));
         }
         return getFlowsForPayloadsInSession(payloads);

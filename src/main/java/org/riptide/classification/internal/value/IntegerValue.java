@@ -12,7 +12,11 @@ public class IntegerValue {
         if (input == null || input.isNullOrEmpty()) {
             this.value = null;
         } else {
-            this.value = Integer.parseInt(input.getValue());
+            try {
+                this.value = Integer.parseInt(input.getValue());
+            } catch (final NumberFormatException ex) {
+                throw new IllegalArgumentException("Value '" + input.getValue() + "' is not a valid number", ex);
+            }
         }
     }
 
