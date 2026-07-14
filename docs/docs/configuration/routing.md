@@ -12,8 +12,8 @@ middle rung for AS data. Two composable shapes:
 riptide:
   routing:
     prefixes:                    # longest prefix wins, over src AND dst addresses
-      "203.0.113.0/24": { asn: 64500, org: "Example Carrier" }
-      "2001:db8::/32":  { asn: 64501, org: "Example IX" }
+      "[203.0.113.0/24]": { asn: 64500, org: "Example Carrier" }
+      "[2001:db8::/32]":  { asn: 64501, org: "Example IX" }
     as-names:                    # names for AS numbers, wherever they came from
       64500: "Example Carrier"
       65001: "Peering Partner"
@@ -32,8 +32,10 @@ riptide:
   block fail startup with both keys named.
 - An invalid prefix fails startup with the offending key named.
 - With neither map configured the enricher is a no-op.
-- In `.properties` form, prefix keys contain dots and need bracket escaping:
-  `riptide.routing.prefixes.[203.0.113.0/24].asn=64500` — prefer YAML for this section.
+- Prefix keys contain dots and slashes, so Spring's map-key escaping applies **in both
+  formats**: quote them as `"[203.0.113.0/24]"` in YAML and write
+  `riptide.routing.prefixes.[203.0.113.0/24].asn=64500` in `.properties` form. Without
+  the brackets the dots are read as nesting and the key silently falls apart.
 
 Use `prefixes` when your exporters don't fill AS fields; use `as-names` when they do and
 you just want readable names in dashboards.

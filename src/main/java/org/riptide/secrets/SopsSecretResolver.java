@@ -41,6 +41,11 @@ public class SopsSecretResolver implements SecretResolver {
     private final String ageKeyFile;
     private final Map<Path, DecryptedFile> cache = new ConcurrentHashMap<>();
 
+    /** Config hot-reload hook: rotated secrets must decrypt fresh at the next resolve. */
+    public void invalidateCache() {
+        this.cache.clear();
+    }
+
     public SopsSecretResolver(@Value("${riptide.secrets.sops.command:sops}") final String command,
                               @Value("${riptide.secrets.sops.age-key-file:}") final String ageKeyFile) {
         this.command = List.of(command.trim().split("\\s+"));

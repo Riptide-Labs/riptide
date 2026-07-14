@@ -40,6 +40,11 @@ public class CachingSnmpService implements SnmpService {
                 .build();
     }
 
+    /** Config hot-reload hook: changed nodes may mean changed endpoints or credentials. */
+    public void invalidateAll() {
+        this.ifIndexCache.invalidateAll();
+    }
+
     @Override
     public Optional<IfInfo> getIfInfo(final SnmpEndpoint snmpEndpoint, final int ifIndex) {
         final var key = Tuple.of(snmpEndpoint.getInetSocketAddress(), ifIndex);
