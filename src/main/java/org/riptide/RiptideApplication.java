@@ -5,6 +5,7 @@
 
 package org.riptide;
 
+import org.riptide.provisioning.ProvisioningCommand;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
@@ -13,6 +14,11 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 @ConfigurationPropertiesScan
 public class RiptideApplication {
     public static void main(final String... args) {
+        // Admin provisioning subcommands run without a Spring context (no collector beans, no admin
+        // capability in the running daemon). Everything else starts the collector as before.
+        if (args.length > 0 && ProvisioningCommand.matches(args[0])) {
+            System.exit(ProvisioningCommand.run(args));
+        }
         SpringApplication.run(RiptideApplication.class, args);
     }
 }

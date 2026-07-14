@@ -122,45 +122,21 @@ var** — add a `config.d` snippet:
 </clickhouse>
 ```
 
-### Provisioning SQL
+### Provisioning
 
-Run once per `(tenant, org)` as an admin. The `flows` table is created by a riptide manage-mode
-start (or equivalent DDL); the constraints are then added by `ALTER` (they are only evaluated on
-`INSERT`, so no `SQL_tenant` needs to be defined at DDL time):
+The `flows` table is created by a riptide manage-mode start (or equivalent DDL); the barrier
+constraints are added by `ALTER` (evaluated only on `INSERT`, so no `SQL_tenant` need be defined at
+DDL time):
 
 ```sql
--- The barrier: each row's tenant/org must equal the writer credential's pinned settings.
-ALTER TABLE riptide.flows
-  ADD CONSTRAINT tenant_pinned CHECK tenant = getSetting('SQL_tenant');
-ALTER TABLE riptide.flows
-  ADD CONSTRAINT org_pinned    CHECK organisation = getSetting('SQL_org');
-
--- Writer credential for tenant acme / org acme-eu. The SQL_tenant/SQL_org settings are CONST,
--- so the client cannot override them.
-CREATE USER writer_acme IDENTIFIED WITH sha256_password BY '…'
-  SETTINGS SQL_tenant = 'acme' CONST, SQL_org = 'acme-eu' CONST;
-GRANT INSERT ON riptide.flows TO writer_acme;
-
--- Optional: bound the writer's ingest volume (written_bytes — written_rows is not a quota metric).
-CREATE QUOTA acme_ingest FOR INTERVAL 1 hour MAX written_bytes = 50000000000 TO writer_acme;
-
--- Read isolation: a readonly reader scoped to its own tenant by a row policy.
-CREATE USER reader_acme IDENTIFIED WITH sha256_password BY '…';
-GRANT SELECT ON riptide.flows TO reader_acme;
-CREATE ROW POLICY acme_read ON riptide.flows
-  FOR SELECT USING tenant = 'acme' TO reader_acme;
+ALTER TABLE riptide.flows ADD CONSTRAINT tenant_pinned CHECK tenant = getSetting('SQL_tenant');
+ALTER TABLE riptide.flows ADD CONSTRAINT org_pinned    CHECK organisation = getSetting('SQL_org');
 ```
 
-riptide is then configured with the matching identity and the scoped credential in phase-2
-validate mode:
-
-```properties
-riptide.clickhouse.manage-schema=false
-riptide.clickhouse.username=writer_acme
-riptide.clickhouse.password=vault://secret/riptide/clickhouse/acme#password
-riptide.identity.tenant=acme
-riptide.identity.organisation=acme-eu
-```
+The per-tenant writer/reader users, role grants, quota, and row policy are provisioned by the
+[`onboard` subcommand](../deploy/multi-tenancy.md#onboard-a-tenant) — one command per
+`(tenant, org)` that also prints the collector's config stanza. See the
+[Multi-tenancy runbook](../deploy/multi-tenancy.md) for the full recipe.
 
 ### What the barrier guarantees
 
