@@ -19,4 +19,11 @@ public interface Listener {
     String getDescription();
     void start();
     void stop();
+
+    /**
+     * Whether this receiver is currently bound and its socket active — i.e. its event loop is alive
+     * and serving the channel. Used by the management health endpoints. Returns {@code false} before
+     * {@link #start()} and after {@link #stop()}, or if the channel has died.
+     */
+    boolean isListening();
 }

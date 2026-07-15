@@ -179,6 +179,11 @@ public class TcpListener implements Listener {
         return String.format("TCP %s:%s",  this.host != null ? this.host : "*", this.port);
     }
 
+    @Override
+    public boolean isListening() {
+        return this.socketFuture != null && this.socketFuture.channel().isActive();
+    }
+
     public TcpListener withHost(final String host) {
         this.host = host;
         return this;

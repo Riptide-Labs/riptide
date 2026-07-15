@@ -17,4 +17,11 @@ services:
       RIPTIDE_CLICKHOUSE_DATABASE: riptide
     ports:
       - "9999:9999/udp"
+    healthcheck:
+      # BusyBox wget is present in the temurin-alpine image; /readyz is 200 once receivers are listening
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
 
