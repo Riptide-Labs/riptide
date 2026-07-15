@@ -35,7 +35,7 @@ domain (source ID). For **sFlow** both come from the datagram payload: subnets m
 the `agent_address` — which may differ from the UDP source — and `observation-domain`
 pins the `sub_agent_id`.
 
-:::warning The pin key is shared across protocols
+:::warning[The pin key is shared across protocols]
 `observation-domain: 0` pins *both* NetFlow v5 exporters with engine type/ID 0 (their
 domain maps to `0`) *and* sFlow agents with the near-universal default
 `sub_agent_id = 0` — and a matching pin beats every wildcard node, even a
@@ -67,7 +67,7 @@ riptide.nodes.core-router.interfaces.10.high-speed=10000
 Fields set here **override** live SNMP values per field; SNMP fills the rest
 ([enrichment ladder](../enrichment.md#the-enrichment-ladder)).
 
-:::tip Keep the inventory in its own file
+:::tip[Keep the inventory in its own file]
 
 Stock Spring lets you split the node map out of the main configuration:
 
