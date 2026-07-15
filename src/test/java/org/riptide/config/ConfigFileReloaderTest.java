@@ -61,7 +61,7 @@ public class ConfigFileReloaderTest {
 
     @DynamicPropertySource
     static void reloadProperties(final DynamicPropertyRegistry registry) {
-        registry.add("spring.config.additional-location", () -> "optional:file:" + CONFIG);
+        registry.add("spring.config.import", () -> "optional:file:" + CONFIG);
         registry.add("riptide.config.reload-interval", () -> "1h");
         // stands in for the environment-variable layer: test properties outrank files
         registry.add("riptide.nodes.envnode.subnet-address", () -> "192.0.2.0/24");
