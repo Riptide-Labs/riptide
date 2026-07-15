@@ -46,11 +46,44 @@ yourself — or let dnf install `java-25-openjdk-headless` alongside.
 | `/etc/riptide/config.yaml` | configuration (root:riptide 0640 — may hold credentials) |
 | `/etc/riptide/riptide.env` | JVM options and environment variables for the service |
 
-## Configure, enable, start
+## Configure ClickHouse access
 
-Installation is deliberately passive: nothing is enabled or started until Riptide can do something
-useful. Point `/etc/riptide/config.yaml` at your ClickHouse and define receivers — everything from
-the [configuration chapters](../configuration/receivers.md) goes there — then:
+Installation is deliberately passive: nothing starts until Riptide can reach a ClickHouse. Edit
+`/etc/riptide/config.yaml` (installed `root:riptide 0640`, so it may hold credentials) and point it
+at your database over the HTTP interface (port 8123):
+
+```yaml
+riptide:
+  clickhouse:
+    endpoint: http://clickhouse.example.com:8123
+    database: riptide
+    username: default
+    # password: left unset = the default user's empty password
+```
+
+By default Riptide manages its own schema (`manage-schema: true`), creating the `flows` table on
+first start — no manual DDL needed.
+
+For a password-protected user, prefer a [secret reference](../configuration/secret-references.md)
+over an inline literal so no plaintext lives in the file:
+
+```yaml
+riptide:
+  clickhouse:
+    endpoint: http://clickhouse.example.com:8123
+    database: riptide
+    username: riptide
+    password: vault://secret/riptide/clickhouse#password   # or env://, file://, sops://
+```
+
+A ClickHouse credential that cannot be resolved is **fatal at startup** (unlike SNMP, which
+degrades). See [ClickHouse configuration](../configuration/clickhouse.md) for schema ownership,
+multi-tenant write isolation, and the identity columns.
+
+## Enable and start
+
+Define at least one receiver in the same file (everything from the
+[configuration chapters](../configuration/receivers.md) goes there), then start the service:
 
 ```bash
 sudo systemctl enable --now riptide
