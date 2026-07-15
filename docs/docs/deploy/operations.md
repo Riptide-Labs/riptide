@@ -71,9 +71,44 @@ restart. Configuration is backward-compatible within a minor line; breaking conf
 moves are logged loudly at startup (e.g. the pre-0.1.0 `riptide.snmp.config.definitions`
 tree logs an explicit error pointing at `riptide.nodes`).
 
+## Health endpoints & probes
+
+Riptide serves two plain-HTTP health endpoints on a management port (default `8080`) — no auth, no
+TLS, cluster-internal. They're built on the JDK HTTP server, so the collector stays headless (no
+application web server).
+
+| Endpoint | Meaning |
+|---|---|
+| `GET /livez` | **Liveness** — the receiver event loops are alive. Returns `200` while booting and once running; `503` only if a started receiver's socket has died. **Never** checks ClickHouse. |
+| `GET /readyz` | **Readiness** — all configured receivers are bound and listening (`200`), else `503`. |
+
+Configure via `riptide.management.*`:
+
+```properties
+riptide.management.enabled=true       # set false to disable the endpoints entirely
+riptide.management.port=8080
+riptide.management.bind-address=0.0.0.0
+```
+
+**Readiness deliberately excludes ClickHouse.** There is no write buffer and a single collector has
+no failover, so making the collector "not ready" during a ClickHouse blip would only drain the load
+balancer (with `externalTrafficPolicy: Local`) and lose *more* flows at the edges — for no benefit.
+Readiness reflects receiver health only; a ClickHouse outage keeps the collector receiving.
+
+Kubernetes probe mapping:
+
+```yaml
+startupProbe:   { httpGet: { path: /readyz, port: 8080 }, failureThreshold: 30, periodSeconds: 2 }
+livenessProbe:  { httpGet: { path: /livez,  port: 8080 } }
+readinessProbe: { httpGet: { path: /readyz, port: 8080 } }
+```
+
+The Compose stack uses `/readyz` as the service `healthcheck` (via the image's BusyBox `wget`).
+
 ## Ports
 
 | Port | Protocol | What |
 |---|---|---|
 | `9999/udp` | NetFlow/IPFIX | default flow ingest (container `EXPOSE`; receivers are configurable) |
+| `8080` | HTTP | management / health endpoints (`/livez`, `/readyz`) |
 | `8123` | HTTP | ClickHouse (stack-internal unless you expose it) |

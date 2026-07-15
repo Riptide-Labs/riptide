@@ -97,6 +97,11 @@ public class UdpListener implements Listener {
         }
     }
 
+    @Override
+    public boolean isListening() {
+        return this.socketFuture != null && this.socketFuture.channel().isActive();
+    }
+
     public UdpListener withHost(String host) {
         this.host = host;
         return this;
