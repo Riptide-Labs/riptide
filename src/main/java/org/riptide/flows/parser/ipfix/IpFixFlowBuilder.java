@@ -125,7 +125,10 @@ public class IpFixFlowBuilder {
                             if (rawFlow.flowStartSysUpTime != null) {
                                 return rawFlow.systemInitTimeMilliseconds.plus(rawFlow.flowStartSysUpTime);
                             }
-                            return null;
+                            // No flow-start element exported: fall back to the export time (the
+                            // packet header timestamp), as goflow2 does — honouring the non-null Flow
+                            // contract and the non-nullable column.
+                            return this.getTimestamp();
                         });
             }
 
@@ -143,7 +146,8 @@ public class IpFixFlowBuilder {
                             if (rawFlow.flowEndSysUpTime != null) {
                                 return rawFlow.systemInitTimeMilliseconds.plus(rawFlow.flowEndSysUpTime);
                             }
-                            return null;
+                            // No flow-end element exported: fall back to the export time (see getFirstSwitched).
+                            return this.getTimestamp();
                         });
             }
 
@@ -152,7 +156,7 @@ public class IpFixFlowBuilder {
                 final var flowActiveTimeout = Optionals.first(rawFlow.flowActiveTimeout, flowActiveTimeoutFallback).orElse(null);
                 final var flowInactiveTimeout = Optionals.first(rawFlow.flowInactiveTimeout, flowInactiveTimeoutFallback).orElse(null);
 
-                return new Timeout()
+                final var delta = new Timeout()
                         .withActiveTimeout(flowActiveTimeout)
                         .withInactiveTimeout(flowInactiveTimeout)
                         .withFirstSwitched(this.getFirstSwitched())
@@ -160,6 +164,9 @@ public class IpFixFlowBuilder {
                         .withNumBytes(this.getBytes())
                         .withNumPackets(this.getPackets())
                         .calculateDeltaSwitched();
+                // The timeout calc can yield null (no timeouts); default to firstSwitched like the
+                // Flow interface, which is now non-null.
+                return delta != null ? delta : this.getFirstSwitched();
             }
 
             @Override
