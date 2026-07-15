@@ -7,6 +7,9 @@ title: Plain JAR
 
 Riptide is a single Spring Boot jar. Requirements: **Java 25** and a reachable ClickHouse.
 
+On Debian/Ubuntu or RHEL-family systems, prefer the
+[DEB / RPM packages](linux-packages.md) — same jar, plus a managed systemd service.
+
 Download the jar from a [GitHub release](https://github.com/Riptide-Labs/riptide/releases)
 and run it:
 

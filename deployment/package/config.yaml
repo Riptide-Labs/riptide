@@ -1,0 +1,19 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Riptide configuration — see https://riptide.space/docs/configuration/receivers
+# Every riptide.* property can live here (receivers, nodes & SNMP, secret
+# references, ClickHouse). The service watches this file and hot-reloads most
+# changes; see the operations chapter of the documentation.
+#
+# Minimal example:
+#
+# riptide:
+#   clickhouse:
+#     endpoint: http://clickhouse.example.com:8123
+#     database: riptide
+#   receivers:
+#     ipfix:
+#       type: ipfix
+#       host: 0.0.0.0
+#       port: 4739

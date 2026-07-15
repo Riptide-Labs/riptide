@@ -1,0 +1,7 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Single source of truth for the nfpm version used by `make packages`: the
+# Makefile parses this FROM line and runs nfpm through the image. The file
+# exists so Dependabot's docker ecosystem keeps the pin (tag + digest) current.
+FROM goreleaser/nfpm:v2.47.0@sha256:a662cb167d7b6d3a83920c83d76b12d02b8ac5dd2c13e5c62c15270b23f6df0c
