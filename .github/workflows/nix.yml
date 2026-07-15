@@ -1,0 +1,32 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Builds the flake and runs its checks on PRs that touch the Nix files or the
+# pom. The pom trigger is the point: a Maven dependency change staled the
+# `mvnHash` in nix/package.nix, and this job fails loudly on that PR instead of
+# at some consumer's `nix build`.
+name: Riptide Nix
+run-name: Build the flake and run flake checks
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ 'main' ]
+    paths:
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - 'pom.xml'
+      - '.github/workflows/nix.yml'
+jobs:
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@786fff0690178f1234e4e1fe9b536e94f5433196 # v20
+      - name: Build the package
+        run: |
+          make nix
+      - name: Run flake checks
+        run: |
+          make nix-check

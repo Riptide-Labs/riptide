@@ -15,6 +15,9 @@ Deploy the published image or jar — no build toolchain needed.
   UI + Grafana) in one `docker compose up`
 - [**Plain JAR**](deploy/plain-jar.md) — `java -jar` with file- or env-var-based
   configuration
+- [**DEB / RPM packages**](deploy/linux-packages.md) — `apt`/`dnf` install with a managed
+  systemd service
+- [**NixOS**](deploy/nixos.md) — flake package plus a `services.riptide` module
 - [Operations notes](deploy/operations.md) — image tags, restarts, upgrades
 
 ## 🛠 I want to work on Riptide

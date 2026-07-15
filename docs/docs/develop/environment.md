@@ -13,6 +13,9 @@ make            # compile with tests → runnable jar in target/
 make help       # all goals
 ```
 
+Nix users can get the full toolchain (JDK 25, Maven, protobuf, pcap tooling) with
+`nix develop` (flake) or `nix-shell` (the `shell.nix`), then run `make` as above.
+
 | Goal | What it does |
 |---|---|
 | `make` / `make jar` | full build with tests and all quality gates |
