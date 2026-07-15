@@ -15,8 +15,8 @@ automatically from your distro or JDK-vendor repositories.
 **Debian / Ubuntu** (Debian 13+, Ubuntu 22.04+):
 
 ```bash
-curl -LO https://github.com/Riptide-Labs/riptide/releases/download/v<version>/riptide_<version>_all.deb
-sudo apt install ./riptide_<version>_all.deb
+curl -LO https://github.com/Riptide-Labs/riptide/releases/download/v%%VERSION%%/riptide_%%VERSION%%_all.deb
+sudo apt install ./riptide_%%VERSION%%_all.deb
 ```
 
 apt pulls `openjdk-25-jre-headless` from the distro archive if no Java 25 is present; an already
@@ -25,7 +25,7 @@ installed Temurin, Corretto, or Zulu 25 also satisfies the dependency.
 **RHEL / Rocky / Alma (9.7+, 10.1+) and Fedora (43+)** — dnf installs directly from the URL:
 
 ```bash
-sudo dnf install https://github.com/Riptide-Labs/riptide/releases/download/v<version>/riptide-<version>-1.noarch.rpm
+sudo dnf install https://github.com/Riptide-Labs/riptide/releases/download/v%%VERSION%%/riptide-%%VERSION%%-1.noarch.rpm
 ```
 
 dnf pulls `java-25-openjdk-headless` from AppStream; Temurin and Zulu 25 also satisfy the

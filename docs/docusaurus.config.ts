@@ -3,9 +3,42 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import {execSync} from 'child_process';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 import {themes as prismThemes} from 'prism-react-renderer';
+
+// Latest published release version, resolved at build time so install commands
+// stay copy-paste-current without anyone editing the docs. Source of truth is
+// the highest `v*` git tag (CI checks out with fetch-tags); override with
+// RIPTIDE_DOCS_VERSION, and fall back to a literal for shallow/tag-less checkouts.
+function latestVersion(): string {
+  if (process.env.RIPTIDE_DOCS_VERSION) return process.env.RIPTIDE_DOCS_VERSION;
+  try {
+    const tags = execSync("git tag --list 'v*' --sort=-version:refname", {
+      encoding: 'utf8',
+    }).trim();
+    const top = tags.split('\n')[0]?.trim();
+    if (top) return top.replace(/^v/, '');
+  } catch {
+    /* no git / no tags — use the fallback below */
+  }
+  return '0.4.1';
+}
+
+// Substitutes the %%VERSION%% token in prose and code blocks. Dependency-free
+// mdast walk (avoids pulling in unist-util-visit).
+function remarkReplaceVersion({version}: {version: string}) {
+  const walk = (node: {value?: unknown; children?: unknown[]}) => {
+    if (typeof node.value === 'string' && node.value.includes('%%VERSION%%')) {
+      node.value = node.value.split('%%VERSION%%').join(version);
+    }
+    if (Array.isArray(node.children)) node.children.forEach(walk as never);
+  };
+  return (tree: unknown) => walk(tree as never);
+}
+
+const RIPTIDE_VERSION = latestVersion();
 
 const config: Config = {
   title: 'Riptide',
@@ -43,6 +76,7 @@ const config: Config = {
           routeBasePath: '/',
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/Riptide-Labs/riptide/tree/main/docs/',
+          remarkPlugins: [[remarkReplaceVersion, {version: RIPTIDE_VERSION}]],
         },
         blog: false,
         theme: {
