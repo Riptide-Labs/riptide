@@ -55,6 +55,10 @@ pom.xml.versionsBackup
 ### riptide files ###
 application-local.properties
 
+### Nix ###
+result
+result-*
+
 ### Docker Compose Override ###
 compose.override.y*ml
 docker-compose.override.y*ml

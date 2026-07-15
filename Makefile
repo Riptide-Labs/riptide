@@ -48,6 +48,8 @@ help:
 	@echo "  oci:          Build OCI container image"
 	@echo "  packages:     Build DEB and RPM packages from the jar (requires Docker)"
 	@echo "  packages-smoke: Install the packages in Debian and Rocky containers and smoke-test them (requires Docker)"
+	@echo "  nix:          Build the flake package from source (requires Nix)"
+	@echo "  nix-check:    Run the flake checks incl. the NixOS module eval (requires Nix)"
 	@echo "  coverage:     Run the unit test suite and render the JaCoCo coverage report"
 	@echo "  e2e:          Run integration and e2e tests (*IT, requires Docker) in addition to the unit suite"
 	@echo "  docs:         Build the Docusaurus documentation site into docs/build"
@@ -113,6 +115,18 @@ packages: deps-oci
 .PHONY: packages-smoke
 packages-smoke: deps-oci
 	deployment/package/smoke-test.sh $(PKG_VERSION)
+
+.PHONY: deps-nix
+deps-nix:
+	@command -v nix >/dev/null || { echo "Please install Nix — https://nixos.org/download"; exit 1; }
+
+.PHONY: nix
+nix: deps-nix
+	nix build .#default --print-build-logs
+
+.PHONY: nix-check
+nix-check: deps-nix
+	nix flake check --print-build-logs
 
 .PHONY: release
 release:
