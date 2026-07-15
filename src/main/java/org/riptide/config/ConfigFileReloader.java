@@ -40,7 +40,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Opt-in hot-reload of the external config file ({@code spring.config.additional-location}):
+ * Opt-in hot-reload of the external config file ({@code spring.config.import}):
  * node and routing changes apply without a restart.
  *
  * <p><b>Trigger</b>: an mtime-independent content-hash poll — the path is re-resolved
@@ -53,7 +53,7 @@ import java.util.concurrent.TimeUnit;
  * live property-source stack with exactly the file layer swapped — environment-variable
  * overrides keep their boot-time precedence because the candidate bind runs the same
  * binder over the same sources. A file created after boot is inserted at the
- * additional-location slot: above classpath defaults, below environment variables.</p>
+ * imported-file slot: above classpath defaults, below environment variables.</p>
  *
  * <p><b>Failure semantics</b>: startup's validation rules run against the candidate;
  * a failing reload keeps serving the old config, warns naming the problem, and counts
@@ -113,7 +113,7 @@ public class ConfigFileReloader {
         }
         this.location = resolveLocation();
         if (this.location == null) {
-            log.warn("Config hot-reload requested but spring.config.additional-location is not a single file: location — disabled");
+            log.warn("Config hot-reload requested but spring.config.import is not a single file: location — disabled");
             return;
         }
         final long millis = this.properties.getReloadInterval().toMillis();
@@ -130,10 +130,12 @@ public class ConfigFileReloader {
         }
     }
 
-    /** The additional-location file, or {@code null} when there is none to watch. */
+    /** The imported config file, or {@code null} when there is none to watch. */
     private Path resolveLocation() {
-        final String raw = this.environment.getProperty("spring.config.additional-location", "");
-        // single location of the documented shape: optional:file:/etc/riptide/config.yaml
+        // spring.config.import (not additional-location, which Spring ignores when set
+        // inside the packaged application.properties) of the documented shape:
+        // optional:file:/etc/riptide/config.yaml
+        final String raw = this.environment.getProperty("spring.config.import", "");
         final String stripped = raw.replace("optional:", "").replace("file:", "").trim();
         if (stripped.isEmpty() || stripped.contains(",")) {
             return null;
@@ -254,7 +256,7 @@ public class ConfigFileReloader {
         return copy;
     }
 
-    /** Swaps the file layer in place, or inserts it at additional-location precedence. */
+    /** Swaps the file layer in place, or inserts it at the imported-file precedence. */
     private void substitute(final MutablePropertySources sources, final List<PropertySource<?>> fresh) {
         final String fileMarker = this.location.toString();
         String anchor = null;
@@ -275,7 +277,7 @@ public class ConfigFileReloader {
                 }
             }
         } else {
-            // file was absent at boot (optional:): insert where additional-location
+            // file was absent at boot (optional:): insert where the imported file
             // sits — above classpath defaults, below environment variables
             String classpathSource = null;
             for (final PropertySource<?> source : sources) {
