@@ -31,7 +31,7 @@ sudo dnf install https://github.com/Riptide-Labs/riptide/releases/download/v<ver
 dnf pulls `java-25-openjdk-headless` from AppStream; Temurin and Zulu 25 also satisfy the
 dependency.
 
-:::note Amazon Corretto on RPM systems
+:::note[Amazon Corretto on RPM systems]
 Corretto's rpm does not provide the `jre-25-headless` virtual the package depends on. If Corretto
 is your runtime, install the package with `rpm -i --nodeps` and manage the Java requirement
 yourself — or let dnf install `java-25-openjdk-headless` alongside.
