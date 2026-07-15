@@ -15,8 +15,8 @@ automatically from your distro or JDK-vendor repositories.
 **Debian / Ubuntu** (Debian 13+, Ubuntu 22.04+):
 
 ```bash
-curl -LO https://github.com/Riptide-Labs/riptide/releases/download/v<version>/riptide_<version>_all.deb
-sudo apt install ./riptide_<version>_all.deb
+curl -LO https://github.com/Riptide-Labs/riptide/releases/download/v%%VERSION%%/riptide_%%VERSION%%_all.deb
+sudo apt install ./riptide_%%VERSION%%_all.deb
 ```
 
 apt pulls `openjdk-25-jre-headless` from the distro archive if no Java 25 is present; an already
@@ -25,13 +25,13 @@ installed Temurin, Corretto, or Zulu 25 also satisfies the dependency.
 **RHEL / Rocky / Alma (9.7+, 10.1+) and Fedora (43+)** — dnf installs directly from the URL:
 
 ```bash
-sudo dnf install https://github.com/Riptide-Labs/riptide/releases/download/v<version>/riptide-<version>-1.noarch.rpm
+sudo dnf install https://github.com/Riptide-Labs/riptide/releases/download/v%%VERSION%%/riptide-%%VERSION%%-1.noarch.rpm
 ```
 
 dnf pulls `java-25-openjdk-headless` from AppStream; Temurin and Zulu 25 also satisfy the
 dependency.
 
-:::note Amazon Corretto on RPM systems
+:::note[Amazon Corretto on RPM systems]
 Corretto's rpm does not provide the `jre-25-headless` virtual the package depends on. If Corretto
 is your runtime, install the package with `rpm -i --nodeps` and manage the Java requirement
 yourself — or let dnf install `java-25-openjdk-headless` alongside.
@@ -46,11 +46,44 @@ yourself — or let dnf install `java-25-openjdk-headless` alongside.
 | `/etc/riptide/config.yaml` | configuration (root:riptide 0640 — may hold credentials) |
 | `/etc/riptide/riptide.env` | JVM options and environment variables for the service |
 
-## Configure, enable, start
+## Configure ClickHouse access
 
-Installation is deliberately passive: nothing is enabled or started until Riptide can do something
-useful. Point `/etc/riptide/config.yaml` at your ClickHouse and define receivers — everything from
-the [configuration chapters](../configuration/receivers.md) goes there — then:
+Installation is deliberately passive: nothing starts until Riptide can reach a ClickHouse. Edit
+`/etc/riptide/config.yaml` (installed `root:riptide 0640`, so it may hold credentials) and point it
+at your database over the HTTP interface (port 8123):
+
+```yaml
+riptide:
+  clickhouse:
+    endpoint: http://clickhouse.example.com:8123
+    database: riptide
+    username: default
+    # password: left unset = the default user's empty password
+```
+
+By default Riptide manages its own schema (`manage-schema: true`), creating the `flows` table on
+first start — no manual DDL needed.
+
+For a password-protected user, prefer a [secret reference](../configuration/secret-references.md)
+over an inline literal so no plaintext lives in the file:
+
+```yaml
+riptide:
+  clickhouse:
+    endpoint: http://clickhouse.example.com:8123
+    database: riptide
+    username: riptide
+    password: vault://secret/riptide/clickhouse#password   # or env://, file://, sops://
+```
+
+A ClickHouse credential that cannot be resolved is **fatal at startup** (unlike SNMP, which
+degrades). See [ClickHouse configuration](../configuration/clickhouse.md) for schema ownership,
+multi-tenant write isolation, and the identity columns.
+
+## Enable and start
+
+Define at least one receiver in the same file (everything from the
+[configuration chapters](../configuration/receivers.md) goes there), then start the service:
 
 ```bash
 sudo systemctl enable --now riptide

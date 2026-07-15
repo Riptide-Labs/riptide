@@ -10,11 +10,12 @@ Riptide is a single Spring Boot jar. Requirements: **Java 25** and a reachable C
 On Debian/Ubuntu or RHEL-family systems, prefer the
 [DEB / RPM packages](linux-packages.md) — same jar, plus a managed systemd service.
 
-Download the jar from a [GitHub release](https://github.com/Riptide-Labs/riptide/releases)
+Download the jar from the latest [GitHub release](https://github.com/Riptide-Labs/riptide/releases)
 and run it:
 
 ```bash
-java -jar riptide-flows-<version>.jar
+curl -LO https://github.com/Riptide-Labs/riptide/releases/download/v%%VERSION%%/riptide-flows-%%VERSION%%.jar
+java -jar riptide-flows-%%VERSION%%.jar
 ```
 
 ## Configuration file
