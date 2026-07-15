@@ -1,7 +1,14 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 .DEFAULT_GOAL := jar
 
 SHELL               := bash -o nounset -o pipefail -o errexit
-VERSION             ?= $(shell mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+# Lazy one-shot: targets that never expand VERSION pay no mvn call; the first
+# expansion runs mvn once and caches (env/CLI overrides still win).
+ifeq ($(origin VERSION),undefined)
+VERSION              = $(eval VERSION := $(shell mvn help:evaluate -Dexpression=project.version -q -DforceStdout))$(VERSION)
+endif
 GIT_BRANCH          := $(shell git branch --show-current)
 GIT_SHORT_HASH      := $(shell git rev-parse --short HEAD)
 RELEASE_VERSION     := UNSET.0.0
@@ -18,6 +25,12 @@ OK                  := "[ 👍 ]"
 SKIP                := "[ ⏭️ ]"
 FAIL                := "[ ❌ ]"
 BUILD_OPTS          := "-DskipTests=false"
+# rpm forbids '-' in versions; tilde sorts before the release (correct upgrade semantic)
+PKG_VERSION          = $(subst -SNAPSHOT,~SNAPSHOT,$(VERSION))
+# nfpm runs via its OCI image; the pin lives in Dockerfile.nfpm so Dependabot bumps it
+NFPM_IMAGE           = $(shell awk '/^FROM/ {print $$2; exit}' deployment/package/Dockerfile.nfpm)
+# --user: without it, rootful Docker on Linux leaves root-owned files in target/
+NFPM                 = docker run --rm --user "$(shell id -u):$(shell id -g)" -v $(CURDIR):/work -w /work -e VERSION $(NFPM_IMAGE)
 
 REQUIRED_BINS := java javac mvn
 $(foreach bin,$(REQUIRED_BINS),\
@@ -33,6 +46,8 @@ help:
 	@echo "  help:         Show this help with explaining the build goals"
 	@echo "  jar:          Compile Riptide from source with tests and generate a runnable jar file in the target directory"
 	@echo "  oci:          Build OCI container image"
+	@echo "  packages:     Build DEB and RPM packages from the jar (requires Docker)"
+	@echo "  packages-smoke: Install the packages in Debian and Rocky containers and smoke-test them (requires Docker)"
 	@echo "  coverage:     Run the unit test suite and render the JaCoCo coverage report"
 	@echo "  e2e:          Run integration and e2e tests (*IT, requires Docker) in addition to the unit suite"
 	@echo "  docs:         Build the Docusaurus documentation site into docs/build"
@@ -86,6 +101,18 @@ oci: deps-oci jar
       --build-arg="GIT_SHORT_HASH"=$(GIT_SHORT_HASH) \
       --build-arg="DATE=$(DATE)" \
       .
+
+.PHONY: packages
+packages: deps-oci
+	@test -f target/riptide-flows-$(VERSION).jar || { echo "target/riptide-flows-$(VERSION).jar missing — run make jar first"; exit 1; }
+	mkdir -p target/package
+	cp target/riptide-flows-$(VERSION).jar target/package/riptide.jar
+	VERSION=$(PKG_VERSION) $(NFPM) package -f nfpm.yaml -p deb -t target/
+	VERSION=$(PKG_VERSION) $(NFPM) package -f nfpm.yaml -p rpm -t target/
+
+.PHONY: packages-smoke
+packages-smoke: deps-oci
+	deployment/package/smoke-test.sh $(PKG_VERSION)
 
 .PHONY: release
 release:

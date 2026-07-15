@@ -1,0 +1,26 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[Unit]
+Description=Riptide NetFlow analysis engine
+Documentation=https://riptide.space/docs/
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=riptide
+Group=riptide
+EnvironmentFile=-/etc/riptide/riptide.env
+ExecStart=/usr/bin/java $JAVA_OPTS -jar /usr/share/riptide/riptide.jar
+Restart=on-failure
+# JVM exits 143 on SIGTERM after running shutdown hooks — that is a clean stop
+SuccessExitStatus=143
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/etc/riptide
+
+[Install]
+WantedBy=multi-user.target

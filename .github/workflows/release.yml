@@ -1,3 +1,6 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 name: Riptide Release
 run-name: Release Workflow
 on:
@@ -20,7 +23,7 @@ jobs:
       - name: Check if you accidentally want to release a SNAPSHOT version
         run: |
           POM_VERSION="$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)"
-          if [[ "${VERSION}" == *"SNAPSHOT"* ]]; then
+          if [[ "${POM_VERSION}" == *"SNAPSHOT"* ]]; then
             echo "Error: Your pom has a SNAPSHOT release. Set the pom to a version number without SNAPSHOT."
             exit 1
           else
@@ -33,6 +36,9 @@ jobs:
       - name: Build with tests
         run: |
           make
+      - name: Build DEB and RPM packages
+        run: |
+          make packages
       - name: Persist JAR artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -67,3 +73,5 @@ jobs:
         with:
           files: |
             target/*.jar
+            target/*.deb
+            target/*.rpm

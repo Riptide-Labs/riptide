@@ -1,3 +1,6 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # To get started with Dependabot version updates, you'll need to specify which
 # package ecosystems to update and where the package manifests are located.
 # Please see the documentation for all configuration options:
@@ -12,6 +15,15 @@ updates:
       - "dependency update"
     commit-message:
       prefix: "ci"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker" # nfpm pin used by `make packages` (Dockerfile.nfpm)
+    directory: "/deployment/package"
+    target-branch: "main"
+    labels:
+      - "dependency update"
+    commit-message:
+      prefix: "build"
     schedule:
       interval: "weekly"
   - package-ecosystem: "maven" # See documentation for possible values
