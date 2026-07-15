@@ -210,10 +210,10 @@ public class UdpSessionManagerTest {
         final var agentA = new ExporterIdentity.Sflow(InetAddress.getByName("10.0.0.1"), 0);
         final var agentB = new ExporterIdentity.Sflow(InetAddress.getByName("10.0.0.2"), 0);
 
-        assertThat(session.verifySequenceNumber(agentA, 1)).isTrue();
-        assertThat(session.verifySequenceNumber(agentB, 20)).isTrue();
-        assertThat(session.verifySequenceNumber(agentA, 2)).isTrue();
-        assertThat(session.verifySequenceNumber(agentB, 21)).isTrue();
+        assertThat(session.verifySequenceNumber(agentA, 1, 1)).isTrue();
+        assertThat(session.verifySequenceNumber(agentB, 20, 1)).isTrue();
+        assertThat(session.verifySequenceNumber(agentA, 2, 1)).isTrue();
+        assertThat(session.verifySequenceNumber(agentB, 21, 1)).isTrue();
         assertThat(manager.sequenceTrackerCount()).isEqualTo(2);
     }
 
@@ -223,12 +223,12 @@ public class UdpSessionManagerTest {
         final var manager = new UdpSessionManager(Duration.ofMinutes(0), () -> new SequenceNumberTracker(32));
         final var identity = new ExporterIdentity.Sflow(InetAddress.getByName("10.0.0.1"), 0);
 
-        manager.getSession(sessionKey).verifySequenceNumber(identity, 1);
+        manager.getSession(sessionKey).verifySequenceNumber(identity, 1, 1);
         assertThat(manager.sequenceTrackerCount()).isEqualTo(1);
         manager.doHousekeeping();
         assertThat(manager.sequenceTrackerCount()).isZero();
 
-        manager.getSession(sessionKey).verifySequenceNumber(identity, 2);
+        manager.getSession(sessionKey).verifySequenceNumber(identity, 2, 1);
         assertThat(manager.sequenceTrackerCount()).isEqualTo(1);
         manager.drop(sessionKey);
         assertThat(manager.sequenceTrackerCount()).isZero();

@@ -53,38 +53,62 @@ public class SequenceNumberTracker {
         this.current = Integer.MIN_VALUE;
     }
 
-    public synchronized boolean verify(final long sequenceNumber) {
+    /** Verify a packet that advances the sequence counter by a single unit (a packet/datagram
+     *  counter, as in NetFlow v9 and sFlow). */
+    public boolean verify(final long sequenceNumber) {
+        return verify(sequenceNumber, 1);
+    }
+
+    /**
+     * Verify a packet whose header sequence number is {@code sequenceNumber} and which carries
+     * {@code count} sequence units. For IPFIX and NetFlow v5 the sequence number counts records/flows,
+     * so a packet with N records advances the counter by N and covers the range
+     * {@code [sequenceNumber, sequenceNumber + count)} — all present. For NetFlow v9 / sFlow the counter
+     * is a packet/datagram count and {@code count} is 1, in which case this reduces exactly to the
+     * single-unit behaviour.
+     */
+    public synchronized boolean verify(final long sequenceNumber, final int count) {
         // Fast-path for disabled sequence tracking - everything is valid
         if (this.seen == null) {
             return true;
         }
 
+        final int size = this.seen.size();
+        final long last = sequenceNumber + Math.max(count, 1) - 1; // inclusive last record in the packet
+
         // Detect jumps and reinitialize
-        if (Math.abs(this.current - sequenceNumber) > this.seen.size()) {
-            this.current = sequenceNumber;
+        if (Math.abs(this.current - sequenceNumber) > size) {
+            this.current = last;
 
             // Start over with a history where everything is marked as seen
             this.seen.reset(true);
             return true;
         }
 
-        // Check if input is out of order
-        if (sequenceNumber < this.current) {
-            // Update the history marking the input as seen
-            this.seen.set(sequenceNumber, true);
+        // Check if input is out of order: the whole packet precedes the current position. Mark its
+        // records as seen (filling any pending-missing slots within the window).
+        if (last < this.current) {
+            for (long x = Math.max(sequenceNumber, last - size + 1); x <= last; x++) {
+                this.seen.set(x, true);
+            }
             return true;
         }
 
-        // Mark current sequence number as seen
-        boolean valid = this.seen.set(sequenceNumber, true);
+        boolean valid = true;
 
-        // Mark everything between current sequence number and input as missing
+        // Mark everything between the current position and this packet's start as missing (a real gap)
         for (long x = this.current + 1; x < sequenceNumber; x++) {
             valid &= this.seen.set(x, false);
         }
 
-        // Advance sequence number
-        this.current = sequenceNumber;
+        // Mark this packet's records as seen. Only the last `size` fit the window; earlier records of
+        // an oversized packet are present too but fall outside the out-of-order history.
+        for (long x = Math.max(sequenceNumber, last - size + 1); x <= last; x++) {
+            valid &= this.seen.set(x, true);
+        }
+
+        // Advance to the last record of this packet
+        this.current = last;
 
         return valid;
     }
