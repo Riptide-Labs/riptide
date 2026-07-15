@@ -69,6 +69,12 @@ public final class Packet implements Iterable<Record>, FlowPacket {
     }
 
     @Override
+    public int getSequenceIncrement() {
+        // NetFlow v5 sequence numbers count flows
+        return this.records.size();
+    }
+
+    @Override
     public String toString() {
         return MoreObjects.toStringHelper(this)
                 .add("header", this.header)

@@ -158,6 +158,11 @@ public final class Packet implements Iterable<FlowSet<?>> {
                 this.dataSets.iterator());
     }
 
+    /** Number of Data Records across all data sets — the IPFIX sequence-number increment (RFC 7011 §3.1). */
+    public int dataRecordCount() {
+        return this.dataSets.stream().mapToInt(set -> set.records.size()).sum();
+    }
+
     @Override
     public String toString() {
         return MoreObjects.toStringHelper(this)

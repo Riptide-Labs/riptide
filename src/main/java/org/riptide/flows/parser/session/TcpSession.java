@@ -163,9 +163,9 @@ public class TcpSession implements Session {
     }
 
     @Override
-    public boolean verifySequenceNumber(final ExporterIdentity scope, final long sequenceNumber) {
+    public boolean verifySequenceNumber(final ExporterIdentity scope, final long sequenceNumber, final int sequenceIncrement) {
         final SequenceNumberTracker tracker = this.sequenceNumbers.computeIfAbsent(scope, (k) -> this.sequenceNumberTracker.get());
-        return tracker.verify(sequenceNumber);
+        return tracker.verify(sequenceNumber, sequenceIncrement);
     }
 
     public Stream<ExporterState> dumpInternalState() {

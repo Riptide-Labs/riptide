@@ -312,9 +312,7 @@ public class IpFixFlowBuilder {
     }
 
     private Stream<IpfixRawFlow> createRawFlows(final Packet packet) {
-        final int recordCount = packet.dataSets.stream()
-                .mapToInt(s -> s.records.size())
-                .sum();
+        final int recordCount = packet.dataRecordCount();
         return packet.dataSets.stream().flatMap(ds -> ds.records.stream()).map(record -> {
             final var dummyFlow = new IpfixRawFlow();
             record.getValues().forEach(value -> conversionService.apply(value, dummyFlow));
