@@ -75,18 +75,21 @@ public class FlowTimeoutTest {
     }
 
     @Test
-    void fallsBackToReceivedAtWhenNoTimingExported() {
+    void fallsBackToExportTimeWhenNoTimingExported() {
         // An exporter that sends no flow-start/end elements: previously getFirstSwitched/
         // getLastSwitched returned null and the flow failed the non-nullable ClickHouse insert.
+        // We fall back to the export (packet header) time, distinct from the receipt time here,
+        // matching goflow2.
+        final var exportTime = Instant.ofEpochSecond(1000);
         final var received = Instant.ofEpochSecond(5000);
         final var raw = new IpfixRawFlow();
-        raw.exportTime = Instant.EPOCH;
+        raw.exportTime = exportTime;
 
         final var flow = new IpFixFlowBuilder(conversionService).buildFlow(received, raw);
 
-        Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(received);
-        Assertions.assertThat(flow.getLastSwitched()).isEqualTo(received);
-        Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo(received);
+        Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(exportTime);
+        Assertions.assertThat(flow.getLastSwitched()).isEqualTo(exportTime);
+        Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo(exportTime);
     }
 
     @Test

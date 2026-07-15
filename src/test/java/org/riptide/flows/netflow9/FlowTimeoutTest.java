@@ -41,18 +41,20 @@ public class FlowTimeoutTest {
     }
 
     @Test
-    void fallsBackToReceivedAtWhenNoTimingExported() {
+    void fallsBackToExportTimeWhenNoTimingExported() {
         // A template without FIRST_SWITCHED/LAST_SWITCHED (or flowStart/EndMilliseconds): previously
         // getFirstSwitched/getLastSwitched returned null and the flow failed the non-nullable insert.
+        // We fall back to the header (export) time, distinct from the receipt time here, matching goflow2.
+        final var headerTime = Instant.ofEpochSecond(1000);
         final var received = Instant.ofEpochSecond(5000);
         final var raw = new Netflow9RawFlow();
-        raw.unixSecs = Instant.EPOCH;
+        raw.unixSecs = headerTime;
         raw.sysUpTime = Duration.ZERO;
 
         final var flowMessage = new Netflow9FlowBuilder(valueConversionService).buildFlow(received, raw);
-        Assertions.assertThat(flowMessage.getFirstSwitched()).isEqualTo(received);
-        Assertions.assertThat(flowMessage.getLastSwitched()).isEqualTo(received);
-        Assertions.assertThat(flowMessage.getDeltaSwitched()).isEqualTo(received);
+        Assertions.assertThat(flowMessage.getFirstSwitched()).isEqualTo(headerTime);
+        Assertions.assertThat(flowMessage.getLastSwitched()).isEqualTo(headerTime);
+        Assertions.assertThat(flowMessage.getDeltaSwitched()).isEqualTo(headerTime);
     }
 
     @Test

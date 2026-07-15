@@ -125,9 +125,10 @@ public class IpFixFlowBuilder {
                             if (rawFlow.flowStartSysUpTime != null) {
                                 return rawFlow.systemInitTimeMilliseconds.plus(rawFlow.flowStartSysUpTime);
                             }
-                            // No flow-start element exported: fall back to receipt time (as sFlow
-                            // does), honouring the non-null Flow contract and the non-nullable column.
-                            return receivedAt;
+                            // No flow-start element exported: fall back to the export time (the
+                            // packet header timestamp), as goflow2 does — honouring the non-null Flow
+                            // contract and the non-nullable column.
+                            return this.getTimestamp();
                         });
             }
 
@@ -145,8 +146,8 @@ public class IpFixFlowBuilder {
                             if (rawFlow.flowEndSysUpTime != null) {
                                 return rawFlow.systemInitTimeMilliseconds.plus(rawFlow.flowEndSysUpTime);
                             }
-                            // No flow-end element exported: fall back to receipt time (see getFirstSwitched).
-                            return receivedAt;
+                            // No flow-end element exported: fall back to the export time (see getFirstSwitched).
+                            return this.getTimestamp();
                         });
             }
 

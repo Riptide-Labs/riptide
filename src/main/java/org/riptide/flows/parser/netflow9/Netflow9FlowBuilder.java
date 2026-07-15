@@ -84,9 +84,10 @@ public class Netflow9FlowBuilder {
                 final var firstSwitched = Optionals.of(raw.FIRST_SWITCHED)
                         .map(this.getBootTime()::plus)
                         .orElse(raw.flowStartMilliseconds);
-                // No FIRST_SWITCHED / flowStartMilliseconds exported: fall back to receipt time (as
-                // sFlow does), honouring the non-null Flow contract and the non-nullable column.
-                return firstSwitched != null ? firstSwitched : receivedAt;
+                // No FIRST_SWITCHED / flowStartMilliseconds exported: fall back to the export time (the
+                // packet header timestamp), as goflow2 does — honouring the non-null Flow contract and
+                // the non-nullable column.
+                return firstSwitched != null ? firstSwitched : this.getTimestamp();
             }
 
             @Override
@@ -112,8 +113,8 @@ public class Netflow9FlowBuilder {
                 final var lastSwitched = Optionals.of(raw.LAST_SWITCHED)
                         .map(this.getBootTime()::plus)
                         .orElse(raw.flowEndMilliseconds);
-                // No LAST_SWITCHED / flowEndMilliseconds exported: fall back to receipt time (see getFirstSwitched).
-                return lastSwitched != null ? lastSwitched : receivedAt;
+                // No LAST_SWITCHED / flowEndMilliseconds exported: fall back to the export time (see getFirstSwitched).
+                return lastSwitched != null ? lastSwitched : this.getTimestamp();
             }
 
             @Override
