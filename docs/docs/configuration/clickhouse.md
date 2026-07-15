@@ -40,10 +40,12 @@ riptide.clickhouse.password=vault://secret/riptide/clickhouse/acme#password
 `riptide.clickhouse.manage-schema` (boolean, default `true`) selects who owns the schema:
 
 - **`true` (default, single-tenant)** — riptide ensures the schema idempotently at startup:
-  the `flows` table with `CREATE TABLE IF NOT EXISTS` (an existing table is not replaced, so
-  its data survives), and the `samples` view with `CREATE OR REPLACE VIEW` (a view holds no
-  data, so it is always refreshed and can never go stale). A fresh install is created; a
-  restart keeps the data — so **flow data now survives a Riptide restart**.
+  the database with `CREATE DATABASE IF NOT EXISTS` (so a fresh single-node install needs no
+  manual DDL — the configured user needs `CREATE` rights), the `flows` table with
+  `CREATE TABLE IF NOT EXISTS` (an existing table is not replaced, so its data survives), and
+  the `samples` view with `CREATE OR REPLACE VIEW` (a view holds no data, so it is always
+  refreshed and can never go stale). A fresh install is created; a restart keeps the data — so
+  **flow data now survives a Riptide restart**.
 - **`false` (provisioned / multi-tenant)** — riptide creates nothing. It validates that the
   `flows` table exists and carries every column it inserts and **fails startup with a clear,
   provisioning-pointing error** if it does not. Use this when an admin owns the schema and

@@ -61,8 +61,8 @@ riptide:
     # password: left unset = the default user's empty password
 ```
 
-By default Riptide manages its own schema (`manage-schema: true`), creating the `flows` table on
-first start — no manual DDL needed.
+By default Riptide manages its own schema (`manage-schema: true`), creating the database and the
+`flows` table on first start — no manual DDL needed (the configured user needs `CREATE` rights).
 
 For a password-protected user, prefer a [secret reference](../configuration/secret-references.md)
 over an inline literal so no plaintext lives in the file:
