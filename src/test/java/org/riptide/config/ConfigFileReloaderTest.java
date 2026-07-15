@@ -31,7 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Integration: the reloader's whole contract against a real Spring context. The
  * config file does not exist at boot (test property sources are applied after
  * ConfigData), so every test also exercises the file-created-after-boot insertion at
- * additional-location precedence. Polls are driven manually — the scheduled interval
+ * imported-file precedence. Polls are driven manually — the scheduled interval
  * is far in the future.
  */
 @SpringBootTest
@@ -269,7 +269,7 @@ public class ConfigFileReloaderTest {
     @Test
     public void fileInsertsAboveClasspathDefaults(@Autowired final org.springframework.core.env.ConfigurableEnvironment environment) throws Exception {
         // classpath application.properties sets riptide.snmp.cache.retentionMs=600000;
-        // the reloaded file must outrank it (additional-location precedence)
+        // the reloaded file must outrank it (imported-file precedence)
         write("""
                 riptide:
                   snmp:
