@@ -81,9 +81,13 @@ public class Netflow9FlowBuilder {
 
             @Override
             public Instant getFirstSwitched() {
-                return Optionals.of(raw.FIRST_SWITCHED)
+                final var firstSwitched = Optionals.of(raw.FIRST_SWITCHED)
                         .map(this.getBootTime()::plus)
                         .orElse(raw.flowStartMilliseconds);
+                // No FIRST_SWITCHED / flowStartMilliseconds exported: fall back to the export time (the
+                // packet header timestamp), as goflow2 does — honouring the non-null Flow contract and
+                // the non-nullable column.
+                return firstSwitched != null ? firstSwitched : this.getTimestamp();
             }
 
             @Override
@@ -91,7 +95,7 @@ public class Netflow9FlowBuilder {
                 final var activeTimeout = Optionals.first(raw.FLOW_ACTIVE_TIMEOUT, flowActiveTimeoutFallback).orElse(null);
                 final var inactiveTimeout = Optionals.first(raw.FLOW_INACTIVE_TIMEOUT, flowInactiveTimeoutFallback).orElse(null);
 
-                return new Timeout()
+                final var delta = new Timeout()
                         .withActiveTimeout(activeTimeout)
                         .withInactiveTimeout(inactiveTimeout)
                         .withFirstSwitched(this.getFirstSwitched())
@@ -99,13 +103,18 @@ public class Netflow9FlowBuilder {
                         .withNumBytes(this.getBytes())
                         .withNumPackets(this.getPackets())
                         .calculateDeltaSwitched();
+                // The timeout calc can yield null (no timeouts); default to firstSwitched like the
+                // Flow interface, which is now non-null.
+                return delta != null ? delta : this.getFirstSwitched();
             }
 
             @Override
             public Instant getLastSwitched() {
-                return Optionals.of(raw.LAST_SWITCHED)
+                final var lastSwitched = Optionals.of(raw.LAST_SWITCHED)
                         .map(this.getBootTime()::plus)
                         .orElse(raw.flowEndMilliseconds);
+                // No LAST_SWITCHED / flowEndMilliseconds exported: fall back to the export time (see getFirstSwitched).
+                return lastSwitched != null ? lastSwitched : this.getTimestamp();
             }
 
             @Override
