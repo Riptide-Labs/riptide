@@ -110,6 +110,22 @@ public class ClickhouseRepositoryIT {
     }
 
     @Test
+    void manageModeCreatesDatabaseOnFreshServer() throws Exception {
+        // A database the container did NOT pre-create and no test creates up front: manage mode
+        // must create the database itself, not just the flows table (regression for the
+        // UNKNOWN_DATABASE failure on a fresh single-node install).
+        final var config = configFor("fresh_managed", true);
+
+        final var repo = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
+        Assertions.assertThatCode(repo::start).doesNotThrowAnyException();
+
+        repo.persist(List.of(testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 40001, 443, 99L)));
+        final var count = queryClient.queryAll("SELECT count() AS c FROM fresh_managed.flows")
+                .getFirst().getLong("c");
+        Assertions.assertThat(count).isEqualTo(1);
+    }
+
+    @Test
     void validateModeSucceedsWithProvisionedTable() {
         final var database = "validate_ok";
         queryClient.execute("CREATE DATABASE IF NOT EXISTS " + database).join();

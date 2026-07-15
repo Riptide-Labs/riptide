@@ -57,6 +57,10 @@ public class ClickhouseRepository implements FlowRepository {
 
     private final Client client;
 
+    // Retained so manage mode can open a second, unpinned client to create the database.
+    private final String username;
+    private final String password;
+
     @SneakyThrows
     public ClickhouseRepository(final FlowMapper flowMapper,
                                 final ClickhouseConfig config,
@@ -73,13 +77,13 @@ public class ClickhouseRepository implements FlowRepository {
         // fatal.
         final String resolvedUsername = secretResolvers.resolve(config.getUsername());
         final String resolvedPassword = secretResolvers.resolve(config.getPassword());
-        final String username = resolvedUsername != null ? resolvedUsername : "default";
-        final String password = resolvedPassword != null ? resolvedPassword : "";
+        this.username = resolvedUsername != null ? resolvedUsername : "default";
+        this.password = resolvedPassword != null ? resolvedPassword : "";
 
         this.client = new Client.Builder()
                 .addEndpoint(config.getEndpoint())
-                .setUsername(username)
-                .setPassword(password)
+                .setUsername(this.username)
+                .setPassword(this.password)
                 .setDefaultDatabase(config.getDatabase())
                 .compressClientRequest(true)
                 .compressServerResponse(true)
@@ -101,9 +105,12 @@ public class ClickhouseRepository implements FlowRepository {
     @SneakyThrows
     public void start() {
         if (this.config.isManageSchema()) {
-            // Manage mode: ensure the schema idempotently. IF NOT EXISTS means an existing flows
-            // table is not replaced, so previously persisted data survives a restart; the samples
-            // VIEW holds no data and is always refreshed (OR REPLACE) so it never goes stale.
+            // Manage mode: ensure the schema idempotently. The database comes first — the main
+            // client pins it via setDefaultDatabase, so DDL through it fails with UNKNOWN_DATABASE
+            // on a fresh server. Then IF NOT EXISTS means an existing flows table is not replaced,
+            // so previously persisted data survives a restart; the samples VIEW holds no data and is
+            // always refreshed (OR REPLACE) so it never goes stale.
+            ensureDatabase();
             this.client.execute(DDL_FLOWS).get();
             this.client.execute(DDL_SAMPLES).get();
         }
@@ -115,6 +122,27 @@ public class ClickhouseRepository implements FlowRepository {
         final TableSchema schema = checkSchema();
 
         this.client.register(ClickhouseFlow.class, schema);
+    }
+
+    /**
+     * Create the target database if it is absent. The main client is scoped to the configured
+     * database via {@code setDefaultDatabase}, so a {@code CREATE DATABASE} through it is rejected
+     * with {@code UNKNOWN_DATABASE} when the database does not exist yet. This opens a short-lived
+     * client that is not scoped to it (the always-present {@code default} database), so the
+     * statement runs. Manage mode owns the schema, so creating the database is part of that.
+     */
+    @SneakyThrows
+    private void ensureDatabase() {
+        try (Client bootstrap = new Client.Builder()
+                .addEndpoint(this.config.getEndpoint())
+                .setUsername(this.username)
+                .setPassword(this.password)
+                .setDefaultDatabase("default")
+                .compressClientRequest(true)
+                .compressServerResponse(true)
+                .build()) {
+            bootstrap.execute("CREATE DATABASE IF NOT EXISTS `" + this.config.getDatabase() + "`").get();
+        }
     }
 
     /**
