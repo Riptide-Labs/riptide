@@ -144,6 +144,34 @@ public class SequenceNumberTrackerTest {
     }
 
     @Test
+    void verifyMultiRecordInOrder() {
+        // IPFIX/NetFlow-v5: the sequence number counts records, so a stream of 10-record packets
+        // advances the counter by 10 each time (0, 10, 20, ...). The in-between numbers are this
+        // packet's own records, not gaps — none must be reported as missing.
+        final var tracker = new SequenceNumberTracker(32);
+        final int records = 10;
+        for (long seq = 0; seq <= 500; seq += records) {
+            Assertions.assertThat(tracker.verify(seq, records)).describedAs("seq=" + seq).isTrue();
+        }
+    }
+
+    @Test
+    void verifyMultiRecordDroppedPacketEventuallyReported() {
+        // A genuinely dropped multi-record packet still leaves a gap that is reported once the
+        // missing records age out of the patience window.
+        final var tracker = new SequenceNumberTracker(32);
+        final int records = 5;
+        Assertions.assertThat(tracker.verify(0, records)).isTrue(); // records 0..4
+
+        // Drop the packet that would carry records 5..9; resume at 10 and keep going.
+        boolean reported = false;
+        for (long seq = 10; seq <= 200; seq += records) {
+            reported |= !tracker.verify(seq, records);
+        }
+        Assertions.assertThat(reported).describedAs("a dropped packet must eventually be reported").isTrue();
+    }
+
+    @Test
     void verifySizeZero() {
         final var tracker = new SequenceNumberTracker(0);
 

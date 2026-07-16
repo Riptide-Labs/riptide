@@ -138,7 +138,7 @@ public abstract class ParserBase implements Parser {
         final Source source = new Source(this.identity, packet.identity(session.getRemoteAddress()));
 
         // Verify that flows sequences are in order
-        if (!session.verifySequenceNumber(source.identity(), packet.getSequenceNumber())) {
+        if (!session.verifySequenceNumber(source.identity(), packet.getSequenceNumber(), packet.getSequenceIncrement())) {
             log.warn("Error in flow sequence detected: from {}", source.identity());
             this.sequenceErrors.inc();
         }

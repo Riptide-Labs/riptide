@@ -39,6 +39,10 @@ riptide.clickhouse.password=vault://secret/riptide/clickhouse/acme#password
 
 `riptide.clickhouse.manage-schema` (boolean, default `true`) selects who owns the schema:
 
+The database name (`riptide.clickhouse.database`) must match `[A-Za-z0-9_-]+` — names with other
+characters (dots, spaces, unicode) are rejected at startup in manage mode. This is stricter than
+what ClickHouse accepts under backtick quoting; rename such a database or use validate mode.
+
 - **`true` (default, single-tenant)** — riptide ensures the schema idempotently at startup:
   the database with `CREATE DATABASE IF NOT EXISTS` (so a fresh single-node install needs no
   manual DDL — the configured user needs `CREATE` rights), the `flows` table with
@@ -46,10 +50,14 @@ riptide.clickhouse.password=vault://secret/riptide/clickhouse/acme#password
   the `samples` view with `CREATE OR REPLACE VIEW` (a view holds no data, so it is always
   refreshed and can never go stale). A fresh install is created; a restart keeps the data — so
   **flow data now survives a Riptide restart**.
-- **`false` (provisioned / multi-tenant)** — riptide creates nothing. It validates that the
+- **`false` (provisioned / multi-tenant)** — the collector creates nothing. It validates that the
   `flows` table exists and carries every column it inserts and **fails startup with a clear,
   provisioning-pointing error** if it does not. Use this when an admin owns the schema and
-  RBAC and each riptide process is a narrowly-scoped writer that only uses the table.
+  RBAC and each riptide process is a narrowly-scoped writer that only uses the table. On a fresh
+  single-node server the admin-side
+  [`onboard --create-schema`](../deploy/multi-tenancy.md#what-it-provisions) bootstraps the database
+  and `flows` table as part of provisioning; without the flag, `onboard` requires the schema to
+  exist and fails loudly if it does not (replicated clusters pre-create the table admin-side).
 
 In both modes, startup verifies the `flows` table is present and carries every column riptide
 inserts (including the `tenant`/`organisation`/`zone`/`system` identity columns) by reading the

@@ -54,6 +54,34 @@ class ProvisioningCommandTest {
                 .hasMessageContaining("--quota-bytes must be a number");
     }
 
+    @Test
+    void parseTtlDaysDefaultsAndRejectsOutOfRange() {
+        assertThat(ProvisioningCommand.parseTtlDays(null)).isEqualTo(30);
+        assertThat(ProvisioningCommand.parseTtlDays("400")).isEqualTo(400);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> ProvisioningCommand.parseTtlDays("0"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("--ttl-days must be between 1 and 10950");
+        // Oversized intervals wrap ClickHouse's UInt32 DateTime arithmetic (verified: INTERVAL
+        // 49710 DAY wraps to a TTL in the past and every insert is silently discarded).
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> ProvisioningCommand.parseTtlDays("49710"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("2106");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> ProvisioningCommand.parseTtlDays("month"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("--ttl-days must be a number");
+    }
+
+    @Test
+    void ttlDaysWithoutCreateSchemaExitsTwo() {
+        final var err = new ByteArrayOutputStream();
+        final int code = ProvisioningCommand.run(
+                new String[] {"onboard", "--admin-url", "http://localhost:1", "--ttl-days", "90",
+                        "--tenant", "t", "--org", "o", "--writer-secret", "w", "--reader-secret", "r"},
+                discard(), new PrintStream(err, true, StandardCharsets.UTF_8));
+        assertThat(code).isEqualTo(2);
+        assertThat(err.toString(StandardCharsets.UTF_8)).contains("--ttl-days requires --create-schema");
+    }
+
     private static PrintStream discard() {
         return new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8);
     }

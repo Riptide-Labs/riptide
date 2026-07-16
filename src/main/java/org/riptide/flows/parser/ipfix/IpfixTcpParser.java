@@ -97,6 +97,12 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
                     public long getSequenceNumber() {
                         return header.sequenceNumber;
                     }
+
+                    @Override
+                    public int getSequenceIncrement() {
+                        // IPFIX sequence numbers count Data Records (RFC 7011 §3.1)
+                        return packet.dataRecordCount();
+                    }
                 };
 
                 return Optional.of(IpfixTcpParser.this.transmit(receivedAt, flow, session));

@@ -37,5 +37,5 @@ public interface Session {
      * observation domain: sFlow agents with distinct payload agent addresses may share
      * one UDP source, and their independent streams must not interleave in one tracker.
      */
-    boolean verifySequenceNumber(ExporterIdentity scope, long sequenceNumber);
+    boolean verifySequenceNumber(ExporterIdentity scope, long sequenceNumber, int sequenceIncrement);
 }

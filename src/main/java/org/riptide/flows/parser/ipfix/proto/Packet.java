@@ -57,9 +57,16 @@ public final class Packet implements Iterable<FlowSet<?>> {
         final List<OptionsTemplateSet> parsedOptionTemplateSets = new ArrayList<>();
         final List<DataSet> parsedDataSets = new ArrayList<>();
 
-        while (buffer.isReadable()) {
+        // Stop once fewer than one Set header remains: a trailing remainder that small can only be
+        // message padding (some exporters pad to a 4-byte boundary), not a Set. Reading it as a Set
+        // would yield an invalid Set ID and drop the whole packet. (Matches goflow2 / NetGauze.)
+        while (buffer.readableBytes() >= FlowSetHeader.SIZE) {
             final ByteBuf headerBuffer = slice(buffer, FlowSetHeader.SIZE);
             final FlowSetHeader setHeader = new FlowSetHeader(headerBuffer);
+
+            if (setHeader.length < FlowSetHeader.SIZE) {
+                throw new InvalidPacketException(buffer, "Set length %d is smaller than the set header", setHeader.length);
+            }
 
             final ByteBuf payloadBuffer = slice(buffer, setHeader.length - FlowSetHeader.SIZE);
             switch (setHeader.getType()) {
@@ -156,6 +163,11 @@ public final class Packet implements Iterable<FlowSet<?>> {
         return Iterators.concat(this.templateSets.iterator(),
                 this.optionTemplateSets.iterator(),
                 this.dataSets.iterator());
+    }
+
+    /** Number of Data Records across all data sets — the IPFIX sequence-number increment (RFC 7011 §3.1). */
+    public int dataRecordCount() {
+        return this.dataSets.stream().mapToInt(set -> set.records.size()).sum();
     }
 
     @Override

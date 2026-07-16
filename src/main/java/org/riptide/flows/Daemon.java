@@ -44,6 +44,10 @@ public class Daemon implements ApplicationRunner {
     private final List<Listener> listeners;
     private final Pipeline pipeline;
 
+    // Set once the receivers have been started, so health checks can tell "still booting" (live but
+    // not ready) apart from "a started receiver has died" (not live).
+    private volatile boolean started;
+
     public Daemon(final Pipeline pipeline,
                   final MetricRegistry metricRegistry,
                   @Qualifier("ipfixValueConversionService") final ValueConversionService ipfixValueConversionService,
@@ -170,11 +174,23 @@ public class Daemon implements ApplicationRunner {
     public void run(final ApplicationArguments args) throws Exception {
         this.pipeline.start();
         this.listeners.forEach(Listener::start);
+        this.started = true;
     }
 
     @PreDestroy
     public void stop() throws Exception {
+        this.started = false;
         this.pipeline.stop();
         this.listeners.forEach(Listener::stop);
+    }
+
+    /** The configured receivers, for health reporting. */
+    public List<Listener> getListeners() {
+        return this.listeners;
+    }
+
+    /** Whether the receivers have been started (i.e. {@link #run} has completed). */
+    public boolean isStarted() {
+        return this.started;
     }
 }

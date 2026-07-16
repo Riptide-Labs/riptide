@@ -276,12 +276,12 @@ public class UdpSessionManager {
         }
 
         @Override
-        public boolean verifySequenceNumber(final ExporterIdentity scope, final long sequenceNumber) {
+        public boolean verifySequenceNumber(final ExporterIdentity scope, final long sequenceNumber, final int sequenceIncrement) {
             final TrackerKey key = new TrackerKey(this.sessionKey, scope);
             final TrackedSequence tracked = UdpSessionManager.this.sequenceNumbers.computeIfAbsent(key,
                     (k) -> new TrackedSequence(UdpSessionManager.this.sequenceNumberTracker.get()));
             tracked.lastSeen = Instant.now();
-            return tracked.tracker.verify(sequenceNumber);
+            return tracked.tracker.verify(sequenceNumber, sequenceIncrement);
         }
 
         private final class Resolver implements Session.Resolver {

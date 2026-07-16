@@ -41,6 +41,35 @@ class ProvisioningDdlTest {
     }
 
     @Test
+    void bootstrapSchemaCreatesDatabaseThenTableWithTtl() {
+        final List<String> sql = ProvisioningDdl.bootstrapSchema("riptide", 400);
+        // Database before table. The composed onboard ordering (bootstrap before the GRANT/ALTER
+        // that need the table) is pinned end-to-end by TenantOnboardingIT against a fresh server.
+        assertThat(sql.get(0)).isEqualTo("CREATE DATABASE IF NOT EXISTS `riptide`");
+        assertThat(sql.get(1).strip()).startsWith("CREATE TABLE IF NOT EXISTS `riptide`.flows (");
+        assertThat(sql.get(1)).contains("TTL toDateTime(timestamp) + INTERVAL 400 DAY");
+        assertThat(sql).hasSize(2);
+    }
+
+    @Test
+    void ensureSharedEmitsNoCreateStatement() {
+        // ClickHouse checks CREATE privileges even when IF NOT EXISTS would no-op, so a default
+        // (least-privilege) onboard run must never send CREATE DATABASE/CREATE TABLE — the schema
+        // bootstrap is a separate, opt-in recipe.
+        assertThat(ProvisioningDdl.ensureShared("riptide", 50_000_000_000L))
+                .noneMatch(s -> s.startsWith("CREATE DATABASE") || s.startsWith("CREATE TABLE"));
+    }
+
+    @Test
+    void neitherRecipeCreatesTheSamplesView() {
+        // In provisioned mode flow_reader is not granted SELECT on samples, so onboard must not
+        // create the (inert, unqueryable) view — it stays a manage-mode-only convenience.
+        assertThat(ProvisioningDdl.bootstrapSchema("riptide", 30)).noneMatch(s -> s.contains("samples"));
+        assertThat(ProvisioningDdl.ensureShared("riptide", 50_000_000_000L))
+                .noneMatch(s -> s.contains("samples"));
+    }
+
+    @Test
     void onboardTenantScopesUsersPolicyWithEscapedPassword() {
         final List<String> sql = ProvisioningDdl.onboardTenant("riptide", "acme", "acme-eu", "p'w", "r'w");
         assertThat(sql).hasSize(7);

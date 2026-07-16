@@ -35,4 +35,16 @@ public interface FlowPacket {
      * @return the sequence number
      */
     long getSequenceNumber();
+
+    /**
+     * The number of sequence-number units this packet advances the exporter's counter by. IPFIX and
+     * NetFlow v5 count Data Records/flows (RFC 7011 §3.1, RFC 3954), so a packet carrying N records
+     * advances the counter by N; NetFlow v9 counts export packets and sFlow counts datagrams, so both
+     * advance by 1 (the default).
+     *
+     * @return the sequence increment; always {@code >= 1}
+     */
+    default int getSequenceIncrement() {
+        return 1;
+    }
 }

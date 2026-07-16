@@ -9,7 +9,6 @@ package org.riptide.repository.clickhouse;
 import com.clickhouse.client.api.Client;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
-import org.intellij.lang.annotations.Language;
 import org.mapstruct.BeanMapping;
 import org.mapstruct.Mapper;
 import org.mapstruct.NullValueCheckStrategy;
@@ -20,6 +19,7 @@ import org.riptide.pipeline.FlowException;
 import com.clickhouse.client.api.metadata.TableSchema;
 import com.clickhouse.data.ClickHouseColumn;
 import org.riptide.repository.FlowRepository;
+import org.riptide.schema.FlowsSchema;
 import org.riptide.secrets.SecretResolvers;
 
 import java.io.IOException;
@@ -111,8 +111,8 @@ public class ClickhouseRepository implements FlowRepository {
             // so previously persisted data survives a restart; the samples VIEW holds no data and is
             // always refreshed (OR REPLACE) so it never goes stale.
             ensureDatabase();
-            this.client.execute(DDL_FLOWS).get();
-            this.client.execute(DDL_SAMPLES).get();
+            this.client.execute(FlowsSchema.createFlowsTable(this.config.getDatabase())).get();
+            this.client.execute(FlowsSchema.createSamplesView(this.config.getDatabase())).get();
         }
 
         // Both modes: the flows table must exist and carry every column riptide inserts. Fail-fast
@@ -141,7 +141,7 @@ public class ClickhouseRepository implements FlowRepository {
                 .compressClientRequest(true)
                 .compressServerResponse(true)
                 .build()) {
-            bootstrap.execute("CREATE DATABASE IF NOT EXISTS `" + this.config.getDatabase() + "`").get();
+            bootstrap.execute(FlowsSchema.createDatabase(this.config.getDatabase())).get();
         }
     }
 
@@ -188,152 +188,6 @@ public class ClickhouseRepository implements FlowRepository {
         }
         return schema;
     }
-
-    @Language("ClickHouse")
-    private static final String DDL_FLOWS = """
-        CREATE TABLE IF NOT EXISTS flows (
-            timestamp DateTime64(3),
-    
-            flowProtocol Enum8(
-                'NetflowV5' = 1,
-                'NetflowV9' = 2,
-                'IPFIX' = 3,
-                'SFLOW' = 4
-            ),
-    
-            tenant String,
-            organisation String,
-            zone String,
-            system String,
-            exporterAddr String,
-    
-            receivedAt DateTime64(9),
-    
-            firstSwitched DateTime64(9),
-            deltaSwitched DateTime64(9),
-            lastSwitched DateTime64(9),
-    
-            inputSnmp UInt32,
-            inputSnmpIfName Nullable(String),
-            inputSnmpIfAlias Nullable(String),
-            inputSnmpIfSpeed Nullable(UInt32),
-    
-            outputSnmp UInt32,
-            outputSnmpIfName Nullable(String),
-            outputSnmpIfAlias Nullable(String),
-            outputSnmpIfSpeed Nullable(UInt32),
-    
-            srcAs UInt64,
-            srcAsOrg Nullable(String),
-            srcAddr IPv6,
-            srcMaskLen UInt8,
-            srcAddrHostname Nullable(String),
-            srcPort UInt16,
-    
-            dstAs UInt64,
-            dstAsOrg Nullable(String),
-            dstAddr IPv6,
-            dstMaskLen UInt8,
-            dstAddrHostname Nullable(String),
-            dstPort UInt16,
-    
-            nextHop Nullable(IPv6),
-            nextHopHostname Nullable(String),
-    
-            bytes UInt64,
-            packets UInt64,
-    
-            direction Enum8('INGRESS' = 1, 'EGRESS' = 2, 'UNKNOWN' = 3),
-    
-            engineId UInt32,
-            engineType UInt16,
-    
-            vlan UInt16,
-            ipProtocolVersion UInt8,
-            protocol UInt8,
-            tcpFlags UInt8,
-            tos UInt8,
-    
-            samplingAlgorithm Enum8(
-                'Unassigned' = 1,
-                'SystematicCountBasedSampling' = 2,
-                'SystematicTimeBasedSampling' = 3,
-                'RandomNOutOfNSampling' = 4,
-                'UniformProbabilisticSampling' = 5,
-                'PropertyMatchFiltering' = 6,
-                'HashBasedFiltering' = 7,
-                'FlowStateDependentIntermediateFlowSelectionProcess' = 8
-            ),\s
-            samplingInterval Float64,
-    
-            application Nullable(String),
-    
-            srcLocality Enum8('PUBLIC' = 1, 'PRIVATE' = 2),
-            dstLocality Enum8('PUBLIC' = 1, 'PRIVATE' = 2),
-            flowLocality Enum8('PUBLIC' = 1, 'PRIVATE' = 2),
-    
-            clockCorrection Nullable(Int64)
-        ) ENGINE = MergeTree()
-        ORDER BY (
-            tenant, organisation,
-            toStartOfHour(timestamp),
-            srcAs, dstAs,
-            srcAddr, dstAddr,
-            srcPort, dstPort
-        )
-        PARTITION BY toYYYYMMDD(timestamp)
-        TTL toDateTime(timestamp) + INTERVAL 30 DAY
-        SETTINGS index_granularity = 8192;
-    """;
-
-    @Language("ClickHouse")
-    private static final String DDL_SAMPLES = """
-        CREATE OR REPLACE VIEW samples AS
-        WITH
-            toInt64({ival:Int64} * 1e9) AS interval_ns,
-    
-            -- Find first and last absolute bucket numbers
-            toUInt64(toUnixTimestamp64Nano(deltaSwitched) / interval_ns) as first_bucket,
-            toUInt64(toUnixTimestamp64Nano(lastSwitched) / interval_ns) as last_bucket,
-    
-            last_bucket - first_bucket + 1 as bucket_count,
-    
-            -- Calculate total duration in nanoseconds
-            age('ns', deltaSwitched, lastSwitched) as flow_duration,
-    
-            -- Generate buckets from the first bucket onward
-            range(toUInt32(bucket_count)) AS buckets,
-    
-            -- Determine the fraction of the interval used in each case
-            CASE
-                -- Only one bucket
-                WHEN bucket_count = 1
-                    THEN 1.0
-    
-                -- First bucket: Portion from start time to the next bucket boundary
-                WHEN bucket = 0
-                    THEN ((interval_ns * (first_bucket + 1)) - toUnixTimestamp64Nano(deltaSwitched)) / interval_ns
-    
-                -- Last bucket: Portion from the start of the last bucket to end time
-                WHEN bucket = bucket_count - 1
-                    THEN (toUnixTimestamp64Nano(lastSwitched) - (interval_ns * last_bucket)) / interval_ns
-    
-                -- Full buckets in between
-                ELSE 1.0
-                END AS bucket_fraction
-    
-        SELECT
-            flow.*,
-    
-            fromUnixTimestamp64Nano((first_bucket + bucket) * interval_ns) AS timestamp,
-    
-            bytes * bucket_fraction / toFloat64(bucket_count) as bytes,
-            packets * bucket_fraction / toFloat64(bucket_count) as packets
-    
-        FROM flows AS flow
-        ARRAY JOIN buckets AS bucket
-        ORDER BY timestamp;
-    """;
 
     @Mapper(nullValueCheckStrategy = NullValueCheckStrategy.ALWAYS,
             componentModel = "spring")
