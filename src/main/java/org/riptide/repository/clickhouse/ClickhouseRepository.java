@@ -28,8 +28,9 @@ import java.net.Inet6Address;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.net.InetAddress;
-import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
@@ -200,8 +201,10 @@ public class ClickhouseRepository implements FlowRepository {
         })
         public abstract ClickhouseFlow flow(EnrichedFlow flow);
 
-        protected Timestamp timestamp(final Instant value) {
-            return Timestamp.from(value);
+        protected OffsetDateTime timestamp(final Instant value) {
+            // UTC offset so the client-v2 DateTime64 encoding is an absolute instant, independent
+            // of the collector host's timezone (#276).
+            return value.atOffset(ZoneOffset.UTC);
         }
 
         @SneakyThrows

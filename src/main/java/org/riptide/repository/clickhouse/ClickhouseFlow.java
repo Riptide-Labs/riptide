@@ -8,13 +8,16 @@ package org.riptide.repository.clickhouse;
 import lombok.Data;
 
 import java.net.Inet6Address;
-import java.sql.Timestamp;
 import java.time.Duration;
+import java.time.OffsetDateTime;
 
 
 @Data
 public class ClickhouseFlow {
-    private Timestamp timestamp;
+    // OffsetDateTime (UTC), not java.sql.Timestamp: the client-v2 encodes a Timestamp from its
+    // JVM-local wall clock, shifting DateTime64 values by the host's UTC offset on a non-UTC host
+    // (#276). An offset-carrying type serializes to an absolute instant regardless of host zone.
+    private OffsetDateTime timestamp;
 
     private byte flowProtocol;
 
@@ -24,11 +27,11 @@ public class ClickhouseFlow {
     private String system;
     private String exporterAddr;
 
-    private Timestamp receivedAt;
+    private OffsetDateTime receivedAt;
 
-    private Timestamp firstSwitched;
-    private Timestamp deltaSwitched;
-    private Timestamp lastSwitched;
+    private OffsetDateTime firstSwitched;
+    private OffsetDateTime deltaSwitched;
+    private OffsetDateTime lastSwitched;
 
     private int inputSnmp;
     private String inputSnmpIfName;
