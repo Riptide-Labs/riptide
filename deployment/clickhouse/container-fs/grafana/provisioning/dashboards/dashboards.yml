@@ -1,0 +1,15 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+---
+apiVersion: 1
+
+providers:
+  - name: riptide
+    type: file
+    updateIntervalSeconds: 30
+    # UI edits are allowed but live only until the provisioned JSON changes (e.g. an image
+    # update) — the file version then wins. Use "Save as" to keep a customized copy.
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

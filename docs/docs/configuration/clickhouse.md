@@ -50,6 +50,15 @@ what ClickHouse accepts under backtick quoting; rename such a database or use va
   the `samples` view with `CREATE OR REPLACE VIEW` (a view holds no data, so it is always
   refreshed and can never go stale). A fresh install is created; a restart keeps the data — so
   **flow data now survives a Riptide restart**.
+
+  :::warning[Hand-created `samples` views need re-creating]
+
+  The `samples` bucket split was corrected in #270 (older definitions under-report traffic by up
+  to the flow's bucket count). Manage-mode collectors heal on restart, but a `samples` view an
+  admin created by hand — e.g. in a provisioned deployment — keeps the old formula until it is
+  re-created from the current definition.
+
+  :::
 - **`false` (provisioned / multi-tenant)** — the collector creates nothing. It validates that the
   `flows` table exists and carries every column it inserts and **fails startup with a clear,
   provisioning-pointing error** if it does not. Use this when an admin owns the schema and

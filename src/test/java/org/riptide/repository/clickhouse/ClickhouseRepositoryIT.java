@@ -166,6 +166,39 @@ public class ClickhouseRepositoryIT {
                 .hasMessageContaining("tenant");
     }
 
+    @Test
+    void samplesViewConservesBytesAcrossBucketExpansion() throws Exception {
+        final var database = "samples_cons";
+        final var repo = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, true), RESOLVERS);
+        repo.start();
+
+        // The #270 repro: a 90s, 6000-byte, 90-packet flow starting 30s before a bucket boundary.
+        // With ival=60 it spans 30s of its first bucket and 60s of its second, so a time-
+        // proportional split gives exactly 2000/4000 bytes — and the totals must be conserved
+        // (the pre-#270 division by bucket_count returned 1000/2000, half the traffic).
+        final var bucketStart = Instant.now().truncatedTo(ChronoUnit.MINUTES).minus(10, ChronoUnit.MINUTES);
+        final var start = bucketStart.plusSeconds(30);
+        final var end = bucketStart.plusSeconds(120);
+        repo.persist(List.of(testFlow(start, end, 50001, 443, 6000L, 90L)));
+
+        // Exactly two buckets — a flow ending on a bucket boundary must NOT emit a spurious
+        // zero-contribution third bucket (boundary shift in the view's last_bucket).
+        final var buckets = queryClient.queryAll(
+                "SELECT round(bytes, 3) AS b, round(packets, 3) AS p FROM " + database
+                        + ".samples(ival = 60) ORDER BY timestamp");
+        Assertions.assertThat(buckets).hasSize(2);
+        Assertions.assertThat(buckets.get(0).getDouble("b")).isCloseTo(2000.0, Assertions.within(0.01));
+        Assertions.assertThat(buckets.get(0).getDouble("p")).isCloseTo(30.0, Assertions.within(0.01));
+        Assertions.assertThat(buckets.get(1).getDouble("b")).isCloseTo(4000.0, Assertions.within(0.01));
+        Assertions.assertThat(buckets.get(1).getDouble("p")).isCloseTo(60.0, Assertions.within(0.01));
+
+        // Conservation: summing the expansion returns the flow's exact totals.
+        final var totals = queryClient.queryAll(
+                "SELECT sum(bytes) AS b, sum(packets) AS p FROM " + database + ".samples(ival = 60)");
+        Assertions.assertThat(totals.getFirst().getDouble("b")).isCloseTo(6000.0, Assertions.within(0.01));
+        Assertions.assertThat(totals.getFirst().getDouble("p")).isCloseTo(90.0, Assertions.within(0.01));
+    }
+
     private static ClickhouseConfig configFor(final String database, final boolean manageSchema) {
         final var config = new ClickhouseConfig();
         config.setEndpoint("http://" + CLICKHOUSE.getHost() + ":" + CLICKHOUSE.getMappedPort(8123));
@@ -188,12 +221,17 @@ public class ClickhouseRepositoryIT {
     }
 
     private static EnrichedFlow testFlow(final Instant now, final int srcPort, final int dstPort, final long bytes) throws Exception {
+        return testFlow(now.minusSeconds(10), now, srcPort, dstPort, bytes, 7L);
+    }
+
+    private static EnrichedFlow testFlow(final Instant deltaSwitched, final Instant lastSwitched, final int srcPort,
+                                         final int dstPort, final long bytes, final long packets) throws Exception {
         return EnrichedFlow.builder()
-                .receivedAt(now)
-                .timestamp(now)
-                .firstSwitched(now.minusSeconds(10))
-                .deltaSwitched(now.minusSeconds(10))
-                .lastSwitched(now)
+                .receivedAt(lastSwitched)
+                .timestamp(lastSwitched)
+                .firstSwitched(deltaSwitched)
+                .deltaSwitched(deltaSwitched)
+                .lastSwitched(lastSwitched)
                 .flowProtocol(Flow.FlowProtocol.IPFIX)
                 .tenant("default")
                 .organisation("default")
@@ -211,7 +249,7 @@ public class ClickhouseRepositoryIT {
                 .inputSnmp(1)
                 .outputSnmp(2)
                 .bytes(bytes)
-                .packets(7L)
+                .packets(packets)
                 .direction(Flow.Direction.INGRESS)
                 .engineId(0)
                 .engineType(0)
