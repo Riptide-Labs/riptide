@@ -76,11 +76,9 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
         final UdpSessionManager.SessionKey sessionKey = this.buildSessionKey(remoteAddress, localAddress);
         final TransactionalSession session = new TransactionalSession(this.sessionManager.getSession(sessionKey));
 
+        final FlowPacket parsed;
         try {
-            final var parsed = this.parse(session, buffer);
-            LOG.trace("Parsed packet: {}", parsed);
-
-            return this.transmit(receivedAt, parsed, session);
+            parsed = this.parse(session, buffer);
         } catch (Exception e) {
             // Discard the malformed message only (RFC 7011 §10.3) — NOT the whole session.
             // Dropping the session here discarded the exporter's templates and sequence state, so
@@ -89,11 +87,15 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
             // #273). The rollback removes only what THIS packet taught us: packets install
             // templates set-by-set while parsing, so a mis-framed packet may have committed a
             // garbage template before a later set threw — retaining it would silently mis-decode
-            // subsequent data sets.
+            // subsequent data sets. Deliberately scoped to the parse phase: a transmit/dispatch
+            // failure below says nothing about the packet's templates.
             session.rollback();
             this.parserErrors.inc();
             throw e;
         }
+        LOG.trace("Parsed packet: {}", parsed);
+
+        return this.transmit(receivedAt, parsed, session);
     }
 
     /** Must be set before {@link #start}; the session manager is built there. */
