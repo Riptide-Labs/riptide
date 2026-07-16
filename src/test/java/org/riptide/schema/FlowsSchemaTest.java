@@ -36,6 +36,19 @@ class FlowsSchemaTest {
     }
 
     @Test
+    void timeColumnsPinUtcTimezone() {
+        // The schema is timezone-explicit so stored instants display/parse in UTC regardless of the
+        // server's local zone (#276) — every time column carries the 'UTC' timezone argument.
+        final String ddl = FlowsSchema.createFlowsTable("riptide");
+        assertThat(ddl)
+                .contains("timestamp DateTime64(3, 'UTC')")
+                .contains("receivedAt DateTime64(9, 'UTC')")
+                .contains("firstSwitched DateTime64(9, 'UTC')")
+                .contains("deltaSwitched DateTime64(9, 'UTC')")
+                .contains("lastSwitched DateTime64(9, 'UTC')");
+    }
+
+    @Test
     void createSamplesViewQualifiesBothViewAndSourceTable() {
         final String ddl = FlowsSchema.createSamplesView("riptide");
         assertThat(ddl.strip()).startsWith("CREATE OR REPLACE VIEW `riptide`.samples AS");
