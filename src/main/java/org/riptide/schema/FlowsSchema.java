@@ -7,6 +7,8 @@ package org.riptide.schema;
 
 import org.intellij.lang.annotations.Language;
 
+import java.util.regex.Pattern;
+
 /**
  * The one definition of riptide's ClickHouse flow schema — the {@code flows} table and the
  * {@code samples} view — as database-qualified, idempotent DDL. Pure string builders (no I/O), so
@@ -22,8 +24,9 @@ import org.intellij.lang.annotations.Language;
  *
  * <p>Every statement names {@code `<db>`.flows} / {@code `<db>`.samples} explicitly rather than
  * relying on a client's default-database pinning, so the same DDL runs correctly on the collector's
- * pinned client and on an unpinned admin client. The database name is backtick-quoted; callers pass
- * a validated name.
+ * pinned client and on an unpinned admin client. The database name is charset-checked and
+ * backtick-quoted here — the collector's {@code riptide.clickhouse.database} property binds without
+ * validation, so the quoting site is the enforcement point.
  *
  * <p>The {@code samples} view carries no data and is created with {@code CREATE OR REPLACE}, so it
  * always tracks the running version. It is used only by the collector's manage path — {@code
@@ -31,6 +34,12 @@ import org.intellij.lang.annotations.Language;
  * it, so it would be inert).
  */
 public final class FlowsSchema {
+
+    /** The collector's manage-mode retention; also the {@code onboard --ttl-days} default. */
+    public static final int DEFAULT_TTL_DAYS = 30;
+
+    /** Same charset as the provisioning boundary ({@code TenantSpec}): no quotes, backticks, spaces. */
+    private static final Pattern SAFE_NAME = Pattern.compile("[A-Za-z0-9_-]+");
 
     private FlowsSchema() {
     }
@@ -40,27 +49,50 @@ public final class FlowsSchema {
         return "CREATE DATABASE IF NOT EXISTS " + ident(database);
     }
 
-    /** {@code CREATE TABLE IF NOT EXISTS `<db>`.flows (…)} — a pre-existing table is left intact. */
+    /** As {@link #createFlowsTable(String, int)} with the collector's default retention. */
     public static String createFlowsTable(final String database) {
-        return FLOWS_TABLE.replace(FLOWS_TOKEN, ident(database) + ".flows");
+        return createFlowsTable(database, DEFAULT_TTL_DAYS);
+    }
+
+    /** {@code CREATE TABLE IF NOT EXISTS `<db>`.flows (…)} — a pre-existing table is left intact. */
+    public static String createFlowsTable(final String database, final int ttlDays) {
+        return FLOWS_TABLE
+                .replace(FLOWS_TOKEN, qualifiedFlows(database))
+                .replace(TTL_DAYS_TOKEN, Integer.toString(ttlDays));
     }
 
     /** {@code CREATE OR REPLACE VIEW `<db>`.samples AS … FROM `<db>`.flows} — collector-only. */
     public static String createSamplesView(final String database) {
         return SAMPLES_VIEW
                 .replace(SAMPLES_TOKEN, ident(database) + ".samples")
-                .replace(FLOWS_TOKEN, ident(database) + ".flows");
+                .replace(FLOWS_TOKEN, qualifiedFlows(database));
     }
 
-    /** Backtick-quote an identifier. The value is pre-validated to exclude backticks. */
+    /** The qualified {@code `<db>`.flows} name — the one home for its construction. */
+    public static String qualifiedFlows(final String database) {
+        return ident(database) + ".flows";
+    }
+
+    /**
+     * Charset-check and backtick-quote an identifier. Enforced here (not just documented) because
+     * the collector's database name arrives from unvalidated configuration; a bad value fails with
+     * a clear message instead of producing malformed DDL.
+     */
     private static String ident(final String name) {
+        if (name == null || !SAFE_NAME.matcher(name).matches()) {
+            throw new IllegalArgumentException(
+                    "invalid ClickHouse database name '" + name + "' — riptide.clickhouse.database"
+                            + " (or onboard --database) must match [A-Za-z0-9_-]+"
+                            + " (letters, digits, underscore, hyphen)");
+        }
         return "`" + name + "`";
     }
 
-    // Placeholder tokens substituted with the qualified names. Plain replace() (not String.format)
-    // avoids treating the multi-line DDL as a format string.
+    // Placeholder tokens substituted with the qualified names / TTL. Plain replace() (not
+    // String.format) avoids treating the multi-line DDL as a format string.
     private static final String FLOWS_TOKEN = "@@flows@@";
     private static final String SAMPLES_TOKEN = "@@samples@@";
+    private static final String TTL_DAYS_TOKEN = "@@ttlDays@@";
 
     @Language("ClickHouse")
     private static final String FLOWS_TABLE = """
@@ -155,7 +187,7 @@ public final class FlowsSchema {
             srcPort, dstPort
         )
         PARTITION BY toYYYYMMDD(timestamp)
-        TTL toDateTime(timestamp) + INTERVAL 30 DAY
+        TTL toDateTime(timestamp) + INTERVAL @@ttlDays@@ DAY
         SETTINGS index_granularity = 8192;
     """;
 

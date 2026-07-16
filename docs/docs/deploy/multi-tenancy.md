@@ -60,9 +60,12 @@ for filtering. All four are riptide-populated columns.
 - The `SQL_` custom-settings prefix enabled (write-barrier requirement) — see the
   [server requirement](../configuration/clickhouse.md#server-requirement).
 - Riptide running in [validate mode](../configuration/clickhouse.md#schema-ownership)
-  (`manage-schema=false`). The `flows` schema itself needs no manual step — `onboard` creates the
-  database and `flows` table (see [What it provisions](#what-it-provisions)) before it grants and
-  constrains them.
+  (`manage-schema=false`). On a fresh **single-node** server, `onboard --create-schema` bootstraps
+  the database and `flows` table itself (see [What it provisions](#what-it-provisions)) — no manual
+  DDL. On a **replicated cluster**, pre-create the `flows` table admin-side (e.g.
+  `ReplicatedMergeTree`, `ON CLUSTER`) and run `onboard` *without* `--create-schema`: the bootstrap
+  DDL is single-node (`MergeTree()`, no `ON CLUSTER`) and would create a node-local table on
+  whichever replica the admin client hits, while the roles and grants replicate.
 
 ## Onboard a tenant
 
@@ -91,6 +94,22 @@ Secret references resolve through the built-in resolvers (`plain`, `env://`, `fi
 `riptide.clickhouse.manage-schema=false` and `riptide.identity.zone` to the collector config as
 needed.
 
+On a fresh single-node server, add **`--create-schema`** to the first onboard: it creates the
+database and `flows` table (with `--ttl-days N` retention, default 30, max 10950 — ClickHouse's
+`DateTime` ends in 2106) before the grants and constraints that need them. `--ttl-days` applies
+only to a table this run creates: it requires `--create-schema`, and a re-run against an existing
+table warns that retention is unchanged. Without the flag, a missing database or table **fails before any
+statement runs** — so a typo'd `--database` can never silently provision a phantom database — and
+the run sends no `CREATE` statement at all, which keeps a least-privilege admin working (ClickHouse
+checks `CREATE` privileges even when `IF NOT EXISTS` would no-op).
+
+### Admin privileges
+
+| mode | minimum privileges for the admin credential |
+|---|---|
+| default (schema exists) | `CREATE USER`/`CREATE ROLE`/`CREATE QUOTA`/`CREATE ROW POLICY`, `ALTER USER`/`ALTER ROLE`, `DROP USER`/`DROP ROW POLICY` (offboard), `ALTER TABLE` on `<db>.flows`, and `INSERT`, `SELECT` on `<db>.flows` plus `SELECT` on `system.databases/tables/columns` **with grant option** (they are granted onward to the roles) |
+| `--create-schema` | the above, plus `CREATE DATABASE ON <db>.*` and `CREATE TABLE ON <db>.flows` |
+
 `onboard` is safe to re-run: it reconciles the writer/reader **passwords** to the current secret, so
 rotating a secret and re-running updates ClickHouse (the users' `CONST` settings and row policy are
 preserved). To remove a tenant: `offboard --admin-url … --tenant acme --yes` (drops its users and
@@ -103,11 +122,11 @@ the quota are one-time objects, so per-tenant reduces to the scoped users + role
 row policy. `onboard` ensures the one-time objects on first run and adds the per-tenant part:
 
 ```sql
--- Once per cluster (idempotent): onboard first creates the schema it depends on, so a fresh
--- provisioned database needs no manual step. IF NOT EXISTS leaves an existing table untouched.
+-- Only with --create-schema, and only when the schema is actually missing (a default run emits
+-- no CREATE statement, so it needs no CREATE privileges). IF NOT EXISTS never replaces a table.
 CREATE DATABASE IF NOT EXISTS riptide;
-CREATE TABLE IF NOT EXISTS riptide.flows (…);  -- full column definition — see the ClickHouse deployment docs
--- Roles carry every per-tenant grant and the reader hardening.
+CREATE TABLE IF NOT EXISTS riptide.flows (…);  -- single-node MergeTree, TTL from --ttl-days (default 30)
+-- Once per cluster (idempotent): roles carry every per-tenant grant and the reader hardening.
 CREATE ROLE IF NOT EXISTS flow_writer;
 GRANT INSERT ON riptide.flows TO flow_writer;
 CREATE ROLE IF NOT EXISTS flow_reader;

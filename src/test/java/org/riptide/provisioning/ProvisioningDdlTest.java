@@ -41,34 +41,32 @@ class ProvisioningDdlTest {
     }
 
     @Test
-    void ensureSharedCreatesSchemaBeforeGrantingOrConstrainingIt() {
-        final List<String> sql = ProvisioningDdl.ensureShared("riptide", 50_000_000_000L);
-        // The database and flows table are created first — the GRANT INSERT and ALTER … ADD
-        // CONSTRAINT below require the table to exist, so a fresh provisioned database is onboardable.
+    void bootstrapSchemaCreatesDatabaseThenTableWithTtl() {
+        final List<String> sql = ProvisioningDdl.bootstrapSchema("riptide", 400);
+        // Database before table. The composed onboard ordering (bootstrap before the GRANT/ALTER
+        // that need the table) is pinned end-to-end by TenantOnboardingIT against a fresh server.
         assertThat(sql.get(0)).isEqualTo("CREATE DATABASE IF NOT EXISTS `riptide`");
         assertThat(sql.get(1).strip()).startsWith("CREATE TABLE IF NOT EXISTS `riptide`.flows (");
-
-        final int createTable = 1;
-        final int firstGrantOnFlows = indexOfFirst(sql, s -> s.startsWith("GRANT INSERT ON `riptide`.flows"));
-        final int firstAlterTable = indexOfFirst(sql, s -> s.startsWith("ALTER TABLE `riptide`.flows"));
-        assertThat(createTable).isLessThan(firstGrantOnFlows).isLessThan(firstAlterTable);
+        assertThat(sql.get(1)).contains("TTL toDateTime(timestamp) + INTERVAL 400 DAY");
+        assertThat(sql).hasSize(2);
     }
 
     @Test
-    void ensureSharedDoesNotCreateTheSamplesView() {
-        // In provisioned mode flow_reader is not granted SELECT on samples, so onboard must not
-        // create the (inert, unqueryable) view — it stays a manage-mode-only convenience.
+    void ensureSharedEmitsNoCreateStatement() {
+        // ClickHouse checks CREATE privileges even when IF NOT EXISTS would no-op, so a default
+        // (least-privilege) onboard run must never send CREATE DATABASE/CREATE TABLE — the schema
+        // bootstrap is a separate, opt-in recipe.
         assertThat(ProvisioningDdl.ensureShared("riptide", 50_000_000_000L))
-                .noneMatch(s -> s.contains("samples"));
+                .noneMatch(s -> s.startsWith("CREATE DATABASE") || s.startsWith("CREATE TABLE"));
     }
 
-    private static int indexOfFirst(final List<String> statements, final java.util.function.Predicate<String> match) {
-        for (int i = 0; i < statements.size(); i++) {
-            if (match.test(statements.get(i))) {
-                return i;
-            }
-        }
-        throw new AssertionError("no statement matched");
+    @Test
+    void neitherRecipeCreatesTheSamplesView() {
+        // In provisioned mode flow_reader is not granted SELECT on samples, so onboard must not
+        // create the (inert, unqueryable) view — it stays a manage-mode-only convenience.
+        assertThat(ProvisioningDdl.bootstrapSchema("riptide", 30)).noneMatch(s -> s.contains("samples"));
+        assertThat(ProvisioningDdl.ensureShared("riptide", 50_000_000_000L))
+                .noneMatch(s -> s.contains("samples"));
     }
 
     @Test

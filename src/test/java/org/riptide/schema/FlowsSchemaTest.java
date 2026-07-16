@@ -8,6 +8,7 @@ package org.riptide.schema;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The flow schema DDL is the single source shared by the collector's manage path and {@code
@@ -50,5 +51,28 @@ class FlowsSchemaTest {
         assertThat(FlowsSchema.createSamplesView("acme_prod"))
                 .contains("VIEW `acme_prod`.samples AS")
                 .contains("FROM `acme_prod`.flows AS flow");
+        assertThat(FlowsSchema.qualifiedFlows("acme_prod")).isEqualTo("`acme_prod`.flows");
+    }
+
+    @Test
+    void ttlIsParameterizedAndDefaultsToTheCollectorRetention() {
+        assertThat(FlowsSchema.createFlowsTable("riptide", 400))
+                .contains("TTL toDateTime(timestamp) + INTERVAL 400 DAY");
+        // The single-arg overload (the collector's manage path) keeps the historical 30 days.
+        assertThat(FlowsSchema.createFlowsTable("riptide"))
+                .contains("TTL toDateTime(timestamp) + INTERVAL 30 DAY");
+    }
+
+    @Test
+    void identRejectsUnsafeDatabaseNames() {
+        // The collector's riptide.clickhouse.database binds without validation, so the quoting
+        // site enforces the charset — a backtick must fail clearly, not emit malformed DDL.
+        assertThatThrownBy(() -> FlowsSchema.createDatabase("ript`ide"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("ript`ide");
+        assertThatThrownBy(() -> FlowsSchema.createFlowsTable("a;b"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> FlowsSchema.createSamplesView(""))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }
