@@ -14,9 +14,10 @@ import java.util.List;
  * whole recipe is one auditable place and lifts cleanly into a future {@code riptide-admin} module.
  *
  * <p>The model puts every identical-per-tenant part into one-time objects ({@link #ensureShared})
- * — the {@code flows} schema, the {@code flow_writer}/{@code flow_reader} roles carrying the grants
- * and the reader hardening, and a single quota keyed by user — so {@link #onboardTenant} reduces to
- * the scoped users, two role grants, and one literal row policy. All statements are idempotent
+ * — the {@code flow_writer}/{@code flow_reader} roles carrying the grants and the reader hardening,
+ * and a single quota keyed by user — so {@link #onboardTenant} reduces to the scoped users, two
+ * role grants, and one literal row policy. The {@code flows} schema itself is a separate, opt-in
+ * recipe ({@link #bootstrapSchema}, {@code onboard --create-schema}). All statements are idempotent
  * ({@code IF NOT EXISTS} / {@code ALTER ROLE SETTINGS}), verified on ClickHouse 25.3.
  *
  * <p>Tenant/org names are validated ({@link TenantSpec}) to a safe charset; generated identifiers
@@ -28,17 +29,23 @@ public final class ProvisioningDdl {
     }
 
     /**
-     * One-time shared objects: the database and {@code flows} table (so onboarding a fresh
-     * provisioned deployment is self-sufficient — the collector only validates in
-     * {@code manage-schema=false} mode), then the two roles, the reader hardening, the CHECK
-     * barrier, and the quota. The schema DDL comes first because the {@code GRANT INSERT} and
-     * {@code ALTER TABLE … ADD CONSTRAINT} below require the table to exist.
+     * The opt-in schema bootstrap ({@code onboard --create-schema}): the database and {@code flows}
+     * table, ordered before {@link #ensureShared} because its {@code GRANT INSERT} and
+     * {@code ALTER TABLE … ADD CONSTRAINT} require the table to exist. Kept separate from
+     * {@link #ensureShared} so a default run sends no CREATE statement at all — ClickHouse checks
+     * the {@code CREATE DATABASE}/{@code CREATE TABLE} privilege even when {@code IF NOT EXISTS}
+     * would no-op, so emitting them unconditionally would break least-privilege admins.
      */
-    public static List<String> ensureShared(final String database, final long quotaBytes) {
-        final String flows = ident(database) + ".flows";
+    public static List<String> bootstrapSchema(final String database, final int ttlDays) {
         return List.of(
                 FlowsSchema.createDatabase(database),
-                FlowsSchema.createFlowsTable(database),
+                FlowsSchema.createFlowsTable(database, ttlDays));
+    }
+
+    /** One-time shared objects: the two roles, the reader hardening, the CHECK barrier, the quota. */
+    public static List<String> ensureShared(final String database, final long quotaBytes) {
+        final String flows = FlowsSchema.qualifiedFlows(database);
+        return List.of(
                 "CREATE ROLE IF NOT EXISTS flow_writer",
                 "GRANT INSERT ON " + flows + " TO flow_writer",
                 "CREATE ROLE IF NOT EXISTS flow_reader",
@@ -66,7 +73,7 @@ public final class ProvisioningDdl {
      */
     public static List<String> onboardTenant(final String database, final String tenant, final String organisation,
                                              final String writerPassword, final String readerPassword) {
-        final String flows = ident(database) + ".flows";
+        final String flows = FlowsSchema.qualifiedFlows(database);
         final String writer = ident("writer_" + tenant);
         final String reader = ident("bi_" + tenant);
         final String policy = ident(tenant + "_iso");
@@ -87,15 +94,16 @@ public final class ProvisioningDdl {
 
     /** Per-tenant teardown: drop the row policy and the two users; shared objects stay. */
     public static List<String> offboardTenant(final String database, final String tenant) {
-        final String flows = ident(database) + ".flows";
+        final String flows = FlowsSchema.qualifiedFlows(database);
         return List.of(
                 "DROP ROW POLICY IF EXISTS " + ident(tenant + "_iso") + " ON " + flows,
                 "DROP USER IF EXISTS " + ident("bi_" + tenant),
                 "DROP USER IF EXISTS " + ident("writer_" + tenant));
     }
 
-    /** Backtick-quote an identifier. The value is pre-validated to exclude backticks. */
+    /** Validate (safe charset, via the package's single check) and backtick-quote an identifier. */
     static String ident(final String name) {
+        TenantSpec.requireSafe("identifier", name);
         return "`" + name + "`";
     }
 

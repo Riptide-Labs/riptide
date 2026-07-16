@@ -6,6 +6,7 @@
 package org.riptide.provisioning;
 
 import com.clickhouse.client.api.Client;
+import org.riptide.schema.FlowsSchema;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
 
@@ -25,6 +26,9 @@ import java.util.Set;
 public final class ProvisioningCommand {
 
     private static final long DEFAULT_QUOTA_BYTES = 50_000_000_000L;
+
+    /** 30 years — far beyond any NetFlow retention, comfortably below the 2106 DateTime wrap. */
+    private static final int MAX_TTL_DAYS = 10_950;
 
     private ProvisioningCommand() {
     }
@@ -87,6 +91,14 @@ public final class ProvisioningCommand {
     private static int onboard(final Args parsed, final String database, final TenantProvisioner provisioner,
                                final PrintStream out, final PrintStream err) {
         final long quotaBytes = parseQuotaBytes(parsed.get("quota-bytes"));
+        final boolean createSchema = parsed.flags.contains("create-schema");
+        final boolean ttlRequested = parsed.get("ttl-days") != null;
+        if (ttlRequested && !createSchema) {
+            // Enforce the nesting the usage text promises: the TTL only applies to a table this
+            // run creates — accepting it standalone would silently do nothing.
+            throw new IllegalArgumentException("--ttl-days requires --create-schema");
+        }
+        final int ttlDays = parseTtlDays(parsed.get("ttl-days"));
         final var spec = new TenantSpec(
                 parsed.require("tenant"),
                 parsed.require("org"),
@@ -95,10 +107,14 @@ public final class ProvisioningCommand {
                 parsed.require("reader-secret"),
                 quotaBytes);
 
-        final String stanza = provisioner.onboard(spec);
+        final var result = provisioner.onboard(spec, createSchema, ttlDays);
+        if (ttlRequested && !result.schemaBootstrapped()) {
+            err.println("warning: --ttl-days ignored — the flows table already exists, its retention"
+                    + " is unchanged (use ALTER TABLE ... MODIFY TTL to change it)");
+        }
         err.println("Onboarded tenant '" + spec.tenant() + "' (org '" + spec.organisation()
                 + "'). Add this to the tenant's riptide config:");
-        out.println(stanza);
+        out.println(result.configStanza());
         return 0;
     }
 
@@ -126,21 +142,48 @@ public final class ProvisioningCommand {
         }
     }
 
+    /**
+     * Retention for a {@code --create-schema}-created table; defaults to the collector's 30 days.
+     * Capped at 30 years: ClickHouse {@code DateTime} ends 2106-02-07 and TTL arithmetic wraps
+     * modulo 2^32 seconds — an oversized interval (verified: {@code INTERVAL 49710 DAY}) wraps to a
+     * TTL in the past and silently discards every inserted row.
+     */
+    static int parseTtlDays(final String value) {
+        if (value == null) {
+            return FlowsSchema.DEFAULT_TTL_DAYS;
+        }
+        final int days;
+        try {
+            days = Integer.parseInt(value);
+        } catch (final NumberFormatException e) {
+            throw new IllegalArgumentException("--ttl-days must be a number of days, was: " + value);
+        }
+        if (days <= 0 || days > MAX_TTL_DAYS) {
+            throw new IllegalArgumentException("--ttl-days must be between 1 and " + MAX_TTL_DAYS
+                    + " (ClickHouse DateTime ends 2106; larger intervals wrap and expire data immediately),"
+                    + " was: " + value);
+        }
+        return days;
+    }
+
     private static void usage(final PrintStream err) {
         err.println("""
                 usage:
                   riptide onboard  --admin-url URL [--admin-user U] [--admin-password REF] \\
                                    --tenant T --org O --writer-secret REF --reader-secret REF \\
-                                   [--database DB] [--quota-bytes N]
+                                   [--database DB] [--quota-bytes N] \\
+                                   [--create-schema [--ttl-days N]]
                   riptide offboard --admin-url URL [--admin-user U] [--admin-password REF] \\
                                    --tenant T [--database DB] --yes
-                secret REF: plain literal, env://VAR, or file:///path[#key]""");
+                secret REF: plain literal, env://VAR, or file:///path[#key]
+                --create-schema: bootstrap the database and flows table if absent (needs CREATE
+                                 privileges); without it, a missing schema fails before provisioning""");
     }
 
     /** Minimal {@code --key value} / {@code --flag} parser. {@code args[0]} is the subcommand. */
     private record Args(String subcommand, Map<String, String> options, Set<String> flags) {
 
-        private static final Set<String> KNOWN_FLAGS = Set.of("yes");
+        private static final Set<String> KNOWN_FLAGS = Set.of("yes", "create-schema");
 
         static Args parse(final String[] args) {
             if (args.length == 0 || !matches(args[0])) {

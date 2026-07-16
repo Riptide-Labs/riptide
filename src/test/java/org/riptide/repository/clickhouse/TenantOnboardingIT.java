@@ -7,7 +7,6 @@ package org.riptide.repository.clickhouse;
 
 import com.clickhouse.client.api.Client;
 import org.assertj.core.api.Assertions;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.riptide.config.ClickhouseConfig;
 import org.riptide.provisioning.ProvisioningCommand;
@@ -28,9 +27,10 @@ import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
 
 /**
  * The {@code onboard}/{@code offboard} subcommands, proven end to end against a real ClickHouse.
- * Onboarding runs against a fresh, empty database — {@code onboard} provisions the {@code flows}
- * table itself (issue #246; the collector only validates in {@code manage-schema=false} mode) before
- * it can grant and constrain it. Then the CLI is driven exactly
+ * Onboarding runs against a genuinely fresh server — nothing is pre-created, so
+ * {@code onboard --create-schema} must bootstrap the database and {@code flows} table itself
+ * (issues #246/#267; the collector only validates in {@code manage-schema=false} mode) before it
+ * can grant and constrain them. Then the CLI is driven exactly
  * as an operator would: {@code onboard} a tenant, and the resulting scoped credentials must satisfy
  * the full isolation matrix — honest write persists, cross-tenant write is rejected (469), the
  * reader sees only its tenant and cannot write/DDL — and {@code offboard} must revoke access.
@@ -52,16 +52,6 @@ public class TenantOnboardingIT {
                     "/etc/clickhouse-server/config.d/custom-settings.xml")
             .withExposedPorts(8123)
             .waitingFor(Wait.forHttp("/ping").forPort(8123).forStatusCode(200));
-
-    private static Client admin;
-
-    @BeforeAll
-    static void createDatabase() throws Exception {
-        admin = new Client.Builder().addEndpoint(endpoint()).setUsername("default").setPassword("").build();
-        // Only the empty database exists up front — no flows table. onboard must create the table
-        // itself before it can grant/constrain it, which is exactly the bootstrap #246 adds.
-        admin.execute("CREATE DATABASE IF NOT EXISTS " + DATABASE).get();
-    }
 
     @Test
     void onboardedTenantWritesHonestlyAndIsIsolated() throws Exception {
@@ -131,6 +121,49 @@ public class TenantOnboardingIT {
     }
 
     @Test
+    void onboardWithoutCreateSchemaFailsLoudlyBeforeProvisioning() throws Exception {
+        // A typo'd --database must fail before any statement runs — not silently provision a
+        // phantom database with the shared roles granted on it (issue #267).
+        final var err = new ByteArrayOutputStream();
+        final int code = ProvisioningCommand.run(
+                new String[] {"onboard", "--admin-url", endpoint(), "--database", "ript1de",
+                        "--tenant", "phantom", "--org", "phantom-eu",
+                        "--writer-secret", "wP", "--reader-secret", "rP"},
+                discard(), new PrintStream(err, true, StandardCharsets.UTF_8));
+
+        Assertions.assertThat(code).isEqualTo(1);
+        Assertions.assertThat(err.toString(StandardCharsets.UTF_8)).contains("--create-schema");
+        try (var admin = new Client.Builder()
+                .addEndpoint(endpoint()).setUsername("default").setPassword("").build()) {
+            Assertions.assertThat(admin.queryAll("EXISTS DATABASE `ript1de`")
+                    .getFirst().getLong("result")).isZero();
+            Assertions.assertThat(admin.queryAll(
+                            "SELECT count() AS c FROM system.users WHERE name = 'writer_phantom'")
+                    .getFirst().getLong("c")).isZero();
+        }
+    }
+
+    @Test
+    void onboardAcceptsAnAdminProvisionedSchemaWithoutTheFlag() throws Exception {
+        // Brownfield/upgrade path: a manage-mode collector owns the schema first; a plain onboard
+        // (no --create-schema) must accept it — this is also the documented clustered-deployment
+        // shape, where the table is pre-created admin-side.
+        final var config = new ClickhouseConfig();
+        config.setEndpoint(endpoint());
+        config.setUsername(SecretRef.of("default"));
+        config.setDatabase("brown");
+        config.setManageSchema(true);
+        new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS).start();
+
+        final int code = ProvisioningCommand.run(
+                new String[] {"onboard", "--admin-url", endpoint(), "--database", "brown",
+                        "--tenant", "browny", "--org", "brown-eu",
+                        "--writer-secret", "wB", "--reader-secret", "rB"},
+                discard(), discard());
+        Assertions.assertThat(code).isZero();
+    }
+
+    @Test
     void offboardRevokesAccessOnlyWithYes() throws Exception {
         Assertions.assertThat(onboard("temp", "temp-eu", "wT", "rT")).isZero();
         try (var reader = rawClient("bi_temp", "rT")) {
@@ -160,8 +193,9 @@ public class TenantOnboardingIT {
     }
 
     private static String[] onboardArgs(final String tenant, final String org, final String writerPw, final String readerPw) {
+        // --create-schema: nothing is pre-created, so the first onboard bootstraps database + table.
         return new String[] {
-                "onboard", "--admin-url", endpoint(), "--database", DATABASE,
+                "onboard", "--admin-url", endpoint(), "--database", DATABASE, "--create-schema",
                 "--tenant", tenant, "--org", org, "--writer-secret", writerPw, "--reader-secret", readerPw};
     }
 

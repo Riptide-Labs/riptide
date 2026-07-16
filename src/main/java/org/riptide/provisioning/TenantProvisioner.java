@@ -6,6 +6,7 @@
 package org.riptide.provisioning;
 
 import com.clickhouse.client.api.Client;
+import org.riptide.schema.FlowsSchema;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
 
@@ -37,18 +38,60 @@ public final class TenantProvisioner {
     /**
      * Ensure the shared objects and this tenant's users/policy exist (idempotent). Returns the
      * riptide configuration stanza for the tenant's collector, referencing the same writer secret.
+     *
+     * <p>A pre-flight check verifies the database and {@code flows} table exist <em>before any
+     * statement runs</em>. If they are missing, the run fails unless {@code createSchema} is set —
+     * a typo'd database name must fail loudly, not silently provision a phantom database with the
+     * shared roles granted on it. The bootstrap statements are only <em>emitted</em> when actually
+     * creating: ClickHouse checks the {@code CREATE} privileges even when {@code IF NOT EXISTS}
+     * would no-op, and a least-privilege admin re-run (e.g. password rotation) must keep working.
      */
-    public String onboard(final TenantSpec spec) {
+    public OnboardResult onboard(final TenantSpec spec, final boolean createSchema, final int ttlDays) {
         final String writerPassword = resolve(spec.writerSecret());
         final String readerPassword = resolve(spec.readerSecret());
 
         final var statements = new ArrayList<String>();
+        final boolean bootstrap = !flowsTableExists(spec.database());
+        if (bootstrap) {
+            if (!createSchema) {
+                throw new ProvisioningException(
+                        "database '" + spec.database() + "' has no flows table — re-run with"
+                                + " --create-schema to bootstrap it, or check the --database value"
+                                + " for typos (an admin-provisioned table is also accepted)", null);
+            }
+            statements.addAll(ProvisioningDdl.bootstrapSchema(spec.database(), ttlDays));
+        }
         statements.addAll(ProvisioningDdl.ensureShared(spec.database(), spec.quotaBytes()));
         statements.addAll(ProvisioningDdl.onboardTenant(
                 spec.database(), spec.tenant(), spec.organisation(), writerPassword, readerPassword));
         execute(statements);
 
-        return configStanza(spec);
+        return new OnboardResult(configStanza(spec), bootstrap);
+    }
+
+    /**
+     * The config stanza plus whether this run created the schema — the caller needs the latter to
+     * warn when an explicitly requested {@code --ttl-days} was not applied (table pre-existed).
+     */
+    public record OnboardResult(String configStanza, boolean schemaBootstrapped) {
+    }
+
+    /**
+     * Pre-flight existence check. {@code EXISTS DATABASE} is queried first — {@code EXISTS TABLE}
+     * against a nonexistent database can raise {@code UNKNOWN_DATABASE} rather than returning 0.
+     */
+    private boolean flowsTableExists(final String database) {
+        return exists("EXISTS DATABASE " + ProvisioningDdl.ident(database))
+                && exists("EXISTS TABLE " + FlowsSchema.qualifiedFlows(database));
+    }
+
+    private boolean exists(final String sql) {
+        try {
+            // EXISTS returns a single UInt8 column named "result".
+            return this.admin.queryAll(sql).getFirst().getLong("result") == 1;
+        } catch (final Exception e) {
+            throw new ProvisioningException("Pre-flight schema check failed: " + sql, e);
+        }
     }
 
     /** Drop the tenant's users and row policy; the shared roles/constraints/quota are left intact. */
