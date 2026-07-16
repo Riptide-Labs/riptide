@@ -59,8 +59,10 @@ for filtering. All four are riptide-populated columns.
 
 - The `SQL_` custom-settings prefix enabled (write-barrier requirement) — see the
   [server requirement](../configuration/clickhouse.md#server-requirement).
-- The `flows` table provisioned by an admin, with riptide running in
-  [validate mode](../configuration/clickhouse.md#schema-ownership) (`manage-schema=false`).
+- Riptide running in [validate mode](../configuration/clickhouse.md#schema-ownership)
+  (`manage-schema=false`). The `flows` schema itself needs no manual step — `onboard` creates the
+  database and `flows` table (see [What it provisions](#what-it-provisions)) before it grants and
+  constrains them.
 
 ## Onboard a tenant
 
@@ -96,12 +98,16 @@ row policy; the shared roles/constraints/quota stay).
 
 ### What it provisions
 
-The recipe is **role-based**: the grants, the reader hardening, the CHECK barrier, and the quota are
-one-time objects, so per-tenant reduces to the scoped users + role grants + one literal row policy.
-`onboard` ensures the one-time objects on first run and adds the per-tenant part:
+The recipe is **role-based**: the schema, the grants, the reader hardening, the CHECK barrier, and
+the quota are one-time objects, so per-tenant reduces to the scoped users + role grants + one literal
+row policy. `onboard` ensures the one-time objects on first run and adds the per-tenant part:
 
 ```sql
--- Once per cluster (idempotent): roles carry every per-tenant grant and the reader hardening.
+-- Once per cluster (idempotent): onboard first creates the schema it depends on, so a fresh
+-- provisioned database needs no manual step. IF NOT EXISTS leaves an existing table untouched.
+CREATE DATABASE IF NOT EXISTS riptide;
+CREATE TABLE IF NOT EXISTS riptide.flows (…);  -- full column definition — see the ClickHouse deployment docs
+-- Roles carry every per-tenant grant and the reader hardening.
 CREATE ROLE IF NOT EXISTS flow_writer;
 GRANT INSERT ON riptide.flows TO flow_writer;
 CREATE ROLE IF NOT EXISTS flow_reader;
