@@ -14,6 +14,7 @@ import org.riptide.flows.listeners.UdpParser;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.OptionListener;
+import org.riptide.flows.parser.session.TransactionalSession;
 import org.riptide.flows.parser.session.UdpSessionManager;
 import org.riptide.pipeline.Identity;
 import org.riptide.pipeline.Source;
@@ -73,18 +74,28 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
         this.packetsReceived.mark();
 
         final UdpSessionManager.SessionKey sessionKey = this.buildSessionKey(remoteAddress, localAddress);
-        final Session session = this.sessionManager.getSession(sessionKey);
+        final TransactionalSession session = new TransactionalSession(this.sessionManager.getSession(sessionKey));
 
+        final FlowPacket parsed;
         try {
-            final var parsed = this.parse(session, buffer);
-            LOG.trace("Parsed packet: {}", parsed);
-
-            return this.transmit(receivedAt, parsed, session);
+            parsed = this.parse(session, buffer);
         } catch (Exception e) {
-            this.sessionManager.drop(sessionKey);
+            // Discard the malformed message only (RFC 7011 §10.3) — NOT the whole session.
+            // Dropping the session here discarded the exporter's templates and sequence state, so
+            // a single corrupt packet made all subsequent valid packets unparseable until the
+            // exporter re-sent its templates (observed against a buggy pmacct nfprobe exporter,
+            // #273). The rollback removes only what THIS packet taught us: packets install
+            // templates set-by-set while parsing, so a mis-framed packet may have committed a
+            // garbage template before a later set threw — retaining it would silently mis-decode
+            // subsequent data sets. Deliberately scoped to the parse phase: a transmit/dispatch
+            // failure below says nothing about the packet's templates.
+            session.rollback();
             this.parserErrors.inc();
             throw e;
         }
+        LOG.trace("Parsed packet: {}", parsed);
+
+        return this.transmit(receivedAt, parsed, session);
     }
 
     /** Must be set before {@link #start}; the session manager is built there. */

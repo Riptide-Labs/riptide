@@ -72,11 +72,6 @@ public class UdpSessionManager {
         return new UdpSession(sessionKey);
     }
 
-    public void drop(final SessionKey sessionKey) {
-        removeTemplateIf(e -> Objects.equals(e.getKey().observationDomainId.sessionKey, sessionKey));
-        this.sequenceNumbers.keySet().removeIf(key -> Objects.equals(key.sessionKey(), sessionKey));
-    }
-
     public int count() {
         return this.templates.size();
     }

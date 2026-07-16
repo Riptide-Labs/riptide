@@ -218,7 +218,7 @@ public class UdpSessionManagerTest {
     }
 
     @Test
-    public void housekeepingAndDropEvictSequenceTrackers() throws Exception {
+    public void housekeepingEvictsSequenceTrackers() throws Exception {
         final var sessionKey = new Netflow9UdpParser.SessionKey(remoteAddress1.getAddress(), localAddress1);
         final var manager = new UdpSessionManager(Duration.ofMinutes(0), () -> new SequenceNumberTracker(32));
         final var identity = new ExporterIdentity.Sflow(InetAddress.getByName("10.0.0.1"), 0);
@@ -226,11 +226,6 @@ public class UdpSessionManagerTest {
         manager.getSession(sessionKey).verifySequenceNumber(identity, 1, 1);
         assertThat(manager.sequenceTrackerCount()).isEqualTo(1);
         manager.doHousekeeping();
-        assertThat(manager.sequenceTrackerCount()).isZero();
-
-        manager.getSession(sessionKey).verifySequenceNumber(identity, 2, 1);
-        assertThat(manager.sequenceTrackerCount()).isEqualTo(1);
-        manager.drop(sessionKey);
         assertThat(manager.sequenceTrackerCount()).isZero();
     }
 
