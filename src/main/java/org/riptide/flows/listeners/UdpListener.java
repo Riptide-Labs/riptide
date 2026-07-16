@@ -9,6 +9,7 @@ import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import io.netty.bootstrap.Bootstrap;
+import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -29,6 +30,7 @@ import org.slf4j.LoggerFactory;
 import java.net.InetSocketAddress;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 
 public class UdpListener implements Listener {
     private static final Logger LOG = LoggerFactory.getLogger(UdpListener.class);
@@ -137,11 +139,13 @@ public class UdpListener implements Listener {
             // Call the parser
             ch.pipeline().addLast(new SingleDatagramPacketParserHandler(UdpListener.this.parser));
 
-            // Add error handling
+            // Backstop for channel-level errors. Parse errors never reach this: the parser handler
+            // logs them itself (with the sender address), so anything landing here is a pipeline
+            // or I/O fault — label it as such, not as a bad packet.
             ch.pipeline().addLast(new ChannelInboundHandlerAdapter() {
                 @Override
                 public void exceptionCaught(final ChannelHandlerContext ctx, final Throwable cause) throws Exception {
-                    LOG.warn("Invalid packet: {}", cause.getMessage());
+                    LOG.warn("Unexpected error in UDP listener pipeline: {}", cause.toString());
                     LOG.debug("", cause);
                 }
             });
@@ -156,28 +160,54 @@ public class UdpListener implements Listener {
         }
     }
 
-    // Invokes parse of the provided parsers and also adds some error handling
-    private static final class SingleDatagramPacketParserHandler extends SimpleChannelInboundHandler<DatagramPacket> {
+    // Invokes parse of the provided parsers and also adds some error handling.
+    // Package-visible for the buffer-lifecycle test (UdpListenerReleaseTest).
+    static final class SingleDatagramPacketParserHandler extends SimpleChannelInboundHandler<DatagramPacket> {
 
         final UdpParser parser;
 
-        private SingleDatagramPacketParserHandler(UdpParser parser) {
+        SingleDatagramPacketParserHandler(UdpParser parser) {
             this.parser = parser;
         }
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, DatagramPacket msg) throws Exception {
-            parser.parse(
-                    Instant.now(),
-                    ReferenceCountUtil.retain(msg.content()),
-                    msg.sender(), msg.recipient()
-            ).handle((result, ex) -> {
-                ReferenceCountUtil.release(msg.content());
+            final InetSocketAddress sender = msg.sender();
+            final ByteBuf content = ReferenceCountUtil.retain(msg.content());
+            CompletableFuture<?> future;
+            try {
+                future = parser.parse(Instant.now(), content, sender, msg.recipient());
+            } catch (final Throwable e) {
+                // Parse errors surface synchronously (and pathological packets can raise Errors) —
+                // normalize into the future so the release below is the one and only path. Before
+                // this, the retained buffer leaked once per malformed packet (#273).
+                future = CompletableFuture.failedFuture(e);
+            }
+            if (future == null) {
+                // A dispatching parser returns null for packets no sub-parser handles.
+                ReferenceCountUtil.release(content);
+                return;
+            }
+            future.whenComplete((result, ex) -> {
+                ReferenceCountUtil.release(content);
                 if (ex != null) {
-                    ctx.fireExceptionCaught(ex);
+                    logInvalidPacket(sender, ex);
                 }
-                return result;
             });
+        }
+
+        // Logged here rather than via fireExceptionCaught: only this handler knows the sender,
+        // and with several exporters on one listener the address is what makes the log actionable.
+        private static void logInvalidPacket(final InetSocketAddress sender, final Throwable cause) {
+            // Async stages wrap failures in CompletionException; unwrap for a clean message.
+            final Throwable root = cause instanceof java.util.concurrent.CompletionException && cause.getCause() != null
+                    ? cause.getCause() : cause;
+            // InvalidPacketException messages carry a multi-KB hex dump after the first line — keep
+            // the WARN to the summary line; the full dump and stack trace are available at DEBUG.
+            final String message = String.valueOf(root.getMessage());
+            final int newline = message.indexOf('\n');
+            LOG.warn("Invalid packet from {}: {}", sender, newline > 0 ? message.substring(0, newline) : message);
+            LOG.debug("Invalid packet from {}:", sender, root);
         }
     }
 
