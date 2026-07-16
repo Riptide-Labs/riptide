@@ -7,6 +7,9 @@ on:
   workflow_dispatch:
   push:
     branches: [ 'main' ]
+    # release tags redeploy so the version resolved from the highest v* tag stays
+    # current (path filters are not evaluated for tag pushes)
+    tags: [ 'v*' ]
     paths: [ 'docs/**', '.github/workflows/docs.yml', 'Makefile' ]
   pull_request:
     branches: [ 'main' ]
