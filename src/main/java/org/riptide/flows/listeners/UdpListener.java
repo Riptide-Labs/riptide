@@ -188,7 +188,7 @@ public class UdpListener implements Listener {
                 ReferenceCountUtil.release(content);
                 return;
             }
-            future.whenComplete((result, ex) -> {
+            future.whenComplete((_, ex) -> {
                 ReferenceCountUtil.release(content);
                 if (ex != null) {
                     logInvalidPacket(sender, ex);

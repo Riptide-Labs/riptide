@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
 import java.time.Instant;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
 
@@ -30,26 +31,26 @@ class UdpListenerReleaseTest {
 
     @Test
     void releasesBufferWhenParseThrowsSynchronously() {
-        assertFullyReleased(parser((receivedAt, buffer, remote, local) -> {
+        assertFullyReleased(parser(() -> {
             throw new IllegalArgumentException("Invalid set ID: 0");
         }));
     }
 
     @Test
     void releasesBufferWhenParseFailsAsynchronously() {
-        assertFullyReleased(parser((receivedAt, buffer, remote, local) ->
+        assertFullyReleased(parser(() ->
                 CompletableFuture.failedFuture(new IllegalStateException("dispatch failed"))));
     }
 
     @Test
     void releasesBufferOnSuccess() {
-        assertFullyReleased(parser((receivedAt, buffer, remote, local) ->
+        assertFullyReleased(parser(() ->
                 CompletableFuture.completedFuture(null)));
     }
 
     @Test
     void releasesBufferWhenParseThrowsAnError() {
-        assertFullyReleased(parser((receivedAt, buffer, remote, local) -> {
+        assertFullyReleased(parser(() -> {
             throw new StackOverflowError();
         }));
     }
@@ -57,7 +58,7 @@ class UdpListenerReleaseTest {
     @Test
     void releasesBufferWhenNoParserHandlesThePacket() {
         // A dispatching parser returns null for packets no sub-parser handles.
-        assertFullyReleased(parser((receivedAt, buffer, remote, local) -> null));
+        assertFullyReleased(parser(() -> null));
     }
 
     private static void assertFullyReleased(final UdpParser parser) {
@@ -75,19 +76,14 @@ class UdpListenerReleaseTest {
         channel.finishAndReleaseAll();
     }
 
-    @FunctionalInterface
-    private interface ParseCall {
-        CompletableFuture<?> parse(Instant receivedAt, ByteBuf buffer,
-                                   InetSocketAddress remote, InetSocketAddress local) throws Exception;
-    }
-
-    private static UdpParser parser(final ParseCall call) {
+    // no test stub ever looks at the parse arguments — a Callable models the outcome directly
+    private static UdpParser parser(final Callable<CompletableFuture<?>> call) {
         return new UdpParser() {
             @Override
             public CompletableFuture<?> parse(final Instant receivedAt, final ByteBuf buffer,
                                               final InetSocketAddress remoteAddress,
                                               final InetSocketAddress localAddress) throws Exception {
-                return call.parse(receivedAt, buffer, remoteAddress, localAddress);
+                return call.call();
             }
 
             @Override
