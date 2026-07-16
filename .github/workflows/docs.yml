@@ -18,6 +18,12 @@ on:
 permissions:
   contents: read
 
+# a release tag and a docs-touching main push can arrive together — serialize
+# deployments to the single github-pages environment instead of failing one
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
