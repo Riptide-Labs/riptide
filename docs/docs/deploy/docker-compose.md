@@ -23,6 +23,21 @@ This starts, from `ghcr.io/riptide-labs/riptide:latest`:
 | ch-ui | [`:5521`](http://localhost:5521) | browse the `riptide.flows` table |
 | grafana | [`:3000`](http://localhost:3000) | dashboards (ClickHouse datasource provisioned) |
 
+Grafana (admin/admin) ships two provisioned dashboards backed by the `flows` table and the
+`samples` bucket-expansion view:
+
+- **Riptide - Top 10**: stacked top-10 rate panels (AS, hosts, applications, services, protocols,
+  exporters, interfaces) plus a source-AS statistics table with a 95th-percentile column.
+- **Riptide - Traffic Paths (Sankey)**: Kentik-style path diagrams (source AS → ingress
+  interface → application → destination AS, and more), weighted by bytes over the selected range.
+
+The JSON sources live in `deployment/clickhouse/container-fs/grafana/provisioning/dashboards/`.
+UI edits last only until the provisioned JSON changes — use *Save as* to keep a customized copy.
+Both dashboards are deployment-neutral: a **Datasource** variable selects the ClickHouse
+connection and a **Database** variable (auto-populated from databases containing a `flows` table)
+selects the riptide database, so they import into any external Grafana without a specifically
+named or `defaultDatabase`-pinned datasource.
+
 Point a NetFlow v5/v9 or IPFIX exporter at UDP `9999` and watch rows arrive in
 `riptide.flows` via ch-ui. Configure [receivers](../configuration/receivers.md) and
 [nodes](../configuration/nodes-and-snmp.md) through environment variables in the compose

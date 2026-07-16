@@ -1,8 +1,12 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
 ---
 apiVersion: 1
 
 datasources:
   - name: ClickHouse
+    # Stable uid so provisioned dashboards can reference this datasource.
+    uid: riptide-clickhouse
     type: grafana-clickhouse-datasource
     jsonData:
       defaultDatabase: riptide
