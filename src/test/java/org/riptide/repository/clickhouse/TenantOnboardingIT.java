@@ -27,8 +27,10 @@ import java.util.List;
 import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
 
 /**
- * The {@code onboard}/{@code offboard} subcommands, proven end to end against a real ClickHouse. The
- * admin provisions the base {@code flows} table (as in production), then the CLI is driven exactly
+ * The {@code onboard}/{@code offboard} subcommands, proven end to end against a real ClickHouse.
+ * Onboarding runs against a fresh, empty database — {@code onboard} provisions the {@code flows}
+ * table itself (issue #246; the collector only validates in {@code manage-schema=false} mode) before
+ * it can grant and constrain it. Then the CLI is driven exactly
  * as an operator would: {@code onboard} a tenant, and the resulting scoped credentials must satisfy
  * the full isolation matrix — honest write persists, cross-tenant write is rejected (469), the
  * reader sees only its tenant and cannot write/DDL — and {@code offboard} must revoke access.
@@ -54,11 +56,11 @@ public class TenantOnboardingIT {
     private static Client admin;
 
     @BeforeAll
-    static void createBaseTable() throws Exception {
+    static void createDatabase() throws Exception {
         admin = new Client.Builder().addEndpoint(endpoint()).setUsername("default").setPassword("").build();
+        // Only the empty database exists up front — no flows table. onboard must create the table
+        // itself before it can grant/constrain it, which is exactly the bootstrap #246 adds.
         admin.execute("CREATE DATABASE IF NOT EXISTS " + DATABASE).get();
-        // The flows table is admin-owned (manage mode), as it would be before any tenant onboards.
-        new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), adminConfig(), RESOLVERS).start();
     }
 
     @Test
@@ -182,15 +184,6 @@ public class TenantOnboardingIT {
                 .setPassword(password)
                 .setDefaultDatabase(DATABASE)
                 .build();
-    }
-
-    private static ClickhouseConfig adminConfig() {
-        final var config = new ClickhouseConfig();
-        config.setEndpoint(endpoint());
-        config.setUsername(SecretRef.of("default"));
-        config.setDatabase(DATABASE);
-        config.setManageSchema(true);
-        return config;
     }
 
     private static PrintStream discard() {

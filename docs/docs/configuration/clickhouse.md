@@ -46,10 +46,12 @@ riptide.clickhouse.password=vault://secret/riptide/clickhouse/acme#password
   the `samples` view with `CREATE OR REPLACE VIEW` (a view holds no data, so it is always
   refreshed and can never go stale). A fresh install is created; a restart keeps the data — so
   **flow data now survives a Riptide restart**.
-- **`false` (provisioned / multi-tenant)** — riptide creates nothing. It validates that the
+- **`false` (provisioned / multi-tenant)** — the collector creates nothing. It validates that the
   `flows` table exists and carries every column it inserts and **fails startup with a clear,
   provisioning-pointing error** if it does not. Use this when an admin owns the schema and
-  RBAC and each riptide process is a narrowly-scoped writer that only uses the table.
+  RBAC and each riptide process is a narrowly-scoped writer that only uses the table. The admin-side
+  [`onboard` subcommand](../deploy/multi-tenancy.md#what-it-provisions) creates the database and
+  `flows` table as part of provisioning, so this mode needs no separate manual schema step.
 
 In both modes, startup verifies the `flows` table is present and carries every column riptide
 inserts (including the `tenant`/`organisation`/`zone`/`system` identity columns) by reading the

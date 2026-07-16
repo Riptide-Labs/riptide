@@ -41,6 +41,37 @@ class ProvisioningDdlTest {
     }
 
     @Test
+    void ensureSharedCreatesSchemaBeforeGrantingOrConstrainingIt() {
+        final List<String> sql = ProvisioningDdl.ensureShared("riptide", 50_000_000_000L);
+        // The database and flows table are created first — the GRANT INSERT and ALTER … ADD
+        // CONSTRAINT below require the table to exist, so a fresh provisioned database is onboardable.
+        assertThat(sql.get(0)).isEqualTo("CREATE DATABASE IF NOT EXISTS `riptide`");
+        assertThat(sql.get(1).strip()).startsWith("CREATE TABLE IF NOT EXISTS `riptide`.flows (");
+
+        final int createTable = 1;
+        final int firstGrantOnFlows = indexOfFirst(sql, s -> s.startsWith("GRANT INSERT ON `riptide`.flows"));
+        final int firstAlterTable = indexOfFirst(sql, s -> s.startsWith("ALTER TABLE `riptide`.flows"));
+        assertThat(createTable).isLessThan(firstGrantOnFlows).isLessThan(firstAlterTable);
+    }
+
+    @Test
+    void ensureSharedDoesNotCreateTheSamplesView() {
+        // In provisioned mode flow_reader is not granted SELECT on samples, so onboard must not
+        // create the (inert, unqueryable) view — it stays a manage-mode-only convenience.
+        assertThat(ProvisioningDdl.ensureShared("riptide", 50_000_000_000L))
+                .noneMatch(s -> s.contains("samples"));
+    }
+
+    private static int indexOfFirst(final List<String> statements, final java.util.function.Predicate<String> match) {
+        for (int i = 0; i < statements.size(); i++) {
+            if (match.test(statements.get(i))) {
+                return i;
+            }
+        }
+        throw new AssertionError("no statement matched");
+    }
+
+    @Test
     void onboardTenantScopesUsersPolicyWithEscapedPassword() {
         final List<String> sql = ProvisioningDdl.onboardTenant("riptide", "acme", "acme-eu", "p'w", "r'w");
         assertThat(sql).hasSize(7);
