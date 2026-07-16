@@ -30,6 +30,31 @@
         "multi": false
       },
       {
+        "name": "database",
+        "label": "Database",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT DISTINCT database FROM system.tables WHERE name = 'flows'"
+        },
+        "refresh": 1,
+        "includeAll": false,
+        "multi": false,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": "riptide",
+          "value": "riptide"
+        },
+        "definition": "SELECT DISTINCT database FROM system.tables WHERE name = 'flows'"
+      },
+      {
         "name": "limit",
         "label": "Paths",
         "type": "custom",
@@ -54,7 +79,7 @@
         "query": {
           "editorType": "sql",
           "format": 1,
-          "rawSql": "SELECT DISTINCT tenant FROM flows ORDER BY tenant",
+          "rawSql": "SELECT DISTINCT tenant FROM ${database}.flows ORDER BY tenant",
           "queryType": "table"
         },
         "refresh": 1,
@@ -70,7 +95,7 @@
             "$__all"
           ]
         },
-        "definition": "SELECT DISTINCT tenant FROM flows ORDER BY tenant"
+        "definition": "SELECT DISTINCT tenant FROM ${database}.flows ORDER BY tenant"
       },
       {
         "name": "zone",
@@ -83,7 +108,7 @@
         "query": {
           "editorType": "sql",
           "format": 1,
-          "rawSql": "SELECT DISTINCT zone FROM flows ORDER BY zone",
+          "rawSql": "SELECT DISTINCT zone FROM ${database}.flows ORDER BY zone",
           "queryType": "table"
         },
         "refresh": 1,
@@ -99,7 +124,7 @@
             "$__all"
           ]
         },
-        "definition": "SELECT DISTINCT zone FROM flows ORDER BY zone"
+        "definition": "SELECT DISTINCT zone FROM ${database}.flows ORDER BY zone"
       },
       {
         "name": "locality",
@@ -148,7 +173,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown')) AS \"Source AS\",\n       concat(exporterAddr, ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp))), if(inputSnmpIfAlias IS NULL, '', concat(' (', inputSnmpIfAlias, ')'))) AS \"Ingress\",\n       ifNull(application, 'unclassified') AS \"Application\",\n       concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')) AS \"Destination AS\",\n       sum(bytes) AS \"Bytes\"\nFROM flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source AS\", \"Ingress\", \"Application\", \"Destination AS\"\nORDER BY \"Bytes\" DESC\nLIMIT $limit",
+          "rawSql": "SELECT concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown')) AS \"Source AS\",\n       concat(exporterAddr, ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp))), if(inputSnmpIfAlias IS NULL, '', concat(' (', inputSnmpIfAlias, ')'))) AS \"Ingress\",\n       ifNull(application, 'unclassified') AS \"Application\",\n       concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')) AS \"Destination AS\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source AS\", \"Ingress\", \"Application\", \"Destination AS\"\nORDER BY \"Bytes\" DESC\nLIMIT $limit",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -186,7 +211,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', '')) AS \"Source\",\n       concat(transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))), '/', toString(dstPort)) AS \"Service\",\n       ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')) AS \"Destination\",\n       sum(bytes) AS \"Bytes\"\nFROM flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source\", \"Service\", \"Destination\"\nORDER BY \"Bytes\" DESC\nLIMIT $limit",
+          "rawSql": "SELECT ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', '')) AS \"Source\",\n       concat(transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))), '/', toString(dstPort)) AS \"Service\",\n       ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')) AS \"Destination\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source\", \"Service\", \"Destination\"\nORDER BY \"Bytes\" DESC\nLIMIT $limit",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -224,7 +249,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT tenant AS \"Tenant\",\n       zone AS \"Zone\",\n       ifNull(application, 'unclassified') AS \"Application\",\n       sum(bytes) AS \"Bytes\"\nFROM flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Tenant\", \"Zone\", \"Application\"\nORDER BY \"Bytes\" DESC\nLIMIT $limit",
+          "rawSql": "SELECT tenant AS \"Tenant\",\n       zone AS \"Zone\",\n       ifNull(application, 'unclassified') AS \"Application\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Tenant\", \"Zone\", \"Application\"\nORDER BY \"Bytes\" DESC\nLIMIT $limit",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
