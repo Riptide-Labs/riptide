@@ -37,7 +37,8 @@ import static org.mockito.Mockito.when;
         "riptide.nodes.test-agent.snmp.community=" + TestSnmpAgent.COMMUNITY,
         // enrichment-ladder per-field pin: static alias overrides SNMP, rest is live
         "riptide.nodes.test-agent.interfaces.1.alias=Uplink pinned by file",
-        "riptide.snmp.cache.retentionMs=4242"
+        "riptide.snmp.cache.retentionMs=4242",
+        "riptide.snmp.cache.negativeRetentionMs=2121"
 })
 public class SnmpEnricherTest {
 
@@ -168,6 +169,38 @@ public class SnmpEnricherTest {
     public void cacheRetentionBindsFromProperties(@Autowired final SnmpCacheConfig cacheConfig) {
         // regression: a bare public field never binds — both caches then run at 0 ms TTL
         assertThat(cacheConfig.getRetentionMs()).isEqualTo(4242);
+        assertThat(cacheConfig.getNegativeRetentionMs()).isEqualTo(2121);
+    }
+
+    @Test
+    public void unknownIfIndexZeroSkipsTheWholeLadder() throws Exception {
+        // single-direction exporters (e.g. pmacct nfprobe) emit ifIndex 0 on the untagged
+        // side of every flow — that must not hit SNMP at all
+        final SnmpService snmpService = Mockito.mock(SnmpService.class);
+
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(snmpService, this.nodeRegistry, emptyInterfaceTable()));
+        final var repository = new TestRepository(metricRegistry);
+        final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
+
+        final Flow flow = Mockito.mock(Flow.class);
+        when(flow.getSrcAddr()).thenReturn(InetAddress.getByName("10.10.10.10"));
+        when(flow.getDstAddr()).thenReturn(InetAddress.getByName("10.20.20.10"));
+        when(flow.getInputSnmp()).thenReturn(0);
+        when(flow.getOutputSnmp()).thenReturn(0);
+
+        final var source = new Source("here", InetAddress.getByName("127.0.0.1"));
+
+        pipeline.process(source, List.of(flow));
+
+        Mockito.verifyNoInteractions(snmpService);
+        assertThat(repository.flows()).allSatisfy(enrichedFlow -> {
+            assertThat(enrichedFlow.getInputSnmpIfName()).isNull();
+            assertThat(enrichedFlow.getInputSnmpIfAlias()).isNull();
+            assertThat(enrichedFlow.getInputSnmpIfSpeed()).isNull();
+            assertThat(enrichedFlow.getOutputSnmpIfName()).isNull();
+            assertThat(enrichedFlow.getOutputSnmpIfAlias()).isNull();
+            assertThat(enrichedFlow.getOutputSnmpIfSpeed()).isNull();
+        });
     }
 
     private static ExporterInterfaceTable emptyInterfaceTable() {

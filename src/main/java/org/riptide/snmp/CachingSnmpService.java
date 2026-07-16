@@ -32,22 +32,37 @@ public class CachingSnmpService implements SnmpService {
     // ifIndex reassignment after device reboots (RFC 2863).
     private final Cache<Tuple<InetSocketAddress, Integer>, Optional<IfInfo>> ifIndexCache;
 
+    // Misses are cached separately with their own (shorter) TTL: every delegate miss is a
+    // full table walk against the device, so an ifIndex that stays unresolvable must cost
+    // one walk per TTL, not one per flow. Separate cache because Guava has no per-entry TTL.
+    private final Cache<Tuple<InetSocketAddress, Integer>, Boolean> missCache;
+
     public CachingSnmpService(final SnmpService delegate, final SnmpCacheConfig cacheConfig) {
         this.delegate = Objects.requireNonNull(delegate);
         this.cacheConfig = Objects.requireNonNull(cacheConfig);
         ifIndexCache = CacheBuilder.newBuilder()
                 .expireAfterWrite(Duration.ofMillis(cacheConfig.getRetentionMs()))
                 .build();
+        missCache = CacheBuilder.newBuilder()
+                .expireAfterWrite(Duration.ofMillis(cacheConfig.getNegativeRetentionMs()))
+                // unlike ifIndexCache (bounded by real interfaces), misses are attacker-shaped:
+                // a rogue exporter spraying distinct ifIndexes must not grow the heap
+                .maximumSize(10_000)
+                .build();
     }
 
     /** Config hot-reload hook: changed nodes may mean changed endpoints or credentials. */
     public void invalidateAll() {
         this.ifIndexCache.invalidateAll();
+        this.missCache.invalidateAll();
     }
 
     @Override
     public Optional<IfInfo> getIfInfo(final SnmpEndpoint snmpEndpoint, final int ifIndex) {
         final var key = Tuple.of(snmpEndpoint.getInetSocketAddress(), ifIndex);
+        if (this.missCache.getIfPresent(key) != null) {
+            return Optional.empty();
+        }
         final Optional<IfInfo> ifInfo;
         try {
             ifInfo = ifIndexCache.get(key, () -> this.delegate.getIfInfo(snmpEndpoint, ifIndex));
@@ -57,6 +72,7 @@ public class CachingSnmpService implements SnmpService {
         }
         if (ifInfo.isEmpty()) {
             ifIndexCache.invalidate(key);
+            missCache.put(key, Boolean.TRUE);
             log.warn("Cannot determine interface info for ifIndex {} for endpoint {}", ifIndex, snmpEndpoint);
         }
         return ifInfo;
