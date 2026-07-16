@@ -21,4 +21,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public class SnmpCacheConfig {
 
     private long retentionMs = 600_000;
+
+    /**
+     * TTL for cached lookup misses. Bounds the cost of an ifIndex that stays
+     * unresolvable (absent from the agent's IF-MIB, or an unreachable agent) to one
+     * table walk per TTL instead of one per flow. 0 disables negative caching.
+     */
+    private long negativeRetentionMs = 60_000;
 }

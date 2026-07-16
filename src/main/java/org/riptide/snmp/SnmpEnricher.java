@@ -66,7 +66,13 @@ public class SnmpEnricher implements Enricher {
     }
 
     private void apply(final Optional<Node> node, final Optional<SnmpEndpoint> snmpEndpoint, final Source source,
-                       final int ifIndex, final Consumer<IfInfo> setter) {
+                       final Integer ifIndex, final Consumer<IfInfo> setter) {
+        // ifIndex 0 is the NetFlow/IPFIX "unknown interface" marker (valid indexes start at 1,
+        // RFC 2863) — exporters tagging a single direction emit it on every flow, and no rung
+        // of the ladder can ever resolve it
+        if (ifIndex == null || ifIndex <= 0) {
+            return;
+        }
         final IfInfo pinned = node
                 .map(n -> n.definition().getInterfaces().get(ifIndex))
                 .orElse(null);
