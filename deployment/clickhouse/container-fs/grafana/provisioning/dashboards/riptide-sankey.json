@@ -18,6 +18,18 @@
   "templating": {
     "list": [
       {
+        "name": "datasource",
+        "label": "Datasource",
+        "type": "datasource",
+        "query": "grafana-clickhouse-datasource",
+        "refresh": 1,
+        "hide": 0,
+        "current": {},
+        "options": [],
+        "includeAll": false,
+        "multi": false
+      },
+      {
         "name": "limit",
         "label": "Paths",
         "type": "custom",
@@ -37,7 +49,7 @@
         "type": "query",
         "datasource": {
           "type": "grafana-clickhouse-datasource",
-          "uid": "riptide-clickhouse"
+          "uid": "${datasource}"
         },
         "query": {
           "editorType": "sql",
@@ -66,7 +78,7 @@
         "type": "query",
         "datasource": {
           "type": "grafana-clickhouse-datasource",
-          "uid": "riptide-clickhouse"
+          "uid": "${datasource}"
         },
         "query": {
           "editorType": "sql",
@@ -112,7 +124,7 @@
       "title": "Traffic paths: Source AS - Ingress interface - Application - Destination AS",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
-        "uid": "riptide-clickhouse"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 13,
@@ -131,7 +143,7 @@
         {
           "datasource": {
             "type": "grafana-clickhouse-datasource",
-            "uid": "riptide-clickhouse"
+            "uid": "${datasource}"
           },
           "editorType": "sql",
           "format": 1,
@@ -150,7 +162,7 @@
       "title": "Conversations: Source host - Service - Destination host",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
-        "uid": "riptide-clickhouse"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 13,
@@ -169,7 +181,7 @@
         {
           "datasource": {
             "type": "grafana-clickhouse-datasource",
-            "uid": "riptide-clickhouse"
+            "uid": "${datasource}"
           },
           "editorType": "sql",
           "format": 1,
@@ -188,7 +200,7 @@
       "title": "Tenancy: Tenant - Zone - Application",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
-        "uid": "riptide-clickhouse"
+        "uid": "${datasource}"
       },
       "gridPos": {
         "h": 10,
@@ -207,7 +219,7 @@
         {
           "datasource": {
             "type": "grafana-clickhouse-datasource",
-            "uid": "riptide-clickhouse"
+            "uid": "${datasource}"
           },
           "editorType": "sql",
           "format": 1,

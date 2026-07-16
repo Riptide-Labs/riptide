@@ -33,8 +33,10 @@ Grafana (admin/admin) ships two provisioned dashboards backed by the `flows` tab
 
 The JSON sources live in `deployment/clickhouse/container-fs/grafana/provisioning/dashboards/`.
 UI edits last only until the provisioned JSON changes — use *Save as* to keep a customized copy.
-The dashboards query the `riptide` database (the datasource's `defaultDatabase`); if you change
-`riptide.clickhouse.database`, adjust the provisioned datasource to match.
+Both dashboards select their ClickHouse connection through a **Datasource** variable, so they can
+also be imported into an external Grafana — any `grafana-clickhouse-datasource` whose
+`defaultDatabase` points at the riptide database works (if you change
+`riptide.clickhouse.database`, adjust the datasource to match).
 
 Point a NetFlow v5/v9 or IPFIX exporter at UDP `9999` and watch rows arrive in
 `riptide.flows` via ch-ui. Configure [receivers](../configuration/receivers.md) and
