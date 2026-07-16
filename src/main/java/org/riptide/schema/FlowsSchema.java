@@ -197,9 +197,17 @@ public final class FlowsSchema {
         WITH
             toInt64({ival:Int64} * 1e9) AS interval_ns,
 
-            -- Find first and last absolute bucket numbers
-            toUInt64(toUnixTimestamp64Nano(deltaSwitched) / interval_ns) as first_bucket,
-            toUInt64(toUnixTimestamp64Nano(lastSwitched) / interval_ns) as last_bucket,
+            -- Find first and last absolute bucket numbers. Integer division is load-bearing:
+            -- Float64 '/' cannot represent nanosecond epochs exactly (ULP ~256ns), which would
+            -- absorb the boundary shift below. greatest() clamps corrupt flows with
+            -- lastSwitched < deltaSwitched to one bucket — unclamped, bucket_count wraps and
+            -- range() throws, poisoning every query over the view. The 1ns shift moves a flow
+            -- ending exactly on a bucket boundary into the preceding bucket instead of emitting
+            -- a spurious zero-contribution bucket.
+            toUInt64(intDiv(toUnixTimestamp64Nano(deltaSwitched), interval_ns)) as first_bucket,
+            toUInt64(intDiv(toUnixTimestamp64Nano(greatest(lastSwitched, deltaSwitched))
+                            - if(age('ns', deltaSwitched, lastSwitched) > 0, 1, 0),
+                            interval_ns)) as last_bucket,
 
             last_bucket - first_bucket + 1 as bucket_count,
 
@@ -225,15 +233,23 @@ public final class FlowsSchema {
 
                 -- Full buckets in between
                 ELSE 1.0
-                END AS bucket_fraction
+                END AS bucket_fraction,
+
+            -- Each bucket receives the flow's share proportional to the TIME spent in that bucket
+            -- (fraction of the interval, normalized by the flow duration), so bytes/packets are
+            -- conserved: summing over all buckets returns the flow's exact totals. Dividing by
+            -- bucket_count instead would under-report by duration/(ival * buckets) (issue #270).
+            -- The bucket_count = 1 branch is the division guard for zero-duration flows — do not
+            -- fold it into bucket_fraction.
+            if(bucket_count = 1, 1., bucket_fraction * interval_ns / flow_duration) AS bucket_share
 
         SELECT
             flow.*,
 
             fromUnixTimestamp64Nano((first_bucket + bucket) * interval_ns) AS timestamp,
 
-            bytes * bucket_fraction / toFloat64(bucket_count) as bytes,
-            packets * bucket_fraction / toFloat64(bucket_count) as packets
+            bytes * bucket_share as bytes,
+            packets * bucket_share as packets
 
         FROM @@flows@@ AS flow
         ARRAY JOIN buckets AS bucket
