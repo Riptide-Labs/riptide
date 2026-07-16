@@ -212,6 +212,8 @@ public class SnmpTest {
         final int port = getNextPort();
         final SnmpCacheConfig snmpCacheConfig = new SnmpCacheConfig();
         snmpCacheConfig.setRetentionMs(600000);
+        // negative caching off: this test exercises miss -> recovery without waiting for the TTL
+        snmpCacheConfig.setNegativeRetentionMs(0);
 
         final SnmpService snmpCache = new CachingSnmpService(new DefaultSnmpService(SECRET_RESOLVERS), snmpCacheConfig);
         final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.COMMUNITY);
@@ -234,5 +236,31 @@ public class SnmpTest {
         assertThat(snmpCache.getIfInfo(snmpEndpoint, 1).get().name()).isEqualTo("eth0");
         assertThat(snmpCache.getIfInfo(snmpEndpoint, 2)).isInstanceOf(Optional.class).isPresent();
         assertThat(snmpCache.getIfInfo(snmpEndpoint, 2).get().name()).isEqualTo("lo0");
+    }
+
+    @Test
+    public void missesAreNegativelyCachedToOneDelegateCallPerTtl() {
+        final SnmpCacheConfig snmpCacheConfig = new SnmpCacheConfig();
+        snmpCacheConfig.setRetentionMs(600000);
+        snmpCacheConfig.setNegativeRetentionMs(600000);
+
+        final AtomicInteger delegateCalls = new AtomicInteger();
+        final SnmpService alwaysMissing = (endpoint, ifIndex) -> {
+            delegateCalls.incrementAndGet();
+            return Optional.empty();
+        };
+        final CachingSnmpService snmpCache = new CachingSnmpService(alwaysMissing, snmpCacheConfig);
+        final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), getNextPort(), TestSnmpAgent.COMMUNITY);
+
+        // every delegate miss is a full table walk — repeated lookups must not repeat it
+        assertThat(snmpCache.getIfInfo(snmpEndpoint, 7)).isInstanceOf(Optional.class).isEmpty();
+        assertThat(snmpCache.getIfInfo(snmpEndpoint, 7)).isInstanceOf(Optional.class).isEmpty();
+        assertThat(snmpCache.getIfInfo(snmpEndpoint, 7)).isInstanceOf(Optional.class).isEmpty();
+        assertThat(delegateCalls.get()).isEqualTo(1);
+
+        // hot-reload invalidation clears the negative entries too
+        snmpCache.invalidateAll();
+        assertThat(snmpCache.getIfInfo(snmpEndpoint, 7)).isInstanceOf(Optional.class).isEmpty();
+        assertThat(delegateCalls.get()).isEqualTo(2);
     }
 }
