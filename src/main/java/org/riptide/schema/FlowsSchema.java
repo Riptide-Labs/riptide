@@ -97,7 +97,9 @@ public final class FlowsSchema {
     @Language("ClickHouse")
     private static final String FLOWS_TABLE = """
         CREATE TABLE IF NOT EXISTS @@flows@@ (
-            timestamp DateTime64(3),
+            -- Time columns pin the UTC timezone so the stored instants also display and parse in
+            -- UTC — the schema is timezone-explicit, not dependent on the server's local zone (#276).
+            timestamp DateTime64(3, 'UTC'),
 
             flowProtocol Enum8(
                 'NetflowV5' = 1,
@@ -112,11 +114,11 @@ public final class FlowsSchema {
             system String,
             exporterAddr String,
 
-            receivedAt DateTime64(9),
+            receivedAt DateTime64(9, 'UTC'),
 
-            firstSwitched DateTime64(9),
-            deltaSwitched DateTime64(9),
-            lastSwitched DateTime64(9),
+            firstSwitched DateTime64(9, 'UTC'),
+            deltaSwitched DateTime64(9, 'UTC'),
+            lastSwitched DateTime64(9, 'UTC'),
 
             inputSnmp UInt32,
             inputSnmpIfName Nullable(String),
