@@ -48,9 +48,9 @@ public final class ProvisioningDdl {
         final String flows = FlowsSchema.qualifiedFlows(database);
         final List<String> statements = new ArrayList<>();
         // Additive schema upgrades first (same precondition as the GRANTs below: the table
-        // exists). Emitted on every run so re-running onboard upgrades a pre-geo table in
+        // exists). Emitted on every run so re-running onboard upgrades a pre-existing table in
         // place; IF NOT EXISTS makes them no-ops everywhere else.
-        statements.addAll(FlowsSchema.addGeoColumns(database));
+        statements.addAll(FlowsSchema.addAdditiveColumns(database));
         statements.addAll(List.of(
                 "CREATE ROLE IF NOT EXISTS flow_writer",
                 "GRANT INSERT ON " + flows + " TO flow_writer",

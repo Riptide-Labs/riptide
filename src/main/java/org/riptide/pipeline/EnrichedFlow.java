@@ -81,6 +81,7 @@ public class EnrichedFlow {
     private String srcCity;
     private String dstCountry;
     private String dstCity;
+    private String exporterName;
 
     public Integer getDscp() {
         return getTos() != null ? getTos() >>> 2 : null;
@@ -113,6 +114,7 @@ public class EnrichedFlow {
         @Mapping(target = "srcCity", ignore = true)
         @Mapping(target = "dstCountry", ignore = true)
         @Mapping(target = "dstCity", ignore = true)
+        @Mapping(target = "exporterName", ignore = true)
 
         @Mapping(target = ".", source = "source")
         @Mapping(target = ".", source = "flow")
