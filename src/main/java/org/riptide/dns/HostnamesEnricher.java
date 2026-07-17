@@ -13,6 +13,7 @@ import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Source;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.util.Objects;
@@ -23,6 +24,7 @@ import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 @Component
+@Order(org.riptide.pipeline.EnricherOrder.HOSTNAMES)
 @Slf4j
 @ConditionalOnProperty(name = "riptide.enricher.hostnames.enabled", havingValue = "true", matchIfMissing = true)
 @Import(NettyDnsConfiguration.class)

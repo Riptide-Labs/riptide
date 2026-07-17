@@ -199,6 +199,50 @@ public class ClickhouseRepositoryIT {
         Assertions.assertThat(totals.getFirst().getDouble("p")).isCloseTo(90.0, Assertions.within(0.01));
     }
 
+    @Test
+    void geoColumnsPersistAndPreGeoTableUpgradesInPlace() throws Exception {
+        final var database = "geo_upgrade";
+        final var config = configFor(database, true);
+        final var repo = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
+        repo.start();
+
+        // Simulate a pre-geo table: keep a persisted row, then drop the geo columns.
+        repo.persist(List.of(testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 60001, 443, 100L)));
+        for (final String column : List.of("srcCountry", "srcCity", "dstCountry", "dstCity")) {
+            queryClient.execute("ALTER TABLE " + database + ".flows DROP COLUMN " + column).get();
+        }
+
+        // Validate mode never alters: it fails fast naming the geo columns and the onboard fix.
+        final var validating = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, false), RESOLVERS);
+        Assertions.assertThatThrownBy(validating::start)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("geo column")
+                .hasMessageContaining("riptide onboard");
+
+        // Manage mode adds the columns back in place; the pre-geo row survives and reads ''.
+        final var upgraded = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
+        Assertions.assertThatCode(upgraded::start).doesNotThrowAnyException();
+        final var legacy = queryClient.queryAll(
+                "SELECT srcCountry FROM " + database + ".flows WHERE srcPort = 60001");
+        Assertions.assertThat(legacy.getFirst().getString("srcCountry")).isEmpty();
+
+        // An enriched flow round-trips its geo fields.
+        final var geoFlow = testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 60002, 443, 100L);
+        geoFlow.setSrcCountry("DE");
+        geoFlow.setSrcCity("Fulda");
+        geoFlow.setDstCountry("US");
+        geoFlow.setDstCity("Ashburn");
+        upgraded.persist(List.of(geoFlow));
+
+        final var row = queryClient.queryAll(
+                "SELECT srcCountry, srcCity, dstCountry, dstCity FROM " + database
+                        + ".flows WHERE srcPort = 60002").getFirst();
+        Assertions.assertThat(row.getString("srcCountry")).isEqualTo("DE");
+        Assertions.assertThat(row.getString("srcCity")).isEqualTo("Fulda");
+        Assertions.assertThat(row.getString("dstCountry")).isEqualTo("US");
+        Assertions.assertThat(row.getString("dstCity")).isEqualTo("Ashburn");
+    }
+
     private static ClickhouseConfig configFor(final String database, final boolean manageSchema) {
         final var config = new ClickhouseConfig();
         config.setEndpoint("http://" + CLICKHOUSE.getHost() + ":" + CLICKHOUSE.getMappedPort(8123));

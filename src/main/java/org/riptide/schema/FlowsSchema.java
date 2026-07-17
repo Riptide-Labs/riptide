@@ -7,6 +7,11 @@ package org.riptide.schema;
 
 import org.intellij.lang.annotations.Language;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
@@ -71,6 +76,34 @@ public final class FlowsSchema {
     /** The qualified {@code `<db>`.flows} name — the one home for its construction. */
     public static String qualifiedFlows(final String database) {
         return ident(database) + ".flows";
+    }
+
+    /** The GeoIP columns and their types — the one home for both CREATE and ALTER emission. */
+    private static final Map<String, String> GEO_COLUMNS = new LinkedHashMap<>();
+
+    static {
+        GEO_COLUMNS.put("srcCountry", "LowCardinality(String)");
+        GEO_COLUMNS.put("srcCity", "LowCardinality(String)");
+        GEO_COLUMNS.put("dstCountry", "LowCardinality(String)");
+        GEO_COLUMNS.put("dstCity", "LowCardinality(String)");
+    }
+
+    /** The GeoIP column names, for callers distinguishing additive-upgradeable columns. */
+    public static Set<String> geoColumnNames() {
+        return Collections.unmodifiableSet(GEO_COLUMNS.keySet());
+    }
+
+    /**
+     * Idempotent additive upgrade: {@code ALTER TABLE … ADD COLUMN IF NOT EXISTS} for each geo
+     * column. Safe on any table — a fresh one (columns exist, no-op) or a pre-geo one (columns
+     * appended in definition order, matching {@link #createFlowsTable}'s trailing placement).
+     */
+    public static List<String> addGeoColumns(final String database) {
+        final String flows = qualifiedFlows(database);
+        return GEO_COLUMNS.entrySet().stream()
+                .map(column -> "ALTER TABLE " + flows + " ADD COLUMN IF NOT EXISTS "
+                        + column.getKey() + " " + column.getValue())
+                .toList();
     }
 
     /**
@@ -179,7 +212,14 @@ public final class FlowsSchema {
             dstLocality Enum8('PUBLIC' = 1, 'PRIVATE' = 2),
             flowLocality Enum8('PUBLIC' = 1, 'PRIVATE' = 2),
 
-            clockCorrection Nullable(Int64)
+            clockCorrection Nullable(Int64),
+
+            -- GeoIP enrichment; '' = unknown. Kept last so a pre-geo table upgraded via
+            -- addGeoColumns() has the same column order as a freshly created one.
+            srcCountry LowCardinality(String),
+            srcCity LowCardinality(String),
+            dstCountry LowCardinality(String),
+            dstCity LowCardinality(String)
         ) ENGINE = MergeTree()
         ORDER BY (
             tenant, organisation,

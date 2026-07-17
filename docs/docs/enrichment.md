@@ -19,12 +19,16 @@ gracefully** — in the worst case a flow carries exactly what the packets said:
 | 2 — live | SNMP IF-MIB, reverse DNS | reachable agents/resolvers |
 | 1.5 — exporter-pushed | v9/IPFIX interface option records (`option interface-table`) | the exporter sending them — nothing on riptide's side |
 | 1 — static | operator mapping files (node `interfaces`, routing mapping) | a config file |
+| 0.5 — global databases | GeoIP mmdb files ([`riptide.geoip`](configuration/geoip.md)) | database files on disk |
 | 0 — packet | ifIndex numbers, exporter-sent AS numbers, addresses, next hop | nothing — always available |
 
 **Precedence is per-field pin**: a field set in a static mapping overrides the live
 value; live sources fill the fields the file doesn't set; packet data is the floor.
 For AS numbers, a **nonzero exporter-provided value always wins** — the routing mapping
-only fills zeros.
+only fills zeros, and GeoIP databases sit below the routing mapping (exporter →
+routing prefixes → geoip override → geoip databases). Country and city come only from
+GeoIP; a [`riptide.geoip.overrides`](configuration/geoip.md#manual-overrides) entry pins
+its set fields over whatever the databases resolve.
 
 For interface fields, exporter-pushed option data and live SNMP share the work with
 **per-field authority** (after any static pin): the interface **name** prefers the

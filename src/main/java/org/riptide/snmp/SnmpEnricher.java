@@ -12,6 +12,7 @@ import org.riptide.node.NodeRegistry;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Source;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -26,6 +27,7 @@ import java.util.function.Consumer;
  * block still enriches from statics and option data.
  */
 @Component
+@Order(org.riptide.pipeline.EnricherOrder.SNMP)
 @RequiredArgsConstructor
 public class SnmpEnricher implements Enricher {
 

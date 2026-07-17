@@ -11,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Source;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.net.InetAddress;
@@ -25,6 +26,7 @@ import java.util.function.Supplier;
  * configured mapping this enricher is a no-op.
  */
 @Component
+@Order(org.riptide.pipeline.EnricherOrder.ROUTING)
 @RequiredArgsConstructor
 public class RoutingEnricher extends Enricher.Single {
 

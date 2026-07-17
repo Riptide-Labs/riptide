@@ -84,4 +84,11 @@ public class ClickhouseFlow {
     private byte flowLocality;
 
     private Duration clockCorrection;
+
+    // '' = unknown; the initializers survive an unenriched flow because the mapper's
+    // null-value check leaves the target untouched for null sources.
+    private String srcCountry = "";
+    private String srcCity = "";
+    private String dstCountry = "";
+    private String dstCity = "";
 }

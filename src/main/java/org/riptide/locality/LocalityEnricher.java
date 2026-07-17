@@ -9,12 +9,14 @@ import org.riptide.flows.parser.data.Flow;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Source;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.net.InetAddress;
 import java.util.concurrent.CompletableFuture;
 
 @Component
+@Order(org.riptide.pipeline.EnricherOrder.LOCALITY)
 public class LocalityEnricher extends Enricher.Single {
 
     @Override

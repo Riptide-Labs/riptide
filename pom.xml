@@ -27,6 +27,7 @@
         <jetbrains-annotations.version>26.1.0</jetbrains-annotations.version>
         <lombok.version>1.18.46</lombok.version>
         <mapstruct.version>1.6.3</mapstruct.version>
+        <maxmind-db.version>3.1.1</maxmind-db.version>
         <maven-checkstyle-plugin.version>3.6.0</maven-checkstyle-plugin.version>
         <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
         <versions-maven-plugin.version>2.21.0</versions-maven-plugin.version>
@@ -163,6 +164,13 @@
             <groupId>com.github.seancfoley</groupId>
             <artifactId>ipaddress</artifactId>
             <version>${ipaddress.version}</version>
+        </dependency>
+
+        <!-- GeoIP enrichment (MaxMind/IPinfo mmdb reader) -->
+        <dependency>
+            <groupId>com.maxmind.db</groupId>
+            <artifactId>maxmind-db</artifactId>
+            <version>${maxmind-db.version}</version>
         </dependency>
 
         <!-- Clickhouse -->
