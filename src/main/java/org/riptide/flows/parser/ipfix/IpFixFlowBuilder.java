@@ -63,12 +63,21 @@ public class IpFixFlowBuilder {
 
             @Override
             public long getBytes() {
+                // The total counters come last: some exporters (e.g. Juniper SRX inline J-Flow)
+                // send only octetTotalCount/packetTotalCount, never the delta variants. Like
+                // NetGauze and nfdump we treat the total as the record's count — a knowing
+                // approximation that over-counts a long-lived flow if its exporter re-reports
+                // growing totals at each active timeout.
                 return Optionals.first(
                                 rawFlow.octetDeltaCount,
                                 rawFlow.postOctetDeltaCount,
                                 rawFlow.layer2OctetDeltaCount,
                                 rawFlow.postLayer2OctetDeltaCount,
-                                rawFlow.transportOctetDeltaCount)
+                                rawFlow.transportOctetDeltaCount,
+                                rawFlow.octetTotalCount,
+                                rawFlow.postOctetTotalCount,
+                                rawFlow.layer2OctetTotalCount,
+                                rawFlow.postLayer2OctetTotalCount)
                         .orElse(0L);
             }
 
@@ -201,7 +210,7 @@ public class IpFixFlowBuilder {
 
             @Override
             public long getPackets() {
-                return Optionals.first(rawFlow.packetDeltaCount, rawFlow.postPacketDeltaCount, rawFlow.transportPacketDeltaCount).orElse(0L);
+                return Optionals.first(rawFlow.packetDeltaCount, rawFlow.postPacketDeltaCount, rawFlow.transportPacketDeltaCount, rawFlow.packetTotalCount, rawFlow.postPacketTotalCount).orElse(0L);
             }
 
             @Override
