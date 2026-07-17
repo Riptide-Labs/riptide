@@ -13,17 +13,17 @@ analysis.
 ## What it does
 
 ```
-UDP/TCP ingest (NetFlow v5 · NetFlow v9 · IPFIX)
+UDP/TCP ingest (NetFlow v5 · NetFlow v9 · IPFIX · sFlow)
    → decode
    → match exporter to a configured node (subnet + observation domain)
-   → enrich:  SNMP interface names/aliases/speed · reverse-DNS hostnames ·
-              traffic classification · locality
-   → persist to ClickHouse
+   → enrich:  classification · clock correction · locality ·
+              AS numbers/orgs · GeoIP country/city ·
+              SNMP interface names/aliases/speed · reverse-DNS hostnames
+   → persist to ClickHouse (tenant/organisation/zone/system identity)
 ```
 
-- **Flow protocols:** NetFlow v5, NetFlow v9, and IPFIX (UDP; IPFIX also via TCP).
-  sFlow support is planned for v0.2.0
-  ([#159](https://github.com/Riptide-Labs/riptide/issues/159)).
+- **Flow protocols:** NetFlow v5, NetFlow v9, IPFIX, and sFlow (UDP; IPFIX also via
+  TCP). See [Receivers](configuration/receivers.md).
 - **Node model:** a thin registry (`riptide.nodes.<name>`) matches exporters by subnet —
   optionally pinned to one observation domain — and carries the SNMP agent
   configuration used to enrich that device's flows. See
@@ -31,8 +31,16 @@ UDP/TCP ingest (NetFlow v5 · NetFlow v9 · IPFIX)
 - **Secrets:** SNMP credentials are **references** (`env://`, `file://`, `vault://`,
   `sops://`), never plaintext in configuration. See
   [Secret references](configuration/secret-references.md).
-- **Enrichment:** SNMP IF-MIB (`ifName`, `ifAlias`, `ifHighSpeed`), reverse-DNS
-  hostnames, rule-based classification. See [Enrichment](enrichment.md).
+- **Enrichment:** a graceful-degradation ladder — rule-based classification, exporter
+  clock correction, locality, AS data from the routing mapping, GeoIP country/city
+  (MaxMind GeoLite2 or IPinfo, with per-prefix overrides), SNMP IF-MIB interface data,
+  exporter-pushed option records, reverse-DNS hostnames. Flows persist even when every
+  live source is unreachable. See [Enrichment](enrichment.md) and
+  [GeoIP](configuration/geoip.md).
+- **Multi-tenancy:** every flow carries tenant/organisation/zone/system identity;
+  `riptide onboard` provisions role-based ClickHouse access with hard row-level
+  isolation per tenant. See the
+  [multi-tenancy runbook](deploy/multi-tenancy.md).
 
 ## Technology
 

@@ -168,7 +168,7 @@ systemctl start ipinfo-update.service
 With either recipe, riptide picks up a refreshed file within `refresh-interval`
 (default 5m) — check the log for `GeoIP databases changed on disk — reloading`.
 
-:::note Schema
+:::note[Schema]
 
 The four geo columns are additive. Manage-mode deployments gain them automatically at
 startup (`ALTER TABLE … ADD COLUMN IF NOT EXISTS`); provisioned deployments re-run
