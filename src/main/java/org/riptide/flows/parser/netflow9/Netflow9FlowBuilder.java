@@ -174,12 +174,14 @@ public class Netflow9FlowBuilder {
 
             @Override
             public long getBytes() {
-                return Optionals.of(raw.IN_BYTES).orElse(0L);
+                // Total counters last, as in the IPFIX builder: exporters using permanent-cache
+                // counters (field 85/86) send no IN_BYTES/IN_PKTS.
+                return Optionals.first(raw.IN_BYTES, raw.IN_PERMANENT_BYTES).orElse(0L);
             }
 
             @Override
             public long getPackets() {
-                return Optionals.of(raw.IN_PKTS).orElse(0L);
+                return Optionals.first(raw.IN_PKTS, raw.IN_PERMANENT_PKTS).orElse(0L);
             }
 
             @Override
