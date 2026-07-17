@@ -24,6 +24,10 @@ public class IpfixRawFlow {
     public Long layer2OctetDeltaCount;
     public Long postLayer2OctetDeltaCount;
     public Long transportOctetDeltaCount;
+    public Long octetTotalCount;
+    public Long postOctetTotalCount;
+    public Long layer2OctetTotalCount;
+    public Long postLayer2OctetTotalCount;
     public Long bgpDestinationAsNumber;
     public Integer flowDirection;
     public InetAddress destinationIPv6Address;
@@ -59,6 +63,8 @@ public class IpfixRawFlow {
     public Long packetDeltaCount;
     public Long postPacketDeltaCount;
     public Long transportPacketDeltaCount;
+    public Long packetTotalCount;
+    public Long postPacketTotalCount;
     public Integer protocolIdentifier;
     public Integer samplingAlgorithm;
     public Integer samplerMode;

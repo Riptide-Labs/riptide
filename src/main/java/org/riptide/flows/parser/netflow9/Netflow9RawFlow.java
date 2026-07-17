@@ -15,6 +15,7 @@ public class Netflow9RawFlow {
     public Duration sysUpTime;
     public int recordCount;
     public Long IN_BYTES;
+    public Long IN_PERMANENT_BYTES;
     public Integer DIRECTION;
     public InetAddress IPV6_DST_ADDR;
     public InetAddress IPV4_DST_ADDR;
@@ -40,6 +41,7 @@ public class Netflow9RawFlow {
     public Integer egressPhysicalInterface;
     public Integer OUTPUT_SNMP;
     public Long IN_PKTS;
+    public Long IN_PERMANENT_PKTS;
     public Integer PROTOCOL;
     public Integer SAMPLING_ALGORITHM;
     public Double SAMPLING_INTERVAL;
