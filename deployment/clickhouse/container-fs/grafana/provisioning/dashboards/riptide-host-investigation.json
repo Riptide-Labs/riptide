@@ -1,0 +1,516 @@
+{
+  "uid": "riptide-host-investigation",
+  "title": "Riptide - Host Investigation (Kentik-style)",
+  "tags": [
+    "riptide",
+    "netflow",
+    "security",
+    "kentik"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "editable": true,
+  "graphTooltip": 0,
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Datasource",
+        "type": "datasource",
+        "query": "grafana-clickhouse-datasource",
+        "refresh": 1,
+        "hide": 0,
+        "current": {},
+        "options": [],
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "database",
+        "label": "Database",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT DISTINCT database FROM system.tables WHERE name = 'flows'"
+        },
+        "refresh": 1,
+        "includeAll": false,
+        "multi": false,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": "riptide",
+          "value": "riptide"
+        },
+        "definition": "SELECT DISTINCT database FROM system.tables WHERE name = 'flows'"
+      },
+      {
+        "name": "host",
+        "label": "Host",
+        "type": "textbox",
+        "query": "192.168.10.1",
+        "options": [],
+        "current": {
+          "selected": true,
+          "text": "192.168.10.1",
+          "value": "192.168.10.1"
+        }
+      },
+      {
+        "name": "limit",
+        "label": "Rows",
+        "type": "custom",
+        "query": "10,25,50,100",
+        "options": [],
+        "includeAll": false,
+        "multi": false,
+        "current": {
+          "selected": true,
+          "text": "25",
+          "value": "25"
+        }
+      },
+      {
+        "name": "tenant",
+        "label": "Tenant",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT DISTINCT tenant FROM ${database}.flows ORDER BY tenant",
+          "queryType": "table"
+        },
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "SELECT DISTINCT tenant FROM ${database}.flows ORDER BY tenant"
+      },
+      {
+        "name": "zone",
+        "label": "Zone",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT DISTINCT zone FROM ${database}.flows ORDER BY zone",
+          "queryType": "table"
+        },
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "SELECT DISTINCT zone FROM ${database}.flows ORDER BY zone"
+      },
+      {
+        "name": "exporter",
+        "label": "Exporter",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT DISTINCT if(exporterName != '', exporterName, exporterAddr) AS __text, exporterAddr AS __value FROM ${database}.flows ORDER BY __text"
+        },
+        "definition": "SELECT DISTINCT if(exporterName != '', exporterName, exporterAddr) AS __text, exporterAddr AS __value FROM ${database}.flows ORDER BY __text",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Traffic to / from $host",
+      "description": "The IP details page's Traffic tab and the forensics walkthrough's 'bidirectional mode': inbound vs outbound volume for one host. https://kb.kentik.com/docs/core-details-pages",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "table",
+          "rawSql": "SELECT $__timeInterval(timestamp) AS time,\n       round(sumIf(bytes, NOT (srcAddr = toIPv6OrNull('$host'))) * 8 / ($__interval_ms / 1000)) AS \"in bps\",\n       round(sumIf(bytes, srcAddr = toIPv6OrNull('$host')) * 8 / ($__interval_ms / 1000)) AS \"out bps\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND (srcAddr = toIPv6OrNull('$host') OR dstAddr = toIPv6OrNull('$host')) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) GROUP BY time ORDER BY time",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Unique peers",
+      "description": "Kentik's primary distributed-source/scanning signal (alert details 'unique source IPs'; attack-hunting walkthrough). A jump in inbound peers = scan/DDoS; outbound = the host scanning or beaconing. https://kb.kentik.com/docs/alert-details",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "id": 2,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "table",
+          "rawSql": "SELECT $__timeInterval(timestamp) AS time,\n       uniqExactIf(if(srcAddr = toIPv6OrNull('$host'), dstAddr, srcAddr), NOT (srcAddr = toIPv6OrNull('$host'))) AS \"peers in\",\n       uniqExactIf(if(srcAddr = toIPv6OrNull('$host'), dstAddr, srcAddr), srcAddr = toIPv6OrNull('$host')) AS \"peers out\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND (srcAddr = toIPv6OrNull('$host') OR dstAddr = toIPv6OrNull('$host')) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) GROUP BY time ORDER BY time",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "TCP flag profile",
+      "description": "Scan signature per the Data Explorer TCP-flags dimension: SYN-only flows (connection attempts that never established) vs flows that saw an ACK. A SYN-only surge inbound is a port scan; outbound, the host probing others. https://kb.kentik.com/docs/data-explorer",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "id": 3,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "table",
+          "rawSql": "SELECT $__timeInterval(timestamp) AS time,\n       countIf(protocol = 6 AND bitAnd(tcpFlags, 2) != 0 AND bitAnd(tcpFlags, 16) = 0) AS \"SYN-only flows\",\n       countIf(protocol = 6 AND bitAnd(tcpFlags, 16) != 0) AS \"established flows\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND (srcAddr = toIPv6OrNull('$host') OR dstAddr = toIPv6OrNull('$host')) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) GROUP BY time ORDER BY time",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Top peers",
+      "description": "The traffic-patterns pivot: who this host talks to, labeled with hostname, geo and AS (enrichment columns), with per-direction volume and how many distinct services were touched \u2014 many ports against one peer = probing (forensics walkthrough). https://kb.kentik.com/docs/core-details-pages",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "id": 4,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT replaceOne(toString(if(srcAddr = toIPv6OrNull('$host'), dstAddr, srcAddr)), '::ffff:', '') AS \"Peer\",\n       any(ifNull(if(srcAddr = toIPv6OrNull('$host'), dstAddrHostname, srcAddrHostname), '')) AS \"Hostname\",\n       if(srcAddr = toIPv6OrNull('$host'), if(dstCountry = '', 'unknown', dstCountry), if(srcCountry = '', 'unknown', srcCountry)) AS \"Country\",\n       if(srcAddr = toIPv6OrNull('$host'), concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')), concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown'))) AS \"AS\",\n       sumIf(bytes, NOT (srcAddr = toIPv6OrNull('$host'))) AS \"Bytes in\",\n       sumIf(bytes, srcAddr = toIPv6OrNull('$host')) AS \"Bytes out\",\n       count() AS \"Flows\",\n       uniqExact(dstPort) AS \"Ports touched\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND (srcAddr = toIPv6OrNull('$host') OR dstAddr = toIPv6OrNull('$host')) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter)\nGROUP BY \"Peer\", \"Country\", \"AS\" ORDER BY \"Bytes in\" + \"Bytes out\" DESC LIMIT $limit",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Top services",
+      "description": "The source-services alert tab: which protocols/ports carry this host's traffic, and how many peers share each \u2014 single-port concentration across many peers is the DDoS/abuse fingerprint. https://kb.kentik.com/docs/alert-details",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 28
+      },
+      "id": 5,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT concat(transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))), '/', toString(dstPort)) AS \"Service\",\n       count() AS \"Flows\",\n       sum(bytes) AS \"Bytes\",\n       uniqExact(if(srcAddr = toIPv6OrNull('$host'), dstAddr, srcAddr)) AS \"Unique peers\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND (srcAddr = toIPv6OrNull('$host') OR dstAddr = toIPv6OrNull('$host')) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter)\nGROUP BY \"Service\" ORDER BY \"Bytes\" DESC LIMIT $limit",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Packet size distribution",
+      "description": "The packet-size alert tab: uniform small packets across high flow counts betray floods and botnets; legitimate traffic spreads. https://kb.kentik.com/docs/alert-details",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 28
+      },
+      "id": 6,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT if(intDiv(bytes, if(packets = 0, 1, packets)) >= 1500, '1500+ B',\n       concat(toString(intDiv(intDiv(bytes, if(packets = 0, 1, packets)), 100) * 100), '-',\n       toString(intDiv(intDiv(bytes, if(packets = 0, 1, packets)), 100) * 100 + 99), ' B')) AS \"Avg packet size\",\n       count() AS \"Flows\",\n       sum(packets) AS \"Packets\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND (srcAddr = toIPv6OrNull('$host') OR dstAddr = toIPv6OrNull('$host')) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter)\nGROUP BY \"Avg packet size\" ORDER BY min(intDiv(bytes, if(packets = 0, 1, packets)))",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Peer countries",
+      "description": "The source-countries alert tab, via riptide's GeoIP columns: countries ranked by unique peers and volume \u2014 geo anomalies flag distributed attacks. https://kb.kentik.com/docs/alert-details",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 38
+      },
+      "id": 7,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT if(srcAddr = toIPv6OrNull('$host'), if(dstCountry = '', 'unknown', dstCountry), if(srcCountry = '', 'unknown', srcCountry)) AS \"Country\",\n       uniqExact(if(srcAddr = toIPv6OrNull('$host'), dstAddr, srcAddr)) AS \"Unique peers\",\n       count() AS \"Flows\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND (srcAddr = toIPv6OrNull('$host') OR dstAddr = toIPv6OrNull('$host')) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter)\nGROUP BY \"Country\" ORDER BY \"Bytes\" DESC LIMIT $limit",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Peer ASes",
+      "description": "The top-ASes table from Botnet & Threat Analysis, minus the threat feed: which networks this host exchanges traffic with. https://kb.kentik.com/docs/botnet-threat-analysis",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 38
+      },
+      "id": 8,
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT if(srcAddr = toIPv6OrNull('$host'), concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')), concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown'))) AS \"AS\",\n       uniqExact(if(srcAddr = toIPv6OrNull('$host'), dstAddr, srcAddr)) AS \"Unique peers\",\n       count() AS \"Flows\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND (srcAddr = toIPv6OrNull('$host') OR dstAddr = toIPv6OrNull('$host')) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter)\nGROUP BY \"AS\" ORDER BY \"Bytes\" DESC LIMIT $limit",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    }
+  ],
+  "annotations": {
+    "list": []
+  },
+  "links": []
+}
