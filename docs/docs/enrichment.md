@@ -19,12 +19,16 @@ gracefully** — in the worst case a flow carries exactly what the packets said:
 | 2 — live | SNMP IF-MIB, reverse DNS | reachable agents/resolvers |
 | 1.5 — exporter-pushed | v9/IPFIX interface option records (`option interface-table`) | the exporter sending them — nothing on riptide's side |
 | 1 — static | operator mapping files (node `interfaces`, routing mapping) | a config file |
+| 0.5 — global databases | GeoIP mmdb files ([`riptide.geoip`](configuration/geoip.md)) | database files on disk |
 | 0 — packet | ifIndex numbers, exporter-sent AS numbers, addresses, next hop | nothing — always available |
 
 **Precedence is per-field pin**: a field set in a static mapping overrides the live
 value; live sources fill the fields the file doesn't set; packet data is the floor.
 For AS numbers, a **nonzero exporter-provided value always wins** — the routing mapping
-only fills zeros.
+only fills zeros, and GeoIP databases sit below the routing mapping (exporter →
+routing prefixes → geoip override → geoip databases). Country and city come only from
+GeoIP; a [`riptide.geoip.overrides`](configuration/geoip.md#manual-overrides) entry pins
+its set fields over whatever the databases resolve.
 
 For interface fields, exporter-pushed option data and live SNMP share the work with
 **per-field authority** (after any static pin): the interface **name** prefers the
@@ -112,3 +116,41 @@ riptide.classification.rules=file:/etc/riptide/classification-rules.csv
 
 Source/destination/flow locality (private vs. public address space) is derived for every
 flow without configuration.
+
+## Clock correction
+
+Exporter clocks lie: sysUpTime arithmetic produces impossible timestamp orderings, and a
+device with broken NTP exports flows minutes in the past or future — invisible in any
+"last 15 minutes" dashboard window even though they arrive and persist fine. Clock
+correction defends the flow's time columns with two mechanisms:
+
+1. **Ordering repair** (always on): a flow claiming `firstSwitched` *after*
+   `lastSwitched` is rebuilt anchored on the packet's export timestamp, preserving the
+   flow's duration where the record allows.
+2. **Skew correction** (opt-in): the export timestamp is compared against `receivedAt` —
+   the collector's own clock. When the difference reaches the threshold, *all* of the
+   flow's time columns (`timestamp`, `firstSwitched`, `deltaSwitched`, `lastSwitched`)
+   are shifted by the negative skew, so the flow lands where it actually happened.
+
+```properties
+riptide.enricher.clock-correction.enabled=true
+# 0 (default) disables skew correction — only the ordering repair runs.
+riptide.enricher.clock-correction.skew-threshold-ms=120000
+```
+
+Every applied skew correction is recorded in the flow's `clockCorrection` column
+(the negated skew), so corrections are auditable per row — and a skewed exporter is
+queryable directly:
+
+```sql
+SELECT exporterAddr, count() AS correctedFlows
+FROM flows WHERE clockCorrection != 0 GROUP BY exporterAddr
+```
+
+Choose the threshold above your fleet's normal export delay: exporters typically run
+one to two active-timeout intervals behind `receivedAt` (often 60–90s), so a threshold
+of 2 minutes corrects genuinely broken clocks without rewriting healthy jitter. Skew
+correction trusts the collector's clock — keep the riptide host NTP-synced, or the
+"correction" would skew every exporter by the collector's own error. Fixing the
+device's NTP remains the real cure; this is the safety net that keeps the data usable
+until it lands.

@@ -48,7 +48,7 @@ maven.buildMavenPackage {
 
   # Verified for the pinned nixpkgs rev (spike A.1). Regenerate with lib.fakeHash
   # whenever pom dependencies change; the nix CI job fails the PR if it drifts.
-  mvnHash = "sha256-wh8lE+K6nB5gvNCREu85GjmQQnn0WtzW05db3MR41Ng=";
+  mvnHash = "sha256-7sCugFB6NQkRwEZNbFGadPXTE3oT9DOClrO8rdS4x1Y=";
 
   nativeBuildInputs = [ makeWrapper ];
 
