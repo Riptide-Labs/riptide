@@ -116,3 +116,41 @@ riptide.classification.rules=file:/etc/riptide/classification-rules.csv
 
 Source/destination/flow locality (private vs. public address space) is derived for every
 flow without configuration.
+
+## Clock correction
+
+Exporter clocks lie: sysUpTime arithmetic produces impossible timestamp orderings, and a
+device with broken NTP exports flows minutes in the past or future — invisible in any
+"last 15 minutes" dashboard window even though they arrive and persist fine. Clock
+correction defends the flow's time columns with two mechanisms:
+
+1. **Ordering repair** (always on): a flow claiming `firstSwitched` *after*
+   `lastSwitched` is rebuilt anchored on the packet's export timestamp, preserving the
+   flow's duration where the record allows.
+2. **Skew correction** (opt-in): the export timestamp is compared against `receivedAt` —
+   the collector's own clock. When the difference reaches the threshold, *all* of the
+   flow's time columns (`timestamp`, `firstSwitched`, `deltaSwitched`, `lastSwitched`)
+   are shifted by the negative skew, so the flow lands where it actually happened.
+
+```properties
+riptide.enricher.clock-correction.enabled=true
+# 0 (default) disables skew correction — only the ordering repair runs.
+riptide.enricher.clock-correction.skew-threshold-ms=120000
+```
+
+Every applied skew correction is recorded in the flow's `clockCorrection` column
+(the negated skew), so corrections are auditable per row — and a skewed exporter is
+queryable directly:
+
+```sql
+SELECT exporterAddr, count() AS correctedFlows
+FROM flows WHERE clockCorrection != 0 GROUP BY exporterAddr
+```
+
+Choose the threshold above your fleet's normal export delay: exporters typically run
+one to two active-timeout intervals behind `receivedAt` (often 60–90s), so a threshold
+of 2 minutes corrects genuinely broken clocks without rewriting healthy jitter. Skew
+correction trusts the collector's clock — keep the riptide host NTP-synced, or the
+"correction" would skew every exporter by the collector's own error. Fixing the
+device's NTP remains the real cure; this is the safety net that keeps the data usable
+until it lands.
