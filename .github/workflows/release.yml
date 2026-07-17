@@ -80,11 +80,10 @@ jobs:
           cosign sign --yes "ghcr.io/riptide-labs/riptide@${{ steps.build-image.outputs.digest }}"
       - name: Sign release artifacts
         run: |
+          # cosign 3.x writes the sigstore bundle (sig + cert + Rekor proof in one file);
+          # the legacy --output-signature/--output-certificate pair no longer works alone.
           for artifact in target/*.jar target/*.deb target/*.rpm; do
-            cosign sign-blob --yes \
-              --output-signature "${artifact}.sig" \
-              --output-certificate "${artifact}.pem" \
-              "${artifact}"
+            cosign sign-blob --yes --bundle "${artifact}.sigstore.json" "${artifact}"
           done
       - name: Release ${{ github.ref_name }}
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
@@ -93,5 +92,4 @@ jobs:
             target/*.jar
             target/*.deb
             target/*.rpm
-            target/*.sig
-            target/*.pem
+            target/*.sigstore.json
