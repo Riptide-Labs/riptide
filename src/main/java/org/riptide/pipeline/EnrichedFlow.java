@@ -77,6 +77,10 @@ public class EnrichedFlow {
     private String outputSnmpIfName;
     private String outputSnmpIfAlias;
     private Long outputSnmpIfSpeed;
+    private String srcCountry;
+    private String srcCity;
+    private String dstCountry;
+    private String dstCity;
 
     public Integer getDscp() {
         return getTos() != null ? getTos() >>> 2 : null;
@@ -105,6 +109,10 @@ public class EnrichedFlow {
         @Mapping(target = "srcAddrHostname", ignore = true)
         @Mapping(target = "dstAddrHostname", ignore = true)
         @Mapping(target = "nextHopHostname", ignore = true)
+        @Mapping(target = "srcCountry", ignore = true)
+        @Mapping(target = "srcCity", ignore = true)
+        @Mapping(target = "dstCountry", ignore = true)
+        @Mapping(target = "dstCity", ignore = true)
 
         @Mapping(target = ".", source = "source")
         @Mapping(target = ".", source = "flow")

@@ -11,11 +11,13 @@ import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Source;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.CompletableFuture;
 
 @Component
+@Order(org.riptide.pipeline.EnricherOrder.CLASSIFICATION)
 @RequiredArgsConstructor
 @ConditionalOnProperty(name = "riptide.enricher.classification.enabled", havingValue = "true", matchIfMissing = true)
 public class ClassificationEnricher extends Enricher.Single {

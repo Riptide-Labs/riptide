@@ -7,6 +7,7 @@ package org.riptide.provisioning;
 
 import org.riptide.schema.FlowsSchema;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -45,7 +46,12 @@ public final class ProvisioningDdl {
     /** One-time shared objects: the two roles, the reader hardening, the CHECK barrier, the quota. */
     public static List<String> ensureShared(final String database, final long quotaBytes) {
         final String flows = FlowsSchema.qualifiedFlows(database);
-        return List.of(
+        final List<String> statements = new ArrayList<>();
+        // Additive schema upgrades first (same precondition as the GRANTs below: the table
+        // exists). Emitted on every run so re-running onboard upgrades a pre-geo table in
+        // place; IF NOT EXISTS makes them no-ops everywhere else.
+        statements.addAll(FlowsSchema.addGeoColumns(database));
+        statements.addAll(List.of(
                 "CREATE ROLE IF NOT EXISTS flow_writer",
                 "GRANT INSERT ON " + flows + " TO flow_writer",
                 "CREATE ROLE IF NOT EXISTS flow_reader",
@@ -61,7 +67,8 @@ public final class ProvisioningDdl {
                 "ALTER TABLE " + flows
                         + " ADD CONSTRAINT IF NOT EXISTS org_pinned CHECK organisation = getSetting('SQL_org')",
                 "CREATE QUOTA IF NOT EXISTS flow_ingest FOR INTERVAL 1 hour MAX written_bytes = "
-                        + quotaBytes + " KEYED BY user_name TO flow_writer");
+                        + quotaBytes + " KEYED BY user_name TO flow_writer"));
+        return List.copyOf(statements);
     }
 
     /**

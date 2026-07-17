@@ -14,12 +14,14 @@ import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Source;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 
 @Component
+@Order(org.riptide.pipeline.EnricherOrder.CLOCK_CORRECTION)
 @Getter
 @Setter
 @RequiredArgsConstructor
