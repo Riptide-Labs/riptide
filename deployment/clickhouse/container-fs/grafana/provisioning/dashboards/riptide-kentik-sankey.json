@@ -140,6 +140,35 @@
           "text": "All",
           "value": "$__all"
         }
+      },
+      {
+        "name": "exporter",
+        "label": "Exporter",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT DISTINCT exporterAddr FROM ${database}.flows ORDER BY exporterAddr"
+        },
+        "definition": "SELECT DISTINCT exporterAddr FROM ${database}.flows ORDER BY exporterAddr",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
       }
     ]
   },
@@ -169,15 +198,15 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown')) AS \"Source AS\",\n       concat(exporterAddr, ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp)))) AS \"Ingress\",\n       concat(exporterAddr, ' - ', ifNull(outputSnmpIfName, concat('if', toString(outputSnmp)))) AS \"Egress\",\n       concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')) AS \"Destination AS\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source AS\", \"Ingress\", \"Egress\", \"Destination AS\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth",
+          "rawSql": "SELECT concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown')) AS \"Source AS\",\n       concat(exporterAddr, ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp)))) AS \"Ingress\",\n       concat(exporterAddr, ' - ', ifNull(outputSnmpIfName, concat('if', toString(outputSnmp)))) AS \"Egress\",\n       concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')) AS \"Destination AS\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source AS\", \"Ingress\", \"Egress\", \"Destination AS\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth",
           "refId": "A"
         }
       ]
     },
     {
       "type": "netsage-sankey-panel",
-      "title": "Situational awareness: Source Country - Source AS - Destination host - Service",
-      "description": "Replicates Kentik's DDoS situational-awareness chain (Source Country \u2192 Source ASN \u2192 Destination IP \u2192 Destination Protocol). https://www.kentik.com/blog/insight-delivered-the-power-of-sankey-diagrams/",
+      "title": "Situational awareness: Source Country - Source AS - Exporter - Destination host - Service",
+      "description": "Replicates Kentik's DDoS situational-awareness chain (Source Country \u2192 Source ASN \u2192 Destination IP \u2192 Destination Protocol), with the observing exporter as the middle column. https://www.kentik.com/blog/insight-delivered-the-power-of-sankey-diagrams/",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -199,15 +228,15 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT if(srcCountry = '', 'unknown', srcCountry) AS \"Source Country\",\n       concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown')) AS \"Source AS\",\n       ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')) AS \"Destination\",\n       concat(transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))), '/', toString(dstPort)) AS \"Service\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source Country\", \"Source AS\", \"Destination\", \"Service\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth",
+          "rawSql": "SELECT if(srcCountry = '', 'unknown', srcCountry) AS \"Source Country\",\n       concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown')) AS \"Source AS\",\n       exporterAddr AS \"Exporter\",\n       ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')) AS \"Destination\",\n       concat(transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))), '/', toString(dstPort)) AS \"Service\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source Country\", \"Source AS\", \"Exporter\", \"Destination\", \"Service\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth",
           "refId": "A"
         }
       ]
     },
     {
       "type": "netsage-sankey-panel",
-      "title": "Geo termination: Destination AS - Destination Country - Destination City",
-      "description": "Replicates Kentik's geo-planning chain (Dest Country \u2192 Dest Region \u2192 Dest City); riptide carries country and city, with the destination AS as the leading column. https://www.kentik.com/blog/insight-delivered-the-power-of-sankey-diagrams/",
+      "title": "Geo termination: Exporter - Destination AS - Destination Country - Destination City",
+      "description": "Replicates Kentik's geo-planning chain (Dest Country \u2192 Dest Region \u2192 Dest City); riptide carries country and city, led by the observing exporter and destination AS. https://www.kentik.com/blog/insight-delivered-the-power-of-sankey-diagrams/",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -229,15 +258,15 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')) AS \"Destination AS\",\n       if(dstCountry = '', 'unknown', dstCountry) AS \"Destination Country\",\n       if(dstCity = '', 'unknown', dstCity) AS \"Destination City\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Destination AS\", \"Destination Country\", \"Destination City\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth",
+          "rawSql": "SELECT exporterAddr AS \"Exporter\",\n       concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')) AS \"Destination AS\",\n       if(dstCountry = '', 'unknown', dstCountry) AS \"Destination Country\",\n       if(dstCity = '', 'unknown', dstCity) AS \"Destination City\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Exporter\", \"Destination AS\", \"Destination Country\", \"Destination City\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth",
           "refId": "A"
         }
       ]
     },
     {
       "type": "netsage-sankey-panel",
-      "title": "Origination/termination: Source City - Source Locality - Destination Locality - Destination City",
-      "description": "Replicates the Data Explorer example chain (Source City \u2192 Source Traffic Origination \u2192 Destination Traffic Termination \u2192 Destination City), with riptide's locality as the origination/termination analog. https://kb.kentik.com/docs/chart-visualization-types",
+      "title": "Origination/termination: Source City - Source Locality - Exporter - Destination Locality - Destination City",
+      "description": "Replicates the Data Explorer example chain (Source City \u2192 Source Traffic Origination \u2192 Destination Traffic Termination \u2192 Destination City), with riptide's locality as the origination/termination analog and the exporter at the waist. https://kb.kentik.com/docs/chart-visualization-types",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -259,7 +288,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT if(srcCity = '', 'unknown', srcCity) AS \"Source City\",\n       toString(srcLocality) AS \"Source Locality\",\n       toString(dstLocality) AS \"Destination Locality\",\n       if(dstCity = '', 'unknown', dstCity) AS \"Destination City\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source City\", \"Source Locality\", \"Destination Locality\", \"Destination City\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth",
+          "rawSql": "SELECT if(srcCity = '', 'unknown', srcCity) AS \"Source City\",\n       toString(srcLocality) AS \"Source Locality\",\n       exporterAddr AS \"Exporter\",\n       toString(dstLocality) AS \"Destination Locality\",\n       if(dstCity = '', 'unknown', dstCity) AS \"Destination City\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source City\", \"Source Locality\", \"Exporter\", \"Destination Locality\", \"Destination City\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth",
           "refId": "A"
         }
       ]
@@ -289,7 +318,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT concat(exporterAddr, ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp)))) AS \"Entry\",\n       concat(exporterAddr, ' - ', ifNull(outputSnmpIfName, concat('if', toString(outputSnmp)))) AS \"Exit\",\n       concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')) AS \"Destination AS\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Entry\", \"Exit\", \"Destination AS\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth",
+          "rawSql": "SELECT concat(exporterAddr, ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp)))) AS \"Entry\",\n       concat(exporterAddr, ' - ', ifNull(outputSnmpIfName, concat('if', toString(outputSnmp)))) AS \"Exit\",\n       concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')) AS \"Destination AS\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Entry\", \"Exit\", \"Destination AS\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth",
           "refId": "A"
         }
       ]
