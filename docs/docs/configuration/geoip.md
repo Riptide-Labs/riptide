@@ -70,20 +70,103 @@ only applied to an AS number that GeoIP itself resolved.
 
 ## Getting the database files
 
-Riptide does not download databases — point it at files a sidecar keeps fresh:
+Riptide does not download databases — point it at files a sidecar keeps fresh. Both
+recipes below replace the file by atomic rename, which riptide's mtime-based refresh
+detects; a collector restart is never needed, and riptide's hardened systemd unit needs
+no changes (it only reads the files).
 
-- **MaxMind GeoLite2** (free, account required): run
-  [`geoipupdate`](https://github.com/maxmind/geoipupdate) via container or systemd
-  timer writing to `/usr/share/GeoIP`. A working bare-metal timer is two units:
-  `geoipupdate.timer` (e.g. `OnCalendar=daily`) invoking
-  `/usr/bin/geoipupdate -f /etc/GeoIP.conf -d /usr/share/GeoIP`.
-- **IPinfo** (free tier available): fetch
-  `https://ipinfo.io/data/free/country_asn.mmdb?token=<token>` on a timer, download to
-  a temp file and `mv` it into place — the atomic rename is what makes riptide's
-  hot-reload race-free.
+### MaxMind GeoLite2 via a systemd timer
 
-Both update mechanisms replace the file by rename, which riptide's mtime-based refresh
-detects; a collector restart is never needed.
+GeoLite2 is free with a MaxMind account. Install
+[`geoipupdate`](https://github.com/maxmind/geoipupdate) (packaged in most distros) and
+put your credentials in `/etc/GeoIP.conf`:
+
+```ini
+AccountID 123456
+LicenseKey your-license-key
+EditionIDs GeoLite2-ASN GeoLite2-City
+```
+
+`/etc/systemd/system/geoipupdate.service`:
+
+```ini
+[Unit]
+Description=Refresh MaxMind GeoIP databases
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/geoipupdate -f /etc/GeoIP.conf -d /usr/share/GeoIP
+```
+
+`/etc/systemd/system/geoipupdate.timer` — GeoLite2 publishes updates on Tuesdays and
+Fridays, so twice a week with jitter is the polite cadence:
+
+```ini
+[Unit]
+Description=Refresh MaxMind GeoIP databases twice a week
+
+[Timer]
+OnCalendar=Tue,Fri 06:00
+RandomizedDelaySec=4h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Enable it and run the first download immediately:
+
+```bash
+systemctl enable --now geoipupdate.timer
+systemctl start geoipupdate.service
+```
+
+### IPinfo via a systemd timer
+
+The free tier needs only a token (put `IPINFO_TOKEN=…` in `/etc/ipinfo.env`,
+mode 0600). The download goes to a temp file and is `mv`ed into place — the atomic
+rename is what makes riptide's hot reload race-free:
+
+`/etc/systemd/system/ipinfo-update.service`:
+
+```ini
+[Unit]
+Description=Refresh IPinfo GeoIP database
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/ipinfo.env
+ExecStart=/bin/sh -c 'curl -fsSL "https://ipinfo.io/data/free/country_asn.mmdb?token=${IPINFO_TOKEN}" \
+    -o /usr/share/GeoIP/.country_asn.mmdb.tmp \
+    && mv /usr/share/GeoIP/.country_asn.mmdb.tmp /usr/share/GeoIP/country_asn.mmdb'
+```
+
+`/etc/systemd/system/ipinfo-update.timer`:
+
+```ini
+[Unit]
+Description=Refresh IPinfo GeoIP database daily
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+systemctl enable --now ipinfo-update.timer
+systemctl start ipinfo-update.service
+```
+
+With either recipe, riptide picks up a refreshed file within `refresh-interval`
+(default 5m) — check the log for `GeoIP databases changed on disk — reloading`.
 
 :::note Schema
 
