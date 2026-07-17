@@ -14,6 +14,7 @@ package org.riptide.pipeline;
  */
 public final class EnricherOrder {
 
+    public static final int EXPORTER_NAME = 50;
     public static final int CLASSIFICATION = 100;
     public static final int CLOCK_CORRECTION = 200;
     public static final int HOSTNAMES = 300;

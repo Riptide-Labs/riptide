@@ -208,7 +208,7 @@ public class ClickhouseRepositoryIT {
 
         // Simulate a pre-geo table: keep a persisted row, then drop the geo columns.
         repo.persist(List.of(testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 60001, 443, 100L)));
-        for (final String column : List.of("srcCountry", "srcCity", "dstCountry", "dstCity")) {
+        for (final String column : List.of("srcCountry", "srcCity", "dstCountry", "dstCity", "exporterName")) {
             queryClient.execute("ALTER TABLE " + database + ".flows DROP COLUMN " + column).get();
         }
 
@@ -216,7 +216,7 @@ public class ClickhouseRepositoryIT {
         final var validating = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, false), RESOLVERS);
         Assertions.assertThatThrownBy(validating::start)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("geo column")
+                .hasMessageContaining("exporterName")
                 .hasMessageContaining("riptide onboard");
 
         // Manage mode adds the columns back in place; the pre-geo row survives and reads ''.

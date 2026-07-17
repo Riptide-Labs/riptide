@@ -91,4 +91,5 @@ public class ClickhouseFlow {
     private String srcCity = "";
     private String dstCountry = "";
     private String dstCity = "";
+    private String exporterName = "";
 }

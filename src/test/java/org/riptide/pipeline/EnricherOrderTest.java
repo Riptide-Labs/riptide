@@ -10,6 +10,7 @@ import org.riptide.classification.ClassificationEnricher;
 import org.riptide.clock.ClockCorrectionEnricher;
 import org.riptide.geoip.GeoIpEnricher;
 import org.riptide.locality.LocalityEnricher;
+import org.riptide.node.ExporterNameEnricher;
 import org.riptide.routing.RoutingEnricher;
 import org.riptide.snmp.SnmpEnricher;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,6 +37,7 @@ public class EnricherOrderTest {
         // HostnamesEnricher is disabled by default (riptide.enricher.hostnames.enabled=false);
         // its slot between ClockCorrection and Locality is pinned by EnricherOrder.HOSTNAMES.
         assertThat(enrichers).extracting(enricher -> (Class) enricher.getClass()).containsExactly(
+                ExporterNameEnricher.class,
                 ClassificationEnricher.class,
                 ClockCorrectionEnricher.class,
                 LocalityEnricher.class,
