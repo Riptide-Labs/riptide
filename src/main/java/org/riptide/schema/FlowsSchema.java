@@ -78,29 +78,34 @@ public final class FlowsSchema {
         return ident(database) + ".flows";
     }
 
-    /** The GeoIP columns and their types — the one home for both CREATE and ALTER emission. */
-    private static final Map<String, String> GEO_COLUMNS = new LinkedHashMap<>();
+    /**
+     * Columns added after the 0.4.x schema, upgradeable in place — the one home for both
+     * CREATE and ALTER emission. Order matters: it is the trailing column order of
+     * {@link #createFlowsTable}, so a fresh and an upgraded table end up identical.
+     */
+    private static final Map<String, String> ADDITIVE_COLUMNS = new LinkedHashMap<>();
 
     static {
-        GEO_COLUMNS.put("srcCountry", "LowCardinality(String)");
-        GEO_COLUMNS.put("srcCity", "LowCardinality(String)");
-        GEO_COLUMNS.put("dstCountry", "LowCardinality(String)");
-        GEO_COLUMNS.put("dstCity", "LowCardinality(String)");
+        ADDITIVE_COLUMNS.put("srcCountry", "LowCardinality(String)");
+        ADDITIVE_COLUMNS.put("srcCity", "LowCardinality(String)");
+        ADDITIVE_COLUMNS.put("dstCountry", "LowCardinality(String)");
+        ADDITIVE_COLUMNS.put("dstCity", "LowCardinality(String)");
+        ADDITIVE_COLUMNS.put("exporterName", "LowCardinality(String)");
     }
 
-    /** The GeoIP column names, for callers distinguishing additive-upgradeable columns. */
-    public static Set<String> geoColumnNames() {
-        return Collections.unmodifiableSet(GEO_COLUMNS.keySet());
+    /** The additive column names, for callers distinguishing in-place-upgradeable columns. */
+    public static Set<String> additiveColumnNames() {
+        return Collections.unmodifiableSet(ADDITIVE_COLUMNS.keySet());
     }
 
     /**
-     * Idempotent additive upgrade: {@code ALTER TABLE … ADD COLUMN IF NOT EXISTS} for each geo
-     * column. Safe on any table — a fresh one (columns exist, no-op) or a pre-geo one (columns
-     * appended in definition order, matching {@link #createFlowsTable}'s trailing placement).
+     * Idempotent additive upgrade: {@code ALTER TABLE … ADD COLUMN IF NOT EXISTS} for each
+     * additive column. Safe on any table — a fresh one (columns exist, no-op) or a pre-upgrade
+     * one (columns appended in definition order, matching {@link #createFlowsTable}).
      */
-    public static List<String> addGeoColumns(final String database) {
+    public static List<String> addAdditiveColumns(final String database) {
         final String flows = qualifiedFlows(database);
-        return GEO_COLUMNS.entrySet().stream()
+        return ADDITIVE_COLUMNS.entrySet().stream()
                 .map(column -> "ALTER TABLE " + flows + " ADD COLUMN IF NOT EXISTS "
                         + column.getKey() + " " + column.getValue())
                 .toList();
@@ -214,12 +219,13 @@ public final class FlowsSchema {
 
             clockCorrection Nullable(Int64),
 
-            -- GeoIP enrichment; '' = unknown. Kept last so a pre-geo table upgraded via
-            -- addGeoColumns() has the same column order as a freshly created one.
+            -- Additive columns (0.5.x); '' = unknown. Kept last so a pre-existing table
+            -- upgraded via addAdditiveColumns() has the same column order as a fresh one.
             srcCountry LowCardinality(String),
             srcCity LowCardinality(String),
             dstCountry LowCardinality(String),
-            dstCity LowCardinality(String)
+            dstCity LowCardinality(String),
+            exporterName LowCardinality(String)
         ) ENGINE = MergeTree()
         ORDER BY (
             tenant, organisation,

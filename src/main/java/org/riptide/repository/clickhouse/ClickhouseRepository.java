@@ -114,9 +114,9 @@ public class ClickhouseRepository implements FlowRepository {
             ensureDatabase();
             this.client.execute(FlowsSchema.createFlowsTable(this.config.getDatabase())).get();
             this.client.execute(FlowsSchema.createSamplesView(this.config.getDatabase())).get();
-            // Additive upgrades manage mode owns: a pre-geo table that IF NOT EXISTS no-oped
-            // over gains the geo columns in place (no data loss); on a fresh table these no-op.
-            for (final String ddl : FlowsSchema.addGeoColumns(this.config.getDatabase())) {
+            // Additive upgrades manage mode owns: a pre-existing table that IF NOT EXISTS no-oped
+            // over gains the additive columns in place (no data loss); on a fresh table these no-op.
+            for (final String ddl : FlowsSchema.addAdditiveColumns(this.config.getDatabase())) {
                 this.client.execute(ddl).get();
             }
         }
@@ -185,12 +185,12 @@ public class ClickhouseRepository implements FlowRepository {
                 .sorted()
                 .toList();
         if (!missing.isEmpty()) {
-            if (FlowsSchema.geoColumnNames().containsAll(missing)) {
-                // Only the additive geo columns are missing — in validate mode riptide never
+            if (FlowsSchema.additiveColumnNames().containsAll(missing)) {
+                // Only additive columns are missing — in validate mode riptide never
                 // alters the schema, but the fix is a safe, data-preserving onboard re-run.
                 throw new IllegalStateException(
                         "flows table in database '" + this.config.getDatabase()
-                                + "' is missing the geo column(s) " + missing
+                                + "' is missing the column(s) " + missing
                                 + " — re-run 'riptide onboard' to add them in place (no data loss), or set "
                                 + "riptide.clickhouse.manage-schema=true to let riptide add them.");
             }

@@ -52,21 +52,23 @@ class ProvisioningDdlTest {
     }
 
     @Test
-    void ensureSharedUpgradesGeoColumnsFirst() {
-        // Additive geo-column upgrades are emitted on every run (before the grants, same
-        // table-exists precondition) so re-running onboard upgrades a pre-geo table in place.
+    void ensureSharedUpgradesAdditiveColumnsFirst() {
+        // Additive column upgrades are emitted on every run (before the grants, same
+        // table-exists precondition) so re-running onboard upgrades a pre-existing table in place.
         final List<String> sql = ProvisioningDdl.ensureShared("riptide", 50_000_000_000L);
         assertThat(sql.get(0)).isEqualTo(
                 "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS srcCountry LowCardinality(String)");
-        assertThat(sql.subList(0, 4)).allMatch(s -> s.contains("ADD COLUMN IF NOT EXISTS"));
-        assertThat(sql).filteredOn(s -> s.contains("ADD COLUMN")).hasSize(4);
+        assertThat(sql.subList(0, 5)).allMatch(s -> s.contains("ADD COLUMN IF NOT EXISTS"));
+        assertThat(sql).filteredOn(s -> s.contains("ADD COLUMN")).hasSize(5);
+        assertThat(sql.get(4)).contains("exporterName LowCardinality(String)");
     }
 
     @Test
-    void bootstrapSchemaIncludesGeoColumns() {
+    void bootstrapSchemaIncludesAdditiveColumns() {
         assertThat(ProvisioningDdl.bootstrapSchema("riptide", 30).get(1))
                 .contains("srcCountry LowCardinality(String)")
-                .contains("dstCity LowCardinality(String)");
+                .contains("dstCity LowCardinality(String)")
+                .contains("exporterName LowCardinality(String)");
     }
 
     @Test
