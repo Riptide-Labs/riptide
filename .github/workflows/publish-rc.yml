@@ -57,13 +57,8 @@ jobs:
             VERSION=${{ env.VERSION }}
           tags: |
             ghcr.io/riptide-labs/riptide:rc
-      # Deletes the untagged versions orphaned by the moving :rc tag. Multi-arch
-      # aware: per-arch manifests referenced by tagged manifest lists are kept;
-      # validate checks all tagged images stay intact afterwards.
-      - name: Clean up untagged package versions
-        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          package: riptide
-          delete-untagged: true
-          validate: true
+      # No untagged-version cleanup here. cosign 3 attaches signatures as OCI
+      # referrers — untagged manifests hanging off the signed release digest —
+      # so a package-wide `delete-untagged` sweep strips released images of
+      # their signatures. It did: 0.4.10 and 0.4.11 no longer verify. The
+      # moving :rc tag overwriting its predecessor is the space control.
