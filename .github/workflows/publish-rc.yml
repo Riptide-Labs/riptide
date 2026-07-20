@@ -13,13 +13,21 @@ permissions:
   contents: read
   packages: write
 
+# Only the newest main commit needs to be :rc — cancel the ones it overtook.
+concurrency:
+  group: publish-rc
+  cancel-in-progress: true
+
 jobs:
   publish:
     # :rc always reflects main — also guards manual dispatches from other refs
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - name: Set up JDK 25 for x64
         uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5.5.0
         with:
@@ -29,9 +37,11 @@ jobs:
           cache: maven
       - name: Set version, date and short git hash
         run: |
-          echo "VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)" >> ${GITHUB_ENV}
-          echo "SHORT_GIT_SHA=$(git rev-parse --short HEAD)" >> ${GITHUB_ENV}
-          echo "BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> ${GITHUB_ENV}
+          {
+            echo "VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)"
+            echo "SHORT_GIT_SHA=$(git rev-parse --short HEAD)"
+            echo "BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          } >> "${GITHUB_ENV}"
       - name: Build with tests
         run: |
           make
