@@ -3,10 +3,11 @@ run-name: Build and Test the application
 on:
   workflow_dispatch:
   push:
-    tags-ignore:
+    branches: [ 'main' ]  # post-merge run on main; tags are the release workflow's
   pull_request:
-    branches: [ 'main' ]  # Builds PRs targeting main
-    types: [ opened, reopened ]  # Default: covers new pushes to PR
+    branches: [ 'main' ]  # every PR targeting main, on open and on each new push
+    # No `types:` filter — naming one replaces the default set, and dropping
+    # `synchronize` from it means pushes to an open PR never rebuild.
 jobs:
   build:
     runs-on: ubuntu-latest
