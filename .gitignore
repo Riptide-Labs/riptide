@@ -6,6 +6,9 @@ target/
 
 .jqwik-database
 
+### Jazzer fuzzing corpus (persisted via CI cache, never committed) ###
+.cifuzz-corpus/
+
 ### Mac OSX ###
 .DS_Store
 
