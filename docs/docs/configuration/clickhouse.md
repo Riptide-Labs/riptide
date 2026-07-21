@@ -48,8 +48,9 @@ what ClickHouse accepts under backtick quoting; rename such a database or use va
   manual DDL — the configured user needs `CREATE` rights), the `flows` table with
   `CREATE TABLE IF NOT EXISTS` (an existing table is not replaced, so its data survives), and
   the `samples` view with `CREATE OR REPLACE VIEW` (a view holds no data, so it is always
-  refreshed and can never go stale). A fresh install is created; a restart keeps the data — so
-  **flow data now survives a Riptide restart**.
+  refreshed and can never go stale), and the [1-minute rollups](#rollups) with
+  `CREATE TABLE IF NOT EXISTS` / `CREATE MATERIALIZED VIEW IF NOT EXISTS`. A fresh install is
+  created; a restart keeps the data — so **flow data now survives a Riptide restart**.
 
   :::warning[Hand-created `samples` views need re-creating]
 
@@ -64,9 +65,10 @@ what ClickHouse accepts under backtick quoting; rename such a database or use va
   provisioning-pointing error** if it does not. Use this when an admin owns the schema and
   RBAC and each riptide process is a narrowly-scoped writer that only uses the table. On a fresh
   single-node server the admin-side
-  [`onboard --create-schema`](../deploy/multi-tenancy.md#what-it-provisions) bootstraps the database
-  and `flows` table as part of provisioning; without the flag, `onboard` requires the schema to
-  exist and fails loudly if it does not (replicated clusters pre-create the table admin-side).
+  [`onboard --create-schema`](../deploy/multi-tenancy.md#what-it-provisions) bootstraps the database,
+  the `flows` table and the [rollups](#rollups) as part of provisioning; without the flag, `onboard`
+  requires the schema to exist and fails loudly if it does not (replicated clusters pre-create the
+  table admin-side).
 
 In both modes, startup verifies the `flows` table is present and carries every column riptide
 inserts (including the `tenant`/`organisation`/`zone`/`system` identity columns) by reading the
@@ -87,6 +89,65 @@ Enrichment results are denormalized into the flow row at write time — exporter
 resolved interface data (`inputSnmpIfName`/`ifAlias`/`ifSpeed` and the `output…`
 counterparts), hostnames, classification, and locality — so queries never need join-time
 lookups.
+
+## Rollups
+
+Alongside `flows` sit four **1-minute rollups**: `SummingMergeTree` tables kept up to date by
+materialized views on `flows`. A dashboard that asks "top applications over the last 30 days"
+reads a few thousand pre-aggregated rows instead of scanning every flow.
+
+| table | dimensions (beyond the shared preamble) |
+|---|---|
+| `flows_by_application_1m` | `application`, `protocol` |
+| `flows_by_conversation_1m` | `srcAddr`, `dstAddr`, `application` |
+| `flows_by_exporter_iface_1m` | `exporterAddr`, `exporterName`, `inputSnmp`, `outputSnmp` |
+| `flows_by_geo_asn_1m` | `srcAs`, `dstAs`, `srcCountry`, `dstCountry` |
+
+Every rollup carries the same preamble — `tenant`, `organisation`, `timestamp`, `zone` — and the
+same measures: `bytes`, `packets`, `flowCount`, plus the directional split `bytesIn`/`bytesOut`
+and `packetsIn`/`packetsOut`. The undirected totals sit alongside the split deliberately: a flow
+with `direction = UNKNOWN` counts in neither `bytesIn` nor `bytesOut`, so a query that summed the
+split would quietly lose it. Use `bytes` unless you specifically want one direction.
+
+`timestamp` keeps the raw table's column name, truncated to the minute
+(`toStartOfMinute`), so a time filter ports between raw and rollup unchanged:
+
+```sql
+-- the same WHERE works against either table
+SELECT application, sum(bytes) AS bytes
+FROM riptide.flows_by_application_1m
+WHERE timestamp >= now() - INTERVAL 7 DAY
+GROUP BY application ORDER BY bytes DESC LIMIT 10;
+```
+
+Each rollup `X` is fed by a materialized view named `X_mv`. Query the table, never the `_mv`.
+
+### Retention
+
+Rollups keep **365 days** by default, against the raw table's 30. That is the point of them: the
+aggregates outlive the flows they came from, so long-range queries keep working after the raw
+rows expire. Retention is set at creation time (`TTL timestamp + INTERVAL <n> DAY`) — in
+provisioned mode via `onboard --ttl-days`, which applies to the raw table; adjust a rollup's TTL
+with `ALTER TABLE … MODIFY TTL` if you need something different.
+
+:::warning[Raw retention above 365 days inverts the invariant]
+
+`--ttl-days` sets only the **raw** table's TTL — the rollups stay at 365 unless altered. A raw
+retention above 365 therefore makes the rollups expire *before* the raw rows, silently defeating
+"aggregates outlive the flows": long-range queries lose the oldest aggregates while the raw data
+still exists. If you set `--ttl-days` above 365, raise the rollups to at least the same value:
+`ALTER TABLE <db>.<rollup> MODIFY TTL timestamp + INTERVAL <n> DAY` for each rollup.
+
+:::
+
+:::warning[Materialized views do not backfill]
+
+A rollup only covers traffic inserted **after** it was created. Adding the rollups to an existing
+deployment does not populate them from historical `flows` rows — they start empty and fill from
+that moment on. To backfill, `INSERT INTO … SELECT` from `flows` yourself, keeping the same
+grouping the view uses.
+
+:::
 
 ## Identity columns
 

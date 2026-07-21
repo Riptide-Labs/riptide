@@ -39,8 +39,9 @@ public final class TenantProvisioner {
      * Ensure the shared objects and this tenant's users/policy exist (idempotent). Returns the
      * riptide configuration stanza for the tenant's collector, referencing the same writer secret.
      *
-     * <p>A pre-flight check verifies the database and {@code flows} table exist <em>before any
-     * statement runs</em>. If they are missing, the run fails unless {@code createSchema} is set —
+     * <p>A pre-flight check verifies the database, the {@code flows} table and the rollups exist
+     * <em>before any statement runs</em>. If they are missing, the run fails unless
+     * {@code createSchema} is set —
      * a typo'd database name must fail loudly, not silently provision a phantom database with the
      * shared roles granted on it. The bootstrap statements are only <em>emitted</em> when actually
      * creating: ClickHouse checks the {@code CREATE} privileges even when {@code IF NOT EXISTS}
@@ -60,6 +61,21 @@ public final class TenantProvisioner {
                                 + " for typos (an admin-provisioned table is also accepted)", null);
             }
             statements.addAll(ProvisioningDdl.bootstrapSchema(spec.database(), ttlDays));
+        }
+        // Same opt-in gate for the rollups, checked separately: a database provisioned before the
+        // rollups existed has a perfectly good flows table and would otherwise pass the check above
+        // while silently lacking them. Short-circuited on bootstrap — a database we are creating
+        // right now cannot have rollups, so there is no point asking ClickHouse eight times.
+        if (bootstrap || !rollupsExist(spec.database())) {
+            if (!createSchema) {
+                throw new ProvisioningException(
+                        "database '" + spec.database() + "' is missing the 1-minute rollup tables or"
+                                + " their materialized views — re-run with --create-schema to add"
+                                + " them. This creates tables and materialized views only; the flows"
+                                + " table and its data are untouched, and the rollups cover traffic"
+                                + " from creation onward (a materialized view does not backfill)", null);
+            }
+            statements.addAll(ProvisioningDdl.bootstrapRollups(spec.database()));
         }
         statements.addAll(ProvisioningDdl.ensureShared(spec.database(), spec.quotaBytes()));
         statements.addAll(ProvisioningDdl.onboardTenant(
@@ -83,6 +99,17 @@ public final class TenantProvisioner {
     private boolean flowsTableExists(final String database) {
         return exists("EXISTS DATABASE " + ProvisioningDdl.ident(database))
                 && exists("EXISTS TABLE " + FlowsSchema.qualifiedFlows(database));
+    }
+
+    /**
+     * Whether every rollup target <em>and</em> its materialized view is present. Both halves are
+     * checked because they fail independently: an interrupted bootstrap can leave the target table
+     * created and the view not, which reports as a healthy-looking empty rollup.
+     */
+    private boolean rollupsExist(final String database) {
+        return FlowsSchema.rollupTableNames().stream()
+                .allMatch(rollup -> exists("EXISTS TABLE " + FlowsSchema.qualifiedRollup(database, rollup))
+                        && exists("EXISTS TABLE " + FlowsSchema.qualifiedRollupView(database, rollup)));
     }
 
     private boolean exists(final String sql) {

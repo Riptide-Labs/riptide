@@ -176,8 +176,10 @@ public final class ProvisioningCommand {
                   riptide offboard --admin-url URL [--admin-user U] [--admin-password REF] \\
                                    --tenant T [--database DB] --yes
                 secret REF: plain literal, env://VAR, or file:///path[#key]
-                --create-schema: bootstrap the database and flows table if absent (needs CREATE
-                                 privileges); without it, a missing schema fails before provisioning""");
+                --create-schema: bootstrap the database, flows table, and 1-minute rollup
+                                 tables/views if absent (needs CREATE privileges) — also the way
+                                 to add the rollups to a pre-rollup deployment; without it, a
+                                 missing schema fails before provisioning""");
     }
 
     /** Minimal {@code --key value} / {@code --flag} parser. {@code args[0]} is the subcommand. */

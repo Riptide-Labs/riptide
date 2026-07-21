@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.riptide.config.ClickhouseConfig;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.pipeline.EnrichedFlow;
+import org.riptide.schema.FlowsSchema;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
 import org.testcontainers.containers.GenericContainer;
@@ -150,6 +151,51 @@ public class ClickhouseRepositoryIT {
     }
 
     @Test
+    void rollupsConserveTotalsAndKeepUndirectedTrafficVisible() throws Exception {
+        final var repo = new ClickhouseRepository(
+                new ClickhouseRepository$FlowMapperImpl(), configFor("rollups", true), RESOLVERS);
+        repo.start();
+
+        // Three flows in one minute bucket: one INGRESS, one EGRESS, one UNKNOWN. The UNKNOWN one
+        // is the point — it belongs to neither side of the split, so a rollup that only carried
+        // bytesIn/bytesOut would lose it entirely.
+        final var minute = Instant.now().truncatedTo(ChronoUnit.MINUTES).minus(5, ChronoUnit.MINUTES);
+        final var ingress = testFlow(minute.plusSeconds(5), 40001, 443, 100L);
+        final var egress = testFlow(minute.plusSeconds(20), 40002, 443, 200L);
+        egress.setDirection(Flow.Direction.EGRESS);
+        final var unknown = testFlow(minute.plusSeconds(40), 40003, 443, 800L);
+        unknown.setDirection(Flow.Direction.UNKNOWN);
+        repo.persist(List.of(ingress, egress, unknown));
+
+        final var rawBytes = queryClient.queryAll("SELECT sum(bytes) AS b FROM rollups.flows")
+                .getFirst().getLong("b");
+        Assertions.assertThat(rawBytes).isEqualTo(1100L);
+
+        // Every rollup must conserve the raw totals — no double counting, no dropped rows.
+        for (final String rollup : FlowsSchema.rollupTableNames()) {
+            final var totals = queryClient.queryAll(
+                    "SELECT sum(bytes) AS b, sum(packets) AS p, sum(flowCount) AS c FROM rollups." + rollup)
+                    .getFirst();
+            Assertions.assertThat(totals.getLong("b")).as("%s bytes", rollup).isEqualTo(1100L);
+            Assertions.assertThat(totals.getLong("p")).as("%s packets", rollup).isEqualTo(21L);
+            Assertions.assertThat(totals.getLong("c")).as("%s flow count", rollup).isEqualTo(3L);
+        }
+
+        // The directional split covers only the directed flows; the undirected total covers all.
+        final var split = queryClient.queryAll("SELECT sum(bytesIn) AS in, sum(bytesOut) AS out, "
+                + "sum(bytes) AS total FROM rollups.flows_by_application_1m").getFirst();
+        Assertions.assertThat(split.getLong("in")).isEqualTo(100L);
+        Assertions.assertThat(split.getLong("out")).isEqualTo(200L);
+        Assertions.assertThat(split.getLong("total")).isEqualTo(1100L);
+
+        // All three land in one bucket: toStartOfMinute really is truncating.
+        final var buckets = queryClient.queryAll(
+                "SELECT timestamp, sum(bytes) AS b FROM rollups.flows_by_application_1m GROUP BY timestamp");
+        Assertions.assertThat(buckets).hasSize(1);
+        Assertions.assertThat(buckets.getFirst().getLong("b")).isEqualTo(1100L);
+    }
+
+    @Test
     void columnCheckFailsFastWhenIdentityColumnMissing() throws Exception {
         final var database = "stale_schema";
         queryClient.execute("CREATE DATABASE IF NOT EXISTS " + database).get();
@@ -205,6 +251,13 @@ public class ClickhouseRepositoryIT {
         final var config = configFor(database, true);
         final var repo = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
         repo.start();
+
+        // start() created the rollup views, and ClickHouse refuses to DROP a column a materialized
+        // view references (ALTER_OF_COLUMN_IS_FORBIDDEN) — drop the views first so the pre-geo
+        // simulation below can strip the columns. A real pre-geo database has neither.
+        for (final String rollup : FlowsSchema.rollupTableNames()) {
+            queryClient.execute("DROP VIEW IF EXISTS " + FlowsSchema.qualifiedRollupView(database, rollup)).get();
+        }
 
         // Simulate a pre-geo table: keep a persisted row, then drop the geo columns.
         repo.persist(List.of(testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 60001, 443, 100L)));

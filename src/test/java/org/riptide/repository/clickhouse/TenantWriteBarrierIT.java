@@ -89,10 +89,18 @@ public class TenantWriteBarrierIT {
         admin.execute("CREATE USER writer_acme IDENTIFIED WITH no_password "
                 + "SETTINGS SQL_tenant = 'acme' CONST, SQL_org = 'acme-eu' CONST").get();
         admin.execute("GRANT INSERT ON " + DATABASE + ".flows TO writer_acme").get();
+        // Writers also read flows (materialized views run as the inserting user), so they need
+        // SELECT and their own row policy — mirroring what onboard provisions.
+        admin.execute("GRANT SELECT ON " + DATABASE + ".flows TO writer_acme").get();
+        admin.execute("CREATE ROW POLICY acme_write ON " + DATABASE + ".flows "
+                + "FOR SELECT USING tenant = 'acme' TO writer_acme").get();
 
         admin.execute("CREATE USER writer_other IDENTIFIED WITH no_password "
                 + "SETTINGS SQL_tenant = 'other' CONST, SQL_org = 'other-eu' CONST").get();
         admin.execute("GRANT INSERT ON " + DATABASE + ".flows TO writer_other").get();
+        admin.execute("GRANT SELECT ON " + DATABASE + ".flows TO writer_other").get();
+        admin.execute("CREATE ROW POLICY other_write ON " + DATABASE + ".flows "
+                + "FOR SELECT USING tenant = 'other' TO writer_other").get();
 
         // Readonly reader for tenant acme, isolated to its own rows by a row policy.
         admin.execute("CREATE USER reader_acme IDENTIFIED WITH no_password").get();
