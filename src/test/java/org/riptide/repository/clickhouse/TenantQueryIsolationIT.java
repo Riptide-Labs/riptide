@@ -189,6 +189,9 @@ public class TenantQueryIsolationIT {
         config.setUsername(SecretRef.of("default"));
         config.setDatabase(DATABASE);
         config.setManageSchema(true);
+        // The isolation assertions read the seeded rows back immediately; async coalescing is
+        // covered by its own test in ClickhouseRepositoryIT.
+        config.setAsyncInserts(false);
         return config;
     }
 

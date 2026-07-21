@@ -59,6 +59,8 @@ public class TimestampTimezoneIT {
             config.setEndpoint(endpoint);
             config.setUsername(SecretRef.of("riptide"));
             config.setPassword(SecretRef.of("riptide"));
+            // Read-after-write assertion; async coalescing has its own test in ClickhouseRepositoryIT.
+            config.setAsyncInserts(false);
 
             // Build the repository after the zone change so its client picks it up.
             final var repository = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
