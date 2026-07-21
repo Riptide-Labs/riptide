@@ -35,7 +35,8 @@ public final class GeoIpDatabase implements Closeable {
 
     static GeoIpDatabase open(final File file) throws IOException {
         final Reader reader = new Reader(file, Reader.FileMode.MEMORY_MAPPED, new CHMCache());
-        final String type = reader.getMetadata().getDatabaseType();
+        // maxmind-db 4.x: Metadata is a record — accessor is databaseType(), not getDatabaseType().
+        final String type = reader.getMetadata().databaseType();
         final boolean ipinfo = type != null && type.toLowerCase(Locale.ROOT).startsWith("ipinfo");
         return new GeoIpDatabase(reader, ipinfo);
     }
