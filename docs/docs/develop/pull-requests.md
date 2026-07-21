@@ -21,6 +21,15 @@ Every PR must pass, all wired through `make` in CI:
 
 Run the Maven-side gates locally before pushing: `make` (= `mvn verify`).
 
+## Tests are part of the change
+
+**New functionality lands with tests, and a bug fix lands with a test that fails without it.**
+A PR that adds behaviour without covering it — or fixes a bug without a regression test — will be
+asked to add one before merge. The coverage floor above is a backstop, not the policy: it catches
+a shortfall in aggregate but does not excuse an untested feature. Match the tier to the change —
+a unit test for pure logic, an `*IT` against real ClickHouse for the repository layer, an e2e/nl6
+case for the ingestion path, a fuzz seed for a parser edge case.
+
 ## Commits
 
 - **Conventional Commits**: `<type>[scope]: <description>` — `feat`, `fix`, `docs`,
