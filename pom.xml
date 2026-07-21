@@ -55,6 +55,20 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
+            <!-- Transitive-CVE pins (Scorecard/osv-scanner findings). Neither library is on a
+                 reachable path — riptide has no STOMP endpoint (GHSA-vhch-2wf3-m8rp) and Jackson
+                 only rides in with Spring (GHSA-5jmj-h7xm-6q6v) — pinned to the patched versions
+                 anyway. Drop each pin once the managing parent/netty-all catches up. -->
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>2.21.5</version>
+            </dependency>
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-codec-stomp</artifactId>
+                <version>4.2.16.Final</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
