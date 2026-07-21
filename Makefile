@@ -50,6 +50,7 @@ help:
 	@echo "  packages-smoke: Install the packages in Debian and Rocky containers and smoke-test them (requires Docker)"
 	@echo "  nix:          Build the flake package from source (requires Nix)"
 	@echo "  nix-check:    Run the flake checks incl. the NixOS module eval (requires Nix)"
+	@echo "  nix-hash:     Regenerate nix/package.nix's mvnHash after a pom change (requires Nix)"
 	@echo "  coverage:     Run the unit test suite and render the JaCoCo coverage report"
 	@echo "  e2e:          Run integration and e2e tests (*IT, requires Docker) in addition to the unit suite"
 	@echo "  fuzz:         Coverage-guided fuzzing of the flow parsers (Jazzer); FUZZ_TIME=<seconds> per target"
@@ -151,6 +152,23 @@ nix: deps-nix
 .PHONY: nix-check
 nix-check: deps-nix
 	nix flake check --print-build-logs
+
+# Regenerate nix/package.nix's mvnHash after a pom change. Forces the fixed-output maven-deps
+# derivation to the fake-hash sentinel so the build reports the real hash, then writes it back.
+# Idempotent: run it whether or not the hash is stale. sed -i.bak works on both GNU and BSD sed.
+NIX_FAKE_HASH := sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+.PHONY: nix-hash
+nix-hash: deps-nix
+	@echo "Forcing the sentinel hash to read back the real one..."
+	@sed -i.bak -E 's|mvnHash = "sha256-[^"]*";|mvnHash = "$(NIX_FAKE_HASH)";|' nix/package.nix
+	@got=$$(nix build .#default --no-link 2>&1 | grep -oE 'sha256-[A-Za-z0-9+/=]{44}' | grep -v '$(NIX_FAKE_HASH)' | head -1); \
+	if [ -z "$$got" ]; then \
+		echo "No hash reported — the build did not fail on a mismatch. Restoring."; \
+		mv nix/package.nix.bak nix/package.nix; exit 1; \
+	fi; \
+	sed -i.bak2 -E "s|mvnHash = \"sha256-[^\"]*\";|mvnHash = \"$$got\";|" nix/package.nix; \
+	rm -f nix/package.nix.bak nix/package.nix.bak2; \
+	echo "mvnHash = $$got"
 
 .PHONY: release
 release:
