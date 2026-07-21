@@ -81,14 +81,22 @@ public class ClickhouseRepository implements FlowRepository {
         this.username = resolvedUsername != null ? resolvedUsername : "default";
         this.password = resolvedPassword != null ? resolvedPassword : "";
 
-        this.client = new Client.Builder()
+        final var builder = new Client.Builder()
                 .addEndpoint(config.getEndpoint())
                 .setUsername(this.username)
                 .setPassword(this.password)
                 .setDefaultDatabase(config.getDatabase())
                 .compressClientRequest(true)
-                .compressServerResponse(true)
-                .build();
+                .compressServerResponse(true);
+        if (config.isAsyncInserts()) {
+            // Server-side coalescing for the per-packet inserts (see ClickhouseConfig#asyncInserts
+            // for the trade-off and measurements). wait_for_async_insert=0 acknowledges on buffer
+            // append — waiting for the flush would serialize the pipeline on the flush interval,
+            // which benchmarks slower than not coalescing at all (14 vs 56 inserts/s).
+            builder.serverSetting("async_insert", "1")
+                    .serverSetting("wait_for_async_insert", "0");
+        }
+        this.client = builder.build();
     }
 
     @Override
@@ -126,6 +134,19 @@ public class ClickhouseRepository implements FlowRepository {
         // EXISTS no-oped over; in validate mode it catches an absent or mis-provisioned schema —
         // before the first insert would fail with an opaque error. Reuses the schema for register.
         final TableSchema schema = checkSchema();
+
+        if (this.config.isManageSchema()) {
+            // Rollups come after the flows check, not with the DDL above: their materialized views
+            // select from flows, so creating them against a stale or mis-provisioned table would
+            // fail with an error about the view rather than about the real problem. Targets before
+            // views — a view cannot be created before the table its TO clause names.
+            for (final String ddl : FlowsSchema.createRollupTables(this.config.getDatabase())) {
+                this.client.execute(ddl).get();
+            }
+            for (final String ddl : FlowsSchema.createRollupViews(this.config.getDatabase())) {
+                this.client.execute(ddl).get();
+            }
+        }
 
         this.client.register(ClickhouseFlow.class, schema);
     }
