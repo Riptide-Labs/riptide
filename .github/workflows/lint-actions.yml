@@ -12,10 +12,11 @@ on:
   workflow_dispatch:
   push:
     branches: [ 'main' ]
-    paths: [ '.github/workflows/**', 'Makefile' ]
+  # No `paths:` filter. `lint` is a required status check, and a required check
+  # that is filtered out never reports — it does not pass, it stays pending, and
+  # the PR can never merge. The job costs ten seconds; the filter cost merges.
   pull_request:
     branches: [ 'main' ]
-    paths: [ '.github/workflows/**', 'Makefile' ]
 
 permissions:
   contents: read
