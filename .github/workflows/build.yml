@@ -1,29 +1,47 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 name: Riptide Build
 run-name: Build and Test the application
 on:
   workflow_dispatch:
   push:
-    tags-ignore:
+    branches: [ 'main' ]  # post-merge run on main; tags are the release workflow's
   pull_request:
-    branches: [ 'main' ]  # Builds PRs targeting main
-    types: [ opened, reopened ]  # Default: covers new pushes to PR
+    branches: [ 'main' ]  # every PR targeting main, on open and on each new push
+    # No `types:` filter — naming one replaces the default set, and dropping
+    # `synchronize` from it means pushes to an open PR never rebuild.
+
+permissions:
+  contents: read
+
+# Superseded pushes to the same PR are wasted runner minutes.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up JDK 25 for x64
-        uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5.5.0
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
         with:
           java-version: '25'
           distribution: 'temurin'
           architecture: x64
           cache: maven
-      - name: Set version number, data and short git hash
+      - name: Set version number, date and short git hash
         run: |
-          echo "VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)" >> ${GITHUB_ENV}
-          echo "SHORT_GIT_SHA=$(git rev-parse --short HEAD)" >> ${GITHUB_ENV}
-          echo "BUILD_DATE"=$(date -u +"%Y-%m-%dT%H:%M:%SZ") >> ${GITHUB_ENV}
+          {
+            echo "VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)"
+            echo "SHORT_GIT_SHA=$(git rev-parse --short HEAD)"
+            echo "BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          } >> "${GITHUB_ENV}"
       - name: Build with tests
         run: |
           make
@@ -35,11 +53,14 @@ jobs:
           path: |
             target/*.jar
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up JDK 25 for x64
-        uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5.5.0
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
         with:
           java-version: '25'
           distribution: 'temurin'

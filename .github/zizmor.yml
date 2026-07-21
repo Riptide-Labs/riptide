@@ -1,0 +1,29 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Deliberate exceptions to the zizmor audits. Anything not listed here is a
+# finding the workflows are expected to be free of — see `make lint-actions`.
+rules:
+  cache-poisoning:
+    ignore:
+      # The three publishing workflows restore a dependency cache (maven for the
+      # release and rc images, npm for the docs site) before producing something
+      # that leaves the runner. zizmor rates that High on the assumption that an
+      # attacker can seed the cache; GitHub's cache scoping is what makes that
+      # not hold here — a pull-request run writes only to its own branch scope
+      # and cannot write to the default branch's, which is the only scope these
+      # three restore from. Poisoning the cache therefore already requires push
+      # access to main, at which point the cache is not the weak link.
+      #
+      # Revisit if GitHub changes cache scoping, or if any of these workflows
+      # starts running on `pull_request_target`.
+      - release.yml
+      - publish-rc.yml
+      - docs.yml
+  superfluous-actions:
+    ignore:
+      # `gh release create` would replace softprops/action-gh-release here, but
+      # the action handles the artifact globs and the prerelease flag in one
+      # declarative block. Pinned by SHA and Dependabot-tracked; not worth the
+      # hand-rolled shell.
+      - release.yml

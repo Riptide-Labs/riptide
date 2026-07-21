@@ -52,6 +52,7 @@ help:
 	@echo "  nix-check:    Run the flake checks incl. the NixOS module eval (requires Nix)"
 	@echo "  coverage:     Run the unit test suite and render the JaCoCo coverage report"
 	@echo "  e2e:          Run integration and e2e tests (*IT, requires Docker) in addition to the unit suite"
+	@echo "  lint-actions: Lint the GitHub Actions workflows (actionlint + zizmor)"
 	@echo "  docs:         Build the Docusaurus documentation site into docs/build"
 	@echo "  docs-serve:   Run the documentation site locally with live reload"
 	@echo "  clean:        Clean the build artifacts"
@@ -83,6 +84,16 @@ coverage: deps-jar
 e2e: deps-jar deps-oci
 	mvn $(BUILD_OPTS) --batch-mode --update-snapshots verify -Pe2e
 	@echo "Coverage report (incl. e2e): target/site/jacoco/index.html"
+
+.PHONY: deps-lint-actions
+deps-lint-actions:
+	command -v actionlint
+	command -v zizmor
+
+.PHONY: lint-actions
+lint-actions: deps-lint-actions
+	actionlint
+	zizmor --persona=regular .github/workflows
 
 .PHONY: deps-docs
 deps-docs:

@@ -10,6 +10,7 @@ import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.riptide.config.ClickhouseConfig;
 import org.riptide.provisioning.ProvisioningCommand;
+import org.riptide.schema.FlowsSchema;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
 import org.testcontainers.containers.GenericContainer;
@@ -21,6 +22,7 @@ import org.testcontainers.utility.MountableFile;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
@@ -188,8 +190,64 @@ public class TenantOnboardingIT {
         }
     }
 
+    @Test
+    void onboardUpgradesAPreRollupPreGeoDatabaseInPlace() throws Exception {
+        // A database provisioned before the geo columns and the rollups existed: the flows table is
+        // perfectly good, so the schema check passes while the rollups are simply absent. This is
+        // the upgrade path for every deployment onboarded before this feature landed.
+        try (var admin = new Client.Builder()
+                .addEndpoint(endpoint()).setUsername("default").setPassword("").build()) {
+            admin.execute(FlowsSchema.createDatabase("legacy")).get();
+            admin.execute(FlowsSchema.createFlowsTable("legacy")).get();
+            for (final String column : FlowsSchema.additiveColumnNames()) {
+                admin.execute("ALTER TABLE legacy.flows DROP COLUMN " + column).get();
+            }
+
+            // Without --create-schema it must refuse, and say why in terms the operator can act on.
+            final var err = new ByteArrayOutputStream();
+            Assertions.assertThat(ProvisioningCommand.run(legacyOnboardArgs(false),
+                    discard(), new PrintStream(err, true, StandardCharsets.UTF_8))).isEqualTo(1);
+            Assertions.assertThat(err.toString(StandardCharsets.UTF_8))
+                    .contains("rollup")
+                    .contains("--create-schema");
+
+            Assertions.assertThat(ProvisioningCommand.run(legacyOnboardArgs(true), discard(), discard())).isZero();
+            for (final String rollup : FlowsSchema.rollupTableNames()) {
+                Assertions.assertThat(exists(admin, FlowsSchema.qualifiedRollup("legacy", rollup))).isTrue();
+                Assertions.assertThat(exists(admin, FlowsSchema.qualifiedRollupView("legacy", rollup))).isTrue();
+            }
+
+            // Half-provisioned is also detected: targets present, views dropped. An interrupted
+            // bootstrap must not read as healthy, or the rollups stay silently empty.
+            for (final String rollup : FlowsSchema.rollupTableNames()) {
+                admin.execute("DROP VIEW " + FlowsSchema.qualifiedRollupView("legacy", rollup)).get();
+            }
+            Assertions.assertThat(ProvisioningCommand.run(legacyOnboardArgs(false), discard(), discard()))
+                    .isEqualTo(1);
+            Assertions.assertThat(ProvisioningCommand.run(legacyOnboardArgs(true), discard(), discard()))
+                    .isZero();
+            for (final String rollup : FlowsSchema.rollupTableNames()) {
+                Assertions.assertThat(exists(admin, FlowsSchema.qualifiedRollupView("legacy", rollup))).isTrue();
+            }
+        }
+    }
+
     private static int onboard(final String tenant, final String org, final String writerPw, final String readerPw) {
         return ProvisioningCommand.run(onboardArgs(tenant, org, writerPw, readerPw), discard(), discard());
+    }
+
+    private static String[] legacyOnboardArgs(final boolean createSchema) {
+        final var args = new ArrayList<>(List.of(
+                "onboard", "--admin-url", endpoint(), "--database", "legacy",
+                "--tenant", "leg", "--org", "leg-eu", "--writer-secret", "wL", "--reader-secret", "rL"));
+        if (createSchema) {
+            args.add("--create-schema");
+        }
+        return args.toArray(String[]::new);
+    }
+
+    private static boolean exists(final Client admin, final String qualifiedName) {
+        return admin.queryAll("EXISTS TABLE " + qualifiedName).getFirst().getLong("result") == 1;
     }
 
     private static String[] onboardArgs(final String tenant, final String org, final String writerPw, final String readerPw) {

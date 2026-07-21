@@ -1,0 +1,54 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Enforces the workflow rules mechanically rather than by memory: actionlint
+# for syntax and shell bugs (it is what caught the empty `tags-ignore:` and the
+# `synchronize`-dropping `types:` filter), zizmor for the security posture
+# (unpinned actions, over-broad permissions, credential persistence, template
+# injection).
+name: Lint Actions
+run-name: Lint the GitHub Actions workflows
+on:
+  workflow_dispatch:
+  push:
+    branches: [ 'main' ]
+  # No `paths:` filter. `lint` is a required status check, and a required check
+  # that is filtered out never reports — it does not pass, it stays pending, and
+  # the PR can never merge. The job costs ten seconds; the filter cost merges.
+  pull_request:
+    branches: [ 'main' ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-actions-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          # sha256 of actionlint_1.7.12_linux_amd64.tar.gz from the release checksums
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          url="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL "${url}" -o actionlint.tar.gz
+          echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum --check
+          tar -xzf actionlint.tar.gz actionlint
+          sudo install -m 0755 actionlint /usr/local/bin/actionlint
+      - name: Install zizmor
+        env:
+          ZIZMOR_VERSION: 1.27.0
+        run: |
+          pipx install "zizmor==${ZIZMOR_VERSION}"
+      - name: Lint workflows
+        run: |
+          make lint-actions

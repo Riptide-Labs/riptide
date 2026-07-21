@@ -34,4 +34,26 @@ public final class ClickhouseConfig {
          * multi-tenant / provisioned mode.
          */
         private boolean manageSchema = true;
+
+        /**
+         * Server-side insert coalescing ({@code async_insert}). The pipeline inserts once per
+         * received packet, and each insert also feeds the rollup materialized views — without
+         * coalescing, that many small inserts collapse ingestion throughput on modest hardware
+         * (measured 206 → 56 inserts/s with the four rollups on two cores). With coalescing the
+         * server buffers and merges them (measured 607 inserts/s), at the price of asynchronous
+         * error reporting: the insert is acknowledged when buffered, so a row the server later
+         * rejects — notably a mis-tenanted row failing the multi-tenant CHECK barrier — is dropped
+         * without the collector seeing an error.
+         *
+         * <p>Unset (default) follows {@link #manageSchema}: on in manage mode (single-tenant,
+         * where the barrier does not exist and flow transport is lossy UDP anyway), off in
+         * provisioned mode (where the barrier's synchronous rejection is part of the isolation
+         * contract). Set explicitly to override either way.
+         */
+        private Boolean asyncInserts;
+
+        /** The effective setting: the explicit value if set, otherwise on exactly in manage mode. */
+        public boolean isAsyncInserts() {
+                return this.asyncInserts != null ? this.asyncInserts : this.manageSchema;
+        }
 }

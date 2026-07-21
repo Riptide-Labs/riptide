@@ -1,0 +1,47 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# OpenSSF Scorecard grades this repository against supply-chain best practice —
+# an external auditor for much of what the workflows here already enforce.
+# Results land in the Security tab as code scanning alerts.
+name: Scorecard
+run-name: OpenSSF Scorecard supply-chain analysis
+on:
+  workflow_dispatch:
+  branch_protection_rule:
+  push:
+    branches: [ 'main' ]
+  schedule:
+    - cron: '17 4 * * 1' # weekly, Monday morning
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scorecard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analysis:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write  # upload the SARIF results
+      id-token: write         # publish the signed results to the public API
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run analysis
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Publishes the score so the README badge and deps.dev can read it.
+          # Public repositories only.
+          publish_results: true
+      - name: Upload results to the Security tab
+        uses: github/codeql-action/upload-sarif@f58f0d11ebf5dedd870fab2f999275f7602cfa46 # codeql-bundle-v2.26.0
+        with:
+          sarif_file: results.sarif

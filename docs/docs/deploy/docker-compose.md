@@ -28,7 +28,7 @@ Grafana (admin/admin) ships two provisioned dashboards backed by the `flows` tab
 
 - **Riptide - Top 10**: stacked top-10 rate panels (AS, hosts, applications, services, protocols,
   exporters, interfaces) plus a source-AS statistics table with a 95th-percentile column.
-- **Riptide - Traffic Paths (Sankey)**: Kentik-style path diagrams (source AS → ingress
+- **Riptide - Traffic Paths (Sankey)**: path diagrams (source AS → ingress
   interface → application → destination AS, and more), weighted by bytes over the selected range.
 
 The JSON sources live in `deployment/clickhouse/container-fs/grafana/provisioning/dashboards/`.

@@ -1,0 +1,52 @@
+name: Bug report
+description: Something in Riptide behaves differently than it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Found a **security** problem? Please don't file it here — see
+        [SECURITY.md](https://github.com/Riptide-Labs/riptide/blob/main/SECURITY.md)
+        for private reporting.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How can we reproduce it?
+      description: |
+        Steps, configuration, and — for anything touching flow parsing or
+        enrichment — a pcap. A pcap is by far the fastest path to a fix.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Riptide version
+      description: The container image tag, package version, or `riptide --version`.
+      placeholder: "0.5.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How are you running it?
+      options:
+        - Container image
+        - DEB/RPM package
+        - Jar directly
+        - Nix
+        - From source
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Paste the log lines around the problem. This is rendered as code, no backticks needed.
+      render: shell
