@@ -81,14 +81,22 @@ public class ClickhouseRepository implements FlowRepository {
         this.username = resolvedUsername != null ? resolvedUsername : "default";
         this.password = resolvedPassword != null ? resolvedPassword : "";
 
-        this.client = new Client.Builder()
+        final var builder = new Client.Builder()
                 .addEndpoint(config.getEndpoint())
                 .setUsername(this.username)
                 .setPassword(this.password)
                 .setDefaultDatabase(config.getDatabase())
                 .compressClientRequest(true)
-                .compressServerResponse(true)
-                .build();
+                .compressServerResponse(true);
+        if (config.isAsyncInserts()) {
+            // Server-side coalescing for the per-packet inserts (see ClickhouseConfig#asyncInserts
+            // for the trade-off and measurements). wait_for_async_insert=0 acknowledges on buffer
+            // append — waiting for the flush would serialize the pipeline on the flush interval,
+            // which benchmarks slower than not coalescing at all (14 vs 56 inserts/s).
+            builder.serverSetting("async_insert", "1")
+                    .serverSetting("wait_for_async_insert", "0");
+        }
+        this.client = builder.build();
     }
 
     @Override

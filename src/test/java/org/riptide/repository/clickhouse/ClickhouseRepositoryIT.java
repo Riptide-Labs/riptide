@@ -51,6 +51,8 @@ public class ClickhouseRepositoryIT {
         config.setEndpoint("http://" + CLICKHOUSE.getHost() + ":" + CLICKHOUSE.getMappedPort(8123));
         config.setUsername(SecretRef.of("riptide"));
         config.setPassword(SecretRef.of("riptide"));
+        // Read-after-write assertions need synchronous inserts; async has its own test below.
+        config.setAsyncInserts(false);
 
         repository = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
         repository.start();
@@ -196,6 +198,31 @@ public class ClickhouseRepositoryIT {
     }
 
     @Test
+    void asyncInsertsDefaultOnInManageModeAndFeedTheRollups() throws Exception {
+        // Manage mode defaults async-inserts on (ClickhouseConfig#isAsyncInserts). The insert is
+        // acknowledged when buffered, so visibility is eventual — the flush is forced here to keep
+        // the test deterministic; production readers poll (dashboards), they do not read-after-write.
+        final var config = configFor("async_mode", true);
+        config.setAsyncInserts(null);
+        Assertions.assertThat(config.isAsyncInserts()).isTrue();
+
+        final var repo = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
+        repo.start();
+        repo.persist(List.of(
+                testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 50001, 443, 300L),
+                testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 50002, 443, 700L)));
+
+        queryClient.execute("SYSTEM FLUSH ASYNC INSERT QUEUE").get();
+
+        Assertions.assertThat(queryClient.queryAll("SELECT sum(bytes) AS b FROM async_mode.flows")
+                .getFirst().getLong("b")).isEqualTo(1000L);
+        // The rollup views fire on the coalesced flush, not per client call — totals must conserve.
+        Assertions.assertThat(queryClient.queryAll(
+                        "SELECT sum(bytes) AS b FROM async_mode.flows_by_application_1m")
+                .getFirst().getLong("b")).isEqualTo(1000L);
+    }
+
+    @Test
     void columnCheckFailsFastWhenIdentityColumnMissing() throws Exception {
         final var database = "stale_schema";
         queryClient.execute("CREATE DATABASE IF NOT EXISTS " + database).get();
@@ -303,6 +330,8 @@ public class ClickhouseRepositoryIT {
         config.setPassword(SecretRef.of("riptide"));
         config.setDatabase(database);
         config.setManageSchema(manageSchema);
+        // These tests assert read-after-write; the coalesced path gets its own dedicated test.
+        config.setAsyncInserts(false);
         return config;
     }
 

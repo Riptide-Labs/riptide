@@ -13,6 +13,7 @@ riptide.clickhouse.username=default
 #riptide.clickhouse.password=vault://secret/riptide/clickhouse#password
 riptide.clickhouse.database=riptide
 riptide.clickhouse.manage-schema=true
+#riptide.clickhouse.async-inserts=   # unset: follows manage-schema — see below
 ```
 
 ## Credentials
@@ -121,6 +122,25 @@ GROUP BY application ORDER BY bytes DESC LIMIT 10;
 ```
 
 Each rollup `X` is fed by a materialized view named `X_mv`. Query the table, never the `_mv`.
+
+### Insert coalescing (`async-inserts`)
+
+The collector inserts once per received packet, and every insert also feeds the four rollup
+views. Without coalescing, that many small inserts collapse throughput on modest hardware —
+measured on two cores: 206 inserts/s without the rollups, 56 with them, **607 with the rollups
+and server-side coalescing** (`async_insert`, acknowledged on buffer append).
+
+`riptide.clickhouse.async-inserts` controls it, and **unset follows `manage-schema`**:
+
+- **manage mode → on.** No write barrier exists, and flow transport is lossy UDP anyway — the
+  ~200 ms server-side buffer window changes nothing an operator relies on.
+- **provisioned mode → off.** The insert is acknowledged before the server evaluates it, so a
+  row the server later rejects is dropped **without the collector seeing an error** — including a
+  mis-tenanted row failing the CHECK barrier. Isolation still holds (the row never lands), but
+  the synchronous `469 VIOLATED_CONSTRAINT` signal is part of the provisioned-mode contract, so
+  coalescing stays off unless you opt in.
+
+Set the property explicitly to override either default.
 
 ### Retention
 
