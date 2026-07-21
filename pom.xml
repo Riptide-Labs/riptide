@@ -44,6 +44,7 @@
         <jmh.version>1.37</jmh.version>
         <jacoco-maven-plugin.version>0.8.15</jacoco-maven-plugin.version>
         <testcontainers.version>2.0.5</testcontainers.version>
+        <jazzer.version>0.24.0</jazzer.version>
     </properties>
 
     <dependencyManagement>
@@ -242,6 +243,16 @@
             <groupId>org.openjdk.jmh</groupId>
             <artifactId>jmh-generator-annprocess</artifactId>
             <version>${jmh.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Coverage-guided fuzzing of the flow parsers (@FuzzTest). In a normal `mvn verify`
+             (JAZZER_FUZZ unset) these run in regression mode: the seed corpus and any crash
+             inputs replay as ordinary JUnit tests, no native agent. The nightly workflow sets
+             JAZZER_FUZZ=1 to actually fuzz. See src/test/java/org/riptide/flows/fuzz. -->
+        <dependency>
+            <groupId>com.code-intelligence</groupId>
+            <artifactId>jazzer-junit</artifactId>
+            <version>${jazzer.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
