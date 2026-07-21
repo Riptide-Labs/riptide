@@ -12,7 +12,7 @@ In short:
 - [Run & debug](https://riptide.space/docs/develop/run-and-debug) — local stack, pcap replay, nl6
 - [Testing](https://riptide.space/docs/develop/testing) — unit / e2e / full-mode tiers
 - [Pull requests](https://riptide.space/docs/develop/pull-requests) — CI quality gates,
-  **DCO sign-off (`git commit -s`)**, Conventional Commits
+  **tests land with the change**, **DCO sign-off (`git commit -s`)**, Conventional Commits
 
 ## Working from an issue
 
