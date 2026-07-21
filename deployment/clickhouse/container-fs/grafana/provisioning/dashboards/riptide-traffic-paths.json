@@ -1,10 +1,10 @@
 {
-  "uid": "riptide-kentik-sankey",
-  "title": "Riptide - Kentik-style Traffic Paths (Sankey)",
+  "uid": "riptide-traffic-paths",
+  "title": "Riptide - Traffic Paths (Sankey)",
   "tags": [
     "riptide",
     "netflow",
-    "kentik"
+    "traffic-paths"
   ],
   "timezone": "browser",
   "schemaVersion": 39,
@@ -176,7 +176,7 @@
     {
       "type": "netsage-sankey-panel",
       "title": "Peering: Source AS - Ingress - Egress - Destination AS",
-      "description": "Replicates Kentik's Discover Peers Sankey and the 'cost per customer' chain (customer \u2192 ingress interface \u2192 egress interface \u2192 adjacent ASN). https://kb.kentik.com/docs/discover-peers",
+      "description": "Peering analysis: the cost-per-customer chain (customer \u2192 ingress interface \u2192 egress interface \u2192 adjacent ASN).",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -206,7 +206,7 @@
     {
       "type": "netsage-sankey-panel",
       "title": "Situational awareness: Source Country - Source AS - Exporter - Destination host - Service",
-      "description": "Replicates Kentik's DDoS situational-awareness chain (Source Country \u2192 Source ASN \u2192 Destination IP \u2192 Destination Protocol), with the observing exporter as the middle column. https://www.kentik.com/blog/insight-delivered-the-power-of-sankey-diagrams/",
+      "description": "DDoS situational awareness: Source Country \u2192 Source ASN \u2192 Destination IP \u2192 Destination Protocol, with the observing exporter as the middle column.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -236,7 +236,7 @@
     {
       "type": "netsage-sankey-panel",
       "title": "Geo termination: Exporter - Destination AS - Destination Country - Destination City",
-      "description": "Replicates Kentik's geo-planning chain (Dest Country \u2192 Dest Region \u2192 Dest City); riptide carries country and city, led by the observing exporter and destination AS. https://www.kentik.com/blog/insight-delivered-the-power-of-sankey-diagrams/",
+      "description": "Geo capacity planning: Dest Country \u2192 Dest Region \u2192 Dest City; riptide carries country and city, led by the observing exporter and destination AS.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -266,7 +266,7 @@
     {
       "type": "netsage-sankey-panel",
       "title": "Origination/termination: Source City - Source Locality - Exporter - Destination Locality - Destination City",
-      "description": "Replicates the Data Explorer example chain (Source City \u2192 Source Traffic Origination \u2192 Destination Traffic Termination \u2192 Destination City), with riptide's locality as the origination/termination analog and the exporter at the waist. https://kb.kentik.com/docs/chart-visualization-types",
+      "description": "Origination/termination flow: Source City \u2192 Source Traffic Origination \u2192 Destination Traffic Termination \u2192 Destination City, with riptide's locality as the origination/termination analog and the exporter at the waist.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -296,7 +296,7 @@
     {
       "type": "netsage-sankey-panel",
       "title": "Ultimate Exit: Ingress - Egress - Destination AS",
-      "description": "Replicates Kentik's Ultimate Exit Sankey (Entry Site \u2192 Exit Site \u2192 Destination AS), mapped to riptide's ingress/egress interfaces. https://kb.kentik.com/docs/using-ultimate-exit",
+      "description": "Entry-to-exit paths: Entry Site \u2192 Exit Site \u2192 Destination AS, mapped to riptide's ingress/egress interfaces.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
