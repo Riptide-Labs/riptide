@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question or help with a setup
+    url: https://matrix.to/#/#riptide:gitter.im
+    about: Chat with us on Matrix — usually faster than an issue for "how do I ...".
+  - name: Documentation
+    url: https://riptide.space/docs/
+    about: Configuration, deployment and development guides.
+  - name: Report a security vulnerability
+    url: https://github.com/Riptide-Labs/riptide/security/advisories/new
+    about: Private disclosure. Please do not use a public issue.
