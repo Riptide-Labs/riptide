@@ -59,6 +59,12 @@ updates:
       docusaurus:
         patterns:
           - "@docusaurus/*"
+      # react and react-dom must move together — Docusaurus fails the build if their versions
+      # differ, so a split bump (one PR each) leaves both PRs red. Group them into one.
+      react:
+        patterns:
+          - "react"
+          - "react-dom"
     ignore:
       # TS 7 removed baseUrl, which @docusaurus/tsconfig still sets; blocked
       # until the Docusaurus toolchain supports TypeScript 7 (see PR #171).
