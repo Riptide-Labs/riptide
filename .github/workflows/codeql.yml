@@ -5,12 +5,13 @@ name: CodeQL
 run-name: CodeQL security and quality analysis
 on:
   workflow_dispatch:
+  # No paths-ignore: Scorecard's SAST check counts commits CodeQL analyzed, and a docs-only
+  # commit slipping through unscanned dings every subsequent scan. The java analysis of an
+  # unchanged tree costs ~2 minutes — cheaper than the standing alert.
   push:
     branches: [ 'main' ]
-    paths-ignore: [ 'docs/**' ]
   pull_request:
     branches: [ 'main' ]
-    paths-ignore: [ 'docs/**' ]
   schedule:
     - cron: '31 5 * * 1' # weekly, Monday morning
 
