@@ -113,26 +113,15 @@ You can also bind mount your configuration to `/app/application.properties`.
 
 # 📦 Make a release
 
-Here is an example if you want to release a new version 1.0.0.
-> [!NOTE]
-> The `main` branch is protected and requires a pull request to merge changes. Create a branch named `release` to make release related changes.
-> Send a PR to merge the release branch into `main`.
-
 ```
 git checkout -b release
 make release RELEASE_VERSION=1.0.0
 ```
 
-The following key functions are provided:
-
-1. Set the release version in the Maven pom.xml
-2. Commit new version in the pom.xml and create a git tag
-3. Set the Maven pom.xml to a new snapshot version
-4. Commit new snapshot version in the pom.xml
-5. Optional: Push commits and tags to the release branch to publish the release, add `PUSH_RELEASE=true`
-
-The CI/CD pipeline to build and publish container images for releases is triggered by pushed git version tags.
-The version number from the pom.xml is driving the container image version tag.
+Pushing the resulting `vX.Y.Z` tag is what publishes the release: signed jar,
+DEB and RPM packages, an SBOM and a multi-arch container image on
+`ghcr.io/riptide-labs/riptide`. The full procedure, the image tagging scheme and
+the `cosign verify` commands are in **[RELEASING.md](RELEASING.md)**.
 
 # 👋 Say hello
 
@@ -144,7 +133,18 @@ You can find us at:
 
 # 👮 Contribution Guidelines
 
-* [Conventional commits](https://www.conventionalcommits.org/en/v1.0.0/)
+Start with **[CONTRIBUTING.md](CONTRIBUTING.md)**. In short: work from an issue,
+[Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), sign off
+every commit with `git commit -s`, and label AI-assisted work with an
+`Assisted-by:` trailer.
+
+Found a security problem? Please don't open an issue — see
+[SECURITY.md](SECURITY.md).
+
+# 📜 License
+
+Riptide is licensed under the **GNU General Public License v3.0 or later**
+(`GPL-3.0-or-later`). See [LICENSE](LICENSE) for the full text.
 
 
 ## Contributors ✨
