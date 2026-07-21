@@ -13,6 +13,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * The one definition of riptide's ClickHouse flow schema — the {@code flows} table and the
@@ -37,11 +39,23 @@ import java.util.regex.Pattern;
  * always tracks the running version. It is used only by the collector's manage path — {@code
  * onboard} does not create it (in provisioned mode the reader role is not granted {@code SELECT} on
  * it, so it would be inert).
+ *
+ * <p>Alongside the raw table sit the <strong>1-minute rollups</strong>: {@code SummingMergeTree}
+ * targets fed by materialized views on {@code flows}. They are emitted as ordinary tables plus
+ * {@code …_mv} views so the provisioning path can create, grant, and row-policy them exactly like
+ * the raw table. A materialized view does not backfill, so a rollup covers traffic from its
+ * creation onward.
  */
 public final class FlowsSchema {
 
     /** The collector's manage-mode retention; also the {@code onboard --ttl-days} default. */
     public static final int DEFAULT_TTL_DAYS = 30;
+
+    /**
+     * Rollup retention, deliberately far longer than {@link #DEFAULT_TTL_DAYS}: the rollups exist so
+     * long-range queries survive the raw table's expiry, which only works if they outlive it.
+     */
+    public static final int DEFAULT_ROLLUP_TTL_DAYS = 365;
 
     /** Same charset as the provisioning boundary ({@code TenantSpec}): no quotes, backticks, spaces. */
     private static final Pattern SAFE_NAME = Pattern.compile("[A-Za-z0-9_-]+");
@@ -76,6 +90,93 @@ public final class FlowsSchema {
     /** The qualified {@code `<db>`.flows} name — the one home for its construction. */
     public static String qualifiedFlows(final String database) {
         return ident(database) + ".flows";
+    }
+
+    /** The qualified {@code `<db>`.<rollup>} target-table name. */
+    public static String qualifiedRollup(final String database, final String table) {
+        return ident(database) + "." + table;
+    }
+
+    /** The qualified {@code `<db>`.<rollup>_mv} materialized-view name. */
+    public static String qualifiedRollupView(final String database, final String table) {
+        return qualifiedRollup(database, table) + "_mv";
+    }
+
+    /**
+     * The rollup target-table names. Callers that must touch every rollup — {@code GRANT}, row
+     * policies, existence checks — iterate this rather than hard-coding a list that would silently
+     * miss a rollup added here later.
+     */
+    public static List<String> rollupTableNames() {
+        return ROLLUPS.stream().map(Rollup::table).toList();
+    }
+
+    /** As {@link #createRollupTables(String, int)} with the default rollup retention. */
+    public static List<String> createRollupTables(final String database) {
+        return createRollupTables(database, DEFAULT_ROLLUP_TTL_DAYS);
+    }
+
+    /** {@code CREATE TABLE IF NOT EXISTS} for every rollup target — pre-existing tables are left intact. */
+    public static List<String> createRollupTables(final String database, final int ttlDays) {
+        return ROLLUPS.stream().map(rollup -> rollupTable(database, rollup, ttlDays)).toList();
+    }
+
+    /**
+     * {@code CREATE MATERIALIZED VIEW IF NOT EXISTS … TO <target>} for every rollup. Must be emitted
+     * <em>after</em> {@link #createRollupTables} — a view whose {@code TO} target does not yet exist
+     * fails to create.
+     */
+    public static List<String> createRollupViews(final String database) {
+        return ROLLUPS.stream().map(rollup -> rollupView(database, rollup)).toList();
+    }
+
+    /**
+     * A rollup target table: every dimension in the sort key, every measure a {@code UInt64} the
+     * {@code SummingMergeTree} engine collapses on merge.
+     */
+    private static String rollupTable(final String database, final Rollup rollup, final int ttlDays) {
+        final List<Dimension> columns = allDimensions(rollup);
+        final StringBuilder ddl = new StringBuilder("CREATE TABLE IF NOT EXISTS ")
+                .append(qualifiedRollup(database, rollup.table()))
+                .append(" (\n");
+        for (final Dimension dimension : columns) {
+            ddl.append("    ").append(dimension.column()).append(' ').append(dimension.type()).append(",\n");
+        }
+        ddl.append(MEASURES.stream()
+                .map(measure -> "    " + measure.column() + " UInt64")
+                .collect(Collectors.joining(",\n")));
+        // Sorting by every dimension is what makes SummingMergeTree collapse correctly: rows agree
+        // on the full key or they are distinct facts.
+        ddl.append("\n) ENGINE = SummingMergeTree()\nORDER BY (")
+                .append(columns.stream().map(Dimension::column).collect(Collectors.joining(", ")))
+                .append(")\nPARTITION BY toYYYYMM(timestamp)\n")
+                .append("TTL timestamp + INTERVAL ").append(ttlDays).append(" DAY\n")
+                .append("SETTINGS index_granularity = 8192");
+        return ddl.toString();
+    }
+
+    /** The materialized view feeding one rollup target from {@code flows}. */
+    private static String rollupView(final String database, final Rollup rollup) {
+        final List<Dimension> columns = allDimensions(rollup);
+        final StringBuilder ddl = new StringBuilder("CREATE MATERIALIZED VIEW IF NOT EXISTS ")
+                .append(qualifiedRollupView(database, rollup.table()))
+                .append(" TO ").append(qualifiedRollup(database, rollup.table()))
+                .append(" AS\nSELECT\n");
+        ddl.append(columns.stream()
+                .map(dimension -> "    " + dimension.selectItem())
+                .collect(Collectors.joining(",\n")));
+        ddl.append(",\n").append(MEASURES.stream()
+                .map(measure -> "    " + measure.expression() + " AS " + measure.column())
+                .collect(Collectors.joining(",\n")));
+        ddl.append("\nFROM ").append(qualifiedFlows(database)).append(" AS ").append(SOURCE_ALIAS)
+                .append("\nGROUP BY ")
+                .append(columns.stream().map(Dimension::column).collect(Collectors.joining(", ")));
+        return ddl.toString();
+    }
+
+    /** The shared preamble followed by the rollup's own dimensions — the full sort key, in order. */
+    private static List<Dimension> allDimensions(final Rollup rollup) {
+        return Stream.concat(PREAMBLE.stream(), rollup.dimensions().stream()).toList();
     }
 
     /**
@@ -124,6 +225,88 @@ public final class FlowsSchema {
                             + " (letters, digits, underscore, hyphen)");
         }
         return "`" + name + "`";
+    }
+
+    /** The {@code flows} alias every rollup view's expressions qualify against. */
+    private static final String SOURCE_ALIAS = "f";
+
+    /**
+     * {@code application} is {@code Nullable(String)} on the raw table but a sort key on every
+     * rollup that carries it, so the null is folded to {@code ''} on the way in — a nullable sort
+     * key would make the {@code SummingMergeTree} collapse depend on null comparison.
+     */
+    private static final Dimension APPLICATION =
+            new Dimension("application", "LowCardinality(String)", "ifNull(f.application, '')");
+
+    /**
+     * Dimensions every rollup carries, ahead of its own. The tenant/organisation prefix mirrors the
+     * raw table's sort key so the same row policies apply, and {@code timestamp} keeps the raw
+     * table's column name so a time filter ports between raw and rollup unchanged — truncated to
+     * the minute, which is what makes the rollup a rollup.
+     */
+    private static final List<Dimension> PREAMBLE = List.of(
+            Dimension.of("tenant", "String"),
+            Dimension.of("organisation", "String"),
+            new Dimension("timestamp", "DateTime('UTC')", "toStartOfMinute(f.timestamp)"),
+            Dimension.of("zone", "String"));
+
+    /**
+     * The measures every rollup carries. Undirected totals sit alongside the ingress/egress split
+     * so a query that does not care about direction needs no reassembly, and one that does is not
+     * forced to re-derive it from the raw table.
+     */
+    private static final List<Measure> MEASURES = List.of(
+            new Measure("bytes", "sum(f.bytes)"),
+            new Measure("packets", "sum(f.packets)"),
+            new Measure("flowCount", "count()"),
+            new Measure("bytesIn", "sumIf(f.bytes, f.direction = 'INGRESS')"),
+            new Measure("bytesOut", "sumIf(f.bytes, f.direction = 'EGRESS')"),
+            new Measure("packetsIn", "sumIf(f.packets, f.direction = 'INGRESS')"),
+            new Measure("packetsOut", "sumIf(f.packets, f.direction = 'EGRESS')"));
+
+    /** The 1-minute rollups. Adding one here propagates to creation, grants, and row policies. */
+    private static final List<Rollup> ROLLUPS = List.of(
+            new Rollup("flows_by_application_1m", List.of(
+                    APPLICATION,
+                    Dimension.of("protocol", "UInt8"))),
+            new Rollup("flows_by_conversation_1m", List.of(
+                    Dimension.of("srcAddr", "IPv6"),
+                    Dimension.of("dstAddr", "IPv6"),
+                    APPLICATION)),
+            new Rollup("flows_by_exporter_iface_1m", List.of(
+                    Dimension.of("exporterAddr", "String"),
+                    Dimension.of("exporterName", "LowCardinality(String)"),
+                    Dimension.of("inputSnmp", "UInt32"),
+                    Dimension.of("outputSnmp", "UInt32"))),
+            new Rollup("flows_by_geo_asn_1m", List.of(
+                    Dimension.of("srcAs", "UInt64"),
+                    Dimension.of("dstAs", "UInt64"),
+                    Dimension.of("srcCountry", "LowCardinality(String)"),
+                    Dimension.of("dstCountry", "LowCardinality(String)"))));
+
+    /** One rollup: its target table name and the dimensions it adds to {@link #PREAMBLE}. */
+    private record Rollup(String table, List<Dimension> dimensions) {
+    }
+
+    /**
+     * A rollup column: its name and type in the target table, and the expression selecting it from
+     * {@code flows} in the view. Every expression is alias-qualified so the view never depends on
+     * name resolution against the source table.
+     */
+    private record Dimension(String column, String type, String expression) {
+
+        /** A dimension read straight through from the identically-named source column. */
+        static Dimension of(final String column, final String type) {
+            return new Dimension(column, type, SOURCE_ALIAS + "." + column);
+        }
+
+        String selectItem() {
+            return expression + " AS " + column;
+        }
+    }
+
+    /** An aggregate carried by every rollup: its target column and the aggregating expression. */
+    private record Measure(String column, String expression) {
     }
 
     // Placeholder tokens substituted with the qualified names / TTL. Plain replace() (not

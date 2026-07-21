@@ -108,27 +108,57 @@ checks `CREATE` privileges even when `IF NOT EXISTS` would no-op).
 | mode | minimum privileges for the admin credential |
 |---|---|
 | default (schema exists) | `CREATE USER`/`CREATE ROLE`/`CREATE QUOTA`/`CREATE ROW POLICY`, `ALTER USER`/`ALTER ROLE`, `DROP USER`/`DROP ROW POLICY` (offboard), `ALTER TABLE` on `<db>.flows`, and `INSERT`, `SELECT` on `<db>.flows` plus `SELECT` on `system.databases/tables/columns` **with grant option** (they are granted onward to the roles) |
-| `--create-schema` | the above, plus `CREATE DATABASE ON <db>.*` and `CREATE TABLE ON <db>.flows` |
+| `--create-schema` | the above, plus `CREATE DATABASE ON <db>.*`, `CREATE TABLE ON <db>.*` (the `flows` table and the rollup targets) and `CREATE VIEW ON <db>.*` (the rollups' materialized views) |
 
 `onboard` is safe to re-run: it reconciles the writer/reader **passwords** to the current secret, so
-rotating a secret and re-running updates ClickHouse (the users' `CONST` settings and row policy are
-preserved). To remove a tenant: `offboard --admin-url … --tenant acme --yes` (drops its users and
-row policy; the shared roles/constraints/quota stay).
+rotating a secret and re-running updates ClickHouse (the users' `CONST` settings are preserved; the
+row policies are **re-asserted** to match the recipe — a policy `TO` list widened by hand is
+reverted on the next run, so route extra grantees through provisioning, not manual DDL). To remove a tenant: `offboard --admin-url … --tenant acme --yes` (drops its users and
+its row policy from `flows` **and every rollup**; the shared roles/constraints/quota stay).
+
+### Adding rollups to an existing deployment
+
+A database provisioned before the rollups existed has a perfectly good `flows` table, so the
+schema check passes while the rollups are simply absent. `onboard` checks for them separately and
+refuses to run without `--create-schema`:
+
+```
+database 'riptide' is missing the 1-minute rollup tables or their materialized views — re-run
+with --create-schema to add them. …
+```
+
+Re-running with `--create-schema` adds them in place. This creates tables and materialized views
+only — **the `flows` table and its data are untouched**. The check covers each rollup's target
+*and* its view, so an interrupted bootstrap that left targets without views is detected rather
+than reading as healthy (which would leave the rollups silently empty).
+
+Because a materialized view does not backfill, rollups added this way cover traffic from creation
+onward. See [Rollups](../configuration/clickhouse.md#rollups) for the table layout and how to
+backfill if you need the history.
 
 ### What it provisions
 
 The recipe is **role-based**: the schema, the grants, the reader hardening, the CHECK barrier, and
-the quota are one-time objects, so per-tenant reduces to the scoped users + role grants + one literal
-row policy. `onboard` ensures the one-time objects on first run and adds the per-tenant part:
+the quota are one-time objects, so per-tenant reduces to the scoped users + role grants + one row
+policy per table (`flows` and each rollup, all sharing the tenant-literal predicate). `onboard`
+ensures the one-time objects on first run and adds the per-tenant part:
 
 ```sql
 -- Only with --create-schema, and only when the schema is actually missing (a default run emits
 -- no CREATE statement, so it needs no CREATE privileges). IF NOT EXISTS never replaces a table.
 CREATE DATABASE IF NOT EXISTS riptide;
 CREATE TABLE IF NOT EXISTS riptide.flows (…);  -- single-node MergeTree, TTL from --ttl-days (default 30)
+-- The 1-minute rollups: targets first, then the materialized views that feed them (a view cannot
+-- be created before its TO table). TTL is 365 days — the aggregates outlive the raw rows.
+CREATE TABLE IF NOT EXISTS riptide.flows_by_application_1m (…);          -- and three more
+CREATE MATERIALIZED VIEW IF NOT EXISTS riptide.flows_by_application_1m_mv
+  TO riptide.flows_by_application_1m AS SELECT … FROM riptide.flows AS f GROUP BY …;
 -- Once per cluster (idempotent): roles carry every per-tenant grant and the reader hardening.
 CREATE ROLE IF NOT EXISTS flow_writer;
 GRANT INSERT ON riptide.flows TO flow_writer;
+-- The writer also reads flows: a materialized view runs as the inserting user, so pushing a row
+-- into a rollup requires SELECT on the view's source table.
+GRANT SELECT ON riptide.flows TO flow_writer;
 CREATE ROLE IF NOT EXISTS flow_reader;
 GRANT SELECT ON riptide.flows TO flow_reader;
 GRANT SELECT ON system.databases TO flow_reader;
@@ -143,16 +173,35 @@ ALTER TABLE riptide.flows ADD CONSTRAINT IF NOT EXISTS org_pinned    CHECK organ
 -- One quota keyed by user gives every writer its own bucket (written_bytes — written_rows is not a metric).
 CREATE QUOTA IF NOT EXISTS flow_ingest FOR INTERVAL 1 hour MAX written_bytes = 50000000000
   KEYED BY user_name TO flow_writer;
+-- Every rollup gets the same treatment as flows, for both roles.
+GRANT INSERT ON riptide.flows_by_application_1m TO flow_writer;   -- and the other three
+GRANT SELECT ON riptide.flows_by_application_1m TO flow_reader;
 
--- Per tenant (the residual): two scoped users + role grants + one literal row policy.
+-- Per tenant (the residual): two scoped users + role grants + one row policy per table.
 CREATE USER IF NOT EXISTS writer_acme IDENTIFIED WITH sha256_password BY '…'
   SETTINGS SQL_tenant = 'acme' CONST, SQL_org = 'acme-eu' CONST;
 GRANT flow_writer TO writer_acme;
 CREATE USER IF NOT EXISTS bi_acme IDENTIFIED WITH sha256_password BY '…'
   SETTINGS SQL_tenant = 'acme' CONST, SQL_org = 'acme-eu' CONST;
 GRANT flow_reader TO bi_acme;
-CREATE ROW POLICY IF NOT EXISTS acme_iso ON riptide.flows FOR SELECT USING tenant = 'acme' TO bi_acme;
+-- The writer is named on the flows policy alongside the reader: a row policy is deny-by-default
+-- for anyone it does not name, and the writer must read flows for the rollup views to push. Its
+-- predicate is the same tenant the CHECK barrier already pins, so it grants no extra row.
+CREATE ROW POLICY OR REPLACE acme_iso ON riptide.flows
+  FOR SELECT USING tenant = 'acme' TO bi_acme, writer_acme;
+-- The rollup policies name the reader only — the writer reaches a rollup by INSERT through its
+-- materialized view, which no row policy filters.
+CREATE ROW POLICY OR REPLACE acme_iso ON riptide.flows_by_application_1m
+  FOR SELECT USING tenant = 'acme' TO bi_acme;                    -- and the other three
 ```
+
+:::note[Why `OR REPLACE` rather than `IF NOT EXISTS`]
+
+For the same reason `onboard` re-issues `ALTER USER` for passwords: a policy left over from an
+earlier run keeps its old `TO` list, so a re-run would not pick up a changed grantee. `OR REPLACE`
+makes the policy match the recipe every time.
+
+:::
 
 :::note
 
@@ -168,7 +217,9 @@ The hardened BI credential is a real boundary, not just a filter (proven by `Ten
 and, through the subcommand, `TenantOnboardingIT`):
 
 - **Reads stay in-tenant** — the row policy limits `bi_acme` to `tenant = 'acme'` rows, even
-  against a shared table holding every tenant.
+  against a shared table holding every tenant. The rollups carry the same policy, so a
+  pre-aggregated query is bounded exactly as the raw one is — a rollup is not a way around the
+  boundary.
 - **Cannot write** — the `flow_reader` role grants no `INSERT` and pins `readonly`, so a write is
   rejected (`ACCESS_DENIED`).
 - **Cannot change schema** — `allow_ddl = 0` rejects any DDL, so a compromised dashboard credential
