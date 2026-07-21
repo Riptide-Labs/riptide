@@ -44,7 +44,7 @@
         <jmh.version>1.37</jmh.version>
         <jacoco-maven-plugin.version>0.8.15</jacoco-maven-plugin.version>
         <testcontainers.version>2.0.5</testcontainers.version>
-        <jazzer.version>0.24.0</jazzer.version>
+        <jazzer.version>0.30.0</jazzer.version>
     </properties>
 
     <dependencyManagement>
