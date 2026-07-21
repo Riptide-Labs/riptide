@@ -1,11 +1,11 @@
 {
   "uid": "riptide-host-investigation",
-  "title": "Riptide - Host Investigation (Kentik-style)",
+  "title": "Riptide - Host Investigation",
   "tags": [
     "riptide",
     "netflow",
     "security",
-    "kentik"
+    "host-investigation"
   ],
   "timezone": "browser",
   "schemaVersion": 39,
@@ -175,7 +175,7 @@
     {
       "type": "timeseries",
       "title": "Traffic to / from $host",
-      "description": "The IP details page's Traffic tab and the forensics walkthrough's 'bidirectional mode': inbound vs outbound volume for one host. https://kb.kentik.com/docs/core-details-pages",
+      "description": "Bidirectional volume: inbound vs outbound traffic for one host.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -217,7 +217,7 @@
     {
       "type": "timeseries",
       "title": "Unique peers",
-      "description": "Kentik's primary distributed-source/scanning signal (alert details 'unique source IPs'; attack-hunting walkthrough). A jump in inbound peers = scan/DDoS; outbound = the host scanning or beaconing. https://kb.kentik.com/docs/alert-details",
+      "description": "Unique-peers signal for distributed sources and scanning. A jump in inbound peers = scan/DDoS; outbound = the host scanning or beaconing.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -259,7 +259,7 @@
     {
       "type": "timeseries",
       "title": "TCP flag profile",
-      "description": "Scan signature per the Data Explorer TCP-flags dimension: SYN-only flows (connection attempts that never established) vs flows that saw an ACK. A SYN-only surge inbound is a port scan; outbound, the host probing others. https://kb.kentik.com/docs/data-explorer",
+      "description": "Scan signature via TCP flags: SYN-only flows (connection attempts that never established) vs flows that saw an ACK. A SYN-only surge inbound is a port scan; outbound, the host probing others.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -301,7 +301,7 @@
     {
       "type": "table",
       "title": "Top peers",
-      "description": "The traffic-patterns pivot: who this host talks to, labeled with hostname, geo and AS (enrichment columns), with per-direction volume and how many distinct services were touched \u2014 many ports against one peer = probing (forensics walkthrough). https://kb.kentik.com/docs/core-details-pages",
+      "description": "Traffic patterns: who this host talks to, labeled with hostname, geo and AS (enrichment columns), with per-direction volume and how many distinct services were touched \u2014 many ports against one peer = probing.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -343,7 +343,7 @@
     {
       "type": "table",
       "title": "Top services",
-      "description": "The source-services alert tab: which protocols/ports carry this host's traffic, and how many peers share each \u2014 single-port concentration across many peers is the DDoS/abuse fingerprint. https://kb.kentik.com/docs/alert-details",
+      "description": "Source services: which protocols/ports carry this host's traffic, and how many peers share each \u2014 single-port concentration across many peers is the DDoS/abuse fingerprint.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -385,7 +385,7 @@
     {
       "type": "table",
       "title": "Packet size distribution",
-      "description": "The packet-size alert tab: uniform small packets across high flow counts betray floods and botnets; legitimate traffic spreads. https://kb.kentik.com/docs/alert-details",
+      "description": "Packet-size signal: uniform small packets across high flow counts betray floods and botnets; legitimate traffic spreads.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -427,7 +427,7 @@
     {
       "type": "table",
       "title": "Peer countries",
-      "description": "The source-countries alert tab, via riptide's GeoIP columns: countries ranked by unique peers and volume \u2014 geo anomalies flag distributed attacks. https://kb.kentik.com/docs/alert-details",
+      "description": "Source countries, via riptide's GeoIP columns: countries ranked by unique peers and volume \u2014 geo anomalies flag distributed attacks.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -469,7 +469,7 @@
     {
       "type": "table",
       "title": "Peer ASes",
-      "description": "The top-ASes table from Botnet & Threat Analysis, minus the threat feed: which networks this host exchanges traffic with. https://kb.kentik.com/docs/botnet-threat-analysis",
+      "description": "Top ASes: which networks this host exchanges traffic with.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
