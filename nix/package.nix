@@ -46,8 +46,9 @@ maven.buildMavenPackage {
   # git-commit-id plugin reads .git, which is not part of the store source.
   mvnParameters = "-Dmaven.gitcommitid.skip=true";
 
-  # Verified for the pinned nixpkgs rev (spike A.1). Regenerate with lib.fakeHash
-  # whenever pom dependencies change; the nix CI job fails the PR if it drifts.
+  # Fixed-output hash of the maven dependency set. Regenerate with `make nix-hash` whenever the
+  # pom changes; the nix CI job fails the PR if it drifts and prints the expected hash in its
+  # job summary.
   mvnHash = "sha256-jNOhE9uMFwLq1VUaEwLauNlVYSECMjPZewvulPJrkIE=";
 
   nativeBuildInputs = [ makeWrapper ];

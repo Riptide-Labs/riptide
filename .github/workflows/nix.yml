@@ -36,8 +36,30 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
       - name: Build the package
+        id: build
         run: |
           make nix
+      # A stale mvnHash after a pom change is the usual failure here. Surface the expected hash and
+      # the one-command fix in the job summary so it is a glance, not a log dig — see #324.
+      - name: Explain a hash mismatch
+        if: failure() && steps.build.outcome == 'failure'
+        run: |
+          got="$(make nix 2>&1 | grep -oE 'got:\s+sha256-[A-Za-z0-9+/=]+' | grep -oE 'sha256-[A-Za-z0-9+/=]+' | head -1 || true)"
+          {
+            echo "### Nix build failed"
+            if [ -n "${got}" ]; then
+              echo "The maven-deps hash in \`nix/package.nix\` is stale (a pom change moved it)."
+              echo ""
+              echo "Fix it with **\`make nix-hash\`**, or set \`mvnHash\` to:"
+              echo ""
+              echo "\`\`\`"
+              echo "${got}"
+              echo "\`\`\`"
+            else
+              echo "No hash mismatch detected — check the build log above for the real cause."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+          exit 1
       - name: Run flake checks
         run: |
           make nix-check
