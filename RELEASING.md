@@ -14,13 +14,17 @@ anything else patch.
 other change. Example for 1.0.0:
 
 ```bash
-git checkout -b release
+git checkout main && git pull
+git checkout -B release
+git push -u origin release
 make release RELEASE_VERSION=1.0.0
 ```
 
-`make release` refuses to run unless you are on the `release` branch, in sync
-with origin, with a clean tree and a version tag that does not exist yet. It
-then:
+`checkout -B` starts the branch fresh from up-to-date `main` even when a local
+`release` from the previous cycle is still around. `make release` refuses to
+run unless you are on the `release` branch, in sync with its upstream (hence
+the `git push -u` above), with a clean tree and a version tag that does not
+exist yet. It then:
 
 1. sets the release version in `pom.xml`
 2. commits it and creates the annotated tag `v1.0.0`
@@ -35,7 +39,11 @@ git push origin HEAD
 git push origin v1.0.0
 ```
 
-Open a PR to merge `release` into `main` and squash-merge it as usual.
+Open a PR to merge `release` into `main` and squash-merge it as usual. The
+branch is deleted automatically on merge; the next release recreates it fresh
+off `main`. An abandoned attempt (PR closed without merging) leaves a stale
+`origin/release` behind — delete it before starting over:
+`git push origin --delete release`.
 
 **The tag push is what releases.** Everything below happens in
 [`release.yml`](.github/workflows/release.yml) with no further input.
