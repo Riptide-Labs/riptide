@@ -12,6 +12,7 @@ import org.junit.jupiter.api.extension.ExtensionContext;
 import org.springframework.util.function.ThrowingFunction;
 import org.xbill.DNS.Flags;
 import org.xbill.DNS.Message;
+import org.xbill.DNS.Rcode;
 import org.xbill.DNS.Record;
 import org.xbill.DNS.Section;
 
@@ -72,8 +73,14 @@ public class MockDnsServer implements BeforeAllCallback, AfterAllCallback {
 
                     response.addRecord(request.getQuestion(), Section.QUESTION);
 
-                    for (Record record : this.callback.apply(request.getQuestion())) {
-                        response.addRecord(record, Section.ANSWER);
+                    final var records = this.callback.apply(request.getQuestion());
+                    if (records == null) {
+                        // null from the callback simulates a server-side failure
+                        response.getHeader().setRcode(Rcode.SERVFAIL);
+                    } else {
+                        for (Record record : records) {
+                            response.addRecord(record, Section.ANSWER);
+                        }
                     }
 
                     final var responseWire = response.toWire();

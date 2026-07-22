@@ -69,7 +69,11 @@ class NettyDnsResolverWorker {
                             resultFuture.complete(Optional.empty());
                         }
                     } else {
-                        parent.reverseCache.put(reverseMapName, Optional.empty());
+                        // Only NXDOMAIN is a cacheable negative answer (RFC 2308); transient
+                        // failures like SERVFAIL must not suppress lookups for the TTL window.
+                        if (DnsResponseCode.NXDOMAIN.equals(dnsResponse.code())) {
+                            parent.reverseCache.put(reverseMapName, Optional.empty());
+                        }
                         resultFuture.complete(Optional.empty());
                     }
                 } finally {
