@@ -46,7 +46,7 @@ class NettyDnsResolverWorker {
         final var dnsQuestion = new DefaultDnsQuestion(reverseMapName, DnsRecordType.PTR, DnsRecord.CLASS_IN);
         Future<AddressedEnvelope<DnsResponse, InetSocketAddress>> queryFuture = resolver.query(dnsQuestion);
         queryFuture.addListener((responseFuture) -> {
-            log.info("DNS Reverse lookup for {}", reverseMapName);
+            log.debug("DNS Reverse lookup for {}", reverseMapName);
             try {
                 final var envelope = (AddressedEnvelope<DnsResponse, InetSocketAddress>) responseFuture.get();
                 if (envelope == null) {
@@ -67,7 +67,7 @@ class NettyDnsResolverWorker {
                             }
                         }
                         if (ptrRecord != null) {
-                            log.warn("Result received for {}: {}", reverseMapName, ptrRecord);
+                            log.debug("Result received for {}: {}", reverseMapName, ptrRecord);
                             final var cacheEntry = new DnsReverseCacheEntry(reverseMapName, ptrRecord, cleanHostname(ptrRecord.hostname()));
                             parent.reverseCache.put(reverseMapName, Optional.of(cacheEntry));
                             resultFuture.complete(Optional.of(cacheEntry.getCleanedHostname()));
