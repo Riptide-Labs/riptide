@@ -14,13 +14,19 @@ import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
+import org.slf4j.LoggerFactory;
 import org.snmp4j.fluent.TargetBuilder;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import inet.ipaddr.IPAddressString;
 
 public class SnmpTest {
@@ -196,6 +202,43 @@ public class SnmpTest {
         assertThat(ifMap.get(2).name()).isEqualTo("lo0-x");
         assertThat(ifMap.get(2).alias()).isEqualTo("My loopback interface");
         assertThat(ifMap.get(2).highSpeed()).isEqualTo(34L);
+    }
+
+    @Test
+    public void walkErrorLogsEndpointIdentityWithoutCommunity(@TempDir Path temporaryFolder) throws Exception {
+        final int port = getNextPort();
+        currentAgent = new TestSnmpAgent("127.0.0.1/" + port, temporaryFolder);
+        currentAgent.start();
+        currentAgent.registerIfTable();
+        currentAgent.registerIfXTable();
+
+        // A mismatched community is silently dropped by the agent, so the walk times out and takes
+        // the error path that logs the target — which must not render the credential (#335).
+        final String wrongCommunity = "wr0ngS3cretCommunity";
+        final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), port, wrongCommunity);
+        snmpEndpoint.getSnmpDefinition().setTimeout(50);
+
+        final var logger = (Logger) LoggerFactory.getLogger(SnmpUtils.class);
+        final var appender = new ListAppender<ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            Assertions.assertThat(SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS)).isEmpty();
+
+            // The leak lives in argument rendering, so assert on the formatted messages
+            Assertions.assertThat(appender.list)
+                    .isNotEmpty()
+                    .noneMatch(event -> event.getFormattedMessage().contains(wrongCommunity))
+                    .anySatisfy(event -> {
+                        assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                        assertThat(event.getFormattedMessage())
+                                .contains("Error querying")
+                                .contains("127.0.0.1")
+                                .contains("(v2c)");
+                    });
+        } finally {
+            logger.detachAppender(appender);
+        }
     }
 
     @Test

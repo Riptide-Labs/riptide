@@ -36,7 +36,7 @@ public final class SnmpUtils {
     private SnmpUtils() {
     }
 
-    private static Map<Integer, IfInfo> walkColumns(final Snmp snmp, final Target<?> target,
+    private static Map<Integer, IfInfo> walkColumns(final Snmp snmp, final Target<?> target, final SnmpEndpoint snmpEndpoint,
                                                     final OID[] columns, final Function<List<VariableBinding>, IfInfo> row) {
         final TableUtils tableUtils = new TableUtils(snmp, new DefaultPDUFactory());
         final List<TableEvent> tableEvents = tableUtils.getTable(target, columns, null, null);
@@ -45,7 +45,8 @@ public final class SnmpUtils {
 
         for (final TableEvent tableEvent : tableEvents) {
             if (tableEvent.isError()) {
-                log.warn("Error querying {} for target {}: {}", columns[0], target, tableEvent.getErrorMessage());
+                // The SNMP4J target must not be logged: its toString() carries the credential (#335)
+                log.warn("Error querying {} for {}: {}", columns[0], snmpEndpoint, tableEvent.getErrorMessage());
                 return new TreeMap<>();
             }
             if (tableEvent.getIndex() == null || tableEvent.getColumns() == null) {
@@ -99,9 +100,9 @@ public final class SnmpUtils {
         final SnmpBuilder snmpBuilder = snmpEndpoint.getSnmpDefinition().getSnmpVersion().getSnmpBuilder();
         try (Snmp snmp = snmpBuilder.build()) {
             final Target<?> target = snmpEndpoint.getSnmpDefinition().getSnmpVersion().getTarget(snmp, snmpBuilder, snmpEndpoint, secretResolvers);
-            final var interfaces = walkColumns(snmp, target, new OID[]{IFX_NAME, IFX_HIGH_SPEED, IFX_ALIAS}, SnmpUtils::ifXRow);
+            final var interfaces = walkColumns(snmp, target, snmpEndpoint, new OID[]{IFX_NAME, IFX_HIGH_SPEED, IFX_ALIAS}, SnmpUtils::ifXRow);
             if (interfaces.isEmpty()) {
-                return walkColumns(snmp, target, new OID[]{IF_DESCR}, SnmpUtils::ifRow);
+                return walkColumns(snmp, target, snmpEndpoint, new OID[]{IF_DESCR}, SnmpUtils::ifRow);
             }
             return interfaces;
         }
