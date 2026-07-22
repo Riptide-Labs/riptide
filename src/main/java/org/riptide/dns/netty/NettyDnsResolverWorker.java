@@ -57,7 +57,15 @@ class NettyDnsResolverWorker {
                 try {
                     final var dnsResponse = envelope.content();
                     if (DnsResponseCode.NOERROR.equals(dnsResponse.code())) {
-                        final DnsPtrRecord ptrRecord = dnsResponse.recordAt(DnsSection.ANSWER);
+                        // RFC 2317 classless delegation answers lead with a CNAME; the PTR may
+                        // sit anywhere in the chain, and only PTR records decode as DnsPtrRecord.
+                        DnsPtrRecord ptrRecord = null;
+                        for (int i = 0; i < dnsResponse.count(DnsSection.ANSWER); i++) {
+                            if (dnsResponse.recordAt(DnsSection.ANSWER, i) instanceof DnsPtrRecord ptr) {
+                                ptrRecord = ptr;
+                                break;
+                            }
+                        }
                         if (ptrRecord != null) {
                             log.warn("Result received for {}: {}", reverseMapName, ptrRecord);
                             final var cacheEntry = new DnsReverseCacheEntry(reverseMapName, ptrRecord, cleanHostname(ptrRecord.hostname()));
