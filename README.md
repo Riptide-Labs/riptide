@@ -114,7 +114,9 @@ You can also bind mount your configuration to `/app/application.properties`.
 # 📦 Make a release
 
 ```
-git checkout -b release
+git checkout main && git pull
+git checkout -B release
+git push -u origin release
 make release RELEASE_VERSION=1.0.0
 ```
 

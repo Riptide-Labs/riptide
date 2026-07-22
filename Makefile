@@ -182,8 +182,11 @@ release:
 	@echo -n "Check release branch:        "
 	@if [ "$(GIT_BRANCH)" != "release" ]; then echo "Releases are made from the release branch, your branch is $(GIT_BRANCH)."; exit 1; fi
 	@echo "$(OK)"
+	@echo -n "Check upstream configured    "
+	@if ! git rev-parse --abbrev-ref @{u} >/dev/null 2>&1; then echo "No upstream for the release branch — run: git push -u origin release"; exit 1; fi
+	@echo "$(OK)"
 	@echo -n "Check release branch in sync "
-	@if [ "$$(git rev-parse HEAD)" != "$$(git rev-parse @{u})" ]; then echo "Release branch not in sync with remote origin."; exit 1; fi
+	@if [ "$$(git rev-parse HEAD)" != "$$(git rev-parse @{u})" ]; then echo "Release branch not in sync with its upstream."; exit 1; fi
 	@echo "$(OK)"
 	@echo -n "Check uncommited changes     "
 	@if git status --porcelain | grep -q .; then echo "There are uncommited changes in your repository."; exit 1; fi
