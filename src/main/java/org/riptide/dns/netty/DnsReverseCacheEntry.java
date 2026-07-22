@@ -19,4 +19,6 @@ public class DnsReverseCacheEntry {
     private final DnsPtrRecord record;
     @NonNull
     private final String cleanedHostname;
+    /** Minimum TTL across the answer's records; a chained answer expires with its shortest link. */
+    private final long effectiveTtlSeconds;
 }

@@ -36,8 +36,15 @@ public final class SnmpUtils {
     private SnmpUtils() {
     }
 
-    private static Map<Integer, IfInfo> walkColumns(final Snmp snmp, final Target<?> target, final SnmpEndpoint snmpEndpoint,
-                                                    final OID[] columns, final Function<List<VariableBinding>, IfInfo> row) {
+    enum WalkOutcome {
+        OK, TIMEOUT, ERROR
+    }
+
+    public record WalkResult(Map<Integer, IfInfo> rows, WalkOutcome outcome) {
+    }
+
+    private static WalkResult walkColumns(final Snmp snmp, final Target<?> target, final SnmpEndpoint snmpEndpoint,
+                                          final OID[] columns, final Function<List<VariableBinding>, IfInfo> row) {
         final TableUtils tableUtils = new TableUtils(snmp, new DefaultPDUFactory());
         final List<TableEvent> tableEvents = tableUtils.getTable(target, columns, null, null);
 
@@ -47,7 +54,12 @@ public final class SnmpUtils {
             if (tableEvent.isError()) {
                 // The SNMP4J target must not be logged: its toString() carries the credential (#335)
                 log.warn("Error querying {} for {}: {}", columns[0], snmpEndpoint, tableEvent.getErrorMessage());
-                return new TreeMap<>();
+                // rows collected before the error are discarded: an incomplete table must not
+                // be cached as if it were complete
+                final var outcome = tableEvent.getStatus() == TableEvent.STATUS_TIMEOUT
+                        ? WalkOutcome.TIMEOUT
+                        : WalkOutcome.ERROR;
+                return new WalkResult(new TreeMap<>(), outcome);
             }
             if (tableEvent.getIndex() == null || tableEvent.getColumns() == null) {
                 continue;
@@ -61,7 +73,7 @@ public final class SnmpUtils {
             }
         }
 
-        return interfaces;
+        return new WalkResult(interfaces, WalkOutcome.OK);
     }
 
     private static IfInfo ifXRow(final List<VariableBinding> columns) {
@@ -94,17 +106,30 @@ public final class SnmpUtils {
 
     /**
      * Walks the exporter's interface table: ifXTable (ifName/ifHighSpeed/ifAlias) first,
-     * falling back to the legacy ifTable (ifDescr only).
+     * falling back to the legacy ifTable (ifDescr only) — unless the first walk timed out.
      */
-    public static Map<Integer, IfInfo> getIfInfoMap(final SnmpEndpoint snmpEndpoint, final SecretResolvers secretResolvers) throws IOException {
+    public static WalkResult getIfInfoMap(final SnmpEndpoint snmpEndpoint, final SecretResolvers secretResolvers) throws IOException {
         final SnmpBuilder snmpBuilder = snmpEndpoint.getSnmpDefinition().getSnmpVersion().getSnmpBuilder();
         try (Snmp snmp = snmpBuilder.build()) {
             final Target<?> target = snmpEndpoint.getSnmpDefinition().getSnmpVersion().getTarget(snmp, snmpBuilder, snmpEndpoint, secretResolvers);
-            final var interfaces = walkColumns(snmp, target, snmpEndpoint, new OID[]{IFX_NAME, IFX_HIGH_SPEED, IFX_ALIAS}, SnmpUtils::ifXRow);
-            if (interfaces.isEmpty()) {
+            final var ifXTable = walkColumns(snmp, target, snmpEndpoint, new OID[]{IFX_NAME, IFX_HIGH_SPEED, IFX_ALIAS}, SnmpUtils::ifXRow);
+            if (shouldFallback(ifXTable)) {
                 return walkColumns(snmp, target, snmpEndpoint, new OID[]{IF_DESCR}, SnmpUtils::ifRow);
             }
-            return interfaces;
+            return ifXTable;
         }
+    }
+
+    /**
+     * The fallback exists for agents that lack ifXTable: v2c/v3 agents answer clean-empty (OK),
+     * v1 agents answer with a noSuchName error (ERROR). A TIMEOUT means the agent does not
+     * answer at all — the fallback walk would only time out again (#337).
+     */
+    static boolean shouldFallback(final WalkResult ifXTableResult) {
+        return switch (ifXTableResult.outcome()) {
+            case TIMEOUT -> false;
+            case ERROR -> true;
+            case OK -> ifXTableResult.rows().isEmpty();
+        };
     }
 }
