@@ -28,4 +28,12 @@ public class SnmpCacheConfig {
      * table walk per TTL instead of one per flow. 0 disables negative caching.
      */
     private long negativeRetentionMs = 60_000;
+
+    /**
+     * Back-off TTL for endpoints whose walk timed out: the whole endpoint is considered
+     * dead and no walks are issued for any of its ifIndexes until the TTL expires, so an
+     * unreachable exporter costs one walk per TTL regardless of how many ifIndexes its
+     * flows reference. Cleared by config hot-reload. 0 disables the endpoint back-off.
+     */
+    private long deadEndpointRetentionMs = 60_000;
 }

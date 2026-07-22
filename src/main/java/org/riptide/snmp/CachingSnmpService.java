@@ -37,6 +37,10 @@ public class CachingSnmpService implements SnmpService {
     // one walk per TTL, not one per flow. Separate cache because Guava has no per-entry TTL.
     private final Cache<Tuple<InetSocketAddress, Integer>, Boolean> missCache;
 
+    // Endpoint-level back-off: misses are per-ifIndex, but a walk timeout condemns the whole
+    // endpoint — without this, a dead exporter costs one walk per distinct ifIndex per TTL (#337).
+    private final Cache<InetSocketAddress, Boolean> deadEndpointCache;
+
     public CachingSnmpService(final SnmpService delegate, final SnmpCacheConfig cacheConfig) {
         this.delegate = Objects.requireNonNull(delegate);
         this.cacheConfig = Objects.requireNonNull(cacheConfig);
@@ -49,31 +53,51 @@ public class CachingSnmpService implements SnmpService {
                 // a rogue exporter spraying distinct ifIndexes must not grow the heap
                 .maximumSize(10_000)
                 .build();
+        deadEndpointCache = CacheBuilder.newBuilder()
+                .expireAfterWrite(Duration.ofMillis(cacheConfig.getDeadEndpointRetentionMs()))
+                .build();
     }
 
     /** Config hot-reload hook: changed nodes may mean changed endpoints or credentials. */
     public void invalidateAll() {
         this.ifIndexCache.invalidateAll();
         this.missCache.invalidateAll();
+        this.deadEndpointCache.invalidateAll();
     }
 
     @Override
     public Optional<IfInfo> getIfInfo(final SnmpEndpoint snmpEndpoint, final int ifIndex) {
-        final var key = Tuple.of(snmpEndpoint.getInetSocketAddress(), ifIndex);
+        final var address = snmpEndpoint.getInetSocketAddress();
+        if (this.deadEndpointCache.getIfPresent(address) != null) {
+            return Optional.empty();
+        }
+        final var key = Tuple.of(address, ifIndex);
         if (this.missCache.getIfPresent(key) != null) {
             return Optional.empty();
         }
         final Optional<IfInfo> ifInfo;
         try {
-            ifInfo = ifIndexCache.get(key, () -> this.delegate.getIfInfo(snmpEndpoint, ifIndex));
+            ifInfo = ifIndexCache.get(key, () -> {
+                final var lookup = this.delegate.lookupIfInfo(snmpEndpoint, ifIndex);
+                if (lookup.endpointTimedOut()) {
+                    this.deadEndpointCache.put(address, Boolean.TRUE);
+                    log.warn("SNMP endpoint {} does not answer, backing off for {} ms",
+                            snmpEndpoint, this.cacheConfig.getDeadEndpointRetentionMs());
+                }
+                return lookup.ifInfo();
+            });
         } catch (ExecutionException e) {
-            // the delegate degrades all failures to Optional.empty and never throws
+            // the delegate degrades all failures to empty lookups and never throws
             throw new IllegalStateException(e);
         }
         if (ifInfo.isEmpty()) {
             ifIndexCache.invalidate(key);
-            missCache.put(key, Boolean.TRUE);
-            log.warn("Cannot determine interface info for ifIndex {} for endpoint {}", ifIndex, snmpEndpoint);
+            // dead endpoints got the single back-off WARN above; the per-ifIndex diagnostic
+            // is only meaningful when the agent actually answered
+            if (this.deadEndpointCache.getIfPresent(address) == null) {
+                missCache.put(key, Boolean.TRUE);
+                log.warn("Cannot determine interface info for ifIndex {} for endpoint {}", ifIndex, snmpEndpoint);
+            }
         }
         return ifInfo;
     }

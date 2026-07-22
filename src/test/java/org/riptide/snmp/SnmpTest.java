@@ -289,8 +289,10 @@ public class SnmpTest {
         final int port = getNextPort();
         final SnmpCacheConfig snmpCacheConfig = new SnmpCacheConfig();
         snmpCacheConfig.setRetentionMs(600000);
-        // negative caching off: this test exercises miss -> recovery without waiting for the TTL
+        // negative caching and endpoint back-off: this test exercises miss -> recovery
+        // without waiting for either TTL (the first lookup targets a not-yet-started agent)
         snmpCacheConfig.setNegativeRetentionMs(0);
+        snmpCacheConfig.setDeadEndpointRetentionMs(0);
 
         final SnmpService snmpCache = new CachingSnmpService(new DefaultSnmpService(SECRET_RESOLVERS), snmpCacheConfig);
         final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.COMMUNITY);
@@ -313,6 +315,53 @@ public class SnmpTest {
         assertThat(snmpCache.getIfInfo(snmpEndpoint, 1).get().name()).isEqualTo("eth0");
         assertThat(snmpCache.getIfInfo(snmpEndpoint, 2)).isInstanceOf(Optional.class).isPresent();
         assertThat(snmpCache.getIfInfo(snmpEndpoint, 2).get().name()).isEqualTo("lo0");
+    }
+
+    @Test
+    public void deadEndpointsShortCircuitAcrossIfIndexes() {
+        final SnmpCacheConfig snmpCacheConfig = new SnmpCacheConfig();
+
+        final AtomicInteger delegateCalls = new AtomicInteger();
+        final SnmpService timingOut = new SnmpService() {
+            @Override
+            public Optional<IfInfo> getIfInfo(final SnmpEndpoint endpoint, final int ifIndex) {
+                return lookupIfInfo(endpoint, ifIndex).ifInfo();
+            }
+
+            @Override
+            public IfInfoLookup lookupIfInfo(final SnmpEndpoint endpoint, final int ifIndex) {
+                delegateCalls.incrementAndGet();
+                return new IfInfoLookup(Optional.empty(), true);
+            }
+        };
+        final CachingSnmpService snmpCache = new CachingSnmpService(timingOut, snmpCacheConfig);
+        final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), getNextPort(), TestSnmpAgent.COMMUNITY);
+
+        final var logger = (Logger) LoggerFactory.getLogger(CachingSnmpService.class);
+        final var appender = new ListAppender<ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            // one timed-out walk condemns the endpoint: other ifIndexes must not walk again
+            assertThat(snmpCache.getIfInfo(snmpEndpoint, 1)).isInstanceOf(Optional.class).isEmpty();
+            assertThat(snmpCache.getIfInfo(snmpEndpoint, 2)).isInstanceOf(Optional.class).isEmpty();
+            assertThat(snmpCache.getIfInfo(snmpEndpoint, 3)).isInstanceOf(Optional.class).isEmpty();
+            assertThat(delegateCalls.get()).isEqualTo(1);
+
+            // one WARN marks the endpoint dead; the per-ifIndex diagnostic stays silent
+            Assertions.assertThat(appender.list)
+                    .filteredOn(event -> event.getFormattedMessage().contains("does not answer"))
+                    .hasSize(1);
+            Assertions.assertThat(appender.list)
+                    .noneMatch(event -> event.getFormattedMessage().contains("Cannot determine interface info"));
+
+            // hot-reload clears the dead marking: the next lookup walks again
+            snmpCache.invalidateAll();
+            assertThat(snmpCache.getIfInfo(snmpEndpoint, 1)).isInstanceOf(Optional.class).isEmpty();
+            assertThat(delegateCalls.get()).isEqualTo(2);
+        } finally {
+            logger.detachAppender(appender);
+        }
     }
 
     @Test
