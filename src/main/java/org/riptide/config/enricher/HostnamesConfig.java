@@ -18,6 +18,7 @@ import java.util.List;
 public class HostnamesConfig {
     private boolean enabled = true;
     private long defaultCacheTtl = Duration.ofMinutes(1).toSeconds();
+    private long maximumCacheTtl = Duration.ofDays(1).toSeconds();
     private Long maximumCacheSize;
     private long queryTimeoutMillis = Duration.ofSeconds(5).toMillis();
     private int resolverThreads = 5;

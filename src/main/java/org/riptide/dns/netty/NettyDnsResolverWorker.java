@@ -68,7 +68,8 @@ class NettyDnsResolverWorker {
                         }
                         if (ptrRecord != null) {
                             log.debug("Result received for {}: {}", reverseMapName, ptrRecord);
-                            final var cacheEntry = new DnsReverseCacheEntry(reverseMapName, ptrRecord, cleanHostname(ptrRecord.hostname()));
+                            final var cacheEntry = new DnsReverseCacheEntry(reverseMapName, ptrRecord,
+                                    cleanHostname(ptrRecord.hostname()), minAnswerTtl(dnsResponse));
                             parent.reverseCache.put(reverseMapName, Optional.of(cacheEntry));
                             resultFuture.complete(Optional.of(cacheEntry.getCleanedHostname()));
                         } else {
@@ -104,6 +105,20 @@ class NettyDnsResolverWorker {
             return ex.getCause(); // TODO MVR decide if you want to go all the way down to the actual root cause
         }
         return ex;
+    }
+
+    /**
+     * Minimum TTL across all ANSWER records. A chained answer must not outlive its shortest
+     * link (the delegation CNAME's TTL governs, RFC 1034); the floor of 1s keeps TTL-0 answers
+     * from being re-queried once per flow.
+     */
+    private static long minAnswerTtl(final DnsResponse response) {
+        long ttlSeconds = Long.MAX_VALUE;
+        final int answerCount = response.count(DnsSection.ANSWER);
+        for (int i = 0; i < answerCount; i++) {
+            ttlSeconds = Math.min(ttlSeconds, response.<DnsRecord>recordAt(DnsSection.ANSWER, i).timeToLive());
+        }
+        return Math.max(ttlSeconds, 1);
     }
 
     private static String cleanHostname(String hostname) {
