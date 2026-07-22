@@ -55,10 +55,11 @@ what ClickHouse accepts under backtick quoting; rename such a database or use va
 
   :::warning[Hand-created `samples` views need re-creating]
 
-  The `samples` bucket split was corrected in #270 (older definitions under-report traffic by up
-  to the flow's bucket count). Manage-mode collectors heal on restart, but a `samples` view an
-  admin created by hand — e.g. in a provisioned deployment — keeps the old formula until it is
-  re-created from the current definition.
+  The `samples` definition evolves: the bucket split was corrected in #270 (older definitions
+  under-report traffic by up to the flow's bucket count), and the view body was restructured in
+  #346 (older definitions are 5–15× slower on every query). Manage-mode collectors heal on
+  restart, but a `samples` view an admin created by hand — e.g. in a provisioned deployment —
+  keeps the old definition until it is re-created from the current one.
 
   :::
 - **`false` (provisioned / multi-tenant)** — the collector creates nothing. It validates that the
@@ -168,6 +169,74 @@ that moment on. To backfill, `INSERT INTO … SELECT` from `flows` yourself, kee
 grouping the view uses.
 
 :::
+
+## Query performance
+
+The `samples(ival)` view expands each flow into per-bucket rows, attributing bytes and packets to
+each bucket **proportionally to the time the flow spent in it** (assuming an even rate across the
+flow's `deltaSwitched`…`lastSwitched` interval). Summing over buckets always returns the flow's
+exact totals. This is the same `time-proportional` load scheme SiLK's `rwcount` defaults to; no
+other ClickHouse flow store offers it — the usual alternative (bucketing each flow entirely into
+its start minute) spikes long flows into single buckets. The precision has a query-time cost:
+every query over `samples()` processes roughly *flows × buckets-per-flow* rows. Three habits keep
+that cost small:
+
+**Use the rollups when buckets are a minute or coarser.** A `samples(ival = 60)` query and a
+[rollup](#rollups) query differ in attribution (proportional vs. start-minute) but usually not in
+what a dashboard shows — and the rollup reads thousands of rows instead of exploding millions.
+Reach for `samples()` when you need sub-minute buckets or exact proportional attribution.
+
+**Bound the flow interval *and* the raw record time, and keep top-N mapping on raw keys.** Inside
+the view the bucketed `timestamp` shadows the raw column, so neither `WHERE timestamp …` nor
+bounds on `deltaSwitched`/`lastSwitched` can use the table's partition or primary index — the
+interval columns are in neither key, so those bounds only filter rows before the explosion (still
+worthwhile). The raw, indexed column stays addressable through the view as `flow.timestamp`:
+bound it too, widened by the longest flow duration you expect, and the query prunes partitions
+like a direct table read:
+
+```sql
+-- top-10 source AS as bps series, {from}/{to}/{ival} filled in by the caller
+WITH top AS (
+    SELECT srcAs FROM riptide.flows
+    WHERE timestamp >= {from} AND timestamp <= {to}
+      AND lastSwitched >= {from} AND deltaSwitched <= {to}
+    GROUP BY srcAs ORDER BY sum(bytes) DESC LIMIT 10
+)
+SELECT time, if(asn IS NULL, 'Other', toString(asn)) AS series, b   -- labels: hundreds of rows
+FROM (
+    SELECT timestamp AS time,
+           if(srcAs IN top, toNullable(srcAs), NULL) AS asn,        -- raw-key mapping: millions of rows
+           sum(bytes) * 8 / {ival} AS b
+    FROM riptide.samples(ival = {ival})
+    WHERE timestamp >= {from} AND timestamp <= {to}
+      AND lastSwitched >= {from} AND deltaSwitched <= {to}          -- pre-explosion row filter
+      AND flow.timestamp >= {from} - INTERVAL 1 HOUR                -- partition/index pruning on the
+      AND flow.timestamp <= {to} + INTERVAL 1 HOUR                  -- raw column, widened by max flow duration
+    GROUP BY time, asn
+) ORDER BY time;
+```
+
+`NULL` is the 'Other' sentinel because it lies outside the value space: unknown AS arrives as
+`srcAs = 0`, which is a real series (often the largest) and must not be folded into 'Other'.
+
+**Render labels after aggregating, not per row.** The inner `GROUP BY` above runs over the
+exploded rows — millions of them — so group on raw binary columns (addresses, AS numbers,
+tuples) and build display strings (`IPv6NumToString`, `concat`, hostname fallbacks) in the outer
+select, which sees only a few hundred aggregated rows. For high-cardinality keys like
+conversations this alone is worth ~1.5×; formatted-string group keys also force ClickHouse's
+slowest aggregation path.
+
+:::note
+
+The bundled top-10 dashboards predate this guidance and still render their series labels per
+exploded row; rewriting them to this pattern is follow-up work tracked in #346.
+
+:::
+
+The view needs a ClickHouse with the new query analyzer (24.8+ recommended, where it is the
+default). The view does not emit zero rows for empty buckets — use
+`ORDER BY time WITH FILL STEP {ival}` (or Grafana's null-as-zero option) when a panel needs
+gap filling.
 
 ## Identity columns
 

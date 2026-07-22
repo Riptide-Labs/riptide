@@ -58,7 +58,10 @@ class FlowsSchemaTest {
     void createSamplesViewQualifiesBothViewAndSourceTable() {
         final String ddl = FlowsSchema.createSamplesView("riptide");
         assertThat(ddl.strip()).startsWith("CREATE OR REPLACE VIEW `riptide`.samples AS");
-        assertThat(ddl).contains("FROM `riptide`.flows AS flow");
+        // One pattern spanning FROM through the alias: the qualified flows table must be what the
+        // scalar-projecting subquery aliased AS flow reads — two independent contains() would
+        // also pass with the fragments in unrelated clauses.
+        assertThat(ddl).containsPattern("FROM `riptide`\\.flows\\s*\\)\\s*AS flow");
         // The view parameter is a literal placeholder bound at SELECT time, not at CREATE time.
         assertThat(ddl).contains("{ival:Int64}");
     }
@@ -69,7 +72,7 @@ class FlowsSchemaTest {
                 .contains("CREATE TABLE IF NOT EXISTS `acme_prod`.flows (");
         assertThat(FlowsSchema.createSamplesView("acme_prod"))
                 .contains("VIEW `acme_prod`.samples AS")
-                .contains("FROM `acme_prod`.flows AS flow");
+                .containsPattern("FROM `acme_prod`\\.flows\\s*\\)\\s*AS flow");
         assertThat(FlowsSchema.qualifiedFlows("acme_prod")).isEqualTo("`acme_prod`.flows");
     }
 
