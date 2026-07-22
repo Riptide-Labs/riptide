@@ -64,9 +64,9 @@ public class NettyDnsResolver implements DnsResolver, DisposableBean {
         if (inetAddress == null) return CompletableFuture.completedFuture(Optional.empty());
         final var reverseMapName = ReverseMap.fromAddress(inetAddress).toString();
         final var cachedEntry = reverseCache.getIfPresent(reverseMapName);
-        if (cachedEntry != null && cachedEntry.isPresent()) {
-            log.info("cache hit for: {}", reverseMapName);
-            return CompletableFuture.completedFuture(Optional.of(cachedEntry.get().getCleanedHostname()));
+        if (cachedEntry != null) {
+            log.debug("cache hit for: {}", reverseMapName);
+            return CompletableFuture.completedFuture(cachedEntry.map(DnsReverseCacheEntry::getCleanedHostname));
         }
         return performReverseLookup(reverseMapName);
     }
