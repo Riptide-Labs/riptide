@@ -46,7 +46,7 @@ class NettyDnsResolverWorker {
         final var dnsQuestion = new DefaultDnsQuestion(reverseMapName, DnsRecordType.PTR, DnsRecord.CLASS_IN);
         Future<AddressedEnvelope<DnsResponse, InetSocketAddress>> queryFuture = resolver.query(dnsQuestion);
         queryFuture.addListener((responseFuture) -> {
-            log.info("DNS Reverse lookup for {}", reverseMapName);
+            log.debug("DNS Reverse lookup for {}", reverseMapName);
             try {
                 final var envelope = (AddressedEnvelope<DnsResponse, InetSocketAddress>) responseFuture.get();
                 if (envelope == null) {
@@ -57,9 +57,17 @@ class NettyDnsResolverWorker {
                 try {
                     final var dnsResponse = envelope.content();
                     if (DnsResponseCode.NOERROR.equals(dnsResponse.code())) {
-                        final DnsPtrRecord ptrRecord = dnsResponse.recordAt(DnsSection.ANSWER);
+                        // RFC 2317 classless delegation answers lead with a CNAME; the PTR may
+                        // sit anywhere in the chain, and only PTR records decode as DnsPtrRecord.
+                        DnsPtrRecord ptrRecord = null;
+                        for (int i = 0; i < dnsResponse.count(DnsSection.ANSWER); i++) {
+                            if (dnsResponse.recordAt(DnsSection.ANSWER, i) instanceof DnsPtrRecord ptr) {
+                                ptrRecord = ptr;
+                                break;
+                            }
+                        }
                         if (ptrRecord != null) {
-                            log.warn("Result received for {}: {}", reverseMapName, ptrRecord);
+                            log.debug("Result received for {}: {}", reverseMapName, ptrRecord);
                             final var cacheEntry = new DnsReverseCacheEntry(reverseMapName, ptrRecord, cleanHostname(ptrRecord.hostname()));
                             parent.reverseCache.put(reverseMapName, Optional.of(cacheEntry));
                             resultFuture.complete(Optional.of(cacheEntry.getCleanedHostname()));
