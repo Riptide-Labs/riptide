@@ -24,14 +24,20 @@ public class DefaultSnmpService implements SnmpService {
 
     @Override
     public Optional<IfInfo> getIfInfo(final SnmpEndpoint snmpEndpoint, final int ifIndex) {
+        return lookupIfInfo(snmpEndpoint, ifIndex).ifInfo();
+    }
+
+    @Override
+    public IfInfoLookup lookupIfInfo(final SnmpEndpoint snmpEndpoint, final int ifIndex) {
         try {
-            final var value = SnmpUtils.getIfInfoMap(snmpEndpoint, this.secretResolvers).get(ifIndex);
-            return Optional.ofNullable(value);
+            final var walk = SnmpUtils.getIfInfoMap(snmpEndpoint, this.secretResolvers);
+            return new IfInfoLookup(Optional.ofNullable(walk.rows().get(ifIndex)),
+                    walk.outcome() == SnmpUtils.WalkOutcome.TIMEOUT);
         } catch (IOException | IllegalArgumentException e) {
             // IllegalArgumentException: an unresolvable secret reference must degrade to an
             // unenriched flow, never fail the pipeline and drop the batch.
             log.warn("Error fetching value from {} at index {}: {}", snmpEndpoint, ifIndex, e.getMessage());
-            return Optional.empty();
+            return new IfInfoLookup(Optional.empty(), false);
         }
     }
 }

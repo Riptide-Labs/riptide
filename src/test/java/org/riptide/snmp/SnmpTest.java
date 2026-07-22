@@ -121,7 +121,7 @@ public class SnmpTest {
         currentAgent.registerIfXTable();
 
         final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.COMMUNITY);
-        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS);
+        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS).rows();
 
         assertThat(ifMap.get(1).name()).isEqualTo("eth0-x");
         assertThat(ifMap.get(1).alias()).isEqualTo("My ethernet interface");
@@ -140,7 +140,7 @@ public class SnmpTest {
         currentAgent.registerIfXTable();
 
         final SnmpEndpoint snmpEndpoint = noAuthNoPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.NOAUTHNOPRIV_USERNAME);
-        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS);
+        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS).rows();
 
         assertThat(ifMap.get(1).name()).isEqualTo("eth0-x");
         assertThat(ifMap.get(1).alias()).isEqualTo("My ethernet interface");
@@ -158,7 +158,7 @@ public class SnmpTest {
         currentAgent.registerIfTable();
 
         final SnmpEndpoint snmpEndpoint = noAuthNoPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.NOAUTHNOPRIV_USERNAME);
-        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS);
+        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS).rows();
 
         assertThat(ifMap.get(1).name()).isEqualTo("eth0");
         assertThat(ifMap.get(1).alias()).isNull();
@@ -175,7 +175,7 @@ public class SnmpTest {
         currentAgent.registerIfXTable();
 
         final SnmpEndpoint snmpEndpoint = authNoPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.AUTHNOPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1, TestSnmpAgent.AUTHNOPRIV_AUTH_PASSHRASE);
-        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS);
+        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS).rows();
 
         assertThat(ifMap.get(1).name()).isEqualTo("eth0-x");
         assertThat(ifMap.get(1).alias()).isEqualTo("My ethernet interface");
@@ -194,7 +194,7 @@ public class SnmpTest {
         currentAgent.registerIfXTable();
 
         final SnmpEndpoint snmpEndpoint = authPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.AUTHPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1, TestSnmpAgent.AUTHPRIV_AUTH_PASSHRASE, TargetBuilder.PrivProtocol.aes128, TestSnmpAgent.AUTHPRIV_PRIV_PASSHRASE);
-        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS);
+        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS).rows();
 
         assertThat(ifMap.get(1).name()).isEqualTo("eth0-x");
         assertThat(ifMap.get(1).alias()).isEqualTo("My ethernet interface");
@@ -223,7 +223,7 @@ public class SnmpTest {
         appender.start();
         logger.addAppender(appender);
         try {
-            Assertions.assertThat(SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS)).isEmpty();
+            Assertions.assertThat(SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS).rows()).isEmpty();
 
             // The leak lives in argument rendering, so assert on the formatted messages
             Assertions.assertThat(appender.list)
@@ -239,6 +239,40 @@ public class SnmpTest {
         } finally {
             logger.detachAppender(appender);
         }
+    }
+
+    @Test
+    public void timedOutWalkSkipsTheIfTableFallback() throws Exception {
+        // no agent listening: the ifXTable walk times out; the ifTable fallback would only time
+        // out again, so exactly one walk (and one WARN) must happen (#337)
+        final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), getNextPort(), TestSnmpAgent.COMMUNITY);
+        snmpEndpoint.getSnmpDefinition().setTimeout(50);
+
+        final var logger = (Logger) LoggerFactory.getLogger(SnmpUtils.class);
+        final var appender = new ListAppender<ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            final var walk = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS);
+
+            assertThat(walk.outcome()).isEqualTo(SnmpUtils.WalkOutcome.TIMEOUT);
+            Assertions.assertThat(walk.rows()).isEmpty();
+            Assertions.assertThat(appender.list)
+                    .filteredOn(event -> event.getFormattedMessage().contains("Error querying"))
+                    .hasSize(1);
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    public void fallbackRunsOnErrorAndEmptyButNotOnTimeout() {
+        // v1 agents lacking ifXTable answer noSuchName (ERROR) — the fallback exists for them
+        assertThat(SnmpUtils.shouldFallback(new SnmpUtils.WalkResult(Map.of(), SnmpUtils.WalkOutcome.ERROR))).isTrue();
+        // v2c/v3 agents lacking ifXTable answer clean-empty
+        assertThat(SnmpUtils.shouldFallback(new SnmpUtils.WalkResult(Map.of(), SnmpUtils.WalkOutcome.OK))).isTrue();
+        assertThat(SnmpUtils.shouldFallback(new SnmpUtils.WalkResult(Map.of(1, new IfInfo("eth0", null, null)), SnmpUtils.WalkOutcome.OK))).isFalse();
+        assertThat(SnmpUtils.shouldFallback(new SnmpUtils.WalkResult(Map.of(), SnmpUtils.WalkOutcome.TIMEOUT))).isFalse();
     }
 
     @Test
