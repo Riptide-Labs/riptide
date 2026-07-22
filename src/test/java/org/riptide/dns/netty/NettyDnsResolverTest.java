@@ -58,6 +58,21 @@ class NettyDnsResolverTest {
         if (request.getType() == Type.PTR && request.getName().toString().equals("28.2.0.192.in-addr.arpa.")) {
             return List.of(Record.fromString(request.getName(), Type.PTR, request.getDClass(), 999999, "clamped.example.com.", null));
         }
+        if (request.getType() == Type.PTR && request.getName().toString().equals("29.2.0.192.in-addr.arpa.")) {
+            // genuine chain, but the PTR's owner is outside the queried name's parent domain
+            return List.of(
+                    Record.fromString(request.getName(), Type.CNAME, request.getDClass(), 300, "29.0/27.2.0.192.in-addr.arpa.", null),
+                    Record.fromString(Name.fromString("9.9.9.9.in-addr.arpa."), Type.PTR, DClass.IN, 300, "offchain.example.com.", null));
+        }
+        if (request.getType() == Type.PTR && request.getName().toString().equals("30.2.0.192.in-addr.arpa.")) {
+            // stray PTR under the parent domain but with no CNAME owned by the queried name
+            return List.of(
+                    Record.fromString(Name.fromString("1.2.0.192.in-addr.arpa."), Type.PTR, DClass.IN, 300, "stray.example.com.", null));
+        }
+        if (request.getType() == Type.PTR && request.getName().toString().equals("31.2.0.192.in-addr.arpa.")) {
+            return List.of(
+                    Record.fromString(Name.fromString("31.2.0.192.IN-ADDR.ARPA."), Type.PTR, DClass.IN, 300, "mixedcase.example.com.", null));
+        }
         if (request.getType() == Type.PTR && request.getName().toString().equals("60.2.0.192.in-addr.arpa.")) {
             // CNAME without the chased PTR, as a non-recursive server would answer
             return List.of(
@@ -148,6 +163,30 @@ class NettyDnsResolverTest {
 
         assertThat(expiresAfter("28.2.0.192.in-addr.arpa."))
                 .isBetween(Duration.ofSeconds(115), Duration.ofSeconds(120));
+    }
+
+    @Test
+    void offChainPtrIsRejectedAndCachedEmpty() throws Exception {
+        final var address = InetAddress.getByName("192.0.2.29");
+
+        assertThat(this.resolver.reverseLookup(address).get(5, TimeUnit.SECONDS)).isEmpty();
+        assertThat(this.resolver.reverseLookup(address).get(5, TimeUnit.SECONDS)).isEmpty();
+
+        assertThat(QUERY_COUNTS.get("29.2.0.192.in-addr.arpa.")).hasValue(1);
+    }
+
+    @Test
+    void strayPtrWithoutChainIsRejected() throws Exception {
+        final var address = InetAddress.getByName("192.0.2.30");
+
+        assertThat(this.resolver.reverseLookup(address).get(5, TimeUnit.SECONDS)).isEmpty();
+    }
+
+    @Test
+    void mixedCaseOwnerIsAccepted() throws Exception {
+        final var address = InetAddress.getByName("192.0.2.31");
+
+        assertThat(this.resolver.reverseLookup(address).get(5, TimeUnit.SECONDS)).contains("mixedcase.example.com");
     }
 
     @Test
