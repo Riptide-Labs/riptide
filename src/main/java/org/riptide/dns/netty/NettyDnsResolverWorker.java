@@ -20,6 +20,7 @@ import io.netty.util.concurrent.Future;
 import lombok.extern.slf4j.Slf4j;
 
 import java.net.InetSocketAddress;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -57,18 +58,11 @@ class NettyDnsResolverWorker {
                 try {
                     final var dnsResponse = envelope.content();
                     if (DnsResponseCode.NOERROR.equals(dnsResponse.code())) {
-                        // RFC 2317 classless delegation answers lead with a CNAME; the PTR may
-                        // sit anywhere in the chain, and only PTR records decode as DnsPtrRecord.
-                        DnsPtrRecord ptrRecord = null;
-                        for (int i = 0; i < dnsResponse.count(DnsSection.ANSWER); i++) {
-                            if (dnsResponse.recordAt(DnsSection.ANSWER, i) instanceof DnsPtrRecord ptr) {
-                                ptrRecord = ptr;
-                                break;
-                            }
-                        }
+                        final var ptrRecord = findChainedPtr(dnsResponse, reverseMapName);
                         if (ptrRecord != null) {
                             log.debug("Result received for {}: {}", reverseMapName, ptrRecord);
-                            final var cacheEntry = new DnsReverseCacheEntry(reverseMapName, ptrRecord, cleanHostname(ptrRecord.hostname()));
+                            final var cacheEntry = new DnsReverseCacheEntry(reverseMapName, ptrRecord,
+                                    cleanHostname(ptrRecord.hostname()), minAnswerTtl(dnsResponse));
                             parent.reverseCache.put(reverseMapName, Optional.of(cacheEntry));
                             resultFuture.complete(Optional.of(cacheEntry.getCleanedHostname()));
                         } else {
@@ -104,6 +98,60 @@ class NettyDnsResolverWorker {
             return ex.getCause(); // TODO MVR decide if you want to go all the way down to the actual root cause
         }
         return ex;
+    }
+
+    /**
+     * Finds the PTR record answering {@code qname}. RFC 2317 classless delegation answers lead
+     * with a CNAME onto a sub-zone; netty leaves CNAME RDATA as a raw slice whose compression
+     * pointers reference the whole datagram, so the chain target cannot be decoded reliably.
+     * Acceptance therefore uses owner names only: the PTR must be owned by the queried name, or
+     * — when a CNAME owned by the queried name is present — by a name at or under the queried
+     * name's parent domain (RFC 2317 delegations stay within the parent zone).
+     */
+    private static DnsPtrRecord findChainedPtr(final DnsResponse response, final String qname) {
+        final int answerCount = response.count(DnsSection.ANSWER);
+        final var canonicalQname = canonical(qname);
+
+        boolean chained = false;
+        for (int i = 0; i < answerCount; i++) {
+            final DnsRecord record = response.recordAt(DnsSection.ANSWER, i);
+            if (DnsRecordType.CNAME.equals(record.type()) && canonical(record.name()).equals(canonicalQname)) {
+                chained = true;
+                break;
+            }
+        }
+
+        final var parentDomain = canonicalQname.substring(canonicalQname.indexOf('.') + 1);
+        for (int i = 0; i < answerCount; i++) {
+            if (response.recordAt(DnsSection.ANSWER, i) instanceof DnsPtrRecord ptr) {
+                final var owner = canonical(ptr.name());
+                if (owner.equals(canonicalQname)
+                        || (chained && (owner.equals(parentDomain) || owner.endsWith("." + parentDomain)))) {
+                    return ptr;
+                }
+                log.warn("Ignoring PTR with unrelated owner {} in answer for {}", ptr.name(), qname);
+            }
+        }
+        return null;
+    }
+
+    private static String canonical(final String name) {
+        final var lower = name.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".") ? lower : lower + ".";
+    }
+
+    /**
+     * Minimum TTL across all ANSWER records. A chained answer must not outlive its shortest
+     * link (the delegation CNAME's TTL governs, RFC 1034); the floor of 1s keeps TTL-0 answers
+     * from being re-queried once per flow.
+     */
+    private static long minAnswerTtl(final DnsResponse response) {
+        long ttlSeconds = Long.MAX_VALUE;
+        final int answerCount = response.count(DnsSection.ANSWER);
+        for (int i = 0; i < answerCount; i++) {
+            ttlSeconds = Math.min(ttlSeconds, response.<DnsRecord>recordAt(DnsSection.ANSWER, i).timeToLive());
+        }
+        return Math.max(ttlSeconds, 1);
     }
 
     private static String cleanHostname(String hostname) {

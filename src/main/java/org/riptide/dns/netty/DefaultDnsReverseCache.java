@@ -25,7 +25,9 @@ public class DefaultDnsReverseCache {
                     @Override
                     public long expireAfterCreate(String key, Optional<DnsReverseCacheEntry> value, long currentTime) {
                         return value.map(it -> {
-                            return Duration.ofSeconds(it.getRecord().timeToLive()).toNanos(); // use the TTL from the DNS record
+                            // min TTL across the answer's records, bounded by configuration
+                            final var ttlSeconds = Math.min(it.getEffectiveTtlSeconds(), config.getMaximumCacheTtl());
+                            return Duration.ofSeconds(ttlSeconds).toNanos();
                         }).orElse(Duration.ofSeconds(config.getDefaultCacheTtl()).toNanos());
                     }
 
