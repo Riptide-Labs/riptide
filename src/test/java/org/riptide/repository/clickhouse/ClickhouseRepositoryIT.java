@@ -23,7 +23,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.net.InetAddress;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * First real-ClickHouse test of the repository: schema creation on a fresh
@@ -270,6 +272,49 @@ public class ClickhouseRepositoryIT {
                 "SELECT sum(bytes) AS b, sum(packets) AS p FROM " + database + ".samples(ival = 60)");
         Assertions.assertThat(totals.getFirst().getDouble("b")).isCloseTo(6000.0, Assertions.within(0.01));
         Assertions.assertThat(totals.getFirst().getDouble("p")).isCloseTo(90.0, Assertions.within(0.01));
+    }
+
+    @Test
+    void samplesViewClampsDegenerateFlowsAndHidesHelperColumns() throws Exception {
+        final var database = "samples_guard";
+        final var repo = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, true), RESOLVERS);
+        repo.start();
+
+        // The two degenerate cases the view's guards exist for: a zero-duration flow (the
+        // bucket_count = 1 branch is its division guard) and a corrupt flow with
+        // lastSwitched < deltaSwitched (the greatest() clamp — unclamped, bucket_count wraps and
+        // range() throws, poisoning every query over the view). Each must land in exactly one
+        // bucket with its full totals.
+        final var minute = Instant.now().truncatedTo(ChronoUnit.MINUTES).minus(10, ChronoUnit.MINUTES);
+        repo.persist(List.of(
+                testFlow(minute.plusSeconds(15), minute.plusSeconds(15), 40011, 443, 500L, 5L),
+                testFlow(minute.plusSeconds(75), minute.plusSeconds(70), 40012, 443, 700L, 7L)));
+
+        final var totals = queryClient.queryAll(
+                "SELECT count() AS n, sum(bytes) AS b, sum(packets) AS p FROM " + database + ".samples(ival = 60)");
+        Assertions.assertThat(totals.getFirst().getLong("n")).isEqualTo(2L);
+        Assertions.assertThat(totals.getFirst().getDouble("b")).isCloseTo(1200.0, Assertions.within(0.01));
+        Assertions.assertThat(totals.getFirst().getDouble("p")).isCloseTo(12.0, Assertions.within(0.01));
+
+        // The view's output contract, derived rather than enumerated: every flows column in
+        // order — with the shadowed trio surfacing under flow.-qualified names — followed by the
+        // bucketed timestamp/bytes/packets. Comparing the full DESCRIBE catches a leaked helper
+        // scalar whatever its name (an enumerated negative list would stay green after a rename),
+        // and equally catches an EXCEPT entry accidentally hiding a real flows column.
+        final var shadowed = Set.of("timestamp", "bytes", "packets");
+        final var expected = new ArrayList<String>();
+        queryClient.queryAll("SELECT name FROM system.columns WHERE database = '" + database
+                        + "' AND table = 'flows' ORDER BY position")
+                .forEach(row -> {
+                    final var name = row.getString("name");
+                    expected.add(shadowed.contains(name) ? "flow." + name : name);
+                });
+        expected.addAll(List.of("timestamp", "bytes", "packets"));
+        final var actual = queryClient.queryAll(
+                        "DESCRIBE (SELECT * FROM " + database + ".samples(ival = 60))").stream()
+                .map(row -> row.getString("name"))
+                .toList();
+        Assertions.assertThat(actual).containsExactlyElementsOf(expected);
     }
 
     @Test

@@ -426,29 +426,13 @@ public final class FlowsSchema {
     private static final String SAMPLES_VIEW = """
         CREATE OR REPLACE VIEW @@samples@@ AS
         WITH
-            toInt64({ival:Int64} * 1e9) AS interval_ns,
+            toInt64({ival:Int64} * 1000000000) AS interval_ns,
 
-            -- Find first and last absolute bucket numbers. Integer division is load-bearing:
-            -- Float64 '/' cannot represent nanosecond epochs exactly (ULP ~256ns), which would
-            -- absorb the boundary shift below. greatest() clamps corrupt flows with
-            -- lastSwitched < deltaSwitched to one bucket — unclamped, bucket_count wraps and
-            -- range() throws, poisoning every query over the view. The 1ns shift moves a flow
-            -- ending exactly on a bucket boundary into the preceding bucket instead of emitting
-            -- a spurious zero-contribution bucket.
-            toUInt64(intDiv(toUnixTimestamp64Nano(deltaSwitched), interval_ns)) as first_bucket,
-            toUInt64(intDiv(toUnixTimestamp64Nano(greatest(lastSwitched, deltaSwitched))
-                            - if(age('ns', deltaSwitched, lastSwitched) > 0, 1, 0),
-                            interval_ns)) as last_bucket,
-
-            last_bucket - first_bucket + 1 as bucket_count,
-
-            -- Calculate total duration in nanoseconds
-            age('ns', deltaSwitched, lastSwitched) as flow_duration,
-
-            -- Generate buckets from the first bucket onward
-            range(toUInt32(bucket_count)) AS buckets,
-
-            -- Determine the fraction of the interval used in each case
+            -- Determine the fraction of the interval used in each case. Computed from the
+            -- per-flow scalars the inner subquery materialized: as plain WITH aliases over the
+            -- base columns these expressions re-expand per reference through the ARRAY JOIN,
+            -- which made every query over the view 5-15x slower (issue #346) — keep the scalar
+            -- math in the subquery and only shallow arithmetic here.
             CASE
                 -- Only one bucket
                 WHEN bucket_count = 1
@@ -456,11 +440,11 @@ public final class FlowsSchema {
 
                 -- First bucket: Portion from start time to the next bucket boundary
                 WHEN bucket = 0
-                    THEN ((interval_ns * (first_bucket + 1)) - toUnixTimestamp64Nano(deltaSwitched)) / interval_ns
+                    THEN ((interval_ns * (first_bucket + 1)) - delta_ns) / interval_ns
 
                 -- Last bucket: Portion from the start of the last bucket to end time
                 WHEN bucket = bucket_count - 1
-                    THEN (toUnixTimestamp64Nano(lastSwitched) - (interval_ns * last_bucket)) / interval_ns
+                    THEN (last_ns - (interval_ns * last_bucket)) / interval_ns
 
                 -- Full buckets in between
                 ELSE 1.0
@@ -475,15 +459,46 @@ public final class FlowsSchema {
             if(bucket_count = 1, 1., bucket_fraction * interval_ns / flow_duration) AS bucket_share
 
         SELECT
-            flow.*,
+            -- EXCEPT hides the helper scalars below. The raw timestamp/bytes/packets stay
+            -- addressable under their flow.-qualified names (and appear so in SELECT *) — that is
+            -- pre-existing analyzer behavior, and flow.timestamp is exactly what a partition-
+            -- pruning time bound must reference (see the query-performance docs).
+            flow.* EXCEPT (delta_ns, last_ns, first_bucket, last_bucket, bucket_count, flow_duration),
 
             fromUnixTimestamp64Nano((first_bucket + bucket) * interval_ns) AS timestamp,
 
-            bytes * bucket_share as bytes,
-            packets * bucket_share as packets
+            bytes * bucket_share AS bytes,
+            packets * bucket_share AS packets
 
-        FROM @@flows@@ AS flow
-        ARRAY JOIN buckets AS bucket
-        ORDER BY timestamp;
+        FROM (
+            SELECT
+                *,
+
+                toUnixTimestamp64Nano(deltaSwitched) AS delta_ns,
+                toUnixTimestamp64Nano(lastSwitched) AS last_ns,
+
+                -- Find first and last absolute bucket numbers. Integer division is load-bearing:
+                -- Float64 '/' cannot represent nanosecond epochs exactly (ULP ~256ns), which would
+                -- absorb the boundary shift below. greatest() clamps corrupt flows with
+                -- lastSwitched < deltaSwitched to one bucket — unclamped, bucket_count wraps and
+                -- range() throws, poisoning every query over the view. The 1ns shift moves a flow
+                -- ending exactly on a bucket boundary into the preceding bucket instead of emitting
+                -- a spurious zero-contribution bucket.
+                toUInt64(intDiv(delta_ns, interval_ns)) AS first_bucket,
+                toUInt64(intDiv(greatest(last_ns, delta_ns) - if(last_ns > delta_ns, 1, 0),
+                                interval_ns)) AS last_bucket,
+
+                last_bucket - first_bucket + 1 AS bucket_count,
+
+                -- Total duration in nanoseconds; negative for corrupt flows, which never divide
+                -- by it (they clamp to bucket_count = 1 above).
+                last_ns - delta_ns AS flow_duration
+
+            FROM @@flows@@
+        ) AS flow
+        -- No ORDER BY: callers that need an order state it themselves. Aggregating consumers get
+        -- the sort eliminated by the optimizer either way, but a bare SELECT would pay a full sort
+        -- of the exploded set (~rows x buckets) for an ordering nothing relies on.
+        ARRAY JOIN range(toUInt32(bucket_count)) AS bucket;
     """;
 }
