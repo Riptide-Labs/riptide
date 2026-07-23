@@ -47,8 +47,10 @@ public final class Header {
         }
 
         this.length = uint16(buffer);
-        if (this.length <= 0) {
-            throw new InvalidPacketException(buffer, "Empty packet");
+        if (this.length < Header.SIZE) {
+            // RFC 7011 section 3.1: Length covers the header as well as the sets, so anything below
+            // the header size is malformed. Without this, payloadLength() goes negative.
+            throw new InvalidPacketException(buffer, "Packet length %d is smaller than the header", this.length);
         }
 
         this.exportTime = uint32(buffer);

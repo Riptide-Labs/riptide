@@ -39,6 +39,14 @@ public final class DataSet extends FlowSet<DataRecord> {
         final int minimumRecordLength = template.stream()
                 .mapToInt(f -> f.length()).sum();
 
+        // A zero-length record would never advance the reader: isReadable(0) is always true and the
+        // record consumes nothing, so the loop below would append until the heap is gone. Reject the
+        // template here rather than trusting whoever installed it, which keeps the loop terminating
+        // no matter how a degenerate template got into the session.
+        if (minimumRecordLength <= 0) {
+            throw new InvalidPacketException(buffer, "Template %d describes a zero-length record", this.header.setId);
+        }
+
         final List<DataRecord> parsedRecords = new ArrayList<>();
         while (buffer.isReadable(minimumRecordLength)) {
             parsedRecords.add(new DataRecord(this, resolver, template, buffer));
