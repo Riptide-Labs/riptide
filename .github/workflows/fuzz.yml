@@ -62,8 +62,12 @@ jobs:
           make fuzz
       # A crash writes its reproducer under src/test/resources/.../<target>Inputs/. Upload it (and
       # the corpus) so a maintainer can replay it locally, then commit it to lock in the regression.
+      # cancelled() is included because a pathological input that hangs rather than crashes trips the
+      # job timeout, which is a cancellation, not a failure: without it that run uploads nothing and
+      # the discovered corpus is lost with the runner. cancelled() also lets this step run during the
+      # timeout's grace period at all.
       - name: Upload crash reproducers
-        if: failure()
+        if: ${{ failure() || cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: fuzz-crash-${{ matrix.target }}
