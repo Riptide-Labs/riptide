@@ -20,7 +20,9 @@ public final class BufferUtils {
     }
 
     public static ByteBuf slice(final ByteBuf buffer, final int size) {
-        if (size > buffer.readableBytes()) {
+        // Sizes are derived from attacker-controlled length fields, so guard both ends: a negative
+        // size slips past the readableBytes check and only fails later inside Netty.
+        if (size < 0 || size > buffer.readableBytes()) {
             throw new BufferUnderflowException();
         }
 

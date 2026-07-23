@@ -39,6 +39,12 @@ public final class OptionsTemplateRecordHeader {
         }
 
         this.optionScopeLength = uint16(buffer);
+        if (this.optionScopeLength == 0) {
+            // RFC 3954 section 6.1: an options template scopes at least one field. Without this an
+            // empty template installs, and the data sets referencing it describe zero-length records.
+            throw new InvalidPacketException(buffer, "Options template %d has no scope fields", this.templateId);
+        }
+
         this.optionLength = uint16(buffer);
     }
 
