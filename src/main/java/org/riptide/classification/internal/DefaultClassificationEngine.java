@@ -29,7 +29,7 @@ public class DefaultClassificationEngine implements ClassificationEngine {
 
     private List<ClassificationRulesReloadedListener> classificationRulesReloadedListeners = new ArrayList<>();
 
-    private final AtomicReference<TreeAndInvalidRules> treeAndInvalidRules = new AtomicReference<>(new TreeAndInvalidRules(Tree.EMPTY, Collections.emptyList()));
+    private final AtomicReference<TreeAndInvalidRules> treeAndInvalidRules = new AtomicReference<>(new TreeAndInvalidRules(Tree.empty(), Collections.emptyList()));
 
     private final ClassificationRuleProvider ruleProvider;
 

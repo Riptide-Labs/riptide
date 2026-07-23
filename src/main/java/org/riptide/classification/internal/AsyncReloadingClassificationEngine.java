@@ -69,12 +69,13 @@ public class AsyncReloadingClassificationEngine implements ClassificationEngine 
     private void waitUntilReadyOrFailed() {
         while (true) {
             switch (state) {
-                case READY:
+                case READY -> {
                     return;
-                case FAILED:
-                    throw new RuntimeException("classification engine can not be used because last reload failed", reloadException);
-                case RELOADING:
-                    break; // fall through to wait() below until the reload settles
+                }
+                case FAILED -> throw new RuntimeException("classification engine can not be used because last reload failed", reloadException);
+                case RELOADING -> {
+                    // fall through to wait() below until the reload settles
+                }
             }
             try {
                 wait();
@@ -124,8 +125,7 @@ public class AsyncReloadingClassificationEngine implements ClassificationEngine 
     @Override
     public synchronized void reload() {
         switch (state) {
-            case READY:
-            case FAILED:
+            case READY, FAILED -> {
                 try {
                     reloadFuture = executorService.submit(this::doReload);
                     setState(State.RELOADING);
@@ -134,11 +134,11 @@ public class AsyncReloadingClassificationEngine implements ClassificationEngine 
                     this.reloadException = t;
                     setState(State.FAILED);
                 }
-                break;
-            case RELOADING:
+            }
+            case RELOADING -> {
                 reloadFuture.cancel(true);
                 reloadFuture = executorService.submit(this::doReload);
-                break;
+            }
         }
     }
 
