@@ -91,13 +91,15 @@ e2e: deps-jar deps-oci
 # mode (the seed corpus replays as ordinary tests in `make jar`) into fuzzing mode. FUZZ_TIME is
 # the per-target budget in seconds; FUZZ_TARGET narrows to one harness (the nightly matrix passes
 # it per job); the corpus persists in .cifuzz-corpus so coverage compounds.
+# test-compile is part of the invocation because deps-jar only checks tool versions: on a fresh
+# checkout (i.e. CI) surefire:test alone has no target/test-classes to select a harness from.
 FUZZ_TIME   ?= 120
 FUZZ_TARGET ?= *FuzzTest
 .PHONY: fuzz
 fuzz: deps-jar
-	JAZZER_FUZZ=1 mvn $(BUILD_OPTS) --batch-mode surefire:test \
-		-Dtest='org.riptide.flows.fuzz.$(FUZZ_TARGET)' -DfailIfNoSpecifiedTests=false \
-		-Djazzer.max_total_time=$(FUZZ_TIME)
+	JAZZER_FUZZ=1 mvn $(BUILD_OPTS) --batch-mode test-compile surefire:test \
+		-Dtest='org.riptide.flows.fuzz.$(FUZZ_TARGET)' \
+		-Djazzer.max_duration=$(FUZZ_TIME)s
 
 .PHONY: deps-lint-actions
 deps-lint-actions:
