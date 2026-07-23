@@ -49,15 +49,20 @@ public class ValueConversionService {
         validate();
     }
 
+    /**
+     * Visitors are keyed by their boxed target class, so a primitive field type must be boxed before
+     * lookup. apply() and validate() both go through here: when they disagreed, validate() accepted a
+     * primitive-typed field at construction while apply() looked it up raw, missed, and threw an NPE
+     * for every such value.
+     */
+    private static Class<?> boxed(final Class<?> type) {
+        return type.isPrimitive() ? PRIMITIVE_TYPE_MAP.get(type) : type;
+    }
+
     private void validate() {
         final var requiredTypes = Stream.of(targetType.getDeclaredFields())
                 .map(Field::getType)
-                .map(it -> {
-                    if (it.isPrimitive()) {
-                        return PRIMITIVE_TYPE_MAP.get(it);
-                    }
-                    return it;
-                })
+                .map(ValueConversionService::boxed)
                 .distinct()
                 .toList();
         for (Class<?> fieldType : requiredTypes) {
@@ -76,14 +81,17 @@ public class ValueConversionService {
             final var key = source.getName();
             final var field = fieldMap.get(key);
             if (field != null) {
-                final var converterVisitor = visitors.get(field.getType());
+                final var converterVisitor = visitors.get(boxed(field.getType()));
                 final var convertedValue = source.accept(converterVisitor);
                 if (convertedValue != null) {
                     field.set(targetFlow, convertedValue);
                 }
             }
         } catch (Exception ex) {
-            log.error("🤡🦄💩: {}", ex.getMessage(), ex);
+            // One unconvertible value must not drop the whole flow, so swallow and move on. Logged at
+            // debug because this runs once per value on the untrusted-input path: a malformed packet
+            // could otherwise flood the log at a higher level (which is exactly what masked this bug).
+            log.debug("Could not convert value {} into {}: {}", source.getName(), targetType, ex.getMessage(), ex);
         }
 
     }
