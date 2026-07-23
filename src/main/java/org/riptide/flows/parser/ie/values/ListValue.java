@@ -72,6 +72,19 @@ public class ListValue extends Value<List<List<Value<?>>>> {
         this.values = Objects.requireNonNull(values);
     }
 
+    /**
+     * Guards the list loops below, which run until the buffer is drained. An element that consumes
+     * nothing — a zero-length field specifier, or a template whose fields are all zero-length —
+     * leaves the reader index where it was while isReadable() stays true, so the loop would append
+     * until the heap is gone. Element sizes come off the wire, so this is reachable from untrusted
+     * input rather than only from a malformed exporter.
+     */
+    private static void requireProgress(final ByteBuf buffer, final int mark) throws InvalidPacketException {
+        if (buffer.readerIndex() == mark) {
+            throw new InvalidPacketException(buffer, "List element consumed no bytes");
+        }
+    }
+
     /*
       0                   1                   2                   3
       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -94,7 +107,9 @@ public class ListValue extends Value<List<List<Value<?>>>> {
 
                 final List<List<Value<?>>> values = new ArrayList<>();
                 while (buffer.isReadable()) {
+                    final int mark = buffer.readerIndex();
                     values.add(Collections.singletonList(DataRecord.parseField(field, resolver, buffer)));
+                    requireProgress(buffer, mark);
                 }
 
                 return new ListValue(name, semantics, semantic, unit, values);
@@ -139,11 +154,13 @@ public class ListValue extends Value<List<List<Value<?>>>> {
 
                 final List<List<Value<?>>> values = new ArrayList<>();
                 while (buffer.isReadable()) {
+                    final int mark = buffer.readerIndex();
                     final List<Value<?>> record = new ArrayList<>(template.count());
                     for (final Field field : template) {
                         record.add(DataRecord.parseField(field, resolver, buffer));
                     }
                     values.add(record);
+                    requireProgress(buffer, mark);
                 }
 
                 return new ListValue(name, semantics, semantic, unit, values);
@@ -232,11 +249,13 @@ public class ListValue extends Value<List<List<Value<?>>>> {
                     final Template template = resolver.lookupTemplate(header.setId);
 
                     while (payloadBuffer.isReadable()) {
+                        final int mark = payloadBuffer.readerIndex();
                         final List<Value<?>> record = new ArrayList<>(template.count());
                         for (final Field field : template) {
                             record.add(DataRecord.parseField(field, resolver, payloadBuffer));
                         }
                         values.add(record);
+                        requireProgress(payloadBuffer, mark);
                     }
                 }
 
