@@ -31,7 +31,10 @@
         <maven-checkstyle-plugin.version>3.6.0</maven-checkstyle-plugin.version>
         <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
         <versions-maven-plugin.version>2.21.0</versions-maven-plugin.version>
-        <netty-all.version>4.2.16.Final</netty-all.version>
+        <!-- Overrides Spring Boot's managed netty.version (4.2.15.Final), which governs every
+             io.netty:netty-* module and otherwise leaves them a patch behind netty-all. 4.2.16.Final
+             patches the Netty advisories in Scorecard alert #120 (GHSA-hpcc-26xq-25fv and 15 more). -->
+        <netty.version>4.2.16.Final</netty.version>
         <org-eclipse-persistence-moxy.version>5.0.1</org-eclipse-persistence-moxy.version>
         <resilience4j.version>2.4.0</resilience4j.version>
         <snmp4j.version>3.12.2</snmp4j.version>
@@ -56,19 +59,14 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-            <!-- Transitive-CVE pins (Scorecard/osv-scanner findings). Neither library is on a
-                 reachable path — riptide has no STOMP endpoint (GHSA-vhch-2wf3-m8rp) and Jackson
-                 only rides in with Spring (GHSA-5jmj-h7xm-6q6v) — pinned to the patched versions
-                 anyway. Drop each pin once the managing parent/netty-all catches up. -->
+            <!-- Transitive-CVE pin (Scorecard/osv-scanner finding): Jackson is not on a reachable
+                 path — it only rides in with Spring (GHSA-5jmj-h7xm-6q6v) — pinned to the patched
+                 version anyway. Drop once the managing parent catches up. Netty (including the
+                 former netty-codec-stomp pin) is handled by the netty.version override above. -->
             <dependency>
                 <groupId>com.fasterxml.jackson.core</groupId>
                 <artifactId>jackson-databind</artifactId>
                 <version>2.22.1</version>
-            </dependency>
-            <dependency>
-                <groupId>io.netty</groupId>
-                <artifactId>netty-codec-stomp</artifactId>
-                <version>4.2.16.Final</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
@@ -97,7 +95,7 @@
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-all</artifactId>
-            <version>${netty-all.version}</version>
+            <version>${netty.version}</version>
         </dependency>
         <dependency>
             <groupId>com.google.guava</groupId>
