@@ -147,6 +147,16 @@ public class ValueTest {
     }
 
     @Test
+    void verifyIPv6AddressValueMapsIPv4() throws Exception {
+        // Dual-stack exporters send IPv4-mapped addresses in IPv6 fields. InetAddress.getByAddress
+        // hands those back as an Inet4Address, which used to fail the cast to the declared type.
+        final var mapped = new byte[]{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, (byte) 0xff, (byte) 0xff, 1, 2, 3, 4};
+        final var ipv6AddressValue = (IPv6AddressValue) IPv6AddressValue.parser("ipv6AddressName", null, null).parse(null, Unpooled.wrappedBuffer(mapped));
+        assertEquals("ipv6AddressName", ipv6AddressValue.getName());
+        assertEquals("0:0:0:0:0:ffff:102:304", ipv6AddressValue.getValue().getHostAddress());
+    }
+
+    @Test
     void verifyMacAddressValue() throws Exception {
         final var macAddressValue = (MacAddressValue) MacAddressValue.parser("macAddressName", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{1, 2, 4, 8, 16, 32}));
         assertEquals("macAddressName", macAddressValue.getName());
