@@ -103,7 +103,14 @@ public abstract class Tree {
         return ruleSet.stream().flatMap(rule -> rule.thresholds.stream());
     }
 
-    public static final Tree EMPTY = Leaf.EMPTY;
+    /**
+     * The empty tree. A method rather than a {@code static final} field so the {@link Leaf} subclass
+     * loads when this is called rather than during {@code Tree}'s own class initialization, which
+     * would be a parent-references-subclass cycle (ClassInitializationDeadlock).
+     */
+    public static Tree empty() {
+        return Leaf.empty();
+    }
 
     /**
      * Collects statistical information about a decision tree.
@@ -117,13 +124,13 @@ public abstract class Tree {
         public static final Info FOR_LEAVE_WITH_3_RULES = new Info(3);
 
         public static Info forLeaf(int ruleSetSize) {
-            switch (ruleSetSize) {
-                case 0: return FOR_LEAVE_WITH_0_RULES;
-                case 1: return FOR_LEAVE_WITH_1_RULE;
-                case 2: return FOR_LEAVE_WITH_2_RULES;
-                case 3: return FOR_LEAVE_WITH_3_RULES;
-                default: return new Info(ruleSetSize);
-            }
+            return switch (ruleSetSize) {
+                case 0 -> FOR_LEAVE_WITH_0_RULES;
+                case 1 -> FOR_LEAVE_WITH_1_RULE;
+                case 2 -> FOR_LEAVE_WITH_2_RULES;
+                case 3 -> FOR_LEAVE_WITH_3_RULES;
+                default -> new Info(ruleSetSize);
+            };
         }
 
         public final int minDepth, maxDepth, sumDepth;
@@ -261,6 +268,8 @@ public abstract class Tree {
     protected abstract boolean isEmpty();
 
     /**
+     * Collects the classifiers this subtree applies to the given request.
+     *
      * @return matching classifiers or {@code null}
      */
     protected abstract Classifiers classifiers(ClassificationRequest request);
@@ -291,19 +300,14 @@ public abstract class Tree {
 
             @Override
             public Classifiers classifiers(ClassificationRequest request) {
-                switch (threshold.compare(request)) {
-                    case LT:
-                        return lt.classifiers(request);
-                    case EQ:
-                        return eq.classifiers(request);
-                    case GT:
-                        return gt.classifiers(request);
-                    case NA:
-                        // request has no value for this threshold's aspect; preserved
-                        // pre-existing behavior — callers treat null as "no classifiers"
-                        return null;
-                }
-                return null;
+                return switch (threshold.compare(request)) {
+                    case LT -> lt.classifiers(request);
+                    case EQ -> eq.classifiers(request);
+                    case GT -> gt.classifiers(request);
+                    // request has no value for this threshold's aspect; preserved
+                    // pre-existing behavior — callers treat null as "no classifiers"
+                    case NA -> null;
+                };
             }
 
             @Override
@@ -337,22 +341,16 @@ public abstract class Tree {
                 // -> the number of "na" nodes along a "classification path" is small because it is limited
                 //    by the number of different aspects that may be absent in some rules
                 // -> there are 5 aspects (src/dst port/addr and protocol)
-                switch (threshold.compare(request)) {
-                    case LT:
-                        return merge(lt.classifiers(request), na.classifiers(request));
-                    case EQ:
-                        return merge(eq.classifiers(request), na.classifiers(request));
-                    case GT:
-                        return merge(gt.classifiers(request), na.classifiers(request));
-                    case NA:
-                        // if a request has no value corresponding to the threshold of this node then only the rules
-                        // that did not include that value are considered
-                        // -> alternatively we could consider all the rules for lt, eq, gt, and na. In that case
-                        //    a request that has no corresponding value could match rules that constrain that value
-                        return na.classifiers(request);
-                    default:
-                        return null; // unexpected
-                }
+                return switch (threshold.compare(request)) {
+                    case LT -> merge(lt.classifiers(request), na.classifiers(request));
+                    case EQ -> merge(eq.classifiers(request), na.classifiers(request));
+                    case GT -> merge(gt.classifiers(request), na.classifiers(request));
+                    // if a request has no value corresponding to the threshold of this node then only the rules
+                    // that did not include that value are considered
+                    // -> alternatively we could consider all the rules for lt, eq, gt, and na. In that case
+                    //    a request that has no corresponding value could match rules that constrain that value
+                    case NA -> na.classifiers(request);
+                };
             }
 
             @Override
@@ -373,7 +371,7 @@ public abstract class Tree {
     // smart constructor for leaves
     private static Leaf leaf(List<PreprocessedRule> ruleSet, Bounds bounds) {
         if (ruleSet.isEmpty()) {
-            return Leaf.EMPTY;
+            return Leaf.empty();
         } else if (ruleSet.size() == 1) {
             return new Leaf.WithClassifiers(ruleSet.get(0).createClassifier(bounds));
         } else {
@@ -388,7 +386,20 @@ public abstract class Tree {
 
     public abstract static class Leaf extends Tree {
 
-        public static final Leaf EMPTY = new Empty();
+        /**
+         * The shared empty leaf. Held in a nested class rather than a {@code static final} field on
+         * {@code Leaf} so its {@link Empty} subclass is constructed on first use, after {@code Leaf}
+         * itself is initialized — a field would be a parent-references-subclass cycle
+         * (ClassInitializationDeadlock). The holder is not a superclass of {@code Empty}, so it is
+         * initialized lazily and safely.
+         */
+        public static Leaf empty() {
+            return EmptyHolder.INSTANCE;
+        }
+
+        private static final class EmptyHolder {
+            private static final Empty INSTANCE = new Empty();
+        }
 
         public Leaf(Info info) {
             super(info);
@@ -464,10 +475,16 @@ public abstract class Tree {
 
     /**
      * Allows to access classifiers sorted by their priorities.
+     *
+     * <p>Package-private rather than private: it appears in the signatures of the non-private
+     * {@code classifiers(...)} and {@link #merge} members, and a private type there is flagged
+     * (ExposedPrivateType). It stays an internal abstraction of this package either way.
      */
-    private interface Classifiers {
+    interface Classifiers {
 
         /**
+         * Advances to the next classifier in priority order.
+         *
          * @return the next classifier or {@code null} if no more classifiers are available
          */
         Classifier next();
