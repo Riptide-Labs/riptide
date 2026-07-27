@@ -75,34 +75,6 @@
         "current": {}
       },
       {
-        "name": "bucket",
-        "label": "Bucket (s)",
-        "type": "custom",
-        "query": "60,300,900",
-        "current": {
-          "selected": true,
-          "text": "300",
-          "value": "300"
-        },
-        "options": [
-          {
-            "selected": false,
-            "text": "60",
-            "value": "60"
-          },
-          {
-            "selected": true,
-            "text": "300",
-            "value": "300"
-          },
-          {
-            "selected": false,
-            "text": "900",
-            "value": "900"
-          }
-        ]
-      },
-      {
         "name": "tenant",
         "label": "Tenant",
         "type": "query",
@@ -615,7 +587,7 @@
       "id": 5,
       "type": "timeseries",
       "title": "Throughput of the slice \u2014 by application",
-      "description": "Traffic rate of the matched flows, stacked by classified application (top 10 by volume, remainder as Other), bucketed by the Bucket variable. This is where a burst shows its shape and its owner: note when it starts, then tighten the address/port filters until only the burst remains.",
+      "description": "Traffic rate of the matched flows, stacked by classified application (top 10 by volume, remainder as Other), bucket size follows the zoom level automatically (never finer than 1 minute, the flow-export resolution). This is where a burst shows its shape and its owner: note when it starts, then tighten the address/port filters until only the burst remains.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -691,13 +663,14 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "table",
-          "rawSql": "WITH top AS (SELECT ifNull(application, 'unclassified') AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND $__conditionalAll(if(srcAddr BETWEEN toIPv6('::ffff:0.0.0.0') AND toIPv6('::ffff:255.255.255.255'), 4, 6) IN (${ipv:csv}), $ipv) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring})) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(ifNull(application, 'unclassified') IN (SELECT dim FROM top), ifNull(application, 'unclassified'), 'Other') AS series,\n       sum(bytes) * 8 / $bucket AS bps\nFROM ${database}.samples(ival = $bucket)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND $__conditionalAll(if(srcAddr BETWEEN toIPv6('::ffff:0.0.0.0') AND toIPv6('::ffff:255.255.255.255'), 4, 6) IN (${ipv:csv}), $ipv) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring})) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $bucket SECOND AND flow.timestamp >= $__fromTime - INTERVAL 1 HOUR AND flow.timestamp <= $__toTime + INTERVAL 1 HOUR\nGROUP BY time, series\nORDER BY time",
+          "rawSql": "WITH top AS (SELECT ifNull(application, 'unclassified') AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND $__conditionalAll(if(srcAddr BETWEEN toIPv6('::ffff:0.0.0.0') AND toIPv6('::ffff:255.255.255.255'), 4, 6) IN (${ipv:csv}), $ipv) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring})) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(ifNull(application, 'unclassified') IN (SELECT dim FROM top), ifNull(application, 'unclassified'), 'Other') AS series,\n       sum(bytes) * 8 / $__interval_s AS bps\nFROM ${database}.samples(ival = $__interval_s)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND $__conditionalAll(if(srcAddr BETWEEN toIPv6('::ffff:0.0.0.0') AND toIPv6('::ffff:255.255.255.255'), 4, 6) IN (${ipv:csv}), $ipv) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring})) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $__interval_s SECOND AND flow.timestamp >= $__fromTime - INTERVAL 1 HOUR AND flow.timestamp <= $__toTime + INTERVAL 1 HOUR\nGROUP BY time, series\nORDER BY time",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "interval": "1m"
     },
     {
       "id": 6,
@@ -913,7 +886,7 @@
                 "value": [
                   {
                     "title": "${__data.fields.Tip}",
-                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${bucket:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&${application:queryparam}&${l4:queryparam}&${ipv:queryparam}&${src_port:queryparam}&${dst_port:queryparam}&${limit:queryparam}&${dst:queryparam}&var-src=${__data.fields.Address}&from=${__from}&to=${__to}"
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&${application:queryparam}&${l4:queryparam}&${ipv:queryparam}&${src_port:queryparam}&${dst_port:queryparam}&${limit:queryparam}&${dst:queryparam}&var-src=${__data.fields.Address}&from=${__from}&to=${__to}"
                   }
                 ]
               }
@@ -1023,7 +996,7 @@
                 "value": [
                   {
                     "title": "${__data.fields.Tip}",
-                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${bucket:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&${application:queryparam}&${l4:queryparam}&${ipv:queryparam}&${src_port:queryparam}&${dst_port:queryparam}&${limit:queryparam}&${src:queryparam}&var-dst=${__data.fields.Address}&from=${__from}&to=${__to}"
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&${application:queryparam}&${l4:queryparam}&${ipv:queryparam}&${src_port:queryparam}&${dst_port:queryparam}&${limit:queryparam}&${src:queryparam}&var-dst=${__data.fields.Address}&from=${__from}&to=${__to}"
                   }
                 ]
               }
@@ -1145,7 +1118,7 @@
                 "value": [
                   {
                     "title": "${__data.fields[\"Initiator tip\"]}",
-                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${bucket:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&${application:queryparam}&${l4:queryparam}&${ipv:queryparam}&${src_port:queryparam}&${dst_port:queryparam}&${limit:queryparam}&${dst:queryparam}&var-src=${__data.fields[\"Initiator addr\"]}&from=${__from}&to=${__to}"
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&${application:queryparam}&${l4:queryparam}&${ipv:queryparam}&${src_port:queryparam}&${dst_port:queryparam}&${limit:queryparam}&${dst:queryparam}&var-src=${__data.fields[\"Initiator addr\"]}&from=${__from}&to=${__to}"
                   }
                 ]
               }
@@ -1162,7 +1135,7 @@
                 "value": [
                   {
                     "title": "${__data.fields[\"Responder tip\"]}",
-                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${bucket:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&${application:queryparam}&${l4:queryparam}&${ipv:queryparam}&${src_port:queryparam}&${dst_port:queryparam}&${limit:queryparam}&${src:queryparam}&var-dst=${__data.fields[\"Responder addr\"]}&from=${__from}&to=${__to}"
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&${application:queryparam}&${l4:queryparam}&${ipv:queryparam}&${src_port:queryparam}&${dst_port:queryparam}&${limit:queryparam}&${src:queryparam}&var-dst=${__data.fields[\"Responder addr\"]}&from=${__from}&to=${__to}"
                   }
                 ]
               }
@@ -1179,7 +1152,7 @@
                 "value": [
                   {
                     "title": "${__data.fields[\"Application tip\"]}",
-                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${bucket:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&${l4:queryparam}&${ipv:queryparam}&${src_port:queryparam}&${dst_port:queryparam}&${limit:queryparam}&${src:queryparam}&${dst:queryparam}&var-application=${__data.fields[\"Application value\"]}&from=${__from}&to=${__to}"
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&${l4:queryparam}&${ipv:queryparam}&${src_port:queryparam}&${dst_port:queryparam}&${limit:queryparam}&${src:queryparam}&${dst:queryparam}&var-application=${__data.fields[\"Application value\"]}&from=${__from}&to=${__to}"
                   }
                 ]
               }
