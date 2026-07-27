@@ -112,6 +112,12 @@ Spring resource location and defaults to the bundled `classification-rules.csv`:
 riptide.classification.rules=file:/etc/riptide/classification-rules.csv
 ```
 
+Row order is the evaluation priority: when several rules match a flow — common when a
+client's ephemeral port collides with another rule's registered port — the earliest
+matching row wins, in both directions of an omnidirectional rule. In a custom ruleset,
+put specific rules (address + port) above broad ones (port-only), or the broad row will
+shadow them.
+
 ## Locality
 
 Source/destination/flow locality (private vs. public address space) is derived for every
