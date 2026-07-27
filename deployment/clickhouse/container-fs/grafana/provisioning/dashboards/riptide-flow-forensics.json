@@ -793,6 +793,175 @@
       "interval": "1m"
     },
     {
+      "id": 15,
+      "type": "barchart",
+      "title": "Top 10 AS \u2014 sent vs received",
+      "description": "The autonomous systems moving the most bytes in the slice: volume sent as source extends right, volume received as destination extends left (shown negative) \u2014 a lopsided bar is a pure producer or consumer, a balanced one is bidirectional exchange. Labelled by AS organisation, ASnnn where no name resolved; flows without AS enrichment (private addresses) are not counted here. Filter with the Source/Destination AS pickers to pin one.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "stacking": "none",
+        "showValue": "never",
+        "groupWidth": 0.7,
+        "barWidth": 0.85,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT\n  ifNull(any(nullIf(org, '')), concat('AS', toString(k))) AS \"AS\",\n  sumIf(b, role = 1) AS \"As source\",\n  -sumIf(b, role = 2) AS \"As destination\"\nFROM (\n  SELECT srcAs AS k, srcAsOrg AS org, bytes AS b, 1 AS role FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND $__conditionalAll(if(srcAddr BETWEEN toIPv6('::ffff:0.0.0.0') AND toIPv6('::ffff:255.255.255.255'), 4, 6) IN (${ipv:csv}), $ipv) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring})) AND $__conditionalAll(srcAs IN (${src_as:csv}), $src_as) AND $__conditionalAll(dstAs IN (${dst_as:csv}), $dst_as) AND $__conditionalAll(srcCity IN (${src_city:singlequote}), $src_city) AND $__conditionalAll(dstCity IN (${dst_city:singlequote}), $dst_city) AND srcAs != 0\n  UNION ALL\n  SELECT dstAs, dstAsOrg, bytes, 2 FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND $__conditionalAll(if(srcAddr BETWEEN toIPv6('::ffff:0.0.0.0') AND toIPv6('::ffff:255.255.255.255'), 4, 6) IN (${ipv:csv}), $ipv) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring})) AND $__conditionalAll(srcAs IN (${src_as:csv}), $src_as) AND $__conditionalAll(dstAs IN (${dst_as:csv}), $dst_as) AND $__conditionalAll(srcCity IN (${src_city:singlequote}), $src_city) AND $__conditionalAll(dstCity IN (${dst_city:singlequote}), $dst_city) AND dstAs != 0\n)\nGROUP BY k\nORDER BY \"As source\" - \"As destination\" DESC\nLIMIT 10",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "barchart",
+      "title": "Top 10 cities \u2014 sent vs received",
+      "description": "GeoIP cities moving the most bytes in the slice: volume sent as source extends right, volume received as destination extends left (shown negative). Flows without a resolved city (private addresses, sparse GeoIP data) are not counted here \u2014 this panel maps the public footprint, not the whole slice. Filter with the Source/Destination city pickers to pin one.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "stacking": "none",
+        "showValue": "never",
+        "groupWidth": 0.7,
+        "barWidth": 0.85,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT\n  k AS \"City\",\n  sumIf(b, role = 1) AS \"As source\",\n  -sumIf(b, role = 2) AS \"As destination\"\nFROM (\n  SELECT srcCity AS k, bytes AS b, 1 AS role FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND $__conditionalAll(if(srcAddr BETWEEN toIPv6('::ffff:0.0.0.0') AND toIPv6('::ffff:255.255.255.255'), 4, 6) IN (${ipv:csv}), $ipv) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring})) AND $__conditionalAll(srcAs IN (${src_as:csv}), $src_as) AND $__conditionalAll(dstAs IN (${dst_as:csv}), $dst_as) AND $__conditionalAll(srcCity IN (${src_city:singlequote}), $src_city) AND $__conditionalAll(dstCity IN (${dst_city:singlequote}), $dst_city) AND srcCity != ''\n  UNION ALL\n  SELECT dstCity, bytes, 2 FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND $__conditionalAll(if(srcAddr BETWEEN toIPv6('::ffff:0.0.0.0') AND toIPv6('::ffff:255.255.255.255'), 4, 6) IN (${ipv:csv}), $ipv) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring})) AND $__conditionalAll(srcAs IN (${src_as:csv}), $src_as) AND $__conditionalAll(dstAs IN (${dst_as:csv}), $dst_as) AND $__conditionalAll(srcCity IN (${src_city:singlequote}), $src_city) AND $__conditionalAll(dstCity IN (${dst_city:singlequote}), $dst_city) AND dstCity != ''\n)\nGROUP BY k\nORDER BY \"As source\" - \"As destination\" DESC\nLIMIT 10",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "bargauge",
+      "title": "IPv4 vs IPv6 traffic",
+      "description": "Total bytes in the slice by address family, derived from the stored address form (reliable even when the exporter leaves ipVersion empty). A network claiming dual-stack with a near-zero IPv6 bar is not actually using it; respect for the IP version filter means a pinned family shows the other at zero.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "reduceOptions": {
+          "values": true,
+          "calcs": [],
+          "fields": ""
+        },
+        "showUnfilled": true,
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT sumIf(bytes, srcAddr BETWEEN toIPv6('::ffff:0.0.0.0') AND toIPv6('::ffff:255.255.255.255')) AS \"IPv4\", sumIf(bytes, srcAddr NOT BETWEEN toIPv6('::ffff:0.0.0.0') AND toIPv6('::ffff:255.255.255.255')) AS \"IPv6\" FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND $__conditionalAll(if(srcAddr BETWEEN toIPv6('::ffff:0.0.0.0') AND toIPv6('::ffff:255.255.255.255'), 4, 6) IN (${ipv:csv}), $ipv) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring})) AND $__conditionalAll(srcAs IN (${src_as:csv}), $src_as) AND $__conditionalAll(dstAs IN (${dst_as:csv}), $dst_as) AND $__conditionalAll(srcCity IN (${src_city:singlequote}), $src_city) AND $__conditionalAll(dstCity IN (${dst_city:singlequote}), $dst_city)",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
       "id": 6,
       "type": "bargauge",
       "title": "L4 protocol mix",
@@ -805,7 +974,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 12
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -858,7 +1027,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 12
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -911,7 +1080,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 12
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -964,7 +1133,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 19
+        "y": 26
       },
       "fieldConfig": {
         "defaults": {
@@ -1074,7 +1243,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 19
+        "y": 26
       },
       "fieldConfig": {
         "defaults": {
@@ -1184,7 +1353,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 28
+        "y": 35
       },
       "fieldConfig": {
         "defaults": {
@@ -1470,7 +1639,7 @@
         "h": 13,
         "w": 24,
         "x": 0,
-        "y": 37
+        "y": 44
       },
       "fieldConfig": {
         "defaults": {
@@ -1509,7 +1678,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 50
+        "y": 57
       },
       "fieldConfig": {
         "defaults": {
@@ -1578,7 +1747,7 @@
         "h": 8,
         "w": 16,
         "x": 8,
-        "y": 50
+        "y": 57
       },
       "fieldConfig": {
         "defaults": {
