@@ -7,6 +7,7 @@ package org.riptide.classification.internal.csv;
 
 import com.google.common.base.Strings;
 import org.apache.commons.csv.CSVFormat;
+import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
 import org.riptide.classification.DefaultRule;
 import org.riptide.classification.Rule;
@@ -26,10 +27,24 @@ public final class CsvImporter {
 
         final var rules = new ArrayList<Rule>();
         final var format = createFormat(hasHeader);
-        final var parser = format.parse(new InputStreamReader(inputStream));
+        // Reject files whose first line is not the expected header: commons-csv would otherwise
+        // consume a rule row as pseudo-header, silently dropping it and shifting every position —
+        // and positions are the evaluation priority. Empty fields in that row make commons-csv
+        // itself refuse ("a header name is missing") before the name comparison can run.
+        final CSVParser parser;
+        try {
+            parser = format.parse(new InputStreamReader(inputStream));
+        } catch (final IllegalArgumentException e) {
+            throw new IOException("The rules file's first line is not the expected header '%s'. The header row is required."
+                    .formatted(String.join(";", HEADERS)), e);
+        }
+        if (hasHeader && !parser.getHeaderNames().equals(List.of(HEADERS))) {
+            throw new IOException("The rules file's first line is not the expected header '%s' but '%s'. The header row is required."
+                    .formatted(String.join(";", HEADERS), String.join(";", parser.getHeaderNames())));
+        }
         for (CSVRecord record : parser.getRecords()) {
             if (record.size() < HEADERS.length) {
-                throw new IOException("The provided rule ''%s'' cannot be parsed. Expected columns %s but received %s.".formatted(record, HEADERS.length, record.size()));
+                throw new IOException("The provided rule '%s' cannot be parsed. Expected columns %s but received %s.".formatted(record, HEADERS.length, record.size()));
             }
 
             final String name = record.get(0);
@@ -41,9 +56,9 @@ public final class CsvImporter {
             final String exportFilter = record.get(6);
             final String omnidirectional = record.get(7);
 
-            // Set values. The row order is the evaluation priority (Rule.getPosition): when
-            // several rules tie otherwise — e.g. an ephemeral port colliding with another
-            // rule's registered port — the earlier row wins deterministically.
+            // Set values. The row order is the evaluation priority (Rule.getPosition): the
+            // earliest matching row wins — even over a later, more specific rule — so specific
+            // rules must precede broad ones.
             final var rule = DefaultRule.builder()
                 .withName(Strings.emptyToNull(name))
                 .withDstPort(Strings.emptyToNull(dstPort))
