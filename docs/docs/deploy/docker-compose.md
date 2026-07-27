@@ -23,17 +23,22 @@ This starts, from `ghcr.io/riptide-labs/riptide:latest`:
 | ch-ui | [`:5521`](http://localhost:5521) | browse the `riptide.flows` table |
 | grafana | [`:3000`](http://localhost:3000) | dashboards (ClickHouse datasource provisioned) |
 
-Grafana (admin/admin) ships two provisioned dashboards backed by the `flows` table and the
+Grafana (admin/admin) ships provisioned dashboards backed by the `flows` table and the
 `samples` bucket-expansion view:
 
 - **Riptide - Top 10**: stacked top-10 rate panels (AS, hosts, applications, services, protocols,
   exporters, interfaces) plus a source-AS statistics table with a 95th-percentile column.
 - **Riptide - Traffic Paths (Sankey)**: path diagrams (source AS → ingress
   interface → application → destination AS, and more), weighted by bytes over the selected range.
+- **Riptide - Host Investigation**: forensics for a single address — traffic, unique peers,
+  TCP flag profile, top peers/services with geo and AS context.
+- **Riptide - Collection Health**: is every exporter delivering? Reporting/silent-exporter
+  verdicts, a per-exporter activity timeline, collection lag percentiles, and an exporter
+  inventory with drill-down into Traffic Paths.
 
 The JSON sources live in `deployment/clickhouse/container-fs/grafana/provisioning/dashboards/`.
 UI edits last only until the provisioned JSON changes — use *Save as* to keep a customized copy.
-Both dashboards are deployment-neutral: a **Datasource** variable selects the ClickHouse
+The dashboards are deployment-neutral: a **Datasource** variable selects the ClickHouse
 connection and a **Database** variable (auto-populated from databases containing a `flows` table)
 selects the riptide database, so they import into any external Grafana without a specifically
 named or `defaultDatabase`-pinned datasource.
