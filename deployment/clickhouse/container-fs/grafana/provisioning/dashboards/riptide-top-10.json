@@ -3,7 +3,8 @@
   "title": "Riptide - Top 10",
   "tags": [
     "riptide",
-    "netflow"
+    "netflow",
+    "audience:engineer"
   ],
   "timezone": "browser",
   "schemaVersion": 39,
@@ -193,7 +194,8 @@
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "description": "Total flow-reported traffic rate across the selected scope. Sanity anchor for everything below: if this is near zero, check the Collection Health dashboard before reading any top-10 ranking."
     },
     {
       "id": 2,
@@ -245,7 +247,8 @@
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "description": "Total bytes carried by flows in the selected range and scope. Switch Tenant/Zone/Locality to compare slices; the top-10 panels below explain who moved it."
     },
     {
       "id": 3,
@@ -297,7 +300,8 @@
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "description": "Number of flow records behind these panels \u2014 a confidence indicator, not a traffic measure. Low counts (sampled exporters, short ranges) make the rankings noisy; widen the range before trusting close calls."
     },
     {
       "id": 4,
@@ -380,7 +384,8 @@
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "description": "Traffic rate by originating autonomous system \u2014 top 10 by volume, remainder stacked as the grey Other band. A new entrant or a suddenly growing AS is a traffic source worth explaining."
     },
     {
       "id": 5,
@@ -463,7 +468,8 @@
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "description": "Traffic rate by destination autonomous system \u2014 top 10 by volume, remainder stacked as the grey Other band. Where does our traffic go; sudden shifts point at CDN moves, new services, or exfiltration."
     },
     {
       "id": 6,
@@ -546,7 +552,8 @@
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "description": "Traffic rate by source host, reverse-DNS name where resolved, plain address otherwise. A single host dominating the stack is the first suspect for link saturation \u2014 open it in Host Investigation (dashboards menu)."
     },
     {
       "id": 7,
@@ -629,7 +636,8 @@
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "description": "Traffic rate by destination host, reverse-DNS name where resolved, plain address otherwise. A single sink drawing outsized volume \u2014 backup target, update server, or data sink worth verifying \u2014 stands out here."
     },
     {
       "id": 8,
@@ -712,7 +720,8 @@
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "description": "Traffic rate by classified application; 'unclassified' means no classification rule matched. Normal: unclassified stays a small share \u2014 a growing unclassified band means the rule set needs attention, not the network."
     },
     {
       "id": 9,
@@ -795,7 +804,8 @@
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "description": "Traffic rate by protocol/destination-port pair \u2014 the port-level view for when application classification is too coarse. Unexpected high-volume ports are the lead to chase in Conversations."
     },
     {
       "id": 10,
@@ -878,7 +888,8 @@
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "description": "Traffic rate by IP protocol. Normal: TCP and UDP dominate; a visible share of anything else (GRE, ESP, ICMP) deserves an explanation \u2014 tunnels, VPNs, or something probing."
     },
     {
       "id": 11,
@@ -961,7 +972,8 @@
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "description": "Traffic rate by exporting device \u2014 which vantage points see the traffic. An exporter's band fading while others hold steady may be a collection problem, not a traffic change: check Collection Health."
     },
     {
       "id": 12,
@@ -1044,7 +1056,8 @@
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "description": "Traffic rate by exporter ingress interface \u2014 which links carry the load into the monitored network. Read together with Top 10 Exporters to localise a saturating link."
     },
     {
       "id": 13,
@@ -1125,11 +1138,24 @@
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "description": "Ranked source-AS table for the range: total volume plus the 95th-percentile rate \u2014 the number used for billing and capacity comparisons, deliberately insensitive to short bursts."
     }
   ],
   "annotations": {
     "list": []
   },
-  "links": []
+  "links": [
+    {
+      "title": "Riptide dashboards",
+      "type": "dashboards",
+      "tags": [
+        "riptide"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true
+    }
+  ],
+  "description": "Which ASes, hosts, applications and services dominate traffic over the selected range? Fleet-compare view over the flows table (byte-weighted, bucketed via the samples view and the Bucket variable); every rate panel stacks the top 10 plus an 'Other' remainder. Scope with Tenant/Zone/Locality; drill into a host via the Host Investigation dashboard (dashboards menu, filters and time carried over)."
 }

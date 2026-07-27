@@ -4,7 +4,8 @@
   "tags": [
     "riptide",
     "netflow",
-    "traffic-paths"
+    "traffic-paths",
+    "audience:engineer"
   ],
   "timezone": "browser",
   "schemaVersion": 39,
@@ -15,7 +16,7 @@
     "to": "now"
   },
   "editable": true,
-  "graphTooltip": 0,
+  "graphTooltip": 1,
   "templating": {
     "list": [
       {
@@ -327,5 +328,17 @@
   "annotations": {
     "list": []
   },
-  "links": []
+  "links": [
+    {
+      "title": "Riptide dashboards",
+      "type": "dashboards",
+      "tags": [
+        "riptide"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true
+    }
+  ],
+  "description": "How does traffic route through the network \u2014 which AS pairs peer across which exporters, where does it originate and terminate geographically, and where does it exit? Byte-weighted Sankey paths over the flows table for the selected range. Scope with Tenant/Zone/Locality/Exporter; Depth caps nodes per column to keep the diagrams readable."
 }

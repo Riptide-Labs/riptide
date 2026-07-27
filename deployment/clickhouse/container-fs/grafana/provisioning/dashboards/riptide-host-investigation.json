@@ -5,7 +5,8 @@
     "riptide",
     "netflow",
     "security",
-    "host-investigation"
+    "host-investigation",
+    "audience:engineer"
   ],
   "timezone": "browser",
   "schemaVersion": 39,
@@ -16,7 +17,7 @@
     "to": "now"
   },
   "editable": true,
-  "graphTooltip": 0,
+  "graphTooltip": 1,
   "templating": {
     "list": [
       {
@@ -66,7 +67,8 @@
           "selected": true,
           "text": "192.168.10.1",
           "value": "192.168.10.1"
-        }
+        },
+        "description": "IP address of the host under investigation (IPv4 or IPv6, as stored in the flows table)."
       },
       {
         "name": "limit",
@@ -192,7 +194,8 @@
           "unit": "bps",
           "color": {
             "mode": "palette-classic"
-          }
+          },
+          "min": 0
         },
         "overrides": []
       },
@@ -512,5 +515,17 @@
   "annotations": {
     "list": []
   },
-  "links": []
+  "links": [
+    {
+      "title": "Riptide dashboards",
+      "type": "dashboards",
+      "tags": [
+        "riptide"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true
+    }
+  ],
+  "description": "What is this one host doing? Investigation view for a single address: traffic in/out, peer fan-out and TCP flag profile on top, then the evidence \u2014 top peers, services, packet sizes and geo/AS context. Enter the host's IP (v4 or v6) in the Host box; typically reached from Top 10 or Conversations with filters and time range carried over."
 }
