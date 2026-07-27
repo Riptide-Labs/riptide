@@ -1,7 +1,7 @@
 {
   "title": "Riptide - Flow Forensics",
   "uid": "riptide-flow-forensics",
-  "description": "Show me exactly the flows matching this slice \u2014 who, what service, how much, and the raw records. Investigation surface over the flows table: every filter (tenant, zone, exporter, application, L4 protocol, source/destination address and port) is optional and they combine with AND; an empty box or 'All' means no constraint on that dimension. Start wide, tighten one filter at a time until only the traffic in question remains, then read the raw records at the bottom. For a single-host deep dive, the host tables link into Host Investigation.",
+  "description": "Show me exactly the flows matching this slice \u2014 who, what service, how much, and the raw records. Investigation surface over the flows table: every filter (tenant, zone, exporter, application, L4 protocol, source/destination address and port) is optional and they combine with AND; an empty box or 'All' means no constraint on that dimension. Start wide, tighten one filter at a time until only the traffic in question remains, then read the raw records at the bottom. Click a host in the tables to set it as the Source or Destination filter \u2014 the whole dashboard tightens to it in place.",
   "tags": [
     "riptide",
     "netflow",
@@ -832,7 +832,7 @@
       "id": 9,
       "type": "table",
       "title": "Top $limit source hosts in the slice",
-      "description": "Sources ranked by bytes sent within the matched flows \u2014 reverse-DNS name where resolved, address otherwise. High Peers with modest Bytes reads as scanning; high Bytes to one peer is a transfer. Click a source to open Host Investigation for it with scope filters and time carried over.",
+      "description": "Sources ranked by bytes sent within the matched flows \u2014 reverse-DNS name where resolved, address otherwise. High Peers with modest Bytes reads as scanning; high Bytes to one peer is a transfer. Click a source to set it as this dashboard's Source filter \u2014 every panel tightens to that host, other filters and time preserved.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -882,8 +882,8 @@
                 "id": "links",
                 "value": [
                   {
-                    "title": "Investigate this host",
-                    "url": "/d/riptide-host-investigation?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&var-host=${__data.fields.Address}&from=${__from}&to=${__to}"
+                    "title": "Filter the slice to this host",
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${bucket:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&${application:queryparam}&${l4:queryparam}&${src_port:queryparam}&${dst_port:queryparam}&${limit:queryparam}&${dst:queryparam}&var-src=${__data.fields.Address}&from=${__from}&to=${__to}"
                   }
                 ]
               }
@@ -918,7 +918,7 @@
       "id": 10,
       "type": "table",
       "title": "Top $limit destination hosts in the slice",
-      "description": "Destinations ranked by bytes received within the matched flows \u2014 reverse-DNS name where resolved, address otherwise. One destination drawing outsized volume is the sink to verify (backup target, update server, or somewhere data should not be going). Click a destination to open Host Investigation for it.",
+      "description": "Destinations ranked by bytes received within the matched flows \u2014 reverse-DNS name where resolved, address otherwise. One destination drawing outsized volume is the sink to verify (backup target, update server, or somewhere data should not be going). Click a destination to set it as this dashboard's Destination filter \u2014 every panel tightens to that host.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -968,8 +968,8 @@
                 "id": "links",
                 "value": [
                   {
-                    "title": "Investigate this host",
-                    "url": "/d/riptide-host-investigation?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&var-host=${__data.fields.Address}&from=${__from}&to=${__to}"
+                    "title": "Filter the slice to this host",
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${bucket:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&${application:queryparam}&${l4:queryparam}&${src_port:queryparam}&${dst_port:queryparam}&${limit:queryparam}&${src:queryparam}&var-dst=${__data.fields.Address}&from=${__from}&to=${__to}"
                   }
                 ]
               }
@@ -1004,7 +1004,7 @@
       "id": 11,
       "type": "table",
       "title": "Top $limit conversations in the slice",
-      "description": "Source-destination pairs and the service between them (protocol/destination port), ranked by bytes. This is usually the answer panel: the conversation at the top of a tightened slice is the traffic you were hunting. Click either end to open Host Investigation for it.",
+      "description": "Source-destination pairs and the service between them (protocol/destination port), ranked by bytes. This is usually the answer panel: the conversation at the top of a tightened slice is the traffic you were hunting. Click either end to set it as the matching address filter and tighten the slice.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -1054,8 +1054,8 @@
                 "id": "links",
                 "value": [
                   {
-                    "title": "Investigate this host",
-                    "url": "/d/riptide-host-investigation?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&var-host=${__data.fields[\"Src address\"]}&from=${__from}&to=${__to}"
+                    "title": "Filter the slice to this host",
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${bucket:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&${application:queryparam}&${l4:queryparam}&${src_port:queryparam}&${dst_port:queryparam}&${limit:queryparam}&${dst:queryparam}&var-src=${__data.fields[\"Src address\"]}&from=${__from}&to=${__to}"
                   }
                 ]
               }
@@ -1071,8 +1071,8 @@
                 "id": "links",
                 "value": [
                   {
-                    "title": "Investigate this host",
-                    "url": "/d/riptide-host-investigation?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&var-host=${__data.fields[\"Dst address\"]}&from=${__from}&to=${__to}"
+                    "title": "Filter the slice to this host",
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${bucket:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&${application:queryparam}&${l4:queryparam}&${src_port:queryparam}&${dst_port:queryparam}&${limit:queryparam}&${src:queryparam}&var-dst=${__data.fields[\"Dst address\"]}&from=${__from}&to=${__to}"
                   }
                 ]
               }

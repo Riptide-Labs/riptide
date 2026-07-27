@@ -553,7 +553,7 @@
           }
         }
       ],
-      "description": "Traffic rate by source host, reverse-DNS name where resolved, plain address otherwise. A single host dominating the stack is the first suspect for link saturation \u2014 open it in Host Investigation (dashboards menu)."
+      "description": "Traffic rate by source host, reverse-DNS name where resolved, plain address otherwise. A single host dominating the stack is the first suspect for link saturation \u2014 chase it in Flow Forensics (dashboards menu)."
     },
     {
       "id": 7,
@@ -805,7 +805,7 @@
           }
         }
       ],
-      "description": "Traffic rate by protocol/destination-port pair \u2014 the port-level view for when application classification is too coarse. Unexpected high-volume ports are the lead to chase in Conversations."
+      "description": "Traffic rate by protocol/destination-port pair \u2014 the port-level view for when application classification is too coarse. Unexpected high-volume ports are the lead to chase in Flow Forensics."
     },
     {
       "id": 10,
@@ -1157,5 +1157,5 @@
       "keepTime": true
     }
   ],
-  "description": "Which ASes, hosts, applications and services dominate traffic over the selected range? Fleet-compare view over the flows table (byte-weighted, bucketed via the samples view and the Bucket variable); every rate panel stacks the top 10 plus an 'Other' remainder. Scope with Tenant/Zone/Locality; drill into a host via the Host Investigation dashboard (dashboards menu, filters and time carried over)."
+  "description": "Which ASes, hosts, applications and services dominate traffic over the selected range? Fleet-compare view over the flows table (byte-weighted, bucketed via the samples view and the Bucket variable); every rate panel stacks the top 10 plus an 'Other' remainder. Scope with Tenant/Zone/Locality; drill into a host or port via the Flow Forensics dashboard (dashboards menu, filters and time carried over)."
 }
