@@ -28,12 +28,13 @@ Grafana (admin/admin) ships provisioned dashboards backed by the `flows` table a
 
 - **Riptide - Top 10**: stacked top-10 rate panels (AS, hosts, applications, services, protocols,
   exporters, interfaces) plus a source-AS statistics table with a 95th-percentile column.
-- **Riptide - Traffic Paths (Sankey)**: exporter-filterable path diagrams — AS peering
-  (source AS → ingress → egress → destination AS), situational-awareness, geo
+- **Riptide - Traffic Paths (Sankey)**: exporter- and direction-filterable path diagrams —
+  AS peering (source AS → ingress → egress → destination AS), situational-awareness, geo
   origination/termination, and ultimate-exit views, weighted by bytes over the selected range.
 - **Riptide - Conversations & Tenancy (Sankey)**: the lighter companion — host-to-host
   conversations by service, tenant → zone → application attribution, and a source AS →
-  ingress interface → application → destination AS path view.
+  ingress interface → application → destination AS path view, filterable by exporter and
+  flow direction.
 - **Riptide - Host Investigation**: forensics for a single address — traffic, unique peers,
   TCP flag profile, top peers/services with geo and AS context.
 - **Riptide - Flow Forensics**: slice flows by any combination of tenant, zone, exporter,

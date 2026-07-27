@@ -140,6 +140,70 @@
           "text": "All",
           "value": "$__all"
         }
+      },
+      {
+        "name": "exporter",
+        "label": "Exporter",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT exporterAddr AS __value, if(argMax(exporterName, receivedAt) != '', argMax(exporterName, receivedAt), exporterAddr) AS __text FROM ${database}.flows GROUP BY exporterAddr ORDER BY __text"
+        },
+        "definition": "SELECT exporterAddr AS __value, if(argMax(exporterName, receivedAt) != '', argMax(exporterName, receivedAt), exporterAddr) AS __text FROM ${database}.flows GROUP BY exporterAddr ORDER BY __text",
+        "refresh": 1,
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "direction",
+        "label": "Direction",
+        "type": "custom",
+        "description": "Flow direction as reported by the exporter (observation-point relative: INGRESS = sampled entering the interface, EGRESS = leaving it). Many exporters only tag one direction \u2014 if a selection empties the diagrams, the exporter simply never reports that side; check the Collection Health dashboard's protocol/exporter panels before suspecting the network.",
+        "query": "Ingress : INGRESS, Egress : EGRESS, Unknown : UNKNOWN",
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [
+          {
+            "selected": false,
+            "text": "Ingress",
+            "value": "INGRESS"
+          },
+          {
+            "selected": false,
+            "text": "Egress",
+            "value": "EGRESS"
+          },
+          {
+            "selected": false,
+            "text": "Unknown",
+            "value": "UNKNOWN"
+          }
+        ]
       }
     ]
   },
@@ -174,7 +238,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown')) AS \"Source AS\",\n       concat(exporterAddr, ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp))), if(inputSnmpIfAlias IS NULL, '', concat(' (', inputSnmpIfAlias, ')'))) AS \"Ingress\",\n       ifNull(application, 'unclassified') AS \"Application\",\n       concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')) AS \"Destination AS\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source AS\", \"Ingress\", \"Application\", \"Destination AS\"\nORDER BY \"Bytes\" DESC\nLIMIT $limit",
+          "rawSql": "SELECT concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown')) AS \"Source AS\",\n       concat(exporterAddr, ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp))), if(inputSnmpIfAlias IS NULL, '', concat(' (', inputSnmpIfAlias, ')'))) AS \"Ingress\",\n       ifNull(application, 'unclassified') AS \"Application\",\n       concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')) AS \"Destination AS\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(direction IN (${direction:singlequote}), $direction) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source AS\", \"Ingress\", \"Application\", \"Destination AS\"\nORDER BY \"Bytes\" DESC\nLIMIT $limit",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -213,7 +277,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', '')) AS \"Source\",\n       concat(transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))), '/', toString(dstPort)) AS \"Service\",\n       ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')) AS \"Destination\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source\", \"Service\", \"Destination\"\nORDER BY \"Bytes\" DESC\nLIMIT $limit",
+          "rawSql": "SELECT ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', '')) AS \"Source\",\n       concat(transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))), '/', toString(dstPort)) AS \"Service\",\n       ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')) AS \"Destination\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(direction IN (${direction:singlequote}), $direction) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source\", \"Service\", \"Destination\"\nORDER BY \"Bytes\" DESC\nLIMIT $limit",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -252,7 +316,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT tenant AS \"Tenant\",\n       zone AS \"Zone\",\n       ifNull(application, 'unclassified') AS \"Application\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Tenant\", \"Zone\", \"Application\"\nORDER BY \"Bytes\" DESC\nLIMIT $limit",
+          "rawSql": "SELECT tenant AS \"Tenant\",\n       zone AS \"Zone\",\n       ifNull(application, 'unclassified') AS \"Application\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(direction IN (${direction:singlequote}), $direction) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Tenant\", \"Zone\", \"Application\"\nORDER BY \"Bytes\" DESC\nLIMIT $limit",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -277,5 +341,5 @@
       "keepTime": true
     }
   ],
-  "description": "Who talks to whom, over which service, and which tenant, zone and application own the traffic? Byte-weighted Sankey views over the flows table for the selected range \u2014 the conversation/attribution companion to the routing-level Traffic Paths dashboard. Scope with Tenant/Zone/Locality; Limit caps fan-out per diagram."
+  "description": "Who talks to whom, over which service, and which tenant, zone and application own the traffic? Byte-weighted Sankey views over the flows table for the selected range \u2014 the conversation/attribution companion to the routing-level Traffic Paths dashboard. Scope with Tenant/Zone/Locality/Exporter/Direction; Limit caps fan-out per diagram."
 }
