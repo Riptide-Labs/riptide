@@ -30,6 +30,8 @@ Grafana (admin/admin) ships provisioned dashboards backed by the `flows` table a
   exporters, interfaces) plus a source-AS statistics table with a 95th-percentile column.
 - **Riptide - Traffic Paths (Sankey)**: path diagrams (source AS → ingress
   interface → application → destination AS, and more), weighted by bytes over the selected range.
+- **Riptide - Conversations & Tenancy (Sankey)**: the lighter companion — host-to-host
+  conversations by service, plus tenant → zone → application attribution.
 - **Riptide - Host Investigation**: forensics for a single address — traffic, unique peers,
   TCP flag profile, top peers/services with geo and AS context.
 - **Riptide - Collection Health**: is every exporter delivering? Reporting/silent-exporter
