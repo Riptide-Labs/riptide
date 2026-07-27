@@ -212,7 +212,7 @@
     {
       "type": "netsage-sankey-panel",
       "title": "Peering: Source AS - Ingress - Egress - Destination AS",
-      "description": "Peering analysis: the cost-per-customer chain (customer \u2192 ingress interface \u2192 egress interface \u2192 adjacent ASN).",
+      "description": "Peering analysis: the cost-per-customer chain (customer \u2192 ingress interface \u2192 egress interface \u2192 adjacent ASN). When nothing matches the current filters, the diagram shows a single 'no flows match the filters' band instead of failing \u2014 loosen the Direction or Exporter filter to get data back.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -234,7 +234,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown')) AS \"Source AS\",\n       concat(if(exporterName != '', exporterName, exporterAddr), ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp)))) AS \"Ingress\",\n       concat(if(exporterName != '', exporterName, exporterAddr), ' - ', ifNull(outputSnmpIfName, concat('if', toString(outputSnmp)))) AS \"Egress\",\n       concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')) AS \"Destination AS\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(direction IN (${direction:singlequote}), $direction) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source AS\", \"Ingress\", \"Egress\", \"Destination AS\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth",
+          "rawSql": "WITH paths AS (\nSELECT concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown')) AS \"Source AS\",\n       concat(if(exporterName != '', exporterName, exporterAddr), ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp)))) AS \"Ingress\",\n       concat(if(exporterName != '', exporterName, exporterAddr), ' - ', ifNull(outputSnmpIfName, concat('if', toString(outputSnmp)))) AS \"Egress\",\n       concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')) AS \"Destination AS\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(direction IN (${direction:singlequote}), $direction) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source AS\", \"Ingress\", \"Egress\", \"Destination AS\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth\n)\nSELECT * FROM paths\nUNION ALL\nSELECT 'no flows match the filters', 'no flows match the filters', 'no flows match the filters', 'no flows match the filters', 1 WHERE (SELECT count() FROM paths) = 0",
           "refId": "A"
         }
       ]
@@ -242,7 +242,7 @@
     {
       "type": "netsage-sankey-panel",
       "title": "Situational awareness: Source Country - Source AS - Exporter - Destination host - Service",
-      "description": "DDoS situational awareness: Source Country \u2192 Source ASN \u2192 Destination IP \u2192 Destination Protocol, with the observing exporter as the middle column.",
+      "description": "DDoS situational awareness: Source Country \u2192 Source ASN \u2192 Destination IP \u2192 Destination Protocol, with the observing exporter as the middle column. When nothing matches the current filters, the diagram shows a single 'no flows match the filters' band instead of failing \u2014 loosen the Direction or Exporter filter to get data back.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -264,7 +264,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT if(srcCountry = '', 'unknown', srcCountry) AS \"Source Country\",\n       concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown')) AS \"Source AS\",\n       if(exporterName != '', exporterName, exporterAddr) AS \"Exporter\",\n       ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')) AS \"Destination\",\n       concat(transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))), '/', toString(dstPort)) AS \"Service\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(direction IN (${direction:singlequote}), $direction) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source Country\", \"Source AS\", \"Exporter\", \"Destination\", \"Service\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth",
+          "rawSql": "WITH paths AS (\nSELECT if(srcCountry = '', 'unknown', srcCountry) AS \"Source Country\",\n       concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown')) AS \"Source AS\",\n       if(exporterName != '', exporterName, exporterAddr) AS \"Exporter\",\n       ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')) AS \"Destination\",\n       concat(transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))), '/', toString(dstPort)) AS \"Service\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(direction IN (${direction:singlequote}), $direction) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source Country\", \"Source AS\", \"Exporter\", \"Destination\", \"Service\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth\n)\nSELECT * FROM paths\nUNION ALL\nSELECT 'no flows match the filters', 'no flows match the filters', 'no flows match the filters', 'no flows match the filters', 'no flows match the filters', 1 WHERE (SELECT count() FROM paths) = 0",
           "refId": "A"
         }
       ]
@@ -272,7 +272,7 @@
     {
       "type": "netsage-sankey-panel",
       "title": "Geo termination: Exporter - Destination AS - Destination Country - Destination City",
-      "description": "Geo capacity planning: Dest Country \u2192 Dest Region \u2192 Dest City; riptide carries country and city, led by the observing exporter and destination AS.",
+      "description": "Geo capacity planning: Dest Country \u2192 Dest Region \u2192 Dest City; riptide carries country and city, led by the observing exporter and destination AS. When nothing matches the current filters, the diagram shows a single 'no flows match the filters' band instead of failing \u2014 loosen the Direction or Exporter filter to get data back.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -294,7 +294,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT if(exporterName != '', exporterName, exporterAddr) AS \"Exporter\",\n       concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')) AS \"Destination AS\",\n       if(dstCountry = '', 'unknown', dstCountry) AS \"Destination Country\",\n       if(dstCity = '', 'unknown', dstCity) AS \"Destination City\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(direction IN (${direction:singlequote}), $direction) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Exporter\", \"Destination AS\", \"Destination Country\", \"Destination City\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth",
+          "rawSql": "WITH paths AS (\nSELECT if(exporterName != '', exporterName, exporterAddr) AS \"Exporter\",\n       concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')) AS \"Destination AS\",\n       if(dstCountry = '', 'unknown', dstCountry) AS \"Destination Country\",\n       if(dstCity = '', 'unknown', dstCity) AS \"Destination City\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(direction IN (${direction:singlequote}), $direction) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Exporter\", \"Destination AS\", \"Destination Country\", \"Destination City\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth\n)\nSELECT * FROM paths\nUNION ALL\nSELECT 'no flows match the filters', 'no flows match the filters', 'no flows match the filters', 'no flows match the filters', 1 WHERE (SELECT count() FROM paths) = 0",
           "refId": "A"
         }
       ]
@@ -302,7 +302,7 @@
     {
       "type": "netsage-sankey-panel",
       "title": "Origination/termination: Source City - Source Locality - Exporter - Destination Locality - Destination City",
-      "description": "Origination/termination flow: Source City \u2192 Source Traffic Origination \u2192 Destination Traffic Termination \u2192 Destination City, with riptide's locality as the origination/termination analog and the exporter at the waist.",
+      "description": "Origination/termination flow: Source City \u2192 Source Traffic Origination \u2192 Destination Traffic Termination \u2192 Destination City, with riptide's locality as the origination/termination analog and the exporter at the waist. When nothing matches the current filters, the diagram shows a single 'no flows match the filters' band instead of failing \u2014 loosen the Direction or Exporter filter to get data back.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -324,7 +324,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT if(srcCity = '', 'unknown', srcCity) AS \"Source City\",\n       toString(srcLocality) AS \"Source Locality\",\n       if(exporterName != '', exporterName, exporterAddr) AS \"Exporter\",\n       toString(dstLocality) AS \"Destination Locality\",\n       if(dstCity = '', 'unknown', dstCity) AS \"Destination City\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(direction IN (${direction:singlequote}), $direction) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source City\", \"Source Locality\", \"Exporter\", \"Destination Locality\", \"Destination City\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth",
+          "rawSql": "WITH paths AS (\nSELECT if(srcCity = '', 'unknown', srcCity) AS \"Source City\",\n       toString(srcLocality) AS \"Source Locality\",\n       if(exporterName != '', exporterName, exporterAddr) AS \"Exporter\",\n       toString(dstLocality) AS \"Destination Locality\",\n       if(dstCity = '', 'unknown', dstCity) AS \"Destination City\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(direction IN (${direction:singlequote}), $direction) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Source City\", \"Source Locality\", \"Exporter\", \"Destination Locality\", \"Destination City\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth\n)\nSELECT * FROM paths\nUNION ALL\nSELECT 'no flows match the filters', 'no flows match the filters', 'no flows match the filters', 'no flows match the filters', 'no flows match the filters', 1 WHERE (SELECT count() FROM paths) = 0",
           "refId": "A"
         }
       ]
@@ -332,7 +332,7 @@
     {
       "type": "netsage-sankey-panel",
       "title": "Ultimate Exit: Ingress - Egress - Destination AS",
-      "description": "Entry-to-exit paths: Entry Site \u2192 Exit Site \u2192 Destination AS, mapped to riptide's ingress/egress interfaces.",
+      "description": "Entry-to-exit paths: Entry Site \u2192 Exit Site \u2192 Destination AS, mapped to riptide's ingress/egress interfaces. When nothing matches the current filters, the diagram shows a single 'no flows match the filters' band instead of failing \u2014 loosen the Direction or Exporter filter to get data back.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -354,7 +354,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT concat(if(exporterName != '', exporterName, exporterAddr), ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp)))) AS \"Entry\",\n       concat(if(exporterName != '', exporterName, exporterAddr), ' - ', ifNull(outputSnmpIfName, concat('if', toString(outputSnmp)))) AS \"Exit\",\n       concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')) AS \"Destination AS\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(direction IN (${direction:singlequote}), $direction) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Entry\", \"Exit\", \"Destination AS\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth",
+          "rawSql": "WITH paths AS (\nSELECT concat(if(exporterName != '', exporterName, exporterAddr), ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp)))) AS \"Entry\",\n       concat(if(exporterName != '', exporterName, exporterAddr), ' - ', ifNull(outputSnmpIfName, concat('if', toString(outputSnmp)))) AS \"Exit\",\n       concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')) AS \"Destination AS\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(direction IN (${direction:singlequote}), $direction) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY \"Entry\", \"Exit\", \"Destination AS\"\nORDER BY \"Bits/s\" DESC\nLIMIT $depth\n)\nSELECT * FROM paths\nUNION ALL\nSELECT 'no flows match the filters', 'no flows match the filters', 'no flows match the filters', 1 WHERE (SELECT count() FROM paths) = 0",
           "refId": "A"
         }
       ]
