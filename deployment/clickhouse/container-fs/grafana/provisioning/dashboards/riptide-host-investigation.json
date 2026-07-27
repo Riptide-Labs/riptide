@@ -154,9 +154,9 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT DISTINCT if(exporterName != '', exporterName, exporterAddr) AS __text, exporterAddr AS __value FROM ${database}.flows ORDER BY __text"
+          "rawSql": "SELECT exporterAddr AS __value, if(argMax(exporterName, receivedAt) != '', argMax(exporterName, receivedAt), exporterAddr) AS __text FROM ${database}.flows GROUP BY exporterAddr ORDER BY __text"
         },
-        "definition": "SELECT DISTINCT if(exporterName != '', exporterName, exporterAddr) AS __text, exporterAddr AS __value FROM ${database}.flows ORDER BY __text",
+        "definition": "SELECT exporterAddr AS __value, if(argMax(exporterName, receivedAt) != '', argMax(exporterName, receivedAt), exporterAddr) AS __text FROM ${database}.flows GROUP BY exporterAddr ORDER BY __text",
         "refresh": 1,
         "includeAll": true,
         "multi": true,
