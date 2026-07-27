@@ -41,7 +41,9 @@ public final class CsvImporter {
             final String exportFilter = record.get(6);
             final String omnidirectional = record.get(7);
 
-            // Set values
+            // Set values. The row order is the evaluation priority (Rule.getPosition): when
+            // several rules tie otherwise — e.g. an ephemeral port colliding with another
+            // rule's registered port — the earlier row wins deterministically.
             final var rule = DefaultRule.builder()
                 .withName(Strings.emptyToNull(name))
                 .withDstPort(Strings.emptyToNull(dstPort))
@@ -51,6 +53,7 @@ public final class CsvImporter {
                 .withProtocol(Strings.emptyToNull(protocol))
                 .withExporterFilter(Strings.emptyToNull(exportFilter))
                 .withOmnidirectional(Boolean.parseBoolean(omnidirectional))
+                .withPosition(rules.size())
                 .build();
 
             rules.add(rule);
