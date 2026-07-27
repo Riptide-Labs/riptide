@@ -263,7 +263,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
       "fieldConfig": {
         "defaults": {
-          "unit": "cps",
+          "unit": "suffix:flows/s",
           "decimals": 1,
           "color": { "mode": "thresholds" },
           "thresholds": {
@@ -441,7 +441,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
       "fieldConfig": {
         "defaults": {
-          "unit": "cps",
+          "unit": "suffix:flows/s",
           "min": 0,
           "decimals": 1,
           "color": { "mode": "palette-classic" },
@@ -504,7 +504,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
       "fieldConfig": {
         "defaults": {
-          "unit": "cps",
+          "unit": "suffix:flows/s",
           "min": 0,
           "decimals": 1,
           "color": { "mode": "palette-classic" },
