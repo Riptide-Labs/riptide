@@ -1,0 +1,1246 @@
+{
+  "title": "Riptide - Flow Forensics",
+  "uid": "riptide-flow-forensics",
+  "description": "Show me exactly the flows matching this slice \u2014 who, what service, how much, and the raw records. Investigation surface over the flows table: every filter (tenant, zone, exporter, application, L4 protocol, source/destination address and port) is optional and they combine with AND; an empty box or 'All' means no constraint on that dimension. Start wide, tighten one filter at a time until only the traffic in question remains, then read the raw records at the bottom. For a single-host deep dive, the host tables link into Host Investigation.",
+  "tags": [
+    "riptide",
+    "netflow",
+    "forensics",
+    "audience:engineer"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "refresh": "5m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "links": [
+    {
+      "title": "Riptide dashboards",
+      "type": "dashboards",
+      "tags": [
+        "riptide"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Datasource",
+        "type": "datasource",
+        "query": "grafana-clickhouse-datasource",
+        "current": {},
+        "refresh": 1
+      },
+      {
+        "name": "database",
+        "label": "Database",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT DISTINCT database FROM system.tables WHERE name = 'flows'"
+        },
+        "definition": "SELECT DISTINCT database FROM system.tables WHERE name = 'flows'",
+        "refresh": 1,
+        "sort": 1,
+        "current": {}
+      },
+      {
+        "name": "bucket",
+        "label": "Bucket (s)",
+        "type": "custom",
+        "query": "60,300,900",
+        "current": {
+          "selected": true,
+          "text": "300",
+          "value": "300"
+        },
+        "options": [
+          {
+            "selected": false,
+            "text": "60",
+            "value": "60"
+          },
+          {
+            "selected": true,
+            "text": "300",
+            "value": "300"
+          },
+          {
+            "selected": false,
+            "text": "900",
+            "value": "900"
+          }
+        ]
+      },
+      {
+        "name": "tenant",
+        "label": "Tenant",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT DISTINCT tenant FROM ${database}.flows ORDER BY tenant"
+        },
+        "definition": "SELECT DISTINCT tenant FROM ${database}.flows ORDER BY tenant",
+        "refresh": 1,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "includeAll": true,
+        "multi": true
+      },
+      {
+        "name": "zone",
+        "label": "Zone",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT DISTINCT zone FROM ${database}.flows ORDER BY zone"
+        },
+        "definition": "SELECT DISTINCT zone FROM ${database}.flows ORDER BY zone",
+        "refresh": 1,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "includeAll": true,
+        "multi": true
+      },
+      {
+        "name": "exporter",
+        "label": "Exporter",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT DISTINCT if(exporterName != '', exporterName, exporterAddr) AS __text, exporterAddr AS __value FROM ${database}.flows ORDER BY __text"
+        },
+        "definition": "SELECT DISTINCT if(exporterName != '', exporterName, exporterAddr) AS __text, exporterAddr AS __value FROM ${database}.flows ORDER BY __text",
+        "refresh": 1,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "includeAll": true,
+        "multi": true
+      },
+      {
+        "name": "application",
+        "label": "Application",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT DISTINCT ifNull(application, 'unclassified') AS application FROM ${database}.flows ORDER BY application"
+        },
+        "definition": "SELECT DISTINCT ifNull(application, 'unclassified') AS application FROM ${database}.flows ORDER BY application",
+        "refresh": 1,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "includeAll": true,
+        "multi": true
+      },
+      {
+        "name": "l4",
+        "label": "L4 protocol",
+        "type": "custom",
+        "query": "TCP : 6, UDP : 17, ICMP : 1, IPv6-ICMP : 58, GRE : 47, ESP : 50, AH : 51, SCTP : 132",
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [
+          {
+            "selected": false,
+            "text": "TCP",
+            "value": "6"
+          },
+          {
+            "selected": false,
+            "text": "UDP",
+            "value": "17"
+          },
+          {
+            "selected": false,
+            "text": "ICMP",
+            "value": "1"
+          },
+          {
+            "selected": false,
+            "text": "IPv6-ICMP",
+            "value": "58"
+          },
+          {
+            "selected": false,
+            "text": "GRE",
+            "value": "47"
+          },
+          {
+            "selected": false,
+            "text": "ESP",
+            "value": "50"
+          },
+          {
+            "selected": false,
+            "text": "AH",
+            "value": "51"
+          },
+          {
+            "selected": false,
+            "text": "SCTP",
+            "value": "132"
+          }
+        ]
+      },
+      {
+        "name": "src",
+        "label": "Source address",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "selected": false,
+          "text": "",
+          "value": ""
+        },
+        "description": "Exact source IP to match (IPv4 or IPv6). Empty = any source."
+      },
+      {
+        "name": "dst",
+        "label": "Destination address",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "selected": false,
+          "text": "",
+          "value": ""
+        },
+        "description": "Exact destination IP to match (IPv4 or IPv6). Empty = any destination."
+      },
+      {
+        "name": "src_port",
+        "label": "Source port",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "selected": false,
+          "text": "",
+          "value": ""
+        },
+        "description": "Exact source port to match (0-65535). Empty = any port."
+      },
+      {
+        "name": "dst_port",
+        "label": "Destination port",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "selected": false,
+          "text": "",
+          "value": ""
+        },
+        "description": "Exact destination port to match (0-65535). Empty = any port."
+      },
+      {
+        "name": "limit",
+        "label": "Limit",
+        "type": "custom",
+        "query": "10,25,50,100",
+        "current": {
+          "selected": true,
+          "text": "25",
+          "value": "25"
+        },
+        "options": [
+          {
+            "selected": false,
+            "text": "10",
+            "value": "10"
+          },
+          {
+            "selected": true,
+            "text": "25",
+            "value": "25"
+          },
+          {
+            "selected": false,
+            "text": "50",
+            "value": "50"
+          },
+          {
+            "selected": false,
+            "text": "100",
+            "value": "100"
+          }
+        ]
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Matched volume",
+      "description": "Total bytes carried by flows matching the current filters over the selected range. This is the size of the slice you are looking at \u2014 if it is far larger than expected, the filters are not as tight as you think.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "decimals": 1,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none",
+        "colorMode": "value",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT sum(bytes) AS \"Matched volume\" FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring}))",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Average rate of the slice",
+      "description": "Matched volume divided by the selected range \u2014 the mean rate of this slice. A burst investigation should switch to the throughput panel below; a mean hides the spike.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "decimals": 1,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none",
+        "colorMode": "value",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT sum(bytes) * 8 / greatest(1, dateDiff('second', $__fromTime, $__toTime)) AS \"Average rate\" FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring}))",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Flow records matched",
+      "description": "Number of flow records behind every panel on this dashboard. Near the 1000-record cap of the raw table below means the raw view is truncated; low counts mean the aggregates are built on thin evidence.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none",
+        "colorMode": "value",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT count() AS \"Flow records\" FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring}))",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Distinct conversations",
+      "description": "Unique source-destination-protocol-destination-port tuples in the slice. One host, many conversations = fan-out (scanning, crawling, or a busy client); many hosts, one conversation shape = a common service.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none",
+        "colorMode": "value",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT uniqExact((srcAddr, dstAddr, protocol, dstPort)) AS \"Conversations\" FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring}))",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Throughput of the slice \u2014 by application",
+      "description": "Traffic rate of the matched flows, stacked by classified application (top 10 by volume, remainder as Other), bucketed by the Bucket variable. This is where a burst shows its shape and its owner: note when it starts, then tighten the address/port filters until only the burst remains.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "min": 0,
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 30,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "gradientMode": "none",
+            "spanNulls": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Other"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#7f7f7f"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "table",
+          "rawSql": "WITH top AS (SELECT ifNull(application, 'unclassified') AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring})) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(ifNull(application, 'unclassified') IN (SELECT dim FROM top), ifNull(application, 'unclassified'), 'Other') AS series,\n       sum(bytes) * 8 / $bucket AS bps\nFROM ${database}.samples(ival = $bucket)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring})) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $bucket SECOND AND flow.timestamp >= $__fromTime - INTERVAL 1 HOUR AND flow.timestamp <= $__toTime + INTERVAL 1 HOUR\nGROUP BY time, series\nORDER BY time",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "bargauge",
+      "title": "L4 protocol mix",
+      "description": "Bytes in the slice by IP protocol, largest first. Normal traffic is dominated by TCP and UDP; meaningful volume on anything else (GRE, ESP, ICMP) is either tunnels and VPNs or something worth explaining.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "reduceOptions": {
+          "values": true,
+          "calcs": [],
+          "fields": ""
+        },
+        "showUnfilled": true,
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))) AS \"Protocol\", sum(bytes) AS \"Bytes\" FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring})) GROUP BY protocol ORDER BY \"Bytes\" DESC LIMIT 8",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "bargauge",
+      "title": "TCP flag distribution",
+      "description": "How many TCP flows in the slice carry each flag (a flow usually carries several). Healthy traffic shows ACK highest with SYN and FIN in proportion; SYN far above ACK is connection attempts that never establish \u2014 scanning or a service refusing connections; elevated RST points at resets from a peer or a middlebox.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "reduceOptions": {
+          "values": true,
+          "calcs": [],
+          "fields": ""
+        },
+        "showUnfilled": true,
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT countIf(bitAnd(tcpFlags, 2) != 0) AS \"SYN\", countIf(bitAnd(tcpFlags, 16) != 0) AS \"ACK\", countIf(bitAnd(tcpFlags, 1) != 0) AS \"FIN\", countIf(bitAnd(tcpFlags, 4) != 0) AS \"RST\", countIf(bitAnd(tcpFlags, 8) != 0) AS \"PSH\", countIf(bitAnd(tcpFlags, 32) != 0) AS \"URG\" FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring})) AND protocol = 6",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "bargauge",
+      "title": "DSCP mix",
+      "description": "Bytes in the slice by DSCP class (the top 6 bits of the ToS byte), largest first. Tells you whether the traffic is marked for priority treatment: bulk data in EF or voice in best-effort are QoS misconfigurations that flow records catch before users do.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "reduceOptions": {
+          "values": true,
+          "calcs": [],
+          "fields": ""
+        },
+        "showUnfilled": true,
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT concat(toString(bitShiftRight(tos, 2)), ' - ', transform(bitShiftRight(tos, 2), [0, 8, 10, 14, 18, 22, 26, 28, 34, 36, 46, 48, 56], ['BE', 'CS1', 'AF11', 'AF13', 'AF21', 'AF23', 'AF31', 'AF32', 'AF41', 'AF42', 'EF', 'CS6', 'CS7'], 'other')) AS \"DSCP\", sum(bytes) AS \"Bytes\" FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring})) GROUP BY bitShiftRight(tos, 2) ORDER BY \"Bytes\" DESC LIMIT 8",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Top $limit source hosts in the slice",
+      "description": "Sources ranked by bytes sent within the matched flows \u2014 reverse-DNS name where resolved, address otherwise. High Peers with modest Bytes reads as scanning; high Bytes to one peer is a transfer. Click a source to open Host Investigation for it with scope filters and time carried over.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 19
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Source"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Investigate this host",
+                    "url": "/d/riptide-host-investigation?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&var-host=${__data.fields.Address}&from=${__from}&to=${__to}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT ifNull(any(srcAddrHostname), replaceOne(toString(srcAddr), '::ffff:', '')) AS \"Source\", replaceOne(toString(srcAddr), '::ffff:', '') AS \"Address\", count() AS \"Flows\", sum(bytes) AS \"Bytes\", sum(packets) AS \"Packets\", uniqExact(dstAddr) AS \"Peers\" FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring})) GROUP BY srcAddr ORDER BY \"Bytes\" DESC LIMIT $limit",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "Top $limit destination hosts in the slice",
+      "description": "Destinations ranked by bytes received within the matched flows \u2014 reverse-DNS name where resolved, address otherwise. One destination drawing outsized volume is the sink to verify (backup target, update server, or somewhere data should not be going). Click a destination to open Host Investigation for it.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 19
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Destination"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Investigate this host",
+                    "url": "/d/riptide-host-investigation?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&var-host=${__data.fields.Address}&from=${__from}&to=${__to}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT ifNull(any(dstAddrHostname), replaceOne(toString(dstAddr), '::ffff:', '')) AS \"Destination\", replaceOne(toString(dstAddr), '::ffff:', '') AS \"Address\", count() AS \"Flows\", sum(bytes) AS \"Bytes\", sum(packets) AS \"Packets\", uniqExact(srcAddr) AS \"Peers\" FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring})) GROUP BY dstAddr ORDER BY \"Bytes\" DESC LIMIT $limit",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "Top $limit conversations in the slice",
+      "description": "Source-destination pairs and the service between them (protocol/destination port), ranked by bytes. This is usually the answer panel: the conversation at the top of a tightened slice is the traffic you were hunting. Click either end to open Host Investigation for it.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Source"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Investigate this host",
+                    "url": "/d/riptide-host-investigation?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&var-host=${__data.fields[\"Src address\"]}&from=${__from}&to=${__to}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Destination"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Investigate this host",
+                    "url": "/d/riptide-host-investigation?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&var-host=${__data.fields[\"Dst address\"]}&from=${__from}&to=${__to}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT ifNull(any(srcAddrHostname), replaceOne(toString(srcAddr), '::ffff:', '')) AS \"Source\", replaceOne(toString(srcAddr), '::ffff:', '') AS \"Src address\", ifNull(any(dstAddrHostname), replaceOne(toString(dstAddr), '::ffff:', '')) AS \"Destination\", replaceOne(toString(dstAddr), '::ffff:', '') AS \"Dst address\", concat(transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))), '/', toString(dstPort)) AS \"Service\", count() AS \"Flows\", sum(bytes) AS \"Bytes\", sum(packets) AS \"Packets\" FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring})) GROUP BY srcAddr, dstAddr, protocol, dstPort ORDER BY \"Bytes\" DESC LIMIT $limit",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "table",
+      "title": "Locality matrix",
+      "description": "Bytes and flows in the slice broken down by source and destination locality (PRIVATE = RFC1918/ULA, PUBLIC = everything else). PRIVATE to PUBLIC is traffic leaving the network \u2014 during an exfiltration scare, tighten the filters and watch this cell; PUBLIC to PRIVATE with no matching outbound is unsolicited inbound.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 37
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT toString(srcLocality) AS \"Source locality\", toString(dstLocality) AS \"Destination locality\", sum(bytes) AS \"Bytes\", count() AS \"Flows\" FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring})) GROUP BY srcLocality, dstLocality ORDER BY \"Bytes\" DESC",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "table",
+      "title": "Raw flow records \u2014 newest first, capped at 1000",
+      "description": "The unaggregated evidence: the most recent 1000 flow records matching the filters, newest first. If 'Flow records matched' above exceeds 1000 this view is truncated \u2014 tighten the filters until it fits. This panel scans the raw table; on wide-open filters over long ranges it is the most expensive panel here.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 8,
+        "y": 37
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "footer": {
+          "show": false
+        },
+        "sortBy": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT timestamp AS \"Time\", if(exporterName != '', exporterName, exporterAddr) AS \"Exporter\", ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', '')) AS \"Source\", srcPort AS \"SPort\", ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')) AS \"Destination\", dstPort AS \"DPort\", transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))) AS \"Proto\", ifNull(application, 'unclassified') AS \"Application\", bytes AS \"Bytes\", packets AS \"Packets\" FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR dstPort = toUInt16OrNull(${dst_port:sqlstring})) ORDER BY timestamp DESC LIMIT 1000",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    }
+  ]
+}

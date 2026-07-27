@@ -36,6 +36,9 @@ Grafana (admin/admin) ships provisioned dashboards backed by the `flows` table a
   ingress interface → application → destination AS path view.
 - **Riptide - Host Investigation**: forensics for a single address — traffic, unique peers,
   TCP flag profile, top peers/services with geo and AS context.
+- **Riptide - Flow Forensics**: slice flows by any combination of tenant, zone, exporter,
+  application, L4 protocol, source/destination address and port — throughput of the slice, top
+  hosts/conversations, protocol/DSCP/TCP-flag mix, locality matrix, and the raw records.
 - **Riptide - Collection Health**: is every exporter delivering? Reporting/silent-exporter
   verdicts, a per-exporter activity timeline, collection lag percentiles, and an exporter
   inventory with drill-down into Traffic Paths.
