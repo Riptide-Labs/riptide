@@ -1,8 +1,13 @@
 {
   "title": "Riptide - Collection Health",
   "uid": "riptide-collection-health",
-  "description": "Is flow collection healthy right now — is every exporter delivering? Status wall for the operator running the Riptide collector: verdict on top, per-exporter activity below, inventory with drill-down at the bottom. All panels read ingest time (receivedAt), not flow switch time, so they measure the collection pipeline rather than the traffic.",
-  "tags": ["riptide", "netflow", "collection-health", "audience:noc"],
+  "description": "Is flow collection healthy right now \u2014 is every exporter delivering? Status wall for the operator running the Riptide collector: verdict on top, per-exporter activity below, inventory with drill-down at the bottom. All panels read ingest time (receivedAt), not flow switch time, so they measure the collection pipeline rather than the traffic.",
+  "tags": [
+    "riptide",
+    "netflow",
+    "collection-health",
+    "audience:noc"
+  ],
   "timezone": "browser",
   "editable": true,
   "graphTooltip": 1,
@@ -23,7 +28,9 @@
     {
       "title": "Riptide dashboards",
       "type": "dashboards",
-      "tags": ["riptide"],
+      "tags": [
+        "riptide"
+      ],
       "asDropdown": true,
       "includeVars": true,
       "keepTime": true
@@ -85,9 +92,21 @@
           "value": "300"
         },
         "options": [
-          { "selected": false, "text": "60", "value": "60" },
-          { "selected": true, "text": "300", "value": "300" },
-          { "selected": false, "text": "900", "value": "900" }
+          {
+            "selected": false,
+            "text": "60",
+            "value": "60"
+          },
+          {
+            "selected": true,
+            "text": "300",
+            "value": "300"
+          },
+          {
+            "selected": false,
+            "text": "900",
+            "value": "900"
+          }
         ]
       },
       {
@@ -111,8 +130,12 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": ["All"],
-          "value": ["$__all"]
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
         }
       },
       {
@@ -136,8 +159,12 @@
         "sort": 1,
         "current": {
           "selected": true,
-          "text": ["All"],
-          "value": ["$__all"]
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
         }
       }
     ]
@@ -146,29 +173,43 @@
     {
       "id": 1,
       "type": "stat",
-      "title": "Exporters reporting — last 15 min",
-      "description": "Distinct exporters that delivered at least one flow record in the last 15 minutes, independent of the selected time range. Normal: matches the number of devices configured to export to this collector. NONE (red) means the collector is receiving nothing — check the collector first: is the container up, is /readyz returning 200, is UDP 9999 reachable? See the operations runbook linked in the dashboard header.",
+      "title": "Exporters reporting \u2014 last 15 min",
+      "description": "Distinct exporters that delivered at least one flow record in the last 15 minutes, independent of the selected time range. Normal: matches the number of devices configured to export to this collector. NONE (red) means the collector is receiving nothing \u2014 check the collector first: is the container up, is /readyz returning 200, is UDP 9999 reachable? See the operations runbook linked in the dashboard header.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
       },
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "decimals": 0,
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null }
+              {
+                "color": "green",
+                "value": null
+              }
             ]
           },
           "mappings": [
             {
               "type": "value",
               "options": {
-                "0": { "text": "NONE", "color": "red", "index": 0 }
+                "0": {
+                  "text": "NONE",
+                  "color": "red",
+                  "index": 0
+                }
               }
             }
           ]
@@ -177,7 +218,9 @@
       },
       "options": {
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -196,30 +239,45 @@
           "queryType": "table",
           "rawSql": "SELECT uniqExact(exporterAddr) AS \"Exporters reporting\"\nFROM ${database}.flows\nWHERE timestamp >= now() - INTERVAL 1 DAY AND receivedAt >= now() - INTERVAL 15 MINUTE AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)",
           "refId": "A",
-          "meta": { "timezone": "UTC" }
+          "meta": {
+            "timezone": "UTC"
+          }
         }
       ]
     },
     {
       "id": 2,
       "type": "stat",
-      "title": "Silent exporters — seen in range, quiet 15 min",
-      "description": "Exporters that delivered flows inside the selected time range but nothing in its final 15 minutes (relative to the range end, so panning into the past judges that window, not now). Normal: 0 (green). Any other value (red) means a device stopped exporting or its packets stopped arriving — check the exporter device and the network path to the collector before suspecting the collector itself, since the other exporters are still getting through. On a quiet network with genuinely idle exporters, widen the mental threshold accordingly; ranges shorter than 15 minutes make this panel meaningless.",
+      "title": "Silent exporters \u2014 seen in range, quiet 15 min",
+      "description": "Exporters that delivered flows inside the selected time range but nothing in its final 15 minutes (relative to the range end, so panning into the past judges that window, not now). Normal: 0 (green). Any other value (red) means a device stopped exporting or its packets stopped arriving \u2014 check the exporter device and the network path to the collector before suspecting the collector itself, since the other exporters are still getting through. On a quiet network with genuinely idle exporters, widen the mental threshold accordingly; ranges shorter than 15 minutes make this panel meaningless.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
       },
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "decimals": 0,
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "red", "value": 1 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
             ]
           },
           "mappings": []
@@ -228,7 +286,9 @@
       },
       "options": {
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -247,36 +307,52 @@
           "queryType": "table",
           "rawSql": "SELECT countIf(lastSeen < $__toTime - INTERVAL 15 MINUTE) AS \"Silent exporters\"\nFROM (\n  SELECT exporterAddr, max(receivedAt) AS lastSeen\n  FROM ${database}.flows\n  WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\n  GROUP BY exporterAddr\n)",
           "refId": "A",
-          "meta": { "timezone": "UTC" }
+          "meta": {
+            "timezone": "UTC"
+          }
         }
       ]
     },
     {
       "id": 3,
       "type": "stat",
-      "title": "Flow record rate — last 5 min",
-      "description": "Flow records received per second, averaged over the last 5 minutes, independent of the selected time range. Normal: steady and roughly proportional to network activity; compare against the 'Flow records by exporter' panel below for what steady looks like here. STALLED (red) means zero records arrived in 5 minutes — treat it like 'Exporters reporting = NONE' and start with the collector's /readyz and the UDP listener port.",
+      "title": "Flow record rate \u2014 last 5 min",
+      "description": "Flow records received per second, averaged over the last 5 minutes, independent of the selected time range. Normal: steady and roughly proportional to network activity; compare against the 'Flow records by exporter' panel below for what steady looks like here. STALLED (red) means zero records arrived in 5 minutes \u2014 treat it like 'Exporters reporting = NONE' and start with the collector's /readyz and the UDP listener port.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
       },
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "suffix:flows/s",
           "decimals": 1,
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null }
+              {
+                "color": "green",
+                "value": null
+              }
             ]
           },
           "mappings": [
             {
               "type": "value",
               "options": {
-                "0": { "text": "STALLED", "color": "red", "index": 0 }
+                "0": {
+                  "text": "STALLED",
+                  "color": "red",
+                  "index": 0
+                }
               }
             }
           ]
@@ -285,7 +361,9 @@
       },
       "options": {
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -304,31 +382,49 @@
           "queryType": "table",
           "rawSql": "SELECT count() / 300 AS \"Flow record rate\"\nFROM ${database}.flows\nWHERE timestamp >= now() - INTERVAL 1 DAY AND receivedAt >= now() - INTERVAL 5 MINUTE AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)",
           "refId": "A",
-          "meta": { "timezone": "UTC" }
+          "meta": {
+            "timezone": "UTC"
+          }
         }
       ]
     },
     {
       "id": 4,
       "type": "stat",
-      "title": "Collection lag p95 — last 15 min",
+      "title": "Collection lag p95 \u2014 last 15 min",
       "description": "95th percentile of the delay between a flow ending on the exporter (lastSwitched) and the record arriving at the collector (receivedAt), over the last 15 minutes. Normal: seconds to about a minute, dominated by the exporter's active/inactive timeout settings. Amber above 1 minute, red above 5: sustained high lag means export batching delay, a congested path to the collector, or exporter clock skew (the collector records the skew it corrects in the clockCorrection column).",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
       },
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
           "decimals": 1,
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 60 },
-              { "color": "red", "value": 300 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 60
+              },
+              {
+                "color": "red",
+                "value": 300
+              }
             ]
           },
           "mappings": []
@@ -337,7 +433,9 @@
       },
       "options": {
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -356,20 +454,27 @@
           "queryType": "table",
           "rawSql": "SELECT if(count() > 0, quantile(0.95)(dateDiff('millisecond', lastSwitched, receivedAt)) / 1000, NULL) AS \"Collection lag p95\"\nFROM ${database}.flows\nWHERE timestamp >= now() - INTERVAL 1 DAY AND receivedAt >= now() - INTERVAL 15 MINUTE AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)",
           "refId": "A",
-          "meta": { "timezone": "UTC" }
+          "meta": {
+            "timezone": "UTC"
+          }
         }
       ]
     },
     {
       "id": 5,
       "type": "state-timeline",
-      "title": "Exporter activity — who was delivering, when",
-      "description": "One row per exporter (named where the exporter has a name, address otherwise), green while at least one flow record arrived in the bucket, red where the exporter went quiet while others kept delivering. Normal: unbroken green rows. A red gap on one row is that exporter or its path; red across all rows at once is the collector. Caveats: intervals before an exporter's first record in the range also render red, and if every exporter is silent simultaneously the interval is missing entirely (no rows) — the stat panels above catch that case.",
+      "title": "Exporter activity \u2014 who was delivering, when",
+      "description": "One row per exporter (named where the exporter has a name, address otherwise), green while at least one flow record arrived in the bucket, red where the exporter went quiet while others kept delivering. Normal: unbroken green rows. A red gap on one row is that exporter or its path; red across all rows at once is the collector. Caveats: intervals before an exporter's first record in the range also render red, and if every exporter is silent simultaneously the interval is missing entirely (no rows) \u2014 the stat panels above catch that case.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
       },
-      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 4 },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -377,25 +482,38 @@
             "lineWidth": 0,
             "spanNulls": false
           },
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null }
+              {
+                "color": "green",
+                "value": null
+              }
             ]
           },
           "mappings": [
             {
               "type": "value",
               "options": {
-                "1": { "text": "Receiving", "color": "green", "index": 0 }
+                "1": {
+                  "text": "Receiving",
+                  "color": "green",
+                  "index": 0
+                }
               }
             },
             {
               "type": "special",
               "options": {
                 "match": "null",
-                "result": { "text": "Silent", "color": "red", "index": 1 }
+                "result": {
+                  "text": "Silent",
+                  "color": "red",
+                  "index": 1
+                }
               }
             }
           ]
@@ -412,7 +530,9 @@
           "placement": "bottom",
           "showLegend": true
         },
-        "tooltip": { "mode": "single" }
+        "tooltip": {
+          "mode": "single"
+        }
       },
       "targets": [
         {
@@ -425,7 +545,9 @@
           "queryType": "table",
           "rawSql": "SELECT toStartOfInterval(receivedAt, toIntervalSecond($bucket)) AS time,\n       if(exporterName != '', exporterName, exporterAddr) AS exporter,\n       1 AS state\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time, exporter\nORDER BY time",
           "refId": "A",
-          "meta": { "timezone": "UTC" }
+          "meta": {
+            "timezone": "UTC"
+          }
         }
       ]
     },
@@ -433,36 +555,52 @@
       "id": 6,
       "type": "timeseries",
       "title": "Flow records by exporter",
-      "description": "Flow records received per second, stacked by exporter (top 10 by record count, remainder as Other), bucketed by ingest time. Normal: each exporter contributes a steady band. A band that thins out or disappears is an exporter fading — cross-check its row in the activity panel above; a step change in one band with steady traffic elsewhere often means an exporter's sampling or timeout configuration changed rather than the network.",
+      "description": "Flow records received per second, stacked by exporter (top 10 by record count, remainder as Other), bucketed by ingest time. Normal: each exporter contributes a steady band. A band that thins out or disappears is an exporter fading \u2014 cross-check its row in the activity panel above; a step change in one band with steady traffic elsewhere often means an exporter's sampling or timeout configuration changed rather than the network.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "suffix:flows/s",
           "min": 0,
           "decimals": 1,
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "fillOpacity": 30,
             "showPoints": "never",
-            "stacking": { "mode": "normal", "group": "A" },
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
             "gradientMode": "none",
             "spanNulls": false
           }
         },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "Other" },
+            "matcher": {
+              "id": "byName",
+              "options": "Other"
+            },
             "properties": [
               {
                 "id": "color",
-                "value": { "mode": "fixed", "fixedColor": "#7f7f7f" }
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#7f7f7f"
+                }
               }
             ]
           }
@@ -473,9 +611,16 @@
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true,
-          "calcs": ["mean", "max", "lastNotNull"]
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
         },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
@@ -488,7 +633,9 @@
           "queryType": "table",
           "rawSql": "WITH top AS (SELECT exporterAddr AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) GROUP BY dim ORDER BY count() DESC LIMIT 10)\nSELECT toStartOfInterval(receivedAt, toIntervalSecond($bucket)) AS time,\n       if(exporterAddr IN (SELECT dim FROM top), if(exporterName != '', exporterName, exporterAddr), 'Other') AS series,\n       count() / $bucket AS rate\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time, series\nORDER BY time",
           "refId": "A",
-          "meta": { "timezone": "UTC" }
+          "meta": {
+            "timezone": "UTC"
+          }
         }
       ]
     },
@@ -496,25 +643,35 @@
       "id": 7,
       "type": "timeseries",
       "title": "Flow records by protocol",
-      "description": "Flow records received per second, stacked by flow protocol (NetFlow v5/v9, IPFIX, sFlow), bucketed by ingest time. Normal: the mix is stable — each device exports one protocol, so this is the exporter fleet seen by protocol. A protocol band vanishing means every exporter of that type stopped at once, which points at a shared cause: a template/parsing problem on the collector for that protocol, or a shared network path.",
+      "description": "Flow records received per second, stacked by flow protocol (NetFlow v5/v9, IPFIX, sFlow), bucketed by ingest time. Normal: the mix is stable \u2014 each device exports one protocol, so this is the exporter fleet seen by protocol. A protocol band vanishing means every exporter of that type stopped at once, which points at a shared cause: a template/parsing problem on the collector for that protocol, or a shared network path.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "suffix:flows/s",
           "min": 0,
           "decimals": 1,
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "fillOpacity": 30,
             "showPoints": "never",
-            "stacking": { "mode": "normal", "group": "A" },
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
             "gradientMode": "none",
             "spanNulls": false
           }
@@ -526,9 +683,16 @@
           "displayMode": "table",
           "placement": "bottom",
           "showLegend": true,
-          "calcs": ["mean", "max", "lastNotNull"]
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
         },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
@@ -541,31 +705,49 @@
           "queryType": "table",
           "rawSql": "SELECT toStartOfInterval(receivedAt, toIntervalSecond($bucket)) AS time,\n       toString(flowProtocol) AS series,\n       count() / $bucket AS rate\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time, series\nORDER BY time",
           "refId": "A",
-          "meta": { "timezone": "UTC" }
+          "meta": {
+            "timezone": "UTC"
+          }
         }
       ]
     },
     {
       "id": 8,
       "type": "timeseries",
-      "title": "Collection lag over time — p50 / p95",
-      "description": "Median and 95th-percentile delay between a flow ending on the exporter (lastSwitched) and its record arriving at the collector (receivedAt), per bucket. Normal: flat, seconds to about a minute, set by the exporters' active/inactive timeouts; p95 well above p50 means a subset of exporters lags behind the rest. A step change in both percentiles is a configuration or clock event — compare with the per-exporter panels to see whether one exporter or all of them moved. Negative values mean exporter clocks run ahead of the collector.",
+      "title": "Collection lag over time \u2014 p50 / p95",
+      "description": "Median and 95th-percentile delay between a flow ending on the exporter (lastSwitched) and its record arriving at the collector (receivedAt), per bucket. Normal: flat, seconds to about a minute, set by the exporters' active/inactive timeouts; p95 well above p50 means a subset of exporters lags behind the rest. A step change in both percentiles is a configuration or clock event \u2014 compare with the per-exporter panels to see whether one exporter or all of them moved. Negative values mean exporter clocks run ahead of the collector.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
       },
-      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 21 },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
           "decimals": 1,
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 60 },
-              { "color": "red", "value": 300 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 60
+              },
+              {
+                "color": "red",
+                "value": 300
+              }
             ]
           },
           "custom": {
@@ -574,28 +756,44 @@
             "lineWidth": 1,
             "fillOpacity": 10,
             "showPoints": "never",
-            "stacking": { "mode": "none" },
+            "stacking": {
+              "mode": "none"
+            },
             "gradientMode": "none",
             "spanNulls": false,
-            "thresholdsStyle": { "mode": "dashed" }
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
           }
         },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "p50" },
+            "matcher": {
+              "id": "byName",
+              "options": "p50"
+            },
             "properties": [
               {
                 "id": "color",
-                "value": { "mode": "fixed", "fixedColor": "light-blue" }
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "light-blue"
+                }
               }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "p95" },
+            "matcher": {
+              "id": "byName",
+              "options": "p95"
+            },
             "properties": [
               {
                 "id": "color",
-                "value": { "mode": "fixed", "fixedColor": "dark-blue" }
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "dark-blue"
+                }
               }
             ]
           }
@@ -607,7 +805,10 @@
           "placement": "bottom",
           "showLegend": true
         },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
@@ -620,79 +821,127 @@
           "queryType": "table",
           "rawSql": "SELECT toStartOfInterval(receivedAt, toIntervalSecond($bucket)) AS time,\n       quantile(0.5)(dateDiff('millisecond', lastSwitched, receivedAt)) / 1000 AS \"p50\",\n       quantile(0.95)(dateDiff('millisecond', lastSwitched, receivedAt)) / 1000 AS \"p95\"\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time\nORDER BY time",
           "refId": "A",
-          "meta": { "timezone": "UTC" }
+          "meta": {
+            "timezone": "UTC"
+          }
         }
       ]
     },
     {
       "id": 9,
       "type": "table",
-      "title": "Exporter inventory — last seen, volume, drill-down",
-      "description": "Every exporter seen in the selected range: name (address where unnamed), protocols spoken, tenants and zones it feeds, when its last record arrived, how long it has been silent (background turns red past 15 minutes), and what it delivered. Sorted silent-first so the problem row is on top. Click an exporter name to open the Traffic Paths dashboard scoped to that exporter with the current filters and time range.",
+      "title": "Exporter inventory \u2014 last seen, volume, drill-down",
+      "description": "Every exporter seen in the selected range: name (address where unnamed), protocols spoken, tenants and zones it feeds, when its last record arrived, how long it has been silent (background turns red past 15 minutes), and what it delivered. Sorted silent-first so the problem row is on top. Click an exporter name to open Flow Forensics scoped to that exporter with the current filters and time range \u2014 from there, slice by host, port, protocol or application.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
       },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 28 },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "none",
-          "color": { "mode": "thresholds" },
+          "color": {
+            "mode": "thresholds"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null }
+              {
+                "color": "green",
+                "value": null
+              }
             ]
           }
         },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "Exporter" },
+            "matcher": {
+              "id": "byName",
+              "options": "Exporter"
+            },
             "properties": [
               {
                 "id": "links",
                 "value": [
                   {
-                    "title": "Traffic paths for this exporter",
-                    "url": "/d/riptide-traffic-paths?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&var-exporter=${__data.fields.Address}&from=${__from}&to=${__to}"
+                    "title": "Slice flows for this exporter (Flow Forensics)",
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${bucket:queryparam}&${tenant:queryparam}&${zone:queryparam}&var-exporter=${__data.fields.Address}&from=${__from}&to=${__to}"
                   }
                 ]
               }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "Silent for" },
+            "matcher": {
+              "id": "byName",
+              "options": "Silent for"
+            },
             "properties": [
-              { "id": "unit", "value": "dtdurations" },
+              {
+                "id": "unit",
+                "value": "dtdurations"
+              },
               {
                 "id": "custom.cellOptions",
-                "value": { "type": "color-background", "mode": "basic" }
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
               },
               {
                 "id": "thresholds",
                 "value": {
                   "mode": "absolute",
                   "steps": [
-                    { "color": "green", "value": null },
-                    { "color": "red", "value": 900 }
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 900
+                    }
                   ]
                 }
               }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "Volume" },
-            "properties": [{ "id": "unit", "value": "bytes" }]
+            "matcher": {
+              "id": "byName",
+              "options": "Volume"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
           },
           {
-            "matcher": { "id": "byName", "options": "Records" },
-            "properties": [{ "id": "unit", "value": "short" }]
+            "matcher": {
+              "id": "byName",
+              "options": "Records"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
           }
         ]
       },
       "options": {
         "showHeader": true,
-        "footer": { "show": false }
+        "footer": {
+          "show": false
+        }
       },
       "targets": [
         {
@@ -705,7 +954,9 @@
           "queryType": "table",
           "rawSql": "SELECT if(max(exporterName) != '', max(exporterName), exporterAddr) AS \"Exporter\",\n       exporterAddr AS \"Address\",\n       arrayStringConcat(groupUniqArray(toString(flowProtocol)), ', ') AS \"Protocols\",\n       arrayStringConcat(groupUniqArray(tenant), ', ') AS \"Tenants\",\n       arrayStringConcat(groupUniqArray(zone), ', ') AS \"Zones\",\n       max(receivedAt) AS \"Last seen\",\n       dateDiff('second', max(receivedAt), $__toTime) AS \"Silent for\",\n       count() AS \"Records\",\n       sum(bytes) AS \"Volume\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY exporterAddr\nORDER BY \"Silent for\" DESC",
           "refId": "A",
-          "meta": { "timezone": "UTC" }
+          "meta": {
+            "timezone": "UTC"
+          }
         }
       ]
     }

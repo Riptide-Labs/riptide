@@ -36,7 +36,7 @@ Grafana (admin/admin) ships provisioned dashboards backed by the `flows` table a
   hosts/conversations, protocol/DSCP/TCP-flag mix, locality matrix, and the raw records.
 - **Riptide - Collection Health**: is every exporter delivering? Reporting/silent-exporter
   verdicts, a per-exporter activity timeline, collection lag percentiles, and an exporter
-  inventory with drill-down into Traffic Paths.
+  inventory with drill-down into Flow Forensics.
 
 The JSON sources live in `deployment/clickhouse/container-fs/grafana/provisioning/dashboards/`.
 UI edits last only until the provisioned JSON changes — use *Save as* to keep a customized copy.
