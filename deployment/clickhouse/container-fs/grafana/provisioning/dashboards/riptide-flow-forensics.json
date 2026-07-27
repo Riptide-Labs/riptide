@@ -1116,6 +1116,45 @@
       ]
     },
     {
+      "id": 14,
+      "type": "netsage-sankey-panel",
+      "title": "Conversation paths: Initiator - Exporter - Interface - Direction - Application - Responder",
+      "description": "How does the sliced traffic move: which initiator, seen by which exporter on which interface and direction, speaking which application, to which responder \u2014 byte-weighted, top $limit paths. The same conversation appears once per exporter/interface/direction it was observed on, so an asymmetric path (in via one interface, out via another) shows as two bands. Initiator here uses the ephemeral-port heuristic per flow record and falls back to the record's source when the ports carry no signal \u2014 the table above is the authority when they disagree (it cross-checks timing and marks uncertainty with ?). Interface and direction are observation-point relative: ingress = sampled entering the interface, egress = leaving it; exporters that tag only one side populate only that band. When nothing matches the current filters, the diagram shows a single 'no flows match the filters' band instead of failing. Address and port filters match either end, like the conversations table.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 13,
+        "w": 24,
+        "x": 0,
+        "y": 37
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "WITH paths AS (\nSELECT\n  if(initiatorIsSrc, srcName, dstName) AS \"Initiator\",\n  exporterLabel AS \"Exporter\",\n  concat(exporterLabel, ' - ', ifaceName) AS \"Interface\",\n  dirLabel AS \"Direction\",\n  app AS \"Application\",\n  if(initiatorIsSrc, dstName, srcName) AS \"Responder\",\n  sum(b) AS \"Bytes\"\nFROM (\n  SELECT\n    ((protocol NOT IN (6, 17, 132)) OR (least(srcPort, dstPort) >= 32768) OR (srcPort >= dstPort)) AS initiatorIsSrc,\n    ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', '')) AS srcName,\n    ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')) AS dstName,\n    if(exporterName != '', exporterName, exporterAddr) AS exporterLabel,\n    if(direction = 'EGRESS', ifNull(outputSnmpIfName, concat('if', toString(outputSnmp))), ifNull(inputSnmpIfName, concat('if', toString(inputSnmp)))) AS ifaceName,\n    multiIf(direction = 'INGRESS', 'ingress', direction = 'EGRESS', 'egress', 'unknown') AS dirLabel,\n    ifNull(application, 'unclassified') AS app,\n    bytes AS b\n  FROM ${database}.flows\n  WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(ifNull(application, 'unclassified') IN (${application:singlequote}), $application) AND $__conditionalAll(protocol IN (${l4:csv}), $l4) AND (${src:sqlstring} = '' OR srcAddr = toIPv6OrNull(${src:sqlstring}) OR dstAddr = toIPv6OrNull(${src:sqlstring})) AND (${dst:sqlstring} = '' OR srcAddr = toIPv6OrNull(${dst:sqlstring}) OR dstAddr = toIPv6OrNull(${dst:sqlstring})) AND (${src_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${src_port:sqlstring}) OR dstPort = toUInt16OrNull(${src_port:sqlstring})) AND (${dst_port:sqlstring} = '' OR srcPort = toUInt16OrNull(${dst_port:sqlstring}) OR dstPort = toUInt16OrNull(${dst_port:sqlstring}))\n)\nGROUP BY \"Initiator\", \"Exporter\", \"Interface\", \"Direction\", \"Application\", \"Responder\"\nORDER BY \"Bytes\" DESC\nLIMIT $limit\n)\nSELECT * FROM paths\nUNION ALL\nSELECT 'no flows match the filters', 'no flows match the filters', 'no flows match the filters', 'no flows match the filters', 'no flows match the filters', 'no flows match the filters', 1 WHERE (SELECT count() FROM paths) = 0",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
       "id": 12,
       "type": "table",
       "title": "Locality matrix",
@@ -1128,7 +1167,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 37
+        "y": 50
       },
       "fieldConfig": {
         "defaults": {
@@ -1197,7 +1236,7 @@
         "h": 8,
         "w": 16,
         "x": 8,
-        "y": 37
+        "y": 50
       },
       "fieldConfig": {
         "defaults": {
