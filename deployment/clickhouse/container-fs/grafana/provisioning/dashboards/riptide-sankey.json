@@ -3,7 +3,8 @@
   "title": "Riptide - Conversations & Tenancy (Sankey)",
   "tags": [
     "riptide",
-    "netflow"
+    "netflow",
+    "audience:engineer"
   ],
   "timezone": "browser",
   "schemaVersion": 39,
@@ -14,7 +15,7 @@
     "to": "now"
   },
   "editable": true,
-  "graphTooltip": 0,
+  "graphTooltip": 1,
   "templating": {
     "list": [
       {
@@ -146,7 +147,7 @@
     {
       "id": 1,
       "type": "netsage-sankey-panel",
-      "title": "Traffic paths: Source AS - Ingress interface - Application - Destination AS",
+      "title": "Application paths: Source AS - Ingress interface - Application - Destination AS",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -179,7 +180,8 @@
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "description": "Byte-weighted path from originating AS through the ingress interface and classified application to the destination AS. Normal: thick ribbons follow known applications between expected ASes; an unknown AS or an unclassified application carrying real volume is the lead to follow."
     },
     {
       "id": 2,
@@ -217,7 +219,8 @@
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "description": "Host-to-host conversations via the service (protocol/destination port) between them, reverse-DNS names where resolved. Answers 'what exactly is that host doing' after Top 10 flags it \u2014 one host fanning out to many services or many peers reads as scanning or probing."
     },
     {
       "id": 3,
@@ -255,11 +258,24 @@
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "description": "Attributes traffic volume to tenant, zone and application. Normal: each tenant's ribbons flow through its own zones into expected applications; volume appearing under the wrong tenant or zone is a provisioning or classification error, not a network event."
     }
   ],
   "annotations": {
     "list": []
   },
-  "links": []
+  "links": [
+    {
+      "title": "Riptide dashboards",
+      "type": "dashboards",
+      "tags": [
+        "riptide"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true
+    }
+  ],
+  "description": "Who talks to whom, over which service, and which tenant, zone and application own the traffic? Byte-weighted Sankey views over the flows table for the selected range \u2014 the conversation/attribution companion to the routing-level Traffic Paths dashboard. Scope with Tenant/Zone/Locality; Limit caps fan-out per diagram."
 }
