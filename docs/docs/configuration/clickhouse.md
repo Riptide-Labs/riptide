@@ -152,32 +152,57 @@ follow ClickHouse's guidance of 10k–100k rows per insert at roughly one insert
 `max-latency` also bounds how stale dashboards go at low flow rates. When the queue is full —
 ClickHouse cannot keep up — the collector **drops flows instead of blocking** (blocking would
 backpressure the parsers into the network socket, where the loss is invisible); drops are counted
-(`persister.batch.droppedRows`) and logged with a rate limit. Alongside sit a queue-depth gauge,
-a batch-size histogram, a flush timer (`persister.batch.flush`), and a `failedRows` counter for
+and logged with a rate limit. Alongside the `droppedRows` counter sit a queue-depth gauge, a
+batch-size histogram, a flush timer (`persister.batch.flush`), and a `failedRows` counter for
 batches whose insert failed.
 
-:::warning[Error visibility and metric semantics under batching]
+:::warning[Error visibility under batching — watch the logs]
 
 With batching enabled, **insert failures never surface to the ingest path**: a failed batch is
 logged by the flusher and counted in `persister.batch.failedRows`, and ingestion continues. The
 synchronous per-insert error signal (e.g. the `469 VIOLATED_CONSTRAINT` rejection in provisioned
-mode) only exists with `batch.enabled=false` (and coalescing off). Watch `failedRows` — it is the
-only signal that inserts are failing.
+mode) only exists with `batch.enabled=false` (and coalescing off).
 
-The pre-existing `logPersisting.persister` timer now measures only the **enqueue** latency (the
-hand-off into the buffer, normally microseconds); re-key dashboards that used it as insert
-duration to `persister.batch.flush`.
+Today the operator-facing signal is therefore the flusher's **`ERROR` log line** (`Failed to
+persist a batch of N flows`) — alert on it. The `persister.batch.*` metrics live only in the
+in-process registry: riptide currently ships **no metrics reporter or exporter** (the management
+server serves `/livez` and `/readyz` only), so they cannot be scraped or graphed yet. They are
+wired and ready for the day an exporter lands — a known gap, not a monitoring recommendation.
+
+Note also that the pre-existing `logPersisting.persister` timer now measures only the **enqueue**
+latency (the hand-off into the buffer, normally microseconds) rather than insert duration; the
+insert duration lives in `persister.batch.flush`. Relevant when metrics do become exportable.
 
 :::
 
+**A poison row now costs a whole batch.** Because rows are inserted together, a single row the
+server rejects fails the entire insert: up to `max-rows` flows are dropped instead of the one bad
+flow the per-record path would have lost. The flusher logs the batch size with the error and
+moves on (one bad batch never wedges ingestion), but a persistent source of rejected rows — a
+mis-tenanted collector against the multi-tenant CHECK barrier, say — now costs proportionally
+more data. Lowering `max-rows` limits the blast radius at the cost of throughput.
+
 On shutdown the repository stops accepting new flows and drains everything already accepted —
 buffered flows are flushed before the repository stops, preserving at-least-once delivery for
-accepted flows. Budget the service manager's stop timeout for the **whole** shutdown sequence,
-not just the grace period: the listeners stop first, each waiting up to ~5 s for its parser
-executor to finish in-flight dispatches (sequentially, per receiver), and only then does the
-batch drain's `shutdown-grace-period` start. Keep that sum below systemd's `TimeoutStopSec`
-(default 90 s), or the process is killed mid-drain. `max-latency` must stay below the grace
-period (enforced at startup), since the flusher notices the stop signal only between flush
+accepted flows.
+
+Budget the service manager's stop timeout for the **whole** shutdown sequence, not just the grace
+period. The listeners stop first and sequentially, and each **parser** waits up to 5 s for its
+dispatch executor to finish in-flight flows — note *per parser*, not per receiver: a `multi`
+receiver runs one parser per enabled protocol and stops them one after another, so a single
+`multi` receiver with all four protocols can take ~20 s on its own. Only then does the batch
+drain's `shutdown-grace-period` start:
+
+```
+worst case ≈ (5 s × total parsers across all receivers) + shutdown-grace-period + 1 s
+```
+
+The trailing second is the grace-expired path only: if the flusher has to be interrupted, it is
+given one more second to unwind before the queue is swept, so that the sweep and the client
+teardown never race an insert that is still in flight. A collector with one `multi` receiver
+(4 protocols) and one IPFIX receiver is therefore 5 × 5 + 5 + 1 = ~31 s. Keep that sum below systemd's `TimeoutStopSec` (default 90 s), or the process
+is killed mid-drain and the buffer is lost. `shutdown-grace-period` must be at least twice
+`max-latency` (enforced at startup), since the flusher notices the stop signal only between flush
 windows.
 
 ### Insert coalescing (`async-inserts`)

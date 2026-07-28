@@ -104,8 +104,9 @@ public final class ClickhouseConfig {
                  * Flush whatever is buffered after this long, even below {@link #maxRows} —
                  * bounds how stale dashboards go at low flow rates. 2 s matches the ~1 insert/s
                  * guidance (issue #382's 200 ms would undersize batches below ClickHouse's
-                 * 1,000-row floor). Must stay well below {@link #shutdownGracePeriod}: the
-                 * flusher notices the stop signal only between drain windows.
+                 * 1,000-row floor). Must be at most half of {@link #shutdownGracePeriod}
+                 * (enforced at startup): the flusher notices the stop signal only between drain
+                 * windows, so one full window can pass before the drain even begins.
                  */
                 private Duration maxLatency = Duration.ofSeconds(2);
 
@@ -130,9 +131,10 @@ public final class ClickhouseConfig {
                 /**
                  * Fail fast on values that would misbehave at runtime; called when the batching
                  * repository is constructed. {@code maxRows <= 0} would busy-spin the flusher,
-                 * {@code queueCapacity <= 0} only surfaces as an opaque queue exception, and
-                 * {@code maxLatency >= shutdownGracePeriod} makes the shutdown drain miss its
-                 * grace window (the flusher notices the stop signal only between drain windows).
+                 * {@code queueCapacity <= 0} only surfaces as an opaque queue exception, and a
+                 * {@code shutdownGracePeriod} under twice {@code maxLatency} leaves the drain no
+                 * usable time (the flusher notices the stop signal only between drain windows,
+                 * so up to one full window is gone before it even starts draining).
                  */
                 public void validate() {
                         if (this.maxRows <= 0) {
@@ -153,12 +155,12 @@ public final class ClickhouseConfig {
                                         "riptide.clickhouse.batch.shutdown-grace-period must be positive (got "
                                                 + this.shutdownGracePeriod + ")");
                         }
-                        if (this.maxLatency.compareTo(this.shutdownGracePeriod) >= 0) {
+                        if (this.shutdownGracePeriod.compareTo(this.maxLatency.multipliedBy(2)) < 0) {
                                 throw new IllegalArgumentException(
-                                        "riptide.clickhouse.batch.max-latency (" + this.maxLatency
-                                                + ") must be shorter than shutdown-grace-period ("
-                                                + this.shutdownGracePeriod
-                                                + ") — the flusher notices the stop signal only between drain windows");
+                                        "riptide.clickhouse.batch.shutdown-grace-period (" + this.shutdownGracePeriod
+                                                + ") must be at least twice max-latency (" + this.maxLatency
+                                                + ") — the flusher notices the stop signal only between drain windows, "
+                                                + "so anything less leaves no time to drain the queue");
                         }
                 }
         }

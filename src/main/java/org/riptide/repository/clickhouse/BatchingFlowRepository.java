@@ -55,7 +55,14 @@ public class BatchingFlowRepository implements FlowRepository {
     private static final long OFFER_TIMEOUT_MS = 100;
 
     /** Minimum spacing between drop warnings; the dropped counter carries the exact tally. */
-    private static final long DROP_WARN_INTERVAL_MS = 10_000;
+    private static final long DROP_WARN_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(10);
+
+    /**
+     * How long stop() waits for the flusher to unwind after the post-grace interrupt, before
+     * sweeping the queue itself. Without it the sweep would drain the same queue concurrently
+     * with the dying flusher, and delegate.stop() could run with an insert still in flight.
+     */
+    private static final long INTERRUPT_JOIN_MS = 1_000;
 
     private final FlowRepository delegate;
 
@@ -68,8 +75,11 @@ public class BatchingFlowRepository implements FlowRepository {
 
     private volatile Thread flusher;
 
-    private final AtomicLong lastDropWarnMillis = new AtomicLong();
+    /** nanoTime, not wall clock: an NTP step backwards would mute drop warnings for the skew. */
+    private final AtomicLong lastDropWarnNanos = new AtomicLong(System.nanoTime() - DROP_WARN_INTERVAL_NANOS);
 
+    private final MetricRegistry metricRegistry;
+    private final String queueDepthGauge;
     private final Counter droppedRows;
     private final Counter failedRows;
     private final Histogram batchSize;
@@ -80,7 +90,7 @@ public class BatchingFlowRepository implements FlowRepository {
                                   final MetricRegistry metricRegistry) {
         this.delegate = Objects.requireNonNull(delegate);
         this.config = Objects.requireNonNull(config);
-        Objects.requireNonNull(metricRegistry);
+        this.metricRegistry = Objects.requireNonNull(metricRegistry);
 
         // Fail fast on nonsensical values: maxRows=0 would busy-spin the flusher, and
         // queueCapacity=0 would surface as an opaque LinkedBlockingQueue exception here.
@@ -93,11 +103,11 @@ public class BatchingFlowRepository implements FlowRepository {
         this.batchSize = metricRegistry.histogram(MetricRegistry.name("persister", "batch", "batchSize"));
         this.flushTimer = metricRegistry.timer(MetricRegistry.name("persister", "batch", "flush"));
 
-        final String queueDepthGauge = MetricRegistry.name("persister", "batch", "queueDepth");
+        this.queueDepthGauge = MetricRegistry.name("persister", "batch", "queueDepth");
         // Replace, don't keep: a stale gauge left by a previous instance would keep reading that
-        // instance's dead queue — worse than no gauge at all.
-        metricRegistry.remove(queueDepthGauge);
-        metricRegistry.register(queueDepthGauge, (Gauge<Integer>) this.queue::size);
+        // instance's dead queue — worse than no gauge at all. stop() unregisters it again.
+        metricRegistry.remove(this.queueDepthGauge);
+        metricRegistry.register(this.queueDepthGauge, (Gauge<Integer>) this.queue::size);
     }
 
     @Override
@@ -132,11 +142,11 @@ public class BatchingFlowRepository implements FlowRepository {
 
     private void drop(final int rows, final String reason) {
         this.droppedRows.inc(rows);
-        final long now = System.currentTimeMillis();
-        final long last = this.lastDropWarnMillis.get();
+        final long now = System.nanoTime();
+        final long last = this.lastDropWarnNanos.get();
         // Rate-limited: under sustained overload every offer times out, and a warn per flow
         // would drown the log. The counter carries the exact tally.
-        if (now - last >= DROP_WARN_INTERVAL_MS && this.lastDropWarnMillis.compareAndSet(last, now)) {
+        if (now - last >= DROP_WARN_INTERVAL_NANOS && this.lastDropWarnNanos.compareAndSet(last, now)) {
             log.warn("Dropping flows ({}); {} dropped in total", reason, this.droppedRows.getCount());
         }
     }
@@ -147,6 +157,11 @@ public class BatchingFlowRepository implements FlowRepository {
             // Fail loud: a "restarted" instance would accept nothing and silently drop every
             // flow — the worst possible failure mode for a persister.
             throw new IllegalStateException("BatchingFlowRepository is stopped and cannot be restarted");
+        }
+        if (this.flusher != null) {
+            // A second start() would re-run the delegate's manage-mode DDL and orphan the first
+            // flusher, which stop() then never joins.
+            throw new IllegalStateException("BatchingFlowRepository is already started");
         }
 
         // Delegate first: the flusher must not insert before the schema is ensured/validated.
@@ -180,9 +195,12 @@ public class BatchingFlowRepository implements FlowRepository {
                     } catch (final InterruptedException e) {
                         // Only stop() interrupts us, and only after the grace period expired —
                         // the insert below would be interrupted too, so give up instead of
-                        // flushing; stop()'s leftover sweep accounts for what stays behind.
+                        // flushing. These rows already left the queue, so stop()'s leftover
+                        // sweep cannot see them: count them here or they vanish from every
+                        // counter.
                         Thread.currentThread().interrupt();
                         if (!batch.isEmpty()) {
+                            this.failedRows.inc(batch.size());
                             log.warn("Flusher interrupted with {} rows drained but unflushed", batch.size());
                         }
                         return;
@@ -235,37 +253,72 @@ public class BatchingFlowRepository implements FlowRepository {
                 Thread.currentThread().interrupt();
             }
             if (thread.isAlive()) {
-                // Grace expired — a wedged or very slow insert. Interrupt as a last resort and
-                // account for what stays behind.
+                // Grace expired — a wedged or very slow insert. Interrupt as a last resort, then
+                // give the flusher a moment to unwind: otherwise the sweep below drains the same
+                // queue concurrently with the dying thread and delegate.stop() can run with an
+                // insert still in flight.
                 graceExpired = true;
                 thread.interrupt();
                 log.warn("Batch flusher did not drain within {}; about {} accepted rows undelivered",
                         this.config.getShutdownGracePeriod(), this.queue.size());
+                try {
+                    thread.join(INTERRUPT_JOIN_MS);
+                } catch (final InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                if (thread.isAlive()) {
+                    // Best effort: proceed rather than hang shutdown on an unresponsive thread.
+                    log.warn("Batch flusher still alive after the interrupt — continuing shutdown");
+                }
             }
             this.flusher = null;
         }
+
         // Straggler sweep: a producer may pass the stopped check and offer after the flusher's
-        // final drain — without this, those rows would be lost uncounted. One best-effort insert.
-        final List<EnrichedFlow> leftovers = new ArrayList<>();
-        this.queue.drainTo(leftovers);
-        if (!leftovers.isEmpty()) {
+        // final drain — without this, those rows would be lost uncounted.
+        sweep(graceExpired);
+
+        this.delegate.stop();
+
+        // A producer parked in the timed offer() can still land a row after the sweep. Nothing
+        // can insert it any more (the delegate is stopped), but silent loss is the one outcome
+        // this class must never have — count it.
+        final List<EnrichedFlow> residue = new ArrayList<>();
+        this.queue.drainTo(residue);
+        if (!residue.isEmpty()) {
+            this.droppedRows.inc(residue.size());
+            log.warn("Dropping {} flows offered after the shutdown drain", residue.size());
+        }
+
+        // Unregister the gauge: left behind, it would read this dead instance's queue forever.
+        this.metricRegistry.remove(this.queueDepthGauge);
+    }
+
+    /**
+     * Drain whatever the flusher left behind, in {@code maxRows}-sized chunks: {@code
+     * queueCapacity} is a multiple of {@code maxRows}, so one unchunked drain could produce an
+     * insert several times larger than any the flusher would ever issue. The healthy path goes
+     * through {@link #flush} so the batch-size histogram and flush timer see it too.
+     *
+     * @param graceExpired when the flusher had to be interrupted: the grace budget is spent and
+     *                     the delegate is why, so another blocking insert would hang shutdown
+     *                     past the service manager's stop timeout (the client has no socket
+     *                     timeout by default) for rows unlikely to land anyway. Count and log.
+     */
+    private void sweep(final boolean graceExpired) {
+        while (true) {
+            final List<EnrichedFlow> chunk = new ArrayList<>();
+            this.queue.drainTo(chunk, this.config.getMaxRows());
+            if (chunk.isEmpty()) {
+                return;
+            }
             if (graceExpired) {
-                // The grace budget is spent and the delegate is why. Another blocking insert
-                // would hang shutdown past the service manager's stop timeout (the client has
-                // no socket timeout by default) for rows that are unlikely to land anyway.
-                this.failedRows.inc(leftovers.size());
+                this.failedRows.inc(chunk.size());
                 log.error("Dropping {} leftover flows: the shutdown grace period is exhausted",
-                        leftovers.size());
+                        chunk.size());
             } else {
-                try {
-                    this.delegate.persist(leftovers);
-                } catch (final FlowException | IOException | RuntimeException e) {
-                    this.failedRows.inc(leftovers.size());
-                    log.error("Failed to persist {} leftover flows during shutdown — dropping them",
-                            leftovers.size(), e);
-                }
+                flush(chunk);
             }
         }
-        this.delegate.stop();
     }
 }

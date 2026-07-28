@@ -19,6 +19,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 import java.util.stream.IntStream;
@@ -197,6 +198,58 @@ class BatchingFlowRepositoryTest {
     }
 
     @Test
+    void secondStartFailsInsteadOfOrphaningTheFirstFlusher() {
+        this.repository = repository(batchConfig(10, Duration.ofMillis(100)));
+        this.repository.start();
+
+        Assertions.assertThatThrownBy(this.repository::start)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("already started");
+    }
+
+    @Test
+    void concurrentProducersLoseNoFlowsAndAreBatchedTogether() throws Exception {
+        // The production shape: 2 × cores parser threads call persist() concurrently. Every flow
+        // must end up either delivered or counted as dropped — never silently gone.
+        final int threads = 4;
+        final int perThread = 250;
+        this.repository = repository(batchConfig(500, Duration.ofMillis(200)));
+        this.repository.start();
+
+        final var start = new CountDownLatch(1);
+        final var done = new CountDownLatch(threads);
+        for (int t = 0; t < threads; t++) {
+            final var worker = new Thread(() -> {
+                try {
+                    start.await();
+                    for (final var flow : flows(perThread)) {
+                        this.repository.persist(List.of(flow));
+                    }
+                } catch (final Exception e) {
+                    throw new IllegalStateException(e);
+                } finally {
+                    done.countDown();
+                }
+            }, "producer-" + t);
+            worker.setDaemon(true);
+            worker.start();
+        }
+        start.countDown();
+        Assertions.assertThat(done.await(10, TimeUnit.SECONDS))
+                .as("producers finished").isTrue();
+
+        // stop() drains synchronously, so the tally is complete once it returns.
+        this.repository.stop();
+
+        final int total = threads * perThread;
+        Assertions.assertThat(this.delegate.count() + droppedRows() + failedRows())
+                .as("every flow is either delivered or counted")
+                .isEqualTo(total);
+        // Batching actually happened: far fewer inserts than flows.
+        Assertions.assertThat(this.delegate.inserts.get()).isLessThan(total);
+    }
+
+    @Test
     void stopBeforeStartSweepsQueuedRowsWithoutFailing() throws Exception {
         // Never started: no flusher exists, so only stop()'s leftover sweep can deliver — the
         // same path that catches rows offered between the flusher's final drain and stop().
@@ -263,12 +316,14 @@ class BatchingFlowRepositoryTest {
     }
 
     @Test
-    void rejectsMaxLatencyNotBelowShutdownGracePeriod() {
-        final var config = batchConfig(10, Duration.ofSeconds(2));
-        config.setShutdownGracePeriod(Duration.ofSeconds(2));
+    void rejectsShutdownGracePeriodUnderTwiceMaxLatency() {
+        // Merely-greater is not enough: one full drain window can pass before the drain starts,
+        // so 4900ms/5000ms would leave 100ms to empty the whole queue.
+        final var config = batchConfig(10, Duration.ofMillis(4900));
+        config.setShutdownGracePeriod(Duration.ofSeconds(5));
         Assertions.assertThatThrownBy(() -> repository(config))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("shorter than shutdown-grace-period");
+                .hasMessageContaining("at least twice max-latency");
     }
 
     private BatchingFlowRepository repository(final ClickhouseConfig.BatchConfig config) {
@@ -288,9 +343,9 @@ class BatchingFlowRepositoryTest {
         config.setMaxRows(maxRows);
         config.setMaxLatency(maxLatency);
         config.setQueueCapacity(1_000);
-        // Validation requires maxLatency < grace; keep the margin small so tests that leave the
-        // flusher parked in an empty drain window on stop() do not burn a production-sized grace.
-        config.setShutdownGracePeriod(maxLatency.plusMillis(500));
+        // Validation requires grace >= 2 × maxLatency; keep the margin tight so tests that leave
+        // the flusher parked in an empty drain window on stop() do not burn a production grace.
+        config.setShutdownGracePeriod(maxLatency.multipliedBy(3));
         return config;
     }
 
@@ -357,7 +412,9 @@ class BatchingFlowRepositoryTest {
                     throw new FlowException(e);
                 }
             }
-            if (this.failuresRemaining.getAndDecrement() > 0) {
+            // Decrement only while positive: a plain getAndDecrement() would also count down on
+            // every successful persist, so a later-armed failure would silently disarm.
+            if (this.failuresRemaining.getAndUpdate(remaining -> remaining > 0 ? remaining - 1 : remaining) > 0) {
                 throw new FlowException("poison batch");
             }
             this.store.persist(flows);

@@ -182,11 +182,15 @@ public class Daemon implements ApplicationRunner {
         this.started = false;
         // Listeners first: the parsers stop accepting packets and finish their in-flight
         // dispatches, so the pipeline's shutdown drain below sees every accepted flow. A
-        // failing listener must not keep the pipeline (and its batch drain) from stopping.
+        // failing listener must not keep the pipeline (and its batch drain) from stopping —
+        // the flusher is a daemon thread, so a skipped drain silently loses the whole buffer.
+        // Exception, not RuntimeException: Listener.stop() declares no checked exceptions, but
+        // the Netty listeners call syncUninterruptibly(), which sneaky-throws the future's
+        // cause — checked exceptions included. Do not "tidy" this back to RuntimeException.
         for (final var listener : this.listeners) {
             try {
                 listener.stop();
-            } catch (final RuntimeException e) {
+            } catch (final Exception e) {
                 log.warn("Failed to stop listener {}", listener.getName(), e);
             }
         }
