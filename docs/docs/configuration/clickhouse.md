@@ -13,7 +13,12 @@ riptide.clickhouse.username=default
 #riptide.clickhouse.password=vault://secret/riptide/clickhouse#password
 riptide.clickhouse.database=riptide
 riptide.clickhouse.manage-schema=true
-#riptide.clickhouse.async-inserts=   # unset: follows manage-schema — see below
+riptide.clickhouse.batch.enabled=true
+riptide.clickhouse.batch.max-rows=10000
+riptide.clickhouse.batch.max-latency=2s
+riptide.clickhouse.batch.queue-capacity=40000
+riptide.clickhouse.batch.shutdown-grace-period=5s
+#riptide.clickhouse.async-inserts=   # unset: derived — off under batching, see below
 ```
 
 ## Credentials
@@ -124,24 +129,105 @@ GROUP BY application ORDER BY bytes DESC LIMIT 10;
 
 Each rollup `X` is fed by a materialized view named `X_mv`. Query the table, never the `_mv`.
 
+### Insert batching (`batch.*`)
+
+Historically the collector inserted flows as they were dispatched — dispatch is per **flow
+record** — and every insert also feeds the four rollup views: each insert forms a ClickHouse part
+and fires all four materialized views, so many small inserts collapse throughput. Issue #382's
+benchmark, framed at the packet level (~24 flow records per received packet on average), capped a
+4-vCPU lab VM at ~150 inserts/s ≈ 3,600 rows/s with the CPU mostly idle. Since #382 the collector
+batches client-side: flows are buffered in a bounded in-memory queue and a single background
+flusher issues **one insert per batch**.
+
+| property | default | meaning |
+|---|---|---|
+| `riptide.clickhouse.batch.enabled` | `true` | Off falls back to the per-record insert path. |
+| `riptide.clickhouse.batch.max-rows` | `10000` | Flush when this many rows are buffered. |
+| `riptide.clickhouse.batch.max-latency` | `2s` | Flush whatever is buffered after this long. |
+| `riptide.clickhouse.batch.queue-capacity` | `40000` | Buffer bound; a full queue drops flows (counted). |
+| `riptide.clickhouse.batch.shutdown-grace-period` | `5s` | How long `stop()` waits for the drain. |
+
+A batch is flushed at `max-rows` rows or after `max-latency`, whichever comes first. The defaults
+follow ClickHouse's guidance of 10k–100k rows per insert at roughly one insert per second;
+`max-latency` also bounds how stale dashboards go at low flow rates. When the queue is full —
+ClickHouse cannot keep up — the collector **drops flows instead of blocking** (blocking would
+backpressure the parsers into the network socket, where the loss is invisible); drops are counted
+and logged with a rate limit. Alongside the `droppedRows` counter sit a queue-depth gauge, a
+batch-size histogram, a flush timer (`persister.batch.flush`), and a `failedRows` counter for
+batches whose insert failed.
+
+:::warning[Error visibility under batching — watch the logs]
+
+With batching enabled, **insert failures never surface to the ingest path**: a failed batch is
+logged by the flusher and counted in `persister.batch.failedRows`, and ingestion continues. The
+synchronous per-insert error signal (e.g. the `469 VIOLATED_CONSTRAINT` rejection in provisioned
+mode) only exists with `batch.enabled=false` (and coalescing off).
+
+Today the operator-facing signal is therefore the flusher's **`ERROR` log line** (`Failed to
+persist a batch of N flows`) — alert on it. The `persister.batch.*` metrics live only in the
+in-process registry: riptide currently ships **no metrics reporter or exporter** (the management
+server serves `/livez` and `/readyz` only), so they cannot be scraped or graphed yet. They are
+wired and ready for the day an exporter lands — a known gap, not a monitoring recommendation.
+
+Note also that the pre-existing `logPersisting.persister` timer now measures only the **enqueue**
+latency (the hand-off into the buffer, normally microseconds) rather than insert duration; the
+insert duration lives in `persister.batch.flush`. Relevant when metrics do become exportable.
+
+:::
+
+**A poison row now costs a whole batch.** Because rows are inserted together, a single row the
+server rejects fails the entire insert: up to `max-rows` flows are dropped instead of the one bad
+flow the per-record path would have lost. The flusher logs the batch size with the error and
+moves on (one bad batch never wedges ingestion), but a persistent source of rejected rows — a
+mis-tenanted collector against the multi-tenant CHECK barrier, say — now costs proportionally
+more data. Lowering `max-rows` limits the blast radius at the cost of throughput.
+
+On shutdown the repository stops accepting new flows and drains everything already accepted —
+buffered flows are flushed before the repository stops, preserving at-least-once delivery for
+accepted flows.
+
+Budget the service manager's stop timeout for the **whole** shutdown sequence, not just the grace
+period. The listeners stop first and sequentially, and each **parser** waits up to 5 s for its
+dispatch executor to finish in-flight flows — note *per parser*, not per receiver: a `multi`
+receiver runs one parser per enabled protocol and stops them one after another, so a single
+`multi` receiver with all four protocols can take ~20 s on its own. Only then does the batch
+drain's `shutdown-grace-period` start:
+
+```
+worst case ≈ (5 s × total parsers across all receivers) + shutdown-grace-period + 1 s
+```
+
+The trailing second is the grace-expired path only: if the flusher has to be interrupted, it is
+given one more second to unwind before the queue is swept, so that the sweep and the client
+teardown never race an insert that is still in flight. A collector with one `multi` receiver
+(4 protocols) and one IPFIX receiver is therefore 5 × 5 + 5 + 1 = ~31 s. Keep that sum below systemd's `TimeoutStopSec` (default 90 s), or the process
+is killed mid-drain and the buffer is lost. `shutdown-grace-period` must be at least twice
+`max-latency` (enforced at startup), since the flusher notices the stop signal only between flush
+windows.
+
 ### Insert coalescing (`async-inserts`)
 
-The collector inserts once per received packet, and every insert also feeds the four rollup
-views. Without coalescing, that many small inserts collapse throughput on modest hardware —
-measured on two cores: 206 inserts/s without the rollups, 56 with them, **607 with the rollups
-and server-side coalescing** (`async_insert`, acknowledged on buffer append).
+Server-side coalescing (`async_insert`, acknowledged on buffer append) was the previous answer to
+the small-insert flood — measured on two cores: 206 inserts/s without the rollups, 56 with
+them, 607 with the rollups and coalescing. Client-side [batching](#insert-batching-batch) has
+superseded it: the server receives one large insert per batch, which coalescing cannot improve
+on. Coalescing also hides insert errors from the collector entirely: the insert is acknowledged
+before the server evaluates it, so a row the server later rejects is dropped **without any error
+anywhere** — including a mis-tenanted row failing the CHECK barrier. (With coalescing off, a
+failed insert is at least visible: as a flusher error log plus `persister.batch.failedRows`
+under batching, or as a synchronous exception with batching disabled.)
 
-`riptide.clickhouse.async-inserts` controls it, and **unset follows `manage-schema`**:
+`riptide.clickhouse.async-inserts` unset therefore now derives as:
 
-- **manage mode → on.** No write barrier exists, and flow transport is lossy UDP anyway — the
-  ~200 ms server-side buffer window changes nothing an operator relies on.
-- **provisioned mode → off.** The insert is acknowledged before the server evaluates it, so a
-  row the server later rejects is dropped **without the collector seeing an error** — including a
-  mis-tenanted row failing the CHECK barrier. Isolation still holds (the row never lands), but
-  the synchronous `469 VIOLATED_CONSTRAINT` signal is part of the provisioned-mode contract, so
-  coalescing stays off unless you opt in.
+- **batching enabled (default) → off.** Superseded, and off keeps insert errors visible to the
+  flusher.
+- **batching disabled → follows `manage-schema`** (the pre-batching default): on in manage mode
+  — no write barrier exists and flow transport is lossy UDP anyway — and off in provisioned
+  mode, where the synchronous `469 VIOLATED_CONSTRAINT` rejection is part of the isolation
+  contract. Without this fallback, `batch.enabled=false` alone would silently land on the
+  measured-slowest combination (56 inserts/s).
 
-Set the property explicitly to override either default.
+Set the property explicitly to override either derivation.
 
 ### Retention
 

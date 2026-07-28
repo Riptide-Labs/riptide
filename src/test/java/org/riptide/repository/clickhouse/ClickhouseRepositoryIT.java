@@ -6,6 +6,7 @@
 package org.riptide.repository.clickhouse;
 
 import com.clickhouse.client.api.Client;
+import com.codahale.metrics.MetricRegistry;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -21,6 +22,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.net.InetAddress;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -200,13 +202,16 @@ public class ClickhouseRepositoryIT {
     }
 
     @Test
-    void asyncInsertsDefaultOnInManageModeAndFeedTheRollups() throws Exception {
-        // Manage mode defaults async-inserts on (ClickhouseConfig#isAsyncInserts). The insert is
-        // acknowledged when buffered, so visibility is eventual — the flush is forced here to keep
-        // the test deterministic; production readers poll (dashboards), they do not read-after-write.
+    void asyncInsertsOptInStillFeedsTheRollups() throws Exception {
+        // Async inserts default off while batching is enabled, since batching supersedes them
+        // (ClickhouseConfig#isAsyncInserts); the coalesced path stays available as an opt-in. The
+        // insert is acknowledged when buffered, so visibility is eventual — the flush is forced
+        // here to keep the test deterministic; production readers poll (dashboards), they do not
+        // read-after-write.
         final var config = configFor("async_mode", true);
         config.setAsyncInserts(null);
-        Assertions.assertThat(config.isAsyncInserts()).isTrue();
+        Assertions.assertThat(config.isAsyncInserts()).isFalse();
+        config.setAsyncInserts(true);
 
         final var repo = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
         repo.start();
@@ -222,6 +227,38 @@ public class ClickhouseRepositoryIT {
         Assertions.assertThat(queryClient.queryAll(
                         "SELECT sum(bytes) AS b FROM async_mode.flows_by_application_1m")
                 .getFirst().getLong("b")).isEqualTo(1000L);
+    }
+
+    @Test
+    void batchingDecoratorDrainsAcceptedFlowsOnStopAndFeedsRollups() throws Exception {
+        final var config = configFor("batching", true);
+        final var repository = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
+        // maxRows stays at the production 10k so the size trigger never fires for a handful of
+        // flows — delivery rides the time trigger and the shutdown drain. maxLatency is small and
+        // the grace generous (vs the production 2s/5s) so a cold first insert on slow CI cannot
+        // outlive the grace mid-drain.
+        config.getBatch().setMaxLatency(Duration.ofMillis(500));
+        config.getBatch().setShutdownGracePeriod(Duration.ofSeconds(15));
+        final var batching = new BatchingFlowRepository(repository, config.getBatch(), new MetricRegistry());
+        batching.start();
+
+        final var minute = Instant.now().truncatedTo(ChronoUnit.MINUTES).minus(5, ChronoUnit.MINUTES);
+        for (int i = 0; i < 5; i++) {
+            // Singleton lists, like the production dispatcher hands the persister.
+            batching.persist(List.of(testFlow(minute.plusSeconds(i), 20001 + i, 443, 100L)));
+        }
+        batching.stop();
+
+        // stop() drained: every accepted row is queryable once it returns.
+        final var count = queryClient.queryAll("SELECT count() AS c FROM batching.flows")
+                .getFirst().getLong("c");
+        Assertions.assertThat(count).isEqualTo(5);
+
+        // The batched insert fired the rollup materialized views (one target as the canary).
+        final var rollupBytes = queryClient.queryAll(
+                        "SELECT sum(bytes) AS b FROM batching.flows_by_application_1m")
+                .getFirst().getLong("b");
+        Assertions.assertThat(rollupBytes).isEqualTo(500L);
     }
 
     @Test

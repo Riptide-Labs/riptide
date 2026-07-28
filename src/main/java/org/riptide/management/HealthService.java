@@ -11,8 +11,9 @@ import org.springframework.stereotype.Component;
 
 /**
  * Evaluates collector health for the management endpoints. Deliberately never references ClickHouse:
- * there is no write buffer and a single collector has no failover, so gating readiness on ClickHouse
- * would only add load-balancer convergence loss for no benefit (see the add-health-endpoints design).
+ * the only write buffer is the small bounded batching queue (flushed within seconds, drained on
+ * shutdown) and a single collector has no failover, so gating readiness on ClickHouse would only
+ * add load-balancer convergence loss for no benefit (see the add-health-endpoints design).
  */
 @Component
 public class HealthService {
