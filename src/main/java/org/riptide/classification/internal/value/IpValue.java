@@ -97,7 +97,7 @@ public class IpValue implements RuleValue<IpAddr, IpValue> {
             if (i * 8 >= mask) {
                 lower[i] = (byte) 0x00;
             } else {
-                lower[i] &= 0xFF << (8 - (mask - i * 8));
+                lower[i] = (byte) (lower[i] & (0xFF << (8 - (mask - i * 8))));
             }
         }
 
@@ -107,7 +107,7 @@ public class IpValue implements RuleValue<IpAddr, IpValue> {
             if (i * 8 >= mask) {
                 upper[i] = (byte) 0xFF;
             } else {
-                upper[i] |= 0xFF >> (mask - i * 8);
+                upper[i] = (byte) (upper[i] | (0xFF >> (mask - i * 8)));
             }
         }
 

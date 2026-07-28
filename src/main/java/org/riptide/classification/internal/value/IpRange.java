@@ -46,10 +46,9 @@ public class IpRange implements Iterable<IpAddr> {
         if (this == o) {
             return true;
         }
-        if (o == null || getClass() != o.getClass()) {
+        if (!(o instanceof IpRange ipAddrs)) {
             return false;
         }
-        IpRange ipAddrs = (IpRange) o;
         return begin.equals(ipAddrs.begin) && end.equals(ipAddrs.end);
     }
 

@@ -54,8 +54,10 @@ public abstract class Threshold<T extends Comparable<T>> {
 
     /**
      * Bundles the information how a rule matches a threshold. More than one flag may be {@code true}.
+     * Package-private (not private) because the protected {@code match} implementations in the
+     * nested subclasses reference it in their signatures.
      */
-    private static class Match {
+    static class Match {
         final boolean lt, eq, gt, na;
 
         Match(boolean lt, boolean eq, boolean gt, boolean na) {
@@ -274,6 +276,10 @@ public abstract class Threshold<T extends Comparable<T>> {
             }
         }
 
+        // getClass() (not instanceof) is load-bearing: the SrcPort and DstPort subclasses share
+        // the port value but must stay distinct in the candidate-threshold Set — an instanceof
+        // equals would collapse SrcPort(n) and DstPort(n) and corrupt the decision tree.
+        @SuppressWarnings("EqualsGetClass")
         @Override
         public final boolean equals(Object o) {
             if (this == o) {
@@ -376,6 +382,10 @@ public abstract class Threshold<T extends Comparable<T>> {
             }
         }
 
+        // getClass() (not instanceof) is load-bearing: the SrcAddress and DstAddress subclasses
+        // share the address value but must stay distinct in the candidate-threshold Set — an
+        // instanceof equals would collapse them and corrupt the decision tree.
+        @SuppressWarnings("EqualsGetClass")
         @Override
         public final boolean equals(Object o) {
             if (this == o) {

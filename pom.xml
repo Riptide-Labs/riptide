@@ -296,7 +296,8 @@
                     <compilerArgs>
                         <arg>-XDcompilePolicy=simple</arg>
                         <arg>--should-stop=ifError=FLOW</arg>
-                        <arg>-Xplugin:ErrorProne -XepExcludedPaths:.*/target/generated-sources/.*</arg>
+                        <!-- Warning-free as of the classification cleanup; keep them that way. -->
+                        <arg>-Xplugin:ErrorProne -XepExcludedPaths:.*/target/generated-sources/.* -Xep:EqualsGetClass:ERROR -Xep:NarrowingCompoundAssignment:ERROR -Xep:ExposedPrivateType:ERROR</arg>
                         <arg>
                             -Amapstruct.unmappedTargetPolicy=ERROR
                         </arg>

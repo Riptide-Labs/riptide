@@ -30,8 +30,7 @@ public final class InformationElementDatabase {
         @Override
         public boolean equals(final Object o) {
             if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-            Key that = (Key) o;
+            if (!(o instanceof Key that)) return false;
             return Objects.equals(this.protocol, that.protocol)
                     && Objects.equals(this.enterpriseNumber, that.enterpriseNumber)
                     && Objects.equals(this.informationElementIdentifier, that.informationElementIdentifier);

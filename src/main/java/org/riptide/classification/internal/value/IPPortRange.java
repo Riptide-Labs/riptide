@@ -41,10 +41,9 @@ public class IPPortRange {
         if (this == o) {
             return true;
         }
-        if (o == null || getClass() != o.getClass()) {
+        if (!(o instanceof IPPortRange that)) {
             return false;
         }
-        IPPortRange that = (IPPortRange) o;
         return begin == that.begin && end == that.end;
     }
 
