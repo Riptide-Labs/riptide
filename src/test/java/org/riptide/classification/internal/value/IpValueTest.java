@@ -160,4 +160,17 @@ public class IpValueTest {
         }
         Assertions.assertThat(value.isInRange(IpAddr.of("2001:0DB8:0:CD30::2"))).isFalse();
     }
+    @Test
+    void verifyCidrMaskBounds() {
+        // valid boundaries parse
+        Assertions.assertThat(IpValue.parseCIDR("10.0.0.0/0")).isNotNull();
+        Assertions.assertThat(IpValue.parseCIDR("10.0.0.0/32")).isNotNull();
+        Assertions.assertThat(IpValue.parseCIDR("2001:db8::/128")).isNotNull();
+
+        // out-of-range masks fail loudly instead of silently matching everything or nothing
+        Assertions.assertThatThrownBy(() -> IpValue.parseCIDR("10.0.0.0/-1")).isInstanceOf(IllegalArgumentException.class);
+        Assertions.assertThatThrownBy(() -> IpValue.parseCIDR("10.0.0.0/-8")).isInstanceOf(IllegalArgumentException.class);
+        Assertions.assertThatThrownBy(() -> IpValue.parseCIDR("10.0.0.0/33")).isInstanceOf(IllegalArgumentException.class);
+        Assertions.assertThatThrownBy(() -> IpValue.parseCIDR("2001:db8::/129")).isInstanceOf(IllegalArgumentException.class);
+    }
 }

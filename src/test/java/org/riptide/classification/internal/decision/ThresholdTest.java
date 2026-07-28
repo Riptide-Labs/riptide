@@ -22,6 +22,12 @@ public class ThresholdTest {
      */
     @Test
     void verifySrcAndDstThresholdsOfEqualValueStayDistinct() {
+        // positive controls first — without them a broken always-false equals would pass
+        assertThat(new Threshold.SrcPort(443)).isEqualTo(new Threshold.SrcPort(443));
+        assertThat(new Threshold.DstPort(443)).isEqualTo(new Threshold.DstPort(443));
+        assertThat(new Threshold.SrcAddress(IpAddr.of("10.0.0.1")))
+                .isEqualTo(new Threshold.SrcAddress(IpAddr.of("10.0.0.1")));
+
         assertThat(new Threshold.SrcPort(443)).isNotEqualTo(new Threshold.DstPort(443));
         assertThat(new Threshold.SrcAddress(IpAddr.of("10.0.0.1")))
                 .isNotEqualTo(new Threshold.DstAddress(IpAddr.of("10.0.0.1")));
@@ -34,7 +40,8 @@ public class ThresholdTest {
         final var thresholds = PreprocessedRule.of(rule).thresholds;
         assertThat(thresholds).filteredOn(t -> t instanceof Threshold.SrcPort).hasSize(1);
         assertThat(thresholds).filteredOn(t -> t instanceof Threshold.DstPort).hasSize(1);
-        assertThat(thresholds).filteredOn(t -> t instanceof Threshold.SrcAddress).isNotEmpty();
-        assertThat(thresholds).filteredOn(t -> t instanceof Threshold.DstAddress).isNotEmpty();
+        // a single-address rule expands to boundary thresholds that dedupe to one per side
+        assertThat(thresholds).filteredOn(t -> t instanceof Threshold.SrcAddress).hasSize(1);
+        assertThat(thresholds).filteredOn(t -> t instanceof Threshold.DstAddress).hasSize(1);
     }
 }

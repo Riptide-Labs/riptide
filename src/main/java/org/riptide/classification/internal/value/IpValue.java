@@ -90,6 +90,12 @@ public class IpValue implements RuleValue<IpAddr, IpValue> {
 
         final byte[] address = InetAddresses.forString(cidr.substring(0, slashIndex)).getAddress();
         final int mask = Integer.parseInt(cidr.substring(slashIndex + 1));
+        if (mask < 0 || mask > address.length * 8) {
+            // out-of-range masks must fail loudly: /-1../-7 would otherwise silently match
+            // the whole address space and oversized masks a single address
+            throw new IllegalArgumentException(
+                    "Invalid CIDR mask /" + mask + " for a " + (address.length * 8) + "-bit address: " + cidr);
+        }
 
         // Mask the lower bound with all zero
         final byte[] lower = Arrays.copyOf(address, address.length);

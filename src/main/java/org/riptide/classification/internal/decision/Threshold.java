@@ -57,7 +57,7 @@ public abstract class Threshold<T extends Comparable<T>> {
      * Package-private (not private) because the protected {@code match} implementations in the
      * nested subclasses reference it in their signatures.
      */
-    static class Match {
+    static final class Match {
         final boolean lt, eq, gt, na;
 
         Match(boolean lt, boolean eq, boolean gt, boolean na) {
@@ -67,7 +67,7 @@ public abstract class Threshold<T extends Comparable<T>> {
             this.na = na;
         }
 
-        static Match NA = new Match(false, false, false, true);
+        static final Match NA = new Match(false, false, false, true);
     }
 
     protected final Function<Bounds, Bound<T>> getBound;
