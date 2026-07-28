@@ -118,7 +118,8 @@ public class UdpSessionManager {
         InetAddress getRemoteAddress();
     }
 
-    private static final class DomainKey {
+    // Package-private (not private) because the public TemplateKey exposes it in a field.
+    static final class DomainKey {
         public final SessionKey sessionKey;
         public final long observationDomainId;
 

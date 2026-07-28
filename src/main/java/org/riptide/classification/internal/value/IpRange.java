@@ -13,7 +13,7 @@ import java.util.Objects;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
-public class IpRange implements Iterable<IpAddr> {
+public final class IpRange implements Iterable<IpAddr> {
 
     public static IpRange of(String addr) {
         final var a = IpAddr.of(addr);
@@ -46,11 +46,10 @@ public class IpRange implements Iterable<IpAddr> {
         if (this == o) {
             return true;
         }
-        if (o == null || getClass() != o.getClass()) {
+        if (!(o instanceof IpRange that)) {
             return false;
         }
-        IpRange ipAddrs = (IpRange) o;
-        return begin.equals(ipAddrs.begin) && end.equals(ipAddrs.end);
+        return begin.equals(that.begin) && end.equals(that.end);
     }
 
     @Override

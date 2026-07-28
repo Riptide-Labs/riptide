@@ -10,7 +10,7 @@ import lombok.ToString;
 import java.util.Objects;
 
 @ToString
-public class IPPortRange {
+public final class IPPortRange {
     private final int begin;
     private final int end;
 
@@ -41,10 +41,9 @@ public class IPPortRange {
         if (this == o) {
             return true;
         }
-        if (o == null || getClass() != o.getClass()) {
+        if (!(o instanceof IPPortRange that)) {
             return false;
         }
-        IPPortRange that = (IPPortRange) o;
         return begin == that.begin && end == that.end;
     }
 

@@ -79,7 +79,7 @@ public class Netflow9UdpParser extends UdpParserBase implements DispatchableUdpP
         return new SessionKey(remoteAddress.getAddress(), localAddress);
     }
 
-    public static class SessionKey implements UdpSessionManager.SessionKey {
+    public static final class SessionKey implements UdpSessionManager.SessionKey {
         private final InetAddress remoteAddress;
         private final InetSocketAddress localAddress;
 
@@ -91,8 +91,7 @@ public class Netflow9UdpParser extends UdpParserBase implements DispatchableUdpP
         @Override
         public boolean equals(final Object o) {
             if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-            final SessionKey that = (SessionKey) o;
+            if (!(o instanceof SessionKey that)) return false;
             return Objects.equals(this.localAddress, that.localAddress)
                     && Objects.equals(this.remoteAddress, that.remoteAddress);
         }

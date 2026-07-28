@@ -86,7 +86,7 @@ public class IpfixUdpParser extends UdpParserBase implements DispatchableUdpPars
         return new SessionKey(remoteAddress, localAddress);
     }
 
-    public static class SessionKey implements UdpSessionManager.SessionKey {
+    public static final class SessionKey implements UdpSessionManager.SessionKey {
         private final InetSocketAddress remoteAddress;
         private final InetSocketAddress localAddress;
 
@@ -98,8 +98,7 @@ public class IpfixUdpParser extends UdpParserBase implements DispatchableUdpPars
         @Override
         public boolean equals(final Object o) {
             if (this == o) return true;
-            if (o == null || getClass() != o.getClass()) return false;
-            final SessionKey that = (SessionKey) o;
+            if (!(o instanceof SessionKey that)) return false;
             return Objects.equals(this.localAddress, that.localAddress)
                     && Objects.equals(this.remoteAddress, that.remoteAddress);
         }
