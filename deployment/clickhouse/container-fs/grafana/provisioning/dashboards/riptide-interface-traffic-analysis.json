@@ -1,0 +1,1029 @@
+{
+  "title": "Riptide - Interface Traffic Analysis",
+  "uid": "riptide-interface-traffic-analysis",
+  "description": "What exactly is crossing this interface \u2014 which applications, conversations, hosts and DSCP classes, split by direction? Pick the exporter and interface(s), optionally narrow to a DSCP class; every row pairs a mirrored in/out throughput chart (top 5, remainder as Other) with a top-10 data-usage table. Click an application, host or conversation in the tables to continue in Flow Forensics with the slice pre-filtered. Panel structure modeled on the OpenNMS Flow Deep Dive dashboard, rebuilt for the riptide flows schema; the SNMP interface-statistics row is intentionally omitted.",
+  "tags": [
+    "riptide",
+    "netflow",
+    "interface-traffic",
+    "audience:engineer"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "refresh": "5m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "links": [
+    {
+      "title": "Riptide dashboards",
+      "type": "dashboards",
+      "tags": [
+        "riptide"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Datasource",
+        "type": "datasource",
+        "query": "grafana-clickhouse-datasource",
+        "current": {},
+        "refresh": 1
+      },
+      {
+        "name": "database",
+        "label": "Database",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT DISTINCT database FROM system.tables WHERE name = 'flows'"
+        },
+        "definition": "SELECT DISTINCT database FROM system.tables WHERE name = 'flows'",
+        "refresh": 1,
+        "sort": 1,
+        "current": {}
+      },
+      {
+        "name": "exporter",
+        "label": "Exporter",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "description": "The exporter whose interface to inspect \u2014 one at a time; interface indexes only make sense per exporter.",
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT exporterAddr AS __value, if(argMax(exporterName, receivedAt) != '', argMax(exporterName, receivedAt), exporterAddr) AS __text FROM ${database}.flows WHERE $__timeFilter(timestamp) GROUP BY exporterAddr ORDER BY __text"
+        },
+        "definition": "exporters seen in the selected range",
+        "refresh": 2,
+        "sort": 0,
+        "includeAll": false,
+        "multi": false,
+        "current": {}
+      },
+      {
+        "name": "interface",
+        "label": "Interface",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "description": "Interfaces the exporter tagged on its flows, labelled by alias, name, or ifN as a last resort. All = every tagged interface.",
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT toString(idx) AS __value, ifNull(argMax(alias, ts), ifNull(argMax(name, ts), concat('if', toString(idx)))) AS __text FROM (SELECT inputSnmp AS idx, inputSnmpIfAlias AS alias, inputSnmpIfName AS name, receivedAt AS ts FROM ${database}.flows WHERE $__timeFilter(timestamp) AND exporterAddr = ${exporter:singlequote} AND inputSnmp != 0 UNION ALL SELECT outputSnmp, outputSnmpIfAlias, outputSnmpIfName, receivedAt FROM ${database}.flows WHERE $__timeFilter(timestamp) AND exporterAddr = ${exporter:singlequote} AND outputSnmp != 0) GROUP BY idx ORDER BY __text"
+        },
+        "definition": "input/output interfaces tagged by ${exporter}",
+        "refresh": 2,
+        "sort": 0,
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      },
+      {
+        "name": "dscp",
+        "label": "DSCP",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "description": "Narrow every panel to one or more DSCP classes.",
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT DISTINCT toString(bitShiftRight(tos, 2)) AS __value, concat(toString(bitShiftRight(tos, 2)), ' - ', transform(bitShiftRight(tos, 2), [0, 8, 10, 14, 18, 22, 26, 28, 34, 36, 46, 48, 56], ['BE', 'CS1', 'AF11', 'AF13', 'AF21', 'AF23', 'AF31', 'AF32', 'AF41', 'AF42', 'EF', 'CS6', 'CS7'], 'other')) AS __text FROM ${database}.flows WHERE $__timeFilter(timestamp) AND exporterAddr = ${exporter:singlequote} ORDER BY bitShiftRight(tos, 2)"
+        },
+        "definition": "DSCP classes seen on ${exporter}",
+        "refresh": 2,
+        "sort": 0,
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Throughput by application \u2014 in vs out",
+      "description": "Rate through the selected interface(s), stacked by classified application (top 5 by volume, remainder as Other). In is traffic that entered through the selected interface(s), out is traffic that left through them (drawn negative, mirroring the in/out convention); one-sided exporters populate only the side they tag. A single application dominating both directions is the interface's workload; an application present only in one direction is transit or one-way replication.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 16,
+        "x": 0,
+        "y": 0
+      },
+      "interval": "1m",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 30,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "gradientMode": "none",
+            "spanNulls": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "Other .*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#7f7f7f"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "table",
+          "rawSql": "WITH top AS (SELECT ifNull(application, 'unclassified') AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND exporterAddr = ${exporter:singlequote} AND ((inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface)) OR (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) AND $__conditionalAll(bitShiftRight(tos, 2) IN (${dscp:csv}), $dscp) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 5)\nSELECT time, concat(lbl, ' \u00b7 ', d.1) AS series, d.2 AS bps FROM (\nSELECT timestamp AS time, if(ifNull(application, 'unclassified') IN (SELECT dim FROM top), ifNull(application, 'unclassified'), 'Other') AS lbl, arrayJoin([('in', sumIf(bytes, (inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface))) * 8 / $__interval_s), ('out', -sumIf(bytes, (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) * 8 / $__interval_s)]) AS d FROM ${database}.samples(ival = $__interval_s) WHERE $__timeFilter(timestamp) AND exporterAddr = ${exporter:singlequote} AND ((inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface)) OR (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) AND $__conditionalAll(bitShiftRight(tos, 2) IN (${dscp:csv}), $dscp) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $__interval_s SECOND AND flow.timestamp >= $__fromTime - INTERVAL 1 HOUR AND flow.timestamp <= $__toTime + INTERVAL 1 HOUR GROUP BY time, lbl\n) WHERE d.2 != 0 ORDER BY time",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Data usage by application",
+      "description": "Bytes through the selected interface(s) per application over the selected range, with each application's share of the interface total. Click an application to slice it in Flow Forensics.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes in"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes out"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Total"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "% of interface"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Application"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Slice this application in Flow Forensics",
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${exporter:queryparam}&from=${__from}&to=${__to}&var-application=${__data.fields.Application}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT ifNull(application, 'unclassified') AS \"Application\", sumIf(bytes, (inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface))) AS \"Bytes in\", sumIf(bytes, (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) AS \"Bytes out\", \"Bytes in\" + \"Bytes out\" AS \"Total\", round(100 * \"Total\" / sum(\"Total\") OVER (), 1) AS \"% of interface\" FROM ${database}.flows WHERE $__timeFilter(timestamp) AND exporterAddr = ${exporter:singlequote} AND ((inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface)) OR (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) AND $__conditionalAll(bitShiftRight(tos, 2) IN (${dscp:csv}), $dscp) GROUP BY \"Application\" ORDER BY \"Total\" DESC LIMIT 10",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Throughput by conversation \u2014 in vs out",
+      "description": "Rate through the selected interface(s) for the top 5 host-pair conversations (both directions folded, labelled pair \u00b7 application; remainder as Other). In is traffic that entered through the selected interface(s), out is traffic that left through them (drawn negative, mirroring the in/out convention); one-sided exporters populate only the side they tag. One conversation carrying most of the interface is a bulk transfer; many small ones are background chatter.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 16,
+        "x": 0,
+        "y": 9
+      },
+      "interval": "1m",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 30,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "gradientMode": "none",
+            "spanNulls": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "Other .*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#7f7f7f"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "table",
+          "rawSql": "WITH top AS (SELECT concat(if(srcAddr < dstAddr, ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', '')), ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', ''))), ' \u2194 ', if(srcAddr < dstAddr, ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')), ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', ''))), ' \u00b7 ', ifNull(application, 'unclassified')) AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND exporterAddr = ${exporter:singlequote} AND ((inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface)) OR (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) AND $__conditionalAll(bitShiftRight(tos, 2) IN (${dscp:csv}), $dscp) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 5)\nSELECT time, concat(lbl, ' \u00b7 ', d.1) AS series, d.2 AS bps FROM (\nSELECT timestamp AS time, if(concat(if(srcAddr < dstAddr, ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', '')), ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', ''))), ' \u2194 ', if(srcAddr < dstAddr, ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')), ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', ''))), ' \u00b7 ', ifNull(application, 'unclassified')) IN (SELECT dim FROM top), concat(if(srcAddr < dstAddr, ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', '')), ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', ''))), ' \u2194 ', if(srcAddr < dstAddr, ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')), ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', ''))), ' \u00b7 ', ifNull(application, 'unclassified')), 'Other') AS lbl, arrayJoin([('in', sumIf(bytes, (inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface))) * 8 / $__interval_s), ('out', -sumIf(bytes, (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) * 8 / $__interval_s)]) AS d FROM ${database}.samples(ival = $__interval_s) WHERE $__timeFilter(timestamp) AND exporterAddr = ${exporter:singlequote} AND ((inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface)) OR (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) AND $__conditionalAll(bitShiftRight(tos, 2) IN (${dscp:csv}), $dscp) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $__interval_s SECOND AND flow.timestamp >= $__fromTime - INTERVAL 1 HOUR AND flow.timestamp <= $__toTime + INTERVAL 1 HOUR GROUP BY time, lbl\n) WHERE d.2 != 0 ORDER BY time",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Data usage by conversation",
+      "description": "Bytes through the selected interface(s) per host-pair conversation over the selected range. Click a conversation to open the pair in Flow Forensics.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes in"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes out"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Total"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "% of interface"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Conversation"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open this pair in Flow Forensics (its conversations table matches either end; directional panels read src\u2192dst as passed)",
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${exporter:queryparam}&from=${__from}&to=${__to}&var-application=${__data.fields[\"App value\"]}&var-src=${__data.fields.Address}&var-dst=${__data.fields[\"Address B\"]}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Address"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Address B"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "App value"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT concat(if(srcAddr < dstAddr, ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', '')), ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', ''))), ' \u2194 ', if(srcAddr < dstAddr, ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')), ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', ''))), ' \u00b7 ', ifNull(application, 'unclassified')) AS \"Conversation\", replaceOne(toString(if(srcAddr < dstAddr, srcAddr, dstAddr)), '::ffff:', '') AS \"Address\", replaceOne(toString(if(srcAddr < dstAddr, dstAddr, srcAddr)), '::ffff:', '') AS \"Address B\", ifNull(application, 'unclassified') AS \"App value\", sumIf(bytes, (inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface))) AS \"Bytes in\", sumIf(bytes, (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) AS \"Bytes out\", \"Bytes in\" + \"Bytes out\" AS \"Total\", round(100 * \"Total\" / sum(\"Total\") OVER (), 1) AS \"% of interface\" FROM ${database}.flows WHERE $__timeFilter(timestamp) AND exporterAddr = ${exporter:singlequote} AND ((inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface)) OR (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) AND $__conditionalAll(bitShiftRight(tos, 2) IN (${dscp:csv}), $dscp) GROUP BY \"Conversation\", \"Address\", \"Address B\", \"App value\" ORDER BY \"Total\" DESC LIMIT 10",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Throughput by host \u2014 in vs out",
+      "description": "Rate through the selected interface(s) for the top 5 hosts (remainder as Other). Lines overlap instead of stacking because a flow counts toward both of its hosts \u2014 stacked, the envelope would double the real interface rate. In is traffic that entered through the selected interface(s), out is traffic that left through them (drawn negative, mirroring the in/out convention); one-sided exporters populate only the side they tag. A host high in both directions is a busy peer; high in one only is a source or a sink.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 16,
+        "x": 0,
+        "y": 18
+      },
+      "interval": "1m",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            },
+            "gradientMode": "none",
+            "spanNulls": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "Other .*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#7f7f7f"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "table",
+          "rawSql": "WITH top AS (SELECT arrayJoin([ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', '')), ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', ''))]) AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND exporterAddr = ${exporter:singlequote} AND ((inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface)) OR (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) AND $__conditionalAll(bitShiftRight(tos, 2) IN (${dscp:csv}), $dscp) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 5)\nSELECT time, concat(lbl, ' \u00b7 ', d.1) AS series, d.2 AS bps FROM (\nSELECT timestamp AS time, if(arrayJoin([ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', '')), ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', ''))]) IN (SELECT dim FROM top), arrayJoin([ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', '')), ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', ''))]), 'Other') AS lbl, arrayJoin([('in', sumIf(bytes, (inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface))) * 8 / $__interval_s), ('out', -sumIf(bytes, (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) * 8 / $__interval_s)]) AS d FROM ${database}.samples(ival = $__interval_s) WHERE $__timeFilter(timestamp) AND exporterAddr = ${exporter:singlequote} AND ((inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface)) OR (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) AND $__conditionalAll(bitShiftRight(tos, 2) IN (${dscp:csv}), $dscp) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $__interval_s SECOND AND flow.timestamp >= $__fromTime - INTERVAL 1 HOUR AND flow.timestamp <= $__toTime + INTERVAL 1 HOUR GROUP BY time, lbl\n) WHERE d.2 != 0 ORDER BY time",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Data usage by host",
+      "description": "Bytes through the selected interface(s) per host over the selected range \u2014 a flow counts toward both of its hosts, so the shares can sum past 100%. Click a host to slice it in Flow Forensics.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes in"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes out"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Total"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "% of interface"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Host"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Slice this host as source in Flow Forensics (swap to the Destination filter there for the other direction)",
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${exporter:queryparam}&from=${__from}&to=${__to}&var-src=${__data.fields.Address}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Address"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT h.1 AS \"Host\", h.2 AS \"Address\", sumIf(bytes, (inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface))) AS \"Bytes in\", sumIf(bytes, (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) AS \"Bytes out\", \"Bytes in\" + \"Bytes out\" AS \"Total\", round(100 * \"Total\" / (sum(\"Total\") OVER () / 2), 1) AS \"% of interface\" FROM (SELECT arrayJoin([(ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', '')), replaceOne(toString(srcAddr), '::ffff:', '')), (ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')), replaceOne(toString(dstAddr), '::ffff:', ''))]) AS h, bytes, inputSnmp, outputSnmp FROM ${database}.flows WHERE $__timeFilter(timestamp) AND exporterAddr = ${exporter:singlequote} AND ((inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface)) OR (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) AND $__conditionalAll(bitShiftRight(tos, 2) IN (${dscp:csv}), $dscp)) GROUP BY \"Host\", \"Address\" ORDER BY \"Total\" DESC LIMIT 10",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Throughput by DSCP \u2014 in vs out",
+      "description": "Rate through the selected interface(s), stacked by DSCP class (top 5, remainder as Other). In is traffic that entered through the selected interface(s), out is traffic that left through them (drawn negative, mirroring the in/out convention); one-sided exporters populate only the side they tag. Bulk data riding EF or voice in best-effort is a QoS misconfiguration this panel catches before users do.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 16,
+        "x": 0,
+        "y": 27
+      },
+      "interval": "1m",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 30,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "gradientMode": "none",
+            "spanNulls": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "Other .*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#7f7f7f"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "table",
+          "rawSql": "WITH top AS (SELECT concat(toString(bitShiftRight(tos, 2)), ' - ', transform(bitShiftRight(tos, 2), [0, 8, 10, 14, 18, 22, 26, 28, 34, 36, 46, 48, 56], ['BE', 'CS1', 'AF11', 'AF13', 'AF21', 'AF23', 'AF31', 'AF32', 'AF41', 'AF42', 'EF', 'CS6', 'CS7'], 'other')) AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND exporterAddr = ${exporter:singlequote} AND ((inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface)) OR (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) AND $__conditionalAll(bitShiftRight(tos, 2) IN (${dscp:csv}), $dscp) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 5)\nSELECT time, concat(lbl, ' \u00b7 ', d.1) AS series, d.2 AS bps FROM (\nSELECT timestamp AS time, if(concat(toString(bitShiftRight(tos, 2)), ' - ', transform(bitShiftRight(tos, 2), [0, 8, 10, 14, 18, 22, 26, 28, 34, 36, 46, 48, 56], ['BE', 'CS1', 'AF11', 'AF13', 'AF21', 'AF23', 'AF31', 'AF32', 'AF41', 'AF42', 'EF', 'CS6', 'CS7'], 'other')) IN (SELECT dim FROM top), concat(toString(bitShiftRight(tos, 2)), ' - ', transform(bitShiftRight(tos, 2), [0, 8, 10, 14, 18, 22, 26, 28, 34, 36, 46, 48, 56], ['BE', 'CS1', 'AF11', 'AF13', 'AF21', 'AF23', 'AF31', 'AF32', 'AF41', 'AF42', 'EF', 'CS6', 'CS7'], 'other')), 'Other') AS lbl, arrayJoin([('in', sumIf(bytes, (inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface))) * 8 / $__interval_s), ('out', -sumIf(bytes, (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) * 8 / $__interval_s)]) AS d FROM ${database}.samples(ival = $__interval_s) WHERE $__timeFilter(timestamp) AND exporterAddr = ${exporter:singlequote} AND ((inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface)) OR (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) AND $__conditionalAll(bitShiftRight(tos, 2) IN (${dscp:csv}), $dscp) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $__interval_s SECOND AND flow.timestamp >= $__fromTime - INTERVAL 1 HOUR AND flow.timestamp <= $__toTime + INTERVAL 1 HOUR GROUP BY time, lbl\n) WHERE d.2 != 0 ORDER BY time",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Data usage by DSCP",
+      "description": "Bytes through the selected interface(s) per DSCP class over the selected range, with each class's share of the interface total.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 27
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes in"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes out"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Total"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "% of interface"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT concat(toString(bitShiftRight(tos, 2)), ' - ', transform(bitShiftRight(tos, 2), [0, 8, 10, 14, 18, 22, 26, 28, 34, 36, 46, 48, 56], ['BE', 'CS1', 'AF11', 'AF13', 'AF21', 'AF23', 'AF31', 'AF32', 'AF41', 'AF42', 'EF', 'CS6', 'CS7'], 'other')) AS \"DSCP\", sumIf(bytes, (inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface))) AS \"Bytes in\", sumIf(bytes, (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) AS \"Bytes out\", \"Bytes in\" + \"Bytes out\" AS \"Total\", round(100 * \"Total\" / sum(\"Total\") OVER (), 1) AS \"% of interface\" FROM ${database}.flows WHERE $__timeFilter(timestamp) AND exporterAddr = ${exporter:singlequote} AND ((inputSnmp != 0 AND $__conditionalAll(inputSnmp IN (${interface:csv}), $interface)) OR (outputSnmp != 0 AND $__conditionalAll(outputSnmp IN (${interface:csv}), $interface))) AND $__conditionalAll(bitShiftRight(tos, 2) IN (${dscp:csv}), $dscp) GROUP BY \"DSCP\" ORDER BY \"Total\" DESC LIMIT 10",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    }
+  ]
+}
