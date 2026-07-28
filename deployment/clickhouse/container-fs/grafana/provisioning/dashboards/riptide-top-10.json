@@ -56,20 +56,6 @@
         "definition": "SELECT DISTINCT database FROM system.tables WHERE name = 'flows'"
       },
       {
-        "name": "bucket",
-        "label": "Bucket size (s)",
-        "type": "custom",
-        "query": "10,30,60,300,900,3600",
-        "options": [],
-        "includeAll": false,
-        "multi": false,
-        "current": {
-          "selected": true,
-          "text": "60",
-          "value": "60"
-        }
-      },
-      {
         "name": "tenant",
         "label": "Tenant",
         "type": "query",
@@ -188,7 +174,7 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "table",
-          "rawSql": "SELECT timestamp AS time, sum(bytes) * 8 / $bucket AS bps\nFROM ${database}.samples(ival = $bucket) WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $bucket SECOND\n  AND timestamp < toStartOfInterval(now(), toIntervalSecond($bucket))\nGROUP BY time ORDER BY time",
+          "rawSql": "SELECT timestamp AS time, sum(bytes) * 8 / 60 AS bps\nFROM ${database}.samples(ival = 60) WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL 60 SECOND\n  AND timestamp < toStartOfInterval(now(), toIntervalSecond(60))\nGROUP BY time ORDER BY time",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -378,14 +364,15 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "table",
-          "rawSql": "WITH top AS (SELECT srcAs AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(srcAs IN (SELECT dim FROM top), concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown')), 'Other') AS series,\n       sum(bytes) * 8 / $bucket AS bps\nFROM ${database}.samples(ival = $bucket)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $bucket SECOND\nGROUP BY time, series\nORDER BY time",
+          "rawSql": "WITH top AS (SELECT srcAs AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(srcAs IN (SELECT dim FROM top), concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown')), 'Other') AS series,\n       sum(bytes) * 8 / $__interval_s AS bps\nFROM ${database}.samples(ival = $__interval_s)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $__interval_s SECOND\nGROUP BY time, series\nORDER BY time",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
           }
         }
       ],
-      "description": "Traffic rate by originating autonomous system \u2014 top 10 by volume, remainder stacked as the grey Other band. A new entrant or a suddenly growing AS is a traffic source worth explaining."
+      "description": "Traffic rate by originating autonomous system \u2014 top 10 by volume, remainder stacked as the grey Other band. A new entrant or a suddenly growing AS is a traffic source worth explaining.",
+      "interval": "1m"
     },
     {
       "id": 5,
@@ -462,14 +449,15 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "table",
-          "rawSql": "WITH top AS (SELECT dstAs AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(dstAs IN (SELECT dim FROM top), concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')), 'Other') AS series,\n       sum(bytes) * 8 / $bucket AS bps\nFROM ${database}.samples(ival = $bucket)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $bucket SECOND\nGROUP BY time, series\nORDER BY time",
+          "rawSql": "WITH top AS (SELECT dstAs AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(dstAs IN (SELECT dim FROM top), concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')), 'Other') AS series,\n       sum(bytes) * 8 / $__interval_s AS bps\nFROM ${database}.samples(ival = $__interval_s)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $__interval_s SECOND\nGROUP BY time, series\nORDER BY time",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
           }
         }
       ],
-      "description": "Traffic rate by destination autonomous system \u2014 top 10 by volume, remainder stacked as the grey Other band. Where does our traffic go; sudden shifts point at CDN moves, new services, or exfiltration."
+      "description": "Traffic rate by destination autonomous system \u2014 top 10 by volume, remainder stacked as the grey Other band. Where does our traffic go; sudden shifts point at CDN moves, new services, or exfiltration.",
+      "interval": "1m"
     },
     {
       "id": 6,
@@ -546,14 +534,15 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "table",
-          "rawSql": "WITH top AS (SELECT srcAddr AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(srcAddr IN (SELECT dim FROM top), ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', '')), 'Other') AS series,\n       sum(bytes) * 8 / $bucket AS bps\nFROM ${database}.samples(ival = $bucket)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $bucket SECOND\nGROUP BY time, series\nORDER BY time",
+          "rawSql": "WITH top AS (SELECT srcAddr AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(srcAddr IN (SELECT dim FROM top), ifNull(srcAddrHostname, replaceOne(toString(srcAddr), '::ffff:', '')), 'Other') AS series,\n       sum(bytes) * 8 / $__interval_s AS bps\nFROM ${database}.samples(ival = $__interval_s)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $__interval_s SECOND\nGROUP BY time, series\nORDER BY time",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
           }
         }
       ],
-      "description": "Traffic rate by source host, reverse-DNS name where resolved, plain address otherwise. A single host dominating the stack is the first suspect for link saturation \u2014 chase it in Flow Forensics (dashboards menu)."
+      "description": "Traffic rate by source host, reverse-DNS name where resolved, plain address otherwise. A single host dominating the stack is the first suspect for link saturation \u2014 chase it in Flow Forensics (dashboards menu).",
+      "interval": "1m"
     },
     {
       "id": 7,
@@ -630,14 +619,15 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "table",
-          "rawSql": "WITH top AS (SELECT dstAddr AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(dstAddr IN (SELECT dim FROM top), ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')), 'Other') AS series,\n       sum(bytes) * 8 / $bucket AS bps\nFROM ${database}.samples(ival = $bucket)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $bucket SECOND\nGROUP BY time, series\nORDER BY time",
+          "rawSql": "WITH top AS (SELECT dstAddr AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(dstAddr IN (SELECT dim FROM top), ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')), 'Other') AS series,\n       sum(bytes) * 8 / $__interval_s AS bps\nFROM ${database}.samples(ival = $__interval_s)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $__interval_s SECOND\nGROUP BY time, series\nORDER BY time",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
           }
         }
       ],
-      "description": "Traffic rate by destination host, reverse-DNS name where resolved, plain address otherwise. A single sink drawing outsized volume \u2014 backup target, update server, or data sink worth verifying \u2014 stands out here."
+      "description": "Traffic rate by destination host, reverse-DNS name where resolved, plain address otherwise. A single sink drawing outsized volume \u2014 backup target, update server, or data sink worth verifying \u2014 stands out here.",
+      "interval": "1m"
     },
     {
       "id": 8,
@@ -714,14 +704,15 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "table",
-          "rawSql": "WITH top AS (SELECT ifNull(application, 'unclassified') AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(ifNull(application, 'unclassified') IN (SELECT dim FROM top), ifNull(application, 'unclassified'), 'Other') AS series,\n       sum(bytes) * 8 / $bucket AS bps\nFROM ${database}.samples(ival = $bucket)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $bucket SECOND\nGROUP BY time, series\nORDER BY time",
+          "rawSql": "WITH top AS (SELECT ifNull(application, 'unclassified') AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(ifNull(application, 'unclassified') IN (SELECT dim FROM top), ifNull(application, 'unclassified'), 'Other') AS series,\n       sum(bytes) * 8 / $__interval_s AS bps\nFROM ${database}.samples(ival = $__interval_s)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $__interval_s SECOND\nGROUP BY time, series\nORDER BY time",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
           }
         }
       ],
-      "description": "Traffic rate by classified application; 'unclassified' means no classification rule matched. Normal: unclassified stays a small share \u2014 a growing unclassified band means the rule set needs attention, not the network."
+      "description": "Traffic rate by classified application; 'unclassified' means no classification rule matched. Normal: unclassified stays a small share \u2014 a growing unclassified band means the rule set needs attention, not the network.",
+      "interval": "1m"
     },
     {
       "id": 9,
@@ -798,14 +789,15 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "table",
-          "rawSql": "WITH top AS (SELECT concat(transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))), '/', toString(dstPort)) AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(concat(transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))), '/', toString(dstPort)) IN (SELECT dim FROM top), concat(transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))), '/', toString(dstPort)), 'Other') AS series,\n       sum(bytes) * 8 / $bucket AS bps\nFROM ${database}.samples(ival = $bucket)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $bucket SECOND\nGROUP BY time, series\nORDER BY time",
+          "rawSql": "WITH top AS (SELECT concat(transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))), '/', toString(dstPort)) AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(concat(transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))), '/', toString(dstPort)) IN (SELECT dim FROM top), concat(transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))), '/', toString(dstPort)), 'Other') AS series,\n       sum(bytes) * 8 / $__interval_s AS bps\nFROM ${database}.samples(ival = $__interval_s)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $__interval_s SECOND\nGROUP BY time, series\nORDER BY time",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
           }
         }
       ],
-      "description": "Traffic rate by protocol/destination-port pair \u2014 the port-level view for when application classification is too coarse. Unexpected high-volume ports are the lead to chase in Flow Forensics."
+      "description": "Traffic rate by protocol/destination-port pair \u2014 the port-level view for when application classification is too coarse. Unexpected high-volume ports are the lead to chase in Flow Forensics.",
+      "interval": "1m"
     },
     {
       "id": 10,
@@ -882,14 +874,15 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "table",
-          "rawSql": "WITH top AS (SELECT transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))) AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))) IN (SELECT dim FROM top), transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))), 'Other') AS series,\n       sum(bytes) * 8 / $bucket AS bps\nFROM ${database}.samples(ival = $bucket)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $bucket SECOND\nGROUP BY time, series\nORDER BY time",
+          "rawSql": "WITH top AS (SELECT transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))) AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))) IN (SELECT dim FROM top), transform(protocol, [1, 2, 6, 17, 41, 47, 50, 51, 58, 89, 132], ['ICMP', 'IGMP', 'TCP', 'UDP', 'IPv6', 'GRE', 'ESP', 'AH', 'IPv6-ICMP', 'OSPFIGP', 'SCTP'], concat('proto-', toString(protocol))), 'Other') AS series,\n       sum(bytes) * 8 / $__interval_s AS bps\nFROM ${database}.samples(ival = $__interval_s)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $__interval_s SECOND\nGROUP BY time, series\nORDER BY time",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
           }
         }
       ],
-      "description": "Traffic rate by IP protocol. Normal: TCP and UDP dominate; a visible share of anything else (GRE, ESP, ICMP) deserves an explanation \u2014 tunnels, VPNs, or something probing."
+      "description": "Traffic rate by IP protocol. Normal: TCP and UDP dominate; a visible share of anything else (GRE, ESP, ICMP) deserves an explanation \u2014 tunnels, VPNs, or something probing.",
+      "interval": "1m"
     },
     {
       "id": 11,
@@ -966,14 +959,15 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "table",
-          "rawSql": "WITH top AS (SELECT exporterAddr AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(exporterAddr IN (SELECT dim FROM top), exporterAddr, 'Other') AS series,\n       sum(bytes) * 8 / $bucket AS bps\nFROM ${database}.samples(ival = $bucket)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $bucket SECOND\nGROUP BY time, series\nORDER BY time",
+          "rawSql": "WITH top AS (SELECT exporterAddr AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(exporterAddr IN (SELECT dim FROM top), exporterAddr, 'Other') AS series,\n       sum(bytes) * 8 / $__interval_s AS bps\nFROM ${database}.samples(ival = $__interval_s)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $__interval_s SECOND\nGROUP BY time, series\nORDER BY time",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
           }
         }
       ],
-      "description": "Traffic rate by exporting device \u2014 which vantage points see the traffic. An exporter's band fading while others hold steady may be a collection problem, not a traffic change: check Collection Health."
+      "description": "Traffic rate by exporting device \u2014 which vantage points see the traffic. An exporter's band fading while others hold steady may be a collection problem, not a traffic change: check Collection Health.",
+      "interval": "1m"
     },
     {
       "id": 12,
@@ -1050,14 +1044,15 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "table",
-          "rawSql": "WITH top AS (SELECT concat(exporterAddr, ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp))), if(inputSnmpIfAlias IS NULL, '', concat(' (', inputSnmpIfAlias, ')'))) AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(concat(exporterAddr, ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp))), if(inputSnmpIfAlias IS NULL, '', concat(' (', inputSnmpIfAlias, ')'))) IN (SELECT dim FROM top), concat(exporterAddr, ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp))), if(inputSnmpIfAlias IS NULL, '', concat(' (', inputSnmpIfAlias, ')'))), 'Other') AS series,\n       sum(bytes) * 8 / $bucket AS bps\nFROM ${database}.samples(ival = $bucket)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $bucket SECOND\nGROUP BY time, series\nORDER BY time",
+          "rawSql": "WITH top AS (SELECT concat(exporterAddr, ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp))), if(inputSnmpIfAlias IS NULL, '', concat(' (', inputSnmpIfAlias, ')'))) AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10)\nSELECT timestamp AS time,\n       if(concat(exporterAddr, ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp))), if(inputSnmpIfAlias IS NULL, '', concat(' (', inputSnmpIfAlias, ')'))) IN (SELECT dim FROM top), concat(exporterAddr, ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp))), if(inputSnmpIfAlias IS NULL, '', concat(' (', inputSnmpIfAlias, ')'))), 'Other') AS series,\n       sum(bytes) * 8 / $__interval_s AS bps\nFROM ${database}.samples(ival = $__interval_s)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $__interval_s SECOND\nGROUP BY time, series\nORDER BY time",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
           }
         }
       ],
-      "description": "Traffic rate by exporter ingress interface \u2014 which links carry the load into the monitored network. Read together with Top 10 Exporters to localise a saturating link."
+      "description": "Traffic rate by exporter ingress interface \u2014 which links carry the load into the monitored network. Read together with Top 10 Exporters to localise a saturating link.",
+      "interval": "1m"
     },
     {
       "id": 13,
@@ -1132,14 +1127,14 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "WITH top AS (SELECT srcAs AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10),\n     intDiv(toUnixTimestamp($__toTime), $bucket)\n       - intDiv(toUnixTimestamp($__fromTime) + $bucket - 1, $bucket) + 1 AS nBuckets,\n     arrayResize(groupArray(bps), greatest(nBuckets, length(groupArray(bps))), 0.) AS padded\nSELECT series AS \"Src AS\",\n       arrayMin(padded) AS \"Min\", arrayMax(padded) AS \"Max\", argMax(bps, time) AS \"Last\",\n       arrayAvg(padded) AS \"Average\", arrayReduce('quantile(0.95)', padded) AS \"95th\",\n       sum(bucket_bytes) AS \"Total\"\nFROM (\n    SELECT timestamp AS time, concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown')) AS series,\n           sum(bytes) * 8 / $bucket AS bps, sum(bytes) AS bucket_bytes\n    FROM ${database}.samples(ival = $bucket)\n    WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $bucket SECOND AND srcAs IN (SELECT dim FROM top)\n      AND timestamp < toStartOfInterval(now(), toIntervalSecond($bucket))\n    GROUP BY time, series\n)\nGROUP BY series\nORDER BY \"Average\" DESC",
+          "rawSql": "WITH top AS (SELECT srcAs AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10),\n     intDiv(toUnixTimestamp($__toTime), 300)\n       - intDiv(toUnixTimestamp($__fromTime) + 300 - 1, 300) + 1 AS nBuckets,\n     arrayResize(groupArray(bps), greatest(nBuckets, length(groupArray(bps))), 0.) AS padded\nSELECT series AS \"Src AS\",\n       arrayMin(padded) AS \"Min\", arrayMax(padded) AS \"Max\", argMax(bps, time) AS \"Last\",\n       arrayAvg(padded) AS \"Average\", arrayReduce('quantile(0.95)', padded) AS \"95th\",\n       sum(bucket_bytes) AS \"Total\"\nFROM (\n    SELECT timestamp AS time, concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown')) AS series,\n           sum(bytes) * 8 / 300 AS bps, sum(bytes) AS bucket_bytes\n    FROM ${database}.samples(ival = 300)\n    WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL 300 SECOND AND srcAs IN (SELECT dim FROM top)\n      AND timestamp < toStartOfInterval(now(), toIntervalSecond(300))\n    GROUP BY time, series\n)\nGROUP BY series\nORDER BY \"Average\" DESC",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
           }
         }
       ],
-      "description": "Ranked source-AS table for the range: total volume plus the 95th-percentile rate \u2014 the number used for billing and capacity comparisons, deliberately insensitive to short bursts."
+      "description": "Ranked source-AS table for the range: total volume plus the 95th-percentile rate \u2014 the number used for billing and capacity comparisons, computed over fixed 5-minute buckets (the billing convention) so it does not change with zoom or window size, deliberately insensitive to short bursts."
     }
   ],
   "annotations": {
@@ -1157,5 +1152,5 @@
       "keepTime": true
     }
   ],
-  "description": "Which ASes, hosts, applications and services dominate traffic over the selected range? Fleet-compare view over the flows table (byte-weighted, bucketed via the samples view and the Bucket variable); every rate panel stacks the top 10 plus an 'Other' remainder. Scope with Tenant/Zone/Locality; drill into a host or port via the Flow Forensics dashboard (dashboards menu, filters and time carried over)."
+  "description": "Which ASes, hosts, applications and services dominate traffic over the selected range? Fleet-compare view over the flows table (byte-weighted, bucketed via the samples view at an automatic resolution that follows the zoom level); every rate panel stacks the top 10 plus an 'Other' remainder. Scope with Tenant/Zone/Locality; drill into a host or port via the Flow Forensics dashboard (dashboards menu, filters and time carried over)."
 }
