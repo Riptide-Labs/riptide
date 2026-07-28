@@ -89,10 +89,11 @@ public class ClickhouseRepository implements FlowRepository {
                 .compressClientRequest(true)
                 .compressServerResponse(true);
         if (config.isAsyncInserts()) {
-            // Server-side coalescing for the per-packet inserts (see ClickhouseConfig#asyncInserts
-            // for the trade-off and measurements). wait_for_async_insert=0 acknowledges on buffer
-            // append — waiting for the flush would serialize the pipeline on the flush interval,
-            // which benchmarks slower than not coalescing at all (14 vs 56 inserts/s).
+            // Server-side coalescing, now opt-in: client-side batching supersedes it (see
+            // ClickhouseConfig#asyncInserts for the trade-off and measurements).
+            // wait_for_async_insert=0 acknowledges on buffer append — waiting for the flush would
+            // serialize the pipeline on the flush interval, which benchmarks slower than not
+            // coalescing at all (14 vs 56 inserts/s).
             builder.serverSetting("async_insert", "1")
                     .serverSetting("wait_for_async_insert", "0");
         }
@@ -105,7 +106,13 @@ public class ClickhouseRepository implements FlowRepository {
             // Persist raw flows
             this.client.insert("flows", flows.stream().map(this.flowMapper::flow).toList()).get();
 
-        } catch (final InterruptedException | ExecutionException e) {
+        } catch (final InterruptedException e) {
+            // Restore the flag before wrapping: the batching flusher swallows FlowException (a
+            // poison batch must not wedge it) and relies on the thread's interrupt status to
+            // observe a shutdown-drain interrupt.
+            Thread.currentThread().interrupt();
+            throw new FlowException(e);
+        } catch (final ExecutionException e) {
             throw new FlowException(e);
         }
     }

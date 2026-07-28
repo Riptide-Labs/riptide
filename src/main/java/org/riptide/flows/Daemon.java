@@ -180,8 +180,17 @@ public class Daemon implements ApplicationRunner {
     @PreDestroy
     public void stop() throws Exception {
         this.started = false;
+        // Listeners first: the parsers stop accepting packets and finish their in-flight
+        // dispatches, so the pipeline's shutdown drain below sees every accepted flow. A
+        // failing listener must not keep the pipeline (and its batch drain) from stopping.
+        for (final var listener : this.listeners) {
+            try {
+                listener.stop();
+            } catch (final RuntimeException e) {
+                log.warn("Failed to stop listener {}", listener.getName(), e);
+            }
+        }
         this.pipeline.stop();
-        this.listeners.forEach(Listener::stop);
     }
 
     /** The configured receivers, for health reporting. */

@@ -97,6 +97,21 @@ public abstract class ParserBase implements Parser {
     public void stop() {
         if (this.executor != null) {
             this.executor.shutdown();
+            try {
+                // Bounded wait for the in-flight dispatches to land in the repository (and its
+                // batch buffer) before the pipeline behind them is stopped and drained.
+                if (!this.executor.awaitTermination(5, SECONDS)) {
+                    log.warn("Parser {} executor did not terminate in time; cancelling remaining dispatches", this.name);
+                    // Cancel what is left: abandoned non-daemon workers would wedge JVM exit,
+                    // and shutdownNow also unblocks a caller stuck in the rejection handler's
+                    // blocking put().
+                    this.executor.shutdownNow();
+                }
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.warn("Interrupted while stopping parser {}; cancelling remaining dispatches", this.name);
+                this.executor.shutdownNow();
+            }
             this.executor = null;
         }
     }
