@@ -82,34 +82,6 @@
         "current": {}
       },
       {
-        "name": "bucket",
-        "label": "Bucket (s)",
-        "type": "custom",
-        "query": "60,300,900",
-        "current": {
-          "selected": true,
-          "text": "300",
-          "value": "300"
-        },
-        "options": [
-          {
-            "selected": false,
-            "text": "60",
-            "value": "60"
-          },
-          {
-            "selected": true,
-            "text": "300",
-            "value": "300"
-          },
-          {
-            "selected": false,
-            "text": "900",
-            "value": "900"
-          }
-        ]
-      },
-      {
         "name": "tenant",
         "label": "Tenant",
         "type": "query",
@@ -543,13 +515,14 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "table",
-          "rawSql": "SELECT toStartOfInterval(receivedAt, toIntervalSecond($bucket)) AS time,\n       if(exporterName != '', exporterName, exporterAddr) AS exporter,\n       1 AS state\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time, exporter\nORDER BY time",
+          "rawSql": "SELECT toStartOfInterval(receivedAt, toIntervalSecond($__interval_s)) AS time,\n       if(exporterName != '', exporterName, exporterAddr) AS exporter,\n       1 AS state\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time, exporter\nORDER BY time",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "interval": "5m"
     },
     {
       "id": 6,
@@ -631,13 +604,14 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "table",
-          "rawSql": "WITH top AS (SELECT exporterAddr AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) GROUP BY dim ORDER BY count() DESC LIMIT 10)\nSELECT toStartOfInterval(receivedAt, toIntervalSecond($bucket)) AS time,\n       if(exporterAddr IN (SELECT dim FROM top), if(exporterName != '', exporterName, exporterAddr), 'Other') AS series,\n       count() / $bucket AS rate\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time, series\nORDER BY time",
+          "rawSql": "WITH top AS (SELECT exporterAddr AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) GROUP BY dim ORDER BY count() DESC LIMIT 10)\nSELECT toStartOfInterval(receivedAt, toIntervalSecond($__interval_s)) AS time,\n       if(exporterAddr IN (SELECT dim FROM top), if(exporterName != '', exporterName, exporterAddr), 'Other') AS series,\n       count() / $__interval_s AS rate\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time, series\nORDER BY time",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "interval": "1m"
     },
     {
       "id": 7,
@@ -703,13 +677,14 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "table",
-          "rawSql": "SELECT toStartOfInterval(receivedAt, toIntervalSecond($bucket)) AS time,\n       toString(flowProtocol) AS series,\n       count() / $bucket AS rate\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time, series\nORDER BY time",
+          "rawSql": "SELECT toStartOfInterval(receivedAt, toIntervalSecond($__interval_s)) AS time,\n       toString(flowProtocol) AS series,\n       count() / $__interval_s AS rate\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time, series\nORDER BY time",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "interval": "1m"
     },
     {
       "id": 8,
@@ -819,13 +794,14 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "table",
-          "rawSql": "SELECT toStartOfInterval(receivedAt, toIntervalSecond($bucket)) AS time,\n       quantile(0.5)(dateDiff('millisecond', lastSwitched, receivedAt)) / 1000 AS \"p50\",\n       quantile(0.95)(dateDiff('millisecond', lastSwitched, receivedAt)) / 1000 AS \"p95\"\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time\nORDER BY time",
+          "rawSql": "SELECT toStartOfInterval(receivedAt, toIntervalSecond($__interval_s)) AS time,\n       quantile(0.5)(dateDiff('millisecond', lastSwitched, receivedAt)) / 1000 AS \"p50\",\n       quantile(0.95)(dateDiff('millisecond', lastSwitched, receivedAt)) / 1000 AS \"p95\"\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time\nORDER BY time",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
           }
         }
-      ]
+      ],
+      "interval": "1m"
     },
     {
       "id": 9,
@@ -870,7 +846,7 @@
                 "value": [
                   {
                     "title": "Slice flows for this exporter (Flow Forensics)",
-                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${bucket:queryparam}&${tenant:queryparam}&${zone:queryparam}&var-exporter=${__data.fields.Address}&from=${__from}&to=${__to}"
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&var-exporter=${__data.fields.Address}&from=${__from}&to=${__to}"
                   }
                 ]
               }
