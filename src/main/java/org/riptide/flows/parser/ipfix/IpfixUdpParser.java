@@ -86,7 +86,7 @@ public class IpfixUdpParser extends UdpParserBase implements DispatchableUdpPars
         return new SessionKey(remoteAddress, localAddress);
     }
 
-    public static class SessionKey implements UdpSessionManager.SessionKey {
+    public static final class SessionKey implements UdpSessionManager.SessionKey {
         private final InetSocketAddress remoteAddress;
         private final InetSocketAddress localAddress;
 

@@ -10,7 +10,7 @@ import lombok.ToString;
 import java.util.Objects;
 
 @ToString
-public class IPPortRange {
+public final class IPPortRange {
     private final int begin;
     private final int end;
 

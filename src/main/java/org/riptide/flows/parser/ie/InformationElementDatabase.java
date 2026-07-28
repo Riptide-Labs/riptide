@@ -14,7 +14,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 public final class InformationElementDatabase {
-    public static class Key {
+    public static final class Key {
         private final Protocol protocol;
         private final Long enterpriseNumber;
         private final Integer informationElementIdentifier;

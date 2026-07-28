@@ -79,7 +79,7 @@ public class Netflow9UdpParser extends UdpParserBase implements DispatchableUdpP
         return new SessionKey(remoteAddress.getAddress(), localAddress);
     }
 
-    public static class SessionKey implements UdpSessionManager.SessionKey {
+    public static final class SessionKey implements UdpSessionManager.SessionKey {
         private final InetAddress remoteAddress;
         private final InetSocketAddress localAddress;
 
