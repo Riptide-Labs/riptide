@@ -26,6 +26,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -48,7 +49,7 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
     }
 
     public IpfixTcpParser(final String name,
-                          final BiConsumer<Source, Flow> dispatcher,
+                          final BiConsumer<Source, List<Flow>> dispatcher,
                           final Identity identity,
                           final MetricRegistry metricRegistry,
                       @Qualifier("ipfixValueConversionService") ValueConversionService conversionService) {

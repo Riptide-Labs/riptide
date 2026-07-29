@@ -24,6 +24,7 @@ import org.slf4j.LoggerFactory;
 import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
@@ -47,7 +48,7 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
 
     public UdpParserBase(final Protocol protocol,
                          final String name,
-                         final BiConsumer<Source, Flow> dispatcher,
+                         final BiConsumer<Source, List<Flow>> dispatcher,
                          final Identity identity,
                          final MetricRegistry metricRegistry) {
         super(protocol, name, dispatcher, identity, metricRegistry);

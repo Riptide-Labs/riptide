@@ -5,6 +5,7 @@
 
 package org.riptide.flows;
 
+import com.codahale.metrics.Counter;
 import com.codahale.metrics.MetricRegistry;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -31,7 +32,6 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -57,12 +57,21 @@ public class Daemon implements ApplicationRunner {
         final var identity = config.resolveIdentity();
 
         this.pipeline = Objects.requireNonNull(pipeline);
-        final BiConsumer<Source, Flow> dispatcher = (source, flow) -> {
+        // A packet's records are dispatched as one batch (see ParserBase#transmit), so a failure
+        // here now costs the whole packet rather than a single flow. That makes swallowing it
+        // quietly unacceptable and rethrowing it worse: the previous RuntimeException travelled up
+        // into the dispatch task, where it was logged as "Error preparing records for dispatch" with
+        // no count and no exporter attribution.
+        //
+        // Count it and name the exporter instead, following the convention BatchingFlowRepository
+        // set: a poison batch must not wedge the pipeline, and loss must never be silent.
+        final Counter dispatchErrors = metricRegistry.counter(MetricRegistry.name("pipeline", "dispatchErrors"));
+        final BiConsumer<Source, List<Flow>> dispatcher = (source, flows) -> {
             try {
-                this.pipeline.process(source, Collections.singletonList(flow));
+                this.pipeline.process(source, flows);
             } catch (final FlowException e) {
-                // TODO fooker: real error handling
-                throw new RuntimeException(e);
+                dispatchErrors.inc(flows.size());
+                log.warn("Dropping {} flows from {}: enrichment failed", flows.size(), source.identity(), e);
             }
         };
 
