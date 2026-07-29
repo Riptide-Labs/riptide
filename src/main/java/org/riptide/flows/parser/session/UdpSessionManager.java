@@ -114,9 +114,13 @@ public class UdpSessionManager {
     }
 
     /**
-     * Exporters (session + observation domain) currently holding at least one template. Distinct
-     * from {@link #count()}, which counts templates: this is what must return to zero once an
-     * exporter's templates expire, or the per-exporter index leaks a mapping per address seen.
+     * Exporter (session + observation domain) mappings held. Distinct from {@link #count()}, which
+     * counts templates: this is what must return to zero once an exporter's templates expire, or
+     * the per-exporter index leaks a mapping per address ever seen.
+     *
+     * <p>Only eventually consistent with "has at least one template": {@link #doHousekeeping()}
+     * expires templates in one pass and reaps the emptied exporters in a second, so a caller can
+     * observe an exporter with no templates between the two.
      */
     int domainCount() {
         return this.templates.size();
@@ -341,15 +345,21 @@ public class UdpSessionManager {
         }
 
         private final class Resolver implements Session.Resolver {
-            private final long observationDomainId;
+            /**
+             * Built once, not per lookup. A Resolver is bound to one exporter for its lifetime while
+             * {@code lookupTemplate}/{@code lookupOptions} run per data record, so rebuilding the key
+             * each time cost a DomainKey plus two varargs arrays and a boxed long per record — on the
+             * very thread this indexing exists to unload.
+             */
+            private final DomainKey domain;
 
             private Resolver(final long observationDomainId) {
-                this.observationDomainId = observationDomainId;
+                this.domain = domain(observationDomainId);
             }
 
             /** This exporter's templates, or an empty map before the first template arrives. */
             private Map<Integer, TimeWrapper<TemplateOptions>> ownTemplates() {
-                final var byId = UdpSessionManager.this.templates.get(domain(this.observationDomainId));
+                final var byId = UdpSessionManager.this.templates.get(this.domain);
                 return byId != null ? byId : Map.of();
             }
 
@@ -374,6 +384,17 @@ public class UdpSessionManager {
                 // containsAll() admits them and their (empty) option map contributes nothing —
                 // the same outcome as the previous filter, without the collector-wide walk.
                 for (final var wrapper : ownTemplates().values()) {
+                    // Nothing recorded against this template means nothing can be found, so skip
+                    // before building scopeValues. This is what elides the data templates — they
+                    // never receive options, since addOptions is only reached under
+                    // type == OPTIONS_TEMPLATE (see the ipfix/netflow9 Packet data-set loops).
+                    // Filtering on the type instead would be subtly different: a zero-scope options
+                    // template keys its options under the empty set, so a template re-announced as
+                    // TEMPLATE could still legitimately match. Emptiness is exact either way.
+                    if (wrapper.wrapped.options.isEmpty()) {
+                        continue;
+                    }
+
                     final Template template = wrapper.wrapped.template;
 
                     if (scoped.containsAll(template.scopeNames)) {

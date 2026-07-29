@@ -249,6 +249,91 @@ public class UdpSessionManagerTest {
         assertThat(manager.domainCount()).as("and the exporter mappings are reaped with them").isZero();
     }
 
+    /**
+     * Smoke test for the per-exporter index (#389) under concurrent churn: one thread repeatedly
+     * creates and reaps an exporter mapping, another re-announces a second template into the same
+     * exporter and reads it straight back, and a third runs housekeeping. The timeout is long, so
+     * housekeeping only exercises the empty-exporter reap, not expiry.
+     *
+     * <p><strong>Known limitation — do not over-trust this test.</strong> It does <em>not</em>
+     * reproduce the reap-vs-insert race that {@code reapEmptyDomains()} uses
+     * {@code computeIfPresent} to avoid. Verified by injecting the regression (reap via
+     * {@code entrySet().removeIf(e -> e.getValue().isEmpty())}): this test still passed. The reason
+     * is that {@code removeIf} removes value-conditionally, and an insert mutates the inner map in
+     * place without changing the mapped instance, so the losing interleaving requires the predicate
+     * to be evaluated before an insert and the removal to land after it — a window too narrow to hit
+     * probabilistically. The argument for {@code computeIfPresent} rests on the bin-lock reasoning
+     * documented on the {@code templates} field, not on this test.
+     *
+     * <p>What it does catch is gross breakage: a non-atomic {@code computeIfAbsent} plus separate
+     * inner {@code put}, dropping the outer {@code compute}, or swapping in a non-thread-safe map.
+     */
+    @Test
+    public void concurrentChurnDoesNotLoseTemplatesOrThrow() throws Exception {
+        final var manager = new UdpSessionManager(Duration.ofHours(1), () -> new SequenceNumberTracker(32));
+        final var sessionKey = new Netflow9UdpParser.SessionKey(remoteAddress1.getAddress(), localAddress1);
+        final var session = manager.getSession(sessionKey);
+
+        final var churn = Template.builder(1, Template.Type.TEMPLATE)
+                .withFields(new ArrayList<>(List.of(field("f1")))).build();
+        final var stable = Template.builder(2, Template.Type.TEMPLATE)
+                .withFields(new ArrayList<>(List.of(field("f2")))).build();
+
+        final var stop = new java.util.concurrent.atomic.AtomicBoolean(false);
+        final var losses = new java.util.concurrent.atomic.AtomicInteger(0);
+        final var errors = new java.util.concurrent.CopyOnWriteArrayList<Throwable>();
+
+        final Runnable churner = () -> {
+            while (!stop.get()) {
+                session.addTemplate(observationId1, churn);
+                session.removeTemplate(observationId1, churn.id);
+            }
+        };
+        final Runnable reannouncer = () -> {
+            while (!stop.get()) {
+                session.addTemplate(observationId1, stable);
+                try {
+                    // must be visible immediately after the insert returns
+                    session.getResolver(observationId1).lookupTemplate(stable.id);
+                } catch (final Exception e) {
+                    losses.incrementAndGet();
+                }
+                session.removeTemplate(observationId1, stable.id);
+            }
+        };
+        final Runnable housekeeper = () -> {
+            while (!stop.get()) {
+                manager.doHousekeeping();
+            }
+        };
+
+        final var threads = new ArrayList<Thread>();
+        for (final Runnable r : List.of(churner, reannouncer, housekeeper)) {
+            final var t = new Thread(() -> {
+                try {
+                    r.run();
+                } catch (final Throwable e) {
+                    errors.add(e);
+                }
+            });
+            t.setDaemon(true);
+            threads.add(t);
+            t.start();
+        }
+
+        Thread.sleep(3000);
+        stop.set(true);
+        for (final var t : threads) {
+            t.join(10_000);
+        }
+
+        assertThat(errors).as("no thread died").isEmpty();
+        assertThat(losses.get())
+                .as("a template must be resolvable immediately after addTemplate returns, even while "
+                        + "another thread is reaping the exporter mapping")
+                .isZero();
+    }
+
     @Test
     public void testNetflow9() {
         testNetflow9SessionKeys(remoteAddress1, localAddress1, remoteAddress1, localAddress1, true);
