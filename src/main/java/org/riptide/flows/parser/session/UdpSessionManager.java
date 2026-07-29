@@ -118,11 +118,14 @@ public class UdpSessionManager {
      * counts templates: this is what must return to zero once an exporter's templates expire, or
      * the per-exporter index leaks a mapping per address ever seen.
      *
+     * <p>Granularity is one entry per {@code (session, observation domain)} pair, i.e. per exporting
+     * process — a single source address announcing two observation domains counts twice.
+     *
      * <p>Only eventually consistent with "has at least one template": {@link #doHousekeeping()}
      * expires templates in one pass and reaps the emptied exporters in a second, so a caller can
      * observe an exporter with no templates between the two.
      */
-    int domainCount() {
+    public int domainCount() {
         return this.templates.size();
     }
 

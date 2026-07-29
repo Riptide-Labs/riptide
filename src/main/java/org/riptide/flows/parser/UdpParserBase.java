@@ -55,10 +55,20 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
         this.packetsReceived = metricRegistry.meter(MetricRegistry.name("parsers",  name, "packetsReceived"));
         this.parserErrors = metricRegistry.counter(MetricRegistry.name("parsers",  name, "parserErrors"));
 
+        // sessionCount reported sessionManager.count() — the TEMPLATE total, not the number of
+        // exporters — so it has always overstated by however many templates each exporter announces.
+        // domainCount() is the quantity the name promises: one per (session, observation domain).
         String sessionCountGauge = MetricRegistry.name("parsers",  name, "sessionCount");
         // Register only if it's not already there in the registry.
         if (!metricRegistry.getGauges().containsKey(sessionCountGauge)) {
-            metricRegistry.register(sessionCountGauge, (Gauge<Integer>) () -> (this.sessionManager != null) ? this.sessionManager.count() : null);
+            metricRegistry.register(sessionCountGauge, (Gauge<Integer>) () -> (this.sessionManager != null) ? this.sessionManager.domainCount() : null);
+        }
+
+        // The old value is still worth having — template cardinality is what drives the parse-path
+        // cost — just under a name that says what it is.
+        String templateCountGauge = MetricRegistry.name("parsers",  name, "templateCount");
+        if (!metricRegistry.getGauges().containsKey(templateCountGauge)) {
+            metricRegistry.register(templateCountGauge, (Gauge<Integer>) () -> (this.sessionManager != null) ? this.sessionManager.count() : null);
         }
     }
 
