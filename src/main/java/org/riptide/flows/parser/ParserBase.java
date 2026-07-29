@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -52,12 +53,27 @@ public abstract class ParserBase implements Parser {
     private int threads = DEFAULT_NUM_THREADS;
 
     /**
-     * Depth of the handoff queue between the listener and the workers. Four packets per worker:
-     * deep enough to absorb the bursts UDP delivers without the listener stalling, shallow enough
-     * that a genuinely overloaded pipeline reports it promptly instead of hiding a growing backlog.
-     * Each entry is one packet's flows, so the resident bound is this times records-per-packet.
+     * Depth of the handoff queue between the listener and the workers, in packets.
+     *
+     * <p>Sized from a measurement, not a guess. An earlier attempt used four packets per worker (32)
+     * and throughput collapsed from ~61k to ~27k rows/s with 14 million records dropped here: UDP
+     * arrives in bursts, so a shallow queue overflows during a burst while the workers idle between
+     * them — they sat at under 2% CPU. The previous design accidentally had enormous burst
+     * absorption, because blocking the listener pushed back into a 256 MB kernel socket buffer that
+     * was doing the real queueing. Replacing that with 32 slots threw away data the kernel would
+     * have held.
+     *
+     * <p>4096 packets is ~100k records at typical fan-out, roughly 20 MB resident — comparable
+     * absorption, but bounded and counted in userspace where the loss is visible.
      */
-    private int queueCapacity = DEFAULT_NUM_THREADS * 4;
+    private int queueCapacity = 4096;
+
+    /**
+     * How long the listener will wait for queue space before dropping. Short and bounded: the point
+     * is to let the kernel's socket buffer absorb a burst rather than discard it, while never
+     * blocking the event loop indefinitely the way the old {@code SynchronousQueue.put()} did.
+     */
+    private static final long OFFER_TIMEOUT_MS = 20;
 
     /** Packets dropped at the handoff because the workers were behind — the seam's loss ledger. */
     private final Counter dispatchDrops;
@@ -109,18 +125,17 @@ public abstract class ParserBase implements Parser {
         this.executor = new ThreadPoolExecutor(
                 this.threads, this.threads,
                 60L, SECONDS,
-                new ArrayBlockingQueue<>(this.queueCapacity),
-                (r, executor) -> {
-                    // Never CallerRunsPolicy: the caller is the event loop, so running a task here
-                    // stalls socket reads for every channel on that loop (and CERT TPS01-J warns it
-                    // cannot prevent starvation deadlock when tasks block on I/O, which these do).
-                    this.dispatchDrops.inc();
-                    if (log.isWarnEnabled() && this.dropWarnLimiter.tryAcquire()) {
-                        log.warn("Parser {} dispatch queue full ({} deep) — dropping a packet's flows; "
-                                        + "{} drops so far. Enrichment or persistence cannot keep up.",
-                                this.name, this.queueCapacity, this.dispatchDrops.getCount());
-                    }
-                });
+                new ArrayBlockingQueue<>(this.queueCapacity));
+        // Default AbortPolicy on purpose, so rejection is thrown to the submitter rather than
+        // swallowed here. The submitter owns the packet's retained ByteBuf, which UdpListener
+        // releases when the returned future completes (see #273); a handler that quietly discarded
+        // the task left that future pending forever and leaked one direct buffer per drop. That is
+        // not theoretical — it exhausted the 2 GB direct-memory pool in about 90 seconds under
+        // overload. Rejection is handled in transmit(), where the future and the counters are.
+        //
+        // Never CallerRunsPolicy either: the caller is the event loop, so running a task here would
+        // stall socket reads for every channel on that loop, and CERT TPS01-J warns it cannot
+        // prevent starvation deadlock when tasks block on I/O, which these do.
     }
 
     @Override
@@ -186,6 +201,28 @@ public abstract class ParserBase implements Parser {
         this.threads = threads;
     }
 
+    /**
+     * Hand the task to the workers, waiting briefly for space. Returns false only when the pipeline
+     * is genuinely saturated, at which point the caller drops and counts.
+     */
+    private boolean enqueue(final Runnable task) {
+        final var pool = (ThreadPoolExecutor) this.executor;
+        try {
+            pool.execute(task);
+            return true;
+        } catch (final RejectedExecutionException e) {
+            if (pool.isShutdown()) {
+                return false;
+            }
+        }
+        try {
+            return pool.getQueue().offer(task, OFFER_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
     protected CompletableFuture<?> transmit(final Instant receivedAt,
                                             final FlowPacket packet,
                                             final Session session) {
@@ -223,7 +260,30 @@ public abstract class ParserBase implements Parser {
             this.recordsDispatched.mark(flows.size());
         };
 
-        final var future = CompletableFuture.runAsync(dispatch, this.executor);
+        // The future is built here rather than by runAsync so that every exit path completes it:
+        // UdpListener releases the packet's retained ByteBuf when this future completes, so a path
+        // that returns something pending leaks a direct buffer (see start(), and #273).
+        final CompletableFuture<Void> future = new CompletableFuture<>();
+        final Runnable task = () -> {
+            try {
+                dispatch.run();
+                future.complete(null);
+            } catch (final Throwable t) {
+                future.completeExceptionally(t);
+            }
+        };
+
+        if (!enqueue(task)) {
+            this.dispatchDrops.inc(flows.size());
+            if (log.isWarnEnabled() && this.dropWarnLimiter.tryAcquire()) {
+                log.warn("Parser {} dispatch queue full ({} packets deep) even after waiting {} ms — "
+                                + "dropped a packet's {} flows; {} records dropped so far. "
+                                + "Enrichment or persistence cannot keep up.",
+                        this.name, this.queueCapacity, OFFER_TIMEOUT_MS, flows.size(),
+                        this.dispatchDrops.getCount());
+            }
+            return CompletableFuture.completedFuture(null);
+        }
 
         this.recordsScheduled.mark(flows.size());
 
