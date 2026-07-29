@@ -86,10 +86,7 @@ public class ClickhouseRepository implements FlowRepository {
                 .setUsername(this.username)
                 .setPassword(this.password)
                 .setDefaultDatabase(config.getDatabase())
-                // Request compression is the insert path and costs flusher CPU, so it is
-                // configurable (see ClickhouseConfig#compressRequests). Response compression only
-                // affects the schema queries at startup, so it stays on unconditionally.
-                .compressClientRequest(config.isCompressRequests())
+                .compressClientRequest(true)
                 .compressServerResponse(true);
         if (config.isAsyncInserts()) {
             // Server-side coalescing, now opt-in: client-side batching supersedes it (see
