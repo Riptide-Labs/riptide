@@ -65,14 +65,18 @@ class ParserDispatchTest {
     void udpDropsWhenSaturatedAndCountsEveryLostRecord() throws Exception {
         final var registry = new MetricRegistry();
         final var gate = new CountDownLatch(1);
+        final var entered = new CountDownLatch(1);
         // One worker, one queue slot: the third packet has nowhere to go.
         final var tally = new AtomicInteger();
-        final var parser = start(new StubParser("udp", registry, true, gated(gate, tally)), 1, 1);
+        final var parser = start(new StubParser("udp", registry, true, gated(entered, gate, tally)), 1, 1);
 
         final var accepted = new ArrayList<CompletableFuture<?>>();
-        for (int i = 0; i < 2; i++) {
-            accepted.add(parser.dispatch());
-        }
+        accepted.add(parser.dispatch());
+        // Wait until the worker actually holds packet one and is parked, so the queue is provably
+        // empty; otherwise packet two races the dequeue and may be the one that drops.
+        assertThat(entered.await(10, TimeUnit.SECONDS)).as("worker must pick up the first packet").isTrue();
+        accepted.add(parser.dispatch());          // fills the single queue slot
+
         // The worker is parked on the gate and the single slot is taken, so this one must drop —
         // after the bounded offer wait, not before.
         final var dropped = parser.dispatch();
@@ -101,15 +105,22 @@ class ParserDispatchTest {
     void reliableTransportBlocksRatherThanDropping() throws Exception {
         final var registry = new MetricRegistry();
         final var gate = new CountDownLatch(1);
+        final var entered = new CountDownLatch(1);
         final var tally = new AtomicInteger();
-        final var parser = start(new StubParser("tcp", registry, false, gated(gate, tally)), 1, 1);
+        final var parser = start(new StubParser("tcp", registry, false, gated(entered, gate, tally)), 1, 1);
 
         parser.dispatch();
-        parser.dispatch();
+        assertThat(entered.await(10, TimeUnit.SECONDS)).as("worker must pick up the first packet").isTrue();
+        parser.dispatch();                        // fills the single queue slot
 
-        // Third submission must block, not drop. Prove it by showing it is still pending while the
-        // worker is gated, then completes once the gate opens.
-        final var blocked = CompletableFuture.supplyAsync(parser::dispatch);
+        // Third submission must block, not drop. Run it on a thread of its own rather than via
+        // supplyAsync: the main thread is the only one that can open the gate so it must never be
+        // the one that blocks here, and the common pool is a shared resource this test should not
+        // depend on being free.
+        final var blocked = new CompletableFuture<CompletableFuture<?>>();
+        final var submitter = new Thread(() -> blocked.complete(parser.dispatch()), "blocked-submitter");
+        submitter.setDaemon(true);
+        submitter.start();
         Thread.sleep(300);
         assertThat(blocked.isDone()).as("submission must block while the queue is full").isFalse();
         assertThat(counter(registry, "tcp", "dispatchDrops"))
@@ -118,6 +129,7 @@ class ParserDispatchTest {
 
         gate.countDown();
         blocked.get(10, TimeUnit.SECONDS).get(10, TimeUnit.SECONDS);
+        submitter.join(TimeUnit.SECONDS.toMillis(10));
         assertThat(tally.get()).isEqualTo(3 * FLOWS_PER_PACKET);
     }
 
@@ -125,10 +137,12 @@ class ParserDispatchTest {
     void shutdownAccountsForQueuedWorkItCouldNotDrain() throws Exception {
         final var registry = new MetricRegistry();
         final var gate = new CountDownLatch(1);
+        final var entered = new CountDownLatch(1);
         final var parser = start(new StubParser("drain", registry, true,
-                gated(gate, new AtomicInteger())), 1, 4);
+                gated(entered, gate, new AtomicInteger())), 1, 4);
 
         parser.dispatch();                       // taken by the gated worker
+        assertThat(entered.await(10, TimeUnit.SECONDS)).as("worker must pick up the first packet").isTrue();
         final var queued = new ArrayList<CompletableFuture<?>>();
         for (int i = 0; i < 3; i++) {
             queued.add(parser.dispatch());       // sits in the queue, will never run
@@ -230,9 +244,22 @@ class ParserDispatchTest {
 
     // ---------------------------------------------------------------- helpers
 
-    /** A dispatcher that parks on {@code gate} (if any) and tallies what it received. */
-    private static BiConsumer<Source, List<Flow>> gated(final CountDownLatch gate, final AtomicInteger tally) {
+    /**
+     * A dispatcher that announces arrival on {@code entered}, then parks on {@code gate} (if any)
+     * and tallies what it received.
+     *
+     * <p>{@code entered} is what makes the saturation tests deterministic. {@code start()} calls
+     * {@code prestartAllCoreThreads()}, so the worker already counts towards {@code corePoolSize}
+     * and {@code execute()} routes the very first packet through {@code workQueue.offer()} rather
+     * than handing it straight to a thread. Whether the <em>second</em> packet finds a free slot
+     * therefore depends on whether the worker has dequeued the first one yet — a race the test must
+     * not guess at. Waiting on {@code entered} pins the queue's occupancy before submitting more.
+     */
+    private static BiConsumer<Source, List<Flow>> gated(final CountDownLatch entered,
+                                                        final CountDownLatch gate,
+                                                        final AtomicInteger tally) {
         return (source, flows) -> {
+            entered.countDown();
             if (gate != null) {
                 try {
                     gate.await(20, TimeUnit.SECONDS);
