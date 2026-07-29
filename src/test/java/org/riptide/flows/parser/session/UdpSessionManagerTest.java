@@ -173,6 +173,82 @@ public class UdpSessionManagerTest {
         assertThat(udpSessionManager.getTemplates().get(new UdpSessionManager.TemplateKey(sessionKey, observationId1, template.id))).isNull();
     }
 
+    /**
+     * Option resolution must depend only on the exporter in hand, not on how many other exporters
+     * the collector is fronting. Guards the per-exporter template index (#389): the previous flat
+     * map found an exporter's templates by scanning every entry in the collector, so this asserts
+     * the property that indexing has to preserve — same answer with 1 exporter or 500.
+     */
+    @Test
+    public void lookupOptionsIsUnaffectedByOtherExporters() {
+        final var sessionKey = new Netflow9UdpParser.SessionKey(remoteAddress1.getAddress(), localAddress1);
+        final var manager = new UdpSessionManager(Duration.ofMinutes(5), () -> new SequenceNumberTracker(32));
+        final var session = manager.getSession(sessionKey);
+
+        final var scopes = List.of(scope("scope1"), scope("scope2"));
+        final var fields = List.of(field("field1"), field("field2"));
+        session.addTemplate(observationId1,
+                Template.builder(templateId1, Template.Type.OPTIONS_TEMPLATE)
+                        .withFields(new ArrayList<>(fields)).withScopes(new ArrayList<>(scopes)).build());
+
+        final var scopeValues = new ArrayList<Value<?>>(List.of(
+                value("scope1", "scopeValue1"), value("scope2", "scopeValue2")));
+        session.addOptions(observationId1, templateId1, scopeValues, new ArrayList<>(List.of(
+                value("additionalField1", "additionalValue1"), value("additionalField2", "additionalValue2"))));
+
+        final var expected = session.getResolver(observationId1).lookupOptions(scopeValues);
+        assertThat(expected).hasSize(2);
+
+        // 500 unrelated exporters, each with an option template carrying the same template id and
+        // the same scope names but different values — the shape most likely to leak across
+        // exporters if the index were keyed wrongly.
+        for (int i = 0; i < 500; i++) {
+            final var otherKey = new Netflow9UdpParser.SessionKey(
+                    InetAddress.getLoopbackAddress(), new InetSocketAddress("10.10.10.10", 20000 + i));
+            final var other = manager.getSession(otherKey);
+            other.addTemplate(observationId1,
+                    Template.builder(templateId1, Template.Type.OPTIONS_TEMPLATE)
+                            .withFields(new ArrayList<>(fields)).withScopes(new ArrayList<>(scopes)).build());
+            other.addOptions(observationId1, templateId1, scopeValues,
+                    new ArrayList<>(List.of(value("additionalField1", "WRONG-" + i))));
+        }
+
+        assertThat(manager.domainCount()).isEqualTo(501);
+
+        // unchanged answer, and specifically none of the other exporters' values
+        assertThat(session.getResolver(observationId1).lookupOptions(scopeValues))
+                .containsExactlyElementsOf(expected);
+        assertThat(session.getResolver(observationId1).lookupOptions(scopeValues))
+                .noneMatch(v -> String.valueOf(v.getValue()).startsWith("WRONG-"));
+    }
+
+    /**
+     * Once an exporter's last template expires the exporter mapping itself must go, or the
+     * per-exporter index accumulates one empty entry per address ever seen — the same
+     * unbounded-growth failure the sequence-tracker eviction exists to prevent. Churning sources
+     * (NAT, roaming agents) make this reachable in practice.
+     */
+    @Test
+    public void housekeepingReapsExportersWithNoTemplatesLeft() {
+        final var manager = new UdpSessionManager(Duration.ofMinutes(0), () -> new SequenceNumberTracker(32));
+
+        for (int i = 0; i < 25; i++) {
+            final var key = new Netflow9UdpParser.SessionKey(
+                    InetAddress.getLoopbackAddress(), new InetSocketAddress("10.10.10.10", 30000 + i));
+            manager.getSession(key).addTemplate(observationId1,
+                    Template.builder(templateId1, Template.Type.TEMPLATE)
+                            .withFields(new ArrayList<>(List.of(field("field1")))).build());
+        }
+
+        assertThat(manager.domainCount()).isEqualTo(25);
+        assertThat(manager.count()).isEqualTo(25);
+
+        manager.doHousekeeping();
+
+        assertThat(manager.count()).as("templates expire").isZero();
+        assertThat(manager.domainCount()).as("and the exporter mappings are reaped with them").isZero();
+    }
+
     @Test
     public void testNetflow9() {
         testNetflow9SessionKeys(remoteAddress1, localAddress1, remoteAddress1, localAddress1, true);
