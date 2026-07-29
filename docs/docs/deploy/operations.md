@@ -71,6 +71,25 @@ restart. Configuration is backward-compatible within a minor line; breaking conf
 moves are logged loudly at startup (e.g. the pre-0.1.0 `riptide.snmp.config.definitions`
 tree logs an explicit error pointing at `riptide.nodes`).
 
+### `parsers.<name>.sessionCount` changed meaning
+
+`sessionCount` used to report the **template** total, not the number of exporters — so it
+overstated by however many templates each exporter announces, and it moved when a single
+exporter merely re-announced its templates. It now reports what the name says: one per
+`(session, observation domain)` pair, i.e. per exporting process.
+
+Expect the value to **drop** on upgrade, by roughly the templates-per-exporter factor. Any
+dashboard or alert keyed on its magnitude needs rebaselining. The previous quantity is still
+published, under the name that describes it:
+
+| Gauge | Reports |
+|---|---|
+| `parsers.<name>.sessionCount` | exporters — `(session, observation domain)` pairs |
+| `parsers.<name>.templateCount` | templates held across all exporters |
+
+Template cardinality is the more useful of the two for capacity work: it is what drives the
+per-record cost of the parse path.
+
 ## Health endpoints & probes
 
 Riptide serves two plain-HTTP health endpoints on a management port (default `8080`) — no auth, no

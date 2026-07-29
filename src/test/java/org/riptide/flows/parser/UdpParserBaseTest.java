@@ -41,6 +41,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class UdpParserBaseTest {
 
     private static final InetSocketAddress REMOTE = new InetSocketAddress("10.0.0.1", 51000);
+    private static final InetSocketAddress SECOND_REMOTE = new InetSocketAddress("10.0.0.3", 51000);
     private static final InetSocketAddress LOCAL = new InetSocketAddress("10.0.0.2", 4739);
     private static final int TEMPLATE_ID = 256;
 
@@ -51,6 +52,8 @@ class UdpParserBaseTest {
     /** P = installs a garbage template mid-packet, then fails; Q = probes for that template. */
     private static final byte POISONED = 'P';
     private static final byte PROBE_POISON = 'Q';
+    /** S = adds a SECOND template to the same exporter, without failing the packet. */
+    private static final byte ADD_SECOND_TEMPLATE = 'S';
     private static final int GARBAGE_TEMPLATE_ID = 300;
 
     private ScheduledExecutorService executor;
@@ -99,10 +102,52 @@ class UdpParserBaseTest {
         assertThat(this.parser.templateResolved).isTrue();
     }
 
+    /**
+     * {@code sessionCount} and {@code templateCount} must report different quantities.
+     *
+     * <p>{@code sessionCount} was wired to the template total for years — it counted templates while
+     * its name promised exporters, so it overstated by however many templates each exporter
+     * announces and moved when an exporter merely re-announced. Nothing caught that, because neither
+     * gauge was covered. This pins both by making the two numbers differ: two exporters, three
+     * templates.
+     */
+    @Test
+    void gaugesReportExportersAndTemplatesSeparately() throws Exception {
+        final var registry = new MetricRegistry();
+        final var parser = new StubParser(registry);
+        parser.start(this.executor);
+        try {
+            parse(parser, ADD_TEMPLATE, REMOTE);
+            parse(parser, ADD_TEMPLATE, SECOND_REMOTE);
+            // a second template for the first exporter only — this is what separates the gauges
+            parse(parser, ADD_SECOND_TEMPLATE, REMOTE);
+
+            assertThat(gauge(registry, "sessionCount"))
+                    .as("exporters, i.e. (session, observation domain) pairs")
+                    .isEqualTo(2);
+            assertThat(gauge(registry, "templateCount"))
+                    .as("templates across all exporters")
+                    .isEqualTo(3);
+        } finally {
+            parser.stop();
+        }
+    }
+
+    private static int gauge(final MetricRegistry registry, final String name) {
+        final var g = registry.getGauges().get(MetricRegistry.name("parsers", "stub", name));
+        assertThat(g).as("gauge parsers.stub.%s is registered", name).isNotNull();
+        return (Integer) g.getValue();
+    }
+
     private void parse(final byte marker) throws Exception {
+        parse(this.parser, marker, REMOTE);
+    }
+
+    private static void parse(final UdpParserBase parser, final byte marker, final InetSocketAddress remote)
+            throws Exception {
         final ByteBuf buffer = Unpooled.buffer().writeByte(marker);
         try {
-            this.parser.parse(Instant.now(), buffer, REMOTE, LOCAL).join();
+            parser.parse(Instant.now(), buffer, remote, LOCAL).join();
         } finally {
             buffer.release();
         }
@@ -114,8 +159,12 @@ class UdpParserBaseTest {
         private boolean garbageTemplateRetained;
 
         StubParser() {
+            this(new MetricRegistry());
+        }
+
+        StubParser(final MetricRegistry metricRegistry) {
             super(Protocol.IPFIX, "stub", (source, flow) -> { }, new Identity("t", "o", "z", "s"),
-                    new MetricRegistry());
+                    metricRegistry);
         }
 
         @Override
@@ -136,6 +185,9 @@ class UdpParserBaseTest {
                             .withFields(List.of(field())).build());
                     throw new InvalidPacketException(buffer, "Invalid set ID: %d", 0);
                 }
+                case ADD_SECOND_TEMPLATE -> session.addTemplate(0,
+                        Template.builder(GARBAGE_TEMPLATE_ID, Template.Type.TEMPLATE)
+                                .withFields(List.of(field())).build());
                 case PROBE_POISON -> {
                     try {
                         session.getResolver(0).lookupTemplate(GARBAGE_TEMPLATE_ID);

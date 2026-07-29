@@ -104,7 +104,14 @@ public class UdpSessionManager {
         return new UdpSession(sessionKey);
     }
 
-    /** Total templates held across all exporters. */
+    /**
+     * Total templates held across all exporters.
+     *
+     * <p>O(exporters) since the per-exporter indexing, where it used to be a {@code size()} field
+     * read, and it backs the {@code parsers.<name>.templateCount} gauge — so a metrics scrape now
+     * walks the outer map. That is a few thousand map reads at realistic fleet sizes, against a
+     * scrape interval measured in seconds, but it is not free: do not call it per packet.
+     */
     public int count() {
         return this.templates.values().stream().mapToInt(Map::size).sum();
     }
