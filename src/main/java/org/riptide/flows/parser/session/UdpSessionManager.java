@@ -5,7 +5,6 @@
 
 package org.riptide.flows.parser.session;
 
-import com.google.common.collect.Iterables;
 import org.riptide.flows.parser.exceptions.MissingTemplateException;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.state.ExporterState;
@@ -28,12 +27,33 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 public class UdpSessionManager {
-    private final ConcurrentMap<TemplateKey, TimeWrapper<TemplateOptions>> templates = new ConcurrentHashMap<>();
+    /**
+     * Templates indexed by exporter (session + observation domain) first, template id second.
+     *
+     * <p>The nesting is load-bearing, not cosmetic. This used to be one flat
+     * {@code Map<TemplateKey, ...>} for the whole collector, and {@code lookupOptions} found an
+     * exporter's templates by scanning every entry and filtering on the session key — an
+     * O(total exporters) walk with an {@code InetSocketAddress.equals} per entry, executed on the
+     * Netty event-loop thread for every data record. Profiling a 1,500-exporter fleet put that
+     * single thread at ~90% of one core with ~52% of its samples in
+     * {@code InetSocketAddress.equals} and ~17% in {@code ConcurrentHashMap} iteration, while the
+     * parser pool sat at ~4% per thread — the collector was producer-bound on a linear scan whose
+     * cost grew with the size of the deployment. Keying by {@link DomainKey} makes both
+     * {@code lookupOptions} and {@code removeAllTemplate} touch only the templates of the exporter
+     * in hand.
+     *
+     * <p>Concurrency contract: the inner maps must never be published to a writer while the outer
+     * mapping can be dropped underneath it, or a template insert can be silently lost. Every
+     * insert therefore mutates the inner map inside an outer {@link ConcurrentMap#compute}, and
+     * empty inner maps are reaped only via {@link ConcurrentMap#computeIfPresent} — both hold the
+     * bin lock for the key, so an insert and a reap of the same exporter cannot interleave.
+     */
+    private final ConcurrentMap<DomainKey, ConcurrentMap<Integer, TimeWrapper<TemplateOptions>>> templates =
+            new ConcurrentHashMap<>();
 
     private final Map<TrackerKey, TrackedSequence> sequenceNumbers = new ConcurrentHashMap<>();
 
@@ -57,59 +77,92 @@ public class UdpSessionManager {
 
     public void doHousekeeping() {
         final Instant timeout = Instant.now().minus(this.timeout);
-        this.removeTemplateIf(e -> e.getValue().time.isBefore(timeout));
+        this.templates.forEach((domain, byId) -> byId.entrySet().removeIf(e -> e.getValue().time.isBefore(timeout)));
+        this.reapEmptyDomains();
         // sequence trackers have their own lifecycle: templates are re-announced and
         // re-inserted, trackers are touched on every datagram — evict idle ones so
         // churning sources (NAT, roaming agents) don't accumulate trackers forever
         this.sequenceNumbers.entrySet().removeIf(e -> e.getValue().lastSeen.isBefore(timeout));
     }
 
-    private void removeTemplateIf(final Predicate<Map.Entry<TemplateKey, TimeWrapper<TemplateOptions>>> predicate) {
-        UdpSessionManager.this.templates.entrySet().removeIf(predicate);
+    /**
+     * Drop exporters whose last template just expired. Without this, a churning source (NAT,
+     * roaming agents) leaves one empty inner map per address forever — the same unbounded-growth
+     * problem the sequence-tracker eviction above exists to avoid.
+     *
+     * <p>{@code computeIfPresent} rather than {@code entrySet().removeIf}: the latter evaluates the
+     * predicate and then removes by key, so a template inserted in between would be dropped with
+     * the mapping. {@code computeIfPresent} re-checks emptiness while holding the key's bin lock.
+     */
+    private void reapEmptyDomains() {
+        for (final DomainKey domain : this.templates.keySet()) {
+            this.templates.computeIfPresent(domain, (k, byId) -> byId.isEmpty() ? null : byId);
+        }
     }
 
     public Session getSession(final SessionKey sessionKey) {
         return new UdpSession(sessionKey);
     }
 
+    /** Total templates held across all exporters. */
     public int count() {
-        return this.templates.size();
+        return this.templates.values().stream().mapToInt(Map::size).sum();
     }
 
     int sequenceTrackerCount() {
         return this.sequenceNumbers.size();
     }
 
+    /**
+     * Exporter (session + observation domain) mappings held. Distinct from {@link #count()}, which
+     * counts templates: this is what must return to zero once an exporter's templates expire, or
+     * the per-exporter index leaks a mapping per address ever seen.
+     *
+     * <p>Granularity is one entry per {@code (session, observation domain)} pair, i.e. per exporting
+     * process — a single source address announcing two observation domains counts twice.
+     *
+     * <p>Only eventually consistent with "has at least one template": {@link #doHousekeeping()}
+     * expires templates in one pass and reaps the emptied exporters in a second, so a caller can
+     * observe an exporter with no templates between the two.
+     */
+    public int domainCount() {
+        return this.templates.size();
+    }
+
     public Object dumpInternalState() {
         final ParserState.Builder parser = ParserState.builder();
 
-        final Map<DomainKey, List<Map.Entry<TemplateKey, TimeWrapper<TemplateOptions>>>> sessions = this.templates.entrySet().stream()
-                .collect(Collectors.groupingBy(e -> e.getKey().observationDomainId));
-
-        for (final var entry : sessions.entrySet()) {
+        this.templates.forEach((domain, byId) -> {
             final String key = String.format("%s#%s",
-                    entry.getKey().sessionKey.getDescription(),
-                    entry.getKey().observationDomainId);
+                    domain.sessionKey.getDescription(),
+                    domain.observationDomainId);
 
             final ExporterState.Builder exporter = ExporterState.builder(key);
 
-            entry.getValue().forEach(e -> {
-                exporter.withTemplate(TemplateState.builder(e.getKey().templateId).withInsertionTime(e.getValue().time));
-                e.getValue().wrapped.options.forEach((selectors, values) ->
-                        exporter.withOptions(OptionState.builder(e.getKey().templateId)
+            byId.forEach((templateId, wrapper) -> {
+                exporter.withTemplate(TemplateState.builder(templateId).withInsertionTime(wrapper.time));
+                wrapper.wrapped.options.forEach((selectors, values) ->
+                        exporter.withOptions(OptionState.builder(templateId)
                                 .withInsertionTime(values.time)
                                 .withSelectors(selectors)
                                 .withValues(values.wrapped)));
             });
 
             parser.withExporter(exporter);
-        }
+        });
 
         return parser.build();
     }
 
+    /**
+     * Flattened snapshot of every template, keyed as before the per-exporter indexing. Builds a
+     * copy on each call, so it is a diagnostic/test accessor — never call it on the packet path.
+     */
     public Map<TemplateKey, TimeWrapper<TemplateOptions>> getTemplates() {
-        return Collections.unmodifiableMap(this.templates);
+        final Map<TemplateKey, TimeWrapper<TemplateOptions>> flat = new LinkedHashMap<>();
+        this.templates.forEach((domain, byId) -> byId.forEach((templateId, wrapper) ->
+                flat.put(new TemplateKey(domain.sessionKey, domain.observationDomainId, templateId), wrapper)));
+        return Collections.unmodifiableMap(flat);
     }
 
     public interface SessionKey {
@@ -221,31 +274,43 @@ public class UdpSessionManager {
             this.sessionKey = Objects.requireNonNull(sessionKey);
         }
 
+        private DomainKey domain(final long observationDomainId) {
+            return new DomainKey(this.sessionKey, observationDomainId);
+        }
+
         @Override
         public void addTemplate(final long observationDomainId, final Template template) {
-            final TemplateKey key = new TemplateKey(this.sessionKey, observationDomainId, template.id);
-            UdpSessionManager.this.templates.compute(key, (k, wrapper) -> {
-                TemplateOptions newTemplateOptions;
-                if (wrapper == null) {
-                    newTemplateOptions = new TemplateOptions(template);
-                } else {
-                    // preserve the old option values
-                    newTemplateOptions = new TemplateOptions(template, wrapper.wrapped.options);
-                }
-                return new TimeWrapper<>(newTemplateOptions);
+            // The inner mutation happens inside the outer compute on purpose: it keeps the insert
+            // atomic against reapEmptyDomains(), which would otherwise be free to drop a
+            // freshly-created (still empty) inner map before this thread populates it.
+            UdpSessionManager.this.templates.compute(domain(observationDomainId), (d, byId) -> {
+                final ConcurrentMap<Integer, TimeWrapper<TemplateOptions>> target =
+                        byId != null ? byId : new ConcurrentHashMap<>();
+                target.compute(template.id, (id, wrapper) -> {
+                    // preserve the old option values across a template re-announcement
+                    final TemplateOptions options = wrapper == null
+                            ? new TemplateOptions(template)
+                            : new TemplateOptions(template, wrapper.wrapped.options);
+                    return new TimeWrapper<>(options);
+                });
+                return target;
             });
         }
 
         @Override
         public void removeTemplate(final long observationDomainId, final int templateId) {
-            final TemplateKey key = new TemplateKey(this.sessionKey, observationDomainId, templateId);
-            UdpSessionManager.this.templates.remove(key);
+            UdpSessionManager.this.templates.computeIfPresent(domain(observationDomainId), (d, byId) -> {
+                byId.remove(templateId);
+                return byId.isEmpty() ? null : byId;
+            });
         }
 
         @Override
         public void removeAllTemplate(final long observationDomainId, final Template.Type type) {
-            final DomainKey domainKey = new DomainKey(this.sessionKey, observationDomainId);
-            UdpSessionManager.this.removeTemplateIf(e -> domainKey.equals(e.getKey().observationDomainId) && e.getValue().wrapped.template.type == type);
+            UdpSessionManager.this.templates.computeIfPresent(domain(observationDomainId), (d, byId) -> {
+                byId.entrySet().removeIf(e -> e.getValue().wrapped.template.type == type);
+                return byId.isEmpty() ? null : byId;
+            });
         }
 
         @Override
@@ -253,8 +318,10 @@ public class UdpSessionManager {
                                final int templateId,
                                final Collection<Value<?>> scopes,
                                final List<Value<?>> values) {
-            final TemplateKey key = new TemplateKey(this.sessionKey, observationDomainId, templateId);
-            UdpSessionManager.this.templates.get(key).wrapped.options.put(new HashSet<>(scopes), new TimeWrapper<>(values));
+            // Unchanged failure semantics: a missing template still throws NullPointerException
+            // rather than silently dropping the option record.
+            UdpSessionManager.this.templates.get(domain(observationDomainId))
+                    .get(templateId).wrapped.options.put(new HashSet<>(scopes), new TimeWrapper<>(values));
 
             UdpSessionManager.this.optionListener.accept(
                     new ExporterIdentity.NetflowIpfix(this.sessionKey.getRemoteAddress(), observationDomainId),
@@ -281,19 +348,27 @@ public class UdpSessionManager {
         }
 
         private final class Resolver implements Session.Resolver {
-            private final long observationDomainId;
+            /**
+             * Built once, not per lookup. A Resolver is bound to one exporter for its lifetime while
+             * {@code lookupTemplate}/{@code lookupOptions} run per data record, so rebuilding the key
+             * each time cost a DomainKey plus two varargs arrays and a boxed long per record — on the
+             * very thread this indexing exists to unload.
+             */
+            private final DomainKey domain;
 
             private Resolver(final long observationDomainId) {
-                this.observationDomainId = observationDomainId;
+                this.domain = domain(observationDomainId);
             }
 
-            private TemplateKey key(final int templateId) {
-                return new TemplateKey(UdpSession.this.sessionKey, this.observationDomainId, templateId);
+            /** This exporter's templates, or an empty map before the first template arrives. */
+            private Map<Integer, TimeWrapper<TemplateOptions>> ownTemplates() {
+                final var byId = UdpSessionManager.this.templates.get(this.domain);
+                return byId != null ? byId : Map.of();
             }
 
             @Override
             public Template lookupTemplate(final int templateId) throws MissingTemplateException {
-                final TimeWrapper<TemplateOptions> templateOptions = UdpSessionManager.this.templates.get(key(templateId));
+                final TimeWrapper<TemplateOptions> templateOptions = ownTemplates().get(templateId);
                 if (templateOptions != null) {
                     return templateOptions.wrapped.template;
                 } else {
@@ -307,11 +382,23 @@ public class UdpSessionManager {
 
                 final Set<String> scoped = values.stream().map(Value::getName).collect(Collectors.toSet());
 
-                for (final var e : Iterables.filter(UdpSessionManager.this.templates.entrySet(),
-                        e -> Objects.equals(e.getKey().observationDomainId.sessionKey, UdpSession.this.sessionKey)
-                                && Objects.equals(e.getKey().observationDomainId.observationDomainId, this.observationDomainId))) {
+                // Only this exporter's templates, so the cost is independent of how many other
+                // exporters the collector is fronting. Data templates have no scope names, so
+                // containsAll() admits them and their (empty) option map contributes nothing —
+                // the same outcome as the previous filter, without the collector-wide walk.
+                for (final var wrapper : ownTemplates().values()) {
+                    // Nothing recorded against this template means nothing can be found, so skip
+                    // before building scopeValues. This is what elides the data templates — they
+                    // never receive options, since addOptions is only reached under
+                    // type == OPTIONS_TEMPLATE (see the ipfix/netflow9 Packet data-set loops).
+                    // Filtering on the type instead would be subtly different: a zero-scope options
+                    // template keys its options under the empty set, so a template re-announced as
+                    // TEMPLATE could still legitimately match. Emptiness is exact either way.
+                    if (wrapper.wrapped.options.isEmpty()) {
+                        continue;
+                    }
 
-                    final Template template = e.getValue().wrapped.template;
+                    final Template template = wrapper.wrapped.template;
 
                     if (scoped.containsAll(template.scopeNames)) {
                         // Found option template where scoped fields is subset of actual data fields
@@ -319,7 +406,7 @@ public class UdpSessionManager {
                                 .filter(s -> template.scopeNames.contains(s.getName()))
                                 .collect(Collectors.toSet());
 
-                        final TimeWrapper<List<Value<?>>> optionValues = e.getValue().wrapped.options.get(scopeValues);
+                        final TimeWrapper<List<Value<?>>> optionValues = wrapper.wrapped.options.get(scopeValues);
                         if (optionValues != null) {
                             for (final Value<?> value : optionValues.wrapped) {
                                 options.put(value.getName(), value);

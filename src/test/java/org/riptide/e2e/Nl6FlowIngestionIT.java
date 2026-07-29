@@ -18,6 +18,7 @@ import org.testcontainers.containers.wait.strategy.Wait;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Map;
 
 import static org.riptide.e2e.E2eTestSupport.await;
@@ -247,10 +248,14 @@ public class Nl6FlowIngestionIT {
         final var row = queryClient.queryAll(
                 "SELECT min(firstSwitched) AS minFirst, max(lastSwitched) AS maxLast FROM flows WHERE flowProtocol = '"
                         + chProtocol + "'").getFirst();
+        // The time columns are DateTime64(_, 'UTC') (FlowsSchema), so getLocalDateTime() hands back a
+        // UTC wall clock. Resolving it against the host zone reinterprets it as local time and shifts
+        // the instant by the host's offset — two hours on a CEST host, against a one-hour tolerance,
+        // so this failed everywhere except a UTC host. Same trap as #276, this time in the assertion.
         final var window = Duration.ofHours(1);
-        Assertions.assertThat(row.getLocalDateTime("minFirst").atZone(java.time.ZoneId.systemDefault()).toInstant())
+        Assertions.assertThat(row.getLocalDateTime("minFirst").atOffset(ZoneOffset.UTC).toInstant())
                 .isAfter(TEST_START.minus(window));
-        Assertions.assertThat(row.getLocalDateTime("maxLast").atZone(java.time.ZoneId.systemDefault()).toInstant())
+        Assertions.assertThat(row.getLocalDateTime("maxLast").atOffset(ZoneOffset.UTC).toInstant())
                 .isBefore(Instant.now().plus(window));
     }
 
