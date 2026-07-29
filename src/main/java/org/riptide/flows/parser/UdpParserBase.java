@@ -33,6 +33,16 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 
 public abstract class UdpParserBase extends ParserBase implements UdpParser {
+
+    /**
+     * Datagrams may be dropped when the workers fall behind: the medium is already lossy, nothing is
+     * acknowledged, and a counted userspace drop beats pushing back into the kernel receive buffer
+     * where the loss cannot be seen. IPFIX/TCP keeps the base class's blocking behaviour.
+     */
+    @Override
+    protected boolean mayDropOnFullQueue() {
+        return true;
+    }
     public static final long HOUSEKEEPING_INTERVAL = 60000;
 
     private static final Logger LOG = LoggerFactory.getLogger(UdpParserBase.class);

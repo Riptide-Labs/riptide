@@ -5,7 +5,6 @@
 
 package org.riptide.snmp;
 
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.riptide.node.Node;
@@ -19,8 +18,6 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
 /**
@@ -44,57 +41,20 @@ public class SnmpEnricher implements Enricher {
     private final ExporterInterfaceTable exporterInterfaceTable;
 
     /**
-     * Dedicated pool for the one path that can block — a caching-layer miss doing an SNMP walk.
-     * Deliberately not the common ForkJoinPool: its parallelism is
-     * {@code availableProcessors() - 1} (zero on a single-vCPU container, where the JDK silently
-     * degrades to a thread per task), and it is shared with parallel streams and every other
-     * defaulting caller in the JVM, so a walk timeout there stalls unrelated work.
+     * Resolves inline and returns an already-completed future.
      *
-     * <p>Sized for wall-clock waiting rather than CPU: these threads sit in a socket read. Daemon
-     * threads so a wedged walk cannot hold up JVM exit.
-     */
-    private volatile ExecutorService snmpExecutor = newSnmpExecutor();
-
-    private static ExecutorService newSnmpExecutor() {
-        return Executors.newFixedThreadPool(SNMP_THREADS, new ThreadFactoryBuilder()
-                .setNameFormat("snmp-enricher-%d")
-                .setDaemon(true)
-                .build());
-    }
-
-    private static final int SNMP_THREADS = 4;
-
-    @Override
-    public void start() {
-        if (this.snmpExecutor.isShutdown()) {
-            this.snmpExecutor = newSnmpExecutor();
-        }
-    }
-
-    @Override
-    public void stop() {
-        this.snmpExecutor.shutdownNow();
-    }
-
-    /**
-     * Offloading is only warranted when this call could actually block, and usually it cannot.
+     * <p>There was an offload here — originally {@code supplyAsync} onto the common ForkJoinPool,
+     * then a dedicated pool — on the reasoning that a caching-layer miss can perform a synchronous
+     * SNMP walk and that must not run on a parser worker. That reasoning does not survive contact
+     * with the caller: {@link org.riptide.pipeline.Pipeline} joins this future, so the worker blocks
+     * for the walk either way. The offload bought a park pair per batch and capped SNMP concurrency
+     * at the pool size for every parser worker — strictly worse than doing the work in place.
      *
-     * <p>The only blocking step is {@link org.riptide.snmp.SnmpService#getIfInfo}, and it is
-     * reached solely when the matched node carries an SNMP endpoint — behind the caching layer,
-     * where a first-touch miss performs a synchronous walk. Everything else here is map lookups:
-     * the node registry, the exporter option table, and the node's pinned interfaces.
-     *
-     * <p>Wrapping the lot in {@code supplyAsync} therefore bought a common-ForkJoinPool round trip
-     * and, because {@code Pipeline} joins the future, a park per call — for map lookups. Measured
-     * at riptide's ~61k rows/s ceiling that was ~52% of all worker parks, with the common pool
-     * itself 100% idle in {@code ForkJoinPool.awaitWork}: the round trip was not doing work, it was
-     * only adding latency the caller then blocked on. The pipeline was context-switch-bound at 2.4
-     * of 4 cores.
-     *
-     * <p>So: resolve inline and return an already-completed future unless an SNMP endpoint is in
-     * play, in which case offload to a dedicated executor — never the common pool, whose
-     * parallelism is {@code availableProcessors() - 1} and shared with every other defaulting
-     * caller in the JVM.
+     * <p>Consequence to be aware of rather than hidden: a first-touch cache miss blocks the calling
+     * parser worker for the walk timeout, and with a bounded dispatch queue upstream that shows up as
+     * queue depth and, if sustained, counted drops. That is the honest shape of a synchronous
+     * enrichment ladder. Making it genuinely asynchronous means not joining in {@code Pipeline}
+     * (issue #384), not moving the block somewhere else.
      */
     @Override
     public CompletableFuture<Void> enrich(final Source source, final List<EnrichedFlow> flows) {
@@ -105,18 +65,8 @@ public class SnmpEnricher implements Enricher {
             return CompletableFuture.completedFuture(null); // nothing could contribute
         }
 
-        final Optional<SnmpEndpoint> snmpEndpoint = node.flatMap(Node::snmpEndpoint);
-        if (snmpEndpoint.isEmpty()) {
-            // No endpoint means getIfInfo() is unreachable, so nothing here can block: pinned
-            // interfaces and option-table entries are both in-memory lookups.
-            enrichInline(source, flows, node, snmpEndpoint);
-            return CompletableFuture.completedFuture(null);
-        }
-
-        // A cache miss can block for the SNMP walk timeout, which must not happen on a parser
-        // worker: it would stall the batch behind it and, through the handoff, the listener too.
-        return CompletableFuture.runAsync(() -> enrichInline(source, flows, node, snmpEndpoint),
-                this.snmpExecutor);
+        enrichInline(source, flows, node, node.flatMap(Node::snmpEndpoint));
+        return CompletableFuture.completedFuture(null);
     }
 
     private void enrichInline(final Source source,

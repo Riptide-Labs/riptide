@@ -5,6 +5,7 @@
 
 package org.riptide.flows;
 
+import com.google.common.util.concurrent.RateLimiter;
 import com.codahale.metrics.Counter;
 import com.codahale.metrics.MetricRegistry;
 import jakarta.annotation.PreDestroy;
@@ -66,12 +67,26 @@ public class Daemon implements ApplicationRunner {
         // Count it and name the exporter instead, following the convention BatchingFlowRepository
         // set: a poison batch must not wedge the pipeline, and loss must never be silent.
         final Counter dispatchErrors = metricRegistry.counter(MetricRegistry.name("pipeline", "dispatchErrors"));
+        // One warning per 10s, like the parser's drop path: a persistently failing enricher at a few
+        // thousand packets/s would otherwise emit a stack trace per packet, synchronously on the
+        // worker, making logging the bottleneck and filling the disk.
+        final RateLimiter errorWarnLimiter = RateLimiter.create(0.1);
         final BiConsumer<Source, List<Flow>> dispatcher = (source, flows) -> {
             try {
                 this.pipeline.process(source, flows);
-            } catch (final FlowException e) {
+            } catch (final FlowException | RuntimeException e) {
+                // RuntimeException too, not just FlowException: CachingSnmpService throws
+                // IllegalStateException, a shut-down SNMP pool throws RejectedExecutionException, and
+                // any enricher can NPE. Those used to escape into the dispatch task and be logged as
+                // "Error preparing records for dispatch" with no counter and no exporter — the exact
+                // hole this block exists to close. A packet's worth of loss must not be silent.
                 dispatchErrors.inc(flows.size());
-                log.warn("Dropping {} flows from {}: enrichment failed", flows.size(), source.identity(), e);
+                if (log.isWarnEnabled() && errorWarnLimiter.tryAcquire()) {
+                    // Deliberately not "enrichment failed": with batching disabled a FlowException
+                    // also arrives from the persist path, and mislabelling it misdirects diagnosis.
+                    log.warn("Dropping {} flows from {}: {}", flows.size(), source.identity(),
+                            e.getMessage(), e);
+                }
             }
         };
 

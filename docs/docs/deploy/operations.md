@@ -71,6 +71,43 @@ restart. Configuration is backward-compatible within a minor line; breaking conf
 moves are logged loudly at startup (e.g. the pre-0.1.0 `riptide.snmp.config.definitions`
 tree logs an explicit error pointing at `riptide.nodes`).
 
+## Ingest loss counters
+
+Flows can be dropped at two bounded queues, and each one counts what it discards — nothing is
+lost silently. Alert on the drop counters; watch the depth gauges for early warning.
+
+| Metric | Meaning |
+|---|---|
+| `parsers.<name>.dispatchQueueDepth` | packets waiting to be enriched (gauge) |
+| `parsers.<name>.dispatchDrops` | **records** discarded because enrichment/persistence fell behind, or discarded at shutdown |
+| `pipeline.dispatchErrors` | records lost because enrichment or persistence threw |
+| `persister.batch.queueDepth` | rows waiting to be inserted (gauge) |
+| `persister.batch.droppedRows` | rows discarded because ClickHouse could not keep up |
+| `persister.batch.failedRows` | rows in batches that failed to insert |
+
+Delivery accounting: `recordsScheduled − dispatchDrops − dispatchErrors` is what reached the
+persister. Note `recordsDispatched` counts only records the pipeline accepted without throwing, so
+it excludes `dispatchErrors`.
+
+**Datagram vs. reliable transports differ deliberately.** A UDP receiver drops when its dispatch
+queue stays full, because the medium is already lossy and a counted userspace drop beats pushing
+back into the kernel receive buffer where the loss is invisible. An IPFIX/**TCP** receiver never
+drops here — the exporter's bytes are already acknowledged and there is no retransmission, so the
+listener blocks instead, which closes the TCP receive window and makes the exporter slow down.
+
+### Memory budget for the queues
+
+Both queues are bounded, so the worst case is the **sum**, and the dispatch queue costs more than
+its flow objects:
+
+- `parsers.<name>` dispatch queue: 4096 packets by default. Each queued packet also pins its
+  received datagram buffer until the packet is enriched — about **33 MB of direct memory per
+  receiver** at the default 8096-byte buffer size, on top of the heap cost of the flow objects.
+- `persister.batch` queue: 40,000 rows by default (`riptide.clickhouse.batch.queue-capacity`).
+
+A `multi` receiver runs one parser per sub-protocol, each with its own queue and threads, so budget
+per sub-protocol and size down accordingly if you configure several.
+
 ## Health endpoints & probes
 
 Riptide serves two plain-HTTP health endpoints on a management port (default `8080`) — no auth, no

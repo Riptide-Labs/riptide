@@ -47,6 +47,7 @@
         <jmh.version>1.37</jmh.version>
         <jacoco-maven-plugin.version>0.8.15</jacoco-maven-plugin.version>
         <testcontainers.version>2.0.5</testcontainers.version>
+        <blockhound.version>1.0.14.RELEASE</blockhound.version>
         <jazzer.version>0.30.0</jazzer.version>
     </properties>
 
@@ -203,6 +204,17 @@
         </dependency>
 
         <!-- Test scope -->
+        <!-- Throws when a blocking call happens on a thread marked non-blocking. The dispatch seam
+             blocks the Netty event loop on IPFIX/TCP by design (see ParserBase#mayDropOnFullQueue),
+             so this is here to catch UNINTENDED blocking on the UDP path, which is the mistake that
+             cost a 2 GB direct-buffer pool and a listener stall during development. -->
+        <dependency>
+            <groupId>io.projectreactor.tools</groupId>
+            <artifactId>blockhound</artifactId>
+            <version>${blockhound.version}</version>
+            <scope>test</scope>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
