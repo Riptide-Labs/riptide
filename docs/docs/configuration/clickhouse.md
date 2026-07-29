@@ -13,6 +13,7 @@ riptide.clickhouse.username=default
 #riptide.clickhouse.password=vault://secret/riptide/clickhouse#password
 riptide.clickhouse.database=riptide
 riptide.clickhouse.manage-schema=true
+#riptide.clickhouse.compress-requests=true   # false trades bandwidth for CPU on a LAN
 riptide.clickhouse.batch.enabled=true
 riptide.clickhouse.batch.max-rows=10000
 riptide.clickhouse.batch.max-latency=2s
@@ -146,6 +147,7 @@ flusher issues **one insert per batch**.
 | `riptide.clickhouse.batch.max-latency` | `2s` | Flush whatever is buffered after this long. |
 | `riptide.clickhouse.batch.queue-capacity` | `40000` | Buffer bound; a full queue drops flows (counted). |
 | `riptide.clickhouse.batch.shutdown-grace-period` | `5s` | How long `stop()` waits for the drain. |
+| `riptide.clickhouse.compress-requests` | `true` | LZ4-compress insert payloads. See below. |
 
 A batch is flushed at `max-rows` rows or after `max-latency`, whichever comes first. The defaults
 follow ClickHouse's guidance of 10k–100k rows per insert at roughly one insert per second;
@@ -410,3 +412,23 @@ users + row policies), Grafana topology, the end-to-end onboarding recipe, and t
 ceiling, see the [Multi-tenancy runbook](../deploy/multi-tenancy.md).
 
 :::
+
+## Insert compression
+
+`riptide.clickhouse.compress-requests` (boolean, default `true`) LZ4-compresses insert
+payloads on the way to ClickHouse. It cuts the bytes on the wire severalfold on flow data,
+which is what you want across a WAN or where egress is metered.
+
+It is not free. Profiling the batch flusher put LZ4 at roughly a fifth of that thread's CPU
+(`ClickHouseLZ4OutputStream.write` plus the LZ4 compressor frames). A collector sitting on
+the same LAN as ClickHouse pushes only single-digit MB/s uncompressed at tens of thousands
+of rows per second — a rounding error on 1 GbE — so turning it off there trades bandwidth
+nobody is paying for against CPU on the one thread that serializes every batch:
+
+```properties
+riptide.clickhouse.compress-requests=false
+```
+
+Leave it on across a WAN, in cloud deployments where egress is billed, or whenever the
+collector and ClickHouse are not on the same network. Response compression is always on and
+is unaffected — it only covers the schema queries at startup.

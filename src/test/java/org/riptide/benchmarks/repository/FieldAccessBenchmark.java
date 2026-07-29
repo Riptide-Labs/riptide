@@ -25,7 +25,6 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
 
 /**
  * How much does the ClickHouse client's reflective POJO field access cost per row?
@@ -50,8 +49,10 @@ import java.util.function.Function;
  *       much of the cost is the per-call access check alone. If this is most of the gap it is a
  *       one-line upstream fix, not a reason to rewrite riptide's insert path.</li>
  *   <li>{@code methodHandle} — unreflected {@link MethodHandle}</li>
- *   <li>{@code direct} — a lambda per field, standing in for generated or hand-written accessors,
- *       i.e. the floor a RowBinaryFormatWriter rewrite could reach</li>
+ *   <li>There is deliberately no "direct call" mode. An earlier revision had one built from a
+ *       lambda wrapping a captured {@link MethodHandle}, which cannot inline to a direct call and so
+ *       measured lambda indirection rather than a floor. {@code methodHandle} is the honest floor
+ *       here; a hand-written accessor would be at or below it.</li>
  * </ul>
  *
  * <p>One invocation reads every field once, so {@code ops/s} is rows/s of field access and the
@@ -63,13 +64,17 @@ import java.util.function.Function;
  *
  * <pre>
  *   mode                     passes/s     ns/row   % of one core @ 29,440 rows/s
- *   reflect (current)       2,513,210        398                          1.17%
- *   reflect+setAccessible   2,828,542        354                          1.04%
- *   MethodHandle            4,154,064        241                          0.71%
+ *   reflect (current)       2,572,855        389                          1.14%
+ *   reflect+setAccessible   2,883,674        347                          1.02%
+ *   MethodHandle            4,149,052        241                          0.71%   <- the floor
  * </pre>
  *
+ * <p>Measured on a POJO populated with values outside the {@code Integer}/{@code Long} caches, so
+ * the figures are not flattered by an all-defaults row: doing that moved the reflective number by
+ * about 2% (2,513,210 → 2,572,855 passes/s), which does not change the conclusion.
+ *
  * <p>So the <em>entire</em> addressable saving from eliminating reflective field access is
- * <strong>~0.46% of one core</strong> at the throughput the collector was measured at, and
+ * <strong>~0.43% of one core</strong> at the throughput the collector was measured at, and
  * {@code setAccessible} alone would account for 0.13%. Hand-writing a
  * {@code RowBinaryFormatWriter} path over 55 columns — with the attendant risk of silent type,
  * null and enum drift against {@code FlowsSchema} — buys under half a percent of a core on a host
@@ -95,11 +100,23 @@ public class FieldAccessBenchmark {
     private Method[] plain;
     private Method[] accessible;
     private MethodHandle[] handles;
-    private List<Function<ClickhouseFlow, Object>> direct;
 
     @Setup(Level.Trial)
     public void setup() throws Exception {
+        // Not an all-defaults instance: null references and small boxed values hit the
+        // Integer/Long caches, so a default row understates the reflective cost in exactly the
+        // direction that flatters the "not worth doing" conclusion. Fill it with values outside the
+        // caches, like a real flow record.
         this.row = new ClickhouseFlow();
+        this.row.setBytes(9_876_543_210L);
+        this.row.setPackets(1_234_567L);
+        this.row.setSrcPort(54_321);
+        this.row.setDstPort(9_999);
+        this.row.setSrcAs(64_512L);
+        this.row.setDstAs(65_001L);
+        this.row.setTenant("tenant-a");
+        this.row.setExporterAddr("198.51.100.7");
+        this.row.setTimestamp(java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC));
 
         // Every zero-arg getter the client's column-to-method matching would find.
         final List<Method> getters = new ArrayList<>();
@@ -129,21 +146,17 @@ public class FieldAccessBenchmark {
             this.handles[i] = lookup.unreflect(this.plain[i]);
         }
 
-        // Lambdas over the same getters: after JIT these are direct calls, so they stand in for
-        // generated accessors without hand-writing 55 method references.
-        this.direct = new ArrayList<>(this.plain.length);
-        for (final Method m : this.plain) {
-            final MethodHandle h = lookup.unreflect(m);
-            this.direct.add(flow -> {
-                try {
-                    return h.invoke(flow);
-                } catch (final Throwable e) {
-                    throw new IllegalStateException(e);
-                }
-            });
-        }
 
-        System.out.printf("%n[setup] ClickhouseFlow getters discovered: %d%n", this.plain.length);
+        // The javadoc extrapolates per-row cost from the column count, so fail loudly if the
+        // discovered getters and the persisted columns ever diverge.
+        final long columns = java.util.Arrays.stream(ClickhouseFlow.class.getDeclaredFields())
+                .filter(f -> !java.lang.reflect.Modifier.isStatic(f.getModifiers()) && !f.isSynthetic())
+                .count();
+        if (this.plain.length < columns) {
+            throw new IllegalStateException("discovered " + this.plain.length
+                    + " getters for " + columns + " persisted columns — the extrapolation is stale");
+        }
+        System.out.printf("%n[setup] ClickhouseFlow getters=%d columns=%d%n", this.plain.length, columns);
     }
 
     @Benchmark
@@ -167,10 +180,4 @@ public class FieldAccessBenchmark {
         }
     }
 
-    @Benchmark
-    public void direct(final Blackhole bh) {
-        for (final Function<ClickhouseFlow, Object> f : this.direct) {
-            bh.consume(f.apply(this.row));
-        }
-    }
 }
