@@ -48,6 +48,9 @@ public final class Packet implements Iterable<FlowSet<?>> {
     public final List<OptionsTemplateSet> optionTemplateSets;
     public final List<DataSet> dataSets;
 
+    /** Data Sets discarded for a missing Template. See {@link org.riptide.flows.parser.FlowPacket#undecodableSets()}. */
+    public final int undecodableSets;
+
     public Packet(final Session session,
                   final Header header,
                   final ByteBuf buffer) throws InvalidPacketException {
@@ -60,6 +63,8 @@ public final class Packet implements Iterable<FlowSet<?>> {
         // Stop once fewer than one Set header remains: a trailing remainder that small can only be
         // message padding (some exporters pad to a 4-byte boundary), not a Set. Reading it as a Set
         // would yield an invalid Set ID and drop the whole packet. (Matches goflow2 / NetGauze.)
+        int undecodable = 0;
+
         while (buffer.readableBytes() >= FlowSetHeader.SIZE) {
             final ByteBuf headerBuffer = slice(buffer, FlowSetHeader.SIZE);
             final FlowSetHeader setHeader = new FlowSetHeader(headerBuffer);
@@ -132,6 +137,9 @@ public final class Packet implements Iterable<FlowSet<?>> {
                     try {
                         dataSet = new DataSet(this, setHeader, resolver, payloadBuffer);
                     } catch (final MissingTemplateException ex) {
+                        // Counted, not merely logged: this discards the whole Set and used to be
+                        // invisible at DEBUG. See FlowPacket#undecodableSets.
+                        undecodable++;
                         LOG.debug("Skipping data-set due to missing template: {}", ex.getMessage());
                         break;
                     }
@@ -156,6 +164,7 @@ public final class Packet implements Iterable<FlowSet<?>> {
         this.templateSets = Collections.unmodifiableList(parsedTemplateSets);
         this.optionTemplateSets = Collections.unmodifiableList(parsedOptionTemplateSets);
         this.dataSets = Collections.unmodifiableList(parsedDataSets);
+        this.undecodableSets = undecodable;
     }
 
     @Override

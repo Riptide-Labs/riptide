@@ -97,6 +97,9 @@ public abstract class ParserBase implements Parser {
     /** Records dropped at the handoff because the workers were behind — the seam's loss ledger. */
     private final Counter dispatchDrops;
 
+    /** Data Sets discarded before decode because their Template was unknown. */
+    private final Counter undecodableSets;
+
     /** One drop warning per 10s; the counter carries the tally. */
     private final RateLimiter dropWarnLimiter = RateLimiter.create(0.1);
 
@@ -121,6 +124,7 @@ public abstract class ParserBase implements Parser {
         this.recordsScheduled = metricRegistry.meter(MetricRegistry.name("parsers", name, "recordsScheduled"));
         this.sequenceErrors = metricRegistry.counter(MetricRegistry.name("parsers", name, "sequenceErrors"));
         this.dispatchDrops = metricRegistry.counter(MetricRegistry.name("parsers", name, "dispatchDrops"));
+        this.undecodableSets = metricRegistry.counter(MetricRegistry.name("parsers", name, "undecodableSets"));
 
         setThreads(DEFAULT_NUM_THREADS);
     }
@@ -363,6 +367,14 @@ public abstract class ParserBase implements Parser {
         //
         // It also stops defeating the enrichers: Enricher.Streaming/Single fan out across the flow
         // list with CompletableFuture.allOf, which did nothing while the list was always size 1.
+        // Counted before the isEmpty() return below, deliberately: a packet whose every Data Set was
+        // undecodable builds no flows at all, so counting after the return would miss precisely the
+        // loss this counter exists to make visible.
+        final int undecodable = packet.undecodableSets();
+        if (undecodable > 0) {
+            this.undecodableSets.inc(undecodable);
+        }
+
         final List<Flow> flows = packet.buildFlows(receivedAt).toList();
         if (flows.isEmpty()) {
             return CompletableFuture.completedFuture(null);
