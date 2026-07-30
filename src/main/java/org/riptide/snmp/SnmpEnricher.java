@@ -40,31 +40,51 @@ public class SnmpEnricher implements Enricher {
     @NonNull
     private final ExporterInterfaceTable exporterInterfaceTable;
 
+    /**
+     * Resolves inline and returns an already-completed future.
+     *
+     * <p>There was an offload here — originally {@code supplyAsync} onto the common ForkJoinPool,
+     * then a dedicated pool — on the reasoning that a caching-layer miss can perform a synchronous
+     * SNMP walk and that must not run on a parser worker. That reasoning does not survive contact
+     * with the caller: {@link org.riptide.pipeline.Pipeline} joins this future, so the worker blocks
+     * for the walk either way. The offload bought a park pair per batch and capped SNMP concurrency
+     * at the pool size for every parser worker — strictly worse than doing the work in place.
+     *
+     * <p>Consequence to be aware of rather than hidden: a first-touch cache miss blocks the calling
+     * parser worker for the walk timeout, and with a bounded dispatch queue upstream that shows up as
+     * queue depth and, if sustained, counted drops. That is the honest shape of a synchronous
+     * enrichment ladder. Making it genuinely asynchronous means not joining in {@code Pipeline}
+     * (issue #384), not moving the block somewhere else.
+     */
     @Override
     public CompletableFuture<Void> enrich(final Source source, final List<EnrichedFlow> flows) {
-        return CompletableFuture.supplyAsync(() -> {
-            // exporter-pushed option data enriches even without a configured node —
-            // it is keyed by exporter identity, not by node
-            final Optional<Node> node = this.nodeRegistry.lookup(source.identity());
-            if (node.isEmpty() && this.exporterInterfaceTable.isEmpty()) {
-                return null; // nothing could contribute — keep the hot path free
-            }
-            final Optional<SnmpEndpoint> snmpEndpoint = node.flatMap(Node::snmpEndpoint);
-            for (final EnrichedFlow flow : flows) {
-                apply(node, snmpEndpoint, source, flow.getInputSnmp(), ifInfo -> {
-                    flow.setInputSnmpIfName(ifInfo.name());
-                    flow.setInputSnmpIfAlias(ifInfo.alias());
-                    flow.setInputSnmpIfSpeed(ifInfo.highSpeed());
-                });
-                apply(node, snmpEndpoint, source, flow.getOutputSnmp(), ifInfo -> {
-                    flow.setOutputSnmpIfName(ifInfo.name());
-                    flow.setOutputSnmpIfAlias(ifInfo.alias());
-                    flow.setOutputSnmpIfSpeed(ifInfo.highSpeed());
-                });
-            }
+        // exporter-pushed option data enriches even without a configured node —
+        // it is keyed by exporter identity, not by node
+        final Optional<Node> node = this.nodeRegistry.lookup(source.identity());
+        if (node.isEmpty() && this.exporterInterfaceTable.isEmpty()) {
+            return CompletableFuture.completedFuture(null); // nothing could contribute
+        }
 
-            return null;
-        });
+        enrichInline(source, flows, node, node.flatMap(Node::snmpEndpoint));
+        return CompletableFuture.completedFuture(null);
+    }
+
+    private void enrichInline(final Source source,
+                              final List<EnrichedFlow> flows,
+                              final Optional<Node> node,
+                              final Optional<SnmpEndpoint> snmpEndpoint) {
+        for (final EnrichedFlow flow : flows) {
+            apply(node, snmpEndpoint, source, flow.getInputSnmp(), ifInfo -> {
+                flow.setInputSnmpIfName(ifInfo.name());
+                flow.setInputSnmpIfAlias(ifInfo.alias());
+                flow.setInputSnmpIfSpeed(ifInfo.highSpeed());
+            });
+            apply(node, snmpEndpoint, source, flow.getOutputSnmp(), ifInfo -> {
+                flow.setOutputSnmpIfName(ifInfo.name());
+                flow.setOutputSnmpIfAlias(ifInfo.alias());
+                flow.setOutputSnmpIfSpeed(ifInfo.highSpeed());
+            });
+        }
     }
 
     private void apply(final Optional<Node> node, final Optional<SnmpEndpoint> snmpEndpoint, final Source source,

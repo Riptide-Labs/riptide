@@ -38,6 +38,20 @@ public final class ClickhouseConfig {
         private boolean manageSchema = true;
 
         /**
+         * Client-side LZ4 compression of insert payloads ({@code compressClientRequest}). On by
+         * default, unchanged from when it was hardcoded: it cuts the bytes on the wire severalfold on
+         * flow data, which matters for egress-billed or WAN-separated deployments.
+         *
+         * <p>It is not free. Profiling the flusher thread at ~29k rows/s put LZ4 at roughly a fifth
+         * of its CPU ({@code ClickHouseLZ4OutputStream.write} plus the {@code LZ4SafeUtils} /
+         * {@code LZ4JavaSafeCompressor} frames). A collector on the same LAN as ClickHouse pushes on
+         * the order of single-digit MB/s uncompressed at that rate — a rounding error on 1 GbE — so
+         * turning this off there trades bandwidth nobody is paying for against CPU on the one thread
+         * that serializes every batch. Leave it on across a WAN or where egress is metered.
+         */
+        private boolean compressRequests = true;
+
+        /**
          * Server-side insert coalescing ({@code async_insert}). Historically the pipeline
          * inserted once per flow record, and each insert also feeds the rollup materialized
          * views — without coalescing, that many small inserts collapse ingestion throughput on
