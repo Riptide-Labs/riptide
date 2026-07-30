@@ -100,14 +100,19 @@ public class UdpListener implements Listener {
         if (!(local instanceof InetSocketAddress bound)) {
             return;
         }
-        final int boundPort = bound.getPort();
         final String gauge = MetricRegistry.name("listeners", this.name, "socketDrops");
         this.metrics.remove(gauge);
-        this.metrics.register(gauge, (Gauge<Long>) () -> UdpSocketDrops.forPort(boundPort));
+        this.metrics.register(gauge, (Gauge<Long>) () -> UdpSocketDrops.forSocket(bound));
     }
 
     @Override
     public void stop() {
+        // Deregister before closing: once the socket is gone the closure describes a port we no
+        // longer own, and the next process to bind it would have its kernel drops published as
+        // this receiver's ingest loss. Same reason BatchingFlowRepository removes its queue-depth
+        // gauge in stop().
+        this.metrics.remove(MetricRegistry.name("listeners", this.name, "socketDrops"));
+
         if (this.socketFuture != null) {
             LOG.info("Closing channel...");
             this.socketFuture.channel().close().syncUninterruptibly();

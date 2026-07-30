@@ -9,10 +9,16 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.net.Inet4Address;
+import java.net.Inet6Address;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * Datagrams the kernel discarded because the socket receive buffer was full, read per socket from
@@ -26,10 +32,12 @@ import java.util.List;
  *
  * <p><strong>Per socket, not per host.</strong> {@code /proc/net/snmp}'s {@code Udp: RcvbufErrors} is
  * a host-wide total and cannot attribute drops to a receiver; the {@code drops} column of
- * {@code /proc/net/udp} can. Both the IPv4 and IPv6 tables are consulted because a wildcard bind on
- * Linux commonly yields a single v6 socket that also serves v4, and the value is <em>summed</em>
- * across every socket bound to the port so that {@code SO_REUSEPORT} fan-out is counted once in
- * total rather than once per socket.
+ * {@code /proc/net/udp} can. Rows are matched on the bound <em>address and port</em>, not the port
+ * alone: two receivers may legitimately share a port on different addresses, and matching by port
+ * would attribute each one's kernel drops to both. Both the IPv4 and IPv6 tables are consulted
+ * because a wildcard bind on Linux commonly yields a single v6 socket that also serves v4, and the
+ * value is <em>summed</em> across matching rows so that {@code SO_REUSEPORT} fan-out is counted once
+ * in total rather than once per socket.
  *
  * <p>Linux-only by construction. Where the files are absent — macOS, or a kernel without procfs —
  * every read returns {@code null} and the gauge simply publishes no value, which is honest: "not
@@ -49,22 +57,29 @@ final class UdpSocketDrops {
     private static final int LOCAL_ADDRESS = 1;
     private static final int MIN_FIELDS = 13;
 
+    /** The all-zeros address halves a wildcard bind shows in each table. */
+    private static final String ANY_V4 = "00000000";
+    private static final String ANY_V6 = "0".repeat(32);
+
     private UdpSocketDrops() {
     }
 
     /**
-     * Total dropped datagrams across all UDP sockets bound to {@code port}.
+     * Total dropped datagrams across all UDP sockets bound to exactly this address and port.
      *
-     * @param port the local port to attribute drops to
-     * @return the summed drop count, or {@code null} when procfs is unavailable or no socket is bound
-     *         to the port (a closed socket has no drop count, which is distinct from having zero)
+     * @param bound the socket address actually bound, as reported by the channel
+     * @return the summed drop count, or {@code null} when procfs is unavailable or no matching socket
+     *         exists (a closed socket has no drop count, which is distinct from having zero)
      */
-    static Long forPort(final int port) {
+    static Long forSocket(final InetSocketAddress bound) {
+        final Set<String> addresses = procAddressForms(bound.getAddress());
+        final int port = bound.getPort();
+
         long total = 0;
         boolean found = false;
 
         for (final Path table : List.of(UDP4, UDP6)) {
-            final Long drops = dropsIn(table, port);
+            final Long drops = dropsIn(table, addresses, port);
             if (drops != null) {
                 total += drops;
                 found = true;
@@ -74,13 +89,13 @@ final class UdpSocketDrops {
         return found ? total : null;
     }
 
-    private static Long dropsIn(final Path table, final int port) {
+    private static Long dropsIn(final Path table, final Set<String> addresses, final int port) {
         if (!Files.isReadable(table)) {
             return null;
         }
 
         try {
-            return sumDrops(Files.readAllLines(table, StandardCharsets.US_ASCII), port);
+            return sumDrops(Files.readAllLines(table, StandardCharsets.US_ASCII), addresses, port);
         } catch (final IOException e) {
             // procfs reads can fail transiently; a metrics scrape must never propagate that
             LOG.debug("Could not read {} for socket drop counts", table, e);
@@ -89,15 +104,16 @@ final class UdpSocketDrops {
     }
 
     /**
-     * Sum the {@code drops} column over every row bound to {@code port}.
+     * Sum the {@code drops} column over every row whose local address half is in {@code addresses}
+     * and whose local port is {@code port}.
      *
      * <p>Package-private and taking lines rather than a path so the column arithmetic is testable
-     * without procfs — the parsing (hex port, last column, summing across sockets) is the part that
-     * can silently produce a plausible wrong number.
+     * without procfs — the parsing (hex port, byte-swapped hex addresses, last column, summing across
+     * sockets) is the part that can silently produce a plausible wrong number.
      *
      * @return summed drops, or {@code null} if no row matched
      */
-    static Long sumDrops(final List<String> lines, final int port) {
+    static Long sumDrops(final List<String> lines, final Set<String> addresses, final int port) {
         long total = 0;
         boolean found = false;
 
@@ -107,7 +123,7 @@ final class UdpSocketDrops {
             if (fields.length < MIN_FIELDS) {
                 continue;
             }
-            if (localPort(fields[LOCAL_ADDRESS]) != port) {
+            if (!matchesLocal(fields[LOCAL_ADDRESS], addresses, port)) {
                 continue;
             }
             final long drops = parseUnsigned(fields[fields.length - 1]);
@@ -120,12 +136,57 @@ final class UdpSocketDrops {
         return found ? total : null;
     }
 
-    /** {@code local_address} is {@code <hex-addr>:<hex-port>}; only the port is needed. */
-    private static int localPort(final String localAddress) {
-        final int colon = localAddress.lastIndexOf(':');
-        if (colon < 0 || colon == localAddress.length() - 1) {
-            return -1;
+    /**
+     * The hex address halves that represent {@code address} in the procfs tables.
+     *
+     * <p>procfs prints each 32-bit word of the address byte-swapped, so {@code 10.0.0.2} appears as
+     * {@code 0200000A}, not {@code 0A000002}. A wildcard bind matches the all-zeros form in either
+     * table. A specific IPv4 bind may appear either as an AF_INET socket in {@code /proc/net/udp} or,
+     * because the JDK opens dual-stack sockets by default, as the v4-mapped form
+     * ({@code ::ffff:a.b.c.d}) in {@code /proc/net/udp6} — both forms are accepted.
+     */
+    static Set<String> procAddressForms(final InetAddress address) {
+        if (address == null || address.isAnyLocalAddress()) {
+            return Set.of(ANY_V4, ANY_V6);
         }
+        if (address instanceof Inet4Address) {
+            final String v4 = wordSwappedHex(address.getAddress());
+            final byte[] mapped = new byte[16];
+            mapped[10] = (byte) 0xFF;
+            mapped[11] = (byte) 0xFF;
+            System.arraycopy(address.getAddress(), 0, mapped, 12, 4);
+            return Set.of(v4, wordSwappedHex(mapped));
+        }
+        if (address instanceof Inet6Address) {
+            return Set.of(wordSwappedHex(address.getAddress()));
+        }
+        return Set.of();
+    }
+
+    private static boolean matchesLocal(final String localAddress, final Set<String> addresses, final int port) {
+        final int colon = localAddress.lastIndexOf(':');
+        if (colon <= 0 || colon == localAddress.length() - 1) {
+            return false;
+        }
+        if (localPort(localAddress, colon) != port) {
+            return false;
+        }
+        return addresses.contains(localAddress.substring(0, colon).toUpperCase(Locale.ROOT));
+    }
+
+    /** Hex-encode {@code bytes} with each 4-byte word byte-swapped, matching procfs's rendering. */
+    private static String wordSwappedHex(final byte[] bytes) {
+        final StringBuilder hex = new StringBuilder(bytes.length * 2);
+        for (int word = 0; word < bytes.length; word += 4) {
+            for (int i = word + 3; i >= word; i--) {
+                hex.append(String.format(Locale.ROOT, "%02X", bytes[i]));
+            }
+        }
+        return hex.toString();
+    }
+
+    /** {@code local_address} is {@code <hex-addr>:<hex-port>}; only the port is needed here. */
+    private static int localPort(final String localAddress, final int colon) {
         try {
             return Integer.parseInt(localAddress.substring(colon + 1), 16);
         } catch (final NumberFormatException e) {

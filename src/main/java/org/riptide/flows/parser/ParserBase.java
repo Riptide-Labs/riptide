@@ -369,7 +369,9 @@ public abstract class ParserBase implements Parser {
         // list with CompletableFuture.allOf, which did nothing while the list was always size 1.
         // Counted before the isEmpty() return below, deliberately: a packet whose every Data Set was
         // undecodable builds no flows at all, so counting after the return would miss precisely the
-        // loss this counter exists to make visible.
+        // loss this counter exists to make visible. The one gap left open: a packet that fails to
+        // parse outright (bad Set length, invalid Set ID) never reaches transmit(), so Sets skipped
+        // earlier in that same packet are accounted under parserErrors instead of here.
         final int undecodable = packet.undecodableSets();
         if (undecodable > 0) {
             this.undecodableSets.inc(undecodable);
