@@ -21,6 +21,7 @@ import org.riptide.pipeline.Identity;
 import org.riptide.pipeline.Source;
 
 import java.net.InetSocketAddress;
+import java.util.List;
 import java.util.function.BiConsumer;
 
 /**
@@ -32,7 +33,7 @@ import java.util.function.BiConsumer;
 public class SflowUdpParser extends UdpParserBase implements DispatchableUdpParser {
 
     public SflowUdpParser(final String name,
-                          final BiConsumer<Source, Flow> dispatcher,
+                          final BiConsumer<Source, List<Flow>> dispatcher,
                           final Identity identity,
                           final MetricRegistry metricRegistry) {
         super(Protocol.SFLOW, name, dispatcher, identity, metricRegistry);

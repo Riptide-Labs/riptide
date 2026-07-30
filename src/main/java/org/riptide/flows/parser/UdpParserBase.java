@@ -24,6 +24,7 @@ import org.slf4j.LoggerFactory;
 import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
@@ -32,6 +33,16 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 
 public abstract class UdpParserBase extends ParserBase implements UdpParser {
+
+    /**
+     * Datagrams may be dropped when the workers fall behind: the medium is already lossy, nothing is
+     * acknowledged, and a counted userspace drop beats pushing back into the kernel receive buffer
+     * where the loss cannot be seen. IPFIX/TCP keeps the base class's blocking behaviour.
+     */
+    @Override
+    protected boolean mayDropOnFullQueue() {
+        return true;
+    }
     public static final long HOUSEKEEPING_INTERVAL = 60000;
 
     private static final Logger LOG = LoggerFactory.getLogger(UdpParserBase.class);
@@ -47,7 +58,7 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
 
     public UdpParserBase(final Protocol protocol,
                          final String name,
-                         final BiConsumer<Source, Flow> dispatcher,
+                         final BiConsumer<Source, List<Flow>> dispatcher,
                          final Identity identity,
                          final MetricRegistry metricRegistry) {
         super(protocol, name, dispatcher, identity, metricRegistry);

@@ -22,6 +22,7 @@ import org.riptide.pipeline.Identity;
 import org.riptide.pipeline.Source;
 
 import java.net.InetSocketAddress;
+import java.util.List;
 import java.util.function.BiConsumer;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
@@ -29,7 +30,7 @@ import static org.riptide.flows.utils.BufferUtils.slice;
 public class Netflow5UdpParser extends UdpParserBase implements DispatchableUdpParser {
 
     public Netflow5UdpParser(final String name,
-                             final BiConsumer<Source, Flow> dispatcher,
+                             final BiConsumer<Source, List<Flow>> dispatcher,
                              final Identity identity,
                              final MetricRegistry metricRegistry) {
         super(Protocol.NETFLOW5, name, dispatcher, identity, metricRegistry);
