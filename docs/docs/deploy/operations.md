@@ -71,6 +71,10 @@ restart. Configuration is backward-compatible within a minor line; breaking conf
 moves are logged loudly at startup (e.g. the pre-0.1.0 `riptide.snmp.config.definitions`
 tree logs an explicit error pointing at `riptide.nodes`).
 
+Upgrading to 0.6.7 also changes what one **metric** means rather than any configuration key — see
+[Parser gauges: exporters and templates](#parser-gauges-exporters-and-templates) before relying on
+`parsers.<name>.sessionCount`.
+
 ## Ingest loss counters
 
 Flows can be dropped at two bounded queues, and each one counts what it discards — nothing is
@@ -107,6 +111,56 @@ its flow objects:
 
 A `multi` receiver runs one parser per sub-protocol, each with its own queue and threads, so budget
 per sub-protocol and size down accordingly if you configure several.
+
+## Parser gauges: exporters and templates
+
+Two gauges describe what a UDP parser is holding. They are easy to confuse, and until 0.6.7
+`sessionCount` reported the wrong one of the two.
+
+| Metric | Meaning |
+|---|---|
+| `parsers.<name>.sessionCount` | exporters — one per `(session, observation domain)` pair |
+| `parsers.<name>.templateCount` | templates held across all exporters |
+
+**What changed in 0.6.7.** `sessionCount` used to report the **template** total, so it overstated by
+however many templates each exporter announces. It now reports `(session, observation domain)` pairs.
+Expect the value to **drop** on upgrade, by roughly the templates-per-exporter factor; the previous
+quantity is still available, under the name that describes it — `templateCount`. This changes what a
+metric *means*, not any configuration key.
+
+What moves `sessionCount` is a new exporter appearing, or an exporter's last template expiring and
+housekeeping reaping it. A steady-state re-announcement of a template the exporter has already sent
+moves **neither** gauge: `addTemplate` replaces the entry under the same template id.
+
+**It is not a count of exporting processes.** A session is keyed by remote address plus the local
+socket, and each observation domain within a session counts separately, so:
+
+- one process announcing two observation domains counts **2**
+- one process sending to two receiver ports counts **2**
+- two processes behind one NAT address, sharing an observation domain, count **1**
+
+**Only IPFIX and NetFlow v9 populate these gauges.** NetFlow v5 and sFlow carry no templates, so both
+gauges stay **0** for those receivers no matter how many exporters are sending — a 0 here is not an
+ingest fault, and the drop-on-upgrade note above does not apply to them. On a `multi` receiver each
+sub-protocol registers its own pair under its own name (`<name>:netflow5`, `<name>:sflow`, …), so
+those pairs read 0 while the IPFIX and NetFlow v9 pairs report real values.
+
+`sessionCount` is only eventually consistent with "holds at least one template": housekeeping expires
+templates in one pass and reaps the emptied exporters in a second, so the gauge can transiently
+include an exporter holding none. An alert on it has to tolerate that flap.
+
+Template cardinality is the more useful of the two for capacity work — it is what drives the
+per-record cost of the parse path. For the drop and depth metrics, see
+[Ingest loss counters](#ingest-loss-counters) above.
+
+:::warning
+
+Riptide does not export metrics yet: there is no reporter and no scrape endpoint, and the management
+port serves only `/livez` and `/readyz`. These gauges are registered in the metrics registry, but
+nothing publishes them — so rebaselining a dashboard is something to do when metric export lands,
+not today.
+
+:::
 
 ## Health endpoints & probes
 

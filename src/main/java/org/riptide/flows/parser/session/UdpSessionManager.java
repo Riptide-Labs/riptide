@@ -104,7 +104,21 @@ public class UdpSessionManager {
         return new UdpSession(sessionKey);
     }
 
-    /** Total templates held across all exporters. */
+    /**
+     * Total templates held across all exporters.
+     *
+     * <p>O(exporters) since the per-exporter indexing. Before that it was {@code templates.size()}
+     * on a flat map — a {@link java.util.concurrent.ConcurrentHashMap} counter-cell sum rather than a
+     * plain field read, but constant in the number of exporters. It now iterates the outer table and
+     * adds one {@link Map#size()} per exporter, and it backs the {@code parsers.<name>.templateCount}
+     * gauge, so a metrics scrape walks every exporter. No cost figure is quoted here because none has
+     * been measured; the point is only that it is no longer constant-time, so do not call it on the
+     * packet path.
+     *
+     * <p>Not a snapshot: concurrent with {@link #doHousekeeping()} — which expires templates in one
+     * pass and reaps the emptied exporters in a second — the sum can include an inner map already
+     * detached from the outer one. Same eventual consistency {@link #domainCount()} documents.
+     */
     public int count() {
         return this.templates.values().stream().mapToInt(Map::size).sum();
     }

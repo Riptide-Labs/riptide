@@ -41,6 +41,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class UdpParserBaseTest {
 
     private static final InetSocketAddress REMOTE = new InetSocketAddress("10.0.0.1", 51000);
+    private static final InetSocketAddress SECOND_REMOTE = new InetSocketAddress("10.0.0.3", 51000);
     private static final InetSocketAddress LOCAL = new InetSocketAddress("10.0.0.2", 4739);
     private static final int TEMPLATE_ID = 256;
 
@@ -51,7 +52,15 @@ class UdpParserBaseTest {
     /** P = installs a garbage template mid-packet, then fails; Q = probes for that template. */
     private static final byte POISONED = 'P';
     private static final byte PROBE_POISON = 'Q';
+    /** S = adds a SECOND template to the same exporter, without failing the packet. */
+    private static final byte ADD_SECOND_TEMPLATE = 'S';
+    /** O = adds a template under a SECOND observation domain of the same exporter. */
+    private static final byte ADD_OTHER_DOMAIN = 'O';
     private static final int GARBAGE_TEMPLATE_ID = 300;
+    /** Distinct from {@link #GARBAGE_TEMPLATE_ID}: the poison markers use that one as their
+     *  "must have been rolled back" sentinel, and sharing it would entangle the two scenarios. */
+    private static final int SECOND_TEMPLATE_ID = 257;
+    private static final int OTHER_DOMAIN = 1;
 
     private ScheduledExecutorService executor;
     private StubParser parser;
@@ -99,10 +108,98 @@ class UdpParserBaseTest {
         assertThat(this.parser.templateResolved).isTrue();
     }
 
+    /**
+     * {@code sessionCount} and {@code templateCount} must report different quantities.
+     *
+     * <p>{@code sessionCount} was wired to the template total for years — it counted templates while
+     * its name promised exporters, so it overstated by however many templates each exporter
+     * announces. Nothing caught that, because neither gauge was covered. This pins both by making
+     * the two numbers differ: two exporters, three templates.
+     *
+     * <p>It also pins the stability the old wiring lacked a guard for: re-announcing a template the
+     * exporter has already sent must move neither gauge, because {@code addTemplate} replaces the
+     * entry under the same template id rather than adding one.
+     */
+    @Test
+    void gaugesReportExportersAndTemplatesSeparately() throws Exception {
+        final var registry = new MetricRegistry();
+        final var parser = new StubParser(registry);
+        parser.start(this.executor);
+        try {
+            parse(parser, ADD_TEMPLATE, REMOTE);
+            parse(parser, ADD_TEMPLATE, SECOND_REMOTE);
+            // a second template for the first exporter only — this is what separates the gauges
+            parse(parser, ADD_SECOND_TEMPLATE, REMOTE);
+
+            assertThat(gauge(registry, "sessionCount"))
+                    .as("exporters, i.e. (session, observation domain) pairs")
+                    .isEqualTo(2);
+            assertThat(gauge(registry, "templateCount"))
+                    .as("templates across all exporters")
+                    .isEqualTo(3);
+
+            // re-announce an already-known template: a same-id replacement, so nothing moves
+            parse(parser, ADD_TEMPLATE, REMOTE);
+
+            assertThat(gauge(registry, "sessionCount"))
+                    .as("a re-announcement must not invent an exporter")
+                    .isEqualTo(2);
+            assertThat(gauge(registry, "templateCount"))
+                    .as("a re-announcement replaces under the same id, so the total is unchanged")
+                    .isEqualTo(3);
+        } finally {
+            parser.stop();
+        }
+    }
+
+    /**
+     * The defining property of {@code sessionCount}, and the half a session-key-only count would
+     * pass silently: one source address announcing two observation domains counts twice. The session
+     * key is {@code (remote address, local socket)}, so without the observation domain in the key
+     * this reads 1.
+     */
+    @Test
+    void sessionCountSeparatesObservationDomainsOfOneExporter() throws Exception {
+        final var registry = new MetricRegistry();
+        final var parser = new StubParser(registry);
+        parser.start(this.executor);
+        try {
+            parse(parser, ADD_TEMPLATE, REMOTE);         // domain 0, template 256
+            parse(parser, ADD_SECOND_TEMPLATE, REMOTE);  // domain 0, template 257
+            parse(parser, ADD_OTHER_DOMAIN, REMOTE);     // domain 1, template 256
+
+            // the two numbers must differ, or a sessionCount still wired to the template total
+            // would read 2 here and pass
+            assertThat(gauge(registry, "sessionCount"))
+                    .as("one address, two observation domains — two exporting processes")
+                    .isEqualTo(2);
+            assertThat(gauge(registry, "templateCount"))
+                    .as("two templates in the first domain, one in the second")
+                    .isEqualTo(3);
+        } finally {
+            parser.stop();
+        }
+    }
+
+    private static int gauge(final MetricRegistry registry, final String name) {
+        final var gaugeMetric = registry.getGauges().get(MetricRegistry.name("parsers", "stub", name));
+        assertThat(gaugeMetric).as("gauge parsers.stub.%s is registered", name).isNotNull();
+        // the gauge yields null until start() builds the session manager — assert rather than
+        // let an unboxing NPE stand in for a failure message
+        final Object value = gaugeMetric.getValue();
+        assertThat(value).as("gauge parsers.stub.%s has a value (parser started?)", name).isNotNull();
+        return (Integer) value;
+    }
+
     private void parse(final byte marker) throws Exception {
+        parse(this.parser, marker, REMOTE);
+    }
+
+    private static void parse(final UdpParserBase parser, final byte marker, final InetSocketAddress remote)
+            throws Exception {
         final ByteBuf buffer = Unpooled.buffer().writeByte(marker);
         try {
-            this.parser.parse(Instant.now(), buffer, REMOTE, LOCAL).join();
+            parser.parse(Instant.now(), buffer, remote, LOCAL).join();
         } finally {
             buffer.release();
         }
@@ -114,8 +211,12 @@ class UdpParserBaseTest {
         private boolean garbageTemplateRetained;
 
         StubParser() {
+            this(new MetricRegistry());
+        }
+
+        StubParser(final MetricRegistry metricRegistry) {
             super(Protocol.IPFIX, "stub", (source, flow) -> { }, new Identity("t", "o", "z", "s"),
-                    new MetricRegistry());
+                    metricRegistry);
         }
 
         @Override
@@ -136,6 +237,12 @@ class UdpParserBaseTest {
                             .withFields(List.of(field())).build());
                     throw new InvalidPacketException(buffer, "Invalid set ID: %d", 0);
                 }
+                case ADD_SECOND_TEMPLATE -> session.addTemplate(0,
+                        Template.builder(SECOND_TEMPLATE_ID, Template.Type.TEMPLATE)
+                                .withFields(List.of(field())).build());
+                case ADD_OTHER_DOMAIN -> session.addTemplate(OTHER_DOMAIN,
+                        Template.builder(TEMPLATE_ID, Template.Type.TEMPLATE)
+                                .withFields(List.of(field())).build());
                 case PROBE_POISON -> {
                     try {
                         session.getResolver(0).lookupTemplate(GARBAGE_TEMPLATE_ID);
