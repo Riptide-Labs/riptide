@@ -174,10 +174,17 @@ final class UdpSocketDrops {
         return addresses.contains(localAddress.substring(0, colon).toUpperCase(Locale.ROOT));
     }
 
-    /** Hex-encode {@code bytes} with each 4-byte word byte-swapped, matching procfs's rendering. */
+    /**
+     * Hex-encode {@code bytes} with each 4-byte word byte-swapped, matching procfs's rendering.
+     *
+     * <p>The loop bound requires a complete word before reading one, so the method is total even
+     * though every real input ({@link InetAddress#getAddress()}) is 4 or 16 bytes: relying on the
+     * call sites for the bounds proof is exactly how a refactor earns an
+     * {@code ArrayIndexOutOfBoundsException} later.
+     */
     private static String wordSwappedHex(final byte[] bytes) {
         final StringBuilder hex = new StringBuilder(bytes.length * 2);
-        for (int word = 0; word < bytes.length; word += 4) {
+        for (int word = 0; word + 3 < bytes.length; word += 4) {
             for (int i = word + 3; i >= word; i--) {
                 hex.append(String.format(Locale.ROOT, "%02X", bytes[i]));
             }
