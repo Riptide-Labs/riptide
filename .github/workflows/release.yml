@@ -158,9 +158,16 @@ jobs:
           subject-name: ghcr.io/riptide-labs/riptide
           subject-digest: ${{ steps.build-image.outputs.digest }}
           push-to-registry: true
+      # Draft first, publish after: this repo's releases are immutable, so assets can
+      # only be attached BEFORE publication. The action already drafts stable releases
+      # internally, but publishes prereleases first and uploads after — which an
+      # immutable release rejects (v0.7.1-rc1 failed exactly there, with zero assets).
+      # Drafting unconditionally gives both flavours the same, working order.
       - name: Release ${{ github.ref_name }}
+        id: gh_release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
+          draft: true
           prerelease: ${{ env.PRERELEASE == 'true' }}
           files: |
             target/*.jar
@@ -169,3 +176,11 @@ jobs:
             target/*.spdx.json
             target/*-sbom-report.html
             target/*.sigstore.json
+      - name: Publish the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ steps.gh_release.outputs.id }}
+        run: |
+          # Publication flips the release immutable; every asset is already attached.
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" -F draft=false >/dev/null
+          echo "published release ${RELEASE_ID} for ${GITHUB_REF_NAME}"
