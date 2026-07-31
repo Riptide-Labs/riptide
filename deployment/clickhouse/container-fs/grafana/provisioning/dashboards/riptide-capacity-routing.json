@@ -1,0 +1,804 @@
+{
+  "uid": "riptide-capacity-routing",
+  "title": "Riptide - Capacity & Routing",
+  "tags": [
+    "riptide",
+    "netflow",
+    "capacity",
+    "audience:engineer"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "editable": true,
+  "graphTooltip": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Datasource",
+        "type": "datasource",
+        "query": "grafana-clickhouse-datasource",
+        "refresh": 1,
+        "hide": 0,
+        "current": {},
+        "options": [],
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "database",
+        "label": "Database",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT DISTINCT database FROM system.tables WHERE name = 'flows'"
+        },
+        "refresh": 1,
+        "includeAll": false,
+        "multi": false,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": "riptide",
+          "value": "riptide"
+        },
+        "definition": "SELECT DISTINCT database FROM system.tables WHERE name = 'flows'"
+      },
+      {
+        "name": "tenant",
+        "label": "Tenant",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT DISTINCT tenant FROM ${database}.flows ORDER BY tenant",
+          "queryType": "table"
+        },
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "SELECT DISTINCT tenant FROM ${database}.flows ORDER BY tenant"
+      },
+      {
+        "name": "zone",
+        "label": "Zone",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT DISTINCT zone FROM ${database}.flows ORDER BY zone",
+          "queryType": "table"
+        },
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "SELECT DISTINCT zone FROM ${database}.flows ORDER BY zone"
+      },
+      {
+        "name": "exporter",
+        "label": "Exporter",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT DISTINCT exporterAddr AS __value, if(exporterName != '', concat(exporterName, ' (', exporterAddr, ')'), exporterAddr) AS __text FROM ${database}.flows ORDER BY __text"
+        },
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "sort": 0,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "SELECT DISTINCT exporterAddr ... FROM ${database}.flows"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Traffic on interfaces with a known speed",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 50
+              },
+              {
+                "color": "green",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none",
+        "colorMode": "value",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT round(100 * sumIf(bytes, inputSnmpIfSpeed > 0 OR outputSnmpIfSpeed > 0) / nullIf(sum(bytes), 0), 1) AS \"Coverage\" FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter)",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Share of bytes whose ingress or egress interface reported a speed via SNMP (ifHighSpeed). Utilisation panels below can only account for this share \u2014 if it is low, the headroom picture is partial, not healthy."
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Interfaces above 80% at peak",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none",
+        "colorMode": "value",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "WITH util AS (\n  SELECT exporterAddr, inputSnmp, timestamp,\n         sum(bytes) * 8 / 60 / (max(inputSnmpIfSpeed) * 1000000) * 100 AS pct\n  FROM ${database}.samples(ival = 60)\n  WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND inputSnmpIfSpeed > 0 AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL 60 SECOND\n  GROUP BY exporterAddr, inputSnmp, timestamp)\nSELECT count() AS \"Interfaces\" FROM (\n  SELECT exporterAddr, inputSnmp, max(pct) AS peak FROM util\n  GROUP BY exporterAddr, inputSnmp HAVING peak > 80)",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Ingress interfaces whose busiest minute in the range exceeded 80% of link capacity. Anything here is a capacity conversation, not an incident yet."
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Flows with no next-hop recorded",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 50
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none",
+        "colorMode": "value",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT round(100 * countIf((nextHop IS NULL OR nextHop IN (toIPv6('::ffff:0.0.0.0'), toIPv6('::')))) / nullIf(count(), 0), 1) AS \"No next hop\" FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter)",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Share of flows where the exporter reported no next hop \u2014 either NULL or the all-zeros address, which is how most exporters signal 'unset'. At 100% the routing panels below have nothing real to show."
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Ingress utilisation \u2014 top 10 interfaces",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "gradientMode": "none",
+            "spanNulls": false
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "table",
+          "rawSql": "WITH top AS (\n  SELECT concat(if(exporterName != '', exporterName, exporterAddr), ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp)))) AS dim\n  FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND inputSnmpIfSpeed > 0\n  GROUP BY dim ORDER BY sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime)) / (max(inputSnmpIfSpeed) * 1000000) DESC LIMIT 10)\nSELECT timestamp AS time, concat(if(exporterName != '', exporterName, exporterAddr), ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp)))) AS series,\n       sum(bytes) * 8 / $__interval_s / (max(inputSnmpIfSpeed) * 1000000) * 100 AS pct\nFROM ${database}.samples(ival = $__interval_s)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND inputSnmpIfSpeed > 0 AND concat(if(exporterName != '', exporterName, exporterAddr), ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp)))) IN (SELECT dim FROM top) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $__interval_s SECOND\nGROUP BY time, series ORDER BY time",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Percentage of link capacity used, per ingress interface, for the ten interfaces with the highest average utilisation. Capacity comes from SNMP ifHighSpeed (Mbit/s); interfaces without a speed are excluded entirely.",
+      "interval": "1m"
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Interface headroom \u2014 p95 and peak against link speed",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Link speed"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bps"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95 load"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bps"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Peak load"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bps"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95 % of capacity"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "WITH util AS (\n  SELECT concat(if(exporterName != '', exporterName, exporterAddr), ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp)))) AS iface, timestamp, sum(bytes) * 8 / 60 AS bps,\n         max(inputSnmpIfSpeed) * 1000000 AS speed_bps\n  FROM ${database}.samples(ival = 60)\n  WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND inputSnmpIfSpeed > 0 AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL 60 SECOND\n  GROUP BY iface, timestamp)\nSELECT iface AS \"Interface\", max(speed_bps) AS \"Link speed\",\n       quantile(0.95)(bps) AS \"p95 load\", max(bps) AS \"Peak load\",\n       round(100 * quantile(0.95)(bps) / nullIf(max(speed_bps), 0), 2) AS \"p95 % of capacity\"\nFROM util GROUP BY iface ORDER BY \"p95 % of capacity\" DESC LIMIT 50",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Per ingress interface: link speed, 95th-percentile and peak load over the range, and what fraction of capacity the p95 represents. Sorted by the tightest headroom. p95 is the number to plan against; peak is the number that hurts."
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Next hop \u2014 where traffic actually leaves",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 23
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT ifNull(nextHopHostname, replaceOne(toString(nextHop), '::ffff:', '')) AS \"Next hop\",\n       concat(toString(dstAs), ': ', ifNull(dstAsOrg, 'unknown')) AS \"Destination AS\",\n       sum(bytes) AS \"Bytes\", count() AS \"Flows\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND NOT (nextHop IS NULL OR nextHop IN (toIPv6('::ffff:0.0.0.0'), toIPv6('::')))\nGROUP BY \"Next hop\", \"Destination AS\" ORDER BY \"Bytes\" DESC LIMIT 50",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Volume grouped by the next hop the exporter recorded, paired with the destination AS. Use it to confirm a prefix is leaving through the upstream you intended, and to spot traffic taking a backup path."
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "One-sided conversations \u2014 only one direction observed",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "WITH pairs AS (\n  SELECT least(srcAddr, dstAddr) AS a, greatest(srcAddr, dstAddr) AS b,\n         countIf(srcAddr < dstAddr) AS fwd, countIf(srcAddr > dstAddr) AS rev,\n         sum(bytes) AS total\n  FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND srcAddr != dstAddr\n  GROUP BY a, b)\nSELECT replaceOne(toString(a), '::ffff:', '') AS \"Endpoint A\",\n       replaceOne(toString(b), '::ffff:', '') AS \"Endpoint B\",\n       fwd AS \"A to B flows\", rev AS \"B to A flows\", total AS \"Bytes\"\nFROM pairs WHERE fwd = 0 OR rev = 0 ORDER BY total DESC LIMIT 50",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Endpoint pairs where flows were seen travelling one way but never the other. Usually a visibility gap (an exporter or interface not configured for both directions) rather than asymmetric routing \u2014 either way, every byte-based comparison for these pairs is half a picture."
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Top source prefixes",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT concat(replaceOne(toString(tupleElement(IPv6CIDRToRange(srcAddr,\n         toUInt8(if(srcAddr BETWEEN toIPv6('::ffff:0.0.0.0') AND toIPv6('::ffff:255.255.255.255'), 96 + srcMaskLen, srcMaskLen))), 1)), '::ffff:', ''),\n       '/', toString(srcMaskLen)) AS \"Source prefix\",\n       sum(bytes) AS \"Bytes\", sum(packets) AS \"Packets\", count() AS \"Flows\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND srcMaskLen > 0\nGROUP BY \"Source prefix\" ORDER BY \"Bytes\" DESC LIMIT 50",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Traffic rolled up to the routable prefix the exporter reported (address masked to its prefix length) instead of individual hosts. Collapses a long tail of hosts into units you can actually act on in routing or policy."
+    }
+  ],
+  "annotations": {
+    "list": []
+  },
+  "links": [
+    {
+      "title": "Riptide dashboards",
+      "type": "dashboards",
+      "tags": [
+        "riptide"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true
+    }
+  ],
+  "description": "Is any link running out of room, and is traffic leaving the way we intended? Capacity panels measure load against SNMP-reported link speed (ifHighSpeed, Mbit/s) and are blind to interfaces without one \u2014 the coverage stat says how blind. Routing panels cover next hop, prefix-level volume, and conversations we only see one side of. Scope with Tenant/Zone/Exporter."
+}
