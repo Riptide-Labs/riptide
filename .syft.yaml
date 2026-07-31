@@ -20,5 +20,9 @@ java:
 # workflow file has no license. Left in, they are 94% of the report's "Unknown
 # originator" bucket and 41% of "Undeclared". See #402.
 exclude:
-  - './docs/**'      # docs-site devDependencies (1224 npm packages)
-  - './.github/**'   # our pinned GitHub Actions (44 packages)
+  - './docs/**'            # docs-site devDependencies (1224 npm packages)
+  - './.github/**'         # our pinned GitHub Actions (44 packages)
+  # `make packages` stages a copy of the release jar for nfpm. Scanning both it
+  # and target/*.jar listed every dependency twice: v0.7.1-rc3 reported 276
+  # Maven packages for 127 distinct purls.
+  - './target/package/**'  # nfpm staging copy of the release jar
