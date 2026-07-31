@@ -86,11 +86,14 @@ jobs:
           path: |
             target/*.jar
       # SPDX over the source tree, so the SBOM describes what went into the
-      # build rather than what syft can infer from the finished jar.
+      # build rather than what syft can infer from the finished jar. The scan
+      # is scoped and the POMs resolved by .syft.yaml — without it the report
+      # is mostly undeclared licenses and unknown originators (#402).
       - name: Generate SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           path: .
+          config: .syft.yaml
           format: spdx-json
           artifact-name: riptide-${{ env.VERSION }}.spdx.json
           output-file: target/riptide-${{ env.VERSION }}.spdx.json
