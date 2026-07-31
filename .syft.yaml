@@ -1,0 +1,24 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Syft configuration for the release SBOM (.github/workflows/release.yml).
+# Passed explicitly via the action's `config` input — do not rely on syft's
+# cwd auto-discovery, which would fail silently and ship a degraded SBOM.
+
+java:
+  # A pom.xml declares dependencies but carries none of their metadata: no
+  # license, no organization, and no version for anything managed by a BOM.
+  # Resolving the POMs is what fills those in. The release job runs `make`
+  # before the SBOM step, so ~/.m2 is already warm and this costs nothing.
+  use-maven-local-repository: true
+  # Fallback for the few POMs a build does not pull into the local repository.
+  use-network: true
+
+# The SBOM describes the release, not the machine that builds it. Both of these
+# trees are cataloged by syft but shipped to nobody, and neither can carry the
+# metadata an SBOM is read for: a package-lock.json has no author field and a
+# workflow file has no license. Left in, they are 94% of the report's "Unknown
+# originator" bucket and 41% of "Undeclared". See #402.
+exclude:
+  - './docs/**'      # docs-site devDependencies (1224 npm packages)
+  - './.github/**'   # our pinned GitHub Actions (44 packages)
