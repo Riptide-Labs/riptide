@@ -89,14 +89,19 @@ public class IpfixUdpParser extends UdpParserBase implements DispatchableUdpPars
 
     @Override
     protected UdpSessionManager.SessionKey buildSessionKey(final InetSocketAddress remoteAddress, final InetSocketAddress localAddress) {
-        return new SessionKey(remoteAddress, localAddress);
+        return new SocketSessionKey(remoteAddress, localAddress);
     }
 
-    public static final class SessionKey implements UdpSessionManager.SessionKey {
+    /**
+     * Keys the session on the full remote <em>socket</em> (address and port) plus the local socket:
+     * an IPFIX UDP Transport Session is per source/destination tuple, so an exporter that moves
+     * source port is a new session. Contrast {@code Netflow9UdpParser.HostSessionKey}.
+     */
+    public static final class SocketSessionKey implements UdpSessionManager.SessionKey {
         private final InetSocketAddress remoteAddress;
         private final InetSocketAddress localAddress;
 
-        public SessionKey(final InetSocketAddress remoteAddress, final InetSocketAddress localAddress) {
+        public SocketSessionKey(final InetSocketAddress remoteAddress, final InetSocketAddress localAddress) {
             this.remoteAddress = remoteAddress;
             this.localAddress = localAddress;
         }
@@ -104,7 +109,7 @@ public class IpfixUdpParser extends UdpParserBase implements DispatchableUdpPars
         @Override
         public boolean equals(final Object o) {
             if (this == o) return true;
-            if (!(o instanceof SessionKey that)) return false;
+            if (!(o instanceof SocketSessionKey that)) return false;
             return Objects.equals(this.localAddress, that.localAddress)
                     && Objects.equals(this.remoteAddress, that.remoteAddress);
         }

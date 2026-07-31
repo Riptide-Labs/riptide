@@ -51,6 +51,6 @@ public class Netflow5UdpParser extends UdpParserBase implements DispatchableUdpP
     @Override
     protected UdpSessionManager.SessionKey buildSessionKey(final InetSocketAddress remoteAddress,
                                                            final InetSocketAddress localAddress) {
-        return new Netflow9UdpParser.SessionKey(remoteAddress.getAddress(), localAddress);
+        return new Netflow9UdpParser.HostSessionKey(remoteAddress.getAddress(), localAddress);
     }
 }

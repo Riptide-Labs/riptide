@@ -82,14 +82,20 @@ public class Netflow9UdpParser extends UdpParserBase implements DispatchableUdpP
 
     @Override
     protected UdpSessionManager.SessionKey buildSessionKey(final InetSocketAddress remoteAddress, final InetSocketAddress localAddress) {
-        return new SessionKey(remoteAddress.getAddress(), localAddress);
+        return new HostSessionKey(remoteAddress.getAddress(), localAddress);
     }
 
-    public static final class SessionKey implements UdpSessionManager.SessionKey {
+    /**
+     * Keys the session on the remote <em>host address</em> plus the local socket, deliberately
+     * ignoring the remote port: NetFlow v9 exporters may hop source ports between packets, and the
+     * templates they announce must survive that. NetFlow v5 and sFlow reuse this key for the same
+     * reason. Contrast {@code IpfixUdpParser.SocketSessionKey}.
+     */
+    public static final class HostSessionKey implements UdpSessionManager.SessionKey {
         private final InetAddress remoteAddress;
         private final InetSocketAddress localAddress;
 
-        public SessionKey(final InetAddress remoteAddress, final InetSocketAddress localAddress) {
+        public HostSessionKey(final InetAddress remoteAddress, final InetSocketAddress localAddress) {
             this.remoteAddress = remoteAddress;
             this.localAddress = localAddress;
         }
@@ -97,7 +103,7 @@ public class Netflow9UdpParser extends UdpParserBase implements DispatchableUdpP
         @Override
         public boolean equals(final Object o) {
             if (this == o) return true;
-            if (!(o instanceof SessionKey that)) return false;
+            if (!(o instanceof HostSessionKey that)) return false;
             return Objects.equals(this.localAddress, that.localAddress)
                     && Objects.equals(this.remoteAddress, that.remoteAddress);
         }
