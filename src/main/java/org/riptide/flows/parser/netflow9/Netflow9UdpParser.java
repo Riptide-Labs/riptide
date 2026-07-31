@@ -67,6 +67,11 @@ public class Netflow9UdpParser extends UdpParserBase implements DispatchableUdpP
             public long getSequenceNumber() {
                 return header.sequenceNumber;
             }
+
+            @Override
+            public int undecodableSets() {
+                return packet.undecodableSets;
+            }
         };
     }
 

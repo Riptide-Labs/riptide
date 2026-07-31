@@ -82,6 +82,8 @@ lost silently. Alert on the drop counters; watch the depth gauges for early warn
 
 | Metric | Meaning |
 |---|---|
+| `listeners.<name>.socketDrops` | **datagrams the kernel discarded** because the socket receive buffer was full (gauge, Linux only) |
+| `parsers.<name>.undecodableSets` | Data Sets discarded because their IPFIX/NetFlow v9 Template was not known |
 | `parsers.<name>.dispatchQueueDepth` | packets waiting to be enriched (gauge) |
 | `parsers.<name>.dispatchDrops` | **records** discarded because enrichment/persistence fell behind, or discarded at shutdown |
 | `pipeline.dispatchErrors` | records lost because enrichment or persistence threw |
@@ -92,6 +94,21 @@ lost silently. Alert on the drop counters; watch the depth gauges for early warn
 Delivery accounting: `recordsScheduled − dispatchDrops − dispatchErrors` is what reached the
 persister. Note `recordsDispatched` counts only records the pipeline accepted without throwing, so
 it excludes `dispatchErrors`.
+
+**Two of these count loss that happens before any of the queues.**
+They were added because a lab measurement found the application accounting for only ~4% of a ~25% shortfall under sustained overload, with nothing accounting for the rest:
+
+- `socketDrops` is **upstream of every application counter**.
+  Once the receive buffer overflows, the datagram is gone before riptide runs, so this is the only place that loss is visible at all.
+  It is read per socket from `/proc/net/udp`, matched on the bound address and port, so it attributes to this receiver rather than to the whole host or to another socket sharing the port number.
+  It publishes no value on non-Linux platforms (absent is not the same as zero).
+  A rising value means the collector cannot drain the socket fast enough: raise `net.core.rmem_max`, or reduce offered load.
+- `undecodableSets` counts Data Sets thrown away because their Template had not arrived.
+  RFC 7011 §8 permits discarding these, so it is not a protocol error, but it is still lost data.
+  It counts **Sets, not records**: without the Template the record size is unknown, so treat it as a lower bound.
+  Note that it also counts Options Data Sets, whose loss costs enrichment metadata (exporter-pushed interface names) rather than flow records, so a non-zero value is not proof that flow data was lost.
+  Expect a burst at startup: a UDP exporter re-announces Templates only periodically, so a freshly started collector discards data until the first Template of each exporter arrives.
+  Sustained non-zero values are the ones to alert on.
 
 **Datagram vs. reliable transports differ deliberately.** A UDP receiver drops when its dispatch
 queue stays full, because the medium is already lossy and a counted userspace drop beats pushing

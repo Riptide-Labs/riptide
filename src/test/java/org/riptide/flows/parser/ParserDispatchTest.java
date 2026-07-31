@@ -242,6 +242,43 @@ class ParserDispatchTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    /**
+     * A Set discarded for a missing Template must be counted. Before this counter the discard was a
+     * {@code LOG.debug} in {@code ipfix/proto/Packet} and nothing else, so on a collector running at
+     * {@code WARN} it was entirely invisible — records gone, every metric reading healthy.
+     */
+    @Test
+    void undecodableSetsAreCounted() throws Exception {
+        final var registry = new MetricRegistry();
+        final var parser = start(new StubParser("undec", registry, true, (s2, f2) -> { }), 1, 16);
+
+        parser.dispatch(FLOWS_PER_PACKET, 2).get(10, TimeUnit.SECONDS);
+
+        assertThat(counter(registry, "undec", "undecodableSets"))
+                .as("Sets, not records: without the Template the record count is unknowable")
+                .isEqualTo(2);
+    }
+
+    /**
+     * The placement guard. A packet whose <em>every</em> Data Set was undecodable builds no flows, so
+     * {@code transmit} returns early — counting after that return would miss exactly the loss the
+     * counter exists to expose, and would do so silently.
+     */
+    @Test
+    void undecodableSetsAreCountedEvenWhenThePacketYieldsNoFlows() throws Exception {
+        final var registry = new MetricRegistry();
+        final var parser = start(new StubParser("undec-only", registry, true, (s2, f2) -> { }), 1, 16);
+
+        final var future = parser.dispatch(0, 3);
+
+        assertThat(counter(registry, "undec-only", "undecodableSets"))
+                .as("counted before the empty-flow early return, or this loss stays invisible")
+                .isEqualTo(3);
+        assertThat(future)
+                .as("a packet with nothing decodable must still complete its future or the buffer leaks")
+                .isCompleted();
+    }
+
     // ---------------------------------------------------------------- helpers
 
     /**
@@ -332,14 +369,19 @@ class ParserDispatchTest {
         }
 
         CompletableFuture<?> dispatch() {
-            return transmit(Instant.now(), packet(), this.session);
+            return transmit(Instant.now(), packet(FLOWS_PER_PACKET, 0), this.session);
         }
 
-        private FlowPacket packet() {
+        /** A packet carrying {@code flowCount} decodable records and {@code undecodable} skipped Sets. */
+        CompletableFuture<?> dispatch(final int flowCount, final int undecodable) {
+            return transmit(Instant.now(), packet(flowCount, undecodable), this.session);
+        }
+
+        private FlowPacket packet(final int flowCount, final int undecodable) {
             return new FlowPacket() {
                 @Override
                 public Stream<Flow> buildFlows(final Instant receivedAt) {
-                    return Stream.generate(() -> FLOW).limit(FLOWS_PER_PACKET);
+                    return Stream.generate(() -> FLOW).limit(flowCount);
                 }
 
                 @Override
@@ -350,6 +392,11 @@ class ParserDispatchTest {
                 @Override
                 public long getSequenceNumber() {
                     return 0;
+                }
+
+                @Override
+                public int undecodableSets() {
+                    return undecodable;
                 }
             };
         }

@@ -5,6 +5,7 @@
 
 package org.riptide.flows.listeners;
 
+import com.codahale.metrics.Gauge;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
@@ -39,6 +40,7 @@ public class UdpListener implements Listener {
     private final UdpParser parser;
 
     private final Meter packetsReceived;
+    private final MetricRegistry metrics;
 
     private EventLoopGroup bossGroup;
     private ChannelFuture socketFuture;
@@ -54,6 +56,7 @@ public class UdpListener implements Listener {
         this.parser = Objects.requireNonNull(parser);
 
         this.packetsReceived = metrics.meter(MetricRegistry.name("listeners", name, "packetsReceived"));
+        this.metrics = metrics;
     }
 
     @Override
@@ -78,10 +81,38 @@ public class UdpListener implements Listener {
                 .handler(new DefaultChannelInitializer())
                 .bind(address)
                 .syncUninterruptibly();
+
+        registerSocketDrops();
+    }
+
+    /**
+     * Publish the kernel's per-socket drop count for the port we actually bound.
+     *
+     * <p>Read from the bound channel rather than {@link #port} so that an ephemeral bind
+     * ({@code port = 0}) still attributes correctly. Registered after {@code bind} for the same
+     * reason — before it there is no port to attribute to.
+     *
+     * <p>Remove-then-register, so a restarted listener rebinds the gauge to its live socket instead of
+     * leaving the previous instance's closure in place.
+     */
+    private void registerSocketDrops() {
+        final java.net.SocketAddress local = this.socketFuture.channel().localAddress();
+        if (!(local instanceof InetSocketAddress bound)) {
+            return;
+        }
+        final String gauge = MetricRegistry.name("listeners", this.name, "socketDrops");
+        this.metrics.remove(gauge);
+        this.metrics.register(gauge, (Gauge<Long>) () -> UdpSocketDrops.forSocket(bound));
     }
 
     @Override
     public void stop() {
+        // Deregister before closing: once the socket is gone the closure describes a port we no
+        // longer own, and the next process to bind it would have its kernel drops published as
+        // this receiver's ingest loss. Same reason BatchingFlowRepository removes its queue-depth
+        // gauge in stop().
+        this.metrics.remove(MetricRegistry.name("listeners", this.name, "socketDrops"));
+
         if (this.socketFuture != null) {
             LOG.info("Closing channel...");
             this.socketFuture.channel().close().syncUninterruptibly();
