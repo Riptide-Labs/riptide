@@ -94,6 +94,20 @@ jobs:
           format: spdx-json
           artifact-name: riptide-${{ env.VERSION }}.spdx.json
           output-file: target/riptide-${{ env.VERSION }}.spdx.json
+      # The SPDX file is machine-readable and human-hostile; ship the human answer
+      # beside it. One self-contained HTML file that works offline — verified to
+      # contain no network fetches, only plain <a> links.
+      - name: Render SBOM HTML report
+        uses: no42-org/blitsbom@3f2e7abc338c05d40a15058eafc318fee310e05f # v0.6.1
+        with:
+          sbom: target/riptide-${{ env.VERSION }}.spdx.json
+          output: target/riptide-${{ env.VERSION }}-sbom-report.html
+          # Digest-pinned for immutability: the action's default resolves a mutable
+          # GHCR tag (report-X.Y.Z). This digest MUST move with the `uses:` pin above —
+          # Dependabot bumps that SHA but cannot see this input, so on every action
+          # bump re-resolve with:
+          #   docker buildx imagetools inspect ghcr.io/no42-org/blitsbom:report-X.Y.Z
+          image: ghcr.io/no42-org/blitsbom@sha256:ff58ce61841db40cd530fd231f999b9fcd413f4df506dca45c7bdf3404087a9f # report-0.6.1
       - name: Login to Registry
         uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2
         with:
@@ -128,7 +142,7 @@ jobs:
         run: |
           # cosign 3.x writes the sigstore bundle (sig + cert + Rekor proof in one file);
           # the legacy --output-signature/--output-certificate pair no longer works alone.
-          for artifact in target/*.jar target/*.deb target/*.rpm target/*.spdx.json; do
+          for artifact in target/*.jar target/*.deb target/*.rpm target/*.spdx.json target/*-sbom-report.html; do
             cosign sign-blob --yes --bundle "${artifact}.sigstore.json" "${artifact}"
           done
       # Provenance answers a different question than the cosign signature does:
@@ -153,4 +167,5 @@ jobs:
             target/*.deb
             target/*.rpm
             target/*.spdx.json
+            target/*-sbom-report.html
             target/*.sigstore.json
