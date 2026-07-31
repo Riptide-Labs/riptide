@@ -1,0 +1,757 @@
+{
+  "uid": "riptide-traffic-composition",
+  "title": "Riptide - Traffic Composition",
+  "tags": [
+    "riptide",
+    "netflow",
+    "composition",
+    "audience:engineer"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "editable": true,
+  "graphTooltip": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Datasource",
+        "type": "datasource",
+        "query": "grafana-clickhouse-datasource",
+        "refresh": 1,
+        "hide": 0,
+        "current": {},
+        "options": [],
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "database",
+        "label": "Database",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT DISTINCT database FROM system.tables WHERE name = 'flows'"
+        },
+        "refresh": 1,
+        "includeAll": false,
+        "multi": false,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": "riptide",
+          "value": "riptide"
+        },
+        "definition": "SELECT DISTINCT database FROM system.tables WHERE name = 'flows'"
+      },
+      {
+        "name": "tenant",
+        "label": "Tenant",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT DISTINCT tenant FROM ${database}.flows ORDER BY tenant",
+          "queryType": "table"
+        },
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "SELECT DISTINCT tenant FROM ${database}.flows ORDER BY tenant"
+      },
+      {
+        "name": "zone",
+        "label": "Zone",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT DISTINCT zone FROM ${database}.flows ORDER BY zone",
+          "queryType": "table"
+        },
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "SELECT DISTINCT zone FROM ${database}.flows ORDER BY zone"
+      },
+      {
+        "name": "exporter",
+        "label": "Exporter",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT DISTINCT exporterAddr AS __value, if(exporterName != '', concat(exporterName, ' (', exporterAddr, ')'), exporterAddr) AS __text FROM ${database}.flows ORDER BY __text"
+        },
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "sort": 0,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "SELECT DISTINCT exporterAddr ... FROM ${database}.flows"
+      },
+      {
+        "name": "locality",
+        "label": "Flow locality",
+        "type": "custom",
+        "query": "PUBLIC,PRIVATE",
+        "options": [],
+        "includeAll": true,
+        "multi": false,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "All"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "geomap",
+      "title": "Where traffic goes \u2014 destination countries",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "continuous-BlYlRd"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "view": {
+          "id": "zero",
+          "lat": 0,
+          "lon": 0,
+          "zoom": 1
+        },
+        "basemap": {
+          "type": "default",
+          "name": "Basemap"
+        },
+        "controls": {
+          "showZoom": true,
+          "mouseWheelZoom": false,
+          "showAttribution": true,
+          "showScale": false,
+          "showMeasure": false,
+          "showDebug": false
+        },
+        "tooltip": {
+          "mode": "details"
+        },
+        "layers": [
+          {
+            "type": "markers",
+            "name": "Countries",
+            "location": {
+              "mode": "lookup",
+              "lookup": "Country",
+              "gazetteer": "public/gazetteer/countries.json"
+            },
+            "config": {
+              "style": {
+                "size": {
+                  "field": "Bytes",
+                  "min": 4,
+                  "max": 30
+                },
+                "color": {
+                  "field": "Bytes"
+                },
+                "opacity": 0.6,
+                "symbol": {
+                  "mode": "fixed",
+                  "fixed": "img/icons/marker/circle.svg"
+                },
+                "textConfig": {
+                  "fontSize": 12,
+                  "offsetX": 0,
+                  "offsetY": 0,
+                  "textAlign": "center",
+                  "textBaseline": "middle"
+                }
+              },
+              "showLegend": true
+            },
+            "tooltip": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT dstCountry AS \"Country\", sum(bytes) AS \"Bytes\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality) AND dstCountry != ''\nGROUP BY dstCountry ORDER BY \"Bytes\" DESC",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Volume by destination country, sized and coloured by bytes. Countries come from GeoIP enrichment as ISO codes; flows with no country (private ranges, unmatched addresses) are excluded rather than pooled into a fake location."
+    },
+    {
+      "id": 2,
+      "type": "geomap",
+      "title": "Where traffic comes from \u2014 source countries",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": {
+            "mode": "continuous-BlYlRd"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "view": {
+          "id": "zero",
+          "lat": 0,
+          "lon": 0,
+          "zoom": 1
+        },
+        "basemap": {
+          "type": "default",
+          "name": "Basemap"
+        },
+        "controls": {
+          "showZoom": true,
+          "mouseWheelZoom": false,
+          "showAttribution": true,
+          "showScale": false,
+          "showMeasure": false,
+          "showDebug": false
+        },
+        "tooltip": {
+          "mode": "details"
+        },
+        "layers": [
+          {
+            "type": "markers",
+            "name": "Countries",
+            "location": {
+              "mode": "lookup",
+              "lookup": "Country",
+              "gazetteer": "public/gazetteer/countries.json"
+            },
+            "config": {
+              "style": {
+                "size": {
+                  "field": "Bytes",
+                  "min": 4,
+                  "max": 30
+                },
+                "color": {
+                  "field": "Bytes"
+                },
+                "opacity": 0.6,
+                "symbol": {
+                  "mode": "fixed",
+                  "fixed": "img/icons/marker/circle.svg"
+                },
+                "textConfig": {
+                  "fontSize": 12,
+                  "offsetX": 0,
+                  "offsetY": 0,
+                  "textAlign": "center",
+                  "textBaseline": "middle"
+                }
+              },
+              "showLegend": true
+            },
+            "tooltip": true
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT srcCountry AS \"Country\", sum(bytes) AS \"Bytes\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality) AND srcCountry != ''\nGROUP BY srcCountry ORDER BY \"Bytes\" DESC",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "The same view for source countries. Read the pair together: a country that is large here but absent opposite is sending far more than it receives."
+    },
+    {
+      "id": 3,
+      "type": "bargauge",
+      "title": "VLAN mix",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [],
+          "fields": "",
+          "values": true
+        },
+        "showUnfilled": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT if(vlan = 0, 'untagged', concat('VLAN ', toString(vlan))) AS \"VLAN\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY vlan ORDER BY \"Bytes\" DESC LIMIT 8",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Bytes per VLAN tag, top eight. VLAN 0 means the exporter reported no tag rather than a VLAN literally numbered zero."
+    },
+    {
+      "id": 4,
+      "type": "bargauge",
+      "title": "DSCP mix",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [],
+          "fields": "",
+          "values": true
+        },
+        "showUnfilled": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT concat(toString(bitShiftRight(tos, 2)), ' - ',\n       transform(bitShiftRight(tos, 2),\n         [0, 8, 10, 14, 18, 22, 26, 28, 34, 36, 46, 48, 56],\n         ['BE', 'CS1', 'AF11', 'AF13', 'AF21', 'AF23', 'AF31', 'AF32',\n          'AF41', 'AF42', 'EF', 'CS6', 'CS7'], 'other')) AS \"DSCP\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\nGROUP BY bitShiftRight(tos, 2) ORDER BY \"Bytes\" DESC LIMIT 8",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Traffic by DSCP class across the whole scope. Tells you whether marking is actually being applied end to end, or whether everything is arriving as best-effort regardless of policy."
+    },
+    {
+      "id": 5,
+      "type": "bargauge",
+      "title": "Flow duration profile",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [],
+          "fields": "",
+          "values": true
+        },
+        "showUnfilled": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT multiIf(dur < 1, '1 - under 1s', dur < 10, '2 - 1 to 10s',\n               dur < 60, '3 - 10 to 60s', dur < 300, '4 - 1 to 5m',\n               '5 - over 5m') AS \"Duration\",\n       count() AS \"Flows\"\nFROM (SELECT dateDiff('second', firstSwitched, lastSwitched) AS dur\n      FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality))\nGROUP BY \"Duration\" ORDER BY \"Duration\"",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "How long flows last, by flow count. A population dominated by sub-second flows is transactional traffic; a heavy long tail is bulk transfer or long-lived tunnels."
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "IPv4 vs IPv6 over time",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 30,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "gradientMode": "none",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "table",
+          "rawSql": "SELECT timestamp AS time,\n       if(srcAddr BETWEEN toIPv6('::ffff:0.0.0.0') AND toIPv6('::ffff:255.255.255.255'), 'IPv4', 'IPv6') AS series,\n       sum(bytes) * 8 / $__interval_s AS bps\nFROM ${database}.samples(ival = $__interval_s)\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL $__interval_s SECOND\nGROUP BY time, series ORDER BY time",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Rate split by address family across the range. The slow-moving trend is the point: this is the panel that answers 'is IPv6 actually growing here' over weeks, not the instantaneous split.",
+      "interval": "1m"
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Prefix length distribution",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT srcMaskLen AS \"Source prefix length\", count() AS \"Flows\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality) AND srcMaskLen > 0\nGROUP BY srcMaskLen ORDER BY \"Flows\" DESC LIMIT 20",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "How specific the routing information behind these flows is, by source prefix length. A pile of /32s where you expect aggregates usually means the exporter is reporting host routes rather than the routing table's view."
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Core network services",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT transform(dstPort,\n         [53, 67, 68, 123, 161, 162, 389, 514, 636, 1812, 1813, 5353],\n         ['DNS', 'DHCP', 'DHCP', 'NTP', 'SNMP', 'SNMP trap', 'LDAP',\n          'Syslog', 'LDAPS', 'RADIUS auth', 'RADIUS acct', 'mDNS'],\n         'other') AS \"Service\",\n       ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')) AS \"Server\",\n       uniqExact(srcAddr) AS \"Clients\", count() AS \"Flows\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\n  AND dstPort IN (53, 67, 68, 123, 161, 162, 389, 514, 636, 1812, 1813, 5353)\nGROUP BY \"Service\", \"Server\" ORDER BY \"Flows\" DESC LIMIT 50",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Traffic to the infrastructure services everything else depends on, identified by well-known destination port. Client count is the useful column: a resolver or NTP server that suddenly serves far more clients than usual is worth a look before users notice."
+    }
+  ],
+  "annotations": {
+    "list": []
+  },
+  "links": [
+    {
+      "title": "Riptide dashboards",
+      "type": "dashboards",
+      "tags": [
+        "riptide"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true
+    }
+  ],
+  "description": "What is this traffic made of, and where does it go geographically? Country maps, VLAN and DSCP mix, address family trend, prefix specificity, flow duration profile, and the core services everything depends on. Descriptive rather than diagnostic: use it to understand the normal shape of the network so the anomaly dashboards mean something."
+}

@@ -37,6 +37,19 @@ Grafana (admin/admin) ships provisioned dashboards backed by the `flows` table a
 - **Riptide - Collection Health**: is every exporter delivering? Reporting/silent-exporter
   verdicts, a per-exporter activity timeline, collection lag percentiles, and an exporter
   inventory with drill-down into Flow Forensics.
+- **Riptide - Interface Traffic Analysis**: throughput and data usage per exporter interface,
+  broken out by application, conversation, host and DSCP, each as an in-vs-out pair.
+- **Riptide - Capacity & Routing**: interface headroom measured against SNMP-reported link speed
+  (p95 and peak as a percentage of capacity), next-hop distribution, prefix-level volume, and
+  conversations only seen in one direction.
+- **Riptide - Behavioural Anomalies**: scanning, host sweeps, repeated attempts against service
+  ports, SYN-only ratio, fan-in targets and packet-size outliers — all derived from traffic shape
+  alone, with the thresholds exposed as dashboard variables.
+- **Riptide - Traffic Composition**: source/destination country maps, VLAN and DSCP mix, flow
+  duration profile, IPv4-vs-IPv6 trend, prefix-length distribution, and core network services.
+- **Riptide - Data Trust**: the metadata that decides whether the other dashboards can be
+  believed — sampling configuration per exporter, clock corrections, tenant/organisation/zone
+  labelling, and exporter identity.
 
 The JSON sources live in `deployment/clickhouse/container-fs/grafana/provisioning/dashboards/`.
 UI edits last only until the provisioned JSON changes — use *Save as* to keep a customized copy.

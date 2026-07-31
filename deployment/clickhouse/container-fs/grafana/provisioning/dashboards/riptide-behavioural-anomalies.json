@@ -1,0 +1,937 @@
+{
+  "uid": "riptide-behavioural-anomalies",
+  "title": "Riptide - Behavioural Anomalies",
+  "tags": [
+    "riptide",
+    "netflow",
+    "security",
+    "audience:engineer"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "editable": true,
+  "graphTooltip": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Datasource",
+        "type": "datasource",
+        "query": "grafana-clickhouse-datasource",
+        "refresh": 1,
+        "hide": 0,
+        "current": {},
+        "options": [],
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "database",
+        "label": "Database",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT DISTINCT database FROM system.tables WHERE name = 'flows'"
+        },
+        "refresh": 1,
+        "includeAll": false,
+        "multi": false,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": "riptide",
+          "value": "riptide"
+        },
+        "definition": "SELECT DISTINCT database FROM system.tables WHERE name = 'flows'"
+      },
+      {
+        "name": "tenant",
+        "label": "Tenant",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT DISTINCT tenant FROM ${database}.flows ORDER BY tenant",
+          "queryType": "table"
+        },
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "SELECT DISTINCT tenant FROM ${database}.flows ORDER BY tenant"
+      },
+      {
+        "name": "zone",
+        "label": "Zone",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "rawSql": "SELECT DISTINCT zone FROM ${database}.flows ORDER BY zone",
+          "queryType": "table"
+        },
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "SELECT DISTINCT zone FROM ${database}.flows ORDER BY zone"
+      },
+      {
+        "name": "exporter",
+        "label": "Exporter",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT DISTINCT exporterAddr AS __value, if(exporterName != '', concat(exporterName, ' (', exporterAddr, ')'), exporterAddr) AS __text FROM ${database}.flows ORDER BY __text"
+        },
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true,
+        "sort": 0,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "definition": "SELECT DISTINCT exporterAddr ... FROM ${database}.flows"
+      },
+      {
+        "name": "min_ports",
+        "label": "Scan: min distinct ports",
+        "type": "custom",
+        "query": "20,50,100,250",
+        "options": [],
+        "includeAll": false,
+        "multi": false,
+        "current": {
+          "selected": true,
+          "text": "50",
+          "value": "50"
+        }
+      },
+      {
+        "name": "min_targets",
+        "label": "Sweep: min distinct targets",
+        "type": "custom",
+        "query": "20,50,100,250",
+        "options": [],
+        "includeAll": false,
+        "multi": false,
+        "current": {
+          "selected": true,
+          "text": "50",
+          "value": "50"
+        }
+      },
+      {
+        "name": "min_attempts",
+        "label": "Repeat attempts: minimum",
+        "type": "custom",
+        "query": "10,25,50,100",
+        "options": [],
+        "includeAll": false,
+        "multi": false,
+        "current": {
+          "selected": true,
+          "text": "25",
+          "value": "25"
+        }
+      },
+      {
+        "name": "min_sources",
+        "label": "Fan-in: min distinct sources",
+        "type": "custom",
+        "query": "20,50,100,250",
+        "options": [],
+        "includeAll": false,
+        "multi": false,
+        "current": {
+          "selected": true,
+          "text": "50",
+          "value": "50"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Sources over the scan threshold",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none",
+        "colorMode": "value",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT count() AS \"Sources\" FROM (\n  SELECT srcAddr FROM ${database}.flows\n  WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND protocol IN (6, 17)\n  GROUP BY srcAddr HAVING uniqExact(dstPort) >= $min_ports)",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Distinct source addresses touching at least the configured number of destination ports in the range. A count, not a verdict \u2014 backup agents and scanners look alike from flow data alone."
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "SYN-only share of TCP flows",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 10
+              },
+              {
+                "color": "red",
+                "value": 30
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none",
+        "colorMode": "value",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT round(100 * countIf(bitAnd(tcpFlags, 2) != 0 AND bitAnd(tcpFlags, 16) = 0)\n       / nullIf(count(), 0), 2) AS \"SYN-only\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND protocol = 6",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Percentage of TCP flows that carried a SYN without an ACK \u2014 connection attempts that never completed. A few percent is normal background; a sustained jump is either a scan or a service that stopped answering."
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Multicast and broadcast share",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none",
+        "colorMode": "value",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT round(100 * sumIf(bytes,\n         dstAddr BETWEEN toIPv6('::ffff:224.0.0.0') AND toIPv6('::ffff:239.255.255.255')\n         OR dstAddr = toIPv6('::ffff:255.255.255.255')\n         OR (dstAddr >= toIPv6('ff00::') AND dstAddr <= toIPv6('ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'))\n       ) / nullIf(sum(bytes), 0), 2) AS \"Multicast\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter)",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Share of bytes destined for a multicast group or the IPv4 broadcast address. Derived from the destination address range \u2014 no separate counter needed. Worth watching when it climbs on a link that should carry unicast."
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Targets with unusual fan-in",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none",
+        "colorMode": "value",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT count() AS \"Targets\" FROM (\n  SELECT dstAddr FROM ${database}.flows\n  WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter)\n  GROUP BY dstAddr HAVING uniqExact(srcAddr) >= $min_sources)",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Destination addresses contacted by at least the configured number of distinct sources. Normal for a public service; notable for anything else."
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "SYN-only flow share over time",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "gradientMode": "none",
+            "spanNulls": false
+          },
+          "max": 100
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "table",
+          "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL $__interval_s SECOND) AS time,\n       round(100 * countIf(bitAnd(tcpFlags, 2) != 0 AND bitAnd(tcpFlags, 16) = 0)\n       / nullIf(count(), 0), 2) AS \"SYN-only %\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND protocol = 6\nGROUP BY time ORDER BY time",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "The SYN-without-ACK ratio bucketed over the range. Counted over flows rather than the samples view, so one long session is one flow \u2014 the same population the stat above measures. Shape matters more than level: a step change is a state change on the network, a slow drift is usually a population change.",
+      "interval": "1m"
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Port scan candidates",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes per flow"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT replaceOne(toString(srcAddr), '::ffff:', '') AS \"Source\",\n       uniqExact(dstPort) AS \"Distinct ports\",\n       uniqExact(dstAddr) AS \"Distinct targets\",\n       count() AS \"Flows\", sum(bytes) AS \"Bytes\",\n       round(sum(bytes) / nullIf(count(), 0)) AS \"Bytes per flow\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND protocol IN (6, 17)\nGROUP BY srcAddr HAVING \"Distinct ports\" >= $min_ports\nORDER BY \"Distinct ports\" DESC LIMIT 50",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Sources ranked by how many distinct destination ports they touched. The bytes-per-flow column is the discriminator: scanning is many tiny flows, legitimate multi-port traffic carries data."
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Host sweep candidates",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT replaceOne(toString(srcAddr), '::ffff:', '') AS \"Source\",\n       uniqExact(dstAddr) AS \"Distinct targets\",\n       uniqExact(dstPort) AS \"Distinct ports\",\n       count() AS \"Flows\", sum(bytes) AS \"Bytes\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND protocol IN (6, 17)\nGROUP BY srcAddr HAVING \"Distinct targets\" >= $min_targets\nORDER BY \"Distinct targets\" DESC LIMIT 50",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Sources ranked by how many distinct destination addresses they touched. A sweep walks addresses on one port; a scan walks ports on one address \u2014 this panel and the one beside it separate the two."
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Repeated attempts against a service port",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes per flow"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT replaceOne(toString(srcAddr), '::ffff:', '') AS \"Source\",\n       replaceOne(toString(dstAddr), '::ffff:', '') AS \"Destination\",\n       dstPort AS \"Port\", count() AS \"Attempts\",\n       round(sum(bytes) / nullIf(count(), 0)) AS \"Bytes per flow\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND protocol = 6\n  AND dstPort IN (21, 22, 23, 25, 110, 143, 389, 445, 587, 993, 995,\n                  1433, 3306, 3389, 5432, 5900, 6379, 27017)\nGROUP BY srcAddr, dstAddr, dstPort HAVING \"Attempts\" >= $min_attempts\nORDER BY \"Attempts\" DESC LIMIT 50",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Source, destination and port combinations with many small TCP flows \u2014 the shape of repeated authentication attempts. Restricted to well-known service ports so ordinary short-lived web traffic does not swamp the list."
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Fan-in targets",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bits/s"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bps"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT replaceOne(toString(dstAddr), '::ffff:', '') AS \"Target\",\n       uniqExact(srcAddr) AS \"Distinct sources\", count() AS \"Flows\",\n       round(sum(bytes) * 8 / (toUnixTimestamp($__toTime) - toUnixTimestamp($__fromTime))) AS \"Bits/s\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter)\nGROUP BY dstAddr HAVING \"Distinct sources\" >= $min_sources\nORDER BY \"Distinct sources\" DESC LIMIT 50",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Destinations receiving traffic from an unusual number of distinct sources, with the rate they were receiving it at. Volumetric floods show up here as high source count and high rate together; a popular service shows high count alone."
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "Packet-size outliers",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Avg packet size"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT replaceOne(toString(srcAddr), '::ffff:', '') AS \"Source\",\n       replaceOne(toString(dstAddr), '::ffff:', '') AS \"Destination\",\n       protocol AS \"Protocol\",\n       round(sum(bytes) / nullIf(sum(packets), 0)) AS \"Avg packet size\",\n       sum(packets) AS \"Packets\", sum(bytes) AS \"Bytes\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter)\nGROUP BY srcAddr, dstAddr, protocol\nHAVING sum(packets) >= 100 AND (\"Avg packet size\" < 100 OR \"Avg packet size\" > 1500)\nORDER BY \"Bytes\" DESC LIMIT 50",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Conversations whose average packet is far from normal \u2014 under 100 bytes (probe or keepalive traffic) or over 1500 (jumbo frames, or an exporter reporting nonsense). Only conversations with enough packets to be meaningful are listed."
+    }
+  ],
+  "annotations": {
+    "list": []
+  },
+  "links": [
+    {
+      "title": "Riptide dashboards",
+      "type": "dashboards",
+      "tags": [
+        "riptide"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true
+    }
+  ],
+  "description": "What looks unusual in the traffic shape alone? Every panel is behavioural \u2014 counting fan-out, fan-in, flow size and TCP flags \u2014 so none of it needs a threat feed and none of it is an accusation. Thresholds are variables at the top: tune them to your network before treating any row as a finding. Scope with Tenant/Zone/Exporter, then pivot into Flow Forensics for a specific address."
+}
