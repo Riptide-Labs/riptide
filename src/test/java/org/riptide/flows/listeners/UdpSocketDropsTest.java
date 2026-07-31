@@ -10,13 +10,21 @@ import org.junit.jupiter.api.condition.DisabledOnOs;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 
+import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.StandardProtocolFamily;
+import java.net.StandardSocketOptions;
 import java.net.UnknownHostException;
+import java.nio.ByteBuffer;
+import java.nio.channels.DatagramChannel;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Column arithmetic for the kernel's per-socket drop counter.
@@ -154,6 +162,131 @@ class UdpSocketDropsTest {
         assertThat(UdpSocketDrops.sumDrops(lines, WILDCARD, 9999))
                 .as("a metrics scrape must not throw on unexpected procfs content")
                 .isEqualTo(4L);
+    }
+
+    // ------------------------------------------------------------ real-kernel verification
+    //
+    // Everything above tests the parser against fixture lines the same author wrote — parser and
+    // expectations are circular. The tests below close the loop against the kernel's actual
+    // rendering. Note the wildcard test is deliberately the weakest: an ephemeral bind's address
+    // half is all zeros, and all zeros is byte-order invariant, so only the 127.0.0.1 and ::1
+    // binds pin the word-swapped encoding.
+
+    /**
+     * Pins the v4 byte order against the real kernel: {@code 127.0.0.1} renders as {@code 0100007F}
+     * only if the word swap is right, and the address is non-palindromic so the wrong order cannot
+     * accidentally match. An explicit {@code INET} socket, so the row is in {@code /proc/net/udp}.
+     */
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    void kernelRenderingMatchesForAnInet4Bind() throws IOException {
+        try (var v4only = DatagramChannel.open(StandardProtocolFamily.INET)) {
+            v4only.bind(new InetSocketAddress(addr("127.0.0.1"), 0));
+
+            assertThat(UdpSocketDrops.forSocket((InetSocketAddress) v4only.getLocalAddress()))
+                    .as("null here means the word-swapped v4 encoding disagrees with the kernel")
+                    .isEqualTo(0L);
+        }
+    }
+
+    /**
+     * Pins the v4-mapped rendering ({@code ::ffff:127.0.0.1}) a dual-stack socket shows in
+     * {@code /proc/net/udp6} — the other half of {@code procAddressForms}' union.
+     *
+     * <p>On an IPv4-only JVM or kernel, {@code open()} falls back to {@code AF_INET} and the plain
+     * v4 form would let this pass without exercising the mapped branch at all — a vacuous green.
+     * So the test first proves the row actually landed in {@code udp6} via the mapped form (the
+     * 8-char v4 form cannot match a 32-char udp6 address half) and skips when it did not.
+     */
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    void kernelRenderingMatchesForAV4MappedDualStackBind() throws IOException {
+        try (var dualStack = DatagramChannel.open()) {
+            dualStack.bind(new InetSocketAddress(addr("127.0.0.1"), 0));
+            final var bound = (InetSocketAddress) dualStack.getLocalAddress();
+
+            final Path udp6 = Path.of("/proc/net/udp6");
+            assumeTrue(Files.isReadable(udp6), "no /proc/net/udp6 here: IPv4-only kernel");
+            final Long viaMapped = UdpSocketDrops.sumDrops(Files.readAllLines(udp6),
+                    UdpSocketDrops.procAddressForms(addr("127.0.0.1")), bound.getPort());
+            assumeTrue(viaMapped != null,
+                    "dual-stack bind fell back to AF_INET: the mapped form is not exercisable here");
+
+            assertThat(viaMapped)
+                    .as("null here means the v4-mapped-in-v6 form disagrees with the kernel")
+                    .isEqualTo(0L);
+            assertThat(UdpSocketDrops.forSocket(bound)).isEqualTo(0L);
+        }
+    }
+
+    /** Pins the v6 word grouping: the single set bit of {@code ::1} lands differently under every
+     *  wrong grouping, so an all-zeros coincidence cannot mask a mistake. */
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    void kernelRenderingMatchesForALoopbackV6Bind() throws IOException {
+        final DatagramChannel channel;
+        try {
+            channel = DatagramChannel.open(StandardProtocolFamily.INET6);
+        } catch (final UnsupportedOperationException e) {
+            assumeTrue(false, "AF_INET6 unavailable here: " + e);
+            return; // not dead code: javac needs it for definite assignment of channel
+        }
+        // bind failures abort INSIDE try-with-resources, so the channel closes on the skip
+        // path too — aborting from an outer catch would leak the fd for the rest of the run
+        try (channel) {
+            try {
+                channel.bind(new InetSocketAddress(addr("::1"), 0));
+            } catch (final IOException e) {
+                assumeTrue(false, "IPv6 loopback unavailable here: " + e);
+            }
+
+            assertThat(UdpSocketDrops.forSocket((InetSocketAddress) channel.getLocalAddress()))
+                    .as("null here means the v6 word grouping disagrees with the kernel")
+                    .isEqualTo(0L);
+        }
+    }
+
+    /** Pins table selection and the port hex for the bind {@code UdpListener} actually performs.
+     *  Weakest of the four on purpose — see the section comment. */
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    void kernelRenderingMatchesForAWildcardBind() throws IOException {
+        try (var channel = DatagramChannel.open()) {
+            channel.bind(new InetSocketAddress(0));
+
+            assertThat(UdpSocketDrops.forSocket((InetSocketAddress) channel.getLocalAddress()))
+                    .as("null here means the wildcard forms or the port hex disagree with the kernel")
+                    .isEqualTo(0L);
+        }
+    }
+
+    /**
+     * The only test that pins the drops <em>column</em>. A zero assertion cannot: off by one the
+     * parser reads {@code pointer}, which the kernel masks to zeros for unprivileged readers — and
+     * that parses as 0 too. So this produces real drops: a minimal receive buffer (the kernel
+     * clamps the request up to its floor, ~2304 bytes), a receiver that never reads, and ~100 KiB
+     * of loopback datagrams. Loopback delivery enqueues synchronously in the sender's syscall, so
+     * by the time the last send returns the kernel has counted the overflow — no sleeps, no races.
+     */
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    void kernelCountedDropsAreTheNumberWeRead() throws IOException {
+        try (var receiver = DatagramChannel.open(StandardProtocolFamily.INET);
+             var sender = DatagramChannel.open(StandardProtocolFamily.INET)) {
+            receiver.setOption(StandardSocketOptions.SO_RCVBUF, 1);
+            receiver.bind(new InetSocketAddress(addr("127.0.0.1"), 0));
+            final var bound = (InetSocketAddress) receiver.getLocalAddress();
+
+            final ByteBuffer payload = ByteBuffer.allocate(1024);
+            for (int i = 0; i < 100; i++) {
+                payload.clear();
+                sender.send(payload, bound);
+            }
+
+            assertThat(UdpSocketDrops.forSocket(bound))
+                    .as("the kernel counted receive-buffer drops; we must read that same counter")
+                    .isGreaterThan(0L);
+        }
     }
 
     @Test
