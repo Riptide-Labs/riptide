@@ -71,7 +71,7 @@ restart. Configuration is backward-compatible within a minor line; breaking conf
 moves are logged loudly at startup (e.g. the pre-0.1.0 `riptide.snmp.config.definitions`
 tree logs an explicit error pointing at `riptide.nodes`).
 
-Upgrading to 0.6.7 also changes what one **metric** means rather than any configuration key — see
+Upgrading to 0.7.0 also changes what one **metric** means rather than any configuration key — see
 [Parser gauges: exporters and templates](#parser-gauges-exporters-and-templates) before relying on
 `parsers.<name>.sessionCount`.
 
@@ -131,7 +131,7 @@ per sub-protocol and size down accordingly if you configure several.
 
 ## Parser gauges: exporters and templates
 
-Two gauges describe what a UDP parser is holding. They are easy to confuse, and until 0.6.7
+Two gauges describe what a UDP parser is holding. They are easy to confuse, and until 0.7.0
 `sessionCount` reported the wrong one of the two.
 
 | Metric | Meaning |
@@ -139,7 +139,7 @@ Two gauges describe what a UDP parser is holding. They are easy to confuse, and 
 | `parsers.<name>.sessionCount` | exporters — one per `(session, observation domain)` pair |
 | `parsers.<name>.templateCount` | templates held across all exporters |
 
-**What changed in 0.6.7.** `sessionCount` used to report the **template** total, so it overstated by
+**What changed in 0.7.0.** `sessionCount` used to report the **template** total, so it overstated by
 however many templates each exporter announces. It now reports `(session, observation domain)` pairs.
 Expect the value to **drop** on upgrade, by roughly the templates-per-exporter factor; the previous
 quantity is still available, under the name that describes it — `templateCount`. This changes what a
