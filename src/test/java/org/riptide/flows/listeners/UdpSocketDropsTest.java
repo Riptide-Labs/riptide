@@ -18,6 +18,8 @@ import java.net.StandardSocketOptions;
 import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 
@@ -173,13 +175,11 @@ class UdpSocketDropsTest {
     /**
      * Pins the v4 byte order against the real kernel: {@code 127.0.0.1} renders as {@code 0100007F}
      * only if the word swap is right, and the address is non-palindromic so the wrong order cannot
-     * accidentally match. An explicit {@code INET} socket pins the {@code /proc/net/udp} rendering;
-     * a default (dual-stack) socket pins the v4-mapped rendering in {@code /proc/net/udp6} — both
-     * halves of {@code procAddressForms}' defensive union.
+     * accidentally match. An explicit {@code INET} socket, so the row is in {@code /proc/net/udp}.
      */
     @Test
     @EnabledOnOs(OS.LINUX)
-    void kernelRenderingMatchesForALoopbackV4Bind() throws IOException {
+    void kernelRenderingMatchesForAnInet4Bind() throws IOException {
         try (var v4only = DatagramChannel.open(StandardProtocolFamily.INET)) {
             v4only.bind(new InetSocketAddress(addr("127.0.0.1"), 0));
 
@@ -187,13 +187,35 @@ class UdpSocketDropsTest {
                     .as("null here means the word-swapped v4 encoding disagrees with the kernel")
                     .isEqualTo(0L);
         }
+    }
 
+    /**
+     * Pins the v4-mapped rendering ({@code ::ffff:127.0.0.1}) a dual-stack socket shows in
+     * {@code /proc/net/udp6} — the other half of {@code procAddressForms}' union.
+     *
+     * <p>On an IPv4-only JVM or kernel, {@code open()} falls back to {@code AF_INET} and the plain
+     * v4 form would let this pass without exercising the mapped branch at all — a vacuous green.
+     * So the test first proves the row actually landed in {@code udp6} via the mapped form (the
+     * 8-char v4 form cannot match a 32-char udp6 address half) and skips when it did not.
+     */
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    void kernelRenderingMatchesForAV4MappedDualStackBind() throws IOException {
         try (var dualStack = DatagramChannel.open()) {
             dualStack.bind(new InetSocketAddress(addr("127.0.0.1"), 0));
+            final var bound = (InetSocketAddress) dualStack.getLocalAddress();
 
-            assertThat(UdpSocketDrops.forSocket((InetSocketAddress) dualStack.getLocalAddress()))
+            final Path udp6 = Path.of("/proc/net/udp6");
+            assumeTrue(Files.isReadable(udp6), "no /proc/net/udp6 here: IPv4-only kernel");
+            final Long viaMapped = UdpSocketDrops.sumDrops(Files.readAllLines(udp6),
+                    UdpSocketDrops.procAddressForms(addr("127.0.0.1")), bound.getPort());
+            assumeTrue(viaMapped != null,
+                    "dual-stack bind fell back to AF_INET: the mapped form is not exercisable here");
+
+            assertThat(viaMapped)
                     .as("null here means the v4-mapped-in-v6 form disagrees with the kernel")
                     .isEqualTo(0L);
+            assertThat(UdpSocketDrops.forSocket(bound)).isEqualTo(0L);
         }
     }
 
@@ -205,12 +227,19 @@ class UdpSocketDropsTest {
         final DatagramChannel channel;
         try {
             channel = DatagramChannel.open(StandardProtocolFamily.INET6);
-            channel.bind(new InetSocketAddress(addr("::1"), 0));
-        } catch (final UnsupportedOperationException | IOException e) {
-            assumeTrue(false, "IPv6 loopback unavailable here: " + e);
-            return;
+        } catch (final UnsupportedOperationException e) {
+            assumeTrue(false, "AF_INET6 unavailable here: " + e);
+            return; // not dead code: javac needs it for definite assignment of channel
         }
+        // bind failures abort INSIDE try-with-resources, so the channel closes on the skip
+        // path too — aborting from an outer catch would leak the fd for the rest of the run
         try (channel) {
+            try {
+                channel.bind(new InetSocketAddress(addr("::1"), 0));
+            } catch (final IOException e) {
+                assumeTrue(false, "IPv6 loopback unavailable here: " + e);
+            }
+
             assertThat(UdpSocketDrops.forSocket((InetSocketAddress) channel.getLocalAddress()))
                     .as("null here means the v6 word grouping disagrees with the kernel")
                     .isEqualTo(0L);
