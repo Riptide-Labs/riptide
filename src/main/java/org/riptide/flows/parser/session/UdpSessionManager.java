@@ -344,7 +344,7 @@ public class UdpSessionManager {
 
         @Override
         public Session.Resolver getResolver(final long observationDomainId) {
-            return new Resolver(observationDomainId);
+            return new DomainResolver(observationDomainId);
         }
 
         @Override
@@ -361,16 +361,16 @@ public class UdpSessionManager {
             return tracked.tracker.verify(sequenceNumber, sequenceIncrement);
         }
 
-        private final class Resolver implements Session.Resolver {
+        private final class DomainResolver implements Session.Resolver {
             /**
-             * Built once, not per lookup. A Resolver is bound to one exporter for its lifetime while
+             * Built once, not per lookup. A resolver is bound to one exporter for its lifetime while
              * {@code lookupTemplate}/{@code lookupOptions} run per data record, so rebuilding the key
              * each time cost a DomainKey plus two varargs arrays and a boxed long per record — on the
              * very thread this indexing exists to unload.
              */
             private final DomainKey domain;
 
-            private Resolver(final long observationDomainId) {
+            private DomainResolver(final long observationDomainId) {
                 this.domain = domain(observationDomainId);
             }
 

@@ -76,14 +76,14 @@ public class UdpSessionManagerTest {
     }
 
     private void testNetflow9SessionKeys(final InetSocketAddress remote1, final InetSocketAddress local1, final InetSocketAddress remote2, final InetSocketAddress local2, final boolean shouldMatch) {
-        final var sessionKey1 = new Netflow9UdpParser.SessionKey(remote1.getAddress(), local1);
-        final var sessionKey2 = new Netflow9UdpParser.SessionKey(remote2.getAddress(), local2);
+        final var sessionKey1 = new Netflow9UdpParser.HostSessionKey(remote1.getAddress(), local1);
+        final var sessionKey2 = new Netflow9UdpParser.HostSessionKey(remote2.getAddress(), local2);
         testSessionKeys(sessionKey1, sessionKey2, shouldMatch);
     }
 
     private void testIpFixSessionKeys(final InetSocketAddress remote1, final InetSocketAddress local1, final InetSocketAddress remote2, final InetSocketAddress local2, final boolean shouldMatch) {
-        final var sessionKey1 = new IpfixUdpParser.SessionKey(remote1, local1);
-        final var sessionKey2 = new IpfixUdpParser.SessionKey(remote2, local2);
+        final var sessionKey1 = new IpfixUdpParser.SocketSessionKey(remote1, local1);
+        final var sessionKey2 = new IpfixUdpParser.SocketSessionKey(remote2, local2);
         testSessionKeys(sessionKey1, sessionKey2, shouldMatch);
     }
 
@@ -138,7 +138,7 @@ public class UdpSessionManagerTest {
      */
     @Test
     public void optionsRemovalTest() {
-        final var sessionKey = new Netflow9UdpParser.SessionKey(remoteAddress1.getAddress(), localAddress1);
+        final var sessionKey = new Netflow9UdpParser.HostSessionKey(remoteAddress1.getAddress(), localAddress1);
 
         final var udpSessionManager = new UdpSessionManager(Duration.ofMinutes(0), () -> new SequenceNumberTracker(32));
         final var session = udpSessionManager.getSession(sessionKey);
@@ -181,7 +181,7 @@ public class UdpSessionManagerTest {
      */
     @Test
     public void lookupOptionsIsUnaffectedByOtherExporters() {
-        final var sessionKey = new Netflow9UdpParser.SessionKey(remoteAddress1.getAddress(), localAddress1);
+        final var sessionKey = new Netflow9UdpParser.HostSessionKey(remoteAddress1.getAddress(), localAddress1);
         final var manager = new UdpSessionManager(Duration.ofMinutes(5), () -> new SequenceNumberTracker(32));
         final var session = manager.getSession(sessionKey);
 
@@ -203,7 +203,7 @@ public class UdpSessionManagerTest {
         // the same scope names but different values — the shape most likely to leak across
         // exporters if the index were keyed wrongly.
         for (int i = 0; i < 500; i++) {
-            final var otherKey = new Netflow9UdpParser.SessionKey(
+            final var otherKey = new Netflow9UdpParser.HostSessionKey(
                     InetAddress.getLoopbackAddress(), new InetSocketAddress("10.10.10.10", 20000 + i));
             final var other = manager.getSession(otherKey);
             other.addTemplate(observationId1,
@@ -233,7 +233,7 @@ public class UdpSessionManagerTest {
         final var manager = new UdpSessionManager(Duration.ofMinutes(0), () -> new SequenceNumberTracker(32));
 
         for (int i = 0; i < 25; i++) {
-            final var key = new Netflow9UdpParser.SessionKey(
+            final var key = new Netflow9UdpParser.HostSessionKey(
                     InetAddress.getLoopbackAddress(), new InetSocketAddress("10.10.10.10", 30000 + i));
             manager.getSession(key).addTemplate(observationId1,
                     Template.builder(templateId1, Template.Type.TEMPLATE)
@@ -271,7 +271,7 @@ public class UdpSessionManagerTest {
     @Test
     public void concurrentChurnDoesNotLoseTemplatesOrThrow() throws Exception {
         final var manager = new UdpSessionManager(Duration.ofHours(1), () -> new SequenceNumberTracker(32));
-        final var sessionKey = new Netflow9UdpParser.SessionKey(remoteAddress1.getAddress(), localAddress1);
+        final var sessionKey = new Netflow9UdpParser.HostSessionKey(remoteAddress1.getAddress(), localAddress1);
         final var session = manager.getSession(sessionKey);
 
         final var churn = Template.builder(1, Template.Type.TEMPLATE)
@@ -364,7 +364,7 @@ public class UdpSessionManagerTest {
         // two sFlow agents behind ONE UDP source (relay/NAT/shared socket), both
         // sub_agent_id 0: their independent sequence streams must not interleave in
         // a single tracker (which flags spurious errors for gaps within patience)
-        final var sessionKey = new Netflow9UdpParser.SessionKey(remoteAddress1.getAddress(), localAddress1);
+        final var sessionKey = new Netflow9UdpParser.HostSessionKey(remoteAddress1.getAddress(), localAddress1);
         final var manager = new UdpSessionManager(Duration.ofMinutes(30), () -> new SequenceNumberTracker(32));
         final var session = manager.getSession(sessionKey);
 
@@ -380,7 +380,7 @@ public class UdpSessionManagerTest {
 
     @Test
     public void housekeepingEvictsSequenceTrackers() throws Exception {
-        final var sessionKey = new Netflow9UdpParser.SessionKey(remoteAddress1.getAddress(), localAddress1);
+        final var sessionKey = new Netflow9UdpParser.HostSessionKey(remoteAddress1.getAddress(), localAddress1);
         final var manager = new UdpSessionManager(Duration.ofMinutes(0), () -> new SequenceNumberTracker(32));
         final var identity = new ExporterIdentity.Sflow(InetAddress.getByName("10.0.0.1"), 0);
 
@@ -392,7 +392,7 @@ public class UdpSessionManagerTest {
 
     @Test
     public void addOptionsNotifiesTheOptionListener() throws Exception {
-        final var sessionKey = new Netflow9UdpParser.SessionKey(remoteAddress1.getAddress(), localAddress1);
+        final var sessionKey = new Netflow9UdpParser.HostSessionKey(remoteAddress1.getAddress(), localAddress1);
         final var seen = new ArrayList<ExporterIdentity>();
         final var manager = new UdpSessionManager(Duration.ofMinutes(30), () -> new SequenceNumberTracker(32),
                 (identity, scopes, values) -> seen.add(identity));

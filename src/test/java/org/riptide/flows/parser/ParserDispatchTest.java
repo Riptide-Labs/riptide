@@ -206,7 +206,7 @@ class ParserDispatchTest {
             @Override
             protected UdpSessionManager.SessionKey buildSessionKey(final InetSocketAddress remote,
                                                                    final InetSocketAddress local) {
-                return new Netflow9UdpParser.SessionKey(remote.getAddress(), local);
+                return new Netflow9UdpParser.HostSessionKey(remote.getAddress(), local);
             }
 
             @Override
@@ -318,7 +318,7 @@ class ParserDispatchTest {
             super(Protocol.IPFIX, name, dispatcher, new Identity("t", "o", "z", "s"), registry);
             this.mayDrop = mayDrop;
             this.session = new UdpSessionManager(Duration.ofMinutes(30), () -> new SequenceNumberTracker(32))
-                    .getSession(new Netflow9UdpParser.SessionKey(REMOTE.getAddress(), LOCAL));
+                    .getSession(new Netflow9UdpParser.HostSessionKey(REMOTE.getAddress(), LOCAL));
         }
 
         @Override

@@ -29,10 +29,10 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class TcpSession implements Session {
-    private final class Resolver implements Session.Resolver {
+    private final class DomainResolver implements Session.Resolver {
         private final long observationDomainId;
 
-        private Resolver(final long observationDomainId) {
+        private DomainResolver(final long observationDomainId) {
             this.observationDomainId = observationDomainId;
         }
 
@@ -154,7 +154,7 @@ public class TcpSession implements Session {
 
     @Override
     public Session.Resolver getResolver(final long observationDomainId) {
-        return new Resolver(observationDomainId);
+        return new DomainResolver(observationDomainId);
     }
 
     @Override

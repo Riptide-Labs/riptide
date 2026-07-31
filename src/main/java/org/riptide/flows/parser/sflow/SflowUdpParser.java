@@ -55,6 +55,6 @@ public class SflowUdpParser extends UdpParserBase implements DispatchableUdpPars
     @Override
     protected UdpSessionManager.SessionKey buildSessionKey(final InetSocketAddress remoteAddress,
                                                            final InetSocketAddress localAddress) {
-        return new Netflow9UdpParser.SessionKey(remoteAddress.getAddress(), localAddress);
+        return new Netflow9UdpParser.HostSessionKey(remoteAddress.getAddress(), localAddress);
     }
 }
