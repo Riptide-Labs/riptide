@@ -104,6 +104,11 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
                         // IPFIX sequence numbers count Data Records (RFC 7011 §3.1)
                         return packet.dataRecordCount();
                     }
+
+                    @Override
+                    public int undecodableSets() {
+                        return packet.undecodableSets;
+                    }
                 };
 
                 return Optional.of(IpfixTcpParser.this.transmit(receivedAt, flow, session));

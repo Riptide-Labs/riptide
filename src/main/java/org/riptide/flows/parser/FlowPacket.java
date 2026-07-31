@@ -47,4 +47,20 @@ public interface FlowPacket {
     default int getSequenceIncrement() {
         return 1;
     }
+
+    /**
+     * Data Sets this packet carried that could not be decoded because their Template was not known.
+     *
+     * <p>RFC 7011 §8 makes collector-side buffering of such records a {@code MAY}, so discarding them
+     * is compliant — but it is still lost data, and it is lost a whole Set at a time. The count is of
+     * <strong>Sets, not records</strong>, and that is not a shortcut: without the Template the record
+     * size is unknown, so the records inside an undecodable Set cannot be counted. Treat it as a lower
+     * bound on records lost.
+     *
+     * @return the number of Data Sets discarded for a missing Template; {@code 0} for protocols
+     *         without templates (NetFlow v5, sFlow)
+     */
+    default int undecodableSets() {
+        return 0;
+    }
 }
