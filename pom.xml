@@ -264,6 +264,20 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- Lombok is declared <scope>provided</scope>, but repackage
+                         bundles provided-scope dependencies into BOOT-INF/lib
+                         anyway. It is a compile-time annotation processor with
+                         nothing left to do at runtime, and it carries a nested
+                         lombok/launch/mavenEcjBootstrapAgent.jar that syft
+                         catalogs as an unversioned, unlicensed package. -->
+                    <excludes>
+                        <exclude>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                        </exclude>
+                    </excludes>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
