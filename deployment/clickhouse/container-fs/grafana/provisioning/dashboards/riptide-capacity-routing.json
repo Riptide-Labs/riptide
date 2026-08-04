@@ -126,7 +126,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT DISTINCT exporterAddr AS __value, if(exporterName != '', concat(exporterName, ' (', exporterAddr, ')'), exporterAddr) AS __text FROM ${database}.flows ORDER BY __text"
+          "rawSql": "SELECT exporterAddr AS __value, if(argMax(exporterName, receivedAt) != '', argMax(exporterName, receivedAt), exporterAddr) AS __text FROM ${database}.flows GROUP BY exporterAddr ORDER BY __text"
         },
         "refresh": 1,
         "includeAll": true,
@@ -141,7 +141,7 @@
             "$__all"
           ]
         },
-        "definition": "SELECT DISTINCT exporterAddr ... FROM ${database}.flows"
+        "definition": "SELECT exporterAddr AS __value, if(argMax(exporterName, receivedAt) != '', argMax(exporterName, receivedAt), exporterAddr) AS __text FROM ${database}.flows GROUP BY exporterAddr ORDER BY __text"
       }
     ]
   },
@@ -526,6 +526,47 @@
                 "value": "percent"
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ExporterAddr"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "IfIndex"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Interface"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Analyse this interface (Interface Traffic Analysis)",
+                    "url": "/d/riptide-interface-traffic-analysis?${datasource:queryparam}&${database:queryparam}&var-exporter=${__data.fields.ExporterAddr}&var-interface=${__data.fields.IfIndex}&from=${__from}&to=${__to}"
+                  }
+                ]
+              }
+            ]
           }
         ]
       },
@@ -550,7 +591,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "WITH util AS (\n  SELECT concat(if(exporterName != '', exporterName, exporterAddr), ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp)))) AS iface, timestamp, sum(bytes) * 8 / 60 AS bps,\n         max(inputSnmpIfSpeed) * 1000000 AS speed_bps\n  FROM ${database}.samples(ival = 60)\n  WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND inputSnmpIfSpeed > 0 AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL 60 SECOND\n  GROUP BY iface, timestamp)\nSELECT iface AS \"Interface\", max(speed_bps) AS \"Link speed\",\n       quantile(0.95)(bps) AS \"p95 load\", max(bps) AS \"Peak load\",\n       round(100 * quantile(0.95)(bps) / nullIf(max(speed_bps), 0), 2) AS \"p95 % of capacity\"\nFROM util GROUP BY iface ORDER BY \"p95 % of capacity\" DESC LIMIT 50",
+          "rawSql": "WITH util AS (\n  SELECT exporterAddr AS eaddr, inputSnmp AS ifidx, concat(if(exporterName != '', exporterName, exporterAddr), ' - ', ifNull(inputSnmpIfName, concat('if', toString(inputSnmp)))) AS iface, timestamp, sum(bytes) * 8 / 60 AS bps,\n         max(inputSnmpIfSpeed) * 1000000 AS speed_bps\n  FROM ${database}.samples(ival = 60)\n  WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND inputSnmpIfSpeed > 0 AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL 60 SECOND\n  GROUP BY eaddr, ifidx, iface, timestamp)\nSELECT iface AS \"Interface\", eaddr AS \"ExporterAddr\", toString(ifidx) AS \"IfIndex\", max(speed_bps) AS \"Link speed\",\n       quantile(0.95)(bps) AS \"p95 load\", max(bps) AS \"Peak load\",\n       round(100 * quantile(0.95)(bps) / nullIf(max(speed_bps), 0), 2) AS \"p95 % of capacity\"\nFROM util GROUP BY eaddr, ifidx, iface ORDER BY \"p95 % of capacity\" DESC LIMIT 50",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -674,6 +715,40 @@
               {
                 "id": "unit",
                 "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Endpoint A"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Slice A \u2192 B flows (Flow Forensics)",
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&var-src=${__data.fields[\"Endpoint A\"]}&var-dst=${__data.fields[\"Endpoint B\"]}&from=${__from}&to=${__to}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Endpoint B"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Slice B \u2192 A flows (Flow Forensics)",
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&var-src=${__data.fields[\"Endpoint B\"]}&var-dst=${__data.fields[\"Endpoint A\"]}&from=${__from}&to=${__to}"
+                  }
+                ]
               }
             ]
           }
