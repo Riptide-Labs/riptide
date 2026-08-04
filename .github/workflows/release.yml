@@ -112,7 +112,7 @@ jobs:
           #   docker buildx imagetools inspect ghcr.io/no42-org/blitsbom:report-X.Y.Z
           image: ghcr.io/no42-org/blitsbom@sha256:ff58ce61841db40cd530fd231f999b9fcd413f4df506dca45c7bdf3404087a9f # report-0.6.1
       - name: Login to Registry
-        uses: docker/login-action@371161bbe7024a29a25c5e19bfcbc0804fe9ad2c # v4.5.2
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
