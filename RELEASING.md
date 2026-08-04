@@ -66,6 +66,9 @@ disagrees with the version in `pom.xml`, or if that version is a `SNAPSHOT`.
 The release is published immediately — it is not a draft. Write the release
 notes afterwards with `gh release edit vX.Y.Z --notes-file notes.md`.
 
+The attached SBOM contains post-generation first-party license assertions: syft cannot read our license from a deb control file or attach one to the scanned directory, so `make sbom-assert` sets `licenseDeclared: GPL-3.0-or-later` (read from `nfpm.yaml`) on those two entries before the report is rendered and the file is signed.
+A release that fails at the "Assert first-party license facts" step means the SBOM shape drifted (typically after a syft upgrade) and the selectors in `deployment/sbom/assert_licenses.py` no longer match exactly one entry each — fix the selector, never ship `NOASSERTION`.
+
 ### Container image tags
 
 | Tag | Points at |
