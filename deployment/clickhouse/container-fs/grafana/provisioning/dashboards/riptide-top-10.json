@@ -1106,6 +1106,35 @@
                 "value": 320
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "AsNum"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Src AS"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Slice flows from this AS (Flow Forensics)",
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&var-src_as=${__data.fields.AsNum}&from=${__from}&to=${__to}"
+                  }
+                ]
+              }
+            ]
           }
         ]
       },
@@ -1127,7 +1156,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "WITH top AS (SELECT srcAs AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10),\n     intDiv(toUnixTimestamp($__toTime), 300)\n       - intDiv(toUnixTimestamp($__fromTime) + 300 - 1, 300) + 1 AS nBuckets,\n     arrayResize(groupArray(bps), greatest(nBuckets, length(groupArray(bps))), 0.) AS padded\nSELECT series AS \"Src AS\",\n       arrayMin(padded) AS \"Min\", arrayMax(padded) AS \"Max\", argMax(bps, time) AS \"Last\",\n       arrayAvg(padded) AS \"Average\", arrayReduce('quantile(0.95)', padded) AS \"95th\",\n       sum(bucket_bytes) AS \"Total\"\nFROM (\n    SELECT timestamp AS time, concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown')) AS series,\n           sum(bytes) * 8 / 300 AS bps, sum(bytes) AS bucket_bytes\n    FROM ${database}.samples(ival = 300)\n    WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL 300 SECOND AND srcAs IN (SELECT dim FROM top)\n      AND timestamp < toStartOfInterval(now(), toIntervalSecond(300))\n    GROUP BY time, series\n)\nGROUP BY series\nORDER BY \"Average\" DESC",
+          "rawSql": "WITH top AS (SELECT srcAs AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) GROUP BY dim ORDER BY sum(bytes) DESC LIMIT 10),\n     intDiv(toUnixTimestamp($__toTime), 300)\n       - intDiv(toUnixTimestamp($__fromTime) + 300 - 1, 300) + 1 AS nBuckets,\n     arrayResize(groupArray(bps), greatest(nBuckets, length(groupArray(bps))), 0.) AS padded\nSELECT series AS \"Src AS\", any(as_num) AS \"AsNum\",\n       arrayMin(padded) AS \"Min\", arrayMax(padded) AS \"Max\", argMax(bps, time) AS \"Last\",\n       arrayAvg(padded) AS \"Average\", arrayReduce('quantile(0.95)', padded) AS \"95th\",\n       sum(bucket_bytes) AS \"Total\"\nFROM (\n    SELECT timestamp AS time, concat(toString(srcAs), ': ', ifNull(srcAsOrg, 'unknown')) AS series,\n           sum(bytes) * 8 / 300 AS bps, sum(bytes) AS bucket_bytes, any(srcAs) AS as_num\n    FROM ${database}.samples(ival = 300)\n    WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND lastSwitched >= $__fromTime AND deltaSwitched <= $__toTime + INTERVAL 300 SECOND AND srcAs IN (SELECT dim FROM top)\n      AND timestamp < toStartOfInterval(now(), toIntervalSecond(300))\n    GROUP BY time, series\n)\nGROUP BY series\nORDER BY \"Average\" DESC",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
