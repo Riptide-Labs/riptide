@@ -141,7 +141,7 @@
             "$__all"
           ]
         },
-        "definition": "SELECT DISTINCT exporterAddr ... FROM ${database}.flows"
+        "definition": "SELECT exporterAddr AS __value, if(argMax(exporterName, receivedAt) != '', argMax(exporterName, receivedAt), exporterAddr) AS __text FROM ${database}.flows GROUP BY exporterAddr ORDER BY __text"
       },
       {
         "name": "min_ports",
