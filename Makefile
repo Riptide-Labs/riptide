@@ -48,6 +48,8 @@ help:
 	@echo "  oci:          Build OCI container image"
 	@echo "  packages:     Build DEB and RPM packages from the jar (requires Docker)"
 	@echo "  packages-smoke: Install the packages in Debian and Rocky containers and smoke-test them (requires Docker)"
+	@echo "  sbom-assert:  Assert first-party license facts in a release SBOM; SBOM=<path to .spdx.json>"
+	@echo "  sbom-assert-test: Run the SBOM assertion script's fixture tests"
 	@echo "  nix:          Build the flake package from source (requires Nix)"
 	@echo "  nix-check:    Run the flake checks incl. the NixOS module eval (requires Nix)"
 	@echo "  nix-hash:     Regenerate nix/package.nix's mvnHash after a pom change (requires Nix)"
@@ -142,6 +144,18 @@ packages: deps-oci
 .PHONY: packages-smoke
 packages-smoke: deps-oci
 	deployment/package/smoke-test.sh $(PKG_VERSION)
+
+# Sets licenseDeclared on the SBOM entries syft cannot fill for us (the deb and
+# the document root, issue #406). Runs in release.yml between SBOM generation
+# and the HTML report render; fails if the SBOM shape drifted.
+.PHONY: sbom-assert
+sbom-assert:
+	@test -n "$(SBOM)" || { echo "usage: make sbom-assert SBOM=target/riptide-<version>.spdx.json"; exit 1; }
+	python3 deployment/sbom/assert_licenses.py $(SBOM)
+
+.PHONY: sbom-assert-test
+sbom-assert-test:
+	python3 -m unittest discover -s deployment/sbom
 
 .PHONY: deps-nix
 deps-nix:

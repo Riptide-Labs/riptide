@@ -42,6 +42,9 @@ jobs:
             echo "SHORT_GIT_SHA=$(git rev-parse --short HEAD)"
             echo "BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
           } >> "${GITHUB_ENV}"
+      - name: SBOM assertion fixture tests
+        run: |
+          make sbom-assert-test
       - name: Build with tests
         run: |
           make

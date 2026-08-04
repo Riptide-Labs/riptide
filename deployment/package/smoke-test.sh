@@ -19,6 +19,7 @@ ASSERTIONS='
   java --version | head -1 | grep -q "openjdk 25" || { echo "FAIL: no Java 25 runtime"; exit 1; }
   test -f /usr/share/riptide/riptide.jar
   test -f /usr/lib/systemd/system/riptide.service
+  grep -q "^License: GPL-3.0-or-later" /usr/share/doc/riptide/copyright || { echo "FAIL: copyright file missing or wrong license"; exit 1; }
   [ "$(stat -c "%U:%G %a" /etc/riptide/config.yaml)" = "root:riptide 640" ]
   [ "$(stat -c "%U:%G %a" /etc/riptide/riptide.env)" = "root:riptide 640" ]
   id riptide >/dev/null

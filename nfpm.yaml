@@ -24,6 +24,9 @@ description: |
 contents:
   - src: target/package/riptide.jar
     dst: /usr/share/riptide/riptide.jar
+  # Debian policy for a GPL package; the RPM states the license in its header.
+  - src: deployment/package/copyright
+    dst: /usr/share/doc/riptide/copyright
   - src: deployment/package/riptide.service
     dst: /usr/lib/systemd/system/riptide.service
   # config.yaml may hold inline credentials: root:riptide 0640, never

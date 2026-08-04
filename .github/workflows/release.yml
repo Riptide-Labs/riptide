@@ -97,6 +97,21 @@ jobs:
           format: spdx-json
           artifact-name: riptide-${{ env.VERSION }}.spdx.json
           output-file: target/riptide-${{ env.VERSION }}.spdx.json
+          # Both uploads happen inside this step, BEFORE the assertion below:
+          # the artifact would persist the unasserted SBOM under the same name
+          # as the release asset, and on a workflow re-run the action finds the
+          # existing release and replaces the corrected asset with a raw one.
+          # The release asset is attached later from target/, post-assertion.
+          upload-artifact: false
+          upload-release-assets: false
+      # Facts syft cannot derive: our own license on the deb entry (a deb control
+      # file has no license field) and on the document root (syft has no flag for
+      # it). Asserted here — before the HTML render and the later signing — so the
+      # machine-readable file, the report, and the signed asset agree. Fails the
+      # release rather than shipping NOASSERTION if the SBOM shape drifts (#406).
+      - name: Assert first-party license facts in the SBOM
+        run: |
+          make sbom-assert SBOM="target/riptide-${VERSION}.spdx.json"
       # The SPDX file is machine-readable and human-hostile; ship the human answer
       # beside it. One self-contained HTML file that works offline — verified to
       # contain no network fetches, only plain <a> links.
