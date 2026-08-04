@@ -80,6 +80,60 @@
    "primaryPackagePurpose": "FILE"
   },
   {
+   "name": "annotations",
+   "SPDXID": "SPDXRef-Package-java-archive-annotations-aed61a17fe9b8687",
+   "versionInfo": "26.1.0",
+   "supplier": "NOASSERTION",
+   "downloadLocation": "NOASSERTION",
+   "filesAnalyzed": false,
+   "sourceInfo": "acquired package info from installed java archive: /pom.xml",
+   "licenseConcluded": "NOASSERTION",
+   "licenseDeclared": "LicenseRef-The-Apache-Software-License--Version-2.0",
+   "copyrightText": "NOASSERTION",
+   "externalRefs": [
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:org.jetbrains:annotations:26.1.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "PACKAGE-MANAGER",
+     "referenceType": "purl",
+     "referenceLocator": "pkg:maven/org.jetbrains/annotations@26.1.0"
+    }
+   ]
+  },
+  {
+   "name": "annotations",
+   "SPDXID": "SPDXRef-Package-java-archive-annotations-8d21f3c47a0be915",
+   "versionInfo": "26.1.0",
+   "supplier": "NOASSERTION",
+   "downloadLocation": "NOASSERTION",
+   "filesAnalyzed": false,
+   "checksums": [
+    {
+     "algorithm": "SHA1",
+     "checksumValue": "c1e9226d7ca6661020c58c94397da0cc3673d5e4"
+    }
+   ],
+   "sourceInfo": "acquired package info from installed java archive: /target/package/riptide.jar",
+   "licenseConcluded": "NOASSERTION",
+   "licenseDeclared": "NOASSERTION",
+   "copyrightText": "NOASSERTION",
+   "externalRefs": [
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:annotations:annotations:26.1.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "PACKAGE-MANAGER",
+     "referenceType": "purl",
+     "referenceLocator": "pkg:maven/annotations/annotations@26.1.0"
+    }
+   ]
+  },
+  {
    "name": "RoaringBitmap",
    "SPDXID": "SPDXRef-Package-java-archive-RoaringBitmap-71a84c9bba502a29",
    "versionInfo": "1.0.6",
@@ -242,6 +296,16 @@
   }
  ],
  "relationships": [
+  {
+   "spdxElementId": "SPDXRef-DocumentRoot-Directory-.",
+   "relatedSpdxElement": "SPDXRef-Package-java-archive-annotations-aed61a17fe9b8687",
+   "relationshipType": "CONTAINS"
+  },
+  {
+   "spdxElementId": "SPDXRef-DocumentRoot-Directory-.",
+   "relatedSpdxElement": "SPDXRef-Package-java-archive-annotations-8d21f3c47a0be915",
+   "relationshipType": "CONTAINS"
+  },
   {
    "spdxElementId": "SPDXRef-DocumentRoot-Directory-.",
    "relatedSpdxElement": "SPDXRef-Package-java-archive-RoaringBitmap-71a84c9bba502a29",

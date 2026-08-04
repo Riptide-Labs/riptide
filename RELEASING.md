@@ -68,6 +68,9 @@ notes afterwards with `gh release edit vX.Y.Z --notes-file notes.md`.
 
 The attached SBOM contains post-generation first-party license assertions: syft cannot read our license from a deb control file or attach one to the scanned directory, so `make sbom-assert` sets `licenseDeclared: GPL-3.0-or-later` (read from `nfpm.yaml`) on those two entries before the report is rendered and the file is signed.
 A release that fails at the "Assert first-party license facts" step means the SBOM shape drifted (typically after a syft upgrade) and the selectors in `deployment/sbom/assert_licenses.py` no longer match exactly one entry each — fix the selector, never ship `NOASSERTION`.
+The same step also sets `licenseConcluded` on a reviewed allowlist of third-party packages syft cannot identify (`deployment/sbom/concluded-licenses.json`).
+A failure naming an allowlist entry means a dependency bump or a syft change invalidated it: re-review the new version's license and update the entry (purl, evidence, review date), or remove it if syft now identifies the package.
+Never fix that failure by deleting the check.
 
 ### Container image tags
 

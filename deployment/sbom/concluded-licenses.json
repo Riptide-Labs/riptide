@@ -1,0 +1,14 @@
+[
+ {
+  "purl": "pkg:maven/annotations/annotations@26.1.0",
+  "licenseConcluded": "Apache-2.0",
+  "evidence": "org.jetbrains:annotations:26.1.0 POM on Maven Central names 'The Apache Software License, Version 2.0'; the jar ships a 46-byte manifest and no META-INF/maven/, so syft derives a self-referential purl from the filename and cannot resolve the real coordinates",
+  "reviewed": "2026-08-04"
+ },
+ {
+  "purl": "pkg:maven/RoaringBitmap/RoaringBitmap@1.0.6",
+  "licenseConcluded": "Apache-2.0",
+  "evidence": "org.roaringbitmap:RoaringBitmap:1.0.6 POM on Maven Central names 'Apache 2'; the jar ships a 46-byte manifest and no META-INF/maven/, so syft derives a self-referential purl from the filename and cannot resolve the real coordinates",
+  "reviewed": "2026-08-04"
+ }
+]

@@ -48,7 +48,7 @@ help:
 	@echo "  oci:          Build OCI container image"
 	@echo "  packages:     Build DEB and RPM packages from the jar (requires Docker)"
 	@echo "  packages-smoke: Install the packages in Debian and Rocky containers and smoke-test them (requires Docker)"
-	@echo "  sbom-assert:  Assert first-party license facts in a release SBOM; SBOM=<path to .spdx.json>"
+	@echo "  sbom-assert:  Assert license facts in a release SBOM; SBOM=<path to .spdx.json>"
 	@echo "  sbom-assert-test: Run the SBOM assertion script's fixture tests"
 	@echo "  nix:          Build the flake package from source (requires Nix)"
 	@echo "  nix-check:    Run the flake checks incl. the NixOS module eval (requires Nix)"
@@ -146,8 +146,10 @@ packages-smoke: deps-oci
 	deployment/package/smoke-test.sh $(PKG_VERSION)
 
 # Sets licenseDeclared on the SBOM entries syft cannot fill for us (the deb and
-# the document root, issue #406). Runs in release.yml between SBOM generation
-# and the HTML report render; fails if the SBOM shape drifted.
+# the document root, issue #406) and licenseConcluded on the reviewed allowlist
+# of third-party packages syft cannot identify (issue #405). Runs in release.yml
+# between SBOM generation and the HTML report render; fails if the SBOM shape
+# drifted or an allowlist entry went stale.
 .PHONY: sbom-assert
 sbom-assert:
 	@test -n "$(SBOM)" || { echo "usage: make sbom-assert SBOM=target/riptide-<version>.spdx.json"; exit 1; }
