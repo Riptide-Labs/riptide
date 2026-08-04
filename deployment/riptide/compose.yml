@@ -15,6 +15,10 @@ services:
       RIPTIDE_CLICKHOUSE_USERNAME: default
       RIPTIDE_CLICKHOUSE_PASSWORD: ""
       RIPTIDE_CLICKHOUSE_DATABASE: riptide
+      # One multi receiver parses NetFlow v5/v9, IPFIX and sFlow on the published port
+      RIPTIDE_RECEIVERS_FLOWS_TYPE: multi
+      RIPTIDE_RECEIVERS_FLOWS_HOST: 0.0.0.0
+      RIPTIDE_RECEIVERS_FLOWS_PORT: "9999"
     ports:
       - "9999:9999/udp"
     healthcheck:
