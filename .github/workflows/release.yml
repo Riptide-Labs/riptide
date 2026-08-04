@@ -31,7 +31,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up JDK 25 for x64
-        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           java-version: '25'
           distribution: 'temurin'
@@ -101,7 +101,7 @@ jobs:
       # beside it. One self-contained HTML file that works offline — verified to
       # contain no network fetches, only plain <a> links.
       - name: Render SBOM HTML report
-        uses: no42-org/blitsbom@3f2e7abc338c05d40a15058eafc318fee310e05f # v0.6.1
+        uses: no42-org/blitsbom@fe66bcc08b9cdf2ac3fbb5b00b9d761a3eec1e84 # v0.7.0
         with:
           sbom: target/riptide-${{ env.VERSION }}.spdx.json
           output: target/riptide-${{ env.VERSION }}-sbom-report.html
