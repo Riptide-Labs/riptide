@@ -126,7 +126,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT DISTINCT exporterAddr AS __value, if(exporterName != '', concat(exporterName, ' (', exporterAddr, ')'), exporterAddr) AS __text FROM ${database}.flows ORDER BY __text"
+          "rawSql": "SELECT exporterAddr AS __value, if(argMax(exporterName, receivedAt) != '', argMax(exporterName, receivedAt), exporterAddr) AS __text FROM ${database}.flows GROUP BY exporterAddr ORDER BY __text"
         },
         "refresh": 1,
         "includeAll": true,
@@ -572,6 +572,23 @@
                 "value": "bytes"
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Source"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Slice flows from this source (Flow Forensics)",
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&var-src=${__data.fields.Source}&from=${__from}&to=${__to}"
+                  }
+                ]
+              }
+            ]
           }
         ]
       },
@@ -645,6 +662,23 @@
               {
                 "id": "unit",
                 "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Source"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Slice flows from this source (Flow Forensics)",
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&var-src=${__data.fields.Source}&from=${__from}&to=${__to}"
+                  }
+                ]
               }
             ]
           }
@@ -722,6 +756,40 @@
                 "value": "bytes"
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Source"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Slice flows from this source (Flow Forensics)",
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&var-src=${__data.fields.Source}&from=${__from}&to=${__to}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Destination"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Slice flows to this service port (Flow Forensics)",
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&var-dst=${__data.fields.Destination}&var-dst_port=${__data.fields.Port}&from=${__from}&to=${__to}"
+                  }
+                ]
+              }
+            ]
           }
         ]
       },
@@ -795,6 +863,23 @@
               {
                 "id": "unit",
                 "value": "bps"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Target"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Slice flows to this target (Flow Forensics)",
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&var-dst=${__data.fields.Target}&from=${__from}&to=${__to}"
+                  }
+                ]
               }
             ]
           }
@@ -882,6 +967,23 @@
               {
                 "id": "unit",
                 "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Source"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Slice this conversation (Flow Forensics)",
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&var-src=${__data.fields.Source}&var-dst=${__data.fields.Destination}&from=${__from}&to=${__to}"
+                  }
+                ]
               }
             ]
           }

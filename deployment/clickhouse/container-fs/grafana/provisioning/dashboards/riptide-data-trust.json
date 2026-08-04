@@ -622,7 +622,25 @@
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Address"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Slice flows from this exporter (Flow Forensics)",
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&var-exporter=${__data.fields.Address}&from=${__from}&to=${__to}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "showHeader": true,

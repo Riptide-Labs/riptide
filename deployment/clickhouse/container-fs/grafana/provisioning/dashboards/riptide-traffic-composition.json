@@ -126,7 +126,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT DISTINCT exporterAddr AS __value, if(exporterName != '', concat(exporterName, ' (', exporterAddr, ')'), exporterAddr) AS __text FROM ${database}.flows ORDER BY __text"
+          "rawSql": "SELECT exporterAddr AS __value, if(argMax(exporterName, receivedAt) != '', argMax(exporterName, receivedAt), exporterAddr) AS __text FROM ${database}.flows GROUP BY exporterAddr ORDER BY __text"
         },
         "refresh": 1,
         "includeAll": true,
@@ -704,6 +704,35 @@
                 "value": "bytes"
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ServerAddr"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Server"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Slice flows to this server (Flow Forensics)",
+                    "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${exporter:queryparam}&var-dst=${__data.fields.ServerAddr}&from=${__from}&to=${__to}"
+                  }
+                ]
+              }
+            ]
           }
         ]
       },
@@ -728,7 +757,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT transform(dstPort,\n         [53, 67, 68, 123, 161, 162, 389, 514, 636, 1812, 1813, 5353],\n         ['DNS', 'DHCP', 'DHCP', 'NTP', 'SNMP', 'SNMP trap', 'LDAP',\n          'Syslog', 'LDAPS', 'RADIUS auth', 'RADIUS acct', 'mDNS'],\n         'other') AS \"Service\",\n       ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')) AS \"Server\",\n       uniqExact(srcAddr) AS \"Clients\", count() AS \"Flows\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\n  AND dstPort IN (53, 67, 68, 123, 161, 162, 389, 514, 636, 1812, 1813, 5353)\nGROUP BY \"Service\", \"Server\" ORDER BY \"Flows\" DESC LIMIT 50",
+          "rawSql": "SELECT transform(dstPort,\n         [53, 67, 68, 123, 161, 162, 389, 514, 636, 1812, 1813, 5353],\n         ['DNS', 'DHCP', 'DHCP', 'NTP', 'SNMP', 'SNMP trap', 'LDAP',\n          'Syslog', 'LDAPS', 'RADIUS auth', 'RADIUS acct', 'mDNS'],\n         'other') AS \"Service\",\n       ifNull(dstAddrHostname, replaceOne(toString(dstAddr), '::ffff:', '')) AS \"Server\", any(replaceOne(toString(dstAddr), '::ffff:', '')) AS \"ServerAddr\",\n       uniqExact(srcAddr) AS \"Clients\", count() AS \"Flows\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(exporterAddr IN (${exporter:singlequote}), $exporter) AND $__conditionalAll(flowLocality = '$locality', $locality)\n  AND dstPort IN (53, 67, 68, 123, 161, 162, 389, 514, 636, 1812, 1813, 5353)\nGROUP BY \"Service\", \"Server\" ORDER BY \"Flows\" DESC LIMIT 50",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
