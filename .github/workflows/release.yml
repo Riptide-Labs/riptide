@@ -101,7 +101,7 @@ jobs:
       # beside it. One self-contained HTML file that works offline — verified to
       # contain no network fetches, only plain <a> links.
       - name: Render SBOM HTML report
-        uses: no42-org/blitsbom@3f2e7abc338c05d40a15058eafc318fee310e05f # v0.6.1
+        uses: no42-org/blitsbom@fe66bcc08b9cdf2ac3fbb5b00b9d761a3eec1e84 # v0.7.0
         with:
           sbom: target/riptide-${{ env.VERSION }}.spdx.json
           output: target/riptide-${{ env.VERSION }}-sbom-report.html
