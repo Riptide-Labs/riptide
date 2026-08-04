@@ -59,6 +59,7 @@ help:
 	@echo "  lint-actions: Lint the GitHub Actions workflows (actionlint + zizmor)"
 	@echo "  docs:         Build the Docusaurus documentation site into docs/build"
 	@echo "  docs-serve:   Run the documentation site locally with live reload"
+	@echo "  landing-serve: Serve the landing page locally for preview"
 	@echo "  clean:        Clean the build artifacts"
 	@echo ""
 
@@ -124,6 +125,11 @@ docs: deps-docs
 .PHONY: docs-serve
 docs-serve: deps-docs
 	cd docs && npm ci && npm run start
+
+.PHONY: landing-serve
+landing-serve:
+	@echo "Serving landing page on http://localhost:8080"
+	@python3 -m http.server 8080 --directory landing
 
 .PHONY: oci
 oci: deps-oci jar
