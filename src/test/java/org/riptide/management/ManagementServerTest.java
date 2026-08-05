@@ -38,6 +38,20 @@ class ManagementServerTest {
     }
 
     private int start(final Daemon daemon) throws Exception {
+        return start(daemon, new RiptideManagementProperties().getMaxConcurrentRequests(), thread -> { });
+    }
+
+    private int start(final Daemon daemon, final java.util.function.Consumer<Thread> onHandle) throws Exception {
+        return start(daemon, new RiptideManagementProperties().getMaxConcurrentRequests(), onHandle);
+    }
+
+    /**
+     * {@code onHandle} runs on the handler thread before the health answer is produced, which is how
+     * the tests observe which thread serves a request and how one holds a permit open.
+     */
+    private int start(final Daemon daemon,
+                      final int maxConcurrentRequests,
+                      final java.util.function.Consumer<Thread> onHandle) throws Exception {
         final int port;
         try (ServerSocket probe = new ServerSocket(0)) {
             port = probe.getLocalPort();
@@ -45,15 +59,37 @@ class ManagementServerTest {
         final var properties = new RiptideManagementProperties();
         properties.setPort(port);
         properties.setBindAddress("127.0.0.1");
+        properties.setMaxConcurrentRequests(maxConcurrentRequests);
 
-        this.server = new ManagementServer(properties, new HealthService(daemon));
+        final var health = new HealthService(daemon) {
+            @Override
+            public Health liveness() {
+                onHandle.accept(Thread.currentThread());
+                return super.liveness();
+            }
+
+            @Override
+            public Health readiness() {
+                onHandle.accept(Thread.currentThread());
+                return super.readiness();
+            }
+        };
+
+        this.server = new ManagementServer(properties, health);
         this.server.start();
         return port;
     }
 
+    /**
+     * Bounded deliberately: the concurrency-cap test parks a request to hold a permit, so without a
+     * working cap the follow-up request would block forever. A timeout turns that into a fast
+     * failure instead of a hung suite.
+     */
     private int status(final int port, final String path) throws Exception {
         final HttpResponse<String> response = HttpClient.newHttpClient().send(
-                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path)).GET().build(),
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                        .timeout(java.time.Duration.ofSeconds(10))
+                        .GET().build(),
                 HttpResponse.BodyHandlers.ofString());
         return response.statusCode();
     }
@@ -94,5 +130,72 @@ class ManagementServerTest {
         final int port = start(daemon);
         assertThat(status(port, "/livez")).isEqualTo(200);   // booting is not a fatal state
         assertThat(status(port, "/readyz")).isEqualTo(503);  // not ready until receivers are up
+    }
+
+    /**
+     * Pins the executor the handlers run on. Without this the suite passes byte-identically whether
+     * the server uses virtual threads or the platform pool it replaced, so a revert or a typo in the
+     * name prefix would ship green.
+     */
+    @Test
+    void handlersRunOnNamedVirtualThreads() throws Exception {
+        final Daemon daemon = mock(Daemon.class);
+        when(daemon.isStarted()).thenReturn(true);
+        when(daemon.getListeners()).thenReturn(List.of());
+        final var observed = new java.util.concurrent.atomic.AtomicReference<Thread>();
+        final int port = start(daemon, observed::set);
+
+        assertThat(status(port, "/livez")).isEqualTo(200);
+
+        final Thread handler = observed.get();
+        assertThat(handler).isNotNull();
+        assertThat(handler.isVirtual()).isTrue();
+        assertThat(handler.getName()).startsWith("management-http-");
+        // virtual threads are always daemon; the JVM is held up by Spring's keep-alive thread
+        assertThat(handler.isDaemon()).isTrue();
+    }
+
+    /**
+     * A thread-per-task executor has no ceiling of its own, so the cap is what stops a caller from
+     * making the collector hold unbounded threads, exchanges and sockets. Beyond it, shed with 503.
+     */
+    @Test
+    void shedsRequestsBeyondTheConcurrencyCap() throws Exception {
+        final Daemon daemon = mock(Daemon.class);
+        when(daemon.isStarted()).thenReturn(true);
+        when(daemon.getListeners()).thenReturn(List.of());
+
+        final var admitted = new java.util.concurrent.CountDownLatch(1);
+        final var release = new java.util.concurrent.CountDownLatch(1);
+        // one permit, and the single admitted request parked until we let it go
+        final int port = start(daemon, 1, thread -> {
+            admitted.countDown();
+            try {
+                release.await();
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        // A dedicated thread, not commonPool: supplyAsync would queue behind whatever else the
+        // suite is running on the shared pool, and this request has to actually reach the server
+        // before the assertion below means anything.
+        final var inFlight = new java.util.concurrent.CompletableFuture<Integer>();
+        final Thread caller = new Thread(() -> {
+            try {
+                inFlight.complete(status(port, "/livez"));
+            } catch (final Exception e) {
+                inFlight.completeExceptionally(e);
+            }
+        }, "cap-test-caller");
+        caller.setDaemon(true);
+        caller.start();
+        assertThat(admitted.await(20, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+        // the permit is taken, so this one is shed rather than queued
+        assertThat(status(port, "/readyz")).isEqualTo(503);
+
+        release.countDown();
+        assertThat(inFlight.get(20, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(200);
     }
 }

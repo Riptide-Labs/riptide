@@ -213,6 +213,19 @@ readinessProbe: { httpGet: { path: /readyz, port: 8080 } }
 
 The Compose stack uses `/readyz` as the service `healthcheck` (via the image's BusyBox `wget`).
 
+The endpoints are served on virtual threads, capped by `riptide.management.max-concurrent-requests` (default 32).
+Requests beyond the cap are answered `503` rather than queued, so a probe gets a fast answer instead of waiting behind a burst.
+
+:::note
+`jstack` does not show virtual threads, so the `management-http-*` handlers are invisible to it and to `top -H`.
+Their absence from a thread dump means the server is idle, not dead.
+To see them, take a dump that includes virtual threads:
+
+```bash
+jcmd <pid> Thread.dump_to_file -format=json /tmp/threads.json
+```
+:::
+
 ## Ports
 
 | Port | Protocol | What |
