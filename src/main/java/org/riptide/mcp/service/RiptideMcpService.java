@@ -60,7 +60,8 @@ public class RiptideMcpService {
             return results;
         }
 
-        final String formattedQuery = sqlQuery + " FORMAT JSONEachRow SETTINGS max_execution_time = "
+        final String cleanSql = sqlQuery != null ? sqlQuery.trim().replaceAll(";+$", "") : "";
+        final String formattedQuery = cleanSql + " FORMAT JSONEachRow SETTINGS max_execution_time = "
                 + mcpProperties.getQueryTimeoutSeconds() + ", readonly = 1";
 
         log.debug("Executing MCP ClickHouse Query: [{}]", formattedQuery);

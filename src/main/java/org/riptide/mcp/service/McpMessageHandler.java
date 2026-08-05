@@ -41,7 +41,8 @@ public class McpMessageHandler {
         final List<McpTool> safeTools = tools != null ? tools : List.of();
         this.toolsMap = safeTools.stream().collect(Collectors.toMap(
                 tool -> tool.getDefinition().getName(),
-                Function.identity()
+                Function.identity(),
+                (existing, replacement) -> existing
         ));
     }
 
@@ -111,7 +112,8 @@ public class McpMessageHandler {
                 return isNotification ? null : JsonRpcMessage.createResult(id, Map.of("prompts", skillRegistry.getMcpPrompts()));
 
             case "prompts/get":
-                final String promptName = String.valueOf(request.getParams() != null ? request.getParams().get("name") : "");
+                final Object rawPromptObj = request.getParams() != null ? request.getParams().get("name") : null;
+                final String promptName = rawPromptObj != null ? String.valueOf(rawPromptObj) : "";
                 final var skillOpt = skillRegistry.getSkill(promptName);
                 if (skillOpt.isPresent()) {
                     final var skill = skillOpt.get();
@@ -126,7 +128,8 @@ public class McpMessageHandler {
                 return isNotification ? null : JsonRpcMessage.createResult(id, Map.of("resources", skillRegistry.getMcpResources()));
 
             case "resources/read":
-                final String uri = String.valueOf(request.getParams() != null ? request.getParams().get("uri") : "");
+                final Object rawUriObj = request.getParams() != null ? request.getParams().get("uri") : null;
+                final String uri = rawUriObj != null ? String.valueOf(rawUriObj) : "";
                 final String resName = uri.replace("resource://riptide/skills/", "");
                 final var resOpt = skillRegistry.getSkill(resName);
                 if (resOpt.isPresent()) {
@@ -164,7 +167,7 @@ public class McpMessageHandler {
 
         final McpTool tool = toolsMap.get(toolName);
         if (tool == null) {
-            return JsonRpcMessage.createError(id, -32601, "Tool not found: " + toolName);
+            return JsonRpcMessage.createError(id, -32602, "Tool not found: " + toolName);
         }
 
         try {

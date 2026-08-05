@@ -26,7 +26,7 @@ public class JsonRpcMessage {
     @Builder.Default
     private String jsonrpc = "2.0";
 
-    @JsonInclude(JsonInclude.Include.ALWAYS)
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     private Object id;
 
     private String method;

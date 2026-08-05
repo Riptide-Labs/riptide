@@ -12,9 +12,9 @@ import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Validates incoming MCP authorization tokens against configured SecretRef references.
@@ -26,7 +26,7 @@ public class McpAuthService {
 
     private final McpAuthProperties authProperties;
     private final SecretResolvers secretResolvers;
-    private final List<String> resolvedTokens = new ArrayList<>();
+    private final List<String> resolvedTokens = new CopyOnWriteArrayList<>();
 
     public McpAuthService(final McpAuthProperties authProperties, final SecretResolvers secretResolvers) {
         this.authProperties = Objects.requireNonNull(authProperties, "authProperties must not be null");

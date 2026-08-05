@@ -317,7 +317,7 @@
                         <arg>-XDcompilePolicy=simple</arg>
                         <arg>--should-stop=ifError=FLOW</arg>
                         <!-- These three checks are warning-free or explicitly suppressed; hold them at ERROR so they stay that way. -->
-                        <arg>-Xplugin:ErrorProne -XepExcludedPaths:.*/target/generated-sources/.* -Xep:EqualsGetClass:ERROR -Xep:NarrowingCompoundAssignment:ERROR -Xep:ExposedPrivateType:ERROR</arg>
+                        <arg>-Xplugin:ErrorProne -XepExcludedPaths:.*/target/generated-.*sources/.* -Xep:EqualsGetClass:ERROR -Xep:NarrowingCompoundAssignment:ERROR -Xep:ExposedPrivateType:ERROR</arg>
                         <arg>
                             -Amapstruct.unmappedTargetPolicy=ERROR
                         </arg>

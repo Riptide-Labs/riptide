@@ -41,7 +41,7 @@ public class McpSseServerTest {
         final SkillRegistry skillRegistry = new SkillRegistry();
         final McpMessageHandler messageHandler = new McpMessageHandler(authService, skillRegistry, List.of());
 
-        sseServer = new McpSseServer(properties, messageHandler);
+        sseServer = new McpSseServer(properties, messageHandler, authService);
         sseServer.run();
         port = sseServer.getPort();
     }
@@ -85,5 +85,44 @@ public class McpSseServerTest {
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.body()).contains("\"id\":1");
         assertThat(response.body()).contains("\"jsonrpc\":\"2.0\"");
+    }
+
+    @Test
+    public void rejectsUnauthenticatedGetSseStreamWhenAuthEnabled() throws Exception {
+        final McpProperties properties = new McpProperties();
+        properties.setEnabled(true);
+        properties.setTransport("sse");
+        properties.setSsePort(0);
+
+        final McpAuthProperties authProperties = new McpAuthProperties();
+        authProperties.setEnabled(true);
+        authProperties.setTokens(List.of(new org.riptide.secrets.SecretRef("secret_token_123")));
+        final McpAuthService authService = new McpAuthService(authProperties, SecretResolvers.defaults());
+        final SkillRegistry skillRegistry = new SkillRegistry();
+        final McpMessageHandler messageHandler = new McpMessageHandler(authService, skillRegistry, List.of());
+
+        final McpSseServer protectedServer = new McpSseServer(properties, messageHandler, authService);
+        protectedServer.run();
+        final int protectedPort = protectedServer.getPort();
+
+        try {
+            final HttpClient client = HttpClient.newHttpClient();
+            final HttpRequest unauthReq = HttpRequest.newBuilder()
+                    .uri(URI.create("http://localhost:" + protectedPort + "/mcp/sse"))
+                    .GET()
+                    .build();
+            final HttpResponse<String> unauthResp = client.send(unauthReq, HttpResponse.BodyHandlers.ofString());
+            assertThat(unauthResp.statusCode()).isEqualTo(401);
+
+            final HttpRequest authReq = HttpRequest.newBuilder()
+                    .uri(URI.create("http://localhost:" + protectedPort + "/mcp/sse?authToken=secret_token_123"))
+                    .GET()
+                    .build();
+            final HttpResponse<String> authResp = client.send(authReq, HttpResponse.BodyHandlers.ofString());
+            assertThat(authResp.statusCode()).isEqualTo(200);
+            assertThat(authResp.body()).contains("event: endpoint");
+        } finally {
+            protectedServer.stop();
+        }
     }
 }
