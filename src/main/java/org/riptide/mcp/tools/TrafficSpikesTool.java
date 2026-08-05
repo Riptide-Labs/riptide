@@ -7,6 +7,7 @@ package org.riptide.mcp.tools;
 
 import org.riptide.mcp.protocol.McpToolDefinition;
 import org.riptide.mcp.service.RiptideMcpService;
+import org.riptide.schema.FlowsSchema;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -39,12 +40,13 @@ public class TrafficSpikesTool {
     }
 
     public List<Map<String, Object>> execute(final Map<String, Object> params) {
-        final int timeRange = ((Number) params.getOrDefault("time_range_minutes", 15)).intValue();
+        final int timeRange = Math.min(Math.max(1, ((Number) params.getOrDefault("time_range_minutes", 15)).intValue()), 43200);
         final String db = mcpService.getDatabaseName();
+        final String table = FlowsSchema.qualifiedFlows(db);
 
         final String sql = String.format(
-                "SELECT dstAddr, SUM(packets) AS total_packets, SUM(bytes) AS total_bytes, COUNT(*) AS flow_count FROM %s.flows WHERE timestamp >= now() - INTERVAL %d MINUTE GROUP BY dstAddr ORDER BY total_packets DESC LIMIT 20",
-                db, timeRange
+                "SELECT dstAddr, SUM(packets) AS total_packets, SUM(bytes) AS total_bytes, COUNT(*) AS flow_count FROM %s WHERE timestamp >= now() - INTERVAL %d MINUTE GROUP BY dstAddr ORDER BY total_packets DESC LIMIT 20",
+                table, timeRange
         );
 
         return mcpService.executeQuery(sql);

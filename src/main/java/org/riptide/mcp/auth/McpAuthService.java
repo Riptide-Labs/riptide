@@ -28,8 +28,15 @@ public class McpAuthService {
     }
 
     /**
+     * Checks if authentication is required.
+     */
+    public boolean isAuthRequired() {
+        return authProperties.isEnabled();
+    }
+
+    /**
      * Checks if the given token string matches any configured authorized SecretRef token.
-     * If authentication is disabled or no tokens are configured, access is allowed.
+     * If authentication is disabled, access is allowed. If enabled but no tokens configured, fails closed.
      */
     public boolean authenticate(final String token) {
         if (!authProperties.isEnabled()) {
@@ -37,8 +44,8 @@ public class McpAuthService {
         }
 
         if (authProperties.getTokens().isEmpty()) {
-            log.warn("MCP authentication is enabled but no authorized tokens are configured in riptide.mcp.auth.tokens");
-            return true;
+            log.error("MCP authentication is enabled but no authorized tokens are configured in riptide.mcp.auth.tokens; failing closed.");
+            return false;
         }
 
         if (token == null || token.isBlank()) {

@@ -5,9 +5,11 @@
 
 package org.riptide.mcp.service;
 
+import org.riptide.schema.FlowsSchema;
+
 /**
- * Intelligent query router that selects ClickHouse raw tables or 1-minute rollup tables
- * based on query timeframe and aggregation dimensions.
+ * Query router that resolves ClickHouse raw tables or 1-minute rollup tables
+ * based on query timeframe and aggregation dimensions using {@link FlowsSchema}.
  */
 public final class QueryRouter {
 
@@ -21,13 +23,18 @@ public final class QueryRouter {
     public static final int ROLLUP_THRESHOLD_MINUTES = 60;
 
     /**
-     * Resolves target ClickHouse table name for application aggregations.
+     * Resolves target ClickHouse table name for top talker queries based on dimension and time range.
      */
-    public static String resolveApplicationTable(final String database, final int timeRangeMinutes) {
+    public static String resolveTopTalkersTable(final String database, final int timeRangeMinutes, final String groupBy) {
         if (timeRangeMinutes >= ROLLUP_THRESHOLD_MINUTES) {
-            return database + ".flows_by_application_1m";
+            if ("application".equalsIgnoreCase(groupBy) || "protocol".equalsIgnoreCase(groupBy)) {
+                return FlowsSchema.qualifiedRollup(database, "flows_by_application_1m");
+            }
+            if ("srcAddr".equalsIgnoreCase(groupBy) || "dstAddr".equalsIgnoreCase(groupBy)) {
+                return FlowsSchema.qualifiedRollup(database, "flows_by_conversation_1m");
+            }
         }
-        return database + ".flows";
+        return FlowsSchema.qualifiedFlows(database);
     }
 
     /**
@@ -35,9 +42,9 @@ public final class QueryRouter {
      */
     public static String resolveInterfaceTable(final String database, final int timeRangeMinutes) {
         if (timeRangeMinutes >= ROLLUP_THRESHOLD_MINUTES) {
-            return database + ".flows_by_exporter_iface_1m";
+            return FlowsSchema.qualifiedRollup(database, "flows_by_exporter_iface_1m");
         }
-        return database + ".flows";
+        return FlowsSchema.qualifiedFlows(database);
     }
 
     /**
@@ -45,8 +52,8 @@ public final class QueryRouter {
      */
     public static String resolveGeoAsnTable(final String database, final int timeRangeMinutes) {
         if (timeRangeMinutes >= ROLLUP_THRESHOLD_MINUTES) {
-            return database + ".flows_by_geo_asn_1m";
+            return FlowsSchema.qualifiedRollup(database, "flows_by_geo_asn_1m");
         }
-        return database + ".flows";
+        return FlowsSchema.qualifiedFlows(database);
     }
 }

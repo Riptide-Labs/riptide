@@ -5,8 +5,10 @@
 
 package org.riptide.mcp.tools;
 
+import org.riptide.classification.IpAddr;
 import org.riptide.mcp.protocol.McpToolDefinition;
 import org.riptide.mcp.service.RiptideMcpService;
+import org.riptide.schema.FlowsSchema;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -40,13 +42,21 @@ public class HostTraceTool {
     }
 
     public List<Map<String, Object>> execute(final Map<String, Object> params) {
-        final String ip = String.valueOf(params.get("ip_address"));
-        final int timeRange = ((Number) params.getOrDefault("time_range_minutes", 15)).intValue();
+        final String rawIp = String.valueOf(params.get("ip_address"));
+        final String ip;
+        try {
+            ip = IpAddr.of(rawIp.trim()).toString();
+        } catch (final Exception e) {
+            return List.of(Map.of("error", "Invalid IP address parameter: " + rawIp));
+        }
+
+        final int timeRange = Math.min(Math.max(1, ((Number) params.getOrDefault("time_range_minutes", 15)).intValue()), 43200);
         final String db = mcpService.getDatabaseName();
+        final String table = FlowsSchema.qualifiedFlows(db);
 
         final String sql = String.format(
-                "SELECT srcAddr, dstAddr, srcPort, dstPort, protocol, application, tcpFlags, bytes, packets FROM %s.flows WHERE timestamp >= now() - INTERVAL %d MINUTE AND (srcAddr = '%s' OR dstAddr = '%s') ORDER BY bytes DESC LIMIT 50",
-                db, timeRange, ip, ip
+                "SELECT srcAddr, dstAddr, srcPort, dstPort, protocol, application, tcpFlags, bytes, packets FROM %s WHERE timestamp >= now() - INTERVAL %d MINUTE AND (srcAddr = '%s' OR dstAddr = '%s') ORDER BY bytes DESC LIMIT 50",
+                table, timeRange, ip, ip
         );
 
         return mcpService.executeQuery(sql);

@@ -12,12 +12,17 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * MCP tool for querying top network talkers grouped by application, host, or protocol.
  */
 @Component
 public class TopTalkersTool {
+
+    private static final Set<String> ALLOWED_GROUP_BY = Set.of(
+            "application", "protocol", "srcAddr", "dstAddr", "srcAs", "dstAs"
+    );
 
     private final RiptideMcpService mcpService;
 
@@ -33,7 +38,7 @@ public class TopTalkersTool {
                         "type", "object",
                         "properties", Map.of(
                                 "time_range_minutes", Map.of("type", "integer", "description", "Time range in minutes"),
-                                "group_by", Map.of("type", "string", "description", "Dimension to group by (application, srcAddr, dstAddr, protocol)")
+                                "group_by", Map.of("type", "string", "description", "Dimension to group by (application, srcAddr, dstAddr, protocol, srcAs, dstAs)")
                         ),
                         "required", List.of("time_range_minutes", "group_by")
                 ))
@@ -41,14 +46,18 @@ public class TopTalkersTool {
     }
 
     public List<Map<String, Object>> execute(final Map<String, Object> params) {
-        final int timeRange = ((Number) params.getOrDefault("time_range_minutes", 15)).intValue();
-        final String groupBy = String.valueOf(params.getOrDefault("group_by", "application"));
-        final String db = mcpService.getDatabaseName();
+        final String rawGroupBy = String.valueOf(params.getOrDefault("group_by", "application"));
+        if (!ALLOWED_GROUP_BY.contains(rawGroupBy)) {
+            return List.of(Map.of("error", "Invalid group_by dimension. Allowed: " + ALLOWED_GROUP_BY));
+        }
 
-        final String table = QueryRouter.resolveApplicationTable(db, timeRange);
+        final int timeRange = Math.min(Math.max(1, ((Number) params.getOrDefault("time_range_minutes", 15)).intValue()), 43200);
+        final String db = mcpService.getDatabaseName();
+        final String table = QueryRouter.resolveTopTalkersTable(db, timeRange, rawGroupBy);
+
         final String sql = String.format(
                 "SELECT %s, SUM(bytes) AS total_bytes, SUM(packets) AS total_packets FROM %s WHERE timestamp >= now() - INTERVAL %d MINUTE GROUP BY %s ORDER BY total_bytes DESC LIMIT 20",
-                groupBy, table, timeRange, groupBy
+                rawGroupBy, table, timeRange, rawGroupBy
         );
 
         return mcpService.executeQuery(sql);

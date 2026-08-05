@@ -7,6 +7,7 @@ package org.riptide.mcp.transport;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.riptide.mcp.auth.McpAuthService;
 import org.riptide.mcp.config.McpProperties;
 import org.riptide.mcp.protocol.JsonRpcMessage;
 import org.riptide.mcp.skills.SkillRegistry;
@@ -36,6 +37,7 @@ import java.util.Map;
 public class McpStdioRunner implements CommandLineRunner {
 
     private final McpProperties properties;
+    private final McpAuthService authService;
     private final SkillRegistry skillRegistry;
     private final TopTalkersTool topTalkersTool;
     private final InterfaceUtilizationTool interfaceUtilizationTool;
@@ -46,6 +48,7 @@ public class McpStdioRunner implements CommandLineRunner {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public McpStdioRunner(final McpProperties properties,
+                          final McpAuthService authService,
                           final SkillRegistry skillRegistry,
                           final TopTalkersTool topTalkersTool,
                           final InterfaceUtilizationTool interfaceUtilizationTool,
@@ -54,6 +57,7 @@ public class McpStdioRunner implements CommandLineRunner {
                           final TrafficSpikesTool trafficSpikesTool,
                           final AutoMitigationRulesTool autoMitigationRulesTool) {
         this.properties = properties;
+        this.authService = authService;
         this.skillRegistry = skillRegistry;
         this.topTalkersTool = topTalkersTool;
         this.interfaceUtilizationTool = interfaceUtilizationTool;
@@ -65,17 +69,24 @@ public class McpStdioRunner implements CommandLineRunner {
 
     @Override
     public void run(final String... args) throws Exception {
-        if (!properties.isEnabled() || !"stdio".equalsIgnoreCase(properties.getTransport())) {
+        if (!properties.isEnabled()) {
             return;
+        }
+
+        if (!"stdio".equalsIgnoreCase(properties.getTransport())) {
+            log.error("Unsupported MCP transport mode [{}]. Only 'stdio' is currently supported.", properties.getTransport());
+            throw new IllegalArgumentException("Unsupported MCP transport mode: " + properties.getTransport());
         }
 
         log.info("Starting Riptide MCP Server Stdio IPC Transport Loop...");
 
         final var runnerThread = new Thread(() -> {
-            try (var reader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
-                 var writer = new PrintWriter(System.out, true, StandardCharsets.UTF_8)) {
+            // Do NOT close System.in / System.out in try-with-resources
+            final var reader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
+            final var writer = new PrintWriter(System.out, true, StandardCharsets.UTF_8);
 
-                String line;
+            String line;
+            try {
                 while ((line = reader.readLine()) != null) {
                     if (line.isBlank()) {
                         continue;
@@ -86,12 +97,14 @@ public class McpStdioRunner implements CommandLineRunner {
                         if (response != null) {
                             writer.println(objectMapper.writeValueAsString(response));
                         }
-                    } catch (final Exception e) {
-                        log.error("Failed to process MCP Stdio JSON-RPC frame: {}", e.getMessage());
+                    } catch (final Exception parseEx) {
+                        log.error("Failed to parse MCP JSON-RPC frame: {}", parseEx.getMessage());
+                        final JsonRpcMessage parseErrorResponse = JsonRpcMessage.createError(null, -32700, "Parse error: " + parseEx.getMessage());
+                        writer.println(objectMapper.writeValueAsString(parseErrorResponse));
                     }
                 }
             } catch (final Exception e) {
-                log.error("Riptide MCP Stdio transport loop error", e);
+                log.error("Riptide MCP Stdio transport loop encountered an error", e);
             }
         }, "mcp-stdio-runner");
 
@@ -106,17 +119,31 @@ public class McpStdioRunner implements CommandLineRunner {
 
         final Object id = request.getId();
         final String method = request.getMethod();
+        final boolean isNotification = (id == null) || method.startsWith("notifications/");
+
+        // Check authentication if required
+        if (authService.isAuthRequired()) {
+            final String authToken = extractAuthToken(request);
+            if (!authService.authenticate(authToken)) {
+                if (isNotification) {
+                    return null;
+                }
+                return JsonRpcMessage.createError(id, -32001, "Unauthorized: invalid MCP authentication token");
+            }
+        }
+
+        // JSON-RPC 2.0: Do not reply to notifications
+        if (method.startsWith("notifications/")) {
+            return null;
+        }
 
         switch (method) {
             case "initialize":
                 final Map<String, Object> serverInfo = new LinkedHashMap<>();
                 serverInfo.put("protocolVersion", "2024-11-05");
                 serverInfo.put("capabilities", Map.of("tools", Map.of(), "prompts", Map.of(), "resources", Map.of()));
-                serverInfo.put("serverInfo", Map.of("name", "riptide-flows-mcp", "version", "0.8.0"));
-                return JsonRpcMessage.createResult(id, serverInfo);
-
-            case "notifications/initialized":
-                return null;
+                serverInfo.put("serverInfo", Map.of("name", "riptide-flows-mcp", "version", "0.7.2-SNAPSHOT"));
+                return isNotification ? null : JsonRpcMessage.createResult(id, serverInfo);
 
             case "tools/list":
                 final List<Map<String, Object>> tools = new ArrayList<>();
@@ -126,45 +153,56 @@ public class McpStdioRunner implements CommandLineRunner {
                 tools.add(geoAsnTool.getDefinition().toMap());
                 tools.add(trafficSpikesTool.getDefinition().toMap());
                 tools.add(autoMitigationRulesTool.getDefinition().toMap());
-                return JsonRpcMessage.createResult(id, Map.of("tools", tools));
+                return isNotification ? null : JsonRpcMessage.createResult(id, Map.of("tools", tools));
 
             case "tools/call":
-                return handleToolCall(id, request.getParams());
+                final JsonRpcMessage toolResult = handleToolCall(id, request.getParams());
+                return isNotification ? null : toolResult;
 
             case "prompts/list":
-                return JsonRpcMessage.createResult(id, Map.of("prompts", skillRegistry.getMcpPrompts()));
+                return isNotification ? null : JsonRpcMessage.createResult(id, Map.of("prompts", skillRegistry.getMcpPrompts()));
 
             case "prompts/get":
                 final String promptName = String.valueOf(request.getParams() != null ? request.getParams().get("name") : "");
                 final var skillOpt = skillRegistry.getSkill(promptName);
                 if (skillOpt.isPresent()) {
                     final var skill = skillOpt.get();
-                    return JsonRpcMessage.createResult(id, Map.of(
+                    return isNotification ? null : JsonRpcMessage.createResult(id, Map.of(
                             "description", skill.getDescription(),
                             "messages", List.of(Map.of("role", "user", "content", Map.of("type", "text", "text", skill.getRawMarkdown())))
                     ));
                 }
-                return JsonRpcMessage.createError(id, -32602, "Prompt not found: " + promptName);
+                return isNotification ? null : JsonRpcMessage.createError(id, -32602, "Prompt not found: " + promptName);
 
             case "resources/list":
-                return JsonRpcMessage.createResult(id, Map.of("resources", skillRegistry.getMcpResources()));
+                return isNotification ? null : JsonRpcMessage.createResult(id, Map.of("resources", skillRegistry.getMcpResources()));
 
             case "resources/read":
                 final String uri = String.valueOf(request.getParams() != null ? request.getParams().get("uri") : "");
                 final String resName = uri.replace("resource://riptide/skills/", "");
                 final var resOpt = skillRegistry.getSkill(resName);
                 if (resOpt.isPresent()) {
-                    return JsonRpcMessage.createResult(id, Map.of("contents", List.of(Map.of(
+                    return isNotification ? null : JsonRpcMessage.createResult(id, Map.of("contents", List.of(Map.of(
                             "uri", uri,
                             "mimeType", "text/markdown",
                             "text", resOpt.get().getRawMarkdown()
                     ))));
                 }
-                return JsonRpcMessage.createError(id, -32602, "Resource not found: " + uri);
+                return isNotification ? null : JsonRpcMessage.createError(id, -32602, "Resource not found: " + uri);
 
             default:
-                return JsonRpcMessage.createError(id, -32601, "Method not found: " + method);
+                return isNotification ? null : JsonRpcMessage.createError(id, -32601, "Method not found: " + method);
         }
+    }
+
+    private String extractAuthToken(final JsonRpcMessage request) {
+        if (request.getParams() != null && request.getParams().containsKey("_meta")) {
+            final Object metaObj = request.getParams().get("_meta");
+            if (metaObj instanceof Map<?, ?> metaMap && metaMap.containsKey("authToken")) {
+                return String.valueOf(metaMap.get("authToken"));
+            }
+        }
+        return null;
     }
 
     private JsonRpcMessage handleToolCall(final Object id, final Map<String, Object> params) {
@@ -198,14 +236,9 @@ public class McpStdioRunner implements CommandLineRunner {
                 resultData = autoMitigationRulesTool.execute(arguments);
                 break;
             default:
-                return JsonRpcMessage.createError(id, -32601, "Unknown tool: " + toolName);
+                return JsonRpcMessage.createError(id, -32601, "Tool not found: " + toolName);
         }
 
-        try {
-            final String jsonResult = objectMapper.writeValueAsString(resultData);
-            return JsonRpcMessage.createResult(id, Map.of("content", List.of(Map.of("type", "text", "text", jsonResult))));
-        } catch (final Exception e) {
-            return JsonRpcMessage.createError(id, -32603, "Internal tool error: " + e.getMessage());
-        }
+        return JsonRpcMessage.createResult(id, Map.of("content", List.of(Map.of("type", "text", "text", resultData))));
     }
 }

@@ -26,6 +26,17 @@ public class McpAuthServiceTest {
     }
 
     @Test
+    public void failsClosedWhenAuthEnabledButNoTokensConfigured() {
+        final McpAuthProperties properties = new McpAuthProperties();
+        properties.setEnabled(true);
+        properties.setTokens(List.of());
+
+        final McpAuthService authService = new McpAuthService(properties, SecretResolvers.defaults());
+        assertThat(authService.authenticate("some_token")).isFalse();
+        assertThat(authService.authenticate(null)).isFalse();
+    }
+
+    @Test
     public void validatesTokenMatchingPlainSecretRef() {
         final McpAuthProperties properties = new McpAuthProperties();
         properties.setEnabled(true);

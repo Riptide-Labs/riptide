@@ -41,8 +41,8 @@ public class InterfaceUtilizationTool {
     }
 
     public List<Map<String, Object>> execute(final Map<String, Object> params) {
-        final int timeRange = ((Number) params.getOrDefault("time_range_minutes", 15)).intValue();
-        final int limit = ((Number) params.getOrDefault("limit", 20)).intValue();
+        final int timeRange = Math.min(Math.max(1, ((Number) params.getOrDefault("time_range_minutes", 15)).intValue()), 43200);
+        final int limit = Math.min(Math.max(1, ((Number) params.getOrDefault("limit", 20)).intValue()), 500);
         final String db = mcpService.getDatabaseName();
 
         final String table = QueryRouter.resolveInterfaceTable(db, timeRange);

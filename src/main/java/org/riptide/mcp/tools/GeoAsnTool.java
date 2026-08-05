@@ -40,12 +40,12 @@ public class GeoAsnTool {
     }
 
     public List<Map<String, Object>> execute(final Map<String, Object> params) {
-        final int timeRange = ((Number) params.getOrDefault("time_range_minutes", 60)).intValue();
+        final int timeRange = Math.min(Math.max(1, ((Number) params.getOrDefault("time_range_minutes", 60)).intValue()), 43200);
         final String db = mcpService.getDatabaseName();
 
         final String table = QueryRouter.resolveGeoAsnTable(db, timeRange);
         final String sql = String.format(
-                "SELECT dstAs, dstAsOrg, dstCountry, SUM(bytes) AS total_bytes FROM %s WHERE timestamp >= now() - INTERVAL %d MINUTE GROUP BY dstAs, dstAsOrg, dstCountry ORDER BY total_bytes DESC LIMIT 20",
+                "SELECT dstAs, dstCountry, SUM(bytes) AS total_bytes FROM %s WHERE timestamp >= now() - INTERVAL %d MINUTE GROUP BY dstAs, dstCountry ORDER BY total_bytes DESC LIMIT 20",
                 table, timeRange
         );
 

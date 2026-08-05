@@ -5,6 +5,7 @@
 
 package org.riptide.mcp.tools;
 
+import org.riptide.classification.IpAddr;
 import org.riptide.mcp.protocol.McpToolDefinition;
 import org.springframework.stereotype.Component;
 
@@ -34,7 +35,14 @@ public class AutoMitigationRulesTool {
     }
 
     public List<Map<String, Object>> execute(final Map<String, Object> params) {
-        final String ip = String.valueOf(params.get("target_ip"));
+        final String rawIp = String.valueOf(params.get("target_ip"));
+        final String ip;
+        try {
+            ip = IpAddr.of(rawIp.trim()).toString();
+        } catch (final Exception e) {
+            return List.of(Map.of("error", "Invalid target IP address parameter: " + rawIp));
+        }
+
         final String attackType = String.valueOf(params.getOrDefault("attack_type", "Volumetric Flood"));
 
         final Map<String, Object> rules = new LinkedHashMap<>();
