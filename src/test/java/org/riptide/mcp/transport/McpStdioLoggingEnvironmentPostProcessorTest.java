@@ -8,6 +8,8 @@ package org.riptide.mcp.transport;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.env.MockEnvironment;
 
+import java.util.Map;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -21,11 +23,9 @@ class McpStdioLoggingEnvironmentPostProcessorTest {
     private final McpStdioLoggingEnvironmentPostProcessor postProcessor =
             new McpStdioLoggingEnvironmentPostProcessor();
 
-    private MockEnvironment environmentWith(final String... pairs) {
+    private MockEnvironment environmentWith(final Map<String, String> properties) {
         final MockEnvironment environment = new MockEnvironment();
-        for (int i = 0; i < pairs.length; i += 2) {
-            environment.setProperty(pairs[i], pairs[i + 1]);
-        }
+        properties.forEach(environment::setProperty);
         postProcessor.postProcessEnvironment(environment, null);
         return environment;
     }
@@ -33,7 +33,7 @@ class McpStdioLoggingEnvironmentPostProcessorTest {
     @Test
     void redirectsConsoleLoggingToStderrForTheStdioTransport() {
         final MockEnvironment environment =
-                environmentWith("riptide.mcp.enabled", "true", "riptide.mcp.transport", "stdio");
+                environmentWith(Map.of("riptide.mcp.enabled", "true", "riptide.mcp.transport", "stdio"));
 
         assertThat(environment.getProperty(CONSOLE_TARGET)).isEqualTo("System.err");
     }
@@ -41,14 +41,14 @@ class McpStdioLoggingEnvironmentPostProcessorTest {
     /** stdio is the default transport, so enabling MCP without naming one still redirects. */
     @Test
     void redirectsWhenTheTransportIsLeftAtItsDefault() {
-        final MockEnvironment environment = environmentWith("riptide.mcp.enabled", "true");
+        final MockEnvironment environment = environmentWith(Map.of("riptide.mcp.enabled", "true"));
 
         assertThat(environment.getProperty(CONSOLE_TARGET)).isEqualTo("System.err");
     }
 
     @Test
     void leavesConsoleLoggingOnStdoutWhenMcpIsDisabled() {
-        final MockEnvironment environment = environmentWith("riptide.mcp.enabled", "false");
+        final MockEnvironment environment = environmentWith(Map.of("riptide.mcp.enabled", "false"));
 
         assertThat(environment.getProperty(CONSOLE_TARGET)).isNull();
     }
@@ -57,17 +57,17 @@ class McpStdioLoggingEnvironmentPostProcessorTest {
     @Test
     void leavesConsoleLoggingOnStdoutForTheSseTransport() {
         final MockEnvironment environment =
-                environmentWith("riptide.mcp.enabled", "true", "riptide.mcp.transport", "sse");
+                environmentWith(Map.of("riptide.mcp.enabled", "true", "riptide.mcp.transport", "sse"));
 
         assertThat(environment.getProperty(CONSOLE_TARGET)).isNull();
     }
 
     @Test
     void keepsAnExplicitOperatorSetting() {
-        final MockEnvironment environment = environmentWith(
+        final MockEnvironment environment = environmentWith(Map.of(
                 "riptide.mcp.enabled", "true",
                 "riptide.mcp.transport", "stdio",
-                CONSOLE_TARGET, "System.out");
+                CONSOLE_TARGET, "System.out"));
 
         assertThat(environment.getProperty(CONSOLE_TARGET)).isEqualTo("System.out");
     }
