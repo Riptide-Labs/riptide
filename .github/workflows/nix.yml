@@ -38,13 +38,14 @@ jobs:
       - name: Build the package
         id: build
         run: |
-          make nix
+          set -o pipefail
+          make nix 2>&1 | tee nix-build.log
       # A stale mvnHash after a pom change is the usual failure here. Surface the expected hash and
       # the one-command fix in the job summary so it is a glance, not a log dig — see #324.
       - name: Explain a hash mismatch
         if: failure() && steps.build.outcome == 'failure'
         run: |
-          got="$(make nix 2>&1 | grep -oE 'got:\s+sha256-[A-Za-z0-9+/=]+' | grep -oE 'sha256-[A-Za-z0-9+/=]+' | head -1 || true)"
+          got="$(grep -oE 'got:\s+sha256-[A-Za-z0-9+/=]+' nix-build.log | grep -oE 'sha256-[A-Za-z0-9+/=]+' | head -1 || true)"
           {
             echo "### Nix build failed"
             if [ -n "${got}" ]; then
