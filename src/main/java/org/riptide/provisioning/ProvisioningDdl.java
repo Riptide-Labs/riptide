@@ -99,6 +99,7 @@ public final class ProvisioningDdl {
         for (final String rollup : FlowsSchema.rollupTableNames()) {
             final String table = FlowsSchema.qualifiedRollup(database, rollup);
             statements.add("GRANT INSERT ON " + table + " TO flow_writer");
+            statements.add("GRANT SELECT ON " + table + " TO flow_writer");
             statements.add("GRANT SELECT ON " + table + " TO flow_reader");
         }
         return List.copyOf(statements);
@@ -111,14 +112,8 @@ public final class ProvisioningDdl {
      * {@code CREATE … IF NOT EXISTS} would silently keep the old password). {@code ALTER USER}
      * preserves the user's {@code CONST} settings and its row-policy membership.
      *
-     * <p>The writer is on the {@code flows} policy alongside the reader. A row policy on a table is
-     * deny-by-default for anyone it does not name, and the writer must read {@code flows} for the
-     * rollup views to push — omitting it would leave the materialized views silently pushing
-     * nothing. Its predicate is the same {@code tenant = '…'} the {@code tenant_pinned} constraint
-     * enforces on insert, so the policy grants the writer no row it could not already write.
-     *
-     * <p>The rollup policies name the reader only: the writer reaches a rollup by {@code INSERT}
-     * through its materialized view, which no row policy filters.
+     * <p>The writer and reader are on the {@code flows} and rollup policies so both tenant users can
+     * select rollup aggregations and tenant flows under strict tenant row-isolation.
      */
     public static List<String> onboardTenant(final String database, final String tenant, final String organisation,
                                              final String writerPassword, final String readerPassword) {
@@ -139,7 +134,7 @@ public final class ProvisioningDdl {
                 "GRANT flow_reader TO " + reader,
                 rowPolicy(policy, flows, tenant, reader + ", " + writer)));
         for (final String rollup : FlowsSchema.rollupTableNames()) {
-            statements.add(rowPolicy(policy, FlowsSchema.qualifiedRollup(database, rollup), tenant, reader));
+            statements.add(rowPolicy(policy, FlowsSchema.qualifiedRollup(database, rollup), tenant, reader + ", " + writer));
         }
         return List.copyOf(statements);
     }

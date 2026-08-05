@@ -47,12 +47,15 @@ public class McpStdioRunner implements CommandLineRunner {
             return;
         }
 
-        log.info("Starting Riptide MCP Server Stdio IPC Transport Loop...");
+        log.info("Starting Riptide MCP Server Stdio IPC Transport Loop (redirecting console logging to stderr)...");
+
+        final var originalOut = System.out;
+        System.setOut(System.err);
 
         final var runnerThread = new Thread(() -> {
-            // Do NOT close System.in / System.out in try-with-resources
+            // Do NOT close System.in / originalOut in try-with-resources
             final var reader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
-            final var writer = new PrintWriter(System.out, true, StandardCharsets.UTF_8);
+            final var writer = new PrintWriter(originalOut, true, StandardCharsets.UTF_8);
 
             String line;
             try {
