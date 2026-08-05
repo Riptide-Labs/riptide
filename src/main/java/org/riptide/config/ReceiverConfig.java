@@ -5,27 +5,44 @@
 
 package org.riptide.config;
 
-import com.fasterxml.jackson.annotation.JsonSubTypes;
-import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import java.time.Duration;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 
-@JsonTypeInfo(
-        use = JsonTypeInfo.Id.NAME,
-        include = JsonTypeInfo.As.PROPERTY,
-        property = "type",
-        visible = true)
-@JsonSubTypes({
-        @JsonSubTypes.Type(value = ReceiverConfig.Neflow5Config.class, name = "netflow5"),
-        @JsonSubTypes.Type(value = ReceiverConfig.Neflow9Config.class, name = "netflow9"),
-        @JsonSubTypes.Type(value = ReceiverConfig.IpfixConfig.class, name = "ipfix"),
-        @JsonSubTypes.Type(value = ReceiverConfig.SflowConfig.class, name = "sflow"),
-        @JsonSubTypes.Type(value = ReceiverConfig.MultiConfig.class, name = "multi"),
-})
 @Data
 public abstract sealed class ReceiverConfig {
+
+    /**
+     * The values {@code riptide.receivers.<name>.type} accepts, and the configuration each one
+     * binds to. This is the dispatch a JSON mapper would previously have driven from a type
+     * annotation; {@link DaemonConfig} binds against whichever class is named here, and the sealed
+     * hierarchy plus {@link Cases} keeps the consuming side exhaustive.
+     */
+    private static final Map<String, Class<? extends ReceiverConfig>> TYPES = Map.of(
+            "netflow5", Neflow5Config.class,
+            "netflow9", Neflow9Config.class,
+            "ipfix", IpfixConfig.class,
+            "sflow", SflowConfig.class,
+            "multi", MultiConfig.class);
+
+    /** The configuration class a {@code type} selects, empty when the value names no receiver. */
+    public static Optional<Class<? extends ReceiverConfig>> typeOf(final String type) {
+        return type == null
+                ? Optional.empty()
+                : Optional.ofNullable(TYPES.get(type.trim().toLowerCase(Locale.ROOT)));
+    }
+
+    /** The accepted {@code type} values, ordered so an error message reads the same every time. */
+    public static Set<String> knownTypes() {
+        return new TreeSet<>(TYPES.keySet());
+    }
+
     String type;
 
     /// Listening port
