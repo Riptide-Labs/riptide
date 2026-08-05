@@ -5,13 +5,17 @@
 
 package org.riptide.flows.parser.exceptions;
 
+import com.google.errorprone.annotations.FormatMethod;
+import com.google.errorprone.annotations.FormatString;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
 
 public class InvalidPacketException extends Exception {
 
-    public InvalidPacketException(final ByteBuf buffer, final String fmt, final Object... args) {
+    /** Annotated so a malformed format string fails at compile time, not when a bad packet hits it. */
+    @FormatMethod
+    public InvalidPacketException(final ByteBuf buffer, @FormatString final String fmt, final Object... args) {
         super(appendPosition(String.format(fmt, args), buffer));
     }
 
@@ -46,6 +50,10 @@ public class InvalidPacketException extends Exception {
      * arithmetic pinned every set-header failure near the end of the message). Returns -1 when the
      * buffers share no addressable memory (e.g. composite buffers).
      */
+    // The two == comparisons below are identity on purpose: the question is whether these are the
+    // same buffer, and whether the two views share one backing array. Content equality would answer
+    // a different question and would be wrong here — two equal arrays are not shared memory.
+    @SuppressWarnings("ReferenceEquality")
     private static int absoluteOffset(final ByteBuf buffer, final ByteBuf root) {
         final int offset;
         if (buffer == root) {

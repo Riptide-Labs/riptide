@@ -14,6 +14,8 @@ public interface SecretResolver {
     String scheme();
 
     /**
+     * Resolves a reference of this resolver's scheme to its secret value.
+     *
      * @throws IllegalArgumentException if the reference cannot be resolved
      */
     String resolve(SecretRef ref);
