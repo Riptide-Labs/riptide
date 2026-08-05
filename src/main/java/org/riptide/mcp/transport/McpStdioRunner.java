@@ -53,12 +53,9 @@ public class McpStdioRunner implements CommandLineRunner {
         System.setOut(System.err);
 
         final var runnerThread = new Thread(() -> {
-            // Do NOT close System.in / originalOut in try-with-resources
-            final var reader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
-            final var writer = new PrintWriter(originalOut, true, StandardCharsets.UTF_8);
-
-            String line;
-            try {
+            try (var reader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
+                 var writer = new PrintWriter(originalOut, true, StandardCharsets.UTF_8)) {
+                String line;
                 while ((line = reader.readLine()) != null) {
                     if (line.isBlank()) {
                         continue;
