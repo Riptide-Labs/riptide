@@ -5,7 +5,6 @@
 
 package org.riptide.management;
 
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import jakarta.annotation.PostConstruct;
@@ -48,10 +47,7 @@ public class ManagementServer {
 
         this.server = HttpServer.create(
                 new InetSocketAddress(this.properties.getBindAddress(), this.properties.getPort()), 0);
-        this.executor = Executors.newFixedThreadPool(2, new ThreadFactoryBuilder()
-                .setNameFormat("management-http-%d")
-                .setDaemon(true)
-                .build());
+        this.executor = Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("management-http-", 0).factory());
         this.server.setExecutor(this.executor);
         this.server.createContext("/livez", exchange -> respond(exchange, this.health.liveness()));
         this.server.createContext("/readyz", exchange -> respond(exchange, this.health.readiness()));
