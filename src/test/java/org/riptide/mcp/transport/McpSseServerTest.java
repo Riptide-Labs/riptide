@@ -15,10 +15,14 @@ import org.riptide.mcp.service.McpMessageHandler;
 import org.riptide.mcp.skills.SkillRegistry;
 import org.riptide.secrets.SecretResolvers;
 
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -61,12 +65,17 @@ public class McpSseServerTest {
                 .GET()
                 .build();
 
-        final HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        final HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
 
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.headers().firstValue("Content-Type").orElse("")).contains("text/event-stream");
-        assertThat(response.body()).contains("event: endpoint");
-        assertThat(response.body()).contains("/mcp/sse?sessionId=");
+
+        try (var reader = new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
+            final String line1 = reader.readLine();
+            final String line2 = reader.readLine();
+            assertThat(line1).contains("event: endpoint");
+            assertThat(line2).contains("/mcp/sse?sessionId=");
+        }
     }
 
     @Test
@@ -118,9 +127,14 @@ public class McpSseServerTest {
                     .uri(URI.create("http://localhost:" + protectedPort + "/mcp/sse?authToken=secret_token_123"))
                     .GET()
                     .build();
-            final HttpResponse<String> authResp = client.send(authReq, HttpResponse.BodyHandlers.ofString());
+            final HttpResponse<InputStream> authResp = client.send(authReq, HttpResponse.BodyHandlers.ofInputStream());
             assertThat(authResp.statusCode()).isEqualTo(200);
-            assertThat(authResp.body()).contains("event: endpoint");
+            try (var reader = new BufferedReader(new InputStreamReader(authResp.body(), StandardCharsets.UTF_8))) {
+                final String line1 = reader.readLine();
+                final String line2 = reader.readLine();
+                assertThat(line1).contains("event: endpoint");
+                assertThat(line2).contains("/mcp/sse?sessionId=");
+            }
         } finally {
             protectedServer.stop();
         }
