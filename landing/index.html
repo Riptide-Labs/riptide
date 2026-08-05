@@ -40,6 +40,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
                 <img src="img/riptide-logo.png" alt="Riptide Logo" class="logo-img">
             </a>
             <nav class="nav" id="main-nav">
+                <a href="#mcp-skills" class="nav-link">MCP & AI Skills</a>
                 <a href="docs/" class="nav-link">Documentation</a>
                 <a href="docs/getting-started" class="nav-link">Quick Start</a>
                 <a href="https://github.com/Riptide-Labs/riptide" class="nav-link" target="_blank" rel="noopener">GitHub</a>
@@ -277,6 +278,127 @@ Creating riptide-grafana    ... <span class="code-green">done</span></span></cod
                         <h3 class="feature-title">Integrated Grafana Ecosystem</h3>
                         <p class="feature-desc">Shipped with standard Grafana template dashboards. Seamless integration for 95th percentile analysis, failure headroom, and deep interface traffic drilling.</p>
                     </div>
+
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                                <path d="M2 17l10 5 10-5"></path>
+                                <path d="M2 12l10 5 10-5"></path>
+                            </svg>
+                        </div>
+                        <h3 class="feature-title">Native MCP AI Server</h3>
+                        <p class="feature-desc">Embedded Model Context Protocol (MCP) server running stdio IPC and HTTP/SSE. Protected by SecretRef tokens (<code>env://</code>, <code>vault://</code>, <code>sops://</code>) for direct LLM integration.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- MCP Server & Shipped Agent Skills Section -->
+        <section id="mcp-skills" class="mcp-section">
+            <div class="container">
+                <div class="section-header">
+                    <div class="tagline-badge">🤖 Model Context Protocol & Shipped Agent Skills</div>
+                    <h2 class="section-title">AI-Powered Network Telemetry & Automation</h2>
+                    <p class="section-subtitle">Riptide ships a native Java MCP server component and 7 pre-packaged Agent Skills directly inside the executable JAR for instant integration with AGY, Claude CLI, and custom AI agents.</p>
+                </div>
+
+                <!-- MCP Capabilities & Architecture Cards -->
+                <div class="mcp-grid">
+                    <div class="mcp-card">
+                        <div class="mcp-badge">Core Engine</div>
+                        <h3>Native Java Protocol Engine</h3>
+                        <p>Zero external Node.js or Python runtimes required. Runs directly inside <code>riptide-flows-*.jar</code> over standard input/output (stdio IPC) or HTTP Server-Sent Events (SSE).</p>
+                        <ul class="mcp-features-list">
+                            <li>⚡ <strong>Stdio & SSE Transports</strong> — Support for AGY / antigravity-cli and Claude CLI</li>
+                            <li>🔐 <strong>SecretRef Token Auth</strong> — Resolves tokens via <code>env://</code>, <code>vault://</code>, and <code>sops://</code></li>
+                            <li>📊 <strong>1-Minute Rollup Router</strong> — Auto-routes ≥ 60m queries to ClickHouse <code>SummingMergeTree</code> views</li>
+                        </ul>
+                    </div>
+
+                    <div class="mcp-card">
+                        <div class="mcp-badge">Auto-Shipped</div>
+                        <h3>7 Embedded Classpath Skills</h3>
+                        <p>Packaged under <code>classpath*:mcp/skills/*.md</code> and auto-discovered as MCP Prompts and Resources. Instant slash commands for autonomous network triage.</p>
+                        <div class="skills-mini-grid">
+                            <div class="skill-tag"><code>/riptide-investigate-ddos</code></div>
+                            <div class="skill-tag"><code>/riptide-cause-analysis</code></div>
+                            <div class="skill-tag"><code>/riptide-capacity-plan</code></div>
+                            <div class="skill-tag"><code>/riptide-peering-analysis</code></div>
+                            <div class="skill-tag"><code>/riptide-app-audit</code></div>
+                            <div class="skill-tag"><code>/riptide-trace-host</code></div>
+                            <div class="skill-tag"><code>/riptide-auto-mitigate</code></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Detailed 7 Skills Grid -->
+                <div class="skills-showcase">
+                    <h3 class="skills-showcase-title">Pre-Packaged Network Engineering Skills</h3>
+                    <div class="skills-grid">
+                        <div class="skill-card">
+                            <div class="skill-icon">🛡️</div>
+                            <div class="skill-info">
+                                <h4>DDoS Mitigation Triage</h4>
+                                <span class="skill-cmd">/riptide-investigate-ddos</span>
+                                <p>Scientific DDoS attack family classification grounded in RFC 4732, Shannon Entropy analysis (ΔH &lt; -1.5), TCP flag histograms, and NIST SP 800-189 amplification heuristics.</p>
+                            </div>
+                        </div>
+
+                        <div class="skill-card">
+                            <div class="skill-icon">📊</div>
+                            <div class="skill-info">
+                                <h4>Baseline Cause Analysis</h4>
+                                <span class="skill-cmd">/riptide-cause-analysis</span>
+                                <p>Compares current 15-minute traffic windows against 24-hour historical baselines to isolate root causes of sudden volumetric and protocol shifts.</p>
+                            </div>
+                        </div>
+
+                        <div class="skill-card">
+                            <div class="skill-icon">📈</div>
+                            <div class="skill-info">
+                                <h4>Interface Capacity Analysis</h4>
+                                <span class="skill-cmd">/riptide-capacity-plan</span>
+                                <p>Evaluates exporter interface bandwidth saturation against enriched SNMP interface speeds and projects 95th percentile link headroom.</p>
+                            </div>
+                        </div>
+
+                        <div class="skill-card">
+                            <div class="skill-icon">🌐</div>
+                            <div class="skill-info">
+                                <h4>Peering & Geo-IP Analysis</h4>
+                                <span class="skill-cmd">/riptide-peering-analysis</span>
+                                <p>Queries 1-minute rollups by Autonomous System Numbers (ASN) and country codes to optimize transit costs and IXP peering relationships.</p>
+                            </div>
+                        </div>
+
+                        <div class="skill-card">
+                            <div class="skill-icon">🔍</div>
+                            <div class="skill-info">
+                                <h4>Application Performance Triage</h4>
+                                <span class="skill-cmd">/riptide-app-audit</span>
+                                <p>Audits application protocol distribution, unclassified port traffic (<code>application IS NULL</code>), and public vs. private locality boundaries.</p>
+                            </div>
+                        </div>
+
+                        <div class="skill-card">
+                            <div class="skill-icon">🔬</div>
+                            <div class="skill-info">
+                                <h4>Host Forensic Investigation</h4>
+                                <span class="skill-cmd">/riptide-trace-host</span>
+                                <p>Forensic walk for target host IPs, detailing peer conversation matrices, active ports, flow durations, VLANs, and exporter interfaces.</p>
+                            </div>
+                        </div>
+
+                        <div class="skill-card">
+                            <div class="skill-icon">⚡</div>
+                            <div class="skill-info">
+                                <h4>Automated DDoS Mitigation</h4>
+                                <span class="skill-cmd">/riptide-auto-mitigate</span>
+                                <p>Generates multi-tier mitigation rules emitting BGP FlowSpec (RFC 8955), RTBH null-routes (RFC 7999), iptables rules, and Cloud Scrubbing GRE redirection.</p>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
@@ -377,11 +499,11 @@ services.riptide = {
 
                         <!-- Standalone JAR Tab -->
                         <div class="tab-pane" id="tab-jar">
-                            <p class="tab-instructions">Run Riptide as a direct Java executable (requires Java 25):</p>
+                            <p class="tab-instructions">Run Riptide as a direct Java executable with native MCP AI Agent server enabled (requires Java 25):</p>
                             <pre class="code-block"><code>cd target
-java -jar riptide-flows-*.jar --spring.config.location=application.properties</code></pre>
+java -jar riptide-flows-*.jar --riptide.mcp.enabled=true --riptide.mcp.transport=stdio</code></pre>
                             <div class="tab-meta">
-                                <span>📦 Standard Spring Boot variables and profiles apply.</span>
+                                <span>📦 Connect AGY / antigravity-cli or Claude CLI directly via stdio IPC or HTTP/SSE at <code>/mcp/sse</code>.</span>
                             </div>
                         </div>
                     </div>
