@@ -242,10 +242,33 @@ public class IpFixFlowBuilder {
                         }).orElse(SamplingAlgorithm.Unassigned);
             }
 
+            /**
+             * What the record carries, then what the selector algorithm implies, then what the
+             * operator configured, then unsampled. Algorithms 0, 8 and 9 have no expressible
+             * interval and yield NaN, which is honest but would land in a Float64 column and
+             * poison any aggregate multiplying by it — so it falls through as unknown instead.
+             */
             @Override
             public double getSamplingInterval() {
-                return Optionals.first(rawFlow.samplingInterval, rawFlow.samplerRandomInterval)
-                        .orElseGet(() -> {
+                // Evaluated in order and lazily: the selector-algorithm derivation divides by
+                // exporter-supplied ranges, so it must not run for a record that already carries
+                // its rate — a degenerate range would then cost the whole packet's batch.
+                final Double onRecord = Optionals.first(
+                                usable(rawFlow.samplingInterval),
+                                usable(rawFlow.samplerRandomInterval))
+                        .orElse(null);
+                if (onRecord != null) {
+                    return onRecord;
+                }
+                final Double derived = usable(fromSelectorAlgorithm());
+                if (derived != null) {
+                    return derived;
+                }
+                return Optionals.first(usable(asDouble(flowSamplingIntervalFallback))).orElse(1.0);
+            }
+
+            /** RFC 5477 selector algorithms, as an interval where one is expressible. */
+            private Double fromSelectorAlgorithm() {
                             switch (rawFlow.selectorAlgorithm) {
                                 case 0, 8, 9 -> {
                                     return Double.NaN;
@@ -269,13 +292,21 @@ public class IpFixFlowBuilder {
                                     final var selectedRangeMax = Optionals.of(rawFlow.hashSelectedRangeMax).orElse(UnsignedLong.MAX_VALUE);
                                     final var outputRangeMin = Optionals.of(rawFlow.hashOutputRangeMin).orElse(UnsignedLong.ZERO);
                                     final var outputRangeMax = Optionals.of(rawFlow.hashOutputRangeMax).orElse(UnsignedLong.MAX_VALUE);
-                                    return (outputRangeMax.minus(outputRangeMin)).dividedBy(selectedRangeMax.minus(selectedRangeMin)).doubleValue();
+                                    final var selectedRange = selectedRangeMax.minus(selectedRangeMin);
+                                    // An exporter is free to send a degenerate range; dividing by it
+                                    // would throw and cost the whole packet, so treat it as unknown.
+                                    if (selectedRange.equals(UnsignedLong.ZERO)) {
+                                        return null;
+                                    }
+                                    return (outputRangeMax.minus(outputRangeMin)).dividedBy(selectedRange).doubleValue();
                                 }
                                 case null, default -> {
-                                    return 1.0;
+                                    // No algorithm, or one this does not model: nothing was
+                                    // derived, so fall through rather than assert "not sampled" —
+                                    // that would outrank a configured fallback with a guess.
+                                    return null;
                                 }
                             }
-                        });
             }
 
             @Override
@@ -318,6 +349,20 @@ public class IpFixFlowBuilder {
                 return FlowProtocol.IPFIX;
             }
         };
+    }
+
+    /**
+     * A rate counts as an answer when it is present and finite, including an explicit 1: an
+     * exporter stating it does not sample has answered, and must not be overridden by a
+     * receiver-wide fallback meant for a different exporter. Absent, 0 (a placeholder) and
+     * non-finite — which is what an inexpressible selector algorithm yields — fall through.
+     */
+    private static Double usable(final Double interval) {
+        return interval != null && Double.isFinite(interval) && interval >= 1.0 ? interval : null;
+    }
+
+    private static Double asDouble(final Long value) {
+        return value != null ? value.doubleValue() : null;
     }
 
     private Stream<IpfixRawFlow> createRawFlows(final Packet packet) {

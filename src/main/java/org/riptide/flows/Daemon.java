@@ -26,6 +26,8 @@ import org.riptide.flows.parser.sflow.SflowUdpParser;
 import org.riptide.flows.parser.netflow9.Netflow9UdpParser;
 import org.riptide.pipeline.FlowException;
 import org.riptide.pipeline.Pipeline;
+import org.riptide.flows.parser.session.ExporterSamplingTable;
+import org.riptide.flows.parser.session.OptionListener;
 import org.riptide.snmp.ExporterInterfaceTable;
 import org.riptide.pipeline.Source;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -54,8 +56,11 @@ public class Daemon implements ApplicationRunner {
                   @Qualifier("ipfixValueConversionService") final ValueConversionService ipfixValueConversionService,
                   @Qualifier("netflow9ValueConversionService") final ValueConversionService netflow9ValueConversionService,
                   final ExporterInterfaceTable exporterInterfaceTable,
+                  final ExporterSamplingTable exporterSamplingTable,
                   final DaemonConfig config) {
         final var identity = config.resolveIdentity();
+        // One option stream, two readers: interface names and sampler rates.
+        final OptionListener optionListener = OptionListener.of(exporterInterfaceTable, exporterSamplingTable);
 
         this.pipeline = Objects.requireNonNull(pipeline);
         // A packet's records are dispatched as one batch (see ParserBase#transmit), so a failure
@@ -106,8 +111,9 @@ public class Daemon implements ApplicationRunner {
                         final var parser = new Netflow9UdpParser(e.getKey(), dispatcher, identity, metricRegistry, netflow9ValueConversionService)
                                 .withFlowActiveTimeoutFallback(config.getFlowActiveTimeoutFallback())
                                 .withFlowInactiveTimeoutFallback(config.getFlowInactiveTimeoutFallback())
-                                .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback());
-                        parser.setOptionListener(exporterInterfaceTable);
+                                .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback())
+                                .withSamplingTable(exporterSamplingTable);
+                        parser.setOptionListener(optionListener);
 
                         return new UdpListener(e.getKey(), parser, metricRegistry)
                                 .withPort(config.getPort())
@@ -123,7 +129,7 @@ public class Daemon implements ApplicationRunner {
                                         .withFlowInactiveTimeoutFallback(config.getFlowInactiveTimeoutFallback())
                                         .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback());
 
-                                parser.setOptionListener(exporterInterfaceTable);
+                                parser.setOptionListener(optionListener);
 
                                 yield new UdpListener(e.getKey(), parser, metricRegistry)
                                         .withPort(config.getPort())
@@ -135,7 +141,7 @@ public class Daemon implements ApplicationRunner {
                                         .withFlowInactiveTimeoutFallback(config.getFlowInactiveTimeoutFallback())
                                         .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback());
 
-                                parser.setOptionListener(exporterInterfaceTable);
+                                parser.setOptionListener(optionListener);
 
                                 yield new TcpListener(e.getKey(), parser, metricRegistry)
                                         .withPort(config.getPort())
@@ -169,8 +175,9 @@ public class Daemon implements ApplicationRunner {
                             final var netflow9 = new Netflow9UdpParser(e.getKey() + ":netflow9", dispatcher, identity, metricRegistry, netflow9ValueConversionService)
                                     .withFlowActiveTimeoutFallback(config.getFlowActiveTimeoutFallback())
                                     .withFlowInactiveTimeoutFallback(config.getFlowInactiveTimeoutFallback())
-                                    .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback());
-                            netflow9.setOptionListener(exporterInterfaceTable);
+                                    .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback())
+                                    .withSamplingTable(exporterSamplingTable);
+                            netflow9.setOptionListener(optionListener);
                             parsers.add(netflow9);
                         }
 
@@ -179,7 +186,7 @@ public class Daemon implements ApplicationRunner {
                                     .withFlowActiveTimeoutFallback(config.getFlowActiveTimeoutFallback())
                                     .withFlowInactiveTimeoutFallback(config.getFlowInactiveTimeoutFallback())
                                     .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback());
-                            ipfix.setOptionListener(exporterInterfaceTable);
+                            ipfix.setOptionListener(optionListener);
                             parsers.add(ipfix);
                         }
 

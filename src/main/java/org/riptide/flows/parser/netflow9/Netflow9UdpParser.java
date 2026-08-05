@@ -8,6 +8,8 @@ package org.riptide.flows.parser.netflow9;
 import com.codahale.metrics.MetricRegistry;
 import com.google.common.base.MoreObjects;
 import io.netty.buffer.ByteBuf;
+import org.riptide.pipeline.ExporterIdentity;
+import org.riptide.flows.parser.session.ExporterSamplingTable;
 import org.riptide.flows.listeners.multi.DispatchableUdpParser;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.UdpParserBase;
@@ -51,11 +53,15 @@ public class Netflow9UdpParser extends UdpParserBase implements DispatchableUdpP
                                final ByteBuf buffer) throws Exception {
         final Header header = new Header(slice(buffer, Header.SIZE));
         final Packet packet = new Packet(session, header, buffer);
+        // The same identity the option tap keys sampler rates by, so a rate learned from this
+        // exporter's options table is found again here.
+        final ExporterIdentity exporter =
+                new ExporterIdentity.NetflowIpfix(session.getRemoteAddress(), header.sourceId);
 
         return new FlowPacket() {
             @Override
             public Stream<Flow> buildFlows(final Instant receivedAt) {
-                return flowBuilder.buildFlows(receivedAt, packet);
+                return flowBuilder.buildFlows(receivedAt, packet, exporter);
             }
 
             @Override
@@ -144,6 +150,12 @@ public class Netflow9UdpParser extends UdpParserBase implements DispatchableUdpP
 
     public Netflow9UdpParser withFlowSamplingIntervalFallback(final Long flowSamplingIntervalFallback) {
         this.flowBuilder.setFlowSamplingIntervalFallback(flowSamplingIntervalFallback);
+        return this;
+    }
+
+    /** Rates learned from sampler options records; see {@link ExporterSamplingTable}. */
+    public Netflow9UdpParser withSamplingTable(final ExporterSamplingTable samplingTable) {
+        this.flowBuilder.setSamplingTable(samplingTable);
         return this;
     }
 }

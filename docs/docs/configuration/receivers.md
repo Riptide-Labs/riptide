@@ -72,6 +72,38 @@ riptide.receivers.nf9.flow-inactive-timeout-fallback=30s
 
 An IPFIX receiver also takes `transport` (`UDP`, the default, or `TCP`).
 
+## Sampling rate
+
+A sampling exporter states its rate once in a sampler options table and then leaves it out of every flow record.
+For **NetFlow v9**, riptide reads that table and remembers the rate per exporter and observation domain, so no configuration is normally needed.
+
+Most platforms only send the table if asked.
+On Cisco IOS-XE that is `option sampler-table timeout <seconds>` under `flow exporter`; on IOS-XR it is `options sampler-table timeout <seconds>` under `flow exporter-map`.
+The timeout governs how quickly a restarted collector relearns the rate, so a short one is worth setting.
+Until the first table arrives, flows from that exporter are recorded as unsampled.
+
+IPFIX does not yet get this correlation: its rate is read only from the flow record itself, so an IPFIX exporter that advertises out of band needs the fallback below.
+
+For an exporter that never advertises a rate, name it yourself:
+
+```properties
+riptide.receivers.nf9.flow-sampling-interval-fallback=1000
+```
+
+This is a last resort, not an override.
+What the exporter says always wins: a rate on the flow record first, then the rate from its sampler options table, then this setting, then unsampled.
+An exporter that explicitly reports an interval of 1 has said it does not sample, and that answer stands over the fallback.
+Note the fallback applies to the whole receiver, so exporters sharing a port share it.
+
+:::note
+riptide records the sampling rate; it does not scale NetFlow or IPFIX `bytes` and `packets` by it.
+Stored counters are what the exporter reported, and the rate sits alongside them for a query to apply.
+
+Two things to know before writing that query.
+sFlow already scales at ingest (`bytes = frame_length × sampling_rate`) and still reports its rate, so multiplying sFlow rows again double-counts them: filter them out, or restrict the query to NetFlow and IPFIX.
+And the 1-minute rollups carry neither the rate nor a scaled measure, so `SUM(bytes * samplingInterval)` only means anything against the raw `flows` table.
+:::
+
 ## Exporter identity
 
 Flows are attributed to their exporter by **source address plus observation domain**
