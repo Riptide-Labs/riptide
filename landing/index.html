@@ -1,0 +1,557 @@
+<!--
+Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Riptide — High-Performance Network Flow Collector & Enrichment Engine</title>
+    <meta name="description" content="Ingest NetFlow v5/v9, IPFIX, and sFlow. Enrich telemetry in real-time with SNMP, GeoIP, and routing context. Query billions of flows instantly with ClickHouse.">
+    <meta name="keywords" content="NetFlow, IPFIX, sFlow, Network Telemetry, ClickHouse, SNMP, Traffic Analysis, Open Source, Network Monitoring">
+    <meta property="og:title" content="Riptide — High-Performance Network Flow Collector">
+    <meta property="og:description" content="Ingest NetFlow, IPFIX, and sFlow. Enrich telemetry in real-time with SNMP, GeoIP, and routing context. Store in ClickHouse.">
+    <meta property="og:image" content="https://riptide.space/img/riptide-logo.png">
+    <meta property="og:url" content="https://riptide.space/">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:image" content="https://riptide.space/img/riptide-logo.png">
+    <link rel="canonical" href="https://riptide.space/">
+    
+    <!-- Typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    
+    <!-- CSS -->
+    <link rel="stylesheet" href="css/style.css">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="img/favicon.png">
+</head>
+<body>
+    <!-- Top Decorative Waves & Gradients -->
+    <div class="glow-bg"></div>
+    <div class="grid-overlay"></div>
+
+    <header class="header">
+        <div class="container header-container">
+            <a href="/" class="logo-area" id="nav-logo">
+                <img src="img/riptide-logo.png" alt="Riptide Logo" class="logo-img">
+            </a>
+            <nav class="nav" id="main-nav">
+                <a href="#mcp-skills" class="nav-link">MCP & AI Skills</a>
+                <a href="docs/" class="nav-link">Documentation</a>
+                <a href="docs/getting-started" class="nav-link">Quick Start</a>
+                <a href="https://github.com/Riptide-Labs/riptide" class="nav-link" target="_blank" rel="noopener">GitHub</a>
+            </nav>
+            <div class="header-actions">
+                <a href="https://github.com/Riptide-Labs/riptide" class="btn btn-secondary btn-nav" target="_blank" rel="noopener" id="btn-github-nav">
+                    <svg class="icon-svg" viewBox="0 0 24 24" width="20" height="20">
+                        <path fill="currentColor" d="M12 2A10 10 0 0 0 2 12c0 4.42 2.87 8.17 6.84 9.5.5.08.66-.23.66-.5v-1.69c-2.77.6-3.36-1.34-3.36-1.34-.46-1.16-1.11-1.47-1.11-1.47-.9-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.07 2.91.83.1-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.92 0-1.11.38-2 1.03-2.71-.1-.25-.45-1.29.1-2.64 0 0 .84-.27 2.75 1.02.79-.22 1.65-.33 2.5-.33.85 0 1.71.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.35.2 2.39.1 2.64.65.71 1.03 1.6 1.03 2.71 0 3.82-2.34 4.66-4.57 4.91.36.31.69.92.69 1.85V21c0 .27.16.59.67.5C19.14 20.16 22 16.42 22 12A10 10 0 0 0 12 2z"/>
+                    </svg>
+                    <span>Star on GitHub</span>
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <!-- Hero Section -->
+        <section class="hero-section">
+            <div class="container hero-container">
+                <div class="hero-content">
+                    <div class="tagline-badge">🌊 High-Performance Flow Telemetry</div>
+                    <h1 class="hero-title">Ingest, Enrich, and Analyze Network Flows at Scale</h1>
+                    <p class="hero-description">
+                        Riptide is an open-source telemetry engine that decodes enterprise network flow protocols, applies dynamic context metadata, and persists millions of records into ClickHouse for instant, real-time traffic analysis.
+                    </p>
+                    <div class="hero-actions">
+                        <a href="#getting-started" class="btn btn-primary" id="btn-hero-start">Deploy Riptide</a>
+                        <a href="docs/" class="btn btn-secondary" id="btn-hero-docs">Read Documentation</a>
+                    </div>
+                </div>
+
+                <div class="hero-graphic">
+                    <div class="terminal-container">
+                        <div class="terminal-header">
+                            <span class="terminal-dot red"></span>
+                            <span class="terminal-dot yellow"></span>
+                            <span class="terminal-dot green"></span>
+                            <span class="terminal-title">docker-compose.yml</span>
+                        </div>
+                        <div class="terminal-body">
+                            <pre class="code-block"><code><span class="code-comment"># Start the full Riptide stack (Ingest + ClickHouse + Grafana)</span>
+$ docker compose up -d
+
+<span class="code-output">Creating network "riptide_default"
+Creating volume "riptide_clickhouse_data"
+Creating riptide-clickhouse ... <span class="code-green">done</span>
+Creating riptide-collector  ... <span class="code-green">done</span>
+Creating riptide-grafana    ... <span class="code-green">done</span></span></code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Pipeline Simulator Section -->
+        <section class="pipeline-section">
+            <div class="container">
+                <div class="section-header">
+                    <h2 class="section-title">The Real-Time Telemetry Pipeline</h2>
+                    <p class="section-subtitle">Watch flow records traverse the ingest, enrichment, and storage layers.</p>
+                </div>
+
+                <div class="pipeline-card">
+                    <!-- Flow Nodes Diagram -->
+                    <div class="pipeline-flow">
+                        <div class="flow-stage" id="stage-exporter" data-tooltip="Network devices exporting telemetry">
+                            <div class="stage-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="2" y="2" width="20" height="8" rx="2"></rect>
+                                    <rect x="2" y="14" width="20" height="8" rx="2"></rect>
+                                    <line x1="6" y1="6" x2="6.01" y2="6"></line>
+                                    <line x1="10" y1="6" x2="18" y2="6"></line>
+                                    <line x1="6" y1="18" x2="6.01" y2="18"></line>
+                                    <line x1="10" y1="18" x2="18" y2="18"></line>
+                                </svg>
+                            </div>
+                            <span class="stage-name">Exporters</span>
+                            <span class="stage-meta">Routers & Switches</span>
+                        </div>
+
+                        <div class="flow-line">
+                            <div class="pulse" id="pulse-1"></div>
+                        </div>
+
+                        <div class="flow-stage" id="stage-ingest" data-tooltip="UDP/TCP parsing and decoding">
+                            <div class="stage-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M4 17L10 11L4 5"></path>
+                                    <line x1="12" y1="19" x2="20" y2="19"></line>
+                                </svg>
+                            </div>
+                            <span class="stage-name">Ingest & Decode</span>
+                            <span class="stage-meta">NetFlow, IPFIX, sFlow</span>
+                        </div>
+
+                        <div class="flow-line">
+                            <div class="pulse" id="pulse-2"></div>
+                        </div>
+
+                        <div class="flow-stage" id="stage-enrich" data-tooltip="Adding live SNMP and regional context">
+                            <div class="stage-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                                    <path d="M2 17l10 5 10-5"></path>
+                                    <path d="M2 12l10 5 10-5"></path>
+                                </svg>
+                            </div>
+                            <span class="stage-name">Enrichment</span>
+                            <span class="stage-meta">SNMP, GeoIP, AS Context</span>
+                        </div>
+
+                        <div class="flow-line">
+                            <div class="pulse" id="pulse-3"></div>
+                        </div>
+
+                        <div class="flow-stage" id="stage-storage" data-tooltip="Persistent ClickHouse database">
+                            <div class="stage-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+                                    <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+                                    <path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"></path>
+                                </svg>
+                            </div>
+                            <span class="stage-name">ClickHouse</span>
+                            <span class="stage-meta">Columnar Storage</span>
+                        </div>
+
+                        <div class="flow-line">
+                            <div class="pulse" id="pulse-4"></div>
+                        </div>
+
+                        <div class="flow-stage" id="stage-visual" data-tooltip="Operator Dashboards">
+                            <div class="stage-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                    <line x1="9" y1="21" x2="9" y2="9"></line>
+                                    <line x1="3" y1="9" x2="21" y2="9"></line>
+                                    <line x1="9" y1="15" x2="21" y2="15"></line>
+                                    <line x1="15" y1="9" x2="15" y2="21"></line>
+                                </svg>
+                            </div>
+                            <span class="stage-name">Visualisation</span>
+                            <span class="stage-meta">Grafana / NOC view</span>
+                        </div>
+                    </div>
+
+                    <!-- Output Console simulating log ticker -->
+                    <div class="console-box">
+                        <div class="console-header">
+                            <span class="console-badge">Live System Logs</span>
+                            <div class="pulse-dot"></div>
+                        </div>
+                        <div class="console-content" id="console-logs">
+                            <!-- Populated dynamically via JS -->
+                            <div class="console-line text-dim">Initializing Riptide telemetry simulator...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Features Section -->
+        <section class="features-section">
+            <div class="container">
+                <div class="section-header">
+                    <h2 class="section-title">Engineered for Network Operations</h2>
+                    <p class="section-subtitle">Features designed to meet the performance and precision demands of NOC and ISP networks.</p>
+                </div>
+
+                <div class="features-grid">
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                            </svg>
+                        </div>
+                        <h3 class="feature-title">Multi-Protocol Ingestion</h3>
+                        <p class="feature-desc">Native decoding for NetFlow v5, NetFlow v9, IPFIX (over UDP & TCP), and sFlow. Run multiple receivers simultaneously on configurable interfaces.</p>
+                    </div>
+
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a3 3 0 0 0-3-3z"></path>
+                                <path d="M6 3a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a3 3 0 0 0-3-3z"></path>
+                                <line x1="6" y1="9" x2="18" y2="9"></line>
+                                <line x1="6" y1="15" x2="18" y2="15"></line>
+                            </svg>
+                        </div>
+                        <h3 class="feature-title">Asynchronous Enrichment Ladder</h3>
+                        <p class="feature-desc">Adds interface descriptions, GeoIP locations, and AS routes without slowing ingest. Degrades gracefully to packet defaults if SNMP/external DNS fail.</p>
+                    </div>
+
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <polyline points="12 6 12 12 16 14"></polyline>
+                            </svg>
+                        </div>
+                        <h3 class="feature-title">Clock Skew Correction</h3>
+                        <p class="feature-desc">Detects and corrects timestamps of exporters with misconfigured NTP clocks or broken sysUpTime math, safeguarding temporal consistency of log queries.</p>
+                    </div>
+
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path>
+                                <path d="M22 12A10 10 0 0 0 12 2v10z"></path>
+                            </svg>
+                        </div>
+                        <h3 class="feature-title">ClickHouse Row-Level Isolation</h3>
+                        <p class="feature-desc">Multi-tenant design featuring row-level data segregation. Provision specific operator permissions and tenant boundaries natively through the CLI command.</p>
+                    </div>
+
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                            </svg>
+                        </div>
+                        <h3 class="feature-title">Secured Credentials</h3>
+                        <p class="feature-desc">Supports secure variable injection mechanisms (`vault://`, `sops://`, `env://`). Plaintext SNMP secrets are never exposed or saved in static properties.</p>
+                    </div>
+
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                                <line x1="8" y1="21" x2="16" y2="21"></line>
+                                <line x1="12" y1="17" x2="12" y2="21"></line>
+                            </svg>
+                        </div>
+                        <h3 class="feature-title">Integrated Grafana Ecosystem</h3>
+                        <p class="feature-desc">Shipped with standard Grafana template dashboards. Seamless integration for 95th percentile analysis, failure headroom, and deep interface traffic drilling.</p>
+                    </div>
+
+                    <div class="feature-card">
+                        <div class="feature-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                                <path d="M2 17l10 5 10-5"></path>
+                                <path d="M2 12l10 5 10-5"></path>
+                            </svg>
+                        </div>
+                        <h3 class="feature-title">Native MCP AI Server</h3>
+                        <p class="feature-desc">Embedded Model Context Protocol (MCP) server running stdio IPC and HTTP/SSE. Protected by SecretRef tokens (<code>env://</code>, <code>vault://</code>, <code>sops://</code>) for direct LLM integration.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- MCP Server & Shipped Agent Skills Section -->
+        <section id="mcp-skills" class="mcp-section">
+            <div class="container">
+                <div class="section-header">
+                    <div class="tagline-badge">🤖 Model Context Protocol & Shipped Agent Skills</div>
+                    <h2 class="section-title">AI-Powered Network Telemetry & Automation</h2>
+                    <p class="section-subtitle">Riptide ships a native Java MCP server component and 7 pre-packaged Agent Skills directly inside the executable JAR for instant integration with AGY, Claude CLI, and custom AI agents.</p>
+                </div>
+
+                <!-- MCP Capabilities & Architecture Cards -->
+                <div class="mcp-grid">
+                    <div class="mcp-card">
+                        <div class="mcp-badge">Core Engine</div>
+                        <h3>Native Java Protocol Engine</h3>
+                        <p>Zero external Node.js or Python runtimes required. Runs directly inside <code>riptide-flows-*.jar</code> over standard input/output (stdio IPC) or HTTP Server-Sent Events (SSE).</p>
+                        <ul class="mcp-features-list">
+                            <li>⚡ <strong>Stdio & SSE Transports</strong> — Support for AGY / antigravity-cli and Claude CLI</li>
+                            <li>🔐 <strong>SecretRef Token Auth</strong> — Resolves tokens via <code>env://</code>, <code>vault://</code>, and <code>sops://</code></li>
+                            <li>📊 <strong>1-Minute Rollup Router</strong> — Auto-routes ≥ 60m queries to ClickHouse <code>SummingMergeTree</code> views</li>
+                        </ul>
+                    </div>
+
+                    <div class="mcp-card">
+                        <div class="mcp-badge">Auto-Shipped</div>
+                        <h3>7 Embedded Classpath Skills</h3>
+                        <p>Packaged under <code>classpath*:mcp/skills/*.md</code> and auto-discovered as MCP Prompts and Resources. Instant slash commands for autonomous network triage.</p>
+                        <div class="skills-mini-grid">
+                            <div class="skill-tag"><code>/riptide-investigate-ddos</code></div>
+                            <div class="skill-tag"><code>/riptide-cause-analysis</code></div>
+                            <div class="skill-tag"><code>/riptide-capacity-plan</code></div>
+                            <div class="skill-tag"><code>/riptide-peering-analysis</code></div>
+                            <div class="skill-tag"><code>/riptide-app-audit</code></div>
+                            <div class="skill-tag"><code>/riptide-trace-host</code></div>
+                            <div class="skill-tag"><code>/riptide-auto-mitigate</code></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Detailed 7 Skills Grid -->
+                <div class="skills-showcase">
+                    <h3 class="skills-showcase-title">Pre-Packaged Network Engineering Skills</h3>
+                    <div class="skills-grid">
+                        <div class="skill-card">
+                            <div class="skill-icon">🛡️</div>
+                            <div class="skill-info">
+                                <h4>DDoS Mitigation Triage</h4>
+                                <span class="skill-cmd">/riptide-investigate-ddos</span>
+                                <p>Scientific DDoS attack family classification grounded in RFC 4732, Shannon Entropy analysis (ΔH &lt; -1.5), TCP flag histograms, and NIST SP 800-189 amplification heuristics.</p>
+                            </div>
+                        </div>
+
+                        <div class="skill-card">
+                            <div class="skill-icon">📊</div>
+                            <div class="skill-info">
+                                <h4>Baseline Cause Analysis</h4>
+                                <span class="skill-cmd">/riptide-cause-analysis</span>
+                                <p>Compares current 15-minute traffic windows against 24-hour historical baselines to isolate root causes of sudden volumetric and protocol shifts.</p>
+                            </div>
+                        </div>
+
+                        <div class="skill-card">
+                            <div class="skill-icon">📈</div>
+                            <div class="skill-info">
+                                <h4>Interface Capacity Analysis</h4>
+                                <span class="skill-cmd">/riptide-capacity-plan</span>
+                                <p>Evaluates exporter interface bandwidth saturation against enriched SNMP interface speeds and projects 95th percentile link headroom.</p>
+                            </div>
+                        </div>
+
+                        <div class="skill-card">
+                            <div class="skill-icon">🌐</div>
+                            <div class="skill-info">
+                                <h4>Peering & Geo-IP Analysis</h4>
+                                <span class="skill-cmd">/riptide-peering-analysis</span>
+                                <p>Queries 1-minute rollups by Autonomous System Numbers (ASN) and country codes to optimize transit costs and IXP peering relationships.</p>
+                            </div>
+                        </div>
+
+                        <div class="skill-card">
+                            <div class="skill-icon">🔍</div>
+                            <div class="skill-info">
+                                <h4>Application Performance Triage</h4>
+                                <span class="skill-cmd">/riptide-app-audit</span>
+                                <p>Audits application protocol distribution, unclassified port traffic (<code>application IS NULL</code>), and public vs. private locality boundaries.</p>
+                            </div>
+                        </div>
+
+                        <div class="skill-card">
+                            <div class="skill-icon">🔬</div>
+                            <div class="skill-info">
+                                <h4>Host Forensic Investigation</h4>
+                                <span class="skill-cmd">/riptide-trace-host</span>
+                                <p>Forensic walk for target host IPs, detailing peer conversation matrices, active ports, flow durations, VLANs, and exporter interfaces.</p>
+                            </div>
+                        </div>
+
+                        <div class="skill-card">
+                            <div class="skill-icon">⚡</div>
+                            <div class="skill-info">
+                                <h4>Automated DDoS Mitigation</h4>
+                                <span class="skill-cmd">/riptide-auto-mitigate</span>
+                                <p>Generates multi-tier mitigation rules emitting BGP FlowSpec (RFC 8955), RTBH null-routes (RFC 7999), iptables rules, and Cloud Scrubbing GRE redirection.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Technology Stack Section -->
+        <section class="tech-section">
+            <div class="container tech-container">
+                <div class="tech-details">
+                    <h2 class="section-title">Built for Performance</h2>
+                    <p class="tech-desc">
+                        Riptide leverages a modern JVM system architecture to process hundreds of thousands of network packets per second per node. Using lightweight event-driven networking and a decoupled asynchronous pipeline, telemetry collection stays fast and resource-efficient.
+                    </p>
+                    <div class="tech-list">
+                        <div class="tech-item"><span class="tech-dot"></span><strong>Java 25</strong> — Next-generation virtual threads for non-blocking task orchestration</div>
+                        <div class="tech-item"><span class="tech-dot"></span><strong>Netty</strong> — Highly optimized TCP/UDP reactive communication loops</div>
+                        <div class="tech-item"><span class="tech-dot"></span><strong>SNMP4J</strong> — Industrial-strength interface MIB queries and options caching</div>
+                        <div class="tech-item"><span class="tech-dot"></span><strong>ClickHouse</strong> — Ultra-fast columnar data indexing and analytical aggregates</div>
+                    </div>
+                </div>
+                <div class="tech-graphic">
+                    <!-- Columnar data visualization -->
+                    <div class="db-grid-container">
+                        <div class="db-column header-col">
+                            <div>Timestamp</div><div>Exporter</div><div>Bytes</div><div>ifName</div><div>SrcIP</div><div>DstIP</div><div>SrcAS</div>
+                        </div>
+                        <div class="db-column">
+                            <div>15:20:00</div><div>10.0.0.1</div><div>1500</div><div class="val-snmp">Gi1/0</div><div>192.168.1.1</div><div>8.8.8.8</div><div class="val-as">15169</div>
+                        </div>
+                        <div class="db-column">
+                            <div>15:20:02</div><div>10.0.0.1</div><div>42800</div><div class="val-snmp">Gi1/0</div><div>192.168.1.10</div><div>1.1.1.1</div><div class="val-as">13335</div>
+                        </div>
+                        <div class="db-column">
+                            <div>15:20:05</div><div>10.0.0.2</div><div>920</div><div class="val-snmp">Te1/1</div><div>172.16.50.4</div><div>198.51.100.2</div><div class="val-as">2914</div>
+                        </div>
+                    </div>
+                    <div class="db-caption">ClickHouse Columnar Layout: Fast aggregation on AS and interface dimensions</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Deployment / Getting Started Section -->
+        <section id="getting-started" class="getting-started-section">
+            <div class="container">
+                <div class="section-header">
+                    <h2 class="section-title">Deployment Options</h2>
+                    <p class="section-subtitle">Get Riptide running in your environment using your preferred method.</p>
+                </div>
+
+                <div class="tabs-container">
+                    <div class="tabs-nav">
+                        <button class="tab-btn active" data-tab="tab-compose" id="btn-tab-compose">Docker Compose</button>
+                        <button class="tab-btn" data-tab="tab-deb" id="btn-tab-deb">Linux Packages</button>
+                        <button class="tab-btn" data-tab="tab-nixos" id="btn-tab-nixos">NixOS Module</button>
+                        <button class="tab-btn" data-tab="tab-jar" id="btn-tab-jar">Standalone JAR</button>
+                    </div>
+
+                    <div class="tabs-content">
+                        <!-- Docker Compose Tab -->
+                        <div class="tab-pane active" id="tab-compose">
+                            <p class="tab-instructions">Deploy the full stack including Riptide, ClickHouse, and Grafana in seconds:</p>
+                            <pre class="code-block"><code>git clone https://github.com/Riptide-Labs/riptide.git
+cd riptide/deployment/riptide
+docker compose up -d</code></pre>
+                            <div class="tab-meta">
+                                <span>🌐 <strong>Grafana:</strong> http://localhost:3000 (admin/admin)</span>
+                                <span>⚡ <strong>UDP Listeners:</strong> Port 9999 for incoming flows</span>
+                            </div>
+                        </div>
+
+                        <!-- Debian/RPM Packages Tab -->
+                        <div class="tab-pane" id="tab-deb">
+                            <p class="tab-instructions">Download and install the latest packages. Installs a managed systemd service:</p>
+                            <pre class="code-block"><code><span class="code-comment"># For Debian/Ubuntu (.deb)</span>
+curl -LO https://github.com/Riptide-Labs/riptide/releases/download/v%%VERSION%%/riptide_%%VERSION%%_all.deb
+sudo apt install ./riptide_%%VERSION%%_all.deb
+sudo systemctl enable --now riptide
+
+<span class="code-comment"># For RHEL/Rocky/Alma/Fedora (.rpm)</span>
+sudo dnf install https://github.com/Riptide-Labs/riptide/releases/download/v%%VERSION%%/riptide-%%VERSION%%-1.noarch.rpm
+sudo systemctl enable --now riptide</code></pre>
+                            <div class="tab-meta">
+                                <span>⚙️ Configuration lives under <code>/etc/riptide/config.yaml</code> — full guide in the <a href="docs/deploy/linux-packages">deploy docs</a></span>
+                            </div>
+                        </div>
+
+                        <!-- NixOS Tab -->
+                        <div class="tab-pane" id="tab-nixos">
+                            <p class="tab-instructions">Integrate Riptide declaratively into your NixOS configuration using the built-in module:</p>
+                            <pre class="code-block"><code><span class="code-comment"># In your NixOS configuration</span>
+services.riptide = {
+  enable = true;
+  settings = {
+    riptide.clickhouse.endpoint = "http://localhost:8123";
+    riptide.receivers.ipfix = { type = "ipfix"; host = "0.0.0.0"; port = 4739; };
+  };
+};</code></pre>
+                        </div>
+
+                        <!-- Standalone JAR Tab -->
+                        <div class="tab-pane" id="tab-jar">
+                            <p class="tab-instructions">Run Riptide as a direct Java executable with native MCP AI Agent server enabled (requires Java 25):</p>
+                            <pre class="code-block"><code>cd target
+java -jar riptide-flows-*.jar --riptide.mcp.enabled=true --riptide.mcp.transport=stdio</code></pre>
+                            <div class="tab-meta">
+                                <span>📦 Connect AGY / antigravity-cli or Claude CLI directly via stdio IPC or HTTP/SSE at <code>/mcp/sse</code>.</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Community Call-Out -->
+        <section class="community-section">
+            <div class="container community-container">
+                <h2 class="section-title">Open Source & Community Driven</h2>
+                <p class="community-desc">
+                    Riptide is licensed under the GPL-3.0-or-later and welcomes contributions from network engineers, operators, and developers. Connect with us to discuss roadmap items or get configuration help.
+                </p>
+                <div class="community-links">
+                    <a href="https://matrix.to/#/#riptide:gitter.im" class="community-card" target="_blank" rel="noopener" id="btn-matrix">
+                        <span class="card-tag">Gitter Chat</span>
+                        <h4>Matrix Chat Room</h4>
+                        <p>Discuss, collaborate, and ask questions with other users.</p>
+                    </a>
+                    <a href="https://github.com/Riptide-Labs/riptide" class="community-card" target="_blank" rel="noopener" id="btn-github-community">
+                        <span class="card-tag">GitHub Issues</span>
+                        <h4>Contribute & Report</h4>
+                        <p>Submit PRs, file bug reports, or request protocol definitions.</p>
+                    </a>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="container footer-container">
+            <div class="footer-info">
+                <div class="footer-logo">RIPTIDE</div>
+                <p class="footer-desc">High-Performance Open-Source Network Telemetry</p>
+            </div>
+            <div class="footer-links">
+                <a href="docs/">Documentation</a>
+                <a href="https://github.com/Riptide-Labs/riptide" target="_blank" rel="noopener">GitHub</a>
+                <a href="https://matrix.to/#/#riptide:gitter.im" target="_blank" rel="noopener">Matrix</a>
+            </div>
+            <div class="footer-bottom">
+                <p>Made with ❤️ for Open Source in Europe 🇪🇺 · Licensed under GPL-3.0-or-later</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="js/script.js"></script>
+</body>
+</html>

@@ -10,10 +10,10 @@ on:
     # release tags redeploy so the version resolved from the highest v* tag stays
     # current (path filters are not evaluated for tag pushes)
     tags: [ 'v*' ]
-    paths: [ 'docs/**', '.github/workflows/docs.yml', 'Makefile' ]
+    paths: [ 'docs/**', 'landing/**', '.github/workflows/docs.yml', 'Makefile' ]
   pull_request:
     branches: [ 'main' ]
-    paths: [ 'docs/**', '.github/workflows/docs.yml', 'Makefile' ]
+    paths: [ 'docs/**', 'landing/**', '.github/workflows/docs.yml', 'Makefile' ]
 
 permissions:
   contents: read
@@ -44,24 +44,26 @@ jobs:
       - name: Build documentation
         run: |
           make docs
-      # The Docusaurus site lives under /docs (baseUrl must match); the domain root
-      # redirects there until a landing page exists. 404.html must sit at the
-      # artifact root — GitHub Pages only serves it from there — and gets a
-      # redirector so pre-move deep links (riptide.space/X and legacy
+      # The Docusaurus site lives under /docs (baseUrl must match); the landing
+      # page is served from the domain root. Its install commands carry
+      # %%VERSION%% tokens substituted here from the highest v* tag — the same
+      # source of truth docusaurus.config.ts uses for the docs. 404.html must
+      # sit at the artifact root — GitHub Pages only serves it from there — and
+      # keeps a redirector so pre-landing deep links (riptide.space/X and legacy
       # riptide-labs.github.io/riptide/X, which GitHub forwards path-preserving)
       # land on /docs/X instead of a dead end. Real 404s under /docs/ still
       # render the Docusaurus page.
-      - name: Stage site under /docs with root redirect
+      - name: Stage site under /docs with landing page
         run: |
           mkdir -p site/docs
           cp -R docs/build/. site/docs/
+          cp -R landing/. site/
+          # stable tags only: version sort ranks v0.7.1-rc3 above v0.7.1
+          VERSION=$(git tag --list 'v*' --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1 | sed 's/^v//')
+          test -n "${VERSION}" || { echo "no v* tag found — cannot resolve %%VERSION%% for the landing page"; exit 1; }
+          sed -i "s/%%VERSION%%/${VERSION}/g" site/index.html
           REDIRECT='<script>(function(){var p=location.pathname;if(p.indexOf("/docs")!==0){location.replace("/docs"+p+location.search+location.hash)}})()</script>'
           sed "s|<head>|<head>${REDIRECT}|" docs/build/404.html > site/404.html
-          cat > site/index.html <<'EOF'
-          <!DOCTYPE html>
-          <meta http-equiv="refresh" content="0; url=/docs/">
-          <link rel="canonical" href="https://riptide.space/docs/">
-          EOF
       - name: Configure GitHub Pages
         if: github.event_name != 'pull_request'
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0

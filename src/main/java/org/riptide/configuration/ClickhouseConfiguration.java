@@ -5,17 +5,43 @@
 
 package org.riptide.configuration;
 
+import com.clickhouse.client.api.Client;
 import com.codahale.metrics.MetricRegistry;
 import org.riptide.config.ClickhouseConfig;
 import org.riptide.repository.FlowRepository;
 import org.riptide.repository.clickhouse.BatchingFlowRepository;
 import org.riptide.repository.clickhouse.ClickhouseRepository;
 import org.riptide.secrets.SecretResolvers;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
 public class ClickhouseConfiguration {
+
+    @Bean
+    @ConditionalOnProperty(name = "riptide.mcp.enabled", havingValue = "true")
+    public Client clickhouseClient(final ClickhouseConfig config,
+                                   final SecretResolvers secretResolvers) {
+        final String resolvedUsername = secretResolvers.resolve(config.getUsername());
+        final String resolvedPassword = secretResolvers.resolve(config.getPassword());
+        final String username = resolvedUsername != null ? resolvedUsername : "default";
+        final String password = resolvedPassword != null ? resolvedPassword : "";
+
+        final var builder = new Client.Builder()
+                .addEndpoint(config.getEndpoint())
+                .setUsername(username)
+                .setPassword(password)
+                .setDefaultDatabase(config.getDatabase())
+                .compressClientRequest(config.isCompressRequests())
+                .compressServerResponse(true);
+        if (config.isAsyncInserts()) {
+            builder.serverSetting("async_insert", "1")
+                    .serverSetting("wait_for_async_insert", "0");
+        }
+        return builder.build();
+    }
+
     @Bean
     public FlowRepository clickhouseRepository(final ClickhouseRepository.FlowMapper flowMapper,
                                                final ClickhouseConfig config,
