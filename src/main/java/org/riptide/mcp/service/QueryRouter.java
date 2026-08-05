@@ -42,6 +42,26 @@ public final class QueryRouter {
     }
 
     /**
+     * Whether a resolved table is one of the rollups rather than the raw {@code flows} table.
+     * Derived from {@link FlowsSchema#rollupTableNames()} so a rollup added to the schema is
+     * classified here without a second edit.
+     */
+    public static boolean isRollup(final String table) {
+        return table != null && FlowsSchema.rollupTableNames().stream()
+                .anyMatch(rollup -> table.endsWith("." + rollup));
+    }
+
+    /**
+     * The SQL expression for a flow count against a resolved table. A rollup row is already an
+     * aggregate of a minute's flows carrying its own {@code flowCount} measure, so counting rows
+     * there would count partially merged {@code SummingMergeTree} parts — a number that undercounts
+     * and shifts as merges run in the background.
+     */
+    public static String flowCountExpression(final String table) {
+        return isRollup(table) ? "SUM(flowCount)" : "COUNT(*)";
+    }
+
+    /**
      * Resolves target ClickHouse table name for exporter/interface aggregations.
      */
     public static String resolveInterfaceTable(final String database, final int timeRangeMinutes) {

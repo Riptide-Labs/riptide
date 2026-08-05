@@ -6,14 +6,15 @@ description: Native Java Model Context Protocol (MCP) server integration, Secret
 
 # Model Context Protocol (MCP) Server
 
-Riptide includes an embedded, native Java **Model Context Protocol (MCP)** server component (`org.riptide.mcp.*`). This component allows AI agent frameworks—such as **Google Antigravity (AGY)**, **Claude CLI**, and custom LLM applications—to directly query ClickHouse network flow telemetry, analyze traffic spikes, and execute automated DDoS triage without requiring external Node.js or Python adapter runtimes.
+Riptide includes an embedded, native Java **Model Context Protocol (MCP)** server component (`org.riptide.mcp.*`).
+This component allows AI agent frameworks (**Google Antigravity (AGY)**, **Claude CLI**, and custom LLM applications) to directly query ClickHouse network flow telemetry, analyze traffic spikes, and execute automated DDoS triage without requiring external Node.js or Python adapter runtimes.
 
 ---
 
 ## Key Capabilities
 
 - **Zero-Dependency Native Java Executable**: Ships directly inside `riptide-flows-*.jar`.
-- **Dual Transport Engine (`stdio` & `sse`)**: Non-blocking IPC loop over standard input/output streams for local CLI hosts (`antigravity-cli`, `claude`) and HTTP Server-Sent Events (`/mcp/sse`) on port 8080 for remote LLM agent clients.
+- **Dual Transport Engine (`stdio` & `sse`)**: Non-blocking IPC loop over standard input/output streams for local CLI hosts (`antigravity-cli`, `claude`) and HTTP Server-Sent Events (`/mcp/sse`) on port 8081 for remote LLM agent clients.
 - **Integrated `SecretRef` Token Authentication**: Optional token authorization dynamically resolved from environment variables (`env://`), local files (`file:///`), HashiCorp Vault (`vault://`), or SOPS (`sops://`).
 - **1-Minute Rollup Query Router**: Queries spanning $\ge 60$ minutes are automatically routed to ClickHouse `SummingMergeTree` rollups (`flows_by_application_1m`, `flows_by_conversation_1m`, `flows_by_exporter_iface_1m`, `flows_by_geo_asn_1m`).
 - **7 Auto-Shipped Agent Skills**: Pre-packaged Markdown skill files embedded under `classpath*:mcp/skills/*.md` exposed automatically as MCP Prompts (`prompts/list`) and Resources (`resources/list`).
@@ -31,12 +32,28 @@ riptide.mcp.enabled=true
 # Transport mode: stdio (default) or sse
 riptide.mcp.transport=stdio
 
-# HTTP SSE Transport Port (applicable when transport=sse)
-riptide.mcp.sse-port=8080
+# HTTP SSE transport bind address and port (applicable when transport=sse).
+# Loopback by default; the port is deliberately not 8080, which riptide.management.port uses.
+riptide.mcp.bind-address=127.0.0.1
+riptide.mcp.sse-port=8081
+
+# Maximum concurrent SSE stream sessions (each holds a socket for its lifetime)
+riptide.mcp.max-sse-sessions=64
+
+# Keep-alive comment interval on an idle SSE stream. Also bounds how long a session whose
+# client vanished without closing the connection stays open: the keep-alive write fails and
+# the session is released.
+riptide.mcp.sse-keep-alive-interval=15s
 
 # ClickHouse Query Safety Controls
 riptide.mcp.query-timeout-seconds=5
 riptide.mcp.max-result-rows=50
+
+# Read-only ClickHouse identity for MCP queries (SecretRef supported).
+# Required in provisioned deployments — see "ClickHouse Credentials" below.
+# Unset falls back to riptide.clickhouse.username / password.
+riptide.mcp.clickhouse.username=bi_acme
+riptide.mcp.clickhouse.password=vault://secret/riptide/clickhouse#bi_acme
 
 # Optional Authentication (SecretRef supported)
 # Stdio transport defaults to false (inherits process-level OS trust)
@@ -44,6 +61,37 @@ riptide.mcp.auth.enabled=false
 riptide.mcp.auth.tokens[0]=file:///etc/riptide/mcp-tokens.txt
 # riptide.mcp.auth.tokens[1]=vault://secret/riptide/mcp#token
 ```
+
+---
+
+## ClickHouse Credentials
+
+MCP only ever reads.
+In a provisioned (multi-tenant) deployment, point it at the tenant reader rather than the ingest writer:
+
+```properties
+riptide.mcp.clickhouse.username=bi_acme
+riptide.mcp.clickhouse.password=vault://secret/riptide/clickhouse#bi_acme
+```
+
+The `bi_<tenant>` user holds the `flow_reader` role, which `riptide onboard` already grants SELECT on `flows` and on every rollup, and which carries the `readonly = 2` / `allow_ddl = 0` hardening.
+It is also already named on every tenant row policy, so no re-provisioning is needed to enable MCP.
+
+Leaving this unset reuses `riptide.clickhouse.username` / `password`.
+That is correct for single-tenant manage mode, where the same user reads and writes.
+In provisioned mode it means querying as `writer_<tenant>`, which holds only INSERT on the rollups: rollup-routed tools (any query spanning 60 minutes or more) then fail with `ACCESS_DENIED`.
+Granting the writer SELECT on the rollups instead would hand the ingest credential a tenant-wide read surface it does not otherwise have; use the reader.
+
+---
+
+## Security Notes for the SSE Transport
+
+The SSE endpoint speaks unauthenticated JSON-RPC unless `riptide.mcp.auth.enabled=true`, and every tool it exposes reads flow telemetry.
+It therefore binds `127.0.0.1` by default and logs a warning at startup when it runs without authentication.
+
+Before setting `riptide.mcp.bind-address` to anything reachable, enable token authentication.
+Tokens are read from the `Authorization: Bearer <token>` header only; query parameters such as `?token=` are not accepted, because they end up in proxy and access logs.
+No CORS headers are sent, so a browser page cannot reach the endpoint cross-origin.
 
 ---
 

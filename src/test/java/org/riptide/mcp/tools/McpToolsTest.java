@@ -80,4 +80,54 @@ public class McpToolsTest {
         final TrafficSpikesTool tool = new TrafficSpikesTool(mockMcpService);
         assertThat(tool.getDefinition().getName()).isEqualTo("riptide_detect_traffic_spikes");
     }
+
+    /**
+     * On the rollup route a row is a minute's worth of pre-aggregated flows, so the flow count has
+     * to come from the summed measure. COUNT(*) there would count SummingMergeTree parts, which
+     * undercounts and shifts as merges run — during a volumetric attack, the case this tool exists
+     * for.
+     */
+    @Test
+    public void countsFlowsWithTheSummedMeasureOnTheRollupRoute() {
+        final RecordingMcpService recording = new RecordingMcpService();
+        final TrafficSpikesTool tool = new TrafficSpikesTool(recording);
+
+        tool.execute(Map.of("time_range_minutes", 1440));
+
+        assertThat(recording.lastSql).contains("`riptide_test`.flows_by_conversation_1m");
+        assertThat(recording.lastSql).contains("SUM(flowCount) AS flow_count");
+        assertThat(recording.lastSql).doesNotContain("COUNT(*)");
+    }
+
+    @Test
+    public void countsFlowRowsOnTheRawRoute() {
+        final RecordingMcpService recording = new RecordingMcpService();
+        final TrafficSpikesTool tool = new TrafficSpikesTool(recording);
+
+        tool.execute(Map.of("time_range_minutes", 15));
+
+        assertThat(recording.lastSql).contains("`riptide_test`.flows ");
+        assertThat(recording.lastSql).contains("COUNT(*) AS flow_count");
+    }
+
+    /** Captures the SQL a tool builds instead of running it. */
+    private static final class RecordingMcpService extends RiptideMcpService {
+        private String lastSql;
+
+        private RecordingMcpService() {
+            super(null, databaseNamed("riptide_test"), new McpProperties());
+        }
+
+        private static ClickhouseConfig databaseNamed(final String database) {
+            final ClickhouseConfig config = new ClickhouseConfig();
+            config.setDatabase(database);
+            return config;
+        }
+
+        @Override
+        public List<Map<String, Object>> executeQuery(final String sqlQuery) {
+            this.lastSql = sqlQuery;
+            return List.of();
+        }
+    }
 }

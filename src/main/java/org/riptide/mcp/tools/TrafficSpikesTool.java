@@ -47,8 +47,8 @@ public class TrafficSpikesTool implements McpTool {
         final String table = QueryRouter.resolveTopTalkersTable(db, timeRange, "dstAddr");
 
         final String sql = String.format(
-                "SELECT dstAddr, SUM(packets) AS total_packets, SUM(bytes) AS total_bytes, COUNT(*) AS flow_count FROM %s WHERE timestamp >= now() - INTERVAL %d MINUTE GROUP BY dstAddr ORDER BY total_packets DESC LIMIT 20",
-                table, timeRange
+                "SELECT dstAddr, SUM(packets) AS total_packets, SUM(bytes) AS total_bytes, %s AS flow_count FROM %s WHERE timestamp >= now() - INTERVAL %d MINUTE GROUP BY dstAddr ORDER BY total_packets DESC LIMIT 20",
+                QueryRouter.flowCountExpression(table), table, timeRange
         );
 
         return mcpService.executeQuery(sql);

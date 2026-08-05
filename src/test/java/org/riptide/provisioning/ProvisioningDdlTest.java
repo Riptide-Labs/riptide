@@ -130,7 +130,6 @@ class ProvisioningDdlTest {
         for (final String rollup : FlowsSchema.rollupTableNames()) {
             final String table = FlowsSchema.qualifiedRollup("riptide", rollup);
             assertThat(sql).contains("GRANT INSERT ON " + table + " TO flow_writer");
-            assertThat(sql).contains("GRANT SELECT ON " + table + " TO flow_writer");
             assertThat(sql).contains("GRANT SELECT ON " + table + " TO flow_reader");
         }
     }
@@ -150,14 +149,14 @@ class ProvisioningDdlTest {
         assertThat(policies).hasSize(1 + FlowsSchema.rollupTableNames().size());
         assertThat(policies).allSatisfy(policy -> assertThat(policy)
                 .startsWith("CREATE ROW POLICY OR REPLACE `acme_iso` ON ")
-                .contains("FOR SELECT USING tenant = 'acme'")
-                .endsWith("TO `bi_acme`, `writer_acme`"));
-        // The writer and reader are named on the flows policy and every rollup policy for tenant isolation.
+                .contains("FOR SELECT USING tenant = 'acme'"));
+        // The writer is named on the flows policy (deny-by-default would otherwise starve the
+        // rollup views) but not on the rollups, which it only ever reaches by INSERT.
         assertThat(policies.getFirst())
                 .contains("ON `riptide`.flows ")
                 .endsWith("TO `bi_acme`, `writer_acme`");
         assertThat(policies.subList(1, policies.size()))
-                .allSatisfy(policy -> assertThat(policy).endsWith("TO `bi_acme`, `writer_acme`"));
+                .allSatisfy(policy -> assertThat(policy).endsWith("TO `bi_acme`"));
     }
 
     @Test

@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -27,6 +28,12 @@ import java.util.stream.Collectors;
 @Slf4j
 @Service
 public class McpMessageHandler {
+
+    /** The MCP protocol revision this server implements, and what it offers when asked for another. */
+    static final String PROTOCOL_VERSION = "2024-11-05";
+
+    /** Every revision this server can speak; a client asking for one of these gets it confirmed. */
+    private static final Set<String> SUPPORTED_PROTOCOL_VERSIONS = Set.of(PROTOCOL_VERSION);
 
     private final McpAuthService authService;
     private final SkillRegistry skillRegistry;
@@ -81,15 +88,8 @@ public class McpMessageHandler {
 
         switch (method) {
             case "initialize":
-                String protocolVersion = "2024-11-05";
-                if (request.getParams() != null && request.getParams().containsKey("protocolVersion")) {
-                    final String reqVer = String.valueOf(request.getParams().get("protocolVersion"));
-                    if (!reqVer.isBlank()) {
-                        protocolVersion = reqVer;
-                    }
-                }
                 final Map<String, Object> serverInfo = new LinkedHashMap<>();
-                serverInfo.put("protocolVersion", protocolVersion);
+                serverInfo.put("protocolVersion", negotiateProtocolVersion(request));
                 serverInfo.put("capabilities", Map.of("tools", Map.of(), "prompts", Map.of(), "resources", Map.of()));
                 serverInfo.put("serverInfo", Map.of("name", "riptide-flows-mcp", "version", "0.7.2-SNAPSHOT"));
                 return isNotification ? null : JsonRpcMessage.createResult(id, serverInfo);
@@ -144,6 +144,29 @@ public class McpMessageHandler {
             default:
                 return isNotification ? null : JsonRpcMessage.createError(id, -32601, "Method not found: " + method);
         }
+    }
+
+    /**
+     * The protocol revision to answer {@code initialize} with: the client's if this server actually
+     * speaks it, otherwise the server's own. Echoing an unsupported revision back would have the
+     * client assume semantics that are not implemented here; the spec's fallback is to name a
+     * version the server supports and let the client decide whether it can work with it.
+     */
+    private String negotiateProtocolVersion(final JsonRpcMessage request) {
+        if (request.getParams() == null) {
+            return PROTOCOL_VERSION;
+        }
+        final Object requested = request.getParams().get("protocolVersion");
+        if (requested == null) {
+            return PROTOCOL_VERSION;
+        }
+        final String requestedVersion = String.valueOf(requested).trim();
+        if (SUPPORTED_PROTOCOL_VERSIONS.contains(requestedVersion)) {
+            return requestedVersion;
+        }
+        log.debug("Client requested unsupported MCP protocol version [{}]; offering [{}].",
+                requestedVersion, PROTOCOL_VERSION);
+        return PROTOCOL_VERSION;
     }
 
     private String extractAuthToken(final JsonRpcMessage request) {

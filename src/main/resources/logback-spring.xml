@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Spring Boot's default console appender, with one addition: the stream it writes to is a property.
+
+The MCP stdio transport speaks JSON-RPC over the process's real stdout, so any log line written
+there corrupts the protocol channel. Redirecting System.out from inside the application cannot fix
+that — Logback's ConsoleAppender resolves and caches its stream when the appender starts, which is
+long before any application code runs, and the startup log lines are already out by then. Selecting
+the target here is the only point early enough. McpStdioLoggingEnvironmentPostProcessor sets it to
+System.err when the stdio transport is configured.
+-->
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <springProperty scope="context" name="CONSOLE_LOG_TARGET" source="riptide.logging.console-target"
+                    defaultValue="System.out"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <target>${CONSOLE_LOG_TARGET}</target>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>${CONSOLE_LOG_THRESHOLD}</level>
+        </filter>
+        <encoder>
+            <pattern>${CONSOLE_LOG_PATTERN}</pattern>
+            <charset>${CONSOLE_LOG_CHARSET}</charset>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

@@ -6,6 +6,7 @@
 package org.riptide.mcp.service;
 
 import org.junit.jupiter.api.Test;
+import org.riptide.schema.FlowsSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -35,5 +36,25 @@ public class QueryRouterTest {
         assertThat(asnTable).isEqualTo("`riptide`.flows_by_geo_asn_1m");
         assertThat(ifaceTable).isEqualTo("`riptide`.flows_by_exporter_iface_1m");
         assertThat(geoTable).isEqualTo("`riptide`.flows_by_geo_asn_1m");
+    }
+
+    @Test
+    public void recognisesRollupTables() {
+        assertThat(QueryRouter.isRollup("`riptide`.flows")).isFalse();
+        assertThat(QueryRouter.isRollup(null)).isFalse();
+        for (final String rollup : FlowsSchema.rollupTableNames()) {
+            assertThat(QueryRouter.isRollup(FlowsSchema.qualifiedRollup("riptide", rollup))).isTrue();
+        }
+    }
+
+    /**
+     * A rollup row already aggregates a minute of flows, so counting rows there counts partially
+     * merged SummingMergeTree parts instead of flows.
+     */
+    @Test
+    public void countsFlowsWithTheSummedMeasureOnRollupsAndRowsOnTheRawTable() {
+        assertThat(QueryRouter.flowCountExpression("`riptide`.flows")).isEqualTo("COUNT(*)");
+        assertThat(QueryRouter.flowCountExpression("`riptide`.flows_by_conversation_1m"))
+                .isEqualTo("SUM(flowCount)");
     }
 }

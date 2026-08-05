@@ -54,6 +54,33 @@ public class McpMessageHandlerTest {
         assertThat(result).containsKey("serverInfo");
     }
 
+    /**
+     * Confirming a revision this server does not implement would have the client assume semantics
+     * that are not there; the spec's fallback is to answer with a supported version.
+     */
+    @Test
+    public void answersUnsupportedProtocolVersionWithTheSupportedOne() {
+        final JsonRpcMessage request = JsonRpcMessage.createRequest(1, "initialize",
+                Map.of("protocolVersion", "2025-06-18"));
+        final JsonRpcMessage response = messageHandler.handleRpcMessage(request);
+
+        assertThat(response.getError()).isNull();
+        @SuppressWarnings("unchecked")
+        final Map<String, Object> result = (Map<String, Object>) response.getResult();
+        assertThat(result.get("protocolVersion")).isEqualTo(McpMessageHandler.PROTOCOL_VERSION);
+    }
+
+    @Test
+    public void answersInitializeWithoutProtocolVersionWithTheSupportedOne() {
+        final JsonRpcMessage request = JsonRpcMessage.createRequest(1, "initialize", Map.of());
+        final JsonRpcMessage response = messageHandler.handleRpcMessage(request);
+
+        assertThat(response.getError()).isNull();
+        @SuppressWarnings("unchecked")
+        final Map<String, Object> result = (Map<String, Object>) response.getResult();
+        assertThat(result.get("protocolVersion")).isEqualTo(McpMessageHandler.PROTOCOL_VERSION);
+    }
+
     @Test
     public void handlesPingRequest() {
         final JsonRpcMessage request = JsonRpcMessage.createRequest(2, "ping", Map.of());

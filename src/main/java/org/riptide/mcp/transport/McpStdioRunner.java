@@ -47,8 +47,13 @@ public class McpStdioRunner implements CommandLineRunner {
             return;
         }
 
-        log.info("Starting Riptide MCP Server Stdio IPC Transport Loop (redirecting console logging to stderr)...");
+        log.info("Starting Riptide MCP Server Stdio IPC Transport Loop...");
 
+        // Console logging already goes to stderr: McpStdioLoggingEnvironmentPostProcessor sets the
+        // appender's target before the logging system starts, which is the only point early enough
+        // to also catch Spring's startup lines. Swapping System.out here is the belt to that
+        // braces — it catches a stray println from a library, which would corrupt frames just as
+        // effectively as a log line.
         final var originalOut = System.out;
         System.setOut(System.err);
 
