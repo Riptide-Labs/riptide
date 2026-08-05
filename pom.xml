@@ -26,9 +26,9 @@
              Jackson 2 module. 2.22.1 patches GHSA-5jmj-h7xm-6q6v (Scorecard/osv-scanner finding).
              Set on the BOM rather than pinning jackson-databind alone so core and annotations move
              with it: Jackson expects databind and core on the same minor, and databind is a direct
-             dependency on paths the daemon takes on every start (DaemonConfig binds
-             riptide.receivers.* through it, see #434, and the MCP components parse JSON-RPC frames
-             and ClickHouse JSONEachRow rows with it). Drop once the managing parent catches up. -->
+             dependency on a reachable path (the MCP components parse JSON-RPC frames and ClickHouse
+             JSONEachRow rows with it). Configuration binding no longer goes through Jackson, see
+             #434. Drop once the managing parent catches up. -->
         <jackson-2-bom.version>2.22.1</jackson-2-bom.version>
         <jakarta-xml-bind-api.version>4.0.5</jakarta-xml-bind-api.version>
         <java.version>25</java.version>

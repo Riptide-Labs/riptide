@@ -9,7 +9,7 @@ Receivers are the flow listeners. None are configured by default — the daemon 
 listeners until you define them. Entries defined in the bundled `application.properties`
 merge with (and cannot be removed by) external configuration.
 
-Each receiver has a free-form name and three settings:
+Each receiver has a free-form name and three core settings:
 
 | Setting | Values |
 |---|---|
@@ -45,6 +45,29 @@ riptide:
       host: 0.0.0.0
       port: 2055
 ```
+
+## Timeout fallbacks
+
+NetFlow v9, IPFIX and `multi` receivers accept fallback flow timeouts.
+An exporter that reports its own active or inactive timeout always wins.
+The fallback fills the gap for exporters whose templates omit the field, which would otherwise leave the flow with no timeout at all.
+
+| Setting | Applies when |
+|---|---|
+| `flow-active-timeout-fallback` | the record carries no active flow timeout |
+| `flow-inactive-timeout-fallback` | the record carries no inactive flow timeout |
+
+Both take a duration, written either with a suffix (`5m`, `30s`) or in ISO-8601 (`PT5M`).
+
+```properties
+riptide.receivers.nf9.type=netflow9
+riptide.receivers.nf9.host=0.0.0.0
+riptide.receivers.nf9.port=2055
+riptide.receivers.nf9.flow-active-timeout-fallback=5m
+riptide.receivers.nf9.flow-inactive-timeout-fallback=30s
+```
+
+An IPFIX receiver also takes `transport` (`UDP`, the default, or `TCP`).
 
 ## Exporter identity
 

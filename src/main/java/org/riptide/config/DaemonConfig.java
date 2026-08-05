@@ -5,13 +5,16 @@
 
 package org.riptide.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.pipeline.Identity;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.source.ConfigurationPropertyName;
+import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -23,8 +26,6 @@ import java.util.stream.Collectors;
 @ConfigurationProperties("riptide")
 @NoArgsConstructor
 public final class DaemonConfig {
-
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
      * Deprecated flow-placement key. Superseded by {@code riptide.identity.zone}; still
@@ -48,8 +49,32 @@ public final class DaemonConfig {
     public void setReceivers(final Map<String, Map<String, Object>> receivers) {
         this.receivers = receivers.entrySet().stream().map((e) -> Map.entry(
                 e.getKey(),
-                objectMapper.convertValue(e.getValue(), ReceiverConfig.class)
+                bindReceiver(e.getKey(), e.getValue())
         )).collect(Collectors.toUnmodifiableMap(Map.Entry::getKey, Map.Entry::getValue));
+    }
+
+    /**
+     * Bind one receiver's properties onto the configuration class its {@code type} names.
+     *
+     * <p>Bound with Spring's {@link Binder} rather than a JSON mapper so a receiver accepts what
+     * every other riptide property accepts: {@code flow-active-timeout-fallback} and
+     * {@code flowActiveTimeoutFallback} both bind, and a duration may be written {@code 5m} as well
+     * as {@code PT5M}. A JSON mapper handles neither, which left the {@code Duration} fallbacks
+     * unreachable by any spelling and the rest camelCase-only (#434). The type dispatch a mapper
+     * would drive from an annotation is {@link ReceiverConfig#typeOf}.
+     */
+    private static ReceiverConfig bindReceiver(final String name, final Map<String, Object> properties) {
+        final Binder binder = new Binder(new MapConfigurationPropertySource(
+                properties != null ? properties : Map.of()));
+        final String type = binder.bind("type", String.class).orElse(null);
+        final Class<? extends ReceiverConfig> target = ReceiverConfig.typeOf(type)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "riptide.receivers." + name + ".type "
+                                + (type == null || type.isBlank() ? "is not set" : "is '" + type + "'")
+                                + "; expected one of " + ReceiverConfig.knownTypes()));
+        return binder.bind(ConfigurationPropertyName.EMPTY, Bindable.of(target))
+                .orElseThrow(() -> new IllegalStateException(
+                        "riptide.receivers." + name + " could not be bound to " + target.getSimpleName()));
     }
 
     /**
