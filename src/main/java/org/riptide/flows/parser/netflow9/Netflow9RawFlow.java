@@ -45,6 +45,10 @@ public class Netflow9RawFlow {
     public Integer PROTOCOL;
     public Integer SAMPLING_ALGORITHM;
     public Double SAMPLING_INTERVAL;
+    // Fields 49/50, the pair a sampler options record carries. Named exactly as
+    // InformationElementProvider registers them, which is how ValueConversionService binds them.
+    public Integer FLOW_SAMPLER_MODE;
+    public Double FLOW_SAMPLER_RANDOM_INTERVAL;
     public InetAddress IPV6_SRC_ADDR;
     public InetAddress IPV4_SRC_ADDR;
     public Long SRC_AS;

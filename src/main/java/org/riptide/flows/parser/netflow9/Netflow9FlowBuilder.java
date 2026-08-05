@@ -12,11 +12,17 @@ import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.data.Optionals;
 import org.riptide.flows.parser.data.Timeout;
 import org.riptide.flows.parser.netflow9.proto.Packet;
+import com.google.common.base.Supplier;
+import com.google.common.base.Suppliers;
+import org.riptide.flows.parser.session.ExporterSamplingTable;
+import org.riptide.flows.parser.session.ExporterSamplingTable.AdvertisedRate;
+import org.riptide.pipeline.ExporterIdentity;
 
 import java.net.InetAddress;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 public class Netflow9FlowBuilder {
@@ -35,18 +41,54 @@ public class Netflow9FlowBuilder {
     @Setter
     private Long flowSamplingIntervalFallback;
 
+    /**
+     * Rates this exporter advertised in a sampler options record. Optional: unset means no
+     * correlation, and the ladder falls through to the configured fallback as before.
+     */
+    @Getter
+    @Setter
+    private ExporterSamplingTable samplingTable;
+
     public Netflow9FlowBuilder(final ValueConversionService conversionService) {
         this.conversionService = Objects.requireNonNull(conversionService);
     }
 
+    /** Without an identity there is no exporter to look a learned rate up for. */
     public Stream<Flow> buildFlows(final Instant receivedAt,
                                    final Packet packet) {
+        return buildFlows(receivedAt, packet, null);
+    }
+
+    /**
+     * The exporter identity is threaded in rather than held on the builder: one UDP parser fronts
+     * every exporter sending to its port, so a builder-scoped rate would be handed to whichever
+     * exporter happened to send next.
+     */
+    public Stream<Flow> buildFlows(final Instant receivedAt,
+                                   final Packet packet,
+                                   final ExporterIdentity identity) {
+        // Resolved lazily and at most once per packet: a record carrying its own rate never asks,
+        // so an exporter that always states it does not register as a permanent lookup miss.
+        final Supplier<Optional<AdvertisedRate>> advertised = Suppliers.memoize(
+                () -> this.samplingTable != null ? this.samplingTable.lookup(identity) : Optional.empty());
         return createRawFlows(packet)
-                .map(rawFlow -> buildFlow(receivedAt, rawFlow));
+                .map(rawFlow -> buildFlow(receivedAt, rawFlow, advertised));
     }
 
     public Flow buildFlow(final Instant receivedAt,
                           final Netflow9RawFlow raw) {
+        return buildFlow(receivedAt, raw, (AdvertisedRate) null);
+    }
+
+    public Flow buildFlow(final Instant receivedAt,
+                          final Netflow9RawFlow raw,
+                          final AdvertisedRate advertisedRate) {
+        return buildFlow(receivedAt, raw, () -> Optional.ofNullable(advertisedRate));
+    }
+
+    private Flow buildFlow(final Instant receivedAt,
+                           final Netflow9RawFlow raw,
+                           final Supplier<Optional<AdvertisedRate>> advertised) {
         final var bootTime = raw.unixSecs.minus(raw.sysUpTime);
 
         return new Flow() {
@@ -228,20 +270,53 @@ public class Netflow9FlowBuilder {
                 return Optionals.of(raw.TOS).orElse(0);
             }
 
+            /**
+             * The mode from a sampler record counts as well as field 35, as it does in the IPFIX
+             * builder. Without it a record carrying only field 49 reports an interval alongside
+             * {@code Unassigned}, which reads as self-contradictory.
+             */
             @Override
             public Flow.SamplingAlgorithm getSamplingAlgorithm() {
-                return switch (raw.SAMPLING_ALGORITHM) {
+                final Integer mode = Optionals.first(raw.SAMPLING_ALGORITHM, raw.FLOW_SAMPLER_MODE)
+                        .or(() -> advertised.get().map(AdvertisedRate::mode))
+                        .orElse(null);
+                return switch (mode) {
                     case 1 -> Flow.SamplingAlgorithm.SystematicCountBasedSampling;
                     case 2 -> Flow.SamplingAlgorithm.RandomNOutOfNSampling;
                     case null, default -> Flow.SamplingAlgorithm.Unassigned;
                 };
             }
 
+            /**
+             * What the exporter put on this record, then what it advertised in its sampler
+             * options table, then what the operator configured, then unsampled. A sampling
+             * exporter usually states its rate only in the options table, so without the middle
+             * rung this reports 1.0 for a router sampling 1:1000.
+             */
             @Override
             public double getSamplingInterval() {
-                return Optionals.of(raw.SAMPLING_INTERVAL).orElse(1.0);
+                return Optionals.first(
+                                usable(raw.SAMPLING_INTERVAL),
+                                usable(raw.FLOW_SAMPLER_RANDOM_INTERVAL))
+                        .or(() -> advertised.get().map(AdvertisedRate::interval).map(Netflow9FlowBuilder::usable))
+                        .or(() -> Optional.ofNullable(usable(asDouble(flowSamplingIntervalFallback))))
+                        .orElse(1.0);
             }
         };
+    }
+
+    /**
+     * A rate counts as an answer when it is present and finite, including an explicit 1: an
+     * exporter stating it does not sample has answered, and must not be overridden by a
+     * receiver-wide fallback meant for a different exporter on the same port. Only absent, 0
+     * (which exporters use as a placeholder) and non-finite fall through to the next rung.
+     */
+    private static Double usable(final Double interval) {
+        return interval != null && Double.isFinite(interval) && interval >= 1.0 ? interval : null;
+    }
+
+    private static Double asDouble(final Long value) {
+        return value != null ? value.doubleValue() : null;
     }
 
     private Stream<Netflow9RawFlow> createRawFlows(Packet packet) {

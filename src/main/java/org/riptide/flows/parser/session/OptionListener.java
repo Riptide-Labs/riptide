@@ -24,4 +24,14 @@ public interface OptionListener {
     };
 
     void accept(ExporterIdentity identity, Collection<Value<?>> scopes, List<Value<?>> values);
+
+    /**
+     * Fans one tap out to several consumers. Option records are a shared stream — one table reads
+     * interface names out of it, another sampling rates — and each consumer already ignores the
+     * records it does not recognize, so the fan-out needs no filtering of its own.
+     */
+    static OptionListener of(final OptionListener... listeners) {
+        final List<OptionListener> targets = List.of(listeners);
+        return (identity, scopes, values) -> targets.forEach(l -> l.accept(identity, scopes, values));
+    }
 }
