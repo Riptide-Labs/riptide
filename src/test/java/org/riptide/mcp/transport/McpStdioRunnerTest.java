@@ -5,6 +5,7 @@
 
 package org.riptide.mcp.transport;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.riptide.mcp.auth.McpAuthProperties;
@@ -35,9 +36,9 @@ public class McpStdioRunnerTest {
         authProperties.setEnabled(false);
         final McpAuthService authService = new McpAuthService(authProperties, SecretResolvers.defaults());
         final SkillRegistry skillRegistry = new SkillRegistry();
-        final McpMessageHandler messageHandler = new McpMessageHandler(authService, skillRegistry, List.of());
+        final McpMessageHandler messageHandler = new McpMessageHandler(authService, skillRegistry, List.of(), new ObjectMapper());
 
-        stdioRunner = new McpStdioRunner(properties, messageHandler);
+        stdioRunner = new McpStdioRunner(properties, messageHandler, new ObjectMapper());
     }
 
     @Test

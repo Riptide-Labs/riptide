@@ -5,6 +5,7 @@
 
 package org.riptide.mcp.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.riptide.mcp.auth.McpAuthProperties;
@@ -36,7 +37,7 @@ public class McpMessageHandlerTest {
         skillRegistry = new SkillRegistry();
         final List<McpTool> tools = List.of(new AutoMitigationRulesTool());
 
-        messageHandler = new McpMessageHandler(authService, skillRegistry, tools);
+        messageHandler = new McpMessageHandler(authService, skillRegistry, tools, new ObjectMapper());
     }
 
     @Test
@@ -146,7 +147,7 @@ public class McpMessageHandlerTest {
         authProperties.setEnabled(true);
         authProperties.setTokens(List.of(new SecretRef("secret_token_123")));
         final McpAuthService auth = new McpAuthService(authProperties, SecretResolvers.defaults());
-        final McpMessageHandler authHandler = new McpMessageHandler(auth, skillRegistry, List.of());
+        final McpMessageHandler authHandler = new McpMessageHandler(auth, skillRegistry, List.of(), new ObjectMapper());
 
         final JsonRpcMessage request = JsonRpcMessage.createRequest(9, "ping", Map.of());
         final JsonRpcMessage response = authHandler.handleRpcMessage(request);
@@ -160,7 +161,7 @@ public class McpMessageHandlerTest {
         authProperties.setEnabled(true);
         authProperties.setTokens(List.of(new SecretRef("secret_token_123")));
         final McpAuthService auth = new McpAuthService(authProperties, SecretResolvers.defaults());
-        final McpMessageHandler authHandler = new McpMessageHandler(auth, skillRegistry, List.of());
+        final McpMessageHandler authHandler = new McpMessageHandler(auth, skillRegistry, List.of(), new ObjectMapper());
 
         final JsonRpcMessage request = JsonRpcMessage.createRequest(10, "ping", Map.of("_meta", Map.of("authToken", "secret_token_123")));
         final JsonRpcMessage response = authHandler.handleRpcMessage(request);

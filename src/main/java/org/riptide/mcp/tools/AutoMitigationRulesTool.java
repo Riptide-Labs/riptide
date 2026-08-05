@@ -6,6 +6,7 @@
 package org.riptide.mcp.tools;
 
 import org.riptide.classification.IpAddr;
+import org.riptide.mcp.config.ConditionalOnMcpEnabled;
 import org.riptide.mcp.protocol.McpToolDefinition;
 import org.springframework.stereotype.Component;
 
@@ -16,6 +17,7 @@ import java.util.Map;
 /**
  * MCP tool for generating multi-tier mitigation rules (BGP FlowSpec, RTBH null-routes, iptables).
  */
+@ConditionalOnMcpEnabled
 @Component
 public class AutoMitigationRulesTool implements McpTool {
 

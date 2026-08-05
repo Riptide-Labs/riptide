@@ -6,6 +6,7 @@
 package org.riptide.mcp.auth;
 
 import lombok.extern.slf4j.Slf4j;
+import org.riptide.mcp.config.ConditionalOnMcpEnabled;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
 import org.springframework.stereotype.Service;
@@ -21,6 +22,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * Resolves secret tokens at initialization and performs constant-time string comparisons.
  */
 @Slf4j
+@ConditionalOnMcpEnabled
 @Service
 public class McpAuthService {
 

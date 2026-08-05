@@ -5,6 +5,7 @@
 
 package org.riptide.mcp.transport;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,9 +46,9 @@ public class McpSseServerTest {
 
         final McpAuthService authService = new McpAuthService(authProperties, SecretResolvers.defaults());
         final McpMessageHandler messageHandler =
-                new McpMessageHandler(authService, new SkillRegistry(), List.of());
+                new McpMessageHandler(authService, new SkillRegistry(), List.of(), new ObjectMapper());
 
-        final McpSseServer server = new McpSseServer(properties, messageHandler, authService);
+        final McpSseServer server = new McpSseServer(properties, messageHandler, authService, new ObjectMapper());
         server.run();
         return server;
     }
@@ -175,7 +176,8 @@ public class McpSseServerTest {
 
         final McpAuthService authService = new McpAuthService(authDisabled(), SecretResolvers.defaults());
         final McpSseServer cappedServer = new McpSseServer(properties,
-                new McpMessageHandler(authService, new SkillRegistry(), List.of()), authService);
+                new McpMessageHandler(authService, new SkillRegistry(), List.of(), new ObjectMapper()),
+                authService, new ObjectMapper());
         cappedServer.run();
 
         try {
@@ -254,7 +256,8 @@ public class McpSseServerTest {
 
         final McpAuthService authService = new McpAuthService(authDisabled(), SecretResolvers.defaults());
         final McpSseServer collidingServer = new McpSseServer(properties,
-                new McpMessageHandler(authService, new SkillRegistry(), List.of()), authService);
+                new McpMessageHandler(authService, new SkillRegistry(), List.of(), new ObjectMapper()),
+                authService, new ObjectMapper());
 
         assertThatThrownBy(collidingServer::run).isInstanceOf(java.net.BindException.class);
     }

@@ -11,6 +11,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.config.ClickhouseConfig;
+import org.riptide.mcp.config.ConditionalOnMcpEnabled;
 import org.riptide.mcp.config.McpProperties;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -30,20 +31,23 @@ import java.util.concurrent.TimeUnit;
  * Service orchestrating ClickHouse queries for MCP tools with automatic rollup routing and execution timeouts.
  */
 @Slf4j
+@ConditionalOnMcpEnabled
 @Service
 public class RiptideMcpService {
 
     private final Client clickhouseClient;
     private final ClickhouseConfig clickhouseConfig;
     private final McpProperties mcpProperties;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     public RiptideMcpService(@Autowired(required = false) final Client clickhouseClient,
                              final ClickhouseConfig clickhouseConfig,
-                             final McpProperties mcpProperties) {
+                             final McpProperties mcpProperties,
+                             final ObjectMapper objectMapper) {
         this.clickhouseClient = clickhouseClient;
         this.clickhouseConfig = Objects.requireNonNull(clickhouseConfig, "clickhouseConfig must not be null");
         this.mcpProperties = Objects.requireNonNull(mcpProperties, "mcpProperties must not be null");
+        this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper must not be null");
     }
 
     /**

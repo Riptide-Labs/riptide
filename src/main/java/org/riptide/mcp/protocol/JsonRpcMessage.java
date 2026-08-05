@@ -5,6 +5,7 @@
 
 package org.riptide.mcp.protocol;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -15,12 +16,18 @@ import java.util.Map;
 
 /**
  * Represents a JSON-RPC 2.0 message frame for the Model Context Protocol.
+ *
+ * <p>Unknown members are ignored rather than rejected. Clients put their own members on a frame and
+ * later protocol revisions add them; failing the parse would turn a field this server simply has no
+ * use for into a rejected request. Declared here rather than left to the mapper's configuration, so
+ * the frame parses the same way whichever {@code ObjectMapper} reads it.
  */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 @JsonInclude(JsonInclude.Include.NON_NULL)
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class JsonRpcMessage {
 
     @Builder.Default
@@ -39,6 +46,7 @@ public class JsonRpcMessage {
     @NoArgsConstructor
     @AllArgsConstructor
     @JsonInclude(JsonInclude.Include.NON_NULL)
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class JsonRpcError {
         private int code;
         private String message;

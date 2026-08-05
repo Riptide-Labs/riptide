@@ -5,6 +5,7 @@
 
 package org.riptide.mcp.tools;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.riptide.config.ClickhouseConfig;
@@ -25,7 +26,7 @@ public class McpToolsTest {
         final ClickhouseConfig chConfig = new ClickhouseConfig();
         chConfig.setDatabase("riptide_test");
         final McpProperties properties = new McpProperties();
-        mockMcpService = new RiptideMcpService(null, chConfig, properties);
+        mockMcpService = new RiptideMcpService(null, chConfig, properties, new ObjectMapper());
     }
 
     @Test
@@ -115,7 +116,7 @@ public class McpToolsTest {
         private String lastSql;
 
         private RecordingMcpService() {
-            super(null, databaseNamed("riptide_test"), new McpProperties());
+            super(null, databaseNamed("riptide_test"), new McpProperties(), new ObjectMapper());
         }
 
         private static ClickhouseConfig databaseNamed(final String database) {

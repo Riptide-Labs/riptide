@@ -12,6 +12,7 @@ import com.sun.net.httpserver.HttpServer;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.mcp.auth.McpAuthService;
+import org.riptide.mcp.config.ConditionalOnMcpEnabled;
 import org.riptide.mcp.config.McpProperties;
 import org.riptide.mcp.protocol.JsonRpcMessage;
 import org.riptide.mcp.service.McpMessageHandler;
@@ -48,23 +49,26 @@ import java.util.concurrent.TimeUnit;
  * request/response caller expects, and it keeps a bare {@code curl} usable against the endpoint.
  */
 @Slf4j
+@ConditionalOnMcpEnabled
 @Component
 public class McpSseServer implements CommandLineRunner {
 
     private final McpProperties properties;
     private final McpMessageHandler messageHandler;
     private final McpAuthService authService;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
     private final Map<String, SseSession> activeSessions = new ConcurrentHashMap<>();
     private HttpServer server;
     private ExecutorService executor;
 
     public McpSseServer(final McpProperties properties,
                         final McpMessageHandler messageHandler,
-                        final McpAuthService authService) {
+                        final McpAuthService authService,
+                        final ObjectMapper objectMapper) {
         this.properties = Objects.requireNonNull(properties, "properties must not be null");
         this.messageHandler = Objects.requireNonNull(messageHandler, "messageHandler must not be null");
         this.authService = Objects.requireNonNull(authService, "authService must not be null");
+        this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper must not be null");
     }
 
     @Override

@@ -5,6 +5,7 @@
 
 package org.riptide.mcp.tools;
 
+import org.riptide.mcp.config.ConditionalOnMcpEnabled;
 import org.riptide.mcp.protocol.McpToolDefinition;
 import org.riptide.mcp.service.QueryRouter;
 import org.riptide.mcp.service.RiptideMcpService;
@@ -16,6 +17,7 @@ import java.util.Map;
 /**
  * MCP tool for querying interface bandwidth utilization and SNMP interface speeds.
  */
+@ConditionalOnMcpEnabled
 @Component
 public class InterfaceUtilizationTool implements McpTool {
 
@@ -43,9 +45,9 @@ public class InterfaceUtilizationTool implements McpTool {
 
     @Override
     public List<Map<String, Object>> execute(final Map<String, Object> params) {
-        final Map<String, Object> safeParams = params != null ? params : Map.of();
-        final int timeRange = parseTimeRange(safeParams.get("time_range_minutes"), 15);
-        final int limit = parseLimit(safeParams.get("limit"), 20);
+        final Map<String, Object> safeParams = ToolParams.safe(params);
+        final int timeRange = ToolParams.timeRangeMinutes(safeParams.get("time_range_minutes"), 15);
+        final int limit = ToolParams.limit(safeParams.get("limit"), 20);
         final String db = mcpService.getDatabaseName();
 
         final String table = QueryRouter.resolveInterfaceTable(db, timeRange);
@@ -55,33 +57,5 @@ public class InterfaceUtilizationTool implements McpTool {
         );
 
         return mcpService.executeQuery(sql);
-    }
-
-    private static int parseTimeRange(final Object raw, final int defaultValue) {
-        if (raw == null) {
-            return defaultValue;
-        }
-        try {
-            if (raw instanceof Number num) {
-                return Math.min(Math.max(1, num.intValue()), 43200);
-            }
-            return Math.min(Math.max(1, Integer.parseInt(raw.toString().trim())), 43200);
-        } catch (final Exception e) {
-            return defaultValue;
-        }
-    }
-
-    private static int parseLimit(final Object raw, final int defaultValue) {
-        if (raw == null) {
-            return defaultValue;
-        }
-        try {
-            if (raw instanceof Number num) {
-                return Math.min(Math.max(1, num.intValue()), 500);
-            }
-            return Math.min(Math.max(1, Integer.parseInt(raw.toString().trim())), 500);
-        } catch (final Exception e) {
-            return defaultValue;
-        }
     }
 }

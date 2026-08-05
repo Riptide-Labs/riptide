@@ -5,6 +5,7 @@
 
 package org.riptide.mcp.tools;
 
+import org.riptide.mcp.config.ConditionalOnMcpEnabled;
 import org.riptide.mcp.protocol.McpToolDefinition;
 import org.riptide.mcp.service.QueryRouter;
 import org.riptide.mcp.service.RiptideMcpService;
@@ -16,6 +17,7 @@ import java.util.Map;
 /**
  * MCP tool for detecting PPS and BPS traffic spikes across target victim IPs.
  */
+@ConditionalOnMcpEnabled
 @Component
 public class TrafficSpikesTool implements McpTool {
 
@@ -42,7 +44,7 @@ public class TrafficSpikesTool implements McpTool {
 
     @Override
     public List<Map<String, Object>> execute(final Map<String, Object> params) {
-        final int timeRange = parseTimeRange(params != null ? params.get("time_range_minutes") : null, 15);
+        final int timeRange = ToolParams.timeRangeMinutes(ToolParams.safe(params).get("time_range_minutes"), 15);
         final String db = mcpService.getDatabaseName();
         final String table = QueryRouter.resolveTopTalkersTable(db, timeRange, "dstAddr");
 
@@ -52,19 +54,5 @@ public class TrafficSpikesTool implements McpTool {
         );
 
         return mcpService.executeQuery(sql);
-    }
-
-    private static int parseTimeRange(final Object raw, final int defaultValue) {
-        if (raw == null) {
-            return defaultValue;
-        }
-        try {
-            if (raw instanceof Number num) {
-                return Math.min(Math.max(1, num.intValue()), 43200);
-            }
-            return Math.min(Math.max(1, Integer.parseInt(raw.toString().trim())), 43200);
-        } catch (final Exception e) {
-            return defaultValue;
-        }
     }
 }

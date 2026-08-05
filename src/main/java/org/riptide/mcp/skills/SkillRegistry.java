@@ -6,6 +6,7 @@
 package org.riptide.mcp.skills;
 
 import lombok.extern.slf4j.Slf4j;
+import org.riptide.mcp.config.ConditionalOnMcpEnabled;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.stereotype.Component;
@@ -23,6 +24,7 @@ import java.util.Optional;
  * and registers them for MCP Prompts (prompts/list) and Resources (resources/list).
  */
 @Slf4j
+@ConditionalOnMcpEnabled
 @Component
 public class SkillRegistry {
 

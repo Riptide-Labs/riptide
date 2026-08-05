@@ -8,6 +8,7 @@ package org.riptide.mcp.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.mcp.auth.McpAuthService;
+import org.riptide.mcp.config.ConditionalOnMcpEnabled;
 import org.riptide.mcp.protocol.JsonRpcMessage;
 import org.riptide.mcp.skills.SkillRegistry;
 import org.riptide.mcp.tools.McpTool;
@@ -18,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -26,6 +28,7 @@ import java.util.stream.Collectors;
  * Core JSON-RPC 2.0 message handler for MCP tools, prompts, resources, and spec protocol methods.
  */
 @Slf4j
+@ConditionalOnMcpEnabled
 @Service
 public class McpMessageHandler {
 
@@ -35,16 +38,27 @@ public class McpMessageHandler {
     /** Every revision this server can speak; a client asking for one of these gets it confirmed. */
     private static final Set<String> SUPPORTED_PROTOCOL_VERSIONS = Set.of(PROTOCOL_VERSION);
 
+    /**
+     * The build version reported in {@code serverInfo}, read from the jar manifest so a release
+     * cannot ship announcing whatever version string was current when this line was written.
+     * Outside a packaged jar (tests, IDE) there is no manifest, hence the fallback.
+     */
+    private static final String SERVER_VERSION = Optional
+            .ofNullable(McpMessageHandler.class.getPackage().getImplementationVersion())
+            .orElse("development");
+
     private final McpAuthService authService;
     private final SkillRegistry skillRegistry;
     private final Map<String, McpTool> toolsMap;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     public McpMessageHandler(final McpAuthService authService,
                              final SkillRegistry skillRegistry,
-                             final List<McpTool> tools) {
+                             final List<McpTool> tools,
+                             final ObjectMapper objectMapper) {
         this.authService = Objects.requireNonNull(authService, "authService must not be null");
         this.skillRegistry = Objects.requireNonNull(skillRegistry, "skillRegistry must not be null");
+        this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper must not be null");
         final List<McpTool> safeTools = tools != null ? tools : List.of();
         this.toolsMap = safeTools.stream().collect(Collectors.toMap(
                 tool -> tool.getDefinition().getName(),
@@ -91,7 +105,7 @@ public class McpMessageHandler {
                 final Map<String, Object> serverInfo = new LinkedHashMap<>();
                 serverInfo.put("protocolVersion", negotiateProtocolVersion(request));
                 serverInfo.put("capabilities", Map.of("tools", Map.of(), "prompts", Map.of(), "resources", Map.of()));
-                serverInfo.put("serverInfo", Map.of("name", "riptide-flows-mcp", "version", "0.7.2-SNAPSHOT"));
+                serverInfo.put("serverInfo", Map.of("name", "riptide-flows-mcp", "version", SERVER_VERSION));
                 return isNotification ? null : JsonRpcMessage.createResult(id, serverInfo);
 
             case "ping":
@@ -201,9 +215,5 @@ public class McpMessageHandler {
             log.error("Execution failed for tool [{}]: {}", toolName, e.getMessage(), e);
             return JsonRpcMessage.createError(id, -32603, "Tool execution error: " + e.getMessage());
         }
-    }
-
-    public Map<String, McpTool> getToolsMap() {
-        return toolsMap;
     }
 }

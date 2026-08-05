@@ -7,6 +7,7 @@ package org.riptide.mcp.transport;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.riptide.mcp.config.ConditionalOnMcpEnabled;
 import org.riptide.mcp.config.McpProperties;
 import org.riptide.mcp.protocol.JsonRpcMessage;
 import org.riptide.mcp.service.McpMessageHandler;
@@ -23,17 +24,20 @@ import java.util.Objects;
  * Runs the non-blocking Stdio IPC loop reading JSON-RPC messages from stdin and writing responses to stdout.
  */
 @Slf4j
+@ConditionalOnMcpEnabled
 @Component
 public class McpStdioRunner implements CommandLineRunner {
 
     private final McpProperties properties;
     private final McpMessageHandler messageHandler;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     public McpStdioRunner(final McpProperties properties,
-                          final McpMessageHandler messageHandler) {
+                          final McpMessageHandler messageHandler,
+                          final ObjectMapper objectMapper) {
         this.properties = Objects.requireNonNull(properties, "properties must not be null");
         this.messageHandler = Objects.requireNonNull(messageHandler, "messageHandler must not be null");
+        this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper must not be null");
     }
 
     @Override

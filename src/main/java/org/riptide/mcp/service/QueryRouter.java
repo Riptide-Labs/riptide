@@ -28,14 +28,14 @@ public final class QueryRouter {
     public static String resolveTopTalkersTable(final String database, final int timeRangeMinutes, final String groupBy) {
         if (timeRangeMinutes >= ROLLUP_THRESHOLD_MINUTES) {
             if ("application".equalsIgnoreCase(groupBy) || "protocol".equalsIgnoreCase(groupBy)) {
-                return FlowsSchema.qualifiedRollup(database, "flows_by_application_1m");
+                return FlowsSchema.qualifiedRollup(database, FlowsSchema.ROLLUP_BY_APPLICATION);
             }
             if ("srcAddr".equalsIgnoreCase(groupBy) || "dstAddr".equalsIgnoreCase(groupBy)) {
-                return FlowsSchema.qualifiedRollup(database, "flows_by_conversation_1m");
+                return FlowsSchema.qualifiedRollup(database, FlowsSchema.ROLLUP_BY_CONVERSATION);
             }
             if ("srcAs".equalsIgnoreCase(groupBy) || "dstAs".equalsIgnoreCase(groupBy)
                     || "srcCountry".equalsIgnoreCase(groupBy) || "dstCountry".equalsIgnoreCase(groupBy)) {
-                return FlowsSchema.qualifiedRollup(database, "flows_by_geo_asn_1m");
+                return FlowsSchema.qualifiedRollup(database, FlowsSchema.ROLLUP_BY_GEO_ASN);
             }
         }
         return FlowsSchema.qualifiedFlows(database);
@@ -66,7 +66,7 @@ public final class QueryRouter {
      */
     public static String resolveInterfaceTable(final String database, final int timeRangeMinutes) {
         if (timeRangeMinutes >= ROLLUP_THRESHOLD_MINUTES) {
-            return FlowsSchema.qualifiedRollup(database, "flows_by_exporter_iface_1m");
+            return FlowsSchema.qualifiedRollup(database, FlowsSchema.ROLLUP_BY_EXPORTER_IFACE);
         }
         return FlowsSchema.qualifiedFlows(database);
     }
@@ -76,7 +76,7 @@ public final class QueryRouter {
      */
     public static String resolveGeoAsnTable(final String database, final int timeRangeMinutes) {
         if (timeRangeMinutes >= ROLLUP_THRESHOLD_MINUTES) {
-            return FlowsSchema.qualifiedRollup(database, "flows_by_geo_asn_1m");
+            return FlowsSchema.qualifiedRollup(database, FlowsSchema.ROLLUP_BY_GEO_ASN);
         }
         return FlowsSchema.qualifiedFlows(database);
     }
