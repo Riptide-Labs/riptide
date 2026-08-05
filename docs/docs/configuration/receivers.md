@@ -50,14 +50,17 @@ riptide:
 
 NetFlow v9, IPFIX and `multi` receivers accept fallback flow timeouts.
 An exporter that reports its own active or inactive timeout always wins.
-The fallback fills the gap for exporters whose templates omit the field, which would otherwise leave the flow with no timeout at all.
+The fallback fills the gap for exporters whose templates omit the field.
 
 | Setting | Applies when |
 |---|---|
 | `flow-active-timeout-fallback` | the record carries no active flow timeout |
 | `flow-inactive-timeout-fallback` | the record carries no inactive flow timeout |
 
+**Set both or neither.** riptide derives a flow's delta-switched time only when both timeouts resolve, so supplying one alone leaves the result unchanged from supplying nothing.
+
 Both take a duration, written either with a suffix (`5m`, `30s`) or in ISO-8601 (`PT5M`).
+A bare number is milliseconds, so write `300s` rather than `300` for five minutes.
 
 ```properties
 riptide.receivers.nf9.type=netflow9

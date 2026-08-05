@@ -11,14 +11,17 @@ import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.pipeline.Identity;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.BindHandler;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.bind.handler.NoUnboundElementsBindHandler;
 import org.springframework.boot.context.properties.source.ConfigurationPropertyName;
 import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -65,16 +68,48 @@ public final class DaemonConfig {
      */
     private static ReceiverConfig bindReceiver(final String name, final Map<String, Object> properties) {
         final Binder binder = new Binder(new MapConfigurationPropertySource(
-                properties != null ? properties : Map.of()));
+                flatten(properties != null ? properties : Map.of())));
         final String type = binder.bind("type", String.class).orElse(null);
         final Class<? extends ReceiverConfig> target = ReceiverConfig.typeOf(type)
                 .orElseThrow(() -> new IllegalArgumentException(
                         "riptide.receivers." + name + ".type "
                                 + (type == null || type.isBlank() ? "is not set" : "is '" + type + "'")
                                 + "; expected one of " + ReceiverConfig.knownTypes()));
-        return binder.bind(ConfigurationPropertyName.EMPTY, Bindable.of(target))
+        // NoUnboundElementsBindHandler keeps the one useful thing the JSON mapper did: reject a
+        // property that matches no field. Without it a typo binds nothing and says nothing, and a
+        // misspelled `port` leaves the primitive at 0, which the listener happily binds as an
+        // ephemeral port — a receiver that looks healthy and never sees the exporter's traffic.
+        return binder.bind(ConfigurationPropertyName.EMPTY, Bindable.of(target),
+                        new NoUnboundElementsBindHandler(BindHandler.DEFAULT))
                 .orElseThrow(() -> new IllegalStateException(
                         "riptide.receivers." + name + " could not be bound to " + target.getSimpleName()));
+    }
+
+    /**
+     * Collapse the nested maps relaxed binding leaves behind back into one property name per value.
+     *
+     * <p>Spring hands this setter a {@code Map<String, Object>} per receiver, and how a name was
+     * split depends on where it came from: {@code RIPTIDE_RECEIVERS_NF9_FLOW_ACTIVE_TIMEOUT_FALLBACK}
+     * arrives as {@code {flow={active={timeout={fallback=5m}}}}}, while the same setting written in
+     * a properties file arrives whole. Rejoining the path with hyphens yields the canonical
+     * {@code flow-active-timeout-fallback} either way. Every receiver property is a scalar, so a
+     * nested map here is always a split name rather than structure worth preserving.
+     */
+    private static Map<String, Object> flatten(final Map<String, Object> properties) {
+        final Map<String, Object> flat = new LinkedHashMap<>();
+        flatten("", properties, flat);
+        return flat;
+    }
+
+    private static void flatten(final String prefix, final Map<?, ?> properties, final Map<String, Object> flat) {
+        properties.forEach((key, value) -> {
+            final String name = prefix.isEmpty() ? String.valueOf(key) : prefix + "-" + key;
+            if (value instanceof Map<?, ?> nested) {
+                flatten(name, nested, flat);
+            } else {
+                flat.put(name, value);
+            }
+        });
     }
 
     /**

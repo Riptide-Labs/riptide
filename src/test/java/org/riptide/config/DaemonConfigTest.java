@@ -13,6 +13,8 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
+import org.springframework.core.env.StandardEnvironment;
+import org.springframework.core.env.SystemEnvironmentPropertySource;
 
 import java.time.Duration;
 import java.util.Map;
@@ -111,6 +113,7 @@ class DaemonConfigTest {
         assertThat(nf9.getHost()).isEqualTo("127.0.0.1");
         assertThat(nf9.getFlowActiveTimeoutFallback()).isEqualTo(Duration.ofMinutes(5));
         assertThat(nf9.getFlowInactiveTimeoutFallback()).isEqualTo(Duration.ofSeconds(30));
+        // Binds, but the flow builders never read it, so it has no runtime effect yet (#435).
         assertThat(nf9.getFlowSamplingIntervalFallback()).isEqualTo(100L);
     }
 
@@ -166,6 +169,71 @@ class DaemonConfigTest {
                 .hasMessageContaining("riptide.receivers.oops.type")
                 .hasMessageContaining("netflow6")
                 .hasMessageContaining("netflow9");
+    }
+
+    /**
+     * Environment variables are the documented way to configure the container image, and Spring
+     * splits every underscore into a level: the setting arrives as
+     * {@code {flow={active={timeout={fallback=5m}}}}} rather than as one name.
+     */
+    @Test
+    void receiverBindsSettingsSuppliedAsEnvironmentVariables() {
+        final var environment = new StandardEnvironment();
+        environment.getPropertySources().addFirst(new SystemEnvironmentPropertySource(
+                StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME,
+                Map.of(
+                        "RIPTIDE_RECEIVERS_NF9_TYPE", "netflow9",
+                        "RIPTIDE_RECEIVERS_NF9_PORT", "2055",
+                        "RIPTIDE_RECEIVERS_NF9_FLOW_ACTIVE_TIMEOUT_FALLBACK", "5m",
+                        "RIPTIDE_RECEIVERS_NF9_FLOW_INACTIVE_TIMEOUT_FALLBACK", "30s")));
+
+        final var config = Binder.get(environment).bind("riptide", DaemonConfig.class).orElseGet(DaemonConfig::new);
+
+        final var nf9 = (ReceiverConfig.Neflow9Config) config.getReceivers().get("nf9");
+        assertThat(nf9.getPort()).isEqualTo(2055);
+        assertThat(nf9.getFlowActiveTimeoutFallback()).isEqualTo(Duration.ofMinutes(5));
+        assertThat(nf9.getFlowInactiveTimeoutFallback()).isEqualTo(Duration.ofSeconds(30));
+    }
+
+    /**
+     * A misspelled property must not bind silently. A typo in {@code port} would otherwise leave the
+     * primitive at 0, and the listener binds that as an ephemeral port: a receiver that reports
+     * healthy and never sees the exporter's traffic.
+     */
+    @Test
+    void misspelledReceiverPropertyIsRejected() {
+        assertThatThrownBy(() -> bind(Map.of(
+                "riptide.receivers.nf9.type", "netflow9",
+                "riptide.receivers.nf9.prot", "2055")))
+                .rootCause()
+                .hasMessageContaining("prot")
+                .hasMessageContaining("unbound");
+    }
+
+    @Test
+    void misspelledDurationFallbackIsRejected() {
+        assertThatThrownBy(() -> bind(Map.of(
+                "riptide.receivers.nf9.type", "netflow9",
+                "riptide.receivers.nf9.flow-active-timeout", "5m")))
+                .rootCause()
+                .hasMessageContaining("flow-active-timeout");
+    }
+
+    /** Unset optional settings keep their declared defaults rather than being reset by the bind. */
+    @Test
+    void unsetReceiverSettingsKeepTheirDefaults() {
+        final var config = bind(Map.of(
+                "riptide.receivers.all.type", "multi",
+                "riptide.receivers.ipfix.type", "ipfix"));
+
+        final var multi = (ReceiverConfig.MultiConfig) config.getReceivers().get("all");
+        assertThat(multi.isNetflow5()).isTrue();
+        assertThat(multi.isNetflow9()).isTrue();
+        assertThat(multi.isIpfix()).isTrue();
+        assertThat(multi.isSflow()).isTrue();
+        assertThat(multi.getFlowActiveTimeoutFallback()).isNull();
+        final var ipfix = (ReceiverConfig.IpfixConfig) config.getReceivers().get("ipfix");
+        assertThat(ipfix.getTransport()).isEqualTo(ReceiverConfig.IpfixConfig.Transport.UDP);
     }
 
     @Test
