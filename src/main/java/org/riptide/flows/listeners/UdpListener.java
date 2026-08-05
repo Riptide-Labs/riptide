@@ -202,6 +202,9 @@ public class UdpListener implements Listener {
         }
 
         @Override
+        // whenComplete exists to release the retained buffer exactly once and to log a bad
+        // packet; the stage it returns has no consumer, and Netty's read loop must not wait on it.
+        @SuppressWarnings("FutureReturnValueIgnored")
         protected void channelRead0(ChannelHandlerContext ctx, DatagramPacket msg) throws Exception {
             final InetSocketAddress sender = msg.sender();
             final ByteBuf content = ReferenceCountUtil.retain(msg.content());

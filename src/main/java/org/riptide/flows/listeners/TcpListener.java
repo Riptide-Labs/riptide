@@ -103,6 +103,10 @@ public class TcpListener implements Listener {
                                     }
                                 })
                                 .addLast(new SimpleChannelInboundHandler<CompletableFuture<?>>() {
+                                    // handle() is used for its side effect — pushing a parse
+                                    // failure back into the pipeline — so the stage it returns has
+                                    // no consumer by design.
+                                    @SuppressWarnings("FutureReturnValueIgnored")
                                     @Override
                                     protected void channelRead0(final ChannelHandlerContext ctx,
                                                                 final CompletableFuture<?> future) throws Exception {
@@ -115,6 +119,10 @@ public class TcpListener implements Listener {
                                     }
                                 })
                                 .addLast(new ChannelInboundHandlerAdapter() {
+                                    // ctx.close() is fire-and-forget: the connection is already
+                                    // being torn down for a bad packet and there is nothing to do
+                                    // with the close future.
+                                    @SuppressWarnings("FutureReturnValueIgnored")
                                     @Override
                                     public void exceptionCaught(final ChannelHandlerContext ctx, final Throwable cause) {
                                         LOG.warn("Invalid packet: {}", cause.getMessage());

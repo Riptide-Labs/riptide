@@ -77,6 +77,10 @@ public class NettyDnsResolver implements DnsResolver, DisposableBean {
         }
     }
 
+    // shutdownGracefully's future is deliberately dropped: awaiting it would add Netty's quiet
+    // period plus timeout (2 s + 15 s by default) to every shutdown, and nothing after this point
+    // depends on the group being fully down — the workers own their own teardown below.
+    @SuppressWarnings("FutureReturnValueIgnored")
     @Override
     public void destroy() throws Exception {
         group.shutdownGracefully();

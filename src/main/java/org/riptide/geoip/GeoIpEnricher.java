@@ -59,6 +59,7 @@ public class GeoIpEnricher extends Enricher.Single {
     private ScheduledExecutorService scheduler;
 
     @Override
+    @SuppressWarnings("FutureReturnValueIgnored")
     public void start() {
         if (this.config.isUnconfigured()) {
             return;
@@ -70,6 +71,9 @@ public class GeoIpEnricher extends Enricher.Single {
             thread.setDaemon(true);
             return thread;
         });
+        // The handle is dropped rather than kept: refresh() swallows RuntimeException itself so
+        // the schedule cannot die silently, and stop() already fences it with shutdownNow plus
+        // awaitTermination, which cancels it more thoroughly than a stored future would.
         this.scheduler.scheduleAtFixedRate(this::refresh, period, period, TimeUnit.MILLISECONDS);
     }
 
@@ -93,6 +97,7 @@ public class GeoIpEnricher extends Enricher.Single {
     }
 
     /** Re-opens the databases when a file changed, appeared, or vanished; swap is atomic. */
+    @SuppressWarnings("FutureReturnValueIgnored")
     void refresh() {
         try {
             final GeoIpSnapshot current = this.snapshot;
@@ -112,6 +117,8 @@ public class GeoIpEnricher extends Enricher.Single {
             this.lastFailedFingerprint = null;
             this.snapshot = next;
             if (this.scheduler != null) {
+                // Fire-and-forget by construction: `retiring` is the record that this snapshot
+                // still needs closing, and stop() closes whatever shutdownNow() drops.
                 this.retiring.add(current);
                 this.scheduler.schedule(() -> {
                     current.close();
