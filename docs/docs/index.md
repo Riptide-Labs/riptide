@@ -41,6 +41,7 @@ UDP/TCP ingest (NetFlow v5 · NetFlow v9 · IPFIX · sFlow)
   `riptide onboard` provisions role-based ClickHouse access with hard row-level
   isolation per tenant. See the
   [multi-tenancy runbook](deploy/multi-tenancy.md).
+- **AI Agent Integration:** native embedded MCP server (`org.riptide.mcp.*`) over stdio IPC and HTTP/SSE with 7 auto-shipped Agent Skills (`/riptide-investigate-ddos`, `/riptide-cause-analysis`, etc.) and `SecretRef` token authentication. See [MCP Server](configuration/mcp-server.md).
 
 ## Technology
 
@@ -54,4 +55,5 @@ Java 25 · Spring Boot · Netty · SNMP4J · ClickHouse. Licensed
 - [Receivers](configuration/receivers.md) — configure flow listeners
 - [Nodes & SNMP](configuration/nodes-and-snmp.md) — the node model and SNMP v1/v2c/v3
 - [Secret references](configuration/secret-references.md) — Vault, SOPS, env, file
+- [MCP Server](configuration/mcp-server.md) — native AI Agent integration & skills
 - [ClickHouse](configuration/clickhouse.md) — persistence
