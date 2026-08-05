@@ -5,7 +5,6 @@
 
 package org.riptide.management;
 
-import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import jakarta.annotation.PostConstruct;
@@ -19,6 +18,8 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
+import java.util.function.Supplier;
 
 /**
  * A minimal HTTP server (JDK {@link HttpServer}, no web application server) exposing {@code /livez}
@@ -33,6 +34,7 @@ public class ManagementServer {
 
     private HttpServer server;
     private ExecutorService executor;
+    private Semaphore inFlight;
 
     public ManagementServer(final RiptideManagementProperties properties, final HealthService health) {
         this.properties = properties;
@@ -48,13 +50,14 @@ public class ManagementServer {
 
         this.server = HttpServer.create(
                 new InetSocketAddress(this.properties.getBindAddress(), this.properties.getPort()), 0);
-        this.executor = Executors.newFixedThreadPool(2, new ThreadFactoryBuilder()
-                .setNameFormat("management-http-%d")
-                .setDaemon(true)
-                .build());
+        // Virtual threads are always daemon, so the factory carries no setDaemon: keep that in mind
+        // before swapping back to platform threads, or the JVM will refuse to exit holding the port.
+        // The JVM is held up by Spring's own non-daemon keep-alive thread (spring.main.keep-alive).
+        this.executor = Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("management-http-", 0).factory());
+        this.inFlight = new Semaphore(this.properties.getMaxConcurrentRequests());
         this.server.setExecutor(this.executor);
-        this.server.createContext("/livez", exchange -> respond(exchange, this.health.liveness()));
-        this.server.createContext("/readyz", exchange -> respond(exchange, this.health.readiness()));
+        this.server.createContext("/livez", exchange -> guarded(exchange, this.health::liveness));
+        this.server.createContext("/readyz", exchange -> guarded(exchange, this.health::readiness));
         this.server.start();
 
         log.info("Management server listening on {}:{} (/livez, /readyz)",
@@ -69,6 +72,24 @@ public class ManagementServer {
         if (this.executor != null) {
             // stop() does not shut down a user-set executor
             this.executor.shutdownNow();
+        }
+    }
+
+    /**
+     * Admission control in front of a handler. A thread-per-task executor imposes no ceiling of its
+     * own, so the cap is what stops a caller — this port is on all interfaces by default — from
+     * making the collector hold an unbounded number of threads, exchanges and sockets. Shedding
+     * with 503 rather than queueing keeps a probe's answer fast and honest under load.
+     */
+    private void guarded(final HttpExchange exchange, final Supplier<Health> health) throws IOException {
+        if (!this.inFlight.tryAcquire()) {
+            respond(exchange, Health.down("management server busy"));
+            return;
+        }
+        try {
+            respond(exchange, health.get());
+        } finally {
+            this.inFlight.release();
         }
     }
 
