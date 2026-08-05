@@ -22,6 +22,14 @@
         <dnsjava.version>3.6.5</dnsjava.version>
         <guava.version>33.6.0-jre</guava.version>
         <ipaddress.version>5.6.2</ipaddress.version>
+        <!-- Overrides Spring Boot's managed jackson-2-bom.version (2.21.4), which governs every
+             Jackson 2 module. 2.22.1 patches GHSA-5jmj-h7xm-6q6v (Scorecard/osv-scanner finding).
+             Set on the BOM rather than pinning jackson-databind alone so core and annotations move
+             with it: Jackson expects databind and core on the same minor, and databind is a direct
+             dependency on paths the daemon takes on every start (DaemonConfig binds
+             riptide.receivers.* through it, see #434, and the MCP components parse JSON-RPC frames
+             and ClickHouse JSONEachRow rows with it). Drop once the managing parent catches up. -->
+        <jackson-2-bom.version>2.22.1</jackson-2-bom.version>
         <jakarta-xml-bind-api.version>4.0.5</jakarta-xml-bind-api.version>
         <java.version>25</java.version>
         <jetbrains-annotations.version>26.1.0</jetbrains-annotations.version>
@@ -59,15 +67,8 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-            <!-- Transitive-CVE pin (Scorecard/osv-scanner finding): Jackson is not on a reachable
-                 path — it only rides in with Spring (GHSA-5jmj-h7xm-6q6v) — pinned to the patched
-                 version anyway. Drop once the managing parent catches up. Netty (including the
-                 former netty-codec-stomp pin) is handled by the netty.version override above. -->
-            <dependency>
-                <groupId>com.fasterxml.jackson.core</groupId>
-                <artifactId>jackson-databind</artifactId>
-                <version>2.22.1</version>
-            </dependency>
+            <!-- Jackson and Netty are patched by overriding the versions their BOMs are imported
+                 with (jackson-2-bom.version, netty.version), not by pinning single artifacts here. -->
             <!-- Transitive-CVE pin (Scorecard/osv-scanner finding): lz4-java vulnerability (GHSA-xx22-p4ch-683r) -->
             <dependency>
                 <groupId>at.yawk.lz4</groupId>
@@ -317,7 +318,7 @@
                         <arg>-XDcompilePolicy=simple</arg>
                         <arg>--should-stop=ifError=FLOW</arg>
                         <!-- These three checks are warning-free or explicitly suppressed; hold them at ERROR so they stay that way. -->
-                        <arg>-Xplugin:ErrorProne -XepExcludedPaths:.*/target/generated-sources/.* -Xep:EqualsGetClass:ERROR -Xep:NarrowingCompoundAssignment:ERROR -Xep:ExposedPrivateType:ERROR</arg>
+                        <arg>-Xplugin:ErrorProne -XepExcludedPaths:.*/target/generated-.*sources/.* -Xep:EqualsGetClass:ERROR -Xep:NarrowingCompoundAssignment:ERROR -Xep:ExposedPrivateType:ERROR</arg>
                         <arg>
                             -Amapstruct.unmappedTargetPolicy=ERROR
                         </arg>

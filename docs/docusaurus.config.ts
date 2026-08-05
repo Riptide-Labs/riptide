@@ -18,7 +18,11 @@ function latestVersion(): string {
     const tags = execSync("git tag --list 'v*' --sort=-version:refname", {
       encoding: 'utf8',
     }).trim();
-    const top = tags.split('\n')[0]?.trim();
+    // stable tags only: version sort ranks v0.7.1-rc3 above v0.7.1
+    const top = tags
+      .split('\n')
+      .map((t) => t.trim())
+      .find((t) => /^v\d+\.\d+\.\d+$/.test(t));
     if (top) return top.replace(/^v/, '');
   } catch {
     /* no git / no tags — use the fallback below */

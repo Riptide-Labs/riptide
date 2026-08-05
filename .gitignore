@@ -71,4 +71,6 @@ _bmad-output/
 _bmad/
 openspec/
 .claude/
+.agent/
+.agents/
 __pycache__/

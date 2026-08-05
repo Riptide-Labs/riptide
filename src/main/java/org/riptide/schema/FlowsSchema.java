@@ -264,21 +264,32 @@ public final class FlowsSchema {
             new Measure("packetsIn", "sumIf(f.packets, f.direction = 'INGRESS')"),
             new Measure("packetsOut", "sumIf(f.packets, f.direction = 'EGRESS')"));
 
+    /**
+     * The rollup target-table names. A query router picking a rollup by dimension has to name one,
+     * and {@link #rollupTableNames()} cannot say which: these constants are that reference, so a
+     * rename here fails compilation at the call site instead of silently producing SQL against a
+     * table that no longer exists.
+     */
+    public static final String ROLLUP_BY_APPLICATION = "flows_by_application_1m";
+    public static final String ROLLUP_BY_CONVERSATION = "flows_by_conversation_1m";
+    public static final String ROLLUP_BY_EXPORTER_IFACE = "flows_by_exporter_iface_1m";
+    public static final String ROLLUP_BY_GEO_ASN = "flows_by_geo_asn_1m";
+
     /** The 1-minute rollups. Adding one here propagates to creation, grants, and row policies. */
     private static final List<Rollup> ROLLUPS = List.of(
-            new Rollup("flows_by_application_1m", List.of(
+            new Rollup(ROLLUP_BY_APPLICATION, List.of(
                     APPLICATION,
                     Dimension.of("protocol", "UInt8"))),
-            new Rollup("flows_by_conversation_1m", List.of(
+            new Rollup(ROLLUP_BY_CONVERSATION, List.of(
                     Dimension.of("srcAddr", "IPv6"),
                     Dimension.of("dstAddr", "IPv6"),
                     APPLICATION)),
-            new Rollup("flows_by_exporter_iface_1m", List.of(
+            new Rollup(ROLLUP_BY_EXPORTER_IFACE, List.of(
                     Dimension.of("exporterAddr", "String"),
                     Dimension.of("exporterName", "LowCardinality(String)"),
                     Dimension.of("inputSnmp", "UInt32"),
                     Dimension.of("outputSnmp", "UInt32"))),
-            new Rollup("flows_by_geo_asn_1m", List.of(
+            new Rollup(ROLLUP_BY_GEO_ASN, List.of(
                     Dimension.of("srcAs", "UInt64"),
                     Dimension.of("dstAs", "UInt64"),
                     Dimension.of("srcCountry", "LowCardinality(String)"),
