@@ -88,8 +88,24 @@ public class McpSseServer implements CommandLineRunner {
     public void stop() {
         if (server != null) {
             server.stop(0);
+            for (final HttpExchange exchange : activeSessions.values()) {
+                try {
+                    exchange.close();
+                } catch (final Exception ignored) {
+                    // Ignore session cleanup exceptions on shutdown
+                }
+            }
+            activeSessions.clear();
             log.info("Stopped Riptide MCP Server HTTP/SSE Transport.");
         }
+    }
+
+    public HttpExchange getActiveSession(final String sessionId) {
+        return sessionId != null ? activeSessions.get(sessionId) : null;
+    }
+
+    public int getActiveSessionCount() {
+        return activeSessions.size();
     }
 
     private class SseHandler implements HttpHandler {
