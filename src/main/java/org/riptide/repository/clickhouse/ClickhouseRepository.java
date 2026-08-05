@@ -271,20 +271,48 @@ public class ClickhouseRepository implements FlowRepository {
             return null;
         }
 
+        // The four Enum8 columns below are mapped by name rather than by ordinal. The values are
+        // fixed by the schema (FlowsSchema.createFlowsTable) and are already written into every
+        // stored row, so they cannot move: with ordinal arithmetic, reordering a constant or
+        // inserting one in the middle would silently re-map live data and every historical row
+        // would read back as the wrong value. An exhaustive switch instead fails to compile when a
+        // constant is added, which is the moment the schema needs the matching ALTER.
+
         protected byte direction(final Flow.Direction value) {
-            return (byte) (value.ordinal() + 1);
+            return switch (value) {
+                case INGRESS -> (byte) 1;
+                case EGRESS -> (byte) 2;
+                case UNKNOWN -> (byte) 3;
+            };
         }
 
         protected byte samplingAlgorithm(final Flow.SamplingAlgorithm value) {
-            return (byte) (value.ordinal() + 1);
+            return switch (value) {
+                case Unassigned -> (byte) 1;
+                case SystematicCountBasedSampling -> (byte) 2;
+                case SystematicTimeBasedSampling -> (byte) 3;
+                case RandomNOutOfNSampling -> (byte) 4;
+                case UniformProbabilisticSampling -> (byte) 5;
+                case PropertyMatchFiltering -> (byte) 6;
+                case HashBasedFiltering -> (byte) 7;
+                case FlowStateDependentIntermediateFlowSelectionProcess -> (byte) 8;
+            };
         }
 
         protected byte protocol(final Flow.FlowProtocol value) {
-            return (byte) (value.ordinal() + 1);
+            return switch (value) {
+                case NetflowV5 -> (byte) 1;
+                case NetflowV9 -> (byte) 2;
+                case IPFIX -> (byte) 3;
+                case SFLOW -> (byte) 4;
+            };
         }
 
         protected byte locality(final Flow.Locality value) {
-            return (byte) (value.ordinal() + 1);
+            return switch (value) {
+                case PUBLIC -> (byte) 1;
+                case PRIVATE -> (byte) 2;
+            };
         }
     }
 }

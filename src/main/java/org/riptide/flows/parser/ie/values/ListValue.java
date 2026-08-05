@@ -39,36 +39,25 @@ public class ListValue extends Value<List<List<Value<?>>>> {
         ORDERED;
 
         public static Semantic parse(final ByteBuf buffer, final int i) throws InvalidPacketException {
-            switch (i) {
-                case 0xFF:
-                    return UNDEFINED;
-                case 0x00:
-                    return NONE_OF;
-                case 0x01:
-                    return EXACTLY_ONE_OF;
-                case 0x02:
-                    return ONE_OR_MORE_OF;
-                case 0x03:
-                    return ALL_OF;
-                case 0x04:
-                    return ORDERED;
-                default:
-                    throw new InvalidPacketException(buffer, "Illegal semantic value: 0x%02x", i);
-            }
+            return switch (i) {
+                case 0xFF -> UNDEFINED;
+                case 0x00 -> NONE_OF;
+                case 0x01 -> EXACTLY_ONE_OF;
+                case 0x02 -> ONE_OR_MORE_OF;
+                case 0x03 -> ALL_OF;
+                case 0x04 -> ORDERED;
+                default -> throw new InvalidPacketException(buffer, "Illegal semantic value: 0x%02x", i);
+            };
         }
     }
-
-    private final Semantic semantic;
 
     private final List<List<Value<?>>> values;
 
     public ListValue(final String name,
                      final Semantics semantics,
-                     final Semantic semantic,
                      final String unit,
                      final List<List<Value<?>>> values) {
         super(name, semantics, unit);
-        this.semantic = Objects.requireNonNull(semantic);
         this.values = Objects.requireNonNull(values);
     }
 
@@ -102,7 +91,9 @@ public class ListValue extends Value<List<List<Value<?>>>> {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) throws InvalidPacketException, MissingTemplateException {
-                final Semantic semantic = Semantic.parse(buffer, uint8(buffer));
+                // Parsed for validation only: an illegal semantic must reject the packet, but the
+                // value itself is not carried anywhere.
+                Semantic.parse(buffer, uint8(buffer));
                 final FieldSpecifier field = new FieldSpecifier(buffer);
 
                 final List<List<Value<?>>> values = new ArrayList<>();
@@ -112,7 +103,7 @@ public class ListValue extends Value<List<List<Value<?>>>> {
                     requireProgress(buffer, mark);
                 }
 
-                return new ListValue(name, semantics, semantic, unit, values);
+                return new ListValue(name, semantics, unit, values);
             }
 
             @Override
@@ -147,7 +138,9 @@ public class ListValue extends Value<List<List<Value<?>>>> {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) throws InvalidPacketException, MissingTemplateException {
-                final Semantic semantic = Semantic.parse(buffer, uint8(buffer));
+                // Parsed for validation only: an illegal semantic must reject the packet, but the
+                // value itself is not carried anywhere.
+                Semantic.parse(buffer, uint8(buffer));
                 final int templateId = uint16(buffer);
 
                 final Template template = resolver.lookupTemplate(templateId);
@@ -163,7 +156,7 @@ public class ListValue extends Value<List<List<Value<?>>>> {
                     requireProgress(buffer, mark);
                 }
 
-                return new ListValue(name, semantics, semantic, unit, values);
+                return new ListValue(name, semantics, unit, values);
             }
 
             @Override
@@ -236,7 +229,9 @@ public class ListValue extends Value<List<List<Value<?>>>> {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) throws InvalidPacketException, MissingTemplateException {
-                final Semantic semantic = Semantic.parse(buffer, uint8(buffer));
+                // Parsed for validation only: an illegal semantic must reject the packet, but the
+                // value itself is not carried anywhere.
+                Semantic.parse(buffer, uint8(buffer));
 
                 final List<List<Value<?>>> values = new ArrayList<>();
                 while (buffer.isReadable()) {
@@ -259,7 +254,7 @@ public class ListValue extends Value<List<List<Value<?>>>> {
                     }
                 }
 
-                return new ListValue(name, semantics, semantic, unit, values);
+                return new ListValue(name, semantics, unit, values);
             }
 
             @Override
