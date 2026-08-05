@@ -37,6 +37,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -80,6 +81,7 @@ public class ConfigFileReloader {
     private volatile boolean stale = false;
 
     private ScheduledExecutorService executor;
+    private ScheduledFuture<?> polling;
     private Path location;
     private byte[] lastAttemptedHash = new byte[0];
     private byte[] lastCommittedHash = new byte[0];
@@ -119,12 +121,19 @@ public class ConfigFileReloader {
         final long millis = this.properties.getReloadInterval().toMillis();
         this.executor = Executors.newSingleThreadScheduledExecutor(
                 runnable -> new Thread(runnable, "ConfigFileReloader"));
-        this.executor.scheduleWithFixedDelay(this::poll, millis, millis, TimeUnit.MILLISECONDS);
+        // The handle is kept and cancelled explicitly rather than discarded. poll() swallows every
+        // Exception itself, so a bad reload cycle cannot silently cancel the schedule and leave
+        // hot-reload dead for the process lifetime — which is the failure this return value exists
+        // to make visible.
+        this.polling = this.executor.scheduleWithFixedDelay(this::poll, millis, millis, TimeUnit.MILLISECONDS);
         log.info("Config hot-reload enabled: watching {} every {}", this.location, this.properties.getReloadInterval());
     }
 
     @PreDestroy
     void stop() {
+        if (this.polling != null) {
+            this.polling.cancel(true);
+        }
         if (this.executor != null) {
             this.executor.shutdownNow();
         }

@@ -15,6 +15,7 @@ import org.riptide.classification.Rule;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -33,7 +34,10 @@ public final class CsvImporter {
         // itself refuse ("a header name is missing") before the name comparison can run.
         final CSVParser parser;
         try {
-            parser = format.parse(new InputStreamReader(inputStream));
+            // UTF-8 explicitly: the rules ship in the jar and are read on whatever platform the
+            // collector runs on, so a non-UTF-8 default locale would mangle any non-ASCII
+            // application or organisation name rather than fail visibly.
+            parser = format.parse(new InputStreamReader(inputStream, StandardCharsets.UTF_8));
         } catch (final IllegalArgumentException e) {
             throw new IOException("The rules file's first line is not the expected header '%s'. The header row is required."
                     .formatted(String.join(";", HEADERS)), e);
