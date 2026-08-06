@@ -116,29 +116,34 @@ public class UdpListener implements Listener {
         this.metrics.register(gauge, (Gauge<Long>) () -> UdpSocketDrops.forSocket(bound));
     }
 
+    // Steps are attempted independently so a failure does not strand the resources after it; see
+    // Teardown. The order below is load-bearing and must not change.
     @Override
     public void stop() {
+        final var teardown = new Teardown();
+
         // Deregister before closing: once the socket is gone the closure describes a port we no
         // longer own, and the next process to bind it would have its kernel drops published as
         // this receiver's ingest loss. Same reason BatchingFlowRepository removes its queue-depth
         // gauge in stop().
-        this.metrics.remove(MetricRegistry.name("listeners", this.name, "socketDrops"));
+        teardown.attempt(() -> this.metrics.remove(MetricRegistry.name("listeners", this.name, "socketDrops")));
 
-        if (this.socketFuture != null) {
+        teardown.attemptIfPresent(this.socketFuture, () -> {
             LOG.info("Closing channel...");
             this.socketFuture.channel().close().syncUninterruptibly();
             if (this.socketFuture.channel().parent() != null) {
                 this.socketFuture.channel().parent().close().syncUninterruptibly();
             }
-        }
+        });
 
-        this.parser.stop();
+        teardown.attempt(this.parser::stop);
 
         LOG.info("Closing boss group...");
-        if (this.bossGroup != null) {
-            // switch to use even listener rather than sync to prevent shutdown deadlock hang
-            this.bossGroup.shutdownGracefully().syncUninterruptibly();
-        }
+        // switch to use even listener rather than sync to prevent shutdown deadlock hang
+        teardown.attemptIfPresent(this.bossGroup,
+                () -> this.bossGroup.shutdownGracefully().syncUninterruptibly());
+
+        teardown.done();
     }
 
     @Override

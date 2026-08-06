@@ -170,30 +170,38 @@ public class TcpListener implements Listener {
                 .syncUninterruptibly();
     }
 
+    // Every field below is assigned in start(), which runs in a later lifecycle phase than the
+    // constructor — a context refresh that fails in between leaves this listener owning nothing.
+    // Steps are attempted independently so a failure does not strand the resources after it; see
+    // Teardown.
     @Override
     public void stop() {
-        LOG.info("Disconnecting clients...");
-        this.channels.close().awaitUninterruptibly();
+        final var teardown = new Teardown();
 
-        if (this.socketFuture != null) {
+        LOG.info("Disconnecting clients...");
+        teardown.attempt(() -> this.channels.close().awaitUninterruptibly());
+
+        teardown.attemptIfPresent(this.socketFuture, () -> {
             LOG.info("Closing channel...");
             this.socketFuture.channel().close().syncUninterruptibly();
             if (this.socketFuture.channel().parent() != null) {
                 this.socketFuture.channel().parent().close().syncUninterruptibly();
             }
-        }
+        });
 
         LOG.info("Stopping parser...");
-        if (this.parser != null) {
-            this.parser.stop();
-        }
+        teardown.attempt(this.parser::stop);
 
         LOG.info("Closing worker group...");
         // switch to use even listener rather than sync to prevent shutdown deadlock hang
-        this.workerGroup.shutdownGracefully().syncUninterruptibly();
+        teardown.attemptIfPresent(this.workerGroup,
+                () -> this.workerGroup.shutdownGracefully().syncUninterruptibly());
 
         LOG.info("Closing boss group...");
-        this.bossGroup.shutdownGracefully().syncUninterruptibly();
+        teardown.attemptIfPresent(this.bossGroup,
+                () -> this.bossGroup.shutdownGracefully().syncUninterruptibly());
+
+        teardown.done();
     }
 
     @Override
