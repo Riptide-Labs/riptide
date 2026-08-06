@@ -18,8 +18,9 @@ import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.FixedRecvByteBufAllocator;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
-import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.DatagramChannel;
 import io.netty.channel.socket.DatagramPacket;
 import io.netty.channel.socket.nio.NioDatagramChannel;
@@ -62,9 +63,9 @@ public class UdpListener implements Listener {
     @Override
     public void start() {
         // Netty defaults to 2 * num cores when the number of threads is set to 0
-        this.bossGroup = new NioEventLoopGroup(0, new ThreadFactoryBuilder()
+        this.bossGroup = new MultiThreadIoEventLoopGroup(0, new ThreadFactoryBuilder()
                 .setNameFormat("udp-listener-nio-" + name + "-%d")
-                .build());
+                .build(), NioIoHandler.newFactory());
 
         this.parser.start(this.bossGroup);
 
