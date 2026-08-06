@@ -221,24 +221,7 @@ public class TcpListener implements Listener {
 
     @Override
     public String getDescription() {
-        return "TCP " + boundOrConfiguredAddress();
-    }
-
-    /**
-     * The address actually bound once started, the configured one before that.
-     *
-     * <p>They differ whenever the kernel chooses: {@code port: 0} configures an ephemeral port, and
-     * reporting the literal {@code 0} tells an operator nothing about where the socket is.
-     *
-     * <p>{@code socketFuture} is assigned only after {@code bind()} returns, so a listener that
-     * failed to bind still reports its configured address — which is the one that has to be fixed.
-     */
-    private String boundOrConfiguredAddress() {
-        if (this.socketFuture != null
-                && this.socketFuture.channel().localAddress() instanceof InetSocketAddress bound) {
-            return bound.getHostString() + ":" + bound.getPort();
-        }
-        return (this.host != null ? this.host : "*") + ":" + this.port;
+        return "TCP " + ListenerAddress.describe(this.socketFuture, this.host, this.port);
     }
 
     @Override

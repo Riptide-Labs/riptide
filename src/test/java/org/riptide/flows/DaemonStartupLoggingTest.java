@@ -116,16 +116,22 @@ class DaemonStartupLoggingTest {
                         assertThat(Integer.parseInt(matcher.group(1))).isPositive();
                     });
 
-            final var summaryIndex = indexOfMessageContaining("Listening for flows");
-            final var lastReceiverIndex = Math.max(
-                    indexOfMessageContaining("Receiver 'nf5'"),
-                    indexOfMessageContaining("Receiver 'nf9'"));
-            assertThat(summaryIndex)
-                    .as("the summary marks the point every receiver is bound, so it comes last")
-                    .isGreaterThan(lastReceiverIndex);
+            final var summaryIndex = lastIndexOfMessageContaining("Listening for flows");
+            // Presence first: with the ordering assertion first, a regression that removed the
+            // summary entirely reported -1 as an ordering failure and the presence assertion below
+            // was unreachable.
             assertThat(summaryIndex)
                     .as("the summary log message must be present")
                     .isGreaterThanOrEqualTo(0);
+            // Last, not first: each receiver logs once today, so the two coincide — but a second
+            // matching line (a retry, or a mixed success/failure run) would let this pass while the
+            // summary actually preceded a receiver line, which is the invariant being pinned.
+            final var lastReceiverIndex = Math.max(
+                    lastIndexOfMessageContaining("Receiver 'nf5'"),
+                    lastIndexOfMessageContaining("Receiver 'nf9'"));
+            assertThat(summaryIndex)
+                    .as("the summary marks the point every receiver is bound, so it comes last")
+                    .isGreaterThan(lastReceiverIndex);
             assertThat(messages().get(summaryIndex))
                     .as("its count must match the receivers reported")
                     .contains("2 receivers");
@@ -153,9 +159,20 @@ class DaemonStartupLoggingTest {
                     "riptide.receivers.ipfixtcp.port", String.valueOf(taken)));
 
             try {
+                // BindException specifically: isInstanceOf(Exception.class) would also pass if the
+                // daemon's own error-logging path threw, so it could not tell "aborted for the
+                // reason under test" from "aborted for an unrelated reason".
                 assertThatThrownBy(() -> daemon.run(new DefaultApplicationArguments()))
                         .as("a receiver that cannot bind must still abort startup")
-                        .isInstanceOf(Exception.class);
+                        .isInstanceOfSatisfying(Throwable.class, thrown -> {
+                            var cause = thrown;
+                            while (cause != null && !(cause instanceof java.net.BindException)) {
+                                cause = cause.getCause();
+                            }
+                            assertThat(cause)
+                                    .as("a BindException must be in the causal chain of %s", thrown)
+                                    .isNotNull();
+                        });
 
                 assertThat(events())
                         .as("the failing receiver is named, with its address: a stack alone is not")
@@ -169,6 +186,119 @@ class DaemonStartupLoggingTest {
 
                 assertThat(messages())
                         .as("a failed start must not be summarised as listening")
+                        .noneSatisfy(m -> assertThat(m).contains("Listening for flows"));
+            } finally {
+                daemon.stop();
+            }
+        }
+    }
+
+    /**
+     * The default configuration omits {@code host} — {@code ReceiverConfig.host} has no default, so
+     * the listener binds the wildcard. Reading the host back off the channel renders that as
+     * {@code 0:0:0:0:0:0:0:0} on a dual-stack JVM, which is materially worse than the {@code *} it
+     * replaced in the very line this logging exists to provide. Every other test here pins
+     * {@code 127.0.0.1}, the one value for which both renderings agree, which is exactly why that
+     * regression was invisible.
+     */
+    @Test
+    void aWildcardBindIsReportedReadablyWithItsResolvedPort() throws Exception {
+        final var daemon = daemon(Map.of(
+                "riptide.receivers.wildcard.type", "netflow5",
+                "riptide.receivers.wildcard.port", "0"));
+
+        try {
+            daemon.run(new DefaultApplicationArguments());
+
+            assertThat(messages())
+                    .as("a wildcard bind stays readable and still resolves its ephemeral port")
+                    .anySatisfy(m -> {
+                        assertThat(m).contains("Receiver 'wildcard' listening on UDP *:");
+                        assertThat(m).doesNotContain("0:0:0:0");
+                        final var matcher = java.util.regex.Pattern
+                                .compile("listening on UDP \\*:(\\d+)").matcher(m);
+                        assertThat(matcher.find()).as("parseable in %s", m).isTrue();
+                        assertThat(Integer.parseInt(matcher.group(1))).isPositive();
+                    });
+        } finally {
+            daemon.stop();
+        }
+    }
+
+    /**
+     * The TCP rendering path had no coverage: the only TCP receiver elsewhere in this class fails to
+     * bind, so it takes the not-yet-bound fallback and the success branch could have been broken
+     * while every test stayed green.
+     */
+    @Test
+    void aTcpReceiverReportsItsResolvedPort() throws Exception {
+        final var daemon = daemon(Map.of(
+                "riptide.receivers.tcpok.type", "ipfix",
+                "riptide.receivers.tcpok.transport", "TCP",
+                "riptide.receivers.tcpok.host", "127.0.0.1",
+                "riptide.receivers.tcpok.port", "0"));
+
+        try {
+            daemon.run(new DefaultApplicationArguments());
+
+            assertThat(messages())
+                    .as("the TCP success branch reports a real bound port")
+                    .anySatisfy(m -> {
+                        assertThat(m).contains("Receiver 'tcpok' listening on TCP 127.0.0.1:");
+                        assertThat(m).doesNotContain(":0");
+                    });
+        } finally {
+            daemon.stop();
+        }
+    }
+
+    /**
+     * The spec scenario "receivers that bound before the failure are still reported" — the log shape
+     * the change exists to fix was one that narrated the receiver which worked and stayed silent
+     * about the one that did not.
+     */
+    @Test
+    void aSuccessfulAndAFailingReceiverAreBothDistinguishableInTheLog() throws Exception {
+        try (var occupied = new ServerSocket()) {
+            occupied.bind(new java.net.InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0));
+            final int taken = occupied.getLocalPort();
+
+            final var daemon = daemon(Map.of(
+                    "riptide.receivers.aaa-ok.type", "netflow5",
+                    "riptide.receivers.aaa-ok.host", "127.0.0.1",
+                    "riptide.receivers.aaa-ok.port", "0",
+                    "riptide.receivers.zzz-clash.type", "ipfix",
+                    "riptide.receivers.zzz-clash.transport", "TCP",
+                    "riptide.receivers.zzz-clash.host", "127.0.0.1",
+                    "riptide.receivers.zzz-clash.port", String.valueOf(taken)));
+
+            try {
+                // Receiver start order follows HashMap iteration, so which one runs first is not
+                // guaranteed. Assert only what must hold either way: if the good one ran, it is
+                // reported as listening; the failing one is always reported as failed; and no
+                // summary is emitted.
+                assertThatThrownBy(() -> daemon.run(new DefaultApplicationArguments()))
+                        .as("one receiver failing still aborts startup")
+                        .isInstanceOf(Throwable.class);
+
+                assertThat(events())
+                        .as("the failing receiver is named as failed, distinguishably")
+                        .anySatisfy(event -> {
+                            assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+                            assertThat(event.getFormattedMessage())
+                                    .contains("Receiver 'zzz-clash'")
+                                    .contains("failed to start")
+                                    .contains(String.valueOf(taken));
+                        });
+
+                assertThat(messages())
+                        .as("no receiver is both reported listening and reported failed")
+                        .noneSatisfy(m -> assertThat(m)
+                                .contains("Receiver 'zzz-clash'")
+                                .contains("listening on"));
+
+                assertThat(messages())
+                        .as("a partially started daemon must not be summarised as listening")
                         .noneSatisfy(m -> assertThat(m).contains("Listening for flows"));
             } finally {
                 daemon.stop();
@@ -209,7 +339,15 @@ class DaemonStartupLoggingTest {
                 "riptide.receivers.second.host", "127.0.0.1",
                 "riptide.receivers.second.port", "0"), pipeline, registry);
 
-        daemon.run(new DefaultApplicationArguments());
+        try {
+            daemon.run(new DefaultApplicationArguments());
+        } catch (final Throwable startFailed) {
+            // Guarded like the other tests in this class: if either ephemeral bind fails, the
+            // already-started listener's event loops would otherwise survive the JVM and the
+            // thread-name assertions in sibling tests would fail confusingly instead of here.
+            daemon.stop();
+            throw startFailed;
+        }
         armed.set(true);
 
         daemon.stop();
@@ -277,9 +415,10 @@ class DaemonStartupLoggingTest {
         return List.copyOf(this.appender.list);
     }
 
-    private int indexOfMessageContaining(final String fragment) {
+    /** Index of the LAST message containing {@code fragment}, or -1. */
+    private int lastIndexOfMessageContaining(final String fragment) {
         final var all = messages();
-        for (int i = 0; i < all.size(); i++) {
+        for (int i = all.size() - 1; i >= 0; i--) {
             if (all.get(i).contains(fragment)) {
                 return i;
             }

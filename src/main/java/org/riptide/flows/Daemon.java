@@ -227,7 +227,15 @@ public class Daemon implements ApplicationRunner {
                 // OutOfMemoryError. Narrowing to Exception would let exactly those aborts through
                 // with the unattributed stack this logging exists to replace. Rethrown immediately,
                 // so nothing is swallowed — precise rethrow keeps the declared type unchanged.
-                final var reason = t.getMessage() != null ? t.getMessage() : t.getClass().getName();
+                // Type as well as message: a NoClassDefFoundError — one of the two cases the
+                // Throwable catch exists for — carries a message like "io/netty/.../Epoll" that
+                // reads as a config problem unless the type is shown. Blank counts as absent:
+                // several construction paths carry an empty message, which would otherwise print
+                // as a bare trailing colon and lose the cause entirely.
+                final var message = t.getMessage();
+                final var reason = message != null && !message.isBlank()
+                        ? t.getClass().getSimpleName() + ": " + message
+                        : t.getClass().getName();
                 log.error("Receiver '{}' failed to start on {}: {}",
                         listener.getName(), listener.getDescription(), reason);
                 throw t;
