@@ -37,8 +37,7 @@ import static org.mockito.Mockito.when;
         "riptide.nodes.test-agent.snmp.community=" + TestSnmpAgent.COMMUNITY,
         // enrichment-ladder per-field pin: static alias overrides SNMP, rest is live
         "riptide.nodes.test-agent.interfaces.1.alias=Uplink pinned by file",
-        "riptide.snmp.cache.retentionMs=4242",
-        "riptide.snmp.cache.negativeRetentionMs=2121"
+        "riptide.snmp.options.retentionMs=4242"
 })
 public class SnmpEnricherTest {
 
@@ -175,10 +174,10 @@ public class SnmpEnricherTest {
     }
 
     @Test
-    public void cacheRetentionBindsFromProperties(@Autowired final SnmpCacheConfig cacheConfig) {
-        // regression: a bare public field never binds — both caches then run at 0 ms TTL
-        assertThat(cacheConfig.getRetentionMs()).isEqualTo(4242);
-        assertThat(cacheConfig.getNegativeRetentionMs()).isEqualTo(2121);
+    public void optionTableRetentionBindsFromProperties(@Autowired final SnmpOptionsConfig optionsConfig) {
+        // regression: a bare public field never binds, and the option table would then run at a
+        // 0 ms TTL — every exporter-pushed interface name expiring the instant it arrived
+        assertThat(optionsConfig.getRetentionMs()).isEqualTo(4242);
     }
 
     @Test
@@ -213,7 +212,7 @@ public class SnmpEnricherTest {
     }
 
     private static ExporterInterfaceTable emptyInterfaceTable() {
-        final SnmpCacheConfig cacheConfig = new SnmpCacheConfig();
+        final SnmpOptionsConfig cacheConfig = new SnmpOptionsConfig();
         cacheConfig.setRetentionMs(60_000);
         return new ExporterInterfaceTable(cacheConfig, new MetricRegistry());
     }

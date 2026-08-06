@@ -73,7 +73,7 @@ public class StaticInterfaceEnricherTest {
     }
 
     private static ExporterInterfaceTable emptyInterfaceTable() {
-        final SnmpCacheConfig cacheConfig = new SnmpCacheConfig();
+        final SnmpOptionsConfig cacheConfig = new SnmpOptionsConfig();
         cacheConfig.setRetentionMs(60_000);
         return new ExporterInterfaceTable(cacheConfig, new MetricRegistry());
     }

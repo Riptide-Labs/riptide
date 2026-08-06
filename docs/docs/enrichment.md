@@ -76,14 +76,56 @@ resolved against the device's IF-MIB:
 | `…IfAlias` | `ifAlias` (ifXTable) | the operator-assigned label; unlike `ifIndex` it is stable across device reboots (RFC 2863) |
 | `…IfSpeed` | `ifHighSpeed` (ifXTable) | Mbit/s |
 
-Results are cached per `(poll address, ifIndex)` with a configurable retention:
+### Interface tables are polled, not looked up
+
+Riptide **never issues SNMP on the flow path**. An exporter is registered the first time a flow arrives from it, its whole interface table is then walked on a schedule, and enrichment reads the resulting snapshot.
+
+That is the operator-visible reason exporter CPU drops after upgrading: load on a device's SNMP agent is now a function of the poll schedule rather than of how many distinct interfaces its flows happen to reference. Previously each `(exporter, ifIndex)` pair cost its own full table walk, so a busy device with many active interfaces was polled hardest — and walks for different interfaces on the same device could run at the same time.
 
 ```properties
-riptide.snmp.cache.retentionMs=600000
+riptide.snmp.poll.refresh-interval-ms=600000     # how often each exporter is walked
+riptide.snmp.poll.snapshot-expiry-ms=1800000     # how long a snapshot stays usable
+riptide.snmp.poll.pool-width=4                   # walks in flight across the whole fleet
+riptide.snmp.poll.deregister-after=3             # silent refresh intervals before polling stops
+riptide.snmp.poll.dead-endpoint-base-ms=60000    # first retry delay after a failed walk
+riptide.snmp.poll.dead-endpoint-ceiling-ms=1800000
+riptide.snmp.poll.max-exporters=4096             # bound on retained snapshots
 ```
 
-The retention is an absolute staleness bound (`expireAfterWrite`) — the backstop for
-`ifIndex` reassignment after device reboots.
+**Refresh and expiry are two settings because they answer two questions.**
+Refresh is how fresh the data is kept.
+Expiry is the absolute staleness bound — the backstop for `ifIndex` reassignment after a device reboot (RFC 2863).
+A snapshot older than the refresh interval but inside the expiry window is **still served**, because an interface name from the previous cycle beats no interface name at all.
+Setting expiry shorter than refresh makes enrichment blank between walks, and the collector warns at startup if you do.
+
+Walks are spread across the refresh interval using a phase derived from the exporter's address, so the fleet does not arrive at the agent as one burst, and the phase is stable across restarts without any stored state.
+
+:::info[Expect a warmup window]
+
+Between an exporter's first flow and its first completed walk there is no snapshot, so those flows carry **no SNMP-derived interface fields**.
+Static interface pins and exporter-pushed option data still apply, so enrichment degrades rather than fails.
+This is expected behaviour, not a fault — it is the cost of never blocking flow processing on a network round trip.
+
+A newly added interface likewise becomes visible at the next poll rather than within a minute.
+An unresolvable `ifIndex` deliberately does **not** trigger an early walk, because that would put agent load back under the control of flow traffic.
+
+:::
+
+### Migrating from `riptide.snmp.cache.*`
+
+| Retired | Replacement | Note |
+|---|---|---|
+| `riptide.snmp.cache.retention-ms` | `riptide.snmp.poll.refresh-interval-ms` | **Not carried over automatically.** The old value was a cache TTL (how long an answer stays usable); the new one is a poll interval (how often to ask). Adopting a 60 s retention would mean walking every exporter every minute — ten times the agent load, silently. Set it deliberately. |
+| `riptide.snmp.cache.negative-retention-ms` | *(none)* | Misses are no longer cached separately: an `ifIndex` absent from a polled snapshot is a known absence, so there is nothing to expire. |
+| `riptide.snmp.cache.dead-endpoint-retention-ms` | `riptide.snmp.poll.dead-endpoint-base-ms` / `-ceiling-ms` | Unreachable endpoints now back off exponentially instead of retrying at a fixed interval. |
+
+Riptide logs a warning at startup for each retired property it finds set, so a stale configuration file is loud rather than silently ineffective.
+
+The exporter option table keeps its own retention, now named for what it is:
+
+```properties
+riptide.snmp.options.retention-ms=1200000
+```
 
 ## Reverse-DNS hostnames
 

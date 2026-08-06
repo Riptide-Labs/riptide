@@ -17,6 +17,7 @@ import java.util.Comparator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -54,6 +55,12 @@ import java.util.function.LongSupplier;
 @Component
 public class InterfaceSnapshotPoller implements InterfaceSource {
 
+    /**
+     * Cap on distinct missing ifIndexes diagnosed per exporter per snapshot. A real device has far
+     * fewer unresolvable interfaces than this; the cap exists because the key comes off the wire.
+     */
+    private static final int MAX_WARNED_MISSING_PER_EXPORTER = 64;
+
     /** One exporter's interface table as a single walk produced it. */
     private record Snapshot(Map<Integer, IfInfo> rows, long takenAtNanos) {
     }
@@ -70,6 +77,8 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         private final java.util.concurrent.atomic.AtomicInteger consecutiveFailures =
                 new java.util.concurrent.atomic.AtomicInteger();
         private volatile boolean unreachable;
+        /** Cleared whenever a new snapshot lands, so a diagnosis repeats at most once per walk. */
+        private final Set<Integer> warnedMissing = ConcurrentHashMap.newKeySet();
 
         private Registration(final SnmpEndpoint endpoint, final long nowNanos) {
             this.endpoint = endpoint;
@@ -189,7 +198,34 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         if (expiryMs <= 0 || now - snapshot.takenAtNanos() > millisToNanos(expiryMs)) {
             return Optional.empty();
         }
-        return Optional.ofNullable(snapshot.rows().get(ifIndex));
+
+        final IfInfo ifInfo = snapshot.rows().get(ifIndex);
+        if (ifInfo == null) {
+            warnMissingOnce(registration, ifIndex);
+        }
+        return Optional.ofNullable(ifInfo);
+    }
+
+    /**
+     * Diagnoses an ifIndex the agent does not carry, at most once per snapshot per ifIndex.
+     *
+     * <p>The old design discovered a miss by walking, so warning per lookup warned per walk.
+     * Against a snapshot the absence is already known, so the same warning would fire on every
+     * flow referencing that interface and scale with traffic while saying nothing new.
+     *
+     * <p>The set of already-warned indexes is bounded and cleared on each new snapshot. Bounded
+     * because it is keyed by a value taken straight off the wire: without a cap, an exporter
+     * spraying distinct ifIndexes would grow it without limit, which is the vector this change
+     * closed elsewhere and must not reopen here.
+     */
+    private void warnMissingOnce(final Registration registration, final int ifIndex) {
+        if (registration.warnedMissing.size() >= MAX_WARNED_MISSING_PER_EXPORTER) {
+            return;
+        }
+        if (registration.warnedMissing.add(ifIndex)) {
+            log.warn("Interface {} is not in the polled interface table of {}",
+                    ifIndex, registration.endpoint);
+        }
     }
 
     private Registration register(final SnmpEndpoint endpoint, final long now) {
@@ -303,6 +339,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             registration.consecutiveFailures.set(0);
             final Map<Integer, IfInfo> rows = table.rows() != null ? table.rows() : Map.of();
             registration.snapshot = new Snapshot(Map.copyOf(rows), now);
+            registration.warnedMissing.clear();
             registration.nextWalkNanos = nextWalkAt(registration.endpoint, now);
         } catch (final RuntimeException e) {
             // Without this the schedule is never advanced for a registration whose walk throws

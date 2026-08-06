@@ -22,8 +22,8 @@ public class ExporterInterfaceTableTest {
     private final MetricRegistry metrics = new MetricRegistry();
     private final ExporterInterfaceTable table = new ExporterInterfaceTable(config(), metrics);
 
-    private static SnmpCacheConfig config() {
-        final SnmpCacheConfig config = new SnmpCacheConfig();
+    private static SnmpOptionsConfig config() {
+        final SnmpOptionsConfig config = new SnmpOptionsConfig();
         config.setRetentionMs(60_000);
         return config;
     }
@@ -109,7 +109,7 @@ public class ExporterInterfaceTableTest {
 
     @Test
     public void entriesExpireOnRetention() throws Exception {
-        final SnmpCacheConfig expiring = new SnmpCacheConfig();
+        final SnmpOptionsConfig expiring = new SnmpOptionsConfig();
         expiring.setRetentionMs(0); // immediate expiry
         final ExporterInterfaceTable shortLived = new ExporterInterfaceTable(expiring, new MetricRegistry());
         final var identity = identity("10.0.0.1", 1);

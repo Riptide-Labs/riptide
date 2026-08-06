@@ -17,7 +17,7 @@ import org.riptide.flows.parser.session.TcpSession;
 import org.riptide.pipeline.ExporterIdentity;
 import org.riptide.snmp.ExporterInterfaceTable;
 import org.riptide.snmp.IfInfo;
-import org.riptide.snmp.SnmpCacheConfig;
+import org.riptide.snmp.SnmpOptionsConfig;
 
 import java.net.InetAddress;
 import java.nio.file.Files;
@@ -39,8 +39,8 @@ public class InterfaceOptionsBlackboxTest {
 
     private final ExporterInterfaceTable table = new ExporterInterfaceTable(config(), new MetricRegistry());
 
-    private static SnmpCacheConfig config() {
-        final SnmpCacheConfig config = new SnmpCacheConfig();
+    private static SnmpOptionsConfig config() {
+        final SnmpOptionsConfig config = new SnmpOptionsConfig();
         config.setRetentionMs(60_000);
         return config;
     }
