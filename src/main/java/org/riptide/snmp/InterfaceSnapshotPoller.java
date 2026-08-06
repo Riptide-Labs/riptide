@@ -158,7 +158,8 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         }
         // Served while stale but unexpired on purpose: an interface name from the previous cycle
         // beats none, and this is why refresh and expiry are separate settings.
-        if (now - snapshot.takenAtNanos() > millisToNanos(this.config.getSnapshotExpiryMs())) {
+        final long expiryMs = this.config.getSnapshotExpiryMs();
+        if (expiryMs <= 0 || now - snapshot.takenAtNanos() > millisToNanos(expiryMs)) {
             return Optional.empty();
         }
         return Optional.ofNullable(snapshot.rows().get(ifIndex));
@@ -170,15 +171,23 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         if (existing != null) {
             return existing;
         }
-        // Registration is driven by flow arrival, so the population follows whatever addresses
-        // send flows — including spoofed ones. Bound in exporters, not in interface entries.
-        if (this.registrations.size() >= this.config.getMaxExporters()) {
+        final int maxExporters = this.config.getMaxExporters();
+        if (maxExporters <= 0 || this.registrations.size() >= maxExporters) {
             this.rejected.mark();
             return null;
         }
+        final AtomicBoolean isNew = new AtomicBoolean(false);
         final Registration created =
-                this.registrations.computeIfAbsent(address, key -> new Registration(endpoint, now));
-        if (created.lastSeenNanos == now) {
+                this.registrations.computeIfAbsent(address, key -> {
+                    isNew.set(true);
+                    return new Registration(endpoint, now);
+                });
+        if (isNew.get()) {
+            if (this.registrations.size() > maxExporters) {
+                this.registrations.remove(address, created);
+                this.rejected.mark();
+                return null;
+            }
             this.registered.mark();
         }
         return created;
@@ -195,11 +204,19 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
 
     /** Package-private so tests can advance the schedule without waiting on wall-clock time. */
     void tick(final long now) {
+        final long refreshMs = Math.max(1, this.config.getRefreshIntervalMs());
+        final long deregisterAfter = Math.max(1, (long) this.config.getDeregisterAfter());
+        long timeoutNanos;
+        try {
+            timeoutNanos = Math.multiplyExact(millisToNanos(refreshMs), deregisterAfter);
+        } catch (final ArithmeticException e) {
+            timeoutNanos = Long.MAX_VALUE;
+        }
+
         for (final Map.Entry<InetSocketAddress, Registration> entry : this.registrations.entrySet()) {
             final Registration registration = entry.getValue();
 
-            if (now - registration.lastSeenNanos
-                    > millisToNanos(this.config.getRefreshIntervalMs()) * this.config.getDeregisterAfter()) {
+            if (now - registration.lastSeenNanos > timeoutNanos) {
                 this.registrations.remove(entry.getKey(), registration);
                 this.deregistered.mark();
                 continue;
@@ -211,7 +228,12 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             if (!registration.walkInFlight.compareAndSet(false, true)) {
                 continue;
             }
-            this.walkers.execute(() -> walk(registration));
+            try {
+                this.walkers.execute(() -> walk(registration));
+            } catch (final Exception e) {
+                registration.walkInFlight.set(false);
+                log.warn("Failed to submit SNMP walk task for endpoint {}: {}", registration.endpoint, e.getMessage());
+            }
         }
     }
 
@@ -246,7 +268,8 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 log.info("SNMP endpoint {} answers again", registration.endpoint);
             }
             registration.consecutiveFailures.set(0);
-            registration.snapshot = new Snapshot(Map.copyOf(table.rows()), now);
+            final Map<Integer, IfInfo> rows = table.rows() != null ? table.rows() : Map.of();
+            registration.snapshot = new Snapshot(Map.copyOf(rows), now);
             registration.nextWalkNanos = nextWalkAt(registration.endpoint, now);
         } finally {
             registration.walkInFlight.set(false);
@@ -259,10 +282,17 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      * lets a population of dead exporters starve the live ones of slots.
      */
     private long backoffNanos(final int consecutiveFailures) {
-        final long base = this.config.getDeadEndpointBaseMs();
-        final long ceiling = this.config.getDeadEndpointCeilingMs();
-        final int doublings = Math.min(consecutiveFailures - 1, 32);
-        final long delay = base >= ceiling >> doublings ? ceiling : base << doublings;
+        final long base = Math.max(1L, this.config.getDeadEndpointBaseMs());
+        final long ceiling = Math.max(base, this.config.getDeadEndpointCeilingMs());
+        final int doublings = Math.max(0, Math.min(consecutiveFailures - 1, 30));
+        long delay = base;
+        for (int i = 0; i < doublings; i++) {
+            delay *= 2;
+            if (delay >= ceiling || delay < 0) {
+                delay = ceiling;
+                break;
+            }
+        }
         return millisToNanos(Math.min(delay, ceiling));
     }
 
@@ -284,10 +314,11 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      * on its own schedule.
      */
     private long nextWalkAt(final SnmpEndpoint endpoint, final long now) {
-        final long interval = millisToNanos(this.config.getRefreshIntervalMs());
-        if (interval <= 0) {
-            return now;
+        final long intervalMs = this.config.getRefreshIntervalMs();
+        if (intervalMs <= 0) {
+            return now + millisToNanos(60_000);
         }
+        final long interval = millisToNanos(intervalMs);
         // Mixed into the full 64-bit range before reducing. Taking the address hash modulo the
         // interval directly does not work: the hash is at most 2^32, about 4.3e9, while a 600 s
         // interval is 6e11 nanoseconds — so every phase would land in the first four seconds and
@@ -331,6 +362,13 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             this.scheduler.shutdownNow();
         }
         this.walkers.shutdownNow();
+        try {
+            if (!this.walkers.awaitTermination(3, TimeUnit.SECONDS)) {
+                log.debug("Walker pool did not terminate within 3 seconds");
+            }
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /** splitmix64 finalizer: spreads a small, poorly distributed hash across the full long range. */

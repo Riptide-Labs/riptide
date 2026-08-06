@@ -77,13 +77,13 @@ public class DefaultSnmpService implements SnmpService {
                 case TIMEOUT -> this.walksTimedOut.mark();
                 case ERROR -> this.walksFailed.mark();
             }
-            return new InterfaceTable(walk.rows(), walk.outcome() == SnmpUtils.WalkOutcome.TIMEOUT);
+            return new InterfaceTable(walk.rows(), walk.outcome() != SnmpUtils.WalkOutcome.OK);
         } catch (IOException | IllegalArgumentException e) {
             // IllegalArgumentException: an unresolvable secret reference must degrade to an
             // unenriched flow, never fail the pipeline and drop the batch.
             this.walksFailed.mark();
             log.warn("Error walking the interface table of {}: {}", snmpEndpoint, e.getMessage());
-            return new InterfaceTable(Map.of(), false);
+            return new InterfaceTable(Map.of(), true);
         }
     }
 }
