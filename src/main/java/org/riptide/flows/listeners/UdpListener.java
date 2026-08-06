@@ -18,8 +18,9 @@ import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.FixedRecvByteBufAllocator;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
-import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.DatagramChannel;
 import io.netty.channel.socket.DatagramPacket;
 import io.netty.channel.socket.nio.NioDatagramChannel;
@@ -61,10 +62,20 @@ public class UdpListener implements Listener {
 
     @Override
     public void start() {
-        // Netty defaults to 2 * num cores when the number of threads is set to 0
-        this.bossGroup = new NioEventLoopGroup(0, new ThreadFactoryBuilder()
-                .setNameFormat("udp-listener-nio-" + name + "-%d")
-                .build());
+        // Netty defaults to 2 * num cores when the number of threads is set to 0.
+        //
+        // Do NOT size this to 1 on the reasoning that a single DatagramChannel occupies one loop.
+        // This group is also the parser's ScheduledExecutorService (see parser.start below), and
+        // UdpParserBase schedules doHousekeeping on it every 60s — one task per sub-parser under
+        // DispatchingUdpParser. scheduleAtFixedRate calls next(), so with more than one loop the
+        // sweep runs on a different thread from the socket; measured, this group starts exactly
+        // two threads. Collapsing to one loop would put every housekeeping sweep on the thread
+        // draining the socket, stalling reception into kernel loss on the socketDrops gauge.
+        // Sizing this group is issue #450, and needs the ingest path measured first.
+        final var formatName = name.replace("%", "%%");
+        this.bossGroup = new MultiThreadIoEventLoopGroup(0, new ThreadFactoryBuilder()
+                .setNameFormat("udp-listener-nio-" + formatName + "-%d")
+                .build(), NioIoHandler.newFactory());
 
         this.parser.start(this.bossGroup);
 

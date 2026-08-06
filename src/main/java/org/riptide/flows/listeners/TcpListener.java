@@ -7,6 +7,7 @@ package org.riptide.flows.listeners;
 
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
+import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelFuture;
@@ -15,10 +16,11 @@ import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.group.ChannelGroup;
 import io.netty.channel.group.DefaultChannelGroup;
-import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.ByteToMessageDecoder;
@@ -55,8 +57,25 @@ public class TcpListener implements Listener {
 
     @Override
     public void start() {
-        this.bossGroup = new NioEventLoopGroup();
-        this.workerGroup = new NioEventLoopGroup();
+        // One thread: ServerBootstrap registers a single channel, so only one event loop is ever
+        // selected for accept. Netty's default (0 = 2 * num cores) would build the rest as loops
+        // nothing can reach — they hold a selector each and never run.
+        //
+        // This holds only because nothing else uses the group. Two assumptions, both of which
+        // would need this count raised again if they change: this listener binds once, and the
+        // parser schedules nothing on it. The second is why UdpListener must stay at the default
+        // — there the same group is the parser's scheduler (UdpParserBase schedules housekeeping
+        // on it), whereas ParserBase.start ignores the executor it is handed and IpfixTcpParser
+        // does not override it.
+        final var formatName = name.replace("%", "%%");
+        this.bossGroup = new MultiThreadIoEventLoopGroup(1, new ThreadFactoryBuilder()
+                .setNameFormat("tcp-listener-nio-boss-" + formatName + "-%d")
+                .build(), NioIoHandler.newFactory());
+        // Netty defaults to 2 * num cores when the number of threads is set to 0; here that is
+        // real capacity, since each accepted connection is assigned a loop round-robin.
+        this.workerGroup = new MultiThreadIoEventLoopGroup(0, new ThreadFactoryBuilder()
+                .setNameFormat("tcp-listener-nio-worker-" + formatName + "-%d")
+                .build(), NioIoHandler.newFactory());
 
         this.parser.start(this.bossGroup);
 

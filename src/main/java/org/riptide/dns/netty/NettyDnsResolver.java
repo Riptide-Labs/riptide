@@ -9,7 +9,9 @@ import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
 import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
-import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.EventLoopGroup;
+import io.netty.channel.MultiThreadIoEventLoopGroup;
+import io.netty.channel.nio.NioIoHandler;
 import io.netty.resolver.dns.DefaultDnsCache;
 import io.netty.resolver.dns.DnsServerAddressStreamProvider;
 import lombok.extern.slf4j.Slf4j;
@@ -34,7 +36,7 @@ public class NettyDnsResolver implements DnsResolver, DisposableBean {
     final DefaultDnsReverseCache reverseCache;
     final DnsServerAddressStreamProvider dnsNameserverProvider;
     final DefaultDnsCache nettyCache;
-    final NioEventLoopGroup group;
+    final EventLoopGroup group;
     private final List<NettyDnsResolverWorker> workers;
     private final RoundRobinIterator<NettyDnsResolverWorker> iterator;
     private final Timer lookupTimer;
@@ -48,9 +50,9 @@ public class NettyDnsResolver implements DnsResolver, DisposableBean {
         this.reverseCache = Objects.requireNonNull(cache);
         this.nettyCache = new DefaultDnsCache();
         this.dnsNameserverProvider = dnsNameserverProvider;
-        this.group = new NioEventLoopGroup(config.getMaximumDnsResolverThreads(), new ThreadFactoryBuilder()
+        this.group = new MultiThreadIoEventLoopGroup(config.getMaximumDnsResolverThreads(), new ThreadFactoryBuilder()
                 .setNameFormat("NettyDnsResolver-NIO-EventLoop-%d")
-                .build());
+                .build(), NioIoHandler.newFactory());
         final var queryTimeout = config.getQueryTimeoutMillis();
         this.workers = IntStream.range(0, config.getMaximumDnsResolverThreads())
                 .mapToObj(i -> new NettyDnsResolverWorker(this, queryTimeout))
