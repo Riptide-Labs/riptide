@@ -126,10 +126,21 @@ docs: deps-docs
 docs-serve: deps-docs
 	cd docs && npm ci && npm run start
 
+# Mirrors the %%VERSION%% substitution docs.yml performs, so local preview shows
+# what the deployed site shows instead of a raw token. Two deliberate differences
+# from CI: sed writes through a redirect rather than -i (GNU and BSD sed disagree
+# on -i, and this target only ever runs on a developer machine), and a missing
+# stable tag falls back to "dev" instead of failing the way a deploy must.
 .PHONY: landing-serve
 landing-serve:
-	@echo "Serving landing page on http://localhost:8080"
-	@python3 -m http.server 8080 --directory landing
+	@rm -rf build/landing
+	@mkdir -p build/landing
+	@cp -R landing/. build/landing/
+	@VERSION=$$(git tag --list 'v*' --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$$' | head -n1 | sed 's/^v//'); \
+		VERSION=$${VERSION:-dev}; \
+		sed "s/%%VERSION%%/$${VERSION}/g" landing/index.html > build/landing/index.html; \
+		echo "Serving landing page (version $${VERSION}) on http://localhost:8080"
+	@python3 -m http.server 8080 --directory build/landing
 
 .PHONY: oci
 oci: deps-oci jar

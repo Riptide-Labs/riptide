@@ -231,6 +231,17 @@ a {
     align-items: center;
 }
 
+/* Wraps the hero tagline and the release badge. Carries the 1.5rem gap to the
+   h1 that .tagline-badge used to own, so hero spacing is unchanged when the
+   badge sits alone (as it does in the MCP section). */
+.hero-badges {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+}
+
 .tagline-badge {
     display: inline-block;
     padding: 0.25rem 0.75rem;
@@ -243,6 +254,48 @@ a {
     color: var(--accent-cyan);
     margin-bottom: 1.5rem;
     box-shadow: 0 0 15px rgba(0, 242, 254, 0.05);
+}
+
+/* Inside .hero-badges the wrapper owns the spacing; standalone badges elsewhere
+   keep their own margin. */
+.hero-badges .tagline-badge {
+    margin-bottom: 0;
+}
+
+/* Green rather than the tagline's cyan: the version reads as "current", and the
+   contrast keeps two adjacent pills from merging into one visual block. */
+.version-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.75rem;
+    background-color: rgba(16, 185, 129, 0.08);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+    border-radius: 20px;
+    font-size: 0.85rem;
+    font-family: var(--font-heading);
+    font-weight: 500;
+    color: var(--accent-green);
+    box-shadow: 0 0 15px rgba(16, 185, 129, 0.05);
+    transition: var(--transition);
+}
+
+.version-badge:hover {
+    border-color: rgba(16, 185, 129, 0.6);
+    box-shadow: 0 0 15px rgba(16, 185, 129, 0.15);
+}
+
+.version-badge:focus-visible {
+    outline: 2px solid var(--accent-green);
+    outline-offset: 2px;
+}
+
+.version-badge-arrow {
+    transition: var(--transition);
+}
+
+.version-badge:hover .version-badge-arrow {
+    transform: translateX(2px);
 }
 
 .hero-title {

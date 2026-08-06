@@ -61,7 +61,15 @@ SPDX-License-Identifier: GPL-3.0-or-later
         <section class="hero-section">
             <div class="container hero-container">
                 <div class="hero-content">
-                    <div class="tagline-badge">🌊 High-Performance Flow Telemetry</div>
+                    <!-- %%VERSION%% is substituted at build time from the highest stable v* tag,
+                         by .github/workflows/docs.yml for the deployed site and by `make
+                         landing-serve` for local preview. Never hardcode a version here. -->
+                    <div class="hero-badges">
+                        <span class="tagline-badge">🌊 High-Performance Flow Telemetry</span>
+                        <a href="https://github.com/Riptide-Labs/riptide/releases/tag/v%%VERSION%%" class="version-badge" target="_blank" rel="noopener" aria-label="Riptide v%%VERSION%% release notes">
+                            v%%VERSION%%<span class="version-badge-arrow" aria-hidden="true">↗</span>
+                        </a>
+                    </div>
                     <h1 class="hero-title">Ingest, Enrich, and Analyze Network Flows at Scale</h1>
                     <p class="hero-description">
                         Riptide is an open-source telemetry engine that decodes enterprise network flow protocols, applies dynamic context metadata, and persists millions of records into ClickHouse for instant, real-time traffic analysis.
