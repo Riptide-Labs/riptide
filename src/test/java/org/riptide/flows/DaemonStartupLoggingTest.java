@@ -159,13 +159,81 @@ class DaemonStartupLoggingTest {
         }
     }
 
+    /**
+     * A listener dying with an {@code Error} must not take the rest of shutdown with it.
+     *
+     * <p>{@code stop()} promises that a failing listener cannot keep the pipeline from draining —
+     * the batch flusher is a daemon thread, so a skipped drain silently loses the whole buffer. An
+     * {@code Error} used to escape the loop and break that promise, skipping every later listener
+     * and the drain itself.
+     *
+     * <p>The failure is injected through the {@code MetricRegistry} the daemon hands its listeners:
+     * {@code UdpListener.stop()} deregisters its {@code socketDrops} gauge, so an {@code Error}
+     * from {@code remove()} surfaces out of that listener's teardown.
+     */
+    @Test
+    void anErrorStoppingOneListenerStopsNeitherTheOthersNorTheDrain() throws Exception {
+        final var armed = new java.util.concurrent.atomic.AtomicBoolean();
+        final var registry = new MetricRegistry() {
+            @Override
+            public boolean remove(final String name) {
+                if (armed.get()) {
+                    throw new StackOverflowError("listener teardown died");
+                }
+                return super.remove(name);
+            }
+        };
+        final var pipeline = Mockito.mock(Pipeline.class);
+        final var daemon = daemon(Map.of(
+                "riptide.receivers.first.type", "netflow5",
+                "riptide.receivers.first.host", "127.0.0.1",
+                "riptide.receivers.first.port", "0",
+                "riptide.receivers.second.type", "netflow5",
+                "riptide.receivers.second.host", "127.0.0.1",
+                "riptide.receivers.second.port", "0"), pipeline, registry);
+
+        daemon.run(new DefaultApplicationArguments());
+        armed.set(true);
+
+        daemon.stop();
+
+        assertThat(liveThreadNames("udp-listener-nio-first-"))
+                .as("the listener whose teardown raised an Error is still released")
+                .isEmpty();
+        assertThat(liveThreadNames("udp-listener-nio-second-"))
+                .as("an Error in one listener must not skip the listeners after it")
+                .isEmpty();
+        Mockito.verify(pipeline).stop();
+    }
+
+    private static List<String> liveThreadNames(final String prefix) {
+        // Polled: shutdownGracefully().syncUninterruptibly() returns when the termination future
+        // completes, which SingleThreadEventExecutor does from inside the event loop thread's own
+        // finally block, so the thread is briefly still alive afterwards.
+        final long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+        List<String> alive;
+        do {
+            alive = Thread.getAllStackTraces().keySet().stream()
+                    .map(Thread::getName)
+                    .filter(name -> name.startsWith(prefix))
+                    .toList();
+        } while (!alive.isEmpty() && System.nanoTime() < deadline);
+        return alive;
+    }
+
     private Daemon daemon(final Map<String, Object> properties) {
+        return daemon(properties, Mockito.mock(Pipeline.class), new MetricRegistry());
+    }
+
+    private Daemon daemon(final Map<String, Object> properties,
+                          final Pipeline pipeline,
+                          final MetricRegistry registry) {
         final var config = new Binder(new MapConfigurationPropertySource(properties))
                 .bind("riptide", DaemonConfig.class)
                 .orElseGet(DaemonConfig::new);
         return new Daemon(
-                Mockito.mock(Pipeline.class),
-                new MetricRegistry(),
+                pipeline,
+                registry,
                 Mockito.mock(ValueConversionService.class),
                 Mockito.mock(ValueConversionService.class),
                 Mockito.mock(ExporterInterfaceTable.class),

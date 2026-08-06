@@ -246,17 +246,30 @@ public class Daemon implements ApplicationRunner {
         // dispatches, so the pipeline's shutdown drain below sees every accepted flow. A
         // failing listener must not keep the pipeline (and its batch drain) from stopping —
         // the flusher is a daemon thread, so a skipped drain silently loses the whole buffer.
-        // Exception, not RuntimeException: Listener.stop() declares no checked exceptions, but
-        // the Netty listeners call syncUninterruptibly(), which sneaky-throws the future's
-        // cause — checked exceptions included. Do not "tidy" this back to RuntimeException.
-        for (final var listener : this.listeners) {
-            try {
-                listener.stop();
-            } catch (final Exception e) {
-                log.warn("Failed to stop listener {}", listener.getName(), e);
+        // Throwable, not Exception and emphatically not RuntimeException. Listener.stop() declares
+        // no checked exceptions, but the Netty listeners call syncUninterruptibly(), which
+        // sneaky-throws the future's cause — checked exceptions included. Do not "tidy" this back
+        // to RuntimeException.
+        //
+        // Throwable widens it further so the promise above actually holds: an Error (a listener's
+        // event loop dying with OutOfMemoryError, a missing native transport surfacing as
+        // NoClassDefFoundError) used to escape this loop, skipping every later listener *and* the
+        // pipeline drain below — silently losing the whole batch buffer, which is the one outcome
+        // this method exists to prevent. Shutdown is best-effort per listener for the same reason
+        // teardown is best-effort per resource inside them (see Teardown).
+        try {
+            for (final var listener : this.listeners) {
+                try {
+                    listener.stop();
+                } catch (final Throwable t) {
+                    log.warn("Failed to stop listener {}", listener.getName(), t);
+                }
             }
+        } finally {
+            // In a finally so the drain survives anything the loop itself could throw, not merely
+            // anything stop() throws.
+            this.pipeline.stop();
         }
-        this.pipeline.stop();
     }
 
     /** The configured receivers, for health reporting. */
