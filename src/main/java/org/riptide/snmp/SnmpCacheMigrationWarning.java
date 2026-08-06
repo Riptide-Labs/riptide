@@ -37,13 +37,26 @@ public class SnmpCacheMigrationWarning {
 
     private Long deadEndpointRetentionMs;
 
+    /**
+     * Warns rather than adopting the old value, which reverses the plan recorded in the change.
+     *
+     * <p>Adopting looked like the kind option: an operator who set {@code retention-ms=60000} for
+     * fresher interface names would keep their intent. It is the dangerous one. The old property
+     * was a cache TTL — how long an answer stays usable — and the new one is a poll interval, how
+     * often to ask. Carrying 60000 across turns "keep answers for a minute" into "walk every
+     * exporter every minute", ten times the agent load the operator had before, silently, on
+     * upgrade. Against a change whose entire purpose is being gentler to exporters, that is the
+     * wrong failure. Warn, and let them choose.
+     */
     @PostConstruct
     void warnAboutRepurposedProperties() {
         if (this.retentionMs != null) {
-            log.warn("riptide.snmp.cache.retention-ms={} no longer controls how fresh SNMP interface "
-                            + "data is. Interface tables are polled on riptide.snmp.poll.refresh-interval-ms "
-                            + "(default 600000); this property now only sizes the exporter option table. "
-                            + "Set riptide.snmp.poll.refresh-interval-ms to keep your intended cadence.",
+            log.warn("riptide.snmp.cache.retention-ms={} is IGNORED and has NOT been carried over. It was a "
+                            + "cache TTL; the new riptide.snmp.poll.refresh-interval-ms (default 600000) is a "
+                            + "poll interval, so adopting your value would change how often riptide walks your "
+                            + "exporters rather than how long it keeps answers. Set refresh-interval-ms "
+                            + "deliberately if you want a different cadence. To size the exporter option "
+                            + "table, use riptide.snmp.options.retention-ms.",
                     this.retentionMs);
         }
         if (this.negativeRetentionMs != null) {

@@ -34,7 +34,7 @@ class SnmpPollConfigTest {
     }
 
     /**
-     * Guards the trap recorded in {@link SnmpCacheConfig}: Spring's binder silently skips
+     * Guards the trap recorded in {@link SnmpOptionsConfig}: Spring's binder silently skips
      * fields without accessors, which would leave every interval at its field default no
      * matter what an operator configured. A relaxed-binding round trip proves the accessors
      * are really there.

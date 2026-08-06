@@ -53,13 +53,11 @@ public class ExporterInterfaceTable implements OptionListener {
     private final Meter recordsConsumed;
     private final Meter recordsSkipped;
 
-    public ExporterInterfaceTable(final SnmpCacheConfig cacheConfig, final MetricRegistry metrics) {
+    public ExporterInterfaceTable(final SnmpOptionsConfig optionsConfig, final MetricRegistry metrics) {
         this.table = CacheBuilder.newBuilder()
-                // 2x the poll-cache retention: exporters re-send option tables at
-                // roughly the same cadence (Cisco default 600 s == our default
-                // retention), so a 1x TTL would race every refresh and one lost
-                // option packet would unenrich flows for a full cycle
-                .expireAfterWrite(Duration.ofMillis(2 * cacheConfig.getRetentionMs()))
+                // sized against how often exporters re-send option tables, not against how often
+                // riptide polls — see SnmpOptionsConfig for why those stopped being the same thing
+                .expireAfterWrite(Duration.ofMillis(optionsConfig.getRetentionMs()))
                 .build();
         this.recordsConsumed = metrics.meter(MetricRegistry.name("enrichment", "optionInterfaces", "consumed"));
         this.recordsSkipped = metrics.meter(MetricRegistry.name("enrichment", "optionInterfaces", "skipped"));

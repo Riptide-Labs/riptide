@@ -5,9 +5,13 @@
 
 package org.riptide.snmp;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.codahale.metrics.MetricRegistry;
 import inet.ipaddr.IPAddressString;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import java.util.Map;
 import java.util.Optional;
@@ -200,6 +204,74 @@ class InterfaceSnapshotPollerTest {
         assertThatThrownBy(() -> poller(new FakeSnmp(), config))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("riptide.snmp.poll.pool-width");
+    }
+
+    /**
+     * The old design discovered a miss by walking, so warning per lookup warned per walk. Against
+     * a snapshot the absence is already known, so an unguarded warning would fire on every flow
+     * referencing that interface and scale with traffic while saying nothing new.
+     */
+    @Test
+    void anAbsentIfIndexIsDiagnosedOncePerSnapshotNotOncePerFlow() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config());
+        final var endpoint = endpoint("10.6.0.1");
+
+        final var logger = (Logger) LoggerFactory.getLogger(InterfaceSnapshotPoller.class);
+        final var appender = new ListAppender<ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            poller.resolve(endpoint, 1);
+            poller.tick(this.clock.get());
+            awaitWalks(poller, snmp, 1);
+
+            // ifIndex 99 is absent from the walked table; 500 flows must not mean 500 warnings
+            for (int i = 0; i < 500; i++) {
+                assertThat(poller.resolve(endpoint, 99)).isEmpty();
+            }
+            assertThat(missWarnings(appender)).isEqualTo(1);
+
+            // a fresh snapshot re-arms the diagnosis, so a persistent gap stays visible
+            advanceMs(700_000);
+            poller.tick(this.clock.get());
+            awaitWalks(poller, snmp, 2);
+            poller.resolve(endpoint, 99);
+            assertThat(missWarnings(appender)).isEqualTo(2);
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    /** The cap exists because the ifIndex comes straight off the wire. */
+    @Test
+    void missDiagnosticsAreBoundedSoASprayCannotGrowTheSet() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config());
+        final var endpoint = endpoint("10.6.0.2");
+
+        final var logger = (Logger) LoggerFactory.getLogger(InterfaceSnapshotPoller.class);
+        final var appender = new ListAppender<ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            poller.resolve(endpoint, 1);
+            poller.tick(this.clock.get());
+            awaitWalks(poller, snmp, 1);
+
+            for (int ifIndex = 1000; ifIndex < 6000; ifIndex++) {
+                poller.resolve(endpoint, ifIndex);
+            }
+            assertThat(missWarnings(appender)).isLessThanOrEqualTo(64);
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    private static long missWarnings(final ListAppender<ILoggingEvent> appender) {
+        return appender.list.stream()
+                .filter(event -> event.getFormattedMessage().contains("not in the polled interface table"))
+                .count();
     }
 
     @Test
