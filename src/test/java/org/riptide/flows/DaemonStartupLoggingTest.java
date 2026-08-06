@@ -37,7 +37,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *
  * <p>The regression this pins (#453): the {@code Listening for flows} summary was emitted from the
  * constructor, while the sockets are bound in {@link Daemon#run}. Those are different lifecycle
- * phases — a bean failing during context refresh means {@code run()} never executes — so the line
+ * phases: a bean failing during context refresh means {@code run()} never executes, so the line
  * announced success before anything listened, and on a healthy boot the bind was the last thing to
  * happen and the only thing never logged.
  *
@@ -61,6 +61,7 @@ class DaemonStartupLoggingTest {
     @AfterEach
     void releaseDaemonLog() {
         this.logger.detachAppender(this.appender);
+        this.appender.stop();
     }
 
     @Test
@@ -100,6 +101,9 @@ class DaemonStartupLoggingTest {
             assertThat(summaryIndex)
                     .as("the summary marks the point every receiver is bound, so it comes last")
                     .isGreaterThan(lastReceiverIndex);
+            assertThat(summaryIndex)
+                    .as("the summary log message must be present")
+                    .isGreaterThanOrEqualTo(0);
             assertThat(messages().get(summaryIndex))
                     .as("its count must match the receivers reported")
                     .contains("2 receivers");
@@ -129,7 +133,7 @@ class DaemonStartupLoggingTest {
                         .isInstanceOf(Exception.class);
 
                 assertThat(events())
-                        .as("the failing receiver is named, with its address — a stack alone is not")
+                        .as("the failing receiver is named, with its address: a stack alone is not")
                         .anySatisfy(event -> {
                             assertThat(event.getLevel()).isEqualTo(Level.ERROR);
                             assertThat(event.getFormattedMessage())
