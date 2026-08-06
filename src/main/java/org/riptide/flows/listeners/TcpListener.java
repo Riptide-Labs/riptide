@@ -170,30 +170,48 @@ public class TcpListener implements Listener {
                 .syncUninterruptibly();
     }
 
+    // socketFuture, workerGroup and bossGroup are assigned in start(), which runs in a later
+    // lifecycle phase than the constructor — a context refresh that fails in between leaves this
+    // listener owning none of them, so those steps are guarded. channels and parser are set at
+    // construction and are never null. Steps are attempted independently so a failure does not
+    // strand the resources after it; see Teardown.
     @Override
     public void stop() {
-        LOG.info("Disconnecting clients...");
-        this.channels.close().awaitUninterruptibly();
+        final var teardown = new Teardown();
 
-        if (this.socketFuture != null) {
+        teardown.attempt(() -> {
+            LOG.info("Disconnecting clients...");
+            this.channels.close().awaitUninterruptibly();
+        });
+
+        teardown.attemptIfPresent(this.socketFuture, () -> {
+            final var ch = this.socketFuture.channel();
             LOG.info("Closing channel...");
-            this.socketFuture.channel().close().syncUninterruptibly();
-            if (this.socketFuture.channel().parent() != null) {
-                this.socketFuture.channel().parent().close().syncUninterruptibly();
+            // Channel and parent are attempted separately: a parent that fails to close must not
+            // be skipped because the child did, and vice versa.
+            teardown.attempt(() -> ch.close().syncUninterruptibly());
+            if (ch.parent() != null) {
+                teardown.attempt(() -> ch.parent().close().syncUninterruptibly());
             }
-        }
+        });
 
-        LOG.info("Stopping parser...");
-        if (this.parser != null) {
+        teardown.attempt(() -> {
+            LOG.info("Stopping parser...");
             this.parser.stop();
-        }
+        });
 
-        LOG.info("Closing worker group...");
         // switch to use even listener rather than sync to prevent shutdown deadlock hang
-        this.workerGroup.shutdownGracefully().syncUninterruptibly();
+        teardown.attemptIfPresent(this.workerGroup, () -> {
+            LOG.info("Closing worker group...");
+            this.workerGroup.shutdownGracefully().syncUninterruptibly();
+        });
 
-        LOG.info("Closing boss group...");
-        this.bossGroup.shutdownGracefully().syncUninterruptibly();
+        teardown.attemptIfPresent(this.bossGroup, () -> {
+            LOG.info("Closing boss group...");
+            this.bossGroup.shutdownGracefully().syncUninterruptibly();
+        });
+
+        teardown.done();
     }
 
     @Override

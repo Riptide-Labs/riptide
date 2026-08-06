@@ -116,29 +116,45 @@ public class UdpListener implements Listener {
         this.metrics.register(gauge, (Gauge<Long>) () -> UdpSocketDrops.forSocket(bound));
     }
 
+    // socketFuture and bossGroup are assigned in start(), which runs in a later lifecycle phase
+    // than the constructor — a context refresh that fails in between leaves this listener owning
+    // neither, so those steps are guarded. metrics and parser are set at construction and are never
+    // null. Steps are attempted independently so a failure does not strand the resources after it;
+    // see Teardown. The order below is load-bearing and must not change.
     @Override
     public void stop() {
+        final var teardown = new Teardown();
+
         // Deregister before closing: once the socket is gone the closure describes a port we no
         // longer own, and the next process to bind it would have its kernel drops published as
         // this receiver's ingest loss. Same reason BatchingFlowRepository removes its queue-depth
         // gauge in stop().
-        this.metrics.remove(MetricRegistry.name("listeners", this.name, "socketDrops"));
+        teardown.attempt(
+                () -> this.metrics.remove(MetricRegistry.name("listeners", this.name, "socketDrops")));
 
-        if (this.socketFuture != null) {
+        teardown.attemptIfPresent(this.socketFuture, () -> {
+            final var ch = this.socketFuture.channel();
             LOG.info("Closing channel...");
-            this.socketFuture.channel().close().syncUninterruptibly();
-            if (this.socketFuture.channel().parent() != null) {
-                this.socketFuture.channel().parent().close().syncUninterruptibly();
+            // Channel and parent are attempted separately: a parent that fails to close must not
+            // be skipped because the child did, and vice versa.
+            teardown.attempt(() -> ch.close().syncUninterruptibly());
+            if (ch.parent() != null) {
+                teardown.attempt(() -> ch.parent().close().syncUninterruptibly());
             }
-        }
+        });
 
-        this.parser.stop();
+        teardown.attempt(() -> {
+            LOG.info("Stopping parser...");
+            this.parser.stop();
+        });
 
-        LOG.info("Closing boss group...");
-        if (this.bossGroup != null) {
-            // switch to use even listener rather than sync to prevent shutdown deadlock hang
+        // switch to use even listener rather than sync to prevent shutdown deadlock hang
+        teardown.attemptIfPresent(this.bossGroup, () -> {
+            LOG.info("Closing boss group...");
             this.bossGroup.shutdownGracefully().syncUninterruptibly();
-        }
+        });
+
+        teardown.done();
     }
 
     @Override

@@ -18,6 +18,20 @@ public interface Listener {
     String getName();
     String getDescription();
     void start();
+
+    /**
+     * Releases everything {@link #start()} acquired.
+     *
+     * <p>Must be safe to call when {@code start()} never ran or did not finish: a listener is
+     * constructed in one lifecycle phase and started in another, so a failure between them leaves a
+     * constructed listener owning nothing. Implementations must not assume fields assigned during
+     * {@code start()} are populated.
+     *
+     * <p>Release is best-effort across resources — a step that fails must not prevent the remaining
+     * steps from being attempted, or a failed channel close would strand the event loop threads
+     * behind it. Failures are reported once every step has been attempted, the first thrown with any
+     * others attached via {@link Throwable#addSuppressed}; they are never silently swallowed.
+     */
     void stop();
 
     /**
