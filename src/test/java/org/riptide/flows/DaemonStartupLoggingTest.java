@@ -49,10 +49,17 @@ class DaemonStartupLoggingTest {
 
     private Logger logger;
     private ListAppender<ILoggingEvent> appender;
+    private Level originalLevel;
 
     @BeforeEach
     void captureDaemonLog() {
         this.logger = (Logger) LoggerFactory.getLogger(Daemon.class);
+        this.originalLevel = this.logger.getLevel();
+        // Pinned, not inherited: two of the assertions below are negative (no "Listening for flows"),
+        // and if ambient test logging were ever raised above INFO they would pass vacuously — the
+        // events would simply never be captured. The capture must not depend on configuration this
+        // test does not own.
+        this.logger.setLevel(Level.INFO);
         this.appender = new ListAppender<>();
         this.appender.start();
         this.logger.addAppender(this.appender);
@@ -62,6 +69,7 @@ class DaemonStartupLoggingTest {
     void releaseDaemonLog() {
         this.logger.detachAppender(this.appender);
         this.appender.stop();
+        this.logger.setLevel(this.originalLevel);
     }
 
     @Test

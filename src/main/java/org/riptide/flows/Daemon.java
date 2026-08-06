@@ -197,7 +197,6 @@ public class Daemon implements ApplicationRunner {
                                 .withHost(config.getHost());
                     }
                 })).toList();
-
     }
 
     // Start-time logging lives here rather than in each Listener: only the call site holds the
@@ -216,16 +215,22 @@ public class Daemon implements ApplicationRunner {
         for (final var listener : this.listeners) {
             try {
                 listener.start();
-            } catch (final Exception e) {
+            } catch (final Throwable t) {
                 // Named here because the propagating stack identifies the transport but neither the
                 // configured receiver nor its port. Message only: Spring prints the full trace as
                 // the exception leaves run(), and a second copy is noise at the moment the operator
                 // is trying to read. Rethrown rather than skipped: /readyz checks every listener,
                 // so continuing would yield a running-but-never-ready daemon.
-                final var reason = e.getMessage() != null ? e.getMessage() : e.getClass().getName();
+                //
+                // Throwable, not Exception: a missing native transport surfaces as
+                // NoClassDefFoundError and starting the event loop threads can raise
+                // OutOfMemoryError. Narrowing to Exception would let exactly those aborts through
+                // with the unattributed stack this logging exists to replace. Rethrown immediately,
+                // so nothing is swallowed — precise rethrow keeps the declared type unchanged.
+                final var reason = t.getMessage() != null ? t.getMessage() : t.getClass().getName();
                 log.error("Receiver '{}' failed to start on {}: {}",
                         listener.getName(), listener.getDescription(), reason);
-                throw e;
+                throw t;
             }
             log.info("Receiver '{}' listening on {}", listener.getName(), listener.getDescription());
         }
