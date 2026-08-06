@@ -126,22 +126,30 @@ public class UdpListener implements Listener {
         // longer own, and the next process to bind it would have its kernel drops published as
         // this receiver's ingest loss. Same reason BatchingFlowRepository removes its queue-depth
         // gauge in stop().
-        teardown.attempt(() -> this.metrics.remove(MetricRegistry.name("listeners", this.name, "socketDrops")));
+        teardown.attemptIfPresent(this.metrics,
+                () -> this.metrics.remove(MetricRegistry.name("listeners", this.name, "socketDrops")));
 
         teardown.attemptIfPresent(this.socketFuture, () -> {
-            LOG.info("Closing channel...");
-            this.socketFuture.channel().close().syncUninterruptibly();
-            if (this.socketFuture.channel().parent() != null) {
-                this.socketFuture.channel().parent().close().syncUninterruptibly();
+            final var ch = this.socketFuture.channel();
+            if (ch != null) {
+                LOG.info("Closing channel...");
+                teardown.attempt(ch.close()::syncUninterruptibly);
+                if (ch.parent() != null) {
+                    teardown.attempt(ch.parent().close()::syncUninterruptibly);
+                }
             }
         });
 
-        teardown.attempt(this.parser::stop);
+        teardown.attemptIfPresent(this.parser, () -> {
+            LOG.info("Stopping parser...");
+            this.parser.stop();
+        });
 
-        LOG.info("Closing boss group...");
         // switch to use even listener rather than sync to prevent shutdown deadlock hang
-        teardown.attemptIfPresent(this.bossGroup,
-                () -> this.bossGroup.shutdownGracefully().syncUninterruptibly());
+        teardown.attemptIfPresent(this.bossGroup, () -> {
+            LOG.info("Closing boss group...");
+            this.bossGroup.shutdownGracefully().syncUninterruptibly();
+        });
 
         teardown.done();
     }

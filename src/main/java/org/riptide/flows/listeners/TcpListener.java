@@ -178,28 +178,37 @@ public class TcpListener implements Listener {
     public void stop() {
         final var teardown = new Teardown();
 
-        LOG.info("Disconnecting clients...");
-        teardown.attempt(() -> this.channels.close().awaitUninterruptibly());
+        teardown.attempt(() -> {
+            LOG.info("Disconnecting clients...");
+            this.channels.close().awaitUninterruptibly();
+        });
 
         teardown.attemptIfPresent(this.socketFuture, () -> {
-            LOG.info("Closing channel...");
-            this.socketFuture.channel().close().syncUninterruptibly();
-            if (this.socketFuture.channel().parent() != null) {
-                this.socketFuture.channel().parent().close().syncUninterruptibly();
+            final var ch = this.socketFuture.channel();
+            if (ch != null) {
+                LOG.info("Closing channel...");
+                teardown.attempt(ch.close()::syncUninterruptibly);
+                if (ch.parent() != null) {
+                    teardown.attempt(ch.parent().close()::syncUninterruptibly);
+                }
             }
         });
 
-        LOG.info("Stopping parser...");
-        teardown.attempt(this.parser::stop);
+        teardown.attemptIfPresent(this.parser, () -> {
+            LOG.info("Stopping parser...");
+            this.parser.stop();
+        });
 
-        LOG.info("Closing worker group...");
         // switch to use even listener rather than sync to prevent shutdown deadlock hang
-        teardown.attemptIfPresent(this.workerGroup,
-                () -> this.workerGroup.shutdownGracefully().syncUninterruptibly());
+        teardown.attemptIfPresent(this.workerGroup, () -> {
+            LOG.info("Closing worker group...");
+            this.workerGroup.shutdownGracefully().syncUninterruptibly();
+        });
 
-        LOG.info("Closing boss group...");
-        teardown.attemptIfPresent(this.bossGroup,
-                () -> this.bossGroup.shutdownGracefully().syncUninterruptibly());
+        teardown.attemptIfPresent(this.bossGroup, () -> {
+            LOG.info("Closing boss group...");
+            this.bossGroup.shutdownGracefully().syncUninterruptibly();
+        });
 
         teardown.done();
     }

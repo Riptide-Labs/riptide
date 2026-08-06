@@ -51,7 +51,7 @@ final class Teardown {
             return;
         }
         final Throwable first = this.failures.getFirst();
-        this.failures.stream().skip(1).forEach(first::addSuppressed);
+        this.failures.stream().skip(1).filter(t -> t != first).forEach(first::addSuppressed);
         throw sneakyThrow(first);
     }
 
