@@ -34,19 +34,40 @@ class TcpListenerThreadNamingTest {
 
     @Test
     void bossThreadIsNamedAfterTheListenerAndItsRole() {
+        final var existingThreads = liveThreadNames().collect(java.util.stream.Collectors.toSet());
+
         final var listener = new TcpListener("naming", parser(), new MetricRegistry())
                 .withHost("127.0.0.1")
                 .withPort(0);
 
         listener.start();
         try {
-            assertThat(liveThreadNames())
+            final var newThreads = liveThreadNames()
+                    .filter(name -> !existingThreads.contains(name))
+                    .toList();
+
+            assertThat(newThreads)
                     .as("the accept thread must identify its listener and role")
                     .anyMatch(name -> name.startsWith("tcp-listener-nio-boss-naming-"));
 
-            assertThat(liveThreadNames())
+            assertThat(newThreads)
                     .as("no group may fall back to Netty's anonymous default naming")
                     .noneMatch(name -> name.startsWith("nioEventLoopGroup-"));
+        } finally {
+            listener.stop();
+        }
+    }
+
+    @Test
+    void handlesPercentInListenerName() {
+        final var listener = new TcpListener("listener%1", parser(), new MetricRegistry())
+                .withHost("127.0.0.1")
+                .withPort(0);
+
+        listener.start();
+        try {
+            assertThat(liveThreadNames())
+                    .anyMatch(name -> name.startsWith("tcp-listener-nio-boss-listener%1-"));
         } finally {
             listener.stop();
         }

@@ -62,9 +62,11 @@ public class UdpListener implements Listener {
 
     @Override
     public void start() {
-        // Netty defaults to 2 * num cores when the number of threads is set to 0
-        this.bossGroup = new MultiThreadIoEventLoopGroup(0, new ThreadFactoryBuilder()
-                .setNameFormat("udp-listener-nio-" + name + "-%d")
+        // One thread: UdpListener binds a single DatagramChannel, so only one event loop is ever
+        // selected. Netty's default (0 = 2 * num cores) would build the rest as loops nothing can reach.
+        final var formatName = name.replace("%", "%%");
+        this.bossGroup = new MultiThreadIoEventLoopGroup(1, new ThreadFactoryBuilder()
+                .setNameFormat("udp-listener-nio-" + formatName + "-%d")
                 .build(), NioIoHandler.newFactory());
 
         this.parser.start(this.bossGroup);

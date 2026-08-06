@@ -61,13 +61,14 @@ public class TcpListener implements Listener {
         // selected for accept. Netty's default (0 = 2 * num cores) would build the rest as loops
         // nothing can reach — they hold a selector each and never run. A second bind() on this
         // listener would make the count matter again.
+        final var formatName = name.replace("%", "%%");
         this.bossGroup = new MultiThreadIoEventLoopGroup(1, new ThreadFactoryBuilder()
-                .setNameFormat("tcp-listener-nio-boss-" + name + "-%d")
+                .setNameFormat("tcp-listener-nio-boss-" + formatName + "-%d")
                 .build(), NioIoHandler.newFactory());
         // Netty defaults to 2 * num cores when the number of threads is set to 0; here that is
         // real capacity, since each accepted connection is assigned a loop round-robin.
         this.workerGroup = new MultiThreadIoEventLoopGroup(0, new ThreadFactoryBuilder()
-                .setNameFormat("tcp-listener-nio-worker-" + name + "-%d")
+                .setNameFormat("tcp-listener-nio-worker-" + formatName + "-%d")
                 .build(), NioIoHandler.newFactory());
 
         this.parser.start(this.bossGroup);
