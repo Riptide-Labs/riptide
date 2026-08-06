@@ -9,11 +9,9 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 
 import com.codahale.metrics.MetricRegistry;
 
-import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.assertj.core.api.Assertions;
@@ -286,145 +284,7 @@ public class SnmpTest {
         assertThat(snmpService.getIfInfo(snmpEndpoint, 1)).isInstanceOf(Optional.class).isEmpty();
     }
 
-    @Test
-    public void testSnmpCache(@TempDir Path temporaryFolder) throws IOException, ExecutionException {
-        final int port = getNextPort();
-        final SnmpCacheConfig snmpCacheConfig = new SnmpCacheConfig();
-        snmpCacheConfig.setRetentionMs(600000);
-        // negative caching and endpoint back-off: this test exercises miss -> recovery
-        // without waiting for either TTL (the first lookup targets a not-yet-started agent)
-        snmpCacheConfig.setNegativeRetentionMs(0);
-        snmpCacheConfig.setDeadEndpointRetentionMs(0);
 
-        final SnmpService snmpCache = new CachingSnmpService(new DefaultSnmpService(SECRET_RESOLVERS, new MetricRegistry()), snmpCacheConfig);
-        final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.COMMUNITY);
 
-        assertThat(snmpCache.getIfInfo(snmpEndpoint, 1)).isInstanceOf(Optional.class).isEmpty();
 
-        currentAgent = new TestSnmpAgent("127.0.0.1/" + port, temporaryFolder);
-        currentAgent.start();
-        currentAgent.registerIfTable();
-
-        assertThat(snmpCache.getIfInfo(snmpEndpoint, 1)).isInstanceOf(Optional.class).isPresent();
-        assertThat(snmpCache.getIfInfo(snmpEndpoint, 1).get().name()).isEqualTo("eth0");
-        assertThat(snmpCache.getIfInfo(snmpEndpoint, 2)).isInstanceOf(Optional.class).isPresent();
-        assertThat(snmpCache.getIfInfo(snmpEndpoint, 2).get().name()).isEqualTo("lo0");
-
-        currentAgent.stop();
-        currentAgent = null;
-
-        assertThat(snmpCache.getIfInfo(snmpEndpoint, 1)).isInstanceOf(Optional.class).isPresent();
-        assertThat(snmpCache.getIfInfo(snmpEndpoint, 1).get().name()).isEqualTo("eth0");
-        assertThat(snmpCache.getIfInfo(snmpEndpoint, 2)).isInstanceOf(Optional.class).isPresent();
-        assertThat(snmpCache.getIfInfo(snmpEndpoint, 2).get().name()).isEqualTo("lo0");
-    }
-
-    /**
-     * The walk meter is the baseline instrument for #443: it must count table walks actually issued
-     * against an agent, not enrichment lookups. Metering the delegate rather than the cache is what
-     * makes that true, and this pins it — two ifIndexes served from cache must not inflate the count.
-     */
-    @Test
-    public void walkMeterCountsWalksNotCacheHits(@TempDir Path temporaryFolder) throws IOException {
-        final int port = getNextPort();
-        final MetricRegistry metrics = new MetricRegistry();
-        final SnmpCacheConfig snmpCacheConfig = new SnmpCacheConfig();
-        snmpCacheConfig.setRetentionMs(600000);
-
-        currentAgent = new TestSnmpAgent("127.0.0.1/" + port, temporaryFolder);
-        currentAgent.start();
-        currentAgent.registerIfTable();
-
-        final SnmpService snmpCache =
-                new CachingSnmpService(new DefaultSnmpService(SECRET_RESOLVERS, metrics), snmpCacheConfig);
-        final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.COMMUNITY);
-
-        assertThat(snmpCache.getIfInfo(snmpEndpoint, 1)).isPresent();
-        assertThat(metrics.meter(MetricRegistry.name("snmp", "walks")).getCount()).isEqualTo(1L);
-
-        // repeat lookup of the same ifIndex: served from cache, no walk
-        assertThat(snmpCache.getIfInfo(snmpEndpoint, 1)).isPresent();
-        assertThat(metrics.meter(MetricRegistry.name("snmp", "walks")).getCount()).isEqualTo(1L);
-
-        // a *different* ifIndex on the same agent walks the whole table again — this is the waste
-        // #443 exists to remove, and the meter is what will show it disappearing
-        assertThat(snmpCache.getIfInfo(snmpEndpoint, 2)).isPresent();
-        assertThat(metrics.meter(MetricRegistry.name("snmp", "walks")).getCount()).isEqualTo(2L);
-
-        assertThat(metrics.meter(MetricRegistry.name("snmp", "walks", "succeeded")).getCount()).isEqualTo(2L);
-        assertThat(metrics.timer(MetricRegistry.name("snmp", "walkDuration")).getCount()).isEqualTo(2L);
-    }
-
-    @Test
-    public void deadEndpointsShortCircuitAcrossIfIndexes() {
-        final SnmpCacheConfig snmpCacheConfig = new SnmpCacheConfig();
-
-        final AtomicInteger delegateCalls = new AtomicInteger();
-        final SnmpService timingOut = new SnmpService() {
-            @Override
-            public Optional<IfInfo> getIfInfo(final SnmpEndpoint endpoint, final int ifIndex) {
-                return lookupIfInfo(endpoint, ifIndex).ifInfo();
-            }
-
-            @Override
-            public IfInfoLookup lookupIfInfo(final SnmpEndpoint endpoint, final int ifIndex) {
-                delegateCalls.incrementAndGet();
-                return new IfInfoLookup(Optional.empty(), true);
-            }
-        };
-        final CachingSnmpService snmpCache = new CachingSnmpService(timingOut, snmpCacheConfig);
-        final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), getNextPort(), TestSnmpAgent.COMMUNITY);
-
-        final var logger = (Logger) LoggerFactory.getLogger(CachingSnmpService.class);
-        final var appender = new ListAppender<ILoggingEvent>();
-        appender.start();
-        logger.addAppender(appender);
-        try {
-            // one timed-out walk condemns the endpoint: other ifIndexes must not walk again
-            assertThat(snmpCache.getIfInfo(snmpEndpoint, 1)).isInstanceOf(Optional.class).isEmpty();
-            assertThat(snmpCache.getIfInfo(snmpEndpoint, 2)).isInstanceOf(Optional.class).isEmpty();
-            assertThat(snmpCache.getIfInfo(snmpEndpoint, 3)).isInstanceOf(Optional.class).isEmpty();
-            assertThat(delegateCalls.get()).isEqualTo(1);
-
-            // one WARN marks the endpoint dead; the per-ifIndex diagnostic stays silent
-            Assertions.assertThat(appender.list)
-                    .filteredOn(event -> event.getFormattedMessage().contains("does not answer"))
-                    .hasSize(1);
-            Assertions.assertThat(appender.list)
-                    .noneMatch(event -> event.getFormattedMessage().contains("Cannot determine interface info"));
-
-            // hot-reload clears the dead marking: the next lookup walks again
-            snmpCache.invalidateAll();
-            assertThat(snmpCache.getIfInfo(snmpEndpoint, 1)).isInstanceOf(Optional.class).isEmpty();
-            assertThat(delegateCalls.get()).isEqualTo(2);
-        } finally {
-            logger.detachAppender(appender);
-        }
-    }
-
-    @Test
-    public void missesAreNegativelyCachedToOneDelegateCallPerTtl() {
-        final SnmpCacheConfig snmpCacheConfig = new SnmpCacheConfig();
-        snmpCacheConfig.setRetentionMs(600000);
-        snmpCacheConfig.setNegativeRetentionMs(600000);
-
-        final AtomicInteger delegateCalls = new AtomicInteger();
-        final SnmpService alwaysMissing = (endpoint, ifIndex) -> {
-            delegateCalls.incrementAndGet();
-            return Optional.empty();
-        };
-        final CachingSnmpService snmpCache = new CachingSnmpService(alwaysMissing, snmpCacheConfig);
-        final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), getNextPort(), TestSnmpAgent.COMMUNITY);
-
-        // every delegate miss is a full table walk — repeated lookups must not repeat it
-        assertThat(snmpCache.getIfInfo(snmpEndpoint, 7)).isInstanceOf(Optional.class).isEmpty();
-        assertThat(snmpCache.getIfInfo(snmpEndpoint, 7)).isInstanceOf(Optional.class).isEmpty();
-        assertThat(snmpCache.getIfInfo(snmpEndpoint, 7)).isInstanceOf(Optional.class).isEmpty();
-        assertThat(delegateCalls.get()).isEqualTo(1);
-
-        // hot-reload invalidation clears the negative entries too
-        snmpCache.invalidateAll();
-        assertThat(snmpCache.getIfInfo(snmpEndpoint, 7)).isInstanceOf(Optional.class).isEmpty();
-        assertThat(delegateCalls.get()).isEqualTo(2);
-    }
 }

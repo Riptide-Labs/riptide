@@ -13,6 +13,7 @@ import org.riptide.secrets.SecretResolvers;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -23,9 +24,10 @@ public class DefaultSnmpService implements SnmpService {
     private final SecretResolvers secretResolvers;
 
     /**
-     * Walk accounting. This is the layer where a walk actually happens: {@link CachingSnmpService}
-     * fronts it, so every increment here is a real table walk against a real agent rather than a
-     * cache hit. That distinction is the whole point of metering here and not there.
+     * Walk accounting. This is the layer where a walk actually happens, so every increment here is
+     * a real table walk against a real agent rather than a lookup served from
+     * {@link InterfaceSnapshotPoller}'s snapshot. That distinction is the whole point of metering
+     * here and not at the layer callers actually use.
      *
      * <p>One walk is roughly ⌈interfaces / 10⌉ GETBULK round trips, because {@code TableUtils}
      * defaults to ten rows per PDU and {@link SnmpUtils} does not override it. The walk rate is
@@ -52,8 +54,21 @@ public class DefaultSnmpService implements SnmpService {
         return lookupIfInfo(snmpEndpoint, ifIndex).ifInfo();
     }
 
+    /**
+     * Resolves one interface by walking the whole table and keeping a single row.
+     *
+     * <p>Retained for the demand-filled caching layer. Every caller that needs more than one
+     * interface from the same exporter should use {@link #walkInterfaces} instead, because
+     * this discards the other rows the walk already paid for.
+     */
     @Override
     public IfInfoLookup lookupIfInfo(final SnmpEndpoint snmpEndpoint, final int ifIndex) {
+        final InterfaceTable table = walkInterfaces(snmpEndpoint);
+        return new IfInfoLookup(Optional.ofNullable(table.rows().get(ifIndex)), table.endpointTimedOut());
+    }
+
+    @Override
+    public InterfaceTable walkInterfaces(final SnmpEndpoint snmpEndpoint) {
         this.walks.mark();
         try (var ignored = this.walkDuration.time()) {
             final var walk = SnmpUtils.getIfInfoMap(snmpEndpoint, this.secretResolvers);
@@ -62,14 +77,13 @@ public class DefaultSnmpService implements SnmpService {
                 case TIMEOUT -> this.walksTimedOut.mark();
                 case ERROR -> this.walksFailed.mark();
             }
-            return new IfInfoLookup(Optional.ofNullable(walk.rows().get(ifIndex)),
-                    walk.outcome() == SnmpUtils.WalkOutcome.TIMEOUT);
+            return new InterfaceTable(walk.rows(), walk.outcome() == SnmpUtils.WalkOutcome.TIMEOUT);
         } catch (IOException | IllegalArgumentException e) {
             // IllegalArgumentException: an unresolvable secret reference must degrade to an
             // unenriched flow, never fail the pipeline and drop the batch.
             this.walksFailed.mark();
-            log.warn("Error fetching value from {} at index {}: {}", snmpEndpoint, ifIndex, e.getMessage());
-            return new IfInfoLookup(Optional.empty(), false);
+            log.warn("Error walking the interface table of {}: {}", snmpEndpoint, e.getMessage());
+            return new InterfaceTable(Map.of(), false);
         }
     }
 }

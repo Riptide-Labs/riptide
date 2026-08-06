@@ -32,7 +32,7 @@ import java.util.function.Consumer;
 public class SnmpEnricher implements Enricher {
 
     @NonNull
-    private final SnmpService snmpService;
+    private final InterfaceSource interfaceSource;
 
     @NonNull
     private final NodeRegistry nodeRegistry;
@@ -43,18 +43,16 @@ public class SnmpEnricher implements Enricher {
     /**
      * Resolves inline and returns an already-completed future.
      *
-     * <p>There was an offload here — originally {@code supplyAsync} onto the common ForkJoinPool,
-     * then a dedicated pool — on the reasoning that a caching-layer miss can perform a synchronous
-     * SNMP walk and that must not run on a parser worker. That reasoning does not survive contact
-     * with the caller: {@link org.riptide.pipeline.Pipeline} joins this future, so the worker blocks
-     * for the walk either way. The offload bought a park pair per batch and capped SNMP concurrency
-     * at the pool size for every parser worker — strictly worse than doing the work in place.
+     * <p>Inline is now correct rather than merely honest. This used to perform a synchronous SNMP
+     * walk on a first-touch cache miss, so a parser worker blocked for the walk timeout and a
+     * sustained miss rate showed up as dispatch queue depth and counted drops. Interface data now
+     * comes from {@link InterfaceSnapshotPoller}, which reads an already-walked snapshot, so there
+     * is no SNMP call left to offload and nothing to block on.
      *
-     * <p>Consequence to be aware of rather than hidden: a first-touch cache miss blocks the calling
-     * parser worker for the walk timeout, and with a bounded dispatch queue upstream that shows up as
-     * queue depth and, if sustained, counted drops. That is the honest shape of a synchronous
-     * enrichment ladder. Making it genuinely asynchronous means not joining in {@code Pipeline}
-     * (issue #384), not moving the block somewhere else.
+     * <p>The remaining consequence is a warmup window, not a stall: between an exporter's first
+     * flow and its first completed walk there is no snapshot, so those flows carry no
+     * SNMP-derived interface fields. Static pins and exporter-pushed option data still apply, so
+     * enrichment degrades rather than fails.
      */
     @Override
     public CompletableFuture<Void> enrich(final Source source, final List<EnrichedFlow> flows) {
@@ -99,8 +97,9 @@ public class SnmpEnricher implements Enricher {
                 .map(n -> n.definition().getInterfaces().get(ifIndex))
                 .orElse(null);
         final IfInfo options = this.exporterInterfaceTable.lookup(source.identity(), ifIndex).orElse(null);
+        // reads the polled snapshot; registers the exporter on its first flow but never walks
         final IfInfo live = snmpEndpoint
-                .flatMap(endpoint -> this.snmpService.getIfInfo(endpoint, ifIndex))
+                .flatMap(endpoint -> this.interfaceSource.resolve(endpoint, ifIndex))
                 .orElse(null);
         final IfInfo merged = IfInfo.merge(pinned, IfInfo.optionsThenSnmp(options, live));
         if (merged != null) {

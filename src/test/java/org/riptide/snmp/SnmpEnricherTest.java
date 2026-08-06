@@ -47,6 +47,15 @@ public class SnmpEnricherTest {
     @Autowired
     SnmpService snmpService;
 
+    /**
+     * These tests exercise the ladder's per-field merge authority, not polling. Resolving straight
+     * from a live walk keeps them independent of the poller's schedule; the poller has its own
+     * tests for registration, spreading and back-off.
+     */
+    private InterfaceSource liveSnmp() {
+        return (endpoint, ifIndex) -> this.snmpService.getIfInfo(endpoint, ifIndex);
+    }
+
     @Autowired
     NodeRegistry nodeRegistry;
 
@@ -59,7 +68,7 @@ public class SnmpEnricherTest {
         snmpAgent.registerIfTable();
         snmpAgent.registerIfXTable();
 
-        final var enrichers = List.<Enricher>of(new SnmpEnricher(this.snmpService, this.nodeRegistry, emptyInterfaceTable()));
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(liveSnmp(), this.nodeRegistry, emptyInterfaceTable()));
         final var repository = new TestRepository(metricRegistry);
         final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
 
@@ -109,7 +118,7 @@ public class SnmpEnricherTest {
                 List.of(new StringValue("IF_NAME", "opt-if2"),
                         new StringValue("IF_DESC", "opt-desc2")));
 
-        final var enrichers = List.<Enricher>of(new SnmpEnricher(this.snmpService, this.nodeRegistry, interfaceTable));
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(liveSnmp(), this.nodeRegistry, interfaceTable));
         final var repository = new TestRepository(metricRegistry);
         final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
 
@@ -147,7 +156,7 @@ public class SnmpEnricherTest {
                 List.of(new UnsignedValue("SCOPE:INTERFACE", 1)),
                 List.of(new StringValue("IF_NAME", "no-node-if1"), new StringValue("IF_DESC", "pushed")));
 
-        final var enrichers = List.<Enricher>of(new SnmpEnricher(this.snmpService, this.nodeRegistry, interfaceTable));
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(liveSnmp(), this.nodeRegistry, interfaceTable));
         final var repository = new TestRepository(metricRegistry);
         final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
 
@@ -176,9 +185,9 @@ public class SnmpEnricherTest {
     public void unknownIfIndexZeroSkipsTheWholeLadder() throws Exception {
         // single-direction exporters (e.g. pmacct nfprobe) emit ifIndex 0 on the untagged
         // side of every flow — that must not hit SNMP at all
-        final SnmpService snmpService = Mockito.mock(SnmpService.class);
+        final InterfaceSource interfaceSource = Mockito.mock(InterfaceSource.class);
 
-        final var enrichers = List.<Enricher>of(new SnmpEnricher(snmpService, this.nodeRegistry, emptyInterfaceTable()));
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(interfaceSource, this.nodeRegistry, emptyInterfaceTable()));
         final var repository = new TestRepository(metricRegistry);
         final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
 
@@ -192,7 +201,7 @@ public class SnmpEnricherTest {
 
         pipeline.process(source, List.of(flow));
 
-        Mockito.verifyNoInteractions(snmpService);
+        Mockito.verifyNoInteractions(interfaceSource);
         assertThat(repository.flows()).allSatisfy(enrichedFlow -> {
             assertThat(enrichedFlow.getInputSnmpIfName()).isNull();
             assertThat(enrichedFlow.getInputSnmpIfAlias()).isNull();

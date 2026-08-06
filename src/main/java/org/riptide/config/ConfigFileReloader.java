@@ -16,7 +16,7 @@ import org.riptide.node.NodeRegistry;
 import org.riptide.node.NodesConfigMigrationCheck;
 import org.riptide.routing.RoutingConfig;
 import org.riptide.secrets.SopsSecretResolver;
-import org.riptide.snmp.CachingSnmpService;
+import org.riptide.snmp.InterfaceSnapshotPoller;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
@@ -73,7 +73,7 @@ public class ConfigFileReloader {
     private final ConfigReloadProperties properties;
     private final NodeRegistry nodeRegistry;
     private final RoutingConfig routingConfig;
-    private final CachingSnmpService snmpCache;
+    private final InterfaceSnapshotPoller interfacePoller;
     private final SopsSecretResolver sopsSecretResolver;
 
     private final Counter reloadSuccesses;
@@ -91,14 +91,14 @@ public class ConfigFileReloader {
                               final ConfigReloadProperties properties,
                               final NodeRegistry nodeRegistry,
                               final RoutingConfig routingConfig,
-                              final CachingSnmpService snmpCache,
+                              final InterfaceSnapshotPoller interfacePoller,
                               final SopsSecretResolver sopsSecretResolver,
                               final MetricRegistry metrics) {
         this.environment = Objects.requireNonNull(environment);
         this.properties = Objects.requireNonNull(properties);
         this.nodeRegistry = Objects.requireNonNull(nodeRegistry);
         this.routingConfig = Objects.requireNonNull(routingConfig);
-        this.snmpCache = Objects.requireNonNull(snmpCache);
+        this.interfacePoller = Objects.requireNonNull(interfacePoller);
         this.sopsSecretResolver = Objects.requireNonNull(sopsSecretResolver);
 
         this.reloadSuccesses = metrics.counter(MetricRegistry.name("config", "reload", "successes"));
@@ -234,7 +234,7 @@ public class ConfigFileReloader {
         this.lastCommittedHash = this.lastAttemptedHash;
         this.nodeRegistry.swap(validatedNodes);
         this.routingConfig.swap(parsedRouting);
-        this.snmpCache.invalidateAll();
+        this.interfacePoller.invalidateAll();
         this.sopsSecretResolver.invalidateCache();
 
         this.reloadSuccesses.inc();
