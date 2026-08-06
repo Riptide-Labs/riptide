@@ -5,6 +5,7 @@
 
 package org.riptide.management;
 
+import com.codahale.metrics.MetricRegistry;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import jakarta.annotation.PostConstruct;
@@ -23,7 +24,8 @@ import java.util.function.Supplier;
 
 /**
  * A minimal HTTP server (JDK {@link HttpServer}, no web application server) exposing {@code /livez}
- * and {@code /readyz} on the management port for Kubernetes probes and Docker Compose health checks.
+ * and {@code /readyz} on the management port for Kubernetes probes and Docker Compose health checks,
+ * and {@code /metrics} in Prometheus text format.
  */
 @Slf4j
 @Component
@@ -31,14 +33,17 @@ public class ManagementServer {
 
     private final RiptideManagementProperties properties;
     private final HealthService health;
+    private final MetricRegistry metrics;
 
     private HttpServer server;
     private ExecutorService executor;
     private Semaphore inFlight;
 
-    public ManagementServer(final RiptideManagementProperties properties, final HealthService health) {
+    public ManagementServer(final RiptideManagementProperties properties, final HealthService health,
+                            final MetricRegistry metrics) {
         this.properties = properties;
         this.health = health;
+        this.metrics = metrics;
     }
 
     @PostConstruct
@@ -58,10 +63,14 @@ public class ManagementServer {
         this.server.setExecutor(this.executor);
         this.server.createContext("/livez", exchange -> guarded(exchange, this.health::liveness));
         this.server.createContext("/readyz", exchange -> guarded(exchange, this.health::readiness));
+        if (this.properties.isMetricsEnabled()) {
+            this.server.createContext("/metrics", this::metrics);
+        }
         this.server.start();
 
-        log.info("Management server listening on {}:{} (/livez, /readyz)",
-                this.properties.getBindAddress(), this.properties.getPort());
+        log.info("Management server listening on {}:{} (/livez, /readyz{})",
+                this.properties.getBindAddress(), this.properties.getPort(),
+                this.properties.isMetricsEnabled() ? ", /metrics" : "");
     }
 
     @PreDestroy
@@ -93,13 +102,37 @@ public class ManagementServer {
         }
     }
 
+    /**
+     * Prometheus scrape endpoint. Shares the probes' concurrency cap rather than carrying its own:
+     * rendering walks the whole registry, so it is the more expensive of the two handlers and has
+     * more reason to be bounded, not less. A scrape that loses the race is shed with 503, which
+     * Prometheus records as a failed scrape rather than retrying into the contention.
+     */
+    private void metrics(final HttpExchange exchange) throws IOException {
+        if (!this.inFlight.tryAcquire()) {
+            respond(exchange, 503, "text/plain; charset=utf-8", "management server busy\n");
+            return;
+        }
+        try {
+            respond(exchange, 200, "text/plain; version=0.0.4; charset=utf-8",
+                    PrometheusExposition.render(this.metrics));
+        } finally {
+            this.inFlight.release();
+        }
+    }
+
     private static void respond(final HttpExchange exchange, final Health health) throws IOException {
-        final byte[] body = ((health.up() ? "ok" : "unavailable") + ": " + health.detail() + "\n")
-                .getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
-        exchange.sendResponseHeaders(health.up() ? 200 : 503, body.length);
+        respond(exchange, health.up() ? 200 : 503, "text/plain; charset=utf-8",
+                (health.up() ? "ok" : "unavailable") + ": " + health.detail() + "\n");
+    }
+
+    private static void respond(final HttpExchange exchange, final int status,
+                                final String contentType, final String body) throws IOException {
+        final byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", contentType);
+        exchange.sendResponseHeaders(status, bytes.length);
         try (OutputStream os = exchange.getResponseBody()) {
-            os.write(body);
+            os.write(bytes);
         }
     }
 }

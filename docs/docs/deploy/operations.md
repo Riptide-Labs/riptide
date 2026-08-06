@@ -170,12 +170,10 @@ Template cardinality is the more useful of the two for capacity work — it is w
 per-record cost of the parse path. For the drop and depth metrics, see
 [Ingest loss counters](#ingest-loss-counters) above.
 
-:::warning
+:::tip
 
-Riptide does not export metrics yet: there is no reporter and no scrape endpoint, and the management
-port serves only `/livez` and `/readyz`. These gauges are registered in the metrics registry, but
-nothing publishes them — so rebaselining a dashboard is something to do when metric export lands,
-not today.
+These gauges, and every other metric on this page, are published on the management port at
+`GET /metrics` in Prometheus text format. See [Metrics endpoint](#metrics-endpoint) below.
 
 :::
 
@@ -189,13 +187,15 @@ application web server).
 |---|---|
 | `GET /livez` | **Liveness** — the receiver event loops are alive. Returns `200` while booting and once running; `503` only if a started receiver's socket has died. **Never** checks ClickHouse. |
 | `GET /readyz` | **Readiness** — all configured receivers are bound and listening (`200`), else `503`. |
+| `GET /metrics` | **Metrics** — the full metric registry in Prometheus text format. See below. |
 
 Configure via `riptide.management.*`:
 
 ```properties
-riptide.management.enabled=true       # set false to disable the endpoints entirely
+riptide.management.enabled=true         # set false to disable the endpoints entirely
 riptide.management.port=8080
 riptide.management.bind-address=0.0.0.0
+riptide.management.metrics-enabled=true # set false to serve probes but not /metrics
 ```
 
 **Readiness deliberately excludes ClickHouse.** There is no write buffer and a single collector has
@@ -215,6 +215,36 @@ The Compose stack uses `/readyz` as the service `healthcheck` (via the image's B
 
 The endpoints are served on virtual threads, capped by `riptide.management.max-concurrent-requests` (default 32).
 Requests beyond the cap are answered `503` rather than queued, so a probe gets a fast answer instead of waiting behind a burst.
+
+## Metrics endpoint
+
+`GET /metrics` renders the whole metric registry in [Prometheus text exposition format](https://prometheus.io/docs/instrumenting/exposition_formats/) 0.0.4.
+
+```bash
+curl -s http://localhost:8080/metrics
+```
+
+Registry names contain dots; Prometheus metric names may not.
+Characters outside `[a-zA-Z0-9_:]` are replaced with `_`, so `enrichment.optionInterfaces.consumed` is scraped as `enrichment_optionInterfaces_consumed`.
+Counters are **not** given the conventional `_total` suffix, so a name you find in the source is the name you search for in Grafana.
+
+Type mapping:
+
+| Registry type | Exposed as |
+|---|---|
+| Gauge (numeric) | `gauge`. Non-numeric gauges are skipped — they have no valid representation, and emitting one would break the entire scrape rather than one series. |
+| Counter | `counter` |
+| Meter | `counter`, plus `_rate_1m` and `_rate_5m` gauges carrying Dropwizard's own moving averages |
+| Histogram | `summary` with p50/p95/p99 and `_count` |
+| Timer | `summary` named `<name>_seconds` with p50/p95/p99 and `_count`. Durations are converted from nanoseconds to seconds, the unit Prometheus tooling assumes. |
+
+The endpoint shares the probes' concurrency cap rather than having its own.
+Rendering walks the whole registry, so it is the more expensive handler and has more reason to be bounded, not less.
+A scrape that loses the race is shed with `503`, which Prometheus records as a failed scrape.
+
+Set `riptide.management.metrics-enabled=false` to serve probes without exposing metric names and values.
+The two are separate settings because they have different exposure profiles: probes answer up/down, while metrics describe your exporters and throughput.
+With it disabled the path is not registered at all, so a scrape gets `404`.
 
 :::note
 `jstack` does not show virtual threads, so the `management-http-*` handlers are invisible to it and to `top -H`.

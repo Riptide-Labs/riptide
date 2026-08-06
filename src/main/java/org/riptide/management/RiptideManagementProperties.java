@@ -18,6 +18,16 @@ public class RiptideManagementProperties {
     /** Serve the management HTTP endpoints ({@code /livez}, {@code /readyz}). */
     private boolean enabled = true;
 
+    /**
+     * Serve {@code /metrics} in Prometheus text format on the management port.
+     *
+     * <p>Separate from {@link #enabled} because the two have different exposure profiles: probes
+     * answer up/down, while the metric names and values describe the deployment's exporters and
+     * throughput. An operator who wants health checks reachable but metrics scraped only from a
+     * private network can turn this off without losing the probes.
+     */
+    private boolean metricsEnabled = true;
+
     /** Management HTTP port. */
     private int port = 8080;
 

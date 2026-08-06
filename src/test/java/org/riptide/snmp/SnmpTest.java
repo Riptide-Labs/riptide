@@ -7,6 +7,8 @@ package org.riptide.snmp;
 
 import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 
+import com.codahale.metrics.MetricRegistry;
+
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
@@ -278,7 +280,7 @@ public class SnmpTest {
     @Test
     public void unresolvableSecretRefDegradesToEmptyInsteadOfThrowing() {
         // a broken secret reference must yield an unenriched flow, never fail the pipeline
-        final SnmpService snmpService = new DefaultSnmpService(SECRET_RESOLVERS);
+        final SnmpService snmpService = new DefaultSnmpService(SECRET_RESOLVERS, new MetricRegistry());
         final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), getNextPort(), "env://RIPTIDE_TEST_MISSING_VAR");
 
         assertThat(snmpService.getIfInfo(snmpEndpoint, 1)).isInstanceOf(Optional.class).isEmpty();
@@ -294,7 +296,7 @@ public class SnmpTest {
         snmpCacheConfig.setNegativeRetentionMs(0);
         snmpCacheConfig.setDeadEndpointRetentionMs(0);
 
-        final SnmpService snmpCache = new CachingSnmpService(new DefaultSnmpService(SECRET_RESOLVERS), snmpCacheConfig);
+        final SnmpService snmpCache = new CachingSnmpService(new DefaultSnmpService(SECRET_RESOLVERS, new MetricRegistry()), snmpCacheConfig);
         final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.COMMUNITY);
 
         assertThat(snmpCache.getIfInfo(snmpEndpoint, 1)).isInstanceOf(Optional.class).isEmpty();
@@ -315,6 +317,42 @@ public class SnmpTest {
         assertThat(snmpCache.getIfInfo(snmpEndpoint, 1).get().name()).isEqualTo("eth0");
         assertThat(snmpCache.getIfInfo(snmpEndpoint, 2)).isInstanceOf(Optional.class).isPresent();
         assertThat(snmpCache.getIfInfo(snmpEndpoint, 2).get().name()).isEqualTo("lo0");
+    }
+
+    /**
+     * The walk meter is the baseline instrument for #443: it must count table walks actually issued
+     * against an agent, not enrichment lookups. Metering the delegate rather than the cache is what
+     * makes that true, and this pins it — two ifIndexes served from cache must not inflate the count.
+     */
+    @Test
+    public void walkMeterCountsWalksNotCacheHits(@TempDir Path temporaryFolder) throws IOException {
+        final int port = getNextPort();
+        final MetricRegistry metrics = new MetricRegistry();
+        final SnmpCacheConfig snmpCacheConfig = new SnmpCacheConfig();
+        snmpCacheConfig.setRetentionMs(600000);
+
+        currentAgent = new TestSnmpAgent("127.0.0.1/" + port, temporaryFolder);
+        currentAgent.start();
+        currentAgent.registerIfTable();
+
+        final SnmpService snmpCache =
+                new CachingSnmpService(new DefaultSnmpService(SECRET_RESOLVERS, metrics), snmpCacheConfig);
+        final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.COMMUNITY);
+
+        assertThat(snmpCache.getIfInfo(snmpEndpoint, 1)).isPresent();
+        assertThat(metrics.meter(MetricRegistry.name("snmp", "walks")).getCount()).isEqualTo(1L);
+
+        // repeat lookup of the same ifIndex: served from cache, no walk
+        assertThat(snmpCache.getIfInfo(snmpEndpoint, 1)).isPresent();
+        assertThat(metrics.meter(MetricRegistry.name("snmp", "walks")).getCount()).isEqualTo(1L);
+
+        // a *different* ifIndex on the same agent walks the whole table again — this is the waste
+        // #443 exists to remove, and the meter is what will show it disappearing
+        assertThat(snmpCache.getIfInfo(snmpEndpoint, 2)).isPresent();
+        assertThat(metrics.meter(MetricRegistry.name("snmp", "walks")).getCount()).isEqualTo(2L);
+
+        assertThat(metrics.meter(MetricRegistry.name("snmp", "walks", "succeeded")).getCount()).isEqualTo(2L);
+        assertThat(metrics.timer(MetricRegistry.name("snmp", "walkDuration")).getCount()).isEqualTo(2L);
     }
 
     @Test
