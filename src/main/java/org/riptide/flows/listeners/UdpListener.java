@@ -116,8 +116,11 @@ public class UdpListener implements Listener {
         this.metrics.register(gauge, (Gauge<Long>) () -> UdpSocketDrops.forSocket(bound));
     }
 
-    // Steps are attempted independently so a failure does not strand the resources after it; see
-    // Teardown. The order below is load-bearing and must not change.
+    // socketFuture and bossGroup are assigned in start(), which runs in a later lifecycle phase
+    // than the constructor — a context refresh that fails in between leaves this listener owning
+    // neither, so those steps are guarded. metrics and parser are set at construction and are never
+    // null. Steps are attempted independently so a failure does not strand the resources after it;
+    // see Teardown. The order below is load-bearing and must not change.
     @Override
     public void stop() {
         final var teardown = new Teardown();
@@ -126,21 +129,21 @@ public class UdpListener implements Listener {
         // longer own, and the next process to bind it would have its kernel drops published as
         // this receiver's ingest loss. Same reason BatchingFlowRepository removes its queue-depth
         // gauge in stop().
-        teardown.attemptIfPresent(this.metrics,
+        teardown.attempt(
                 () -> this.metrics.remove(MetricRegistry.name("listeners", this.name, "socketDrops")));
 
         teardown.attemptIfPresent(this.socketFuture, () -> {
             final var ch = this.socketFuture.channel();
-            if (ch != null) {
-                LOG.info("Closing channel...");
-                teardown.attempt(ch.close()::syncUninterruptibly);
-                if (ch.parent() != null) {
-                    teardown.attempt(ch.parent().close()::syncUninterruptibly);
-                }
+            LOG.info("Closing channel...");
+            // Channel and parent are attempted separately: a parent that fails to close must not
+            // be skipped because the child did, and vice versa.
+            teardown.attempt(() -> ch.close().syncUninterruptibly());
+            if (ch.parent() != null) {
+                teardown.attempt(() -> ch.parent().close().syncUninterruptibly());
             }
         });
 
-        teardown.attemptIfPresent(this.parser, () -> {
+        teardown.attempt(() -> {
             LOG.info("Stopping parser...");
             this.parser.stop();
         });

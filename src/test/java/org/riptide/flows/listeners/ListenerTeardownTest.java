@@ -71,9 +71,10 @@ class ListenerTeardownTest {
                 .as("the failure must still reach the caller, not be swallowed")
                 .isSameAs(failure);
 
-        assertThat(liveThreadNames("tcp-listener-nio-"))
-                .as("the parser's failure must not prevent the event loop groups from shutting down")
-                .isEmpty();
+        awaitNoThreads("tcp-listener-nio-boss-stranded-",
+                "the parser's failure must not prevent the event loop groups from shutting down");
+        awaitNoThreads("tcp-listener-nio-worker-stranded-",
+                "the parser's failure must not prevent the event loop groups from shutting down");
     }
 
     @Test
@@ -109,9 +110,8 @@ class ListenerTeardownTest {
                         .as("later failures are attached rather than discarded")
                         .contains(parserFailure));
 
-        assertThat(liveThreadNames("udp-listener-nio-multi-"))
-                .as("both failures notwithstanding, the event loops are still released")
-                .isEmpty();
+        awaitNoThreads("udp-listener-nio-multi-",
+                "both failures notwithstanding, the event loops are still released");
     }
 
     private static java.util.List<String> liveThreadNames(final String prefix) {
@@ -119,6 +119,21 @@ class ListenerTeardownTest {
                 .map(Thread::getName)
                 .filter(name -> name.startsWith(prefix))
                 .toList();
+    }
+
+    /**
+     * Polls rather than asserting once. {@code shutdownGracefully().syncUninterruptibly()} returns
+     * when the termination future completes, and {@code SingleThreadEventExecutor} completes it
+     * from inside the event loop thread's own {@code finally} block — so the thread is briefly
+     * still alive, and visible to {@link Thread#getAllStackTraces()}, after the waiter wakes.
+     * A single assertion here would flake.
+     */
+    private static void awaitNoThreads(final String prefix, final String because) {
+        final long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+        while (!liveThreadNames(prefix).isEmpty() && System.nanoTime() < deadline) {
+            Thread.onSpinWait();
+        }
+        assertThat(liveThreadNames(prefix)).as(because).isEmpty();
     }
 
     /** @param stopFailure thrown from {@code stop()} when non-null. */

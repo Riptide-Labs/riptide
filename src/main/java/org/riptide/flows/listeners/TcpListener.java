@@ -170,10 +170,11 @@ public class TcpListener implements Listener {
                 .syncUninterruptibly();
     }
 
-    // Every field below is assigned in start(), which runs in a later lifecycle phase than the
-    // constructor — a context refresh that fails in between leaves this listener owning nothing.
-    // Steps are attempted independently so a failure does not strand the resources after it; see
-    // Teardown.
+    // socketFuture, workerGroup and bossGroup are assigned in start(), which runs in a later
+    // lifecycle phase than the constructor — a context refresh that fails in between leaves this
+    // listener owning none of them, so those steps are guarded. channels and parser are set at
+    // construction and are never null. Steps are attempted independently so a failure does not
+    // strand the resources after it; see Teardown.
     @Override
     public void stop() {
         final var teardown = new Teardown();
@@ -185,16 +186,16 @@ public class TcpListener implements Listener {
 
         teardown.attemptIfPresent(this.socketFuture, () -> {
             final var ch = this.socketFuture.channel();
-            if (ch != null) {
-                LOG.info("Closing channel...");
-                teardown.attempt(ch.close()::syncUninterruptibly);
-                if (ch.parent() != null) {
-                    teardown.attempt(ch.parent().close()::syncUninterruptibly);
-                }
+            LOG.info("Closing channel...");
+            // Channel and parent are attempted separately: a parent that fails to close must not
+            // be skipped because the child did, and vice versa.
+            teardown.attempt(() -> ch.close().syncUninterruptibly());
+            if (ch.parent() != null) {
+                teardown.attempt(() -> ch.parent().close().syncUninterruptibly());
             }
         });
 
-        teardown.attemptIfPresent(this.parser, () -> {
+        teardown.attempt(() -> {
             LOG.info("Stopping parser...");
             this.parser.stop();
         });
