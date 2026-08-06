@@ -51,20 +51,10 @@ public class DefaultSnmpService implements SnmpService {
 
     @Override
     public Optional<IfInfo> getIfInfo(final SnmpEndpoint snmpEndpoint, final int ifIndex) {
-        return lookupIfInfo(snmpEndpoint, ifIndex).ifInfo();
-    }
-
-    /**
-     * Resolves one interface by walking the whole table and keeping a single row.
-     *
-     * <p>Retained for the demand-filled caching layer. Every caller that needs more than one
-     * interface from the same exporter should use {@link #walkInterfaces} instead, because
-     * this discards the other rows the walk already paid for.
-     */
-    @Override
-    public IfInfoLookup lookupIfInfo(final SnmpEndpoint snmpEndpoint, final int ifIndex) {
-        final InterfaceTable table = walkInterfaces(snmpEndpoint);
-        return new IfInfoLookup(Optional.ofNullable(table.rows().get(ifIndex)), table.endpointTimedOut());
+        // Walks the whole table and keeps one row. Retained for callers that genuinely want a
+        // single interface; anything resolving more than one from the same exporter should use
+        // walkInterfaces instead, because this discards the rows that walk already paid for.
+        return Optional.ofNullable(walkInterfaces(snmpEndpoint).rows().get(ifIndex));
     }
 
     @Override
@@ -77,6 +67,8 @@ public class DefaultSnmpService implements SnmpService {
                 case TIMEOUT -> this.walksTimedOut.mark();
                 case ERROR -> this.walksFailed.mark();
             }
+            // any non-OK outcome is a failed walk: an error PDU is no more worth retrying
+            // immediately than a timeout, and the meters above keep the distinction
             return new InterfaceTable(walk.rows(), walk.outcome() != SnmpUtils.WalkOutcome.OK);
         } catch (IOException | IllegalArgumentException e) {
             // IllegalArgumentException: an unresolvable secret reference must degrade to an

@@ -12,15 +12,6 @@ public interface SnmpService {
     Optional<IfInfo> getIfInfo(SnmpEndpoint snmpEndpoint, int ifIndex);
 
     /**
-     * Like {@link #getIfInfo}, additionally reporting whether the endpoint failed to answer at
-     * all (walk timeout) — the caching layer uses this to back off per endpoint, not per
-     * ifIndex.
-     */
-    default IfInfoLookup lookupIfInfo(SnmpEndpoint snmpEndpoint, int ifIndex) {
-        return new IfInfoLookup(getIfInfo(snmpEndpoint, ifIndex), false);
-    }
-
-    /**
      * Walks the endpoint's whole interface table and returns every row.
      *
      * <p>The per-ifIndex methods above are built on this one and throw away everything except
@@ -32,14 +23,14 @@ public interface SnmpService {
      */
     InterfaceTable walkInterfaces(SnmpEndpoint snmpEndpoint);
 
-    record IfInfoLookup(Optional<IfInfo> ifInfo, boolean endpointTimedOut) {
-    }
-
     /**
-     * One exporter's interface table as a single walk produced it. An empty {@code rows} with
-     * {@code endpointTimedOut} false means the agent answered but carried nothing usable;
-     * with it true, the agent did not answer at all and a second walk would not help either.
+     * One exporter's interface table as a single walk produced it.
+     *
+     * <p>{@code walkFailed} covers every outcome that did not yield a usable table: a timeout, an
+     * error PDU, or an exception the SNMP layer degraded. It deliberately does not distinguish
+     * them, because callers treat them alike — none is worth retrying immediately. Reserve
+     * per-outcome detail for the meters, which do separate them.
      */
-    record InterfaceTable(Map<Integer, IfInfo> rows, boolean endpointTimedOut) {
+    record InterfaceTable(Map<Integer, IfInfo> rows, boolean walkFailed) {
     }
 }

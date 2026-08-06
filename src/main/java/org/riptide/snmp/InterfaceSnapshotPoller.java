@@ -91,6 +91,12 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
 
     private final Meter registered;
     private final Meter deregistered;
+    /**
+     * Counts <em>lookups</em> refused at the exporter bound, not distinct exporters: it is
+     * marked on the resolve path, so a single rejected exporter contributes once per flow and
+     * per direction. It is a pressure signal, not a population count, and cannot be used
+     * directly to size {@code max-exporters}; compare it against the exporters gauge instead.
+     */
     private final Meter rejected;
 
     @Autowired
@@ -110,6 +116,27 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         this.config = Objects.requireNonNull(config);
         this.nanoTime = Objects.requireNonNull(nanoTime);
 
+        // Fail loudly at startup rather than silently. Each of these otherwise disables SNMP
+        // enrichment in a way that looks like a data problem: a non-positive pool width throws
+        // from inside the executor factory naming neither property nor class, and non-positive
+        // expiry or exporter bound make every resolve() return empty with only a meter to show
+        // for it. Note 0 does not mean "unlimited" here, unlike the negative-cache TTL it
+        // replaces — hence checking rather than reinterpreting.
+        requirePositive(config.getRefreshIntervalMs(), "riptide.snmp.poll.refresh-interval-ms");
+        requirePositive(config.getSnapshotExpiryMs(), "riptide.snmp.poll.snapshot-expiry-ms");
+        requirePositive(config.getPoolWidth(), "riptide.snmp.poll.pool-width");
+        requirePositive(config.getDeregisterAfter(), "riptide.snmp.poll.deregister-after");
+        requirePositive(config.getDeadEndpointBaseMs(), "riptide.snmp.poll.dead-endpoint-base-ms");
+        requirePositive(config.getDeadEndpointCeilingMs(), "riptide.snmp.poll.dead-endpoint-ceiling-ms");
+        requirePositive(config.getMaxExporters(), "riptide.snmp.poll.max-exporters");
+        if (config.getSnapshotExpiryMs() < config.getRefreshIntervalMs()) {
+            // not fatal: it still works, it just throws away data it could have served
+            log.warn("riptide.snmp.poll.snapshot-expiry-ms ({}) is shorter than refresh-interval-ms ({}), "
+                            + "so a snapshot expires before it is refreshed and enrichment will blank "
+                            + "between walks",
+                    config.getSnapshotExpiryMs(), config.getRefreshIntervalMs());
+        }
+
         this.walkers = Executors.newFixedThreadPool(config.getPoolWidth(),
                 runnable -> {
                     final Thread thread = new Thread(runnable, "snmp-walker");
@@ -119,7 +146,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
 
         this.registered = metrics.meter(MetricRegistry.name("snmp", "poller", "registered"));
         this.deregistered = metrics.meter(MetricRegistry.name("snmp", "poller", "deregistered"));
-        this.rejected = metrics.meter(MetricRegistry.name("snmp", "poller", "rejectedAtBound"));
+        this.rejected = metrics.meter(MetricRegistry.name("snmp", "poller", "rejectedLookups"));
         metrics.gauge(MetricRegistry.name("snmp", "poller", "exporters"), () -> this.registrations::size);
         metrics.gauge(MetricRegistry.name("snmp", "poller", "queueDepth"), () -> this::dueCount);
         metrics.gauge(MetricRegistry.name("snmp", "poller", "oldestSnapshotAgeMs"), () -> this::oldestSnapshotAgeMs);
@@ -217,8 +244,14 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             final Registration registration = entry.getValue();
 
             if (now - registration.lastSeenNanos > timeoutNanos) {
-                this.registrations.remove(entry.getKey(), registration);
-                this.deregistered.mark();
+                // Not while a walk is running: the in-flight flag lives on this object, so
+                // removing it lets a re-registration mint a fresh flag and start a second
+                // concurrent walk against an agent whose first walk is still parked in its
+                // timeout. Deregistration can wait a tick.
+                if (!registration.walkInFlight.get()) {
+                    this.registrations.remove(entry.getKey(), registration);
+                    this.deregistered.mark();
+                }
                 continue;
             }
             if (now < registration.nextWalkNanos) {
@@ -252,13 +285,13 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             final SnmpService.InterfaceTable table = this.snmpService.walkInterfaces(registration.endpoint);
             final long now = this.nanoTime.getAsLong();
 
-            if (table.endpointTimedOut()) {
-                registration.nextWalkNanos = now + backoffNanos(registration.consecutiveFailures.incrementAndGet());
+            if (table.walkFailed()) {
+                backOff(registration, now);
                 if (!registration.unreachable) {
                     registration.unreachable = true;
                     // transitions are logged, not attempts: a per-retry warning would scale with
                     // how long a device stays down
-                    log.warn("SNMP endpoint {} does not answer, backing off", registration.endpoint);
+                    log.warn("SNMP endpoint {} did not answer usably, backing off", registration.endpoint);
                 }
                 return;
             }
@@ -271,9 +304,24 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             final Map<Integer, IfInfo> rows = table.rows() != null ? table.rows() : Map.of();
             registration.snapshot = new Snapshot(Map.copyOf(rows), now);
             registration.nextWalkNanos = nextWalkAt(registration.endpoint, now);
+        } catch (final RuntimeException e) {
+            // Without this the schedule is never advanced for a registration whose walk throws
+            // something the SNMP layer does not degrade — an snmp4j target construction failure,
+            // say — and the 1 Hz scheduler would re-submit that endpoint every second forever,
+            // with a stack trace each time. Back off exactly as a failed walk does, so an
+            // endpoint that throws is treated no more kindly than one that does not answer.
+            backOff(registration, this.nanoTime.getAsLong());
+            if (!registration.unreachable) {
+                registration.unreachable = true;
+                log.warn("Interface walk of {} failed unexpectedly, backing off", registration.endpoint, e);
+            }
         } finally {
             registration.walkInFlight.set(false);
         }
+    }
+
+    private void backOff(final Registration registration, final long now) {
+        registration.nextWalkNanos = now + backoffNanos(registration.consecutiveFailures.incrementAndGet());
     }
 
     /**
@@ -349,11 +397,27 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 .orElse(0L);
     }
 
-    /** Configuration hot-reload: endpoints or credentials may have changed. */
+    /**
+     * Configuration hot-reload: endpoints or credentials may have changed, so everything is due
+     * for a fresh walk immediately and any accumulated back-off is abandoned.
+     *
+     * <p>Snapshots are deliberately <em>kept</em> rather than dropped. Under the demand-filled
+     * design clearing was free because the next flow refilled synchronously; here a cleared
+     * snapshot is a real gap, and every reload — including one that changed nothing about SNMP —
+     * would blank interface names for the whole fleet until each exporter was re-walked. The
+     * existing data is served, staleness-bounded as always, while the re-walk happens underneath.
+     *
+     * <p>Registrations are kept for a second reason: dropping one whose walk is still in flight
+     * would let a re-registration create a fresh in-flight flag and start a concurrent walk
+     * against the same agent, breaking the one-walk-per-endpoint guarantee.
+     */
     public void invalidateAll() {
-        // clears the accumulated back-off as well as the snapshots, so the next tick retries a
-        // previously unreachable endpoint immediately rather than at its escalated delay
-        this.registrations.clear();
+        final long now = this.nanoTime.getAsLong();
+        for (final Registration registration : this.registrations.values()) {
+            registration.consecutiveFailures.set(0);
+            registration.unreachable = false;
+            registration.nextWalkNanos = now;
+        }
     }
 
     @PreDestroy
@@ -368,6 +432,12 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             }
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void requirePositive(final long value, final String property) {
+        if (value <= 0) {
+            throw new IllegalArgumentException(property + " must be greater than 0, but was " + value);
         }
     }
 

@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class InterfaceSnapshotPollerTest {
 
@@ -28,8 +29,8 @@ class InterfaceSnapshotPollerTest {
     private final MetricRegistry metrics = new MetricRegistry();
 
     /** Counts walks and records which endpoints were walked; never touches a network. */
-    private static final class FakeSnmp implements SnmpService {
-        private final AtomicInteger walks = new AtomicInteger();
+    private static class FakeSnmp implements SnmpService {
+        protected final AtomicInteger walks = new AtomicInteger();
         private final Set<String> walked = ConcurrentHashMap.newKeySet();
         private volatile boolean timeout;
         private volatile CountDownLatch entered;
@@ -104,6 +105,101 @@ class InterfaceSnapshotPollerTest {
         while (poller.anyWalkInFlight() && System.currentTimeMillis() < deadline) {
             Thread.sleep(5);
         }
+    }
+
+    /**
+     * Without the catch in {@code walk()} the schedule is never advanced for an endpoint whose
+     * walk throws something the SNMP layer does not degrade, and the 1 Hz scheduler re-submits it
+     * every second forever. The symptom is an unbounded retry loop plus a stack trace per second,
+     * so this pins that a throwing walk backs off exactly like a failing one.
+     */
+    @Test
+    void aWalkThatThrowsBacksOffInsteadOfRetryingEverySecond() throws Exception {
+        final var thrower = new FakeSnmp() {
+            @Override
+            public InterfaceTable walkInterfaces(final SnmpEndpoint endpoint) {
+                this.walks.incrementAndGet();
+                throw new IllegalStateException("snmp4j target construction blew up");
+            }
+        };
+        final var config = config();
+        config.setDeadEndpointBaseMs(1_000);
+        final var poller = poller(thrower, config);
+        final var endpoint = endpoint("10.5.0.1");
+
+        poller.resolve(endpoint, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, thrower, 1);
+
+        // an unguarded throw would leave nextWalkNanos in the past, so every tick re-walks
+        poller.tick(this.clock.get());
+        poller.tick(this.clock.get());
+        Thread.sleep(50);
+        assertThat(thrower.walks.get()).isEqualTo(1);
+
+        advanceMs(1_100);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, thrower, 2);
+    }
+
+    /**
+     * Hot-reload used to clear the whole registration map. Under demand-fill that was free because
+     * the next flow refilled synchronously; against a poller it blanks interface names fleet-wide
+     * until every exporter is re-walked, for any config change at all.
+     */
+    @Test
+    void hotReloadRePollsWithoutBlankingEnrichmentInTheMeantime() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config());
+        final var endpoint = endpoint("10.5.0.2");
+
+        poller.resolve(endpoint, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        poller.invalidateAll();
+
+        // the existing snapshot is still served while the re-walk happens underneath
+        assertThat(poller.resolve(endpoint, 1)).contains(new IfInfo("eth0", "uplink", 1000L));
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 2);
+    }
+
+    /**
+     * The in-flight flag lives on the Registration, so removing one mid-walk lets a
+     * re-registration mint a fresh flag and start a second concurrent walk against an agent whose
+     * first walk is still parked in its timeout — breaking the one-walk-per-endpoint guarantee.
+     */
+    @Test
+    void anExporterIsNotDeregisteredWhileItsWalkIsStillRunning() throws Exception {
+        final var snmp = new FakeSnmp();
+        snmp.entered = new CountDownLatch(1);
+        snmp.release = new CountDownLatch(1);
+        final var poller = poller(snmp, config());
+        final var endpoint = endpoint("10.5.0.3");
+
+        poller.resolve(endpoint, 1);
+        poller.tick(this.clock.get());
+        assertThat(snmp.entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+        // long past the deregistration threshold, but the walk is still parked
+        advanceMs(600_000L * 5);
+        poller.tick(this.clock.get());
+        poller.resolve(endpoint, 1);
+        poller.tick(this.clock.get());
+        assertThat(snmp.walks.get()).isEqualTo(1);
+
+        snmp.release.countDown();
+    }
+
+    @Test
+    void nonPositiveConfigurationFailsFastAndNamesTheProperty() {
+        final var config = config();
+        config.setPoolWidth(0);
+
+        assertThatThrownBy(() -> poller(new FakeSnmp(), config))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("riptide.snmp.poll.pool-width");
     }
 
     @Test
@@ -384,7 +480,9 @@ class InterfaceSnapshotPollerTest {
         }
 
         poller.tick(this.clock.get());
-        assertThat(this.metrics.meter(MetricRegistry.name("snmp", "poller", "rejectedAtBound")).getCount())
+        // the meter counts refused lookups, not distinct exporters: each address resolves once
+        // here, so the numbers coincide, but under real traffic it is a pressure signal
+        assertThat(this.metrics.meter(MetricRegistry.name("snmp", "poller", "rejectedLookups")).getCount())
                 .isEqualTo(45L);
     }
 
