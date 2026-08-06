@@ -56,6 +56,7 @@ help:
 	@echo "  coverage:     Run the unit test suite and render the JaCoCo coverage report"
 	@echo "  e2e:          Run integration and e2e tests (*IT, requires Docker) in addition to the unit suite"
 	@echo "  fuzz:         Coverage-guided fuzzing of the flow parsers (Jazzer); FUZZ_TIME=<seconds> per target"
+	@echo "  bench:        Run the JMH microbenchmarks; BENCH_TARGET=<regex> to narrow, BENCH_OPTS=<jmh flags>"
 	@echo "  lint-actions: Lint the GitHub Actions workflows (actionlint + zizmor)"
 	@echo "  docs:         Build the Docusaurus documentation site into docs/build"
 	@echo "  docs-serve:   Run the documentation site locally with live reload"
@@ -103,6 +104,28 @@ fuzz: deps-jar
 	JAZZER_FUZZ=1 mvn $(BUILD_OPTS) --batch-mode test-compile surefire:test \
 		-Dtest='org.riptide.flows.fuzz.$(FUZZ_TARGET)' \
 		-Djazzer.max_duration=$(FUZZ_TIME)s
+
+# JMH microbenchmarks (src/test/java/org/riptide/benchmarks). Not part of `make jar`: a benchmark
+# run takes minutes and its numbers are meaningless on a loaded machine, so it is opt-in and never
+# a build gate. BENCH_TARGET is a JMH regex over benchmark class names.
+#
+# BENCH_OPTS overrides the per-class @Fork/@Warmup/@Measurement annotations, which are all set to
+# JMH-light values (1 fork, 2 warmup, 5 measurement) for a quick single run. Two forks and ten
+# iterations is the setting worth quoting a number from: these decode benchmarks sit around 20us/op,
+# and a single noisy fork has been observed moving the mean by 2x on a loaded machine. This is still
+# lighter on forks than JMH's own default of 5. Check `uptime` before trusting any result.
+#
+# dependency:build-classpath is what lets JMH run from the test classpath without a shade/uber jar.
+BENCH_TARGET ?= .*Benchmark
+BENCH_OPTS   ?= -wi 3 -i 10 -f 2
+.PHONY: bench
+bench: deps-jar
+	mvn $(BUILD_OPTS) --batch-mode test-compile \
+		dependency:build-classpath -Dmdep.outputFile=target/test-cp.txt -Dmdep.includeScope=test
+	java -cp "target/classes:target/test-classes:$$(cat target/test-cp.txt)" \
+		org.riptide.benchmarks.Benchmarks '$(BENCH_TARGET)' $(BENCH_OPTS) \
+		-rf json -rff target/jmh-result.json
+	@echo "JMH result: target/jmh-result.json"
 
 .PHONY: deps-lint-actions
 deps-lint-actions:
