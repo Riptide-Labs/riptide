@@ -122,10 +122,13 @@ class DaemonStartupLoggingTest {
 
     @Test
     void aReceiverThatCannotBindIsNamedWithItsAddress() throws Exception {
-        // reuseAddress(false) so the conflict is real: Java enables SO_REUSEADDR on ServerSocket by
-        // default on some platforms, which lets a second bind succeed and the test silently pass.
+        // The conflict comes from the socket being live and listening: on Linux and macOS a second
+        // bind to the same address and port fails with EADDRINUSE regardless of SO_REUSEADDR, which
+        // only relaxes TIME_WAIT — sharing a live listener needs SO_REUSEPORT, which neither side
+        // sets. Note TcpListener hard-codes SO_REUSEADDR on its own bootstrap, so nothing set here
+        // would gate it anyway. (On Windows, SO_REUSEADDR does permit hijacking a live socket, so
+        // this test assumes POSIX semantics — as does CI.)
         try (var occupied = new ServerSocket()) {
-            occupied.setReuseAddress(false);
             occupied.bind(new java.net.InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0));
             final int taken = occupied.getLocalPort();
 
@@ -210,15 +213,26 @@ class DaemonStartupLoggingTest {
         // Polled: shutdownGracefully().syncUninterruptibly() returns when the termination future
         // completes, which SingleThreadEventExecutor does from inside the event loop thread's own
         // finally block, so the thread is briefly still alive afterwards.
+        // Sleeping rather than spinning: getAllStackTraces() walks every thread behind a safepoint,
+        // so a tight loop would pin a core and hammer safepoints for the whole deadline on exactly
+        // the run where the assertion is about to fail and the output matters most.
         final long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
         List<String> alive;
-        do {
+        while (true) {
             alive = Thread.getAllStackTraces().keySet().stream()
                     .map(Thread::getName)
                     .filter(name -> name.startsWith(prefix))
                     .toList();
-        } while (!alive.isEmpty() && System.nanoTime() < deadline);
-        return alive;
+            if (alive.isEmpty() || System.nanoTime() >= deadline) {
+                return alive;
+            }
+            try {
+                Thread.sleep(10);
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return alive;
+            }
+        }
     }
 
     private Daemon daemon(final Map<String, Object> properties) {
