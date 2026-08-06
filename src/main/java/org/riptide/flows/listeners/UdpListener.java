@@ -62,10 +62,18 @@ public class UdpListener implements Listener {
 
     @Override
     public void start() {
-        // One thread: UdpListener binds a single DatagramChannel, so only one event loop is ever
-        // selected. Netty's default (0 = 2 * num cores) would build the rest as loops nothing can reach.
+        // Netty defaults to 2 * num cores when the number of threads is set to 0.
+        //
+        // Do NOT size this to 1 on the reasoning that a single DatagramChannel occupies one loop.
+        // This group is also the parser's ScheduledExecutorService (see parser.start below), and
+        // UdpParserBase schedules doHousekeeping on it every 60s — one task per sub-parser under
+        // DispatchingUdpParser. scheduleAtFixedRate calls next(), so with more than one loop the
+        // sweep runs on a different thread from the socket; measured, this group starts exactly
+        // two threads. Collapsing to one loop would put every housekeeping sweep on the thread
+        // draining the socket, stalling reception into kernel loss on the socketDrops gauge.
+        // Sizing this group is issue #450, and needs the ingest path measured first.
         final var formatName = name.replace("%", "%%");
-        this.bossGroup = new MultiThreadIoEventLoopGroup(1, new ThreadFactoryBuilder()
+        this.bossGroup = new MultiThreadIoEventLoopGroup(0, new ThreadFactoryBuilder()
                 .setNameFormat("udp-listener-nio-" + formatName + "-%d")
                 .build(), NioIoHandler.newFactory());
 

@@ -59,8 +59,14 @@ public class TcpListener implements Listener {
     public void start() {
         // One thread: ServerBootstrap registers a single channel, so only one event loop is ever
         // selected for accept. Netty's default (0 = 2 * num cores) would build the rest as loops
-        // nothing can reach — they hold a selector each and never run. A second bind() on this
-        // listener would make the count matter again.
+        // nothing can reach — they hold a selector each and never run.
+        //
+        // This holds only because nothing else uses the group. Two assumptions, both of which
+        // would need this count raised again if they change: this listener binds once, and the
+        // parser schedules nothing on it. The second is why UdpListener must stay at the default
+        // — there the same group is the parser's scheduler (UdpParserBase schedules housekeeping
+        // on it), whereas ParserBase.start ignores the executor it is handed and IpfixTcpParser
+        // does not override it.
         final var formatName = name.replace("%", "%%");
         this.bossGroup = new MultiThreadIoEventLoopGroup(1, new ThreadFactoryBuilder()
                 .setNameFormat("tcp-listener-nio-boss-" + formatName + "-%d")
