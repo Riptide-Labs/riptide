@@ -19,8 +19,9 @@ import java.util.List;
  * <p>Steps run in the order given; several teardown orderings are load-bearing (a UDP listener must
  * deregister its {@code socketDrops} gauge before releasing the port it describes). Failures are
  * collected and rethrown by {@link #done()}: the first as-is, the rest suppressed onto it. Keeping
- * the first exception rather than wrapping matters because {@code Daemon.stop()} catches
- * {@code Exception} specifically to receive Netty's sneaky-thrown cause intact.
+ * the first throwable rather than wrapping matters because the caller diagnoses from it —
+ * {@code Daemon.stop()} logs it against the listener's name — and wrapping would bury Netty's
+ * sneaky-thrown cause under a synthesised type.
  */
 final class Teardown {
 
@@ -55,9 +56,12 @@ final class Teardown {
         throw sneakyThrow(first);
     }
 
-    // Preserves the original throwable's type instead of wrapping it: Daemon.stop() catches
-    // Exception (not RuntimeException) precisely so Netty's sneaky-thrown checked causes reach it
-    // unaltered, and wrapping here would defeat that.
+    // Preserves the original throwable's type instead of wrapping it, so what the caller logs is
+    // the real cause — including the checked exceptions Netty sneaky-throws out of
+    // syncUninterruptibly(), which a wrapper would bury. Callers must catch Throwable to receive
+    // it: an Error is a legitimate outcome here, and Daemon.stop() catches Throwable for exactly
+    // that reason. Narrowing a caller back to Exception reintroduces the bug where one listener's
+    // Error skips every listener after it.
     @SuppressWarnings("unchecked")
     private static <T extends Throwable> RuntimeException sneakyThrow(final Throwable t) throws T {
         throw (T) t;

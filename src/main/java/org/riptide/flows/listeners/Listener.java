@@ -16,7 +16,23 @@ import org.riptide.flows.parser.Parser;
  */
 public interface Listener {
     String getName();
+
+    /**
+     * Where this listener listens, for the startup log and diagnostics — for example
+     * {@code UDP 0.0.0.0:9999}.
+     *
+     * <p>Must report the port actually bound once started, not the configured one: {@code port: 0}
+     * asks the kernel to choose, and echoing back {@code 0} tells an operator nothing about where
+     * the socket is. Must stop reporting it once the listener is no longer active, so a stopped
+     * listener does not name a port another process may since have taken.
+     *
+     * <p>The host is reported as configured rather than read back from the channel — a wildcard
+     * bind reads back as {@code 0:0:0:0:0:0:0:0} on a dual-stack JVM and a hostname as its resolved
+     * literal, neither of which is what the operator wrote or can grep for. {@link ListenerAddress}
+     * implements this split; implementations should use it rather than repeat the rules.
+     */
     String getDescription();
+
     void start();
 
     /**

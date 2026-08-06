@@ -221,7 +221,7 @@ public class TcpListener implements Listener {
 
     @Override
     public String getDescription() {
-        return String.format("TCP %s:%s",  this.host != null ? this.host : "*", this.port);
+        return "TCP " + ListenerAddress.describe(this.socketFuture, this.host, this.port);
     }
 
     @Override

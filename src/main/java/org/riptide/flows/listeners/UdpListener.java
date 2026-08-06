@@ -184,7 +184,7 @@ public class UdpListener implements Listener {
 
     @Override
     public String getDescription() {
-        return String.format("UDP %s:%s", this.host != null ? this.host : "*", this.port);
+        return "UDP " + ListenerAddress.describe(this.socketFuture, this.host, this.port);
     }
 
     private class DefaultChannelInitializer extends ChannelInitializer<DatagramChannel> {

@@ -197,15 +197,54 @@ public class Daemon implements ApplicationRunner {
                                 .withHost(config.getHost());
                     }
                 })).toList();
-
-        log.info("Listening for flows with {} receivers \\o/", this.listeners.size());
     }
 
+    // Start-time logging lives here rather than in each Listener: only the call site holds the
+    // receiver's name *and* can observe its failure: a listener that throws from start() cannot
+    // log its own. A future Listener should not add its own bind line and duplicate this.
+    //
+    // These lines necessarily follow Spring's "Started RiptideApplication", which is logged before
+    // callRunners(). That reads oddly but is honest; the alternative is binding during context
+    // refresh via SmartLifecycle, which would move isStarted() and the health semantics with it.
+    // Do NOT "fix" the ordering by moving the summary back into the constructor: that was #453,
+    // where it claimed to be listening before anything was bound.
     @Override
     public void run(final ApplicationArguments args) throws Exception {
         this.pipeline.start();
-        this.listeners.forEach(Listener::start);
+
+        for (final var listener : this.listeners) {
+            try {
+                listener.start();
+            } catch (final Throwable t) {
+                // Named here because the propagating stack identifies the transport but neither the
+                // configured receiver nor its port. Message only: Spring prints the full trace as
+                // the exception leaves run(), and a second copy is noise at the moment the operator
+                // is trying to read. Rethrown rather than skipped: /readyz checks every listener,
+                // so continuing would yield a running-but-never-ready daemon.
+                //
+                // Throwable, not Exception: a missing native transport surfaces as
+                // NoClassDefFoundError and starting the event loop threads can raise
+                // OutOfMemoryError. Narrowing to Exception would let exactly those aborts through
+                // with the unattributed stack this logging exists to replace. Rethrown immediately,
+                // so nothing is swallowed — precise rethrow keeps the declared type unchanged.
+                // Type as well as message: a NoClassDefFoundError — one of the two cases the
+                // Throwable catch exists for — carries a message like "io/netty/.../Epoll" that
+                // reads as a config problem unless the type is shown. Blank counts as absent:
+                // several construction paths carry an empty message, which would otherwise print
+                // as a bare trailing colon and lose the cause entirely.
+                final var message = t.getMessage();
+                final var reason = message != null && !message.isBlank()
+                        ? t.getClass().getSimpleName() + ": " + message
+                        : t.getClass().getName();
+                log.error("Receiver '{}' failed to start on {}: {}",
+                        listener.getName(), listener.getDescription(), reason);
+                throw t;
+            }
+            log.info("Receiver '{}' listening on {}", listener.getName(), listener.getDescription());
+        }
+
         this.started = true;
+        log.info("Listening for flows with {} receivers \\o/", this.listeners.size());
     }
 
     @PreDestroy
@@ -215,17 +254,30 @@ public class Daemon implements ApplicationRunner {
         // dispatches, so the pipeline's shutdown drain below sees every accepted flow. A
         // failing listener must not keep the pipeline (and its batch drain) from stopping —
         // the flusher is a daemon thread, so a skipped drain silently loses the whole buffer.
-        // Exception, not RuntimeException: Listener.stop() declares no checked exceptions, but
-        // the Netty listeners call syncUninterruptibly(), which sneaky-throws the future's
-        // cause — checked exceptions included. Do not "tidy" this back to RuntimeException.
-        for (final var listener : this.listeners) {
-            try {
-                listener.stop();
-            } catch (final Exception e) {
-                log.warn("Failed to stop listener {}", listener.getName(), e);
+        // Throwable, not Exception and emphatically not RuntimeException. Listener.stop() declares
+        // no checked exceptions, but the Netty listeners call syncUninterruptibly(), which
+        // sneaky-throws the future's cause — checked exceptions included. Do not "tidy" this back
+        // to RuntimeException.
+        //
+        // Throwable widens it further so the promise above actually holds: an Error (a listener's
+        // event loop dying with OutOfMemoryError, a missing native transport surfacing as
+        // NoClassDefFoundError) used to escape this loop, skipping every later listener *and* the
+        // pipeline drain below — silently losing the whole batch buffer, which is the one outcome
+        // this method exists to prevent. Shutdown is best-effort per listener for the same reason
+        // teardown is best-effort per resource inside them (see Teardown).
+        try {
+            for (final var listener : this.listeners) {
+                try {
+                    listener.stop();
+                } catch (final Throwable t) {
+                    log.warn("Failed to stop listener {}", listener.getName(), t);
+                }
             }
+        } finally {
+            // In a finally so the drain survives anything the loop itself could throw, not merely
+            // anything stop() throws.
+            this.pipeline.stop();
         }
-        this.pipeline.stop();
     }
 
     /** The configured receivers, for health reporting. */
