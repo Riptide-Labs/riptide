@@ -40,8 +40,8 @@ public class StaticInterfaceEnricherTest {
 
     private final MetricRegistry metricRegistry = new MetricRegistry();
 
-    @Autowired
-    SnmpService snmpService;
+    /** Static pins must resolve with no SNMP data at all, so the ladder's live rung is empty. */
+    private final InterfaceSource noSnmp = (endpoint, ifIndex) -> java.util.Optional.empty();
 
     @Autowired
     NodeRegistry nodeRegistry;
@@ -50,7 +50,7 @@ public class StaticInterfaceEnricherTest {
 
     @Test
     public void staticMappingEnrichesWithoutSnmp() throws Exception {
-        final var enrichers = List.<Enricher>of(new SnmpEnricher(this.snmpService, this.nodeRegistry, emptyInterfaceTable()));
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(this.noSnmp, this.nodeRegistry, emptyInterfaceTable()));
         final var repository = new TestRepository(metricRegistry);
         final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
 

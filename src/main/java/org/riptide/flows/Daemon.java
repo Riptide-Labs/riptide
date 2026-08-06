@@ -80,9 +80,9 @@ public class Daemon implements ApplicationRunner {
             try {
                 this.pipeline.process(source, flows);
             } catch (final FlowException | RuntimeException e) {
-                // RuntimeException too, not just FlowException: CachingSnmpService throws
-                // IllegalStateException, a shut-down SNMP pool throws RejectedExecutionException, and
-                // any enricher can NPE. Those used to escape into the dispatch task and be logged as
+                // RuntimeException too, not just FlowException: a shut-down SNMP pool throws
+                // RejectedExecutionException and any enricher can NPE. Those used to escape into
+                // the dispatch task and be logged as
                 // "Error preparing records for dispatch" with no counter and no exporter — the exact
                 // hole this block exists to close. A packet's worth of loss must not be silent.
                 dispatchErrors.inc(flows.size());
