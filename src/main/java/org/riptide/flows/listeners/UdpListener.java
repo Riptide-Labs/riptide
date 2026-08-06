@@ -184,7 +184,25 @@ public class UdpListener implements Listener {
 
     @Override
     public String getDescription() {
-        return String.format("UDP %s:%s", this.host != null ? this.host : "*", this.port);
+        return "UDP " + boundOrConfiguredAddress();
+    }
+
+    /**
+     * The address actually bound once started, the configured one before that.
+     *
+     * <p>They differ whenever the kernel chooses: {@code port: 0} configures an ephemeral port, and
+     * reporting the literal {@code 0} tells an operator nothing about where the socket is. Read
+     * from the channel for the same reason {@link #registerSocketDrops()} does.
+     *
+     * <p>{@code socketFuture} is assigned only after {@code bind()} returns, so a listener that
+     * failed to bind still reports its configured address — which is the one that has to be fixed.
+     */
+    private String boundOrConfiguredAddress() {
+        if (this.socketFuture != null
+                && this.socketFuture.channel().localAddress() instanceof InetSocketAddress bound) {
+            return bound.getHostString() + ":" + bound.getPort();
+        }
+        return (this.host != null ? this.host : "*") + ":" + this.port;
     }
 
     private class DefaultChannelInitializer extends ChannelInitializer<DatagramChannel> {

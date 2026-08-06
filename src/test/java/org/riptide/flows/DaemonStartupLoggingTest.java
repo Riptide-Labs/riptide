@@ -102,6 +102,20 @@ class DaemonStartupLoggingTest {
                     .anySatisfy(m -> assertThat(m).contains("Receiver 'nf5'").contains("listening on"))
                     .anySatisfy(m -> assertThat(m).contains("Receiver 'nf9'").contains("listening on"));
 
+            // Both receivers are configured with port 0, so the kernel picks. Reporting the literal
+            // 0 would tell an operator nothing about where the socket actually is — the same "log
+            // does not match what is bound" defect this change exists to fix.
+            assertThat(messages().stream().filter(m -> m.contains("listening on")).toList())
+                    .as("the ephemeral port is resolved, not echoed back as configured")
+                    .isNotEmpty()
+                    .allSatisfy(m -> {
+                        assertThat(m).doesNotContain(":0");
+                        final var matcher = java.util.regex.Pattern
+                                .compile("listening on \\w+ \\S+:(\\d+)").matcher(m);
+                        assertThat(matcher.find()).as("address is parseable in %s", m).isTrue();
+                        assertThat(Integer.parseInt(matcher.group(1))).isPositive();
+                    });
+
             final var summaryIndex = indexOfMessageContaining("Listening for flows");
             final var lastReceiverIndex = Math.max(
                     indexOfMessageContaining("Receiver 'nf5'"),
