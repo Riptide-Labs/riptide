@@ -5,6 +5,7 @@
 
 package org.riptide.management;
 
+import com.codahale.metrics.MetricRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.riptide.flows.Daemon;
@@ -29,6 +30,7 @@ import static org.mockito.Mockito.when;
 class ManagementServerTest {
 
     private ManagementServer server;
+    private final MetricRegistry registry = new MetricRegistry();
 
     @AfterEach
     void tearDown() {
@@ -75,7 +77,7 @@ class ManagementServerTest {
             }
         };
 
-        this.server = new ManagementServer(properties, health);
+        this.server = new ManagementServer(properties, health, this.registry);
         this.server.start();
         return port;
     }
@@ -92,6 +94,59 @@ class ManagementServerTest {
                         .GET().build(),
                 HttpResponse.BodyHandlers.ofString());
         return response.statusCode();
+    }
+
+    private HttpResponse<String> get(final int port, final String path) throws Exception {
+        return HttpClient.newHttpClient().send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                        .timeout(java.time.Duration.ofSeconds(10))
+                        .GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
+    @Test
+    void metricsEndpointServesTheRegistry() throws Exception {
+        // registered before start so the handler renders whatever the registry holds at scrape time
+        this.registry.meter(MetricRegistry.name("snmp", "walks")).mark(3);
+        this.registry.counter(MetricRegistry.name("flows", "dropped")).inc(7);
+
+        final Daemon daemon = mock(Daemon.class);
+        lenient().when(daemon.isStarted()).thenReturn(true);
+        final int port = start(daemon);
+
+        final HttpResponse<String> response = get(port, "/metrics");
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.headers().firstValue("Content-Type"))
+                .hasValue("text/plain; version=0.0.4; charset=utf-8");
+        // registry names carry dots, which Prometheus does not allow in metric names
+        assertThat(response.body())
+                .contains("# TYPE snmp_walks counter")
+                .contains("snmp_walks 3.0")
+                .contains("# TYPE flows_dropped counter")
+                .contains("flows_dropped 7.0");
+    }
+
+    @Test
+    void metricsEndpointCanBeDisabledWithoutLosingProbes() throws Exception {
+        final Daemon daemon = mock(Daemon.class);
+        when(daemon.isStarted()).thenReturn(true);
+        when(daemon.getListeners()).thenReturn(List.of());
+
+        final int port;
+        try (ServerSocket probe = new ServerSocket(0)) {
+            port = probe.getLocalPort();
+        }
+        final var properties = new RiptideManagementProperties();
+        properties.setPort(port);
+        properties.setBindAddress("127.0.0.1");
+        properties.setMetricsEnabled(false);
+
+        this.server = new ManagementServer(properties, new HealthService(daemon), this.registry);
+        this.server.start();
+
+        assertThat(status(port, "/livez")).isEqualTo(200);
+        // no context registered, so the JDK server answers 404 rather than an empty scrape
+        assertThat(status(port, "/metrics")).isEqualTo(404);
     }
 
     @Test
