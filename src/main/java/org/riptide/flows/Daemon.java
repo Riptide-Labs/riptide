@@ -198,14 +198,39 @@ public class Daemon implements ApplicationRunner {
                     }
                 })).toList();
 
-        log.info("Listening for flows with {} receivers \\o/", this.listeners.size());
     }
 
+    // Start-time logging lives here rather than in each Listener: only the call site holds the
+    // receiver's name *and* can observe its failure — a listener that throws from start() cannot
+    // log its own. A future Listener should not add its own bind line and duplicate this.
+    //
+    // These lines necessarily follow Spring's "Started RiptideApplication", which is logged before
+    // callRunners(). That reads oddly but is honest; the alternative is binding during context
+    // refresh via SmartLifecycle, which would move isStarted() and the health semantics with it.
+    // Do NOT "fix" the ordering by moving the summary back into the constructor — that was #453,
+    // where it claimed to be listening before anything was bound.
     @Override
     public void run(final ApplicationArguments args) throws Exception {
         this.pipeline.start();
-        this.listeners.forEach(Listener::start);
+
+        for (final var listener : this.listeners) {
+            try {
+                listener.start();
+            } catch (final Exception e) {
+                // Named here because the propagating stack identifies the transport but neither the
+                // configured receiver nor its port. Message only: Spring prints the full trace as
+                // the exception leaves run(), and a second copy is noise at the moment the operator
+                // is trying to read. Rethrown rather than skipped — /readyz checks every listener,
+                // so continuing would yield a running-but-never-ready daemon.
+                log.error("Receiver '{}' failed to start on {}: {}",
+                        listener.getName(), listener.getDescription(), e.getMessage());
+                throw e;
+            }
+            log.info("Receiver '{}' listening on {}", listener.getName(), listener.getDescription());
+        }
+
         this.started = true;
+        log.info("Listening for flows with {} receivers \\o/", this.listeners.size());
     }
 
     @PreDestroy
