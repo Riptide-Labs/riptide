@@ -188,6 +188,20 @@ public final class SflowFlowBuilder {
             public double getSamplingInterval() {
                 return sample.samplingRate;
             }
+
+            /**
+             * Always on the sample: sFlow carries the rate by construction, so there is no ladder
+             * here and no rung below this one.
+             *
+             * <p>Note what this provenance does <em>not</em> say. sFlow counters are already
+             * scaled at ingest ({@code bytes = frameLength × samplingRate}), so multiplying an
+             * sFlow row by its interval double-counts it. That is a property of the protocol, not
+             * of the rung, and {@code flowProtocol} is what distinguishes it.
+             */
+            @Override
+            public SamplingProvenance getSamplingProvenance() {
+                return SamplingProvenance.Record;
+            }
         };
     }
 }

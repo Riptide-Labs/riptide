@@ -10,6 +10,7 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import org.junit.jupiter.api.Test;
 import org.riptide.flows.parser.data.Flow;
+import org.riptide.flows.parser.data.Flow.SamplingProvenance;
 import org.riptide.flows.parser.exceptions.InvalidPacketException;
 import org.riptide.flows.parser.netflow5.Netflow5FlowBuilder;
 import org.riptide.flows.parser.netflow5.proto.Header;
@@ -197,6 +198,57 @@ class Netflow5SamplingLadderTest {
                 .isEqualTo(1);
         assertThat(meter(metrics, "fallback")).as("two packets fell through to config").isEqualTo(2);
         assertThat(meter(metrics, "assumed")).as("no packet reached the default").isZero();
+    }
+
+    /**
+     * The meter and the column are two reports of one resolution, so they must never disagree.
+     * Both are named from the same enum constant; this is the assertion that the naming holds all
+     * the way through to the flow.
+     */
+    @Test
+    void theMeteredRungAndTheRecordedProvenanceAgree() throws Exception {
+        final var metrics = new MetricRegistry();
+        final var builder = new Netflow5FlowBuilder("test", metrics);
+        builder.setFlowSamplingIntervalFallback(500L);
+
+        assertThat(onlyFlow(packet(0, 1000), builder).getSamplingProvenance())
+                .isEqualTo(SamplingProvenance.Header);
+        assertThat(meter(metrics, SamplingProvenance.Header.token())).isEqualTo(1);
+
+        assertThat(onlyFlow(packet(0, 0), builder).getSamplingProvenance())
+                .isEqualTo(SamplingProvenance.Fallback);
+        assertThat(meter(metrics, SamplingProvenance.Fallback.token())).isEqualTo(1);
+
+        final var noFallback = new Netflow5FlowBuilder("test", metrics);
+        assertThat(onlyFlow(packet(0, 0), noFallback).getSamplingProvenance())
+                .isEqualTo(SamplingProvenance.Assumed);
+        assertThat(meter(metrics, SamplingProvenance.Assumed.token())).isEqualTo(1);
+    }
+
+    /** Every record in a packet carries the packet's provenance, as it carries its interval. */
+    @Test
+    void everyFlowInAPacketCarriesTheSameProvenance() throws Exception {
+        final var builder = new Netflow5FlowBuilder("test", new MetricRegistry());
+
+        assertThat(builder.buildFlows(Instant.EPOCH, packet(0, 1000, 3)).toList())
+                .allSatisfy(flow -> {
+                    assertThat(flow.getSamplingInterval()).isEqualTo(1000.0);
+                    assertThat(flow.getSamplingProvenance()).isEqualTo(SamplingProvenance.Header);
+                });
+    }
+
+    /**
+     * A header stating 1 is an exporter saying it does not sample. It reads as {@code header}, not
+     * {@code assumed} — the two produce the same interval and mean opposite things.
+     */
+    @Test
+    void aHeaderStatingOneIsAnAnswerNotAnAssumption() throws Exception {
+        final var builder = new Netflow5FlowBuilder("test", new MetricRegistry());
+
+        final var flow = onlyFlow(packet(0, 1), builder);
+
+        assertThat(flow.getSamplingInterval()).isEqualTo(1.0);
+        assertThat(flow.getSamplingProvenance()).isEqualTo(SamplingProvenance.Header);
     }
 
     @Test

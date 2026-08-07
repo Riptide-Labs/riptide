@@ -83,6 +83,17 @@ answer for v5 rows written from here on, and older rows are not rewritten. Watch
 detail, including how to identify affected exporters and how to pin the old behaviour, is in
 [Sampling rate](../configuration/receivers.md#sampling-rate).
 
+**A `samplingProvenance` column is added to `flows` on upgrade.** It records which rung of the
+resolution ladder supplied each row's `samplingInterval`, so a stored `1` stops being ambiguous
+between an exporter that said it does not sample and one that said nothing at all. In manage mode
+the column is added in place with `ALTER TABLE … ADD COLUMN IF NOT EXISTS`: no operator action, no
+data loss, no rewrite. A provisioned deployment (`manage-schema: false`) fails fast naming the
+column — re-run `riptide onboard` to add it. Existing rows read `''`, which means "written before
+this column existed" and is deliberately distinct from `assumed`; they are not backfilled, because
+the information needed to reconstruct them was never recorded. No existing column, value or query
+result changes. See [Where a rate came
+from](../configuration/receivers.md#where-a-rate-came-from).
+
 ## Ingest loss counters
 
 Flows can be dropped at two bounded queues, and each one counts what it discards — nothing is
@@ -162,7 +173,21 @@ per receiver.
 
 `assumed` is not the same statement as an exporter reporting a rate of `1`.
 An exporter that states `1` has said it does not sample, and that lands under `header`.
-`assumed` means nothing stated a rate at all, and `1` is what riptide wrote in the absence of one — the stored `samplingInterval` cannot tell the two apart, which is what these meters are for.
+`assumed` means nothing stated a rate at all, and `1` is what riptide wrote in the absence of one.
+
+Each meter's leaf name is the value written to that flow's `samplingProvenance` column, so a meter and the rows it counted always agree.
+The meters answer "is this happening now" without a query; the column answers it for any period, for every protocol, and per exporter:
+
+```sql
+SELECT exporterAddr, samplingProvenance, samplingInterval, count() AS flows
+FROM flows
+WHERE timestamp > now() - INTERVAL 1 HOUR
+GROUP BY exporterAddr, samplingProvenance, samplingInterval
+ORDER BY exporterAddr, flows DESC
+```
+
+One exporter appearing under two provenances is a rate that is not resolving consistently — firmware populating the sampling field on some export paths and not others, or a v9 sampler options table expiring between refreshes.
+See [Where a rate came from](../configuration/receivers.md#where-a-rate-came-from) for the full vocabulary.
 
 These exist because the resolution is invisible in the data path: riptide records the rate without
 applying it, so an exporter that starts or stops advertising changes no counter and raises no error.

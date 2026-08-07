@@ -6,6 +6,7 @@
 package org.riptide.repository.clickhouse;
 
 import lombok.Data;
+import org.riptide.flows.parser.data.Flow;
 
 import java.net.Inet6Address;
 import java.time.Duration;
@@ -76,6 +77,11 @@ public class ClickhouseFlow {
 
     private byte samplingAlgorithm;
     private double samplingInterval = 1.0;
+
+    // Pairs with the 1.0 above: an unenriched flow carries no resolution, and "assumed" is the
+    // honest reading of a 1.0 nothing stated. '' is reserved for rows written before the column
+    // existed, which is a different fact and is not something the collector can produce.
+    private String samplingProvenance = Flow.SamplingProvenance.Assumed.token();
 
     private String application;
 

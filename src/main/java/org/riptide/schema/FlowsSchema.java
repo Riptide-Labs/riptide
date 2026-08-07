@@ -192,6 +192,7 @@ public final class FlowsSchema {
         ADDITIVE_COLUMNS.put("dstCountry", "LowCardinality(String)");
         ADDITIVE_COLUMNS.put("dstCity", "LowCardinality(String)");
         ADDITIVE_COLUMNS.put("exporterName", "LowCardinality(String)");
+        ADDITIVE_COLUMNS.put("samplingProvenance", "LowCardinality(String)");
     }
 
     /** The additive column names, for callers distinguishing in-place-upgradeable columns. */
@@ -419,7 +420,12 @@ public final class FlowsSchema {
             srcCity LowCardinality(String),
             dstCountry LowCardinality(String),
             dstCity LowCardinality(String),
-            exporterName LowCardinality(String)
+            exporterName LowCardinality(String),
+
+            -- Which rung of the resolution ladder supplied samplingInterval: 'record', 'options',
+            -- 'header', 'derived', 'fallback' or 'assumed'. '' means the row was written before
+            -- this column existed, which is distinct from 'assumed' and is not backfillable.
+            samplingProvenance LowCardinality(String)
         ) ENGINE = MergeTree()
         ORDER BY (
             tenant, organisation,

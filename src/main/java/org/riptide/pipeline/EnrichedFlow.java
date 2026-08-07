@@ -15,6 +15,7 @@ import org.riptide.flows.parser.data.Flow.Direction;
 import org.riptide.flows.parser.data.Flow.FlowProtocol;
 import org.riptide.flows.parser.data.Flow.Locality;
 import org.riptide.flows.parser.data.Flow.SamplingAlgorithm;
+import org.riptide.flows.parser.data.Flow.SamplingProvenance;
 
 import java.net.InetAddress;
 import java.time.Duration;
@@ -50,6 +51,7 @@ public class EnrichedFlow {
     private Integer protocol;
     private SamplingAlgorithm samplingAlgorithm;
     private Double samplingInterval;
+    private SamplingProvenance samplingProvenance;
     private InetAddress srcAddr;
     private String srcAddrHostname;
     private Long srcAs;
