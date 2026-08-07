@@ -37,6 +37,11 @@ import static org.mockito.Mockito.when;
         "riptide.nodes.test-agent.snmp.community=" + TestSnmpAgent.COMMUNITY,
         // enrichment-ladder per-field pin: static alias overrides SNMP, rest is live
         "riptide.nodes.test-agent.interfaces.1.alias=Uplink pinned by file",
+        // pinned in every field IfInfo carries, so the live rung can add nothing for it —
+        // the case the liveness test below depends on
+        "riptide.nodes.test-agent.interfaces.3.name=ge-0/0/3",
+        "riptide.nodes.test-agent.interfaces.3.alias=Fully pinned by file",
+        "riptide.nodes.test-agent.interfaces.3.high-speed=1000",
         "riptide.snmp.options.retentionMs=4242"
 })
 public class SnmpEnricherTest {
@@ -213,6 +218,11 @@ public class SnmpEnricherTest {
 
     @Test
     public void pinnedInterfacesStillCallTrackAndResolveToMaintainLiveness() throws Exception {
+        // ifIndex 3 is pinned in name, alias and highSpeed, so the live rung cannot contribute a
+        // single field for it and skipping the call would look free. It is not: the call is what
+        // registers the exporter and refreshes its liveness, so withholding it would deregister
+        // the exporter and cost ifIndex 2 — pinned in nothing — its alias and speed for a whole
+        // walk cycle. Guards the short-circuit proposed in #446.
         final InterfaceSource interfaceSource = Mockito.mock(InterfaceSource.class);
         when(interfaceSource.trackAndResolve(Mockito.any(), Mockito.anyInt())).thenReturn(java.util.Optional.empty());
 
@@ -223,15 +233,24 @@ public class SnmpEnricherTest {
         final Flow flow = Mockito.mock(Flow.class);
         when(flow.getSrcAddr()).thenReturn(InetAddress.getByName("10.10.10.10"));
         when(flow.getDstAddr()).thenReturn(InetAddress.getByName("10.20.20.10"));
-        when(flow.getInputSnmp()).thenReturn(1);
+        when(flow.getInputSnmp()).thenReturn(3);
         when(flow.getOutputSnmp()).thenReturn(2);
 
         final var source = new Source("here", InetAddress.getByName("127.0.0.1"));
         pipeline.process(source, List.of(flow));
 
         final var targetIp = InetAddress.getByName("127.0.0.1");
-        Mockito.verify(interfaceSource).trackAndResolve(Mockito.argThat(ep -> ep != null && ep.getInetSocketAddress().getAddress().equals(targetIp)), Mockito.eq(1));
+        // the fully pinned interface: the assertion that actually fails if the ladder short-circuits
+        Mockito.verify(interfaceSource).trackAndResolve(Mockito.argThat(ep -> ep != null && ep.getInetSocketAddress().getAddress().equals(targetIp)), Mockito.eq(3));
         Mockito.verify(interfaceSource).trackAndResolve(Mockito.argThat(ep -> ep != null && ep.getInetSocketAddress().getAddress().equals(targetIp)), Mockito.eq(2));
+
+        // and the pin still reaches the flow, so the mock's empty live rung proves the pin
+        // supplied every field rather than the enricher silently dropping them
+        assertThat(repository.flows()).allSatisfy(enrichedFlow -> {
+            assertThat(enrichedFlow.getInputSnmpIfName()).isEqualTo("ge-0/0/3");
+            assertThat(enrichedFlow.getInputSnmpIfAlias()).isEqualTo("Fully pinned by file");
+            assertThat(enrichedFlow.getInputSnmpIfSpeed()).isEqualTo(1000L);
+        });
     }
 
     private static ExporterInterfaceTable emptyInterfaceTable() {
