@@ -51,6 +51,10 @@ public final class Packet implements Iterable<FlowSet<?>> {
     /** Data Sets discarded for a missing Template. See {@link org.riptide.flows.parser.FlowPacket#undecodableSets()}. */
     public final int undecodableSets;
 
+    // Left as a statement switch. Arrow form does not compile here: a case assigns a local that
+    // is declared before the switch and read after it, and arrow cases scope that assignment
+    // away. The readability the check offers needs the decode restructured, not the switch.
+    @SuppressWarnings("StatementSwitchToExpressionSwitch")
     public Packet(final Session session,
                   final Header header,
                   final ByteBuf buffer) throws InvalidPacketException {

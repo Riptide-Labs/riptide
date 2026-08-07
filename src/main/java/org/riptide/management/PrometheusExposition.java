@@ -53,14 +53,14 @@ final class PrometheusExposition {
         for (final Map.Entry<String, Counter> entry : registry.getCounters().entrySet()) {
             final String name = sanitize(entry.getKey());
             type(out, name, "counter");
-            sample(out, name, entry.getValue().getCount());
+            sample(out, name, (double) entry.getValue().getCount());
         }
 
         for (final Map.Entry<String, Meter> entry : registry.getMeters().entrySet()) {
             final String name = sanitize(entry.getKey());
             final Meter meter = entry.getValue();
             type(out, name, "counter");
-            sample(out, name, meter.getCount());
+            sample(out, name, (double) meter.getCount());
             // Dropwizard's own moving averages. Prometheus would normally derive a rate from the
             // counter, but exporting these costs nothing and they are what riptide's existing
             // meters were created to show.
@@ -75,7 +75,7 @@ final class PrometheusExposition {
             final Histogram histogram = entry.getValue();
             type(out, name, "summary");
             quantiles(out, name, histogram.getSnapshot(), 1.0d);
-            sample(out, name + "_count", histogram.getCount());
+            sample(out, name + "_count", (double) histogram.getCount());
         }
 
         for (final Map.Entry<String, Timer> entry : registry.getTimers().entrySet()) {
@@ -83,7 +83,7 @@ final class PrometheusExposition {
             final Timer timer = entry.getValue();
             type(out, name, "summary");
             quantiles(out, name, timer.getSnapshot(), 1.0d / TimeUnit.SECONDS.toNanos(1L));
-            sample(out, name + "_count", timer.getCount());
+            sample(out, name + "_count", (double) timer.getCount());
         }
 
         return out.toString();

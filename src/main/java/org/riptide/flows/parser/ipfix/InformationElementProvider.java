@@ -149,6 +149,10 @@ class Registry {
 @XmlRootElement(name = "registry", namespace = NAMESPACE)
 @XmlAccessorType(XmlAccessType.NONE)
 @Data
+// Named for the protocol, not the JDK: RFC 3954 and RFC 7011 both call this a Record, and
+// nothing here refers to java.lang.Record. Renaming would cost the domain vocabulary
+// across every parser to settle a clash that cannot actually arise.
+@SuppressWarnings("AvoidCommonTypeNames")
 class Record {
     @XmlElement(namespace = NAMESPACE)
     private Integer elementId;

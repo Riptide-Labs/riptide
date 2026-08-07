@@ -117,6 +117,10 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     }
 
     /** Test seam: a controllable clock, and the option not to start the background scheduler. */
+    // The ScheduledFuture is deliberately discarded. tickQuietly swallows everything, so the
+    // schedule cannot die of a thrown task — the failure mode keeping a handle would protect
+    // against — and the executor itself is held in a field and shut down with the component.
+    @SuppressWarnings("FutureReturnValueIgnored")
     InterfaceSnapshotPoller(final SnmpService snmpService,
                             final SnmpPollConfig config,
                             final MetricRegistry metrics,
@@ -267,6 +271,10 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     }
 
     /** Package-private so tests can advance the schedule without waiting on wall-clock time. */
+    // registrations is a ConcurrentHashMap, whose iterators are explicitly weakly consistent and
+    // documented to tolerate concurrent removal — including by the iterating thread. The check
+    // fires on the shape of the loop, not on the collection's actual contract.
+    @SuppressWarnings("ModifyCollectionInEnhancedForLoop")
     void tick(final long now) {
         final long refreshMs = Math.max(1, this.config.getRefreshIntervalMs());
         final long deregisterAfter = Math.max(1, (long) this.config.getDeregisterAfter());

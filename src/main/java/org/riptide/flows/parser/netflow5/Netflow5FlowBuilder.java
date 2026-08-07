@@ -296,7 +296,7 @@ public final class Netflow5FlowBuilder {
                 };
             }
 
-            /** Resolved once for the packet; see {@code resolveSamplingRate}. */
+            /* Resolved once for the packet; see {@code resolveSamplingRate}. */
             @Override
             public double getSamplingInterval() {
                 return rate.interval();

@@ -5,6 +5,7 @@
 
 package org.riptide.mcp.transport;
 
+import com.google.common.base.Splitter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
@@ -52,6 +53,12 @@ import java.util.concurrent.TimeUnit;
 @ConditionalOnMcpEnabled
 @Component
 public class McpSseServer implements CommandLineRunner {
+
+    /**
+     * Query-string separator. Guava rather than {@code String.split}, which recompiles a regex per
+     * call and silently drops trailing empty fields.
+     */
+    private static final Splitter QUERY_PARAMS = Splitter.on('&').omitEmptyStrings();
 
     private final McpProperties properties;
     private final McpMessageHandler messageHandler;
@@ -128,6 +135,7 @@ public class McpSseServer implements CommandLineRunner {
      * One SSE stream: the frames waiting to go out and the exchange they go out on. The GET handler
      * owns the writing; everything else only ever hands it a frame.
      */
+
     private static final class SseSession {
         private final BlockingQueue<String> pending = new LinkedBlockingQueue<>();
         private volatile boolean open = true;
@@ -297,7 +305,7 @@ public class McpSseServer implements CommandLineRunner {
             if (query == null || query.isBlank()) {
                 return null;
             }
-            for (final String param : query.split("&")) {
+            for (final String param : QUERY_PARAMS.split(query)) {
                 final String[] kv = param.split("=", 2);
                 if (kv.length == 2 && name.equals(kv[0])) {
                     return kv[1].trim();

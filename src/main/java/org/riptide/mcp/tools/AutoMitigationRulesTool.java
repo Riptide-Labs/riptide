@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -59,10 +60,10 @@ public class AutoMitigationRulesTool implements McpTool {
         rules.put("target_ip", ip);
         rules.put("attack_type", attackType);
 
-        if (attackType.toLowerCase().contains("syn")) {
+        if (attackType.toLowerCase(Locale.ROOT).contains("syn")) {
             rules.put("bgp_flowspec", "match destination-prefix " + ip + "/32 protocol tcp flags syn -> rate-limit 0");
             rules.put("iptables", "iptables -A INPUT -d " + ip + " -p tcp --tcp-flags SYN,ACK SYN -j DROP");
-        } else if (attackType.toLowerCase().contains("udp") || attackType.toLowerCase().contains("dns")) {
+        } else if (attackType.toLowerCase(Locale.ROOT).contains("udp") || attackType.toLowerCase(Locale.ROOT).contains("dns")) {
             rules.put("bgp_flowspec", "match destination-prefix " + ip + "/32 protocol udp -> rate-limit 0");
             rules.put("iptables", "iptables -A INPUT -d " + ip + " -p udp -j DROP");
         } else {

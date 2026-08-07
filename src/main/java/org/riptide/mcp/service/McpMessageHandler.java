@@ -100,64 +100,65 @@ public class McpMessageHandler {
             return null;
         }
 
-        switch (method) {
-            case "initialize":
+        return switch (method) {
+            case "initialize" -> {
                 final Map<String, Object> serverInfo = new LinkedHashMap<>();
                 serverInfo.put("protocolVersion", negotiateProtocolVersion(request));
                 serverInfo.put("capabilities", Map.of("tools", Map.of(), "prompts", Map.of(), "resources", Map.of()));
                 serverInfo.put("serverInfo", Map.of("name", "riptide-flows-mcp", "version", SERVER_VERSION));
-                return isNotification ? null : JsonRpcMessage.createResult(id, serverInfo);
-
-            case "ping":
-                return isNotification ? null : JsonRpcMessage.createResult(id, Map.of());
-
-            case "tools/list":
+                yield isNotification ? null : JsonRpcMessage.createResult(id, serverInfo);
+            }
+            case "ping" -> {
+                yield isNotification ? null : JsonRpcMessage.createResult(id, Map.of());
+            }
+            case "tools/list" -> {
                 final List<Map<String, Object>> toolsList = new ArrayList<>();
                 for (final McpTool tool : toolsMap.values()) {
                     toolsList.add(tool.getDefinition().toMap());
                 }
-                return isNotification ? null : JsonRpcMessage.createResult(id, Map.of("tools", toolsList));
-
-            case "tools/call":
+                yield isNotification ? null : JsonRpcMessage.createResult(id, Map.of("tools", toolsList));
+            }
+            case "tools/call" -> {
                 final JsonRpcMessage toolResult = handleToolCall(id, request.getParams());
-                return isNotification ? null : toolResult;
-
-            case "prompts/list":
-                return isNotification ? null : JsonRpcMessage.createResult(id, Map.of("prompts", skillRegistry.getMcpPrompts()));
-
-            case "prompts/get":
+                yield isNotification ? null : toolResult;
+            }
+            case "prompts/list" -> {
+                yield isNotification ? null : JsonRpcMessage.createResult(id, Map.of("prompts", skillRegistry.getMcpPrompts()));
+            }
+            case "prompts/get" -> {
                 final Object rawPromptObj = request.getParams() != null ? request.getParams().get("name") : null;
                 final String promptName = rawPromptObj != null ? String.valueOf(rawPromptObj) : "";
                 final var skillOpt = skillRegistry.getSkill(promptName);
                 if (skillOpt.isPresent()) {
                     final var skill = skillOpt.get();
-                    return isNotification ? null : JsonRpcMessage.createResult(id, Map.of(
+                    yield isNotification ? null : JsonRpcMessage.createResult(id, Map.of(
                             "description", skill.getDescription(),
                             "messages", List.of(Map.of("role", "user", "content", Map.of("type", "text", "text", skill.getRawMarkdown())))
                     ));
                 }
-                return isNotification ? null : JsonRpcMessage.createError(id, -32602, "Prompt not found: " + promptName);
-
-            case "resources/list":
-                return isNotification ? null : JsonRpcMessage.createResult(id, Map.of("resources", skillRegistry.getMcpResources()));
-
-            case "resources/read":
+                yield isNotification ? null : JsonRpcMessage.createError(id, -32602, "Prompt not found: " + promptName);
+            }
+            case "resources/list" -> {
+                yield isNotification ? null : JsonRpcMessage.createResult(id, Map.of("resources", skillRegistry.getMcpResources()));
+            }
+            case "resources/read" -> {
                 final Object rawUriObj = request.getParams() != null ? request.getParams().get("uri") : null;
                 final String uri = rawUriObj != null ? String.valueOf(rawUriObj) : "";
                 final String resName = uri.replace("resource://riptide/skills/", "");
                 final var resOpt = skillRegistry.getSkill(resName);
                 if (resOpt.isPresent()) {
-                    return isNotification ? null : JsonRpcMessage.createResult(id, Map.of("contents", List.of(Map.of(
+                    yield isNotification ? null : JsonRpcMessage.createResult(id, Map.of("contents", List.of(Map.of(
                             "uri", uri,
                             "mimeType", "text/markdown",
                             "text", resOpt.get().getRawMarkdown()
                     ))));
                 }
-                return isNotification ? null : JsonRpcMessage.createError(id, -32602, "Resource not found: " + uri);
-
-            default:
-                return isNotification ? null : JsonRpcMessage.createError(id, -32601, "Method not found: " + method);
-        }
+                yield isNotification ? null : JsonRpcMessage.createError(id, -32602, "Resource not found: " + uri);
+            }
+            default -> {
+                yield isNotification ? null : JsonRpcMessage.createError(id, -32601, "Method not found: " + method);
+            }
+        };
     }
 
     /**

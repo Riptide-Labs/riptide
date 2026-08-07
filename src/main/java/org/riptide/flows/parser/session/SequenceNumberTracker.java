@@ -133,11 +133,11 @@ public class SequenceNumberTracker {
             this.values = new boolean[size];
         }
 
-        public void reset(final boolean value) {
+        void reset(final boolean value) {
             Arrays.fill(this.values, value);
         }
 
-        public boolean set(final long index, final boolean value) {
+        boolean set(final long index, final boolean value) {
             // Calculate the index in the ring
             // This cast is safe because long mod int is always int
             final int wrapped = (int) (index % this.values.length);
@@ -148,7 +148,7 @@ public class SequenceNumberTracker {
             return prev;
         }
 
-        public int size() {
+        int size() {
             return this.values.length;
         }
     }

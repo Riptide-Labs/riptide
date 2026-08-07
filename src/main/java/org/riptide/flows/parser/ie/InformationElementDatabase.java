@@ -114,7 +114,7 @@ public final class InformationElementDatabase {
             builder.put(key, element);
         }
 
-        public Map<Key, InformationElement> build() {
+        Map<Key, InformationElement> build() {
             return this.builder.build();
         }
     }
