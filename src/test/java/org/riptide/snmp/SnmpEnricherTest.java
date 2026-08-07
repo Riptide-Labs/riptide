@@ -259,4 +259,74 @@ public class SnmpEnricherTest {
         cacheConfig.setRetentionMs(60_000);
         return new ExporterInterfaceTable(cacheConfig, new SessionAdmissionConfig(), new MetricRegistry());
     }
+
+    /**
+     * An interface whose option entry was evicted by the per-scope cap must still be enriched by the
+     * rungs above and below it, and its flow must still be emitted.
+     *
+     * <p>This is what makes the cap safe to set: it costs the option rung for that interface and
+     * nothing else. A cap that silently dropped flows, or blanked interfaces a static pin already
+     * covered, would trade a memory-exhaustion bug for a data-loss one.
+     */
+    @Test
+    public void interfaceEvictedByTheScopeCapStillEnrichesFromPinsAndSnmp(@TempDir Path temporaryFolder)
+            throws Exception {
+        final TestSnmpAgent snmpAgent = new TestSnmpAgent("127.0.0.1/12345", temporaryFolder);
+        snmpAgent.start();
+        snmpAgent.registerIfTable();
+        snmpAgent.registerIfXTable();
+
+        final var source = new Source("here", InetAddress.getByName("127.0.0.1"));
+
+        final SnmpOptionsConfig cacheConfig = new SnmpOptionsConfig();
+        cacheConfig.setRetentionMs(60_000);
+        final SessionAdmissionConfig capped = new SessionAdmissionConfig();
+        capped.setMaxIfIndexesPerScope(1);
+        final var metrics = new MetricRegistry();
+        final ExporterInterfaceTable interfaceTable =
+                new ExporterInterfaceTable(cacheConfig, capped, metrics);
+
+        // Interface 1 is pushed first, then a second interface displaces it: with a budget of one,
+        // interface 1's option entry is gone by the time the flow referencing it arrives.
+        interfaceTable.accept(source.identity(),
+                List.of(new UnsignedValue("SCOPE:INTERFACE", 1)),
+                List.of(new StringValue("IF_NAME", "opt-if1"), new StringValue("IF_DESC", "opt-desc1")));
+        interfaceTable.accept(source.identity(),
+                List.of(new UnsignedValue("SCOPE:INTERFACE", 2)),
+                List.of(new StringValue("IF_NAME", "opt-if2"), new StringValue("IF_DESC", "opt-desc2")));
+
+        assertThat(metrics.meter("enrichment.optionInterfaces.rejected").getCount())
+                .as("the eviction is counted, not silent")
+                .isEqualTo(1);
+
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(liveSnmp(), this.nodeRegistry, interfaceTable));
+        final var repository = new TestRepository(this.metricRegistry);
+        final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
+
+        final Flow flow = Mockito.mock(Flow.class);
+        when(flow.getSrcAddr()).thenReturn(InetAddress.getByName("10.10.10.10"));
+        when(flow.getDstAddr()).thenReturn(InetAddress.getByName("10.20.20.10"));
+        when(flow.getInputSnmp()).thenReturn(1);
+        when(flow.getOutputSnmp()).thenReturn(2);
+
+        pipeline.process(source, List.of(flow));
+
+        snmpAgent.stop();
+
+        assertThat(repository.flows())
+                .as("the flow is still emitted — eviction degrades enrichment, it does not deny the flow")
+                .isNotEmpty()
+                .allSatisfy(enrichedFlow -> {
+                    // interface 1 lost its option entry, so the live SNMP name is what remains
+                    assertThat(enrichedFlow.getInputSnmpIfName())
+                            .as("live SNMP still resolves the evicted interface")
+                            .isNotNull()
+                            .isNotEqualTo("opt-if1");
+                    // and the static pin above the option rung is untouched by the eviction
+                    assertThat(enrichedFlow.getInputSnmpIfAlias()).isEqualTo("Uplink pinned by file");
+                    assertThat(enrichedFlow.getInputSnmpIfSpeed()).isEqualTo(14L);
+                    // the surviving entry still wins its field, so the cap cost exactly one interface
+                    assertThat(enrichedFlow.getOutputSnmpIfName()).isEqualTo("opt-if2");
+                });
+    }
 }

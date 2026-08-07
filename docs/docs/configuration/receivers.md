@@ -235,3 +235,90 @@ Sampled headers are decoded down to addresses, ports, and TCP flags; whatever a
 truncated or non-IP header doesn't reveal stays at its floor value and the flow is
 still persisted (see [Enrichment](../enrichment.md)). Counter samples are skipped —
 riptide does not interpret them.
+
+## Session state bounds
+
+Riptide keeps per-exporter state on the UDP ingest path: NetFlow v9 and IPFIX templates, sequence
+trackers, and the interface names exporters push as option records. All of it is keyed on the
+exporter **scope identity** — `(source address, observation domain)` for v9 and IPFIX,
+`(agent address, sub-agent ID)` for sFlow.
+
+Every part of that identity is chosen by the sender. The observation domain is a 32-bit header
+field, and both halves of the sFlow pair come out of the datagram payload rather than the UDP
+header. A sender that varies one of them mints a new identity on every packet, so the state is
+bounded rather than left to grow.
+
+```yaml
+riptide:
+  flows:
+    session:
+      max-sources: 4096            # distinct UDP sources retaining state
+      max-scopes-per-source: 16    # scope identities per source
+      max-ifindexes-per-scope: 1024 # interface entries per scope
+      source-idle-timeout: 30m     # release a source's slot after this much silence
+```
+
+All four must be positive. Zero or negative is refused at startup, naming the property, because a
+zero would disable the bound rather than tighten it — and `max-sources: 0` would refuse every
+exporter and stop v9/IPFIX decoding altogether.
+
+### Sizing
+
+Worst-case retained state is a product you can multiply out:
+
+```
+session tables : max-sources × max-scopes-per-source × ~852 B
+option table   : max-sources × max-scopes-per-source × max-ifindexes-per-scope × ~144 B
+```
+
+Read the second line as a ceiling, not an expectation. Reaching it means an attacker holding all
+`max-sources` slots at once. What a single source can spend is
+`max-scopes-per-source × max-ifindexes-per-scope × ~144 B` — about 2.4 MB at the defaults. A real
+fleet holds one scope per exporter and its own interfaces, far below either number.
+
+The defaults suit real hardware: a per-linecard chassis exporting several observation domains from
+one address, and a large router carrying up to a thousand interfaces once subinterfaces are counted.
+
+### When a bound is reached
+
+Behaviour differs by level, on purpose.
+
+| Bound | On reaching it | Effect |
+|---|---|---|
+| `max-sources` | New sources refused; admitted ones keep their state | New exporters are not retained until a slot frees |
+| `max-scopes-per-source` | That source's least-recently-used scope is displaced | Confined to that source — no other exporter is affected |
+| `max-ifindexes-per-scope` | That scope's least-recently-used interface is evicted | Degrades only: static pins and live SNMP still resolve the interface, and the flow is still emitted |
+
+Only the source bound refuses; the other two evict least-recently-used within their own level. That
+asymmetry is deliberate. Evicting across sources would let whoever sends hardest choose which of
+your devices stop being monitored, so eviction is always confined to the source that caused it.
+
+### Watching them
+
+```
+flows.session.sources               # gauge: sources currently holding a slot
+flows.session.scopes                # gauge: admitted scope identities
+flows.session.rejectedSources       # meter: source bound reached
+flows.session.rejectedScopes        # meter: a scope was displaced
+enrichment.optionInterfaces.rejected # meter: an interface entry was evicted
+```
+
+A rejection meter climbing steadily on a healthy fleet means the bound is too low for your
+hardware, not that you are under attack — raise the matching setting. Rejections are also logged at
+warning level, rate-limited, with separate limiters per bound so a noisy scope flood cannot mask the
+more serious source-bound message.
+
+Keep `source-idle-timeout` at or above the receiver's template timeout. They are separate timers:
+the slot and the state it authorises would otherwise expire at different moments, and state
+retained after its slot is released puts the real total above the configured ceiling. Riptide warns
+at startup if the template timeout is the longer of the two.
+
+### What this is not
+
+Bounding is not authentication. Riptide does not verify that an exporter is who it claims to be,
+and these limits do not make it safe to expose a flow port to untrusted networks. They cap the cost
+of an abusive sender; they do not identify one.
+
+Restrict the flow port to known exporters. Note that a source ACL constrains the *source* bound but
+does not blunt the payload-borne multiplier: a single permitted sender can still vary observation
+domain or sFlow agent address freely, which is exactly what `max-scopes-per-source` exists to cap.

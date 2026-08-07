@@ -30,9 +30,11 @@ import java.time.Duration;
  *   option table   : maxSources x maxScopesPerSource x maxIfIndexesPerScope x ~144 B
  * </pre>
  *
- * <p>At the defaults below that is roughly 56 MB of session state and 600 MB of option-table
- * entries — the latter being a ceiling reached only under attack, since a real fleet holds one
- * scope per exporter and a few hundred interfaces in total.
+ * <p>Read the second line as a ceiling, not an expectation. Reaching it means holding every one of
+ * {@code maxSources} slots at once. What a single source can actually spend is
+ * {@code maxScopesPerSource x maxIfIndexesPerScope x ~144 B} — about 2.4 MB at the defaults below —
+ * and a real fleet holds one scope per exporter with its own interfaces, orders of magnitude below
+ * either figure.
  *
  * <p>JavaBean properties (not bare public fields) on purpose, for the reason recorded in
  * {@code SnmpCacheConfig}: Spring's binder silently skips fields without accessors, which here
@@ -76,10 +78,25 @@ public class SessionAdmissionConfig {
      * {@code ifIndex} across 2^32 values. This bounds the inner map so the product above stays
      * finite.
      *
-     * <p>Rejection here only degrades — static pins and live SNMP still resolve the interface — so
-     * this is the tightest budget and the quietest one.
+     * <p>Sized for real hardware rather than for the worst-case product. A large chassis router
+     * carries hundreds to low thousands of interfaces once subinterfaces are counted, and every one
+     * is a legitimate option record in a single scope — so a tight cap here does not inconvenience
+     * an attacker, it discards real interface names on healthy deployments. An earlier value of 128
+     * evicted 372 of a 500-interface router's interfaces.
+     *
+     * <p>The reason a generous value is affordable: what an attacker can actually spend is bounded
+     * per source, at {@code maxScopesPerSource x maxIfIndexesPerScope x ~144 B} — about 2.4 MB from
+     * one address at these defaults. Reaching the full product in the class comment additionally
+     * requires occupying every one of {@code maxSources} slots, which needs that many distinct
+     * source addresses and, because the source table refuses new entrants rather than evicting,
+     * winning them ahead of the real fleet. The source bound is the control that matters there.
+     *
+     * <p>Eviction is least-recently-used within the scope, so a device carrying more interfaces than
+     * this keeps the ones actually referenced by traffic and loses the idle tail. Rejection only
+     * degrades — static pins and live SNMP still resolve the interface, and the flow is still
+     * emitted — which is why this budget is the quietest of the three.
      */
-    private int maxIfIndexesPerScope = 128;
+    private int maxIfIndexesPerScope = 1_024;
 
     /**
      * How long an admitted source may go unheard before its budget is released.

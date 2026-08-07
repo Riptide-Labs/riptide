@@ -95,6 +95,35 @@ public class ExporterInterfaceTableTest {
     }
 
     /**
+     * The defaults must fit real hardware, not just stop an attacker.
+     *
+     * <p>A large chassis router carries hundreds of interfaces once subinterfaces are counted, and
+     * every one of them is a legitimate option record in a single scope. If the shipped
+     * {@code max-ifindexes-per-scope} is below that, riptide silently discards real interface names
+     * on healthy deployments — trading a memory-exhaustion bug for a data-quality one, which the
+     * design explicitly names as the main operational risk of this change.
+     */
+    @Test
+    public void aHighInterfaceCountRouterFitsWithinTheShippedDefault() throws Exception {
+        final var metrics = new MetricRegistry();
+        // Shipped defaults, deliberately: this test exists to check them, not a tuned value.
+        final var table = new ExporterInterfaceTable(config(), new SessionAdmissionConfig(), metrics);
+        final var router = identity("10.0.0.1", 0);
+
+        final int interfacesOnALargeRouter = 500;
+        for (int ifIndex = 1; ifIndex <= interfacesOnALargeRouter; ifIndex++) {
+            table.accept(router,
+                    List.of(new UnsignedValue("SCOPE:INTERFACE", ifIndex)),
+                    List.of(new StringValue("IF_NAME", "TenGigE0/0/0/" + ifIndex)));
+        }
+
+        assertThat(metrics.meter("enrichment.optionInterfaces.rejected").getCount())
+                .as("a real %d-interface router must not have its interface names evicted at the defaults",
+                        interfacesOnALargeRouter)
+                .isZero();
+    }
+
+    /**
      * Refreshing an interface already held is not a new entry, so a device whose budget is full
      * still tracks renames on the interfaces it does hold.
      */

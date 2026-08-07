@@ -9,6 +9,7 @@ import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.RemovalCause;
 import com.google.common.primitives.UnsignedLong;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.ie.values.visitor.StringVisitor;
@@ -75,7 +76,7 @@ public class ExporterInterfaceTable implements OptionListener {
     private final Meter recordsConsumed;
     private final Meter recordsSkipped;
     /**
-     * Interface entries dropped because a scope hit its cap. Degrade-only, so this is a meter and
+     * Interface entries evicted because a scope hit its cap. Degrade-only, so this is a meter and
      * not a warning: static pins and live SNMP still resolve the interface, and the flow is still
      * emitted. Watch it to tell an attack from a cap set too low for a large chassis.
      */
@@ -131,12 +132,10 @@ public class ExporterInterfaceTable implements OptionListener {
         // option tables (e.g. an interface-scoped table plus the IOS-XR style one);
         // the fresh record pins its fields, the existing entry fills the rest
         final IfInfo existing = forScope.getIfPresent(ifIndex);
-        if (existing == null && forScope.size() >= this.maxIfIndexesPerScope) {
-            // Only a *new* ifIndex is refused. Refreshing one already held keeps a real device's
-            // interfaces current even once a spray has filled the rest of its budget.
-            this.recordsRejected.mark();
-            return;
-        }
+        // Always written, never refused. The cap is enforced by evicting this scope's
+        // least-recently-used interface instead: refusing the new entry would leave a device with
+        // more interfaces than the cap permanently blind to whichever ones it happened to mention
+        // last, while eviction keeps the window over the interfaces actually carrying traffic.
         forScope.put(ifIndex, IfInfo.merge(new IfInfo(name, description, null), existing));
         this.recordsConsumed.mark();
     }
@@ -155,6 +154,14 @@ public class ExporterInterfaceTable implements OptionListener {
             return this.table.get(identity, () -> CacheBuilder.newBuilder()
                     .expireAfterWrite(this.retention)
                     .maximumSize(this.maxIfIndexesPerScope)
+                    // Only SIZE is counted. Expiry is the table working as designed — exporters
+                    // re-send their option tables — whereas a size eviction is the cap biting, and
+                    // is the one an operator needs to tell an attack from a cap set too low.
+                    .<Integer, IfInfo>removalListener(notification -> {
+                        if (notification.getCause() == RemovalCause.SIZE) {
+                            this.recordsRejected.mark();
+                        }
+                    })
                     .build());
         } catch (final ExecutionException e) {
             // The loader is a plain builder call and throws nothing checked; Guava still declares it.

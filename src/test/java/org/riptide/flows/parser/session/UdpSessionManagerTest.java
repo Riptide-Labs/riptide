@@ -406,4 +406,48 @@ public class UdpSessionManagerTest {
         assertThat(seen).containsExactly(
                 new ExporterIdentity.NetflowIpfix(remoteAddress1.getAddress(), observationId1));
     }
+    /**
+     * The end-to-end form of the bound: a spray driven through the real {@code addTemplate} and
+     * {@code verifySequenceNumber} paths, not through the oracle in isolation.
+     *
+     * <p>This is what GHSA-rggj-c47j-46v9 reduces to. Before the bound, every minted observation
+     * domain added a templates entry and a sequence tracker and nothing ever removed them inside the
+     * TTL, so retained state tracked the attacker's packet count. It must now plateau at the
+     * configured ceiling regardless of how long the spray runs.
+     */
+    @Test
+    void aDomainSprayPlateausAtTheConfiguredCeiling() throws Exception {
+        final var config = new SessionAdmissionConfig();
+        config.setMaxSources(4);
+        config.setMaxScopesPerSource(8);
+        final var manager = new UdpSessionManager(Duration.ofMinutes(30),
+                () -> new SequenceNumberTracker(32),
+                OptionListener.NONE,
+                new SessionAdmission(config, new com.codahale.metrics.MetricRegistry()));
+
+        final var remote = new InetSocketAddress(InetAddress.getByName("10.10.10.20"), 9999);
+        final var local = new InetSocketAddress(InetAddress.getByName("10.10.10.10"), 2055);
+        final var session = manager.getSession(new Netflow9UdpParser.HostSessionKey(remote.getAddress(), local));
+        final var template = Template.builder(100, Template.Type.TEMPLATE)
+                .withFields(List.of(field("field1"))).build();
+
+        // One source, 5000 minted observation domains — the attack, at rate.
+        for (long domain = 0; domain < 5_000; domain++) {
+            session.addTemplate(domain, template);
+            session.verifySequenceNumber(
+                    new org.riptide.pipeline.ExporterIdentity.NetflowIpfix(remote.getAddress(), domain),
+                    domain, 1);
+        }
+
+        assertThat(manager.domainCount())
+                .as("retained exporters plateau at the scope budget, not at the spray length")
+                .isLessThanOrEqualTo(8);
+        assertThat(manager.sequenceTrackerCount())
+                .as("sequence trackers are bounded by the same budget")
+                .isLessThanOrEqualTo(8);
+        assertThat(manager.count())
+                .as("one template each, so templates are bounded by the same budget")
+                .isLessThanOrEqualTo(8);
+    }
+
 }

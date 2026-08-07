@@ -274,6 +274,34 @@ class SessionAdmissionTest {
         assertThat(meter("rejectedSources")).isEqualTo(1);
     }
 
+    /**
+     * The shipped defaults must fit real hardware. A per-linecard chassis legitimately exports
+     * several observation domains from one address, and a cap below that would churn a healthy
+     * device's templates — the design's stated main operational risk, and the failure mode an
+     * operator would misread as an exporter problem.
+     */
+    @Test
+    void aMultiScopeChassisFitsWithinTheShippedDefaults() {
+        // Shipped defaults, deliberately: this test exists to check them, not a tuned value.
+        final SessionAdmission admission =
+                new SessionAdmission(new SessionAdmissionConfig(), this.metrics, this.clock::get);
+        final var chassis = source("10.0.0.1");
+        final List<ExporterIdentity> evicted = new ArrayList<>();
+
+        // Eight linecards, each its own observation domain, each re-announcing templates.
+        for (int round = 0; round < 20; round++) {
+            for (long linecard = 0; linecard < 8; linecard++) {
+                admission.admit(chassis, scope("10.0.0.1", linecard), evicted::add);
+            }
+        }
+
+        assertThat(evicted)
+                .as("a real 8-domain chassis must never have a scope displaced at the defaults")
+                .isEmpty();
+        assertThat(meter("rejectedScopes")).isZero();
+        assertThat(admission.scopeCount()).isEqualTo(8);
+    }
+
     @Test
     void anAdmittedScopeIsNotDisplacedByItsOwnRepeatedTraffic() {
         final SessionAdmission admission = admission(config(8, 2));
