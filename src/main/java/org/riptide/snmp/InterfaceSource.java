@@ -26,7 +26,7 @@ public interface InterfaceSource {
      * implementation may use these calls both to decide an exporter is worth polling at all and to
      * decide it is still alive, so a caller that skips this for an ifIndex it believes it already
      * knows withholds liveness for the whole exporter. {@link InterfaceSnapshotPoller} deregisters
-     * after {@code refresh-interval-ms × deregister-after} without a call and drops the snapshot
+     * after {@code refresh-interval-ms * deregister-after} without a call and drops the snapshot
      * with the registration, so the exporter's next flow starts from a cold warmup window. Call it
      * for every flow and direction carrying a usable ifIndex, and use the answer or don't.
      *

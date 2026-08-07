@@ -211,6 +211,29 @@ public class SnmpEnricherTest {
         });
     }
 
+    @Test
+    public void pinnedInterfacesStillCallTrackAndResolveToMaintainLiveness() throws Exception {
+        final InterfaceSource interfaceSource = Mockito.mock(InterfaceSource.class);
+        when(interfaceSource.trackAndResolve(Mockito.any(), Mockito.anyInt())).thenReturn(java.util.Optional.empty());
+
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(interfaceSource, this.nodeRegistry, emptyInterfaceTable()));
+        final var repository = new TestRepository(metricRegistry);
+        final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
+
+        final Flow flow = Mockito.mock(Flow.class);
+        when(flow.getSrcAddr()).thenReturn(InetAddress.getByName("10.10.10.10"));
+        when(flow.getDstAddr()).thenReturn(InetAddress.getByName("10.20.20.10"));
+        when(flow.getInputSnmp()).thenReturn(1);
+        when(flow.getOutputSnmp()).thenReturn(2);
+
+        final var source = new Source("here", InetAddress.getByName("127.0.0.1"));
+        pipeline.process(source, List.of(flow));
+
+        final var targetIp = InetAddress.getByName("127.0.0.1");
+        Mockito.verify(interfaceSource).trackAndResolve(Mockito.argThat(ep -> ep != null && ep.getInetSocketAddress().getAddress().equals(targetIp)), Mockito.eq(1));
+        Mockito.verify(interfaceSource).trackAndResolve(Mockito.argThat(ep -> ep != null && ep.getInetSocketAddress().getAddress().equals(targetIp)), Mockito.eq(2));
+    }
+
     private static ExporterInterfaceTable emptyInterfaceTable() {
         final SnmpOptionsConfig cacheConfig = new SnmpOptionsConfig();
         cacheConfig.setRetentionMs(60_000);

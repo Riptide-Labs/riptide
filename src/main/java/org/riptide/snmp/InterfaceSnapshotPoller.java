@@ -131,7 +131,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         // from inside the executor factory naming neither property nor class, and non-positive
         // expiry or exporter bound make every trackAndResolve() return empty with only a meter to show
         // for it. Note 0 does not mean "unlimited" here, unlike the negative-cache TTL it
-        // replaces — hence checking rather than reinterpreting.
+        // replaces, so check rather than reinterpreting.
         requirePositive(config.getRefreshIntervalMs(), "riptide.snmp.poll.refresh-interval-ms");
         requirePositive(config.getSnapshotExpiryMs(), "riptide.snmp.poll.snapshot-expiry-ms");
         requirePositive(config.getPoolWidth(), "riptide.snmp.poll.pool-width");
