@@ -19,6 +19,7 @@ import org.riptide.config.DaemonConfig;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.session.ExporterSamplingTable;
+import org.riptide.flows.parser.session.SessionAdmissionConfig;
 import org.riptide.pipeline.Pipeline;
 import org.riptide.pipeline.Source;
 import org.riptide.snmp.ExporterInterfaceTable;
@@ -284,6 +285,7 @@ class Netflow5SamplingFallbackTest {
                 Mockito.mock(ValueConversionService.class),
                 Mockito.mock(ExporterInterfaceTable.class),
                 Mockito.mock(ExporterSamplingTable.class),
+                new SessionAdmissionConfig(),
                 config);
     }
 }

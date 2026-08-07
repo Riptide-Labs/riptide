@@ -6,6 +6,7 @@
 package org.riptide.snmp;
 
 import com.codahale.metrics.MetricRegistry;
+import org.riptide.flows.parser.session.SessionAdmissionConfig;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
@@ -75,6 +76,6 @@ public class StaticInterfaceEnricherTest {
     private static ExporterInterfaceTable emptyInterfaceTable() {
         final SnmpOptionsConfig cacheConfig = new SnmpOptionsConfig();
         cacheConfig.setRetentionMs(60_000);
-        return new ExporterInterfaceTable(cacheConfig, new MetricRegistry());
+        return new ExporterInterfaceTable(cacheConfig, new SessionAdmissionConfig(), new MetricRegistry());
     }
 }

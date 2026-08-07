@@ -7,6 +7,7 @@ package org.riptide.snmp;
 
 
 import com.codahale.metrics.MetricRegistry;
+import org.riptide.flows.parser.session.SessionAdmissionConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mapstruct.factory.Mappers;
@@ -256,6 +257,6 @@ public class SnmpEnricherTest {
     private static ExporterInterfaceTable emptyInterfaceTable() {
         final SnmpOptionsConfig cacheConfig = new SnmpOptionsConfig();
         cacheConfig.setRetentionMs(60_000);
-        return new ExporterInterfaceTable(cacheConfig, new MetricRegistry());
+        return new ExporterInterfaceTable(cacheConfig, new SessionAdmissionConfig(), new MetricRegistry());
     }
 }

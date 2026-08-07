@@ -9,6 +9,7 @@ import com.codahale.metrics.MetricRegistry;
 import org.junit.jupiter.api.Test;
 import org.riptide.flows.parser.ie.values.StringValue;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
+import org.riptide.flows.parser.session.SessionAdmissionConfig;
 import org.riptide.pipeline.ExporterIdentity;
 
 import java.net.InetAddress;
@@ -20,12 +21,96 @@ import static org.assertj.core.api.Assertions.assertThat;
 public class ExporterInterfaceTableTest {
 
     private final MetricRegistry metrics = new MetricRegistry();
-    private final ExporterInterfaceTable table = new ExporterInterfaceTable(config(), metrics);
+    private final ExporterInterfaceTable table =
+            new ExporterInterfaceTable(config(), admissionConfig(), metrics);
 
     private static SnmpOptionsConfig config() {
         final SnmpOptionsConfig config = new SnmpOptionsConfig();
         config.setRetentionMs(60_000);
         return config;
+    }
+
+    private static SessionAdmissionConfig admissionConfig() {
+        return new SessionAdmissionConfig();
+    }
+
+    private static SessionAdmissionConfig admissionConfig(final int maxIfIndexesPerScope) {
+        final SessionAdmissionConfig config = new SessionAdmissionConfig();
+        config.setMaxIfIndexesPerScope(maxIfIndexesPerScope);
+        return config;
+    }
+
+    /**
+     * The option table's own half of GHSA-rggj-c47j-46v9. A per-scope cap is not enough on its own
+     * for this table: {@code addOptions} runs once per option data record, several hundred fit in a
+     * datagram, and {@code ifIndex} is 32 bits — so an attacker inside a single <em>admitted</em>
+     * scope can grow it without ever tripping the session bound.
+     */
+    @Test
+    public void ifIndexSprayWithinOneScopeIsBounded() throws Exception {
+        final var table = new ExporterInterfaceTable(config(), admissionConfig(8), this.metrics);
+        final var identity = identity("10.0.0.1", 1);
+
+        for (int ifIndex = 1; ifIndex <= 500; ifIndex++) {
+            table.accept(identity,
+                    List.of(new UnsignedValue("SCOPE:INTERFACE", ifIndex)),
+                    List.of(new StringValue("IF_NAME", "if" + ifIndex)));
+        }
+
+        int retained = 0;
+        for (int ifIndex = 1; ifIndex <= 500; ifIndex++) {
+            if (table.lookup(identity, ifIndex).isPresent()) {
+                retained++;
+            }
+        }
+        assertThat(retained)
+                .as("500 sprayed interfaces must not become 500 retained entries")
+                .isLessThanOrEqualTo(8);
+        assertThat(this.metrics.meter("enrichment.optionInterfaces.rejected").getCount())
+                .as("the drop is visible, so a cap set too low for a real chassis can be told from an attack")
+                .isPositive();
+    }
+
+    /**
+     * A spray in one scope must not cost another scope its interface names — the same isolation
+     * property the session budget has, one level down.
+     */
+    @Test
+    public void oneScopeSprayingDoesNotEvictAnotherScopesInterfaces() throws Exception {
+        final var table = new ExporterInterfaceTable(config(), admissionConfig(4), this.metrics);
+        final var victim = identity("10.0.0.2", 1);
+        final var attacker = identity("10.0.0.1", 1);
+
+        table.accept(victim, List.of(new UnsignedValue("SCOPE:INTERFACE", 1)),
+                List.of(new StringValue("IF_NAME", "victim-if1")));
+
+        for (int ifIndex = 1; ifIndex <= 200; ifIndex++) {
+            table.accept(attacker, List.of(new UnsignedValue("SCOPE:INTERFACE", ifIndex)),
+                    List.of(new StringValue("IF_NAME", "spray" + ifIndex)));
+        }
+
+        assertThat(table.lookup(victim, 1)).map(IfInfo::name)
+                .as("the victim's entry survives an unrelated scope filling its own budget")
+                .contains("victim-if1");
+    }
+
+    /**
+     * Refreshing an interface already held is not a new entry, so a device whose budget is full
+     * still tracks renames on the interfaces it does hold.
+     */
+    @Test
+    public void refreshingAHeldInterfaceIsNotRefusedByAFullBudget() throws Exception {
+        final var table = new ExporterInterfaceTable(config(), admissionConfig(2), this.metrics);
+        final var identity = identity("10.0.0.1", 1);
+
+        table.accept(identity, List.of(new UnsignedValue("SCOPE:INTERFACE", 1)),
+                List.of(new StringValue("IF_NAME", "before")));
+        table.accept(identity, List.of(new UnsignedValue("SCOPE:INTERFACE", 2)),
+                List.of(new StringValue("IF_NAME", "other")));
+        table.accept(identity, List.of(new UnsignedValue("SCOPE:INTERFACE", 1)),
+                List.of(new StringValue("IF_NAME", "after")));
+
+        assertThat(table.lookup(identity, 1)).map(IfInfo::name).contains("after");
     }
 
     private static ExporterIdentity identity(final String host, final long domain) throws UnknownHostException {
@@ -111,7 +196,7 @@ public class ExporterInterfaceTableTest {
     public void entriesExpireOnRetention() throws Exception {
         final SnmpOptionsConfig expiring = new SnmpOptionsConfig();
         expiring.setRetentionMs(0); // immediate expiry
-        final ExporterInterfaceTable shortLived = new ExporterInterfaceTable(expiring, new MetricRegistry());
+        final ExporterInterfaceTable shortLived = new ExporterInterfaceTable(expiring, new SessionAdmissionConfig(), new MetricRegistry());
         final var identity = identity("10.0.0.1", 1);
 
         shortLived.accept(identity, List.of(new UnsignedValue("SCOPE:INTERFACE", 3)),

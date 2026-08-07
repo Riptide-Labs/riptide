@@ -14,6 +14,7 @@ import org.riptide.flows.parser.netflow9.proto.Packet;
 import org.riptide.flows.parser.session.SequenceNumberTracker;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.TcpSession;
+import org.riptide.flows.parser.session.SessionAdmissionConfig;
 import org.riptide.pipeline.ExporterIdentity;
 import org.riptide.snmp.ExporterInterfaceTable;
 import org.riptide.snmp.IfInfo;
@@ -37,7 +38,7 @@ public class InterfaceOptionsBlackboxTest {
 
     private static final Path FOLDER = Paths.get("src/test/resources/flows");
 
-    private final ExporterInterfaceTable table = new ExporterInterfaceTable(config(), new MetricRegistry());
+    private final ExporterInterfaceTable table = new ExporterInterfaceTable(config(), new SessionAdmissionConfig(), new MetricRegistry());
 
     private static SnmpOptionsConfig config() {
         final SnmpOptionsConfig config = new SnmpOptionsConfig();

@@ -376,7 +376,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             // Test against half the ceiling rather than doubling first and clamping after. The
             // latter needs an overflow check that can never fire (the ceiling is reached first),
             // so it reads as a guard while being dead code. This keeps delay within
-            // [base, ceiling] by construction, so it can never go negative — which would
+            // [base, ceiling] by construction, so it can never go negative, which would
             // schedule the next walk in the past and busy-loop the endpoint being backed off.
             delay = delay > ceiling / 2 ? ceiling : delay * 2;
         }
