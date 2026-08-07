@@ -84,16 +84,37 @@ Until the first table arrives, flows from that exporter are recorded as unsample
 
 IPFIX does not yet get this correlation: its rate is read only from the flow record itself, so an IPFIX exporter that advertises out of band needs the fallback below.
 
+**NetFlow v5 has no options-table mechanism**, so there is nothing for riptide to correlate.
+A v5 exporter states its rate in the packet header instead, in a single 16-bit field holding a 2-bit sampling mode and a 14-bit interval.
+riptide reads the mode from that field and reports it as the sampling algorithm, but **does not yet read the interval** — so a sampling v5 exporter is recorded as unsampled unless you name the rate yourself.
+
 For an exporter that never advertises a rate, name it yourself:
 
 ```properties
 riptide.receivers.nf9.flow-sampling-interval-fallback=1000
 ```
 
-This is a last resort, not an override.
+For NetFlow v9 and IPFIX this is a last resort, not an override.
 What the exporter says always wins: a rate on the flow record first, then the rate from its sampler options table, then this setting, then unsampled.
 An exporter that explicitly reports an interval of 1 has said it does not sample, and that answer stands over the fallback.
+
+For **NetFlow v5** the same setting is the *only* rung above unsampled rather than a last resort, because the rate a v5 exporter states in its header is not yet read.
+It applies to a dedicated `netflow5` receiver and to the v5 half of a `multi` receiver alike:
+
+```properties
+riptide.receivers.nf5.type=netflow5
+riptide.receivers.nf5.flow-sampling-interval-fallback=1000
+```
+
+:::caution
+Because the v5 header interval is not read yet, this setting is applied to v5 flows even when the exporter's header states a mode and an interval of its own.
+For v5 only, the fallback is therefore an override in practice, which is the opposite of how it behaves for v9 and IPFIX.
+If your v5 exporters set the sampling mode bits, check what they advertise before configuring a rate here.
+:::
+
 Note the fallback applies to the whole receiver, so exporters sharing a port share it.
+That matters most for v5, where it is doing all the work: a receiver fronting a mixed fleet gives every v5 exporter behind it the same rate.
+Give exporters that sample at different rates their own receivers and ports.
 
 :::note
 riptide records the sampling rate; it does not scale NetFlow or IPFIX `bytes` and `packets` by it.

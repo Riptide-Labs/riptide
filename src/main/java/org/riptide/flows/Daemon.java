@@ -99,7 +99,8 @@ public class Daemon implements ApplicationRunner {
                 .map(e -> e.getValue().accept(new ReceiverConfig.Cases<Listener>() {
                     @Override
                     public Listener match(final ReceiverConfig.Neflow5Config config) {
-                        final var parser = new Netflow5UdpParser(e.getKey(), dispatcher, identity, metricRegistry);
+                        final var parser = new Netflow5UdpParser(e.getKey(), dispatcher, identity, metricRegistry)
+                                .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback());
 
                         return new UdpListener(e.getKey(), parser, metricRegistry)
                                 .withPort(config.getPort())
@@ -164,7 +165,8 @@ public class Daemon implements ApplicationRunner {
                         final var parsers = new HashSet<DispatchableUdpParser>();
 
                         if (config.isNetflow5()) {
-                            parsers.add(new Netflow5UdpParser(e.getKey() + ":netflow5", dispatcher, identity, metricRegistry));
+                            parsers.add(new Netflow5UdpParser(e.getKey() + ":netflow5", dispatcher, identity, metricRegistry)
+                                    .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback()));
                         }
 
                         if (config.isSflow()) {

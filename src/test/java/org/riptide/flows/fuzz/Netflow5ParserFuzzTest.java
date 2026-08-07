@@ -7,6 +7,7 @@ package org.riptide.flows.fuzz;
 
 import com.code_intelligence.jazzer.junit.FuzzTest;
 import io.netty.buffer.ByteBuf;
+import org.riptide.flows.parser.netflow5.Netflow5FlowBuilder;
 import org.riptide.flows.parser.netflow5.proto.Header;
 import org.riptide.flows.parser.netflow5.proto.Packet;
 
@@ -31,7 +32,7 @@ class Netflow5ParserFuzzTest {
             final Header header = new Header(slice(buffer, Header.SIZE));
             final Packet packet = new Packet(header, buffer);
             // Terminate the lazy stream so the record field decode actually runs.
-            packet.buildFlows(Instant.EPOCH).forEach(flow -> { });
+            new Netflow5FlowBuilder().buildFlows(Instant.EPOCH, packet).forEach(flow -> { });
         } catch (final Throwable t) {
             if (!FuzzSupport.isDesignedRejection(t)) {
                 throw t;

@@ -22,12 +22,16 @@ import org.riptide.pipeline.Identity;
 import org.riptide.pipeline.Source;
 
 import java.net.InetSocketAddress;
+import java.time.Instant;
 import java.util.List;
 import java.util.function.BiConsumer;
+import java.util.stream.Stream;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
 
 public class Netflow5UdpParser extends UdpParserBase implements DispatchableUdpParser {
+
+    private final Netflow5FlowBuilder flowBuilder = new Netflow5FlowBuilder();
 
     public Netflow5UdpParser(final String name,
                              final BiConsumer<Source, List<Flow>> dispatcher,
@@ -45,7 +49,34 @@ public class Netflow5UdpParser extends UdpParserBase implements DispatchableUdpP
     protected FlowPacket parse(final Session session,
                                final ByteBuf buffer) throws Exception {
         final Header header = new Header(slice(buffer, Header.SIZE));
-        return new Packet(header, buffer);
+        final Packet packet = new Packet(header, buffer);
+
+        return new FlowPacket() {
+            @Override
+            public Stream<Flow> buildFlows(final Instant receivedAt) {
+                return flowBuilder.buildFlows(receivedAt, packet);
+            }
+
+            @Override
+            public long getObservationDomainId() {
+                return packet.getObservationDomainId();
+            }
+
+            @Override
+            public long getSequenceNumber() {
+                return packet.getSequenceNumber();
+            }
+
+            @Override
+            public int getSequenceIncrement() {
+                return packet.getSequenceIncrement();
+            }
+        };
+    }
+
+    public Netflow5UdpParser withFlowSamplingIntervalFallback(final Long flowSamplingIntervalFallback) {
+        this.flowBuilder.setFlowSamplingIntervalFallback(flowSamplingIntervalFallback);
+        return this;
     }
 
     @Override
