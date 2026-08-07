@@ -89,4 +89,37 @@ public class SessionAdmissionConfig {
      * staying full until restart.
      */
     private Duration sourceIdleTimeout = Duration.ofMinutes(30);
+
+    /**
+     * Reject a configuration that would disable the bound instead of setting it.
+     *
+     * <p>Called from every component these limits govern, because a non-positive value here is not
+     * a smaller bound — it is no bound, or no service. {@code max-scopes-per-source} at zero would
+     * leave the tables growing exactly as they did before this change, restoring the vulnerability
+     * silently; {@code max-sources} at zero would refuse every exporter and stop NetFlow v9 and
+     * IPFIX decoding outright. Neither should be discoverable only from a metric.
+     *
+     * <p>Same posture, and the same message shape, as {@code InterfaceSnapshotPoller}'s checks on
+     * its own intervals: fail at startup naming the property, rather than at runtime naming nothing.
+     */
+    public void validate() {
+        requirePositive(this.maxSources, "riptide.flows.session.max-sources");
+        requirePositive(this.maxScopesPerSource, "riptide.flows.session.max-scopes-per-source");
+        requirePositive(this.maxIfIndexesPerScope, "riptide.flows.session.max-ifindexes-per-scope");
+        if (this.sourceIdleTimeout == null || this.sourceIdleTimeout.isNegative()
+                || this.sourceIdleTimeout.isZero()) {
+            throw new IllegalArgumentException(
+                    "riptide.flows.session.source-idle-timeout must be positive, but was "
+                            + this.sourceIdleTimeout
+                            + " — a non-positive timeout reclaims every source on the next sweep, so no"
+                            + " exporter would keep its admission slot between packets.");
+        }
+    }
+
+    private static void requirePositive(final int value, final String property) {
+        if (value <= 0) {
+            throw new IllegalArgumentException(property + " must be positive, but was " + value
+                    + " — zero or negative disables the bound rather than tightening it.");
+        }
+    }
 }

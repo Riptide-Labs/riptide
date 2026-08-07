@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The bound that makes GHSA-rggj-c47j-46v9 unexploitable.
@@ -220,6 +221,57 @@ class SessionAdmissionTest {
         assertThat(admission.scopeCount())
                 .as("a forged agent address must not buy a fresh budget")
                 .isEqualTo(4);
+    }
+
+    /**
+     * A bound set to zero must be rejected, not honoured as "no bound". Before this check, a
+     * mistyped {@code max-scopes-per-source} restored the unbounded growth the class exists to
+     * stop, silently and with no way to tell from the outside.
+     */
+    @Test
+    void aNonPositiveBoundIsRefusedAtStartupRatherThanDisablingTheBound() {
+        assertThatThrownBy(() -> admission(config(4096, 0)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("riptide.flows.session.max-scopes-per-source")
+                .hasMessageContaining("disables the bound");
+
+        assertThatThrownBy(() -> admission(config(0, 16)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("riptide.flows.session.max-sources");
+
+        final SessionAdmissionConfig negativeIfIndexes = config(16, 4);
+        negativeIfIndexes.setMaxIfIndexesPerScope(-1);
+        assertThatThrownBy(() -> admission(negativeIfIndexes))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("riptide.flows.session.max-ifindexes-per-scope");
+
+        final SessionAdmissionConfig zeroTimeout = config(16, 4);
+        zeroTimeout.setSourceIdleTimeout(java.time.Duration.ZERO);
+        assertThatThrownBy(() -> admission(zeroTimeout))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("riptide.flows.session.source-idle-timeout");
+    }
+
+    /**
+     * The source bound is the more serious of the two conditions — new exporters stop being
+     * retained entirely — so a continuous scope-budget flood must not be able to suppress it.
+     */
+    @Test
+    void aScopeFloodDoesNotSuppressTheSourceBoundWarning() {
+        final SessionAdmission admission = admission(config(1, 1));
+        final var admitted = source("10.0.0.1");
+
+        // Fill the single source slot, then spray scopes so the scope-budget warning fires.
+        admission.admit(admitted, scope("10.0.0.1", 0), e -> { });
+        for (long domain = 1; domain < 50; domain++) {
+            admission.admit(admitted, scope("10.0.0.1", domain), e -> { });
+        }
+        assertThat(meter("rejectedScopes")).isPositive();
+
+        // A different source now arrives at a full table. Its warning uses its own limiter, so the
+        // scope flood above cannot have consumed the interval.
+        assertThat(admission.admit(source("10.0.0.2"), scope("10.0.0.2", 1), e -> { })).isFalse();
+        assertThat(meter("rejectedSources")).isEqualTo(1);
     }
 
     @Test

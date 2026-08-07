@@ -86,6 +86,7 @@ public class ExporterInterfaceTable implements OptionListener {
                                   final MetricRegistry metrics) {
         // sized against how often exporters re-send option tables, not against how often
         // riptide polls — see SnmpOptionsConfig for why those stopped being the same thing
+        admissionConfig.validate();
         this.retention = Duration.ofMillis(optionsConfig.getRetentionMs());
         this.maxIfIndexesPerScope = admissionConfig.getMaxIfIndexesPerScope();
         this.table = CacheBuilder.newBuilder()

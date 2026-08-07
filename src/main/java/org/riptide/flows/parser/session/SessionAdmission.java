@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.riptide.flows.parser.session.UdpSessionManager.SessionKey;
 import org.riptide.pipeline.ExporterIdentity;
 
+import java.time.Duration;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -65,7 +66,16 @@ public final class SessionAdmission {
 
     private final Meter rejectedSources;
     private final Meter rejectedScopes;
-    private final AtomicLong lastWarnNanos = new AtomicLong(Long.MIN_VALUE);
+    /**
+     * One limiter per condition, not one shared.
+     *
+     * <p>They do not carry the same weight: hitting the scope budget is routine under a spray and
+     * costs that source its least-recently-used scope, while hitting the source bound means new
+     * exporters are no longer retained at all. Sharing a limiter let the noisy signal suppress the
+     * serious one, indefinitely, since a flood produces the noisy one continuously.
+     */
+    private final AtomicLong lastSourceWarnNanos = new AtomicLong(Long.MIN_VALUE);
+    private final AtomicLong lastScopeWarnNanos = new AtomicLong(Long.MIN_VALUE);
 
     public SessionAdmission(final SessionAdmissionConfig config, final MetricRegistry metrics) {
         this(config, metrics, System::nanoTime);
@@ -76,6 +86,7 @@ public final class SessionAdmission {
                      final MetricRegistry metrics,
                      final LongSupplier nanoTime) {
         this.config = Objects.requireNonNull(config);
+        this.config.validate();
         this.nanoTime = Objects.requireNonNull(nanoTime);
 
         this.rejectedSources = metrics.meter(MetricRegistry.name("flows", "session", "rejectedSources"));
@@ -170,6 +181,17 @@ public final class SessionAdmission {
         }
     }
 
+    /**
+     * How long a source may go unheard before its budget is released.
+     *
+     * <p>Exposed so a caller holding the matching table TTL can check the two agree. The budget slot
+     * and the state it authorises are reclaimed by different timers, which is only harmless while
+     * this is the shorter of the two.
+     */
+    public Duration sourceIdleTimeout() {
+        return this.config.getSourceIdleTimeout();
+    }
+
     /** Distinct sources currently holding a budget. */
     public int sourceCount() {
         return this.sources.size();
@@ -189,16 +211,17 @@ public final class SessionAdmission {
     }
 
     /**
-     * One warning per interval across the whole instance, not per source: the case worth logging is
-     * a flood, and a flood by definition arrives from many identities at once.
+     * One warning per interval per condition, not per source: the case worth logging is a flood,
+     * and a flood by definition arrives from many identities at once.
      */
     private void warnRateLimited(final SessionKey source, final ExporterIdentity scope) {
+        final AtomicLong limiter = scope == null ? this.lastSourceWarnNanos : this.lastScopeWarnNanos;
         final long now = now();
-        final long last = this.lastWarnNanos.get();
+        final long last = limiter.get();
         if (now - last < WARN_INTERVAL_NANOS && last != Long.MIN_VALUE) {
             return;
         }
-        if (!this.lastWarnNanos.compareAndSet(last, now)) {
+        if (!limiter.compareAndSet(last, now)) {
             return;
         }
         if (scope == null) {
@@ -247,7 +270,10 @@ public final class SessionAdmission {
                 return null;
             }
             ExporterIdentity evicted = null;
-            if (maxScopes > 0 && this.admitted.size() >= maxScopes) {
+            // No `maxScopes > 0` guard: it would make a misconfigured zero mean "no bound" rather
+            // than "no room", restoring the unbounded growth this class exists to stop. The
+            // constructor rejects a non-positive value outright, so the bound is always enforced.
+            if (this.admitted.size() >= maxScopes) {
                 final Iterator<ExporterIdentity> lruFirst = this.admitted.keySet().iterator();
                 evicted = lruFirst.next();
                 lruFirst.remove();

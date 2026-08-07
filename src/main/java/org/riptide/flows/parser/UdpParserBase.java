@@ -159,6 +159,18 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
     @Override
     public void start() {
         super.start();
+        // The admission slot and the state it authorises expire on different timers. That is only
+        // harmless while the slot outlives the state: the other way round, a source's budget is
+        // released while its templates are still held, so the retained total can exceed the
+        // configured ceiling for the difference between the two.
+        final Duration idleTimeout = this.sessionAdmission.sourceIdleTimeout();
+        if (this.templateTimeout.compareTo(idleTimeout) > 0) {
+            LOG.warn("Template timeout ({}) outlives riptide.flows.session.source-idle-timeout ({}), so"
+                            + " session state is retained after its admission slot is released. Raise"
+                            + " source-idle-timeout to at least the template timeout to keep the"
+                            + " configured bound exact.",
+                    this.templateTimeout, idleTimeout);
+        }
         this.sessionManager = new UdpSessionManager(this.templateTimeout, this::sequenceNumberTracker,
                 this.optionListener, this.sessionAdmission);
         // Daemon: ParserBase.stop() already documents that abandoned non-daemon workers wedge JVM
