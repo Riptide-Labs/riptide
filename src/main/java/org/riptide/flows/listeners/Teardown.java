@@ -47,6 +47,10 @@ final class Teardown {
      * Rethrows the first recorded failure with the remainder suppressed, or returns if every step
      * succeeded.
      */
+    // Identity, not equality, is the point: addSuppressed throws IllegalArgumentException when
+    // handed the very object it is called on, and two distinct throwables that happen to compare
+    // equal are still two real failures worth recording. Value equality here would drop one.
+    @SuppressWarnings("ReferenceEquality")
     void done() {
         if (this.failures.isEmpty()) {
             return;

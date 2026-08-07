@@ -52,6 +52,11 @@ public final class Packet implements Iterable<FlowSet<?>> {
     /** Data Sets discarded for a missing Template. See {@link org.riptide.flows.parser.FlowPacket#undecodableSets()}. */
     public final int undecodableSets;
 
+    // Left as a statement switch. The DATA_SET case uses `break` inside its catch block to
+    // abandon an undecodable set and leave the switch, and `break` is not legal in an arrow case.
+    // Converting means restructuring that early exit — the readability the check offers is not
+    // reachable by changing the case labels alone.
+    @SuppressWarnings("StatementSwitchToExpressionSwitch")
     public Packet(final Session session,
                   final Header header,
                   final ByteBuf buffer) throws InvalidPacketException {

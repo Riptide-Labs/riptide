@@ -18,6 +18,10 @@ import static org.riptide.flows.utils.BufferUtils.uint16;
 import static org.riptide.flows.utils.BufferUtils.uint32;
 import static org.riptide.flows.utils.BufferUtils.uint8;
 
+// Named for the protocol, not the JDK: RFC 3954 and RFC 7011 both call this a Record, and
+// nothing here refers to java.lang.Record. Renaming would cost the domain vocabulary
+// across every parser to settle a clash that cannot actually arise.
+@SuppressWarnings("AvoidCommonTypeNames")
 public class Record {
 
     public static final int SIZE = 48;

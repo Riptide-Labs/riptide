@@ -246,7 +246,7 @@ public class IpFixFlowBuilder {
                         }).orElse(SamplingAlgorithm.Unassigned);
             }
 
-            /**
+            /*
              * What the record carries, then what the selector algorithm implies, then what the
              * operator configured, then an assumed 1.0. Algorithms 0, 8 and 9 have no expressible
              * interval and yield NaN, which is honest but would land in a Float64 column and
@@ -288,46 +288,46 @@ public class IpFixFlowBuilder {
                 return this.rate.get().from();
             }
 
-            /** RFC 5477 selector algorithms, as an interval where one is expressible. */
+            /* RFC 5477 selector algorithms, as an interval where one is expressible. */
             private Double fromSelectorAlgorithm() {
-                            switch (rawFlow.selectorAlgorithm) {
-                                case 0, 8, 9 -> {
-                                    return Double.NaN;
-                                }
-                                case 1, 2 -> {
-                                    final var interval = Optionals.first(rawFlow.samplingFlowInterval, rawFlow.flowSamplingTimeInterval).orElse(1.0);
-                                    final var spacing = Optionals.first(rawFlow.samplingFlowSpacing, rawFlow.flowSamplingTimeSpacing).orElse(0.0);
-                                    return interval + spacing / interval;
-                                }
-                                case 3 -> {
-                                    final var size = Optionals.of(rawFlow.samplingSize).orElse(1.0);
-                                    final var population = Optionals.of(rawFlow.samplingPopulation).orElse(1.0);
-                                    return population / size;
-                                }
-                                case 4 -> {
-                                    final var probability = Optionals.of(rawFlow.samplingProbability).orElse(1.0);
-                                    return 1.0 / probability;
-                                }
-                                case 5, 6, 7 -> {
-                                    final var selectedRangeMin = Optionals.of(rawFlow.hashSelectedRangeMin).orElse(UnsignedLong.ZERO);
-                                    final var selectedRangeMax = Optionals.of(rawFlow.hashSelectedRangeMax).orElse(UnsignedLong.MAX_VALUE);
-                                    final var outputRangeMin = Optionals.of(rawFlow.hashOutputRangeMin).orElse(UnsignedLong.ZERO);
-                                    final var outputRangeMax = Optionals.of(rawFlow.hashOutputRangeMax).orElse(UnsignedLong.MAX_VALUE);
-                                    final var selectedRange = selectedRangeMax.minus(selectedRangeMin);
-                                    // An exporter is free to send a degenerate range; dividing by it
-                                    // would throw and cost the whole packet, so treat it as unknown.
-                                    if (selectedRange.equals(UnsignedLong.ZERO)) {
-                                        return null;
-                                    }
-                                    return (outputRangeMax.minus(outputRangeMin)).dividedBy(selectedRange).doubleValue();
-                                }
-                                case null, default -> {
-                                    // No algorithm, or one this does not model: nothing was
-                                    // derived, so fall through rather than assert "not sampled" —
-                                    // that would outrank a configured fallback with a guess.
-                                    return null;
-                                }
-                            }
+                return switch (rawFlow.selectorAlgorithm) {
+                    case 0, 8, 9 -> {
+                        yield Double.NaN;
+                    }
+                    case 1, 2 -> {
+                        final var interval = Optionals.first(rawFlow.samplingFlowInterval, rawFlow.flowSamplingTimeInterval).orElse(1.0);
+                        final var spacing = Optionals.first(rawFlow.samplingFlowSpacing, rawFlow.flowSamplingTimeSpacing).orElse(0.0);
+                        yield interval + spacing / interval;
+                    }
+                    case 3 -> {
+                        final var size = Optionals.of(rawFlow.samplingSize).orElse(1.0);
+                        final var population = Optionals.of(rawFlow.samplingPopulation).orElse(1.0);
+                        yield population / size;
+                    }
+                    case 4 -> {
+                        final var probability = Optionals.of(rawFlow.samplingProbability).orElse(1.0);
+                        yield 1.0 / probability;
+                    }
+                    case 5, 6, 7 -> {
+                        final var selectedRangeMin = Optionals.of(rawFlow.hashSelectedRangeMin).orElse(UnsignedLong.ZERO);
+                        final var selectedRangeMax = Optionals.of(rawFlow.hashSelectedRangeMax).orElse(UnsignedLong.MAX_VALUE);
+                        final var outputRangeMin = Optionals.of(rawFlow.hashOutputRangeMin).orElse(UnsignedLong.ZERO);
+                        final var outputRangeMax = Optionals.of(rawFlow.hashOutputRangeMax).orElse(UnsignedLong.MAX_VALUE);
+                        final var selectedRange = selectedRangeMax.minus(selectedRangeMin);
+                        // An exporter is free to send a degenerate range; dividing by it
+                        // would throw and cost the whole packet, so treat it as unknown.
+                        if (selectedRange.equals(UnsignedLong.ZERO)) {
+                            yield null;
+                        }
+                        yield outputRangeMax.minus(outputRangeMin).dividedBy(selectedRange).doubleValue();
+                    }
+                    case null, default -> {
+                        // No algorithm, or one this does not model: nothing was
+                        // derived, so fall through rather than assert "not sampled" —
+                        // that would outrank a configured fallback with a guess.
+                        yield null;
+                    }
+                };
             }
 
             @Override

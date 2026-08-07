@@ -117,6 +117,16 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     }
 
     /** Test seam: a controllable clock, and the option not to start the background scheduler. */
+    // The ScheduledFuture is deliberately discarded: tickQuietly catches RuntimeException, so no
+    // ordinary tick failure can cancel the schedule, and the executor is held in a field and shut
+    // down with the component.
+    //
+    // This is narrower than it looks. An Error thrown from tick — an OutOfMemoryError under ingest
+    // pressure being the realistic one — is not caught, would cancel the schedule, and would stop
+    // interface polling for the process lifetime with nothing to observe it, since the discarded
+    // handle is the only thing that would carry the failure. Tracked separately rather than
+    // widened here; catching Error to keep a timer alive deserves its own decision.
+    @SuppressWarnings("FutureReturnValueIgnored")
     InterfaceSnapshotPoller(final SnmpService snmpService,
                             final SnmpPollConfig config,
                             final MetricRegistry metrics,
@@ -267,6 +277,10 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     }
 
     /** Package-private so tests can advance the schedule without waiting on wall-clock time. */
+    // registrations is a ConcurrentHashMap, whose iterators are explicitly weakly consistent and
+    // documented to tolerate concurrent removal — including by the iterating thread. The check
+    // fires on the shape of the loop, not on the collection's actual contract.
+    @SuppressWarnings("ModifyCollectionInEnhancedForLoop")
     void tick(final long now) {
         final long refreshMs = Math.max(1, this.config.getRefreshIntervalMs());
         final long deregisterAfter = Math.max(1, (long) this.config.getDeregisterAfter());

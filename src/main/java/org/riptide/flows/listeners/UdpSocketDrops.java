@@ -5,6 +5,8 @@
 
 package org.riptide.flows.listeners;
 
+import com.google.common.base.CharMatcher;
+import com.google.common.base.Splitter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -103,6 +105,10 @@ final class UdpSocketDrops {
         }
     }
 
+    /** Collapses runs of whitespace and keeps no empty fields — procfs column separation. */
+    private static final Splitter FIELDS =
+            Splitter.on(CharMatcher.whitespace()).omitEmptyStrings().trimResults();
+
     /**
      * Sum the {@code drops} column over every row whose local address half is in {@code addresses}
      * and whose local port is {@code port}.
@@ -118,15 +124,19 @@ final class UdpSocketDrops {
         boolean found = false;
 
         for (final String line : lines) {
-            final String[] fields = line.trim().split("\\s+");
+            // Guava's splitter rather than String.split: the latter is regex-compiled per line and
+            // silently drops trailing empty fields, which is the behaviour Error Prone flags. Here
+            // the columns are fixed-width procfs output, so the two agree — but the intent
+            // (collapse runs of whitespace, keep no empties) is stated rather than implied.
+            final List<String> fields = FIELDS.splitToList(line);
             // the header line splits fine but has no numeric port, so it falls out on the port check
-            if (fields.length < MIN_FIELDS) {
+            if (fields.size() < MIN_FIELDS) {
                 continue;
             }
-            if (!matchesLocal(fields[LOCAL_ADDRESS], addresses, port)) {
+            if (!matchesLocal(fields.get(LOCAL_ADDRESS), addresses, port)) {
                 continue;
             }
-            final long drops = parseUnsigned(fields[fields.length - 1]);
+            final long drops = parseUnsigned(fields.get(fields.size() - 1));
             if (drops >= 0) {
                 total += drops;
                 found = true;

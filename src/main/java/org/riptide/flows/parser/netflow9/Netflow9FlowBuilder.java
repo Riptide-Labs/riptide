@@ -272,7 +272,7 @@ public class Netflow9FlowBuilder {
                 return Optionals.of(raw.TOS).orElse(0);
             }
 
-            /**
+            /*
              * The mode from a sampler record counts as well as field 35, as it does in the IPFIX
              * builder. Without it a record carrying only field 49 reports an interval alongside
              * {@code Unassigned}, which reads as self-contradictory.
@@ -289,7 +289,7 @@ public class Netflow9FlowBuilder {
                 };
             }
 
-            /**
+            /*
              * What the exporter put on this record, then what it advertised in its sampler
              * options table, then what the operator configured, then an assumed 1.0. A sampling
              * exporter usually states its rate only in the options table, so without the middle

@@ -78,8 +78,8 @@ public class TcpSession implements Session {
     }
 
     private static final class TemplateKey {
-        public final long observationDomainId;
-        public final int templateId;
+        final long observationDomainId;
+        final int templateId;
 
         TemplateKey(final long observationDomainId,
                     final int templateId) {
@@ -178,11 +178,11 @@ public class TcpSession implements Session {
                                  final ExporterState.Builder exporter = ExporterState.builder(key);
 
                                  this.templates.entrySet().stream()
-                                               .filter(e -> Objects.equals(e.getKey().observationDomainId, domain))
+                                               .filter(e -> e.getKey().observationDomainId == domain)
                                                .forEach(e -> exporter.withTemplate(TemplateState.builder(e.getKey().templateId)));
 
                                  this.options.entrySet().stream()
-                                             .filter(e -> Objects.equals(e.getKey().observationDomainId, domain))
+                                             .filter(e -> e.getKey().observationDomainId == domain)
                                              .forEach(e -> e.getValue().forEach((selectors, values) ->
                                                                                         exporter.withOptions(OptionState.builder(e.getKey().templateId)
                                                                                                                         .withSelectors(selectors)

@@ -242,7 +242,9 @@ public class UdpSessionManager {
                 return false;
             }
 
-            return Objects.equals(this.observationDomainId, that.observationDomainId)
+            // == on the long, not Objects.equals: the latter boxes both sides on every lookup,
+            // and this runs per data record on the parser path.
+            return this.observationDomainId == that.observationDomainId
                     && Objects.equals(this.sessionKey, that.sessionKey);
         }
 
@@ -272,8 +274,10 @@ public class UdpSessionManager {
                 return false;
             }
 
+            // observationDomainId is a DomainKey here, so it keeps Objects.equals; templateId is
+            // an int and would box.
             return Objects.equals(this.observationDomainId, that.observationDomainId)
-                    && Objects.equals(this.templateId, that.templateId);
+                    && this.templateId == that.templateId;
         }
 
         @Override

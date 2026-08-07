@@ -189,7 +189,7 @@ public final class SflowFlowBuilder {
                 return sample.samplingRate;
             }
 
-            /**
+            /*
              * Always on the sample: sFlow carries the rate by construction, so there is no ladder
              * here and no rung below this one.
              *

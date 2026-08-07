@@ -6,6 +6,7 @@
 package org.riptide.mcp.transport;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Splitter;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
@@ -23,6 +24,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -52,6 +54,14 @@ import java.util.concurrent.TimeUnit;
 @ConditionalOnMcpEnabled
 @Component
 public class McpSseServer implements CommandLineRunner {
+
+    /**
+     * Query-string splitting. Guava rather than {@code String.split}, whose single-argument form
+     * silently drops trailing empty fields — a {@code ?a=1&b=} would lose its last parameter.
+     * {@link #QUERY_PAIR} keeps the value intact when it contains its own {@code =}.
+     */
+    private static final Splitter QUERY_PARAMS = Splitter.on('&').omitEmptyStrings();
+    private static final Splitter QUERY_PAIR = Splitter.on('=').limit(2);
 
     private final McpProperties properties;
     private final McpMessageHandler messageHandler;
@@ -297,10 +307,10 @@ public class McpSseServer implements CommandLineRunner {
             if (query == null || query.isBlank()) {
                 return null;
             }
-            for (final String param : query.split("&")) {
-                final String[] kv = param.split("=", 2);
-                if (kv.length == 2 && name.equals(kv[0])) {
-                    return kv[1].trim();
+            for (final String param : QUERY_PARAMS.split(query)) {
+                final List<String> kv = QUERY_PAIR.splitToList(param);
+                if (kv.size() == 2 && name.equals(kv.get(0))) {
+                    return kv.get(1).trim();
                 }
             }
             return null;
