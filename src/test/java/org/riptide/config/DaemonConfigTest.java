@@ -117,6 +117,36 @@ class DaemonConfigTest {
         assertThat(nf9.getFlowSamplingIntervalFallback()).isEqualTo(100L);
     }
 
+    /**
+     * NetFlow v5 cannot advertise a sampling rate out of band, so the configured fallback is the
+     * only way to state one. Before this bound, the property threw {@code BindException} and took
+     * startup with it, leaving a sampling v5 exporter with no supported way to be corrected.
+     */
+    @Test
+    void netflow5ReceiverBindsSamplingIntervalFallback() {
+        final var config = bind(Map.of(
+                "riptide.receivers.nf5.type", "netflow5",
+                "riptide.receivers.nf5.port", "2055",
+                "riptide.receivers.nf5.flow-sampling-interval-fallback", "1000"));
+
+        final var receiver = config.getReceivers().get("nf5");
+        assertThat(receiver).isInstanceOf(ReceiverConfig.Neflow5Config.class);
+        final var nf5 = (ReceiverConfig.Neflow5Config) receiver;
+        assertThat(nf5.getPort()).isEqualTo(2055);
+        assertThat(nf5.getFlowSamplingIntervalFallback()).isEqualTo(1000L);
+    }
+
+    /** Unset stays null, so the builder can tell "not configured" from a configured 1. */
+    @Test
+    void netflow5SamplingIntervalFallbackDefaultsToUnset() {
+        final var config = bind(Map.of(
+                "riptide.receivers.nf5.type", "netflow5",
+                "riptide.receivers.nf5.port", "2055"));
+
+        final var nf5 = (ReceiverConfig.Neflow5Config) config.getReceivers().get("nf5");
+        assertThat(nf5.getFlowSamplingIntervalFallback()).isNull();
+    }
+
     /** Relaxed binding: the camelCase spelling that used to be the only one accepted still works. */
     @Test
     void receiverBindsCamelCaseKeysAndIsoDurations() {

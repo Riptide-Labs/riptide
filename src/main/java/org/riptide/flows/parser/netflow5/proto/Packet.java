@@ -8,20 +8,21 @@ package org.riptide.flows.parser.netflow5.proto;
 import com.google.common.base.MoreObjects;
 import io.netty.buffer.ByteBuf;
 import org.riptide.flows.parser.exceptions.InvalidPacketException;
-import org.riptide.flows.parser.data.Flow;
-import org.riptide.flows.parser.FlowPacket;
-import org.riptide.flows.parser.netflow5.Netflow5FlowBuilder;
 
-import java.time.Instant;
 import java.util.Iterator;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.stream.Stream;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
 
-public final class Packet implements Iterable<Record>, FlowPacket {
+/**
+ * The decoded wire representation, with no opinion on how flows are built from it.
+ *
+ * <p>Flow construction lives in {@code Netflow5FlowBuilder}, which the parser holds so that
+ * receiver settings can reach it — the same split NetFlow v9 and IPFIX already use.
+ */
+public final class Packet implements Iterable<Record> {
 
     public final Header header;
 
@@ -51,24 +52,15 @@ public final class Packet implements Iterable<Record>, FlowPacket {
         return this.records.iterator();
     }
 
-    @Override
-    public Stream<Flow> buildFlows(final Instant receivedAt) {
-        return this.records.stream()
-                .map(record -> Netflow5FlowBuilder.buildFlow(receivedAt, this.header, record));
-    }
-
-    @Override
     public long getObservationDomainId() {
         // parenthesized: '+' binds tighter than '<<', which used to shift by (8 + engineId)
         return (((long) this.header.engineType) << 8) + ((long) this.header.engineId);
     }
 
-    @Override
     public long getSequenceNumber() {
         return this.header.flowSequence;
     }
 
-    @Override
     public int getSequenceIncrement() {
         // NetFlow v5 sequence numbers count flows
         return this.records.size();

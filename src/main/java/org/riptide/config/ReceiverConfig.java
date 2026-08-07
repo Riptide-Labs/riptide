@@ -56,6 +56,12 @@ public abstract sealed class ReceiverConfig {
     @Data
     @EqualsAndHashCode(callSuper = true)
     public static final class Neflow5Config extends ReceiverConfig {
+        /**
+         * NetFlow v5 has no options-template mechanism to advertise a sampling rate, so unlike v9
+         * and IPFIX this is the only way an operator can state one. Accepting the property here
+         * also stops a dedicated v5 receiver failing startup on a setting its siblings take.
+         */
+        Long flowSamplingIntervalFallback = null;
 
         @Override
         public <T> T accept(final Cases<T> cases) {

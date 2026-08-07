@@ -8,20 +8,36 @@ package org.riptide.flows.parser.netflow5;
 
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.netflow5.proto.Header;
+import org.riptide.flows.parser.netflow5.proto.Packet;
 import org.riptide.flows.parser.netflow5.proto.Record;
 
 import java.net.InetAddress;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.stream.Stream;
 
 public final class Netflow5FlowBuilder {
-    private Netflow5FlowBuilder() {
 
+    /**
+     * The rate an operator declared for this receiver, {@code null} when none is configured.
+     *
+     * <p>NetFlow v5 has no options-template mechanism, so unlike v9 there is no rung between the
+     * exporter and this one: whatever the exporter cannot say, only configuration can.
+     */
+    private Long flowSamplingIntervalFallback;
+
+    public void setFlowSamplingIntervalFallback(final Long flowSamplingIntervalFallback) {
+        this.flowSamplingIntervalFallback = flowSamplingIntervalFallback;
     }
 
-    public static Flow buildFlow(final Instant receivedAt,
-                                 final Header header,
-                                 final Record record) {
+    public Stream<Flow> buildFlows(final Instant receivedAt, final Packet packet) {
+        return packet.records.stream()
+                .map(record -> buildFlow(receivedAt, packet.header, record));
+    }
+
+    public Flow buildFlow(final Instant receivedAt,
+                          final Header header,
+                          final Record record) {
 
         final var timestamp = Instant.ofEpochSecond(header.unixSecs, header.unixNSecs);
         final var bootTime = timestamp.minus(header.sysUptime, ChronoUnit.MILLIS);
@@ -178,10 +194,29 @@ public final class Netflow5FlowBuilder {
                 };
             }
 
+            /**
+             * What the operator configured, then unsampled. NetFlow v5 exporters cannot advertise
+             * a rate out of band the way v9 does, so this receiver-wide setting is the only rung
+             * above the default — until the packet header is read as well.
+             */
             @Override
             public double getSamplingInterval() {
-                return 1.0;
+                final Double configured = usable(asDouble(flowSamplingIntervalFallback));
+                return configured != null ? configured : 1.0;
             }
         };
+    }
+
+    /**
+     * A rate counts as an answer when it is present and finite, including an explicit 1: an
+     * operator configuring 1 has stated this receiver's exporters do not sample. Only absent,
+     * 0 and non-finite fall through to the next rung. Mirrors {@code Netflow9FlowBuilder}.
+     */
+    private static Double usable(final Double interval) {
+        return interval != null && Double.isFinite(interval) && interval >= 1.0 ? interval : null;
+    }
+
+    private static Double asDouble(final Long value) {
+        return value != null ? value.doubleValue() : null;
     }
 }

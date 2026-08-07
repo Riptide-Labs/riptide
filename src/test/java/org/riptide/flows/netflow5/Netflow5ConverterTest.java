@@ -11,6 +11,7 @@ import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.riptide.flows.parser.exceptions.InvalidPacketException;
 import org.riptide.flows.parser.data.Flow;
+import org.riptide.flows.parser.netflow5.Netflow5FlowBuilder;
 import org.riptide.flows.parser.netflow5.proto.Header;
 import org.riptide.flows.parser.netflow5.proto.Packet;
 
@@ -76,7 +77,7 @@ public class Netflow5ConverterTest {
             final ByteBuf buffer = Unpooled.wrappedBuffer(payload);
             final Header header = new Header(slice(buffer, Header.SIZE));
             final Packet packet = new Packet(header, buffer);
-            flows.addAll(packet.buildFlows(Instant.EPOCH).toList());
+            flows.addAll(new Netflow5FlowBuilder().buildFlows(Instant.EPOCH, packet).toList());
         }
         return flows;
     }
