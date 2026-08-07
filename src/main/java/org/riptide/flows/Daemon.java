@@ -303,18 +303,34 @@ public class Daemon implements ApplicationRunner {
         try {
             this.pipeline.stop();
         } catch (final Throwable t) {
-            if (primary != null) {
-                primary.addSuppressed(t);
-            } else {
+            if (primary == null) {
                 primary = t;
+            } else if (t instanceof Error && !(primary instanceof Error)) {
+                // A JVM-level failure outranks a routine shutdown exception. Without this an
+                // OutOfMemoryError in the drain would be attached beneath a listener's
+                // IllegalStateException and read as the lesser problem in Spring's shutdown log.
+                t.addSuppressed(primary);
+                primary = t;
+            } else {
+                primary.addSuppressed(t);
             }
         }
 
+        // Rethrown by type rather than cast. `primary` is a Throwable, and a cast to Exception
+        // would raise ClassCastException on anything that is neither Exception nor Error —
+        // discarding the cause this whole block exists to preserve, which is the failure being
+        // fixed rather than a new one.
         if (primary instanceof Error error) {
             throw error;
         }
+        if (primary instanceof RuntimeException runtime) {
+            throw runtime;
+        }
+        if (primary instanceof Exception checked) {
+            throw checked;
+        }
         if (primary != null) {
-            throw (Exception) primary;
+            throw new IllegalStateException("listener shutdown failed", primary);
         }
     }
 
