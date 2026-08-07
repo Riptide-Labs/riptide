@@ -52,3 +52,10 @@ jobs:
       - name: Lint workflows
         run: |
           make lint-actions
+      # Not about workflows, but it belongs to the same "enforce it mechanically"
+      # job and needs no extra permissions. The contributor badge count and the
+      # credit table are literals in README.md, so they drift silently whenever
+      # .all-contributorsrc is edited without re-running the generator.
+      - name: Check the contributor list is in sync
+        run: |
+          make contributors-check
