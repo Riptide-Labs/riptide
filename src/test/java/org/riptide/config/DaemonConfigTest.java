@@ -170,6 +170,13 @@ class DaemonConfigTest {
     /** The same setting on a multi receiver, where it governs that receiver's v5 half. */
     @Test
     void multiReceiverBindsTrustHeaderSamplingInterval() {
+        final var defaults = (ReceiverConfig.MultiConfig) bind(Map.of(
+                "riptide.receivers.mixed.type", "multi",
+                "riptide.receivers.mixed.port", "2055")).getReceivers().get("mixed");
+        assertThat(defaults.isTrustHeaderSamplingInterval())
+                .as("on by default here too, or the two receiver types disagree silently")
+                .isTrue();
+
         final var multi = (ReceiverConfig.MultiConfig) bind(Map.of(
                 "riptide.receivers.mixed.type", "multi",
                 "riptide.receivers.mixed.port", "2055",

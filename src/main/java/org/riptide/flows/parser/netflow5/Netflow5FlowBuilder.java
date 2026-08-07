@@ -29,11 +29,16 @@ public final class Netflow5FlowBuilder {
     private Long flowSamplingIntervalFallback;
 
     /**
-     * Whether a header stating algorithm 0 alongside a non-zero interval is read as a rate.
+     * Whether an interval is read as a rate when the header's algorithm bits are not 1 or 2.
      *
-     * <p>Governs that case alone. Algorithms 1 and 2 are unambiguous and always read: the exporter
-     * stated both how and how much, and discarding the interval would leave
-     * {@code flowSamplingIntervalFallback} overriding a rate the exporter explicitly gave.
+     * <p>Governs that case alone. A header stating algorithm 1 or 2 <em>together with a non-zero
+     * interval</em> is unambiguous and always read: the exporter said both how and how much, and
+     * discarding the interval would leave {@code flowSamplingIntervalFallback} overriding a rate
+     * the exporter explicitly gave.
+     *
+     * <p>Note the qualifier. A stated mode with a zero interval is not a rate, so it still falls
+     * through to the configured fallback — the exporter named a method and no number, and only
+     * configuration can supply the number.
      */
     private boolean trustHeaderSamplingInterval = true;
 
@@ -46,22 +51,27 @@ public final class Netflow5FlowBuilder {
     }
 
     /**
-     * Which rung answered, counted per packet.
+     * Which rung answered, counted per packet and scoped to the receiver.
      *
      * <p>Reading the header changes recorded rates without changing anything in the data path —
      * riptide stores the rate and does not apply it — so nothing else would show an operator that
      * their exporters are now being read differently. Per packet rather than per flow because the
      * rate is a property of the header: every record in a packet resolves identically, and counting
      * each one would report the same fact once per flow.
+     *
+     * <p>Named per receiver like every other parser metric, rather than globally as
+     * {@code ExporterSamplingTable} does. That table is one Spring bean for the whole daemon; this
+     * builder is one per parser, so an unscoped name would blend a dedicated v5 receiver with the
+     * v5 half of a {@code multi} receiver and hide which one stopped resolving from the header.
      */
     private final Meter headerResolved;
     private final Meter fallbackResolved;
     private final Meter unsampled;
 
-    public Netflow5FlowBuilder(final MetricRegistry metrics) {
-        this.headerResolved = metrics.meter(MetricRegistry.name("parser", "netflow5Sampling", "header"));
-        this.fallbackResolved = metrics.meter(MetricRegistry.name("parser", "netflow5Sampling", "fallback"));
-        this.unsampled = metrics.meter(MetricRegistry.name("parser", "netflow5Sampling", "unsampled"));
+    public Netflow5FlowBuilder(final String name, final MetricRegistry metrics) {
+        this.headerResolved = metrics.meter(MetricRegistry.name("parsers", name, "samplingRate", "header"));
+        this.fallbackResolved = metrics.meter(MetricRegistry.name("parsers", name, "samplingRate", "fallback"));
+        this.unsampled = metrics.meter(MetricRegistry.name("parsers", name, "samplingRate", "unsampled"));
     }
 
     public Stream<Flow> buildFlows(final Instant receivedAt, final Packet packet) {

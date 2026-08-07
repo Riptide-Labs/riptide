@@ -38,7 +38,7 @@ public class Netflow5UdpParser extends UdpParserBase implements DispatchableUdpP
                              final Identity identity,
                              final MetricRegistry metricRegistry) {
         super(Protocol.NETFLOW5, name, dispatcher, identity, metricRegistry);
-        this.flowBuilder = new Netflow5FlowBuilder(metricRegistry);
+        this.flowBuilder = new Netflow5FlowBuilder(name, metricRegistry);
     }
 
     @Override

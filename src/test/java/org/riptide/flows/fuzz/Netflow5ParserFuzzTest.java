@@ -33,7 +33,7 @@ class Netflow5ParserFuzzTest {
             final Header header = new Header(slice(buffer, Header.SIZE));
             final Packet packet = new Packet(header, buffer);
             // Terminate the lazy stream so the record field decode actually runs.
-            new Netflow5FlowBuilder(new MetricRegistry())
+            new Netflow5FlowBuilder("fuzz", new MetricRegistry())
                     .buildFlows(Instant.EPOCH, packet).forEach(flow -> { });
         } catch (final Throwable t) {
             if (!FuzzSupport.isDesignedRejection(t)) {

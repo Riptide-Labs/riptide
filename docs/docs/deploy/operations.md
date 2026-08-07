@@ -75,6 +75,14 @@ Upgrading to 0.7.0 also changes what one **metric** means rather than any config
 [Parser gauges: exporters and templates](#parser-gauges-exporters-and-templates) before relying on
 `parsers.<name>.sessionCount`.
 
+**NetFlow v5 sampling rates change on upgrade.** riptide now reads the sampling rate a v5 exporter
+states in its packet header, where it previously ignored it. Stored `bytes` and `packets` are
+untouched and nothing fails, but any query multiplying by `samplingInterval` returns a different
+answer for v5 rows written from here on, and older rows are not rewritten. Watch
+`parsers.<name>.samplingRate.header` to see which receivers are now resolving from the header. Full
+detail, including how to identify affected exporters and how to pin the old behaviour, is in
+[Sampling rate](../configuration/receivers.md#sampling-rate).
+
 ## Ingest loss counters
 
 Flows can be dropped at two bounded queues, and each one counts what it discards — nothing is
@@ -138,6 +146,25 @@ Two gauges describe what a UDP parser is holding. They are easy to confuse, and 
 |---|---|
 | `parsers.<name>.sessionCount` | exporters — one per `(session, observation domain)` pair |
 | `parsers.<name>.templateCount` | templates held across all exporters |
+
+## NetFlow v5 sampling rate resolution
+
+NetFlow v5 has no options table, so a v5 flow's sampling rate resolves from the packet header, then
+the receiver's `flow-sampling-interval-fallback`, then unsampled. Which rung answered is metered per
+**packet** (the rate lives in the header, so every record in a packet resolves identically) and per
+receiver.
+
+| Metric | Meaning |
+|---|---|
+| `parsers.<name>.samplingRate.header` | packets whose rate came from the exporter's header |
+| `parsers.<name>.samplingRate.fallback` | packets that fell through to the configured rate |
+| `parsers.<name>.samplingRate.unsampled` | packets with no rate anywhere, recorded as `1` |
+
+These exist because the resolution is invisible in the data path: riptide records the rate without
+applying it, so an exporter that starts or stops advertising changes no counter and raises no error.
+A `header` rate that falls to zero means a fleet stopped advertising and is now being recorded as
+unsampled — or on the configured rate, which may not match. See
+[Sampling rate](../configuration/receivers.md#sampling-rate) for the resolution order and settings.
 
 **What changed in 0.7.0.** `sessionCount` used to report the **template** total, so it overstated by
 however many templates each exporter announces. It now reports `(session, observation domain)` pairs.

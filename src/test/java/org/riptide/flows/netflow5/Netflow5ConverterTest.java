@@ -78,7 +78,7 @@ public class Netflow5ConverterTest {
             final ByteBuf buffer = Unpooled.wrappedBuffer(payload);
             final Header header = new Header(slice(buffer, Header.SIZE));
             final Packet packet = new Packet(header, buffer);
-            flows.addAll(new Netflow5FlowBuilder(new MetricRegistry())
+            flows.addAll(new Netflow5FlowBuilder("test", new MetricRegistry())
                     .buildFlows(Instant.EPOCH, packet).toList());
         }
         return flows;

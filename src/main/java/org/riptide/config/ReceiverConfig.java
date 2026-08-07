@@ -64,11 +64,11 @@ public abstract sealed class ReceiverConfig {
         Long flowSamplingIntervalFallback = null;
 
         /**
-         * Whether a header stating algorithm 0 alongside a non-zero interval is read as a rate.
+         * Whether an interval is read as a rate when the header's algorithm bits are not 1 or 2.
          *
-         * <p>Governs that case only. A header stating algorithm 1 or 2 is unambiguous and is always
-         * read, so disabling this does not let a configured fallback override an exporter that
-         * signalled its mode properly.
+         * <p>Governs that case only. A header stating algorithm 1 or 2 together with a non-zero
+         * interval is unambiguous and is always read, so disabling this does not let a configured
+         * fallback override an exporter that stated both a mode and a rate.
          */
         boolean trustHeaderSamplingInterval = true;
 

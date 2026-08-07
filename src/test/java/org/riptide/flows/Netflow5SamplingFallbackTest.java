@@ -191,6 +191,27 @@ class Netflow5SamplingFallbackTest {
                 .allSatisfy(flow -> assertThat(flow.getSamplingInterval()).isEqualTo(1.0));
     }
 
+    /**
+     * The opt-out on the v5 half of a `multi` receiver, end to end.
+     *
+     * <p>Without this, replacing the multi branch's {@code withTrustHeaderSamplingInterval(...)}
+     * with a hardcoded {@code true} passes every other test in the change — which is precisely the
+     * shape of the wiring defect the preceding change existed to fix.
+     */
+    @Test
+    void pinningTheHeaderOffReachesTheMultiReceiversNetflow5Half() throws Exception {
+        final var flows = flowsFromDaemonConfigured(Map.of(
+                "riptide.receivers.mixed.type", "multi",
+                "riptide.receivers.mixed.host", "127.0.0.1",
+                "riptide.receivers.mixed.port", "0",
+                "riptide.receivers.mixed.trust-header-sampling-interval", "false"), SAMPLED_CAPTURE);
+
+        assertThat(flows)
+                .as("the setting must reach v5 on a multi receiver, not only on a dedicated one")
+                .isNotEmpty()
+                .allSatisfy(flow -> assertThat(flow.getSamplingInterval()).isEqualTo(1.0));
+    }
+
     /** Starts a daemon on an ephemeral port, sends one v5 capture at it, and returns what it built. */
     private List<Flow> flowsFromDaemonConfigured(final Map<String, Object> properties) throws Exception {
         return flowsFromDaemonConfigured(properties, UNSAMPLED_CAPTURE);

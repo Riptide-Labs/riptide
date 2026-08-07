@@ -139,6 +139,28 @@ class Netflow5SamplingLadderTest {
     }
 
     /**
+     * A stated mode with a zero interval names a method and no number, so it is not a rate and
+     * falls through like any other zero. The configured fallback then supplies the number rather
+     * than overriding one — the exporter never gave one to override.
+     *
+     * <p>With nothing configured the flow reports the mode beside an interval of 1. That reads
+     * oddly, but it is the honest answer: riptide knows how this exporter samples and not how much,
+     * and inventing a rate would be worse than reporting the default.
+     */
+    @Test
+    void aStatedModeWithNoIntervalIsNotARate() throws Exception {
+        assertThat(onlyFlow(packet(1, 0), builder(1000L, true)).getSamplingInterval())
+                .as("the fallback supplies the number the exporter omitted")
+                .isEqualTo(1000.0);
+
+        final var unconfigured = onlyFlow(packet(1, 0), builder(null, true));
+        assertThat(unconfigured.getSamplingInterval()).isEqualTo(1.0);
+        assertThat(unconfigured.getSamplingAlgorithm())
+                .as("the mode is still reported; only the rate is unknown")
+                .isEqualTo(Flow.SamplingAlgorithm.SystematicCountBasedSampling);
+    }
+
+    /**
      * Algorithm 3 is undefined in the v5 header, so it is not a signalled mode and must fall under
      * the opt-out with algorithm 0. Gating the unconditional branch on {@code != 0} instead of on
      * the two defined values would make a word of all ones — plausible from a corrupt datagram —
@@ -163,7 +185,7 @@ class Netflow5SamplingLadderTest {
     @Test
     void whichRungAnsweredIsMeteredOncePerPacket() throws Exception {
         final var metrics = new MetricRegistry();
-        final var builder = new Netflow5FlowBuilder(metrics);
+        final var builder = new Netflow5FlowBuilder("test", metrics);
         builder.setFlowSamplingIntervalFallback(500L);
 
         assertThat(builder.buildFlows(Instant.EPOCH, packet(0, 1000, 3)).toList()).hasSize(3);
@@ -180,19 +202,51 @@ class Netflow5SamplingLadderTest {
     @Test
     void aPacketWithNoRateAnywhereIsMeteredAsUnsampled() throws Exception {
         final var metrics = new MetricRegistry();
-        assertThat(new Netflow5FlowBuilder(metrics).buildFlows(Instant.EPOCH, packet(0, 0)).toList())
+        assertThat(new Netflow5FlowBuilder("test", metrics).buildFlows(Instant.EPOCH, packet(0, 0)).toList())
                 .hasSize(1);
 
         assertThat(meter(metrics, "unsampled")).isEqualTo(1);
         assertThat(meter(metrics, "header")).isZero();
     }
 
+    /**
+     * The spec scenario as written: two exporters, one advertising and one silent, counted apart
+     * in the same registry rather than in separate ones.
+     */
+    @Test
+    void headerResolvedAndUnsampledExportersAreCountedApart() throws Exception {
+        final var metrics = new MetricRegistry();
+        final var builder = new Netflow5FlowBuilder("test", metrics);
+
+        assertThat(builder.buildFlows(Instant.EPOCH, packet(0, 1000)).toList()).hasSize(1);
+        assertThat(builder.buildFlows(Instant.EPOCH, packet(0, 0)).toList()).hasSize(1);
+
+        assertThat(meter(metrics, "header")).isEqualTo(1);
+        assertThat(meter(metrics, "unsampled")).isEqualTo(1);
+        assertThat(meter(metrics, "fallback")).isZero();
+    }
+
+    /** Scoped per receiver, so two v5 receivers cannot blend into one set of counts. */
+    @Test
+    void metersAreScopedToTheReceiver() throws Exception {
+        final var metrics = new MetricRegistry();
+
+        assertThat(new Netflow5FlowBuilder("nf5-edge", metrics)
+                .buildFlows(Instant.EPOCH, packet(0, 1000)).toList()).hasSize(1);
+
+        assertThat(metrics.meter(MetricRegistry.name("parsers", "nf5-edge", "samplingRate", "header")).getCount())
+                .isEqualTo(1);
+        assertThat(metrics.meter(MetricRegistry.name("parsers", "nf5-core", "samplingRate", "header")).getCount())
+                .as("a second receiver's counts are its own")
+                .isZero();
+    }
+
     private static long meter(final MetricRegistry metrics, final String rung) {
-        return metrics.meter(MetricRegistry.name("parser", "netflow5Sampling", rung)).getCount();
+        return metrics.meter(MetricRegistry.name("parsers", "test", "samplingRate", rung)).getCount();
     }
 
     private static Netflow5FlowBuilder builder(final Long fallback, final boolean trustHeader) {
-        final var builder = new Netflow5FlowBuilder(new MetricRegistry());
+        final var builder = new Netflow5FlowBuilder("test", new MetricRegistry());
         builder.setFlowSamplingIntervalFallback(fallback);
         builder.setTrustHeaderSamplingInterval(trustHeader);
         return builder;
@@ -234,7 +288,7 @@ class Netflow5SamplingLadderTest {
         final Header header = new Header(slice(buffer, Header.SIZE));
         final Packet packet = new Packet(header, buffer);
 
-        return new Netflow5FlowBuilder(new MetricRegistry())
+        return new Netflow5FlowBuilder("test", new MetricRegistry())
                 .buildFlows(Instant.EPOCH, packet)
                 .findFirst()
                 .orElseThrow()
