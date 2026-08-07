@@ -52,7 +52,7 @@ import java.util.concurrent.TimeUnit;
 import static org.riptide.flows.utils.BufferUtils.slice;
 
 /**
- * What one UDP event-loop thread pays per NetFlow v9 datagram, for issue #450.
+ * What one UDP event-loop thread pays per NetFlow v9 datagram, measured for issue #450.
  *
  * <p>#450 asks whether UDP ingest is capped by reading on a single event loop. The premise there is
  * that the thread "drains a socket into a handoff queue", which the code does not support: the
