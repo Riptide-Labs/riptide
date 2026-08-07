@@ -6,6 +6,8 @@
 package org.riptide.flows.parser.netflow5;
 
 
+import com.codahale.metrics.Meter;
+import com.codahale.metrics.MetricRegistry;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.netflow5.proto.Header;
 import org.riptide.flows.parser.netflow5.proto.Packet;
@@ -26,18 +28,101 @@ public final class Netflow5FlowBuilder {
      */
     private Long flowSamplingIntervalFallback;
 
+    /**
+     * Whether an interval is read as a rate when the header's algorithm bits are not 1 or 2.
+     *
+     * <p>Governs that case alone. A header stating algorithm 1 or 2 <em>together with a non-zero
+     * interval</em> is unambiguous and always read: the exporter said both how and how much, and
+     * discarding the interval would leave {@code flowSamplingIntervalFallback} overriding a rate
+     * the exporter explicitly gave.
+     *
+     * <p>Note the qualifier. A stated mode with a zero interval is not a rate, so it still falls
+     * through to the configured fallback — the exporter named a method and no number, and only
+     * configuration can supply the number.
+     */
+    private boolean trustHeaderSamplingInterval = true;
+
     public void setFlowSamplingIntervalFallback(final Long flowSamplingIntervalFallback) {
         this.flowSamplingIntervalFallback = flowSamplingIntervalFallback;
     }
 
-    public Stream<Flow> buildFlows(final Instant receivedAt, final Packet packet) {
-        return packet.records.stream()
-                .map(record -> buildFlow(receivedAt, packet.header, record));
+    public void setTrustHeaderSamplingInterval(final boolean trustHeaderSamplingInterval) {
+        this.trustHeaderSamplingInterval = trustHeaderSamplingInterval;
     }
 
-    public Flow buildFlow(final Instant receivedAt,
-                          final Header header,
-                          final Record record) {
+    /**
+     * Which rung answered, counted per packet and scoped to the receiver.
+     *
+     * <p>Reading the header changes recorded rates without changing anything in the data path —
+     * riptide stores the rate and does not apply it — so nothing else would show an operator that
+     * their exporters are now being read differently. Per packet rather than per flow because the
+     * rate is a property of the header: every record in a packet resolves identically, and counting
+     * each one would report the same fact once per flow.
+     *
+     * <p>Named per receiver like every other parser metric, rather than globally as
+     * {@code ExporterSamplingTable} does. That table is one Spring bean for the whole daemon; this
+     * builder is one per parser, so an unscoped name would blend a dedicated v5 receiver with the
+     * v5 half of a {@code multi} receiver and hide which one stopped resolving from the header.
+     */
+    private final Meter headerResolved;
+    private final Meter fallbackResolved;
+    private final Meter unsampled;
+
+    public Netflow5FlowBuilder(final String name, final MetricRegistry metrics) {
+        this.headerResolved = metrics.meter(MetricRegistry.name("parsers", name, "samplingRate", "header"));
+        this.fallbackResolved = metrics.meter(MetricRegistry.name("parsers", name, "samplingRate", "fallback"));
+        this.unsampled = metrics.meter(MetricRegistry.name("parsers", name, "samplingRate", "unsampled"));
+    }
+
+    public Stream<Flow> buildFlows(final Instant receivedAt, final Packet packet) {
+        // Resolved once for the packet: the rate lives in the header, so it is the same for every
+        // record, and resolving per flow would recompute it and over-count the meters.
+        final double samplingInterval = resolveSamplingInterval(packet.header);
+        return packet.records.stream()
+                .map(record -> buildFlow(receivedAt, packet.header, record, samplingInterval));
+    }
+
+    /**
+     * What the exporter put in the packet header, then what the operator configured, then
+     * unsampled. NetFlow v5 has no options-template mechanism, so the header is the only thing the
+     * exporter itself can say and there is no rung between it and configuration.
+     *
+     * <p>The header packs a 2-bit algorithm and a 14-bit interval into one word, and the two
+     * non-zero cases are not equally clear. Algorithm 1 or 2 means the exporter stated both how and
+     * how much, so the interval is read unconditionally — suppressing it would leave a configured
+     * fallback overriding a rate the exporter explicitly gave. Algorithm 0 with a non-zero interval
+     * is self-contradictory on its face, yet it is what a sampling exporter routinely emits: the
+     * mode bits are not a mandatory field, and pmacct's own exporter never sets them. Reading it is
+     * the default and what every comparable collector does, but it is the one case an operator can
+     * pin off with {@code trust-header-sampling-interval}.
+     *
+     * <p>An interval of 0 is the signal that an exporter does not sample. The mode bits are not.
+     *
+     * <p>Only 1 and 2 count as a signalled mode. Algorithm 3 is undefined in the v5 header, so it
+     * carries no more meaning than 0 does and must not buy the unconditional branch: a word of all
+     * ones would otherwise be read as a rate of 16383 that the operator has no way to suppress.
+     * {@code getSamplingAlgorithm} maps 3 to {@code Unassigned} for the same reason.
+     */
+    private double resolveSamplingInterval(final Header header) {
+        final Double advertised = usable((double) header.samplingInterval);
+        final boolean modeSignalled = header.samplingAlgorithm == 1 || header.samplingAlgorithm == 2;
+        if (advertised != null && (modeSignalled || this.trustHeaderSamplingInterval)) {
+            this.headerResolved.mark();
+            return advertised;
+        }
+        final Double configured = usable(asDouble(this.flowSamplingIntervalFallback));
+        if (configured != null) {
+            this.fallbackResolved.mark();
+            return configured;
+        }
+        this.unsampled.mark();
+        return 1.0;
+    }
+
+    private Flow buildFlow(final Instant receivedAt,
+                           final Header header,
+                           final Record record,
+                           final double samplingInterval) {
 
         final var timestamp = Instant.ofEpochSecond(header.unixSecs, header.unixNSecs);
         final var bootTime = timestamp.minus(header.sysUptime, ChronoUnit.MILLIS);
@@ -194,15 +279,10 @@ public final class Netflow5FlowBuilder {
                 };
             }
 
-            /**
-             * What the operator configured, then unsampled. NetFlow v5 exporters cannot advertise
-             * a rate out of band the way v9 does, so this receiver-wide setting is the only rung
-             * above the default — until the packet header is read as well.
-             */
+            /** Resolved once for the packet; see {@code resolveSamplingInterval}. */
             @Override
             public double getSamplingInterval() {
-                final Double configured = usable(asDouble(flowSamplingIntervalFallback));
-                return configured != null ? configured : 1.0;
+                return samplingInterval;
             }
         };
     }

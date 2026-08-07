@@ -31,13 +31,14 @@ import static org.riptide.flows.utils.BufferUtils.slice;
 
 public class Netflow5UdpParser extends UdpParserBase implements DispatchableUdpParser {
 
-    private final Netflow5FlowBuilder flowBuilder = new Netflow5FlowBuilder();
+    private final Netflow5FlowBuilder flowBuilder;
 
     public Netflow5UdpParser(final String name,
                              final BiConsumer<Source, List<Flow>> dispatcher,
                              final Identity identity,
                              final MetricRegistry metricRegistry) {
         super(Protocol.NETFLOW5, name, dispatcher, identity, metricRegistry);
+        this.flowBuilder = new Netflow5FlowBuilder(name, metricRegistry);
     }
 
     @Override
@@ -76,6 +77,11 @@ public class Netflow5UdpParser extends UdpParserBase implements DispatchableUdpP
 
     public Netflow5UdpParser withFlowSamplingIntervalFallback(final Long flowSamplingIntervalFallback) {
         this.flowBuilder.setFlowSamplingIntervalFallback(flowSamplingIntervalFallback);
+        return this;
+    }
+
+    public Netflow5UdpParser withTrustHeaderSamplingInterval(final boolean trustHeaderSamplingInterval) {
+        this.flowBuilder.setTrustHeaderSamplingInterval(trustHeaderSamplingInterval);
         return this;
     }
 
