@@ -372,14 +372,15 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         final long ceiling = Math.max(base, this.config.getDeadEndpointCeilingMs());
         final int doublings = Math.max(0, Math.min(consecutiveFailures - 1, 30));
         long delay = base;
-        for (int i = 0; i < doublings; i++) {
-            delay *= 2;
-            if (delay >= ceiling || delay < 0) {
-                delay = ceiling;
-                break;
-            }
+        for (int i = 0; i < doublings && delay < ceiling; i++) {
+            // Test against half the ceiling rather than doubling first and clamping after. The
+            // latter needs an overflow check that can never fire (the ceiling is reached first),
+            // so it reads as a guard while being dead code. This keeps delay within
+            // [base, ceiling] by construction, so it can never go negative — which would
+            // schedule the next walk in the past and busy-loop the endpoint being backed off.
+            delay = delay > ceiling / 2 ? ceiling : delay * 2;
         }
-        return millisToNanos(Math.min(delay, ceiling));
+        return millisToNanos(delay);
     }
 
     /**
