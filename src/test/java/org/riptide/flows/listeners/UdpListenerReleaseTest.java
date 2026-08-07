@@ -15,7 +15,6 @@ import java.net.InetSocketAddress;
 import java.time.Instant;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ScheduledExecutorService;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -102,7 +101,7 @@ class UdpListenerReleaseTest {
             }
 
             @Override
-            public void start(final ScheduledExecutorService executorService) {
+            public void start() {
             }
 
             @Override

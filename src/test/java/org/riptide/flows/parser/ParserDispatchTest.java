@@ -323,7 +323,7 @@ class ParserDispatchTest {
         if (this.scheduler == null) {
             this.scheduler = Executors.newSingleThreadScheduledExecutor();
         }
-        parser.start(this.scheduler);
+        parser.start();
         this.started.add(parser);
         return parser;
     }

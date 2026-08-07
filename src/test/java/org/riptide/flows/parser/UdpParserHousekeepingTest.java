@@ -11,52 +11,35 @@ import org.riptide.flows.parser.netflow5.Netflow5UdpParser;
 import org.riptide.pipeline.Identity;
 
 import java.util.List;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 /**
- * A parser schedules its session housekeeping on a scheduler it owns, never on the executor its
- * listener hands over.
+ * A parser owns the scheduler that sweeps its sessions, and releases it with itself.
  *
- * <p>That executor is the listener's event loop group, whose job is draining a socket.
- * {@code scheduleAtFixedRate} dispatches by round-robin, so work placed there can land on the
- * reading thread and turn every sweep into a pause in packet reception — kernel loss on
- * {@code socketDrops} rather than an application error (#457).
+ * <p>This class used to carry a third test: hand {@code start()} a poisoned
+ * {@code ScheduledExecutorService} and assert nothing was scheduled on it. That guard is gone
+ * because #459 removed the parameter — there is no executor to pass any more, so the mistake it
+ * caught cannot be made. Deleting a test is normally a loss of coverage; here the hazard became
+ * structurally impossible rather than merely watched, which is the only good reason to remove one.
  *
- * <p>Two assertions, because either alone can pass on a parser that does nothing: the handed-over
- * executor must go unused, AND the sweep must actually be scheduled somewhere.
+ * <p>What it protected, for the record: the executor was the listener's event loop group, whose job
+ * is draining a socket. {@code scheduleAtFixedRate} dispatches by round-robin, so a sweep placed
+ * there could land on the reading thread and turn every execution into a pause in packet reception
+ * — kernel loss on {@code socketDrops} rather than an application error (#457).
  */
 class UdpParserHousekeepingTest {
-
-    @Test
-    void nothingIsScheduledOnTheExecutorTheListenerPasses() {
-        final var poisoned = new PoisonedScheduler();
-        final var parser = parser("poison-check");
-
-        parser.start(poisoned);
-        try {
-            assertThat(poisoned.used)
-                    .as("the listener's event loop group must not be used as a timer")
-                    .isFalse();
-        } finally {
-            parser.stop();
-        }
-    }
 
     @Test
     void housekeepingRunsOnASchedulerTheParserOwns() {
         final var parser = parser("owned-check");
 
-        parser.start(new PoisonedScheduler());
+        parser.start();
         try {
             assertThat(awaitThreads("udp-parser-housekeeping-owned-check"))
-                    .as("the sweep must be scheduled somewhere — without this the guard above "
-                        + "passes on a parser that schedules nothing at all")
+                    .as("the sweep must be scheduled on a thread belonging to this parser")
                     .isNotEmpty();
         } finally {
             parser.stop();
@@ -70,7 +53,7 @@ class UdpParserHousekeepingTest {
     @Test
     void stoppingTwiceIsWellDefined() {
         final var parser = parser("double-stop");
-        parser.start(new PoisonedScheduler());
+        parser.start();
         parser.stop();
 
         assertThatCode(parser::stop).doesNotThrowAnyException();
@@ -110,34 +93,5 @@ class UdpParserHousekeepingTest {
 
     private static UdpParserBase parser(final String name) {
         return new Netflow5UdpParser(name, (source, flows) -> { }, new Identity("t", "o", "z", "s"), new MetricRegistry());
-    }
-
-    /** Fails the test rather than the process: records any use instead of scheduling anything. */
-    private static final class PoisonedScheduler implements ScheduledExecutorService {
-        private volatile boolean used;
-
-        private <T> T poison() {
-            this.used = true;
-            throw new UnsupportedOperationException(
-                    "a parser must own its scheduler, not borrow the listener's event loop group");
-        }
-
-        @Override public ScheduledFuture<?> schedule(Runnable c, long d, TimeUnit u) { return poison(); }
-        @Override public <V> ScheduledFuture<V> schedule(Callable<V> c, long d, TimeUnit u) { return poison(); }
-        @Override public ScheduledFuture<?> scheduleAtFixedRate(Runnable c, long i, long p, TimeUnit u) { return poison(); }
-        @Override public ScheduledFuture<?> scheduleWithFixedDelay(Runnable c, long i, long d, TimeUnit u) { return poison(); }
-        @Override public void execute(Runnable command) { poison(); }
-        @Override public <T> java.util.concurrent.Future<T> submit(Callable<T> task) { return poison(); }
-        @Override public <T> java.util.concurrent.Future<T> submit(Runnable task, T result) { return poison(); }
-        @Override public java.util.concurrent.Future<?> submit(Runnable task) { return poison(); }
-        @Override public <T> List<java.util.concurrent.Future<T>> invokeAll(java.util.Collection<? extends Callable<T>> t) { return poison(); }
-        @Override public <T> List<java.util.concurrent.Future<T>> invokeAll(java.util.Collection<? extends Callable<T>> t, long o, TimeUnit u) { return poison(); }
-        @Override public <T> T invokeAny(java.util.Collection<? extends Callable<T>> t) { return poison(); }
-        @Override public <T> T invokeAny(java.util.Collection<? extends Callable<T>> t, long o, TimeUnit u) { return poison(); }
-        @Override public void shutdown() { poison(); }
-        @Override public List<Runnable> shutdownNow() { return poison(); }
-        @Override public boolean isShutdown() { return false; }
-        @Override public boolean isTerminated() { return false; }
-        @Override public boolean awaitTermination(long timeout, TimeUnit unit) { return poison(); }
     }
 }

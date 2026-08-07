@@ -77,7 +77,7 @@ public class TcpListener implements Listener {
                 .setNameFormat("tcp-listener-nio-worker-" + formatName + "-%d")
                 .build(), NioIoHandler.newFactory());
 
-        this.parser.start(this.bossGroup);
+        this.parser.start();
 
         final InetSocketAddress address = this.host != null
                 ? SocketUtils.socketAddress(this.host, this.port)

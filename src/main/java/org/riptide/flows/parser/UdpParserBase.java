@@ -128,22 +128,23 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
     }
 
     /**
-     * The passed executor is deliberately ignored.
+     * Owns the scheduler that sweeps its sessions.
      *
-     * <p>It is a listener's event loop group, whose job is draining a socket. Scheduling on it
-     * dispatches by round-robin, so the sweep can land on the reading thread itself and turn every
-     * execution into a pause in packet reception — kernel loss on the {@code socketDrops} gauge
-     * rather than an application error. It only missed that thread because the group was built
-     * larger than its one channel needs.
-     *
-     * <p>Ownership follows the data instead: this class creates {@code sessionManager} and discards
-     * it in {@link #stop}, so it owns the schedule that sweeps it. Same shape as
+     * <p>Ownership follows the data: this class creates {@code sessionManager} and discards it in
+     * {@link #stop}, so it owns the schedule that reaps it. Same shape as
      * {@code InterfaceSnapshotPoller} and {@code GeoIpEnricher} — a named daemon single-thread
      * scheduler, shut down with its owner.
+     *
+     * <p>Until #459 this method took a {@code ScheduledExecutorService} from its listener and, until
+     * #457, scheduled on it. That executor was the listener's event loop group, whose job is
+     * draining a socket: {@code scheduleAtFixedRate} dispatches by round-robin, so the sweep could
+     * land on the reading thread and turn every execution into a pause in packet reception — kernel
+     * loss on {@code socketDrops} rather than an application error. The parameter is gone, so that
+     * is no longer a mistake anyone can make.
      */
     @Override
-    public void start(final ScheduledExecutorService executorService) {
-        super.start(executorService);
+    public void start() {
+        super.start();
         this.sessionManager = new UdpSessionManager(this.templateTimeout, this::sequenceNumberTracker, this.optionListener);
         // Daemon: ParserBase.stop() already documents that abandoned non-daemon workers wedge JVM
         // exit, and a reaper killed mid-sweep costs nothing — it reads and prunes, it never writes
