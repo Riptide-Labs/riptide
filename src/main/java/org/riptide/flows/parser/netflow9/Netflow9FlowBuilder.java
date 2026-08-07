@@ -303,8 +303,7 @@ public class Netflow9FlowBuilder {
                                     usable(raw.SAMPLING_INTERVAL),
                                     usable(raw.FLOW_SAMPLER_RANDOM_INTERVAL))
                             .map(interval -> ResolvedRate.of(interval, SamplingProvenance.Record))
-                            .or(() -> Optional.ofNullable(advertised.get())
-                                    .flatMap(rate -> rate)
+                            .or(() -> advertised.get()
                                     .map(AdvertisedRate::interval)
                                     .map(Netflow9FlowBuilder::usable)
                                     .map(interval -> ResolvedRate.of(interval, SamplingProvenance.Options)))

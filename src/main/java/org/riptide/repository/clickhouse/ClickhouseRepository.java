@@ -323,7 +323,7 @@ public class ClickhouseRepository implements FlowRepository {
          * Java constant cannot silently change what stored rows say.
          */
         protected String samplingProvenance(final Flow.SamplingProvenance value) {
-            return value != null ? value.token() : Flow.SamplingProvenance.Assumed.token();
+            return value.token();
         }
     }
 }

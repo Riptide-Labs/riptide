@@ -22,6 +22,7 @@ import java.util.Collections;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Stream;
 
 public final class Netflow5FlowBuilder {
@@ -71,8 +72,9 @@ public final class Netflow5FlowBuilder {
      * v5 half of a {@code multi} receiver and hide which one stopped resolving from the header.
      *
      * <p>Keyed by the rung itself and named from its token, so the metric and the
-     * {@code samplingProvenance} column cannot drift apart: a rung renamed in one place is renamed
-     * in both, and a rung this builder can reach without a meter fails at construction.
+     * {@code samplingProvenance} column cannot drift apart: renaming a rung renames both. Only the
+     * three rungs a v5 packet can reach are registered — the other three would be permanently zero
+     * and would read as "this receiver never resolves that way" rather than "it cannot".
      */
     private final Map<SamplingProvenance, Meter> rungMeters;
 
@@ -92,7 +94,10 @@ public final class Netflow5FlowBuilder {
         // Resolved once for the packet: the rate lives in the header, so it is the same for every
         // record, and resolving per flow would recompute it and over-count the meters.
         final ResolvedRate rate = resolveSamplingRate(packet.header);
-        this.rungMeters.get(rate.from()).mark();
+        // Fails loudly rather than with a bare NPE if a rung is ever added to the ladder below
+        // without being registered above.
+        Objects.requireNonNull(this.rungMeters.get(rate.from()),
+                () -> "no meter registered for sampling rung " + rate.from()).mark();
         return packet.records.stream()
                 .map(record -> buildFlow(receivedAt, packet.header, record, rate));
     }
