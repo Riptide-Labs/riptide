@@ -87,10 +87,16 @@ public final class Netflow5FlowBuilder {
      * pin off with {@code trust-header-sampling-interval}.
      *
      * <p>An interval of 0 is the signal that an exporter does not sample. The mode bits are not.
+     *
+     * <p>Only 1 and 2 count as a signalled mode. Algorithm 3 is undefined in the v5 header, so it
+     * carries no more meaning than 0 does and must not buy the unconditional branch: a word of all
+     * ones would otherwise be read as a rate of 16383 that the operator has no way to suppress.
+     * {@code getSamplingAlgorithm} maps 3 to {@code Unassigned} for the same reason.
      */
     private double resolveSamplingInterval(final Header header) {
         final Double advertised = usable((double) header.samplingInterval);
-        if (advertised != null && (header.samplingAlgorithm != 0 || this.trustHeaderSamplingInterval)) {
+        final boolean modeSignalled = header.samplingAlgorithm == 1 || header.samplingAlgorithm == 2;
+        if (advertised != null && (modeSignalled || this.trustHeaderSamplingInterval)) {
             this.headerResolved.mark();
             return advertised;
         }

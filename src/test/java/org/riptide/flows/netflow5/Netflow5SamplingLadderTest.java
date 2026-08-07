@@ -139,6 +139,24 @@ class Netflow5SamplingLadderTest {
     }
 
     /**
+     * Algorithm 3 is undefined in the v5 header, so it is not a signalled mode and must fall under
+     * the opt-out with algorithm 0. Gating the unconditional branch on {@code != 0} instead of on
+     * the two defined values would make a word of all ones — plausible from a corrupt datagram —
+     * read as a rate of 16383 that an operator has no way to suppress.
+     */
+    @Test
+    void anUndefinedAlgorithmIsNotTreatedAsASignalledMode() throws Exception {
+        assertThat(onlyFlow(packet(3, 16383), builder(null, true)).getSamplingInterval())
+                .as("still read by default, like algorithm 0")
+                .isEqualTo(16383.0);
+        assertThat(onlyFlow(packet(3, 16383), builder(null, false)).getSamplingInterval())
+                .as("but the opt-out reaches it, unlike a stated mode")
+                .isEqualTo(1.0);
+        assertThat(onlyFlow(packet(3, 16383), builder(null, true)).getSamplingAlgorithm())
+                .isEqualTo(Flow.SamplingAlgorithm.Unassigned);
+    }
+
+    /**
      * Metered per packet, not per flow: the rate lives in the header, so every record in a packet
      * resolves identically and counting each one would report the same fact once per flow.
      */

@@ -125,25 +125,32 @@ Note the fallback applies to the whole receiver, so exporters sharing a port sha
 Give exporters that sample at different rates their own receivers and ports, unless they state their rates in the header — in which case each is read individually and the fallback never comes up.
 
 :::warning[NetFlow v5 rates changed]
-Earlier releases ignored the v5 header interval and recorded every v5 flow as unsampled (`samplingInterval = 1`).
-Flows from an exporter that advertises a rate now carry that rate instead.
+Earlier releases ignored the v5 header interval. What they recorded instead depended on the receiver:
 
-Nothing about stored `bytes` and `packets` changes, and no query breaks — but a query that multiplies by `samplingInterval` will return a different, larger and more correct answer for v5 rows written after the upgrade.
-Rows written before it are not rewritten, because correcting them would need each exporter's rate at each past moment, which is exactly what was never recorded.
-A query spanning the upgrade therefore mixes both, and the earlier rows under-report by each exporter's true rate.
+- **No fallback configured** — every v5 flow was recorded as unsampled, `samplingInterval = 1`. Flows from an exporter that advertises a rate now carry that rate, so a query multiplying by `samplingInterval` returns a **larger** and more correct answer.
+- **`flow-sampling-interval-fallback` configured** — every v5 flow carried the configured value, whatever the exporter said. The exporter's own rate now wins, so the recorded value can move in **either** direction. An exporter advertising 1:20 behind a receiver configured for 1000 drops from 1000 to 20, and a query multiplying by the rate returns an answer 50× smaller than before — and correct, where the old one was not.
 
-Find which exporters are affected, and when each flipped:
+Stored `bytes` and `packets` are unchanged either way, and no query errors.
+
+Rows written before the upgrade are not rewritten: correcting them would need each exporter's rate at each past moment, which is exactly what was never recorded. A query spanning the upgrade mixes both conventions.
+
+Find which exporters now report a rate, and when each changed:
 
 ```sql
 SELECT exporterAddr, samplingInterval, min(timestamp), max(timestamp)
 FROM flows
-WHERE flowProtocol = 'NetflowV5' AND samplingInterval != 1
+WHERE flowProtocol = 'NetflowV5'
 GROUP BY exporterAddr, samplingInterval
+ORDER BY exporterAddr, min(timestamp)
 ```
 
-**If you compensated for this by hardcoding a multiplier** in a dashboard or query — because you knew riptide under-reported these exporters — remove it, or you will now double-count.
+More than one row per `exporterAddr` means that exporter's recorded rate changed, and the `min(timestamp)` of the later row is when.
 
-To keep the previous behaviour while you correct queries, set `trust-header-sampling-interval=false` on the affected receivers.
+**If you compensated for this by hardcoding a multiplier** in a dashboard or query — because you knew riptide was not reading these exporters' rates — remove it, or you will now double-count.
+
+To pin the old behaviour while you correct queries, set `trust-header-sampling-interval=false` on the affected receivers.
+Note this only suppresses the header for exporters that leave the mode bits at zero; an exporter that states a mode is always read, so for those the old value cannot be restored by configuration.
+Set `flow-sampling-interval-fallback` to the value you were relying on if you need a specific rate recorded.
 :::
 
 :::note
