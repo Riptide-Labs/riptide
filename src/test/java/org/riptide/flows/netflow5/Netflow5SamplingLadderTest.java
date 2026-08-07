@@ -252,7 +252,7 @@ class Netflow5SamplingLadderTest {
     }
 
     @Test
-    void aPacketWithNoRateAnywhereIsMeteredAsUnsampled() throws Exception {
+    void aPacketWithNoRateAnywhereIsMeteredAsAssumed() throws Exception {
         final var metrics = new MetricRegistry();
         assertThat(new Netflow5FlowBuilder("test", metrics).buildFlows(Instant.EPOCH, packet(0, 0)).toList())
                 .hasSize(1);
@@ -266,7 +266,7 @@ class Netflow5SamplingLadderTest {
      * in the same registry rather than in separate ones.
      */
     @Test
-    void headerResolvedAndUnsampledExportersAreCountedApart() throws Exception {
+    void headerResolvedAndAssumedExportersAreCountedApart() throws Exception {
         final var metrics = new MetricRegistry();
         final var builder = new Netflow5FlowBuilder("test", metrics);
 

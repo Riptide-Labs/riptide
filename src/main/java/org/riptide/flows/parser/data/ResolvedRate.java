@@ -5,6 +5,7 @@
 
 package org.riptide.flows.parser.data;
 
+import java.util.Objects;
 import org.riptide.flows.parser.data.Flow.SamplingProvenance;
 
 /**
@@ -21,6 +22,10 @@ import org.riptide.flows.parser.data.Flow.SamplingProvenance;
  * @param from     the rung that produced {@code interval}
  */
 public record ResolvedRate(double interval, SamplingProvenance from) {
+
+    public ResolvedRate {
+        Objects.requireNonNull(from, "from must not be null");
+    }
 
     /** Nothing stated a rate: {@code 1.0}, recorded as assumed rather than as an answer. */
     public static ResolvedRate assumed() {
