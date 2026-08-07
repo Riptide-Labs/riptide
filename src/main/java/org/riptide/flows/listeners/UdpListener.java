@@ -62,18 +62,18 @@ public class UdpListener implements Listener {
 
     @Override
     public void start() {
-        // Netty defaults to 2 * num cores when the number of threads is set to 0.
+        // One thread, because this group drives this listener's one DatagramChannel and nothing
+        // else. Netty's default (0 = 2 * num cores) built 20 loops on a 10-core host of which 19
+        // could never be selected, each holding a selector.
         //
-        // Do NOT size this to 1 on the reasoning that a single DatagramChannel occupies one loop.
-        // This group is also the parser's ScheduledExecutorService (see parser.start below), and
-        // UdpParserBase schedules doHousekeeping on it every 60s — one task per sub-parser under
-        // DispatchingUdpParser. scheduleAtFixedRate calls next(), so with more than one loop the
-        // sweep runs on a different thread from the socket; measured, this group starts exactly
-        // two threads. Collapsing to one loop would put every housekeeping sweep on the thread
-        // draining the socket, stalling reception into kernel loss on the socketDrops gauge.
-        // Sizing this group is issue #450, and needs the ingest path measured first.
+        // The rule that matters is the second half: this group serves the channel only. It used to
+        // double as the parser's ScheduledExecutorService, which is why it could not be sized —
+        // UdpParserBase scheduled a 60s sweep on it, and scheduleAtFixedRate dispatches by
+        // round-robin, so with one loop every sweep would have landed on the thread draining the
+        // socket (#457). The parser owns its own scheduler now and ignores what it is handed here.
+        // Do not give this group other work to make it earn its keep; give the work its own thread.
         final var formatName = name.replace("%", "%%");
-        this.bossGroup = new MultiThreadIoEventLoopGroup(0, new ThreadFactoryBuilder()
+        this.bossGroup = new MultiThreadIoEventLoopGroup(1, new ThreadFactoryBuilder()
                 .setNameFormat("udp-listener-nio-" + formatName + "-%d")
                 .build(), NioIoHandler.newFactory());
 

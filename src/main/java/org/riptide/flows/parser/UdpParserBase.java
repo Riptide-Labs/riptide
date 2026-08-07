@@ -27,6 +27,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -53,6 +54,8 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
     private UdpSessionManager sessionManager;
 
     private ScheduledFuture<?> housekeepingFuture;
+    /** Owned, not borrowed — see {@link #start}. */
+    private ScheduledExecutorService housekeeper;
     private Duration templateTimeout = Duration.ofMinutes(30);
     private OptionListener optionListener = OptionListener.NONE;
 
@@ -124,11 +127,36 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
         this.optionListener = Objects.requireNonNull(optionListener);
     }
 
+    /**
+     * The passed executor is deliberately ignored.
+     *
+     * <p>It is a listener's event loop group, whose job is draining a socket. Scheduling on it
+     * dispatches by round-robin, so the sweep can land on the reading thread itself and turn every
+     * execution into a pause in packet reception — kernel loss on the {@code socketDrops} gauge
+     * rather than an application error. It only missed that thread because the group was built
+     * larger than its one channel needs.
+     *
+     * <p>Ownership follows the data instead: this class creates {@code sessionManager} and discards
+     * it in {@link #stop}, so it owns the schedule that sweeps it. Same shape as
+     * {@code InterfaceSnapshotPoller} and {@code GeoIpEnricher} — a named daemon single-thread
+     * scheduler, shut down with its owner.
+     */
     @Override
     public void start(final ScheduledExecutorService executorService) {
         super.start(executorService);
         this.sessionManager = new UdpSessionManager(this.templateTimeout, this::sequenceNumberTracker, this.optionListener);
-        this.housekeepingFuture = executorService.scheduleAtFixedRate(this.sessionManager::doHousekeeping,
+        // Daemon: ParserBase.stop() already documents that abandoned non-daemon workers wedge JVM
+        // exit, and a reaper killed mid-sweep costs nothing — it reads and prunes, it never writes
+        // anything a later sweep cannot redo.
+        this.housekeeper = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            final Thread thread = new Thread(runnable, "udp-parser-housekeeping-" + getName());
+            thread.setDaemon(true);
+            return thread;
+        });
+        // The handle is kept and cancelled explicitly rather than discarded: doHousekeeping throwing
+        // would otherwise cancel the schedule silently and leave reaping dead for the process
+        // lifetime.
+        this.housekeepingFuture = this.housekeeper.scheduleAtFixedRate(this.sessionManager::doHousekeeping,
                 HOUSEKEEPING_INTERVAL,
                 HOUSEKEEPING_INTERVAL,
                 TimeUnit.MILLISECONDS);
@@ -139,6 +167,12 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
         if (this.housekeepingFuture != null) {
             this.housekeepingFuture.cancel(false);
             this.housekeepingFuture = null;
+        }
+        // Nulled like the future above, so a second stop() is well defined rather than shutting down
+        // an already-dead executor.
+        if (this.housekeeper != null) {
+            this.housekeeper.shutdownNow();
+            this.housekeeper = null;
         }
 
         super.stop();

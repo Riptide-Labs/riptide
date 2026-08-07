@@ -19,22 +19,30 @@ import java.util.stream.Collectors;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * A {@code UdpListener}'s event loop group is also the parser's {@code ScheduledExecutorService}:
- * {@code start()} hands it to {@code parser.start(...)}, and {@code UdpParserBase} schedules
- * {@code doHousekeeping} on it every 60s — once per sub-parser under {@code DispatchingUdpParser}.
+ * A {@code UdpListener}'s event loop group must drive its channel and nothing else.
  *
- * <p>The regression this pins: sizing the group to one loop on the reasoning that a single
- * {@code DatagramChannel} only occupies one. {@code scheduleAtFixedRate} calls {@code next()}, so
- * with the default group the sweep runs on a different loop from the socket; with one loop it runs
- * on the thread draining the socket, turning every sweep into a pause in packet reception that
- * surfaces as kernel loss on the {@code socketDrops} gauge rather than as an application error.
+ * <p>History, because this assertion inverted and that reads like a weakening. It used to require
+ * the group to start MORE than one thread: {@code start()} handed the group to
+ * {@code parser.start(...)}, {@code UdpParserBase} scheduled a 60s sweep on it, and
+ * {@code scheduleAtFixedRate} dispatches by round-robin — so a one-loop group would have put every
+ * sweep on the thread draining the socket, turning it into a pause in packet reception that
+ * surfaces as kernel loss on {@code socketDrops} rather than as an application error. That
+ * regression was caught in review once already.
  *
- * <p>Sizing this group is issue #450 and needs the ingest path measured first.
+ * <p>The parser owns its scheduler now (#457), so the group is sized to its one channel.
+ *
+ * <p>Note what this test does and does not prove after that inversion. It proves the SIZING: a
+ * second thread here means something other than the channel took work on this group. It does NOT
+ * prove the decoupling, because with one loop {@code next()} returns that same loop — a re-coupled
+ * sweep would share the socket's thread and the count would still be 1. Verified: reverting the
+ * parser to schedule on the passed executor leaves this test green. The decoupling guard is
+ * {@code UdpParserHousekeepingTest}, which fails loudly on that revert. Both are needed; neither
+ * covers the other.
  */
 class UdpListenerSchedulerIsolationTest {
 
     @Test
-    void scheduledParserWorkDoesNotShareTheThreadDrainingTheSocket() {
+    void theListenerGroupDrivesItsChannelAndNothingElse() {
         final var listener = new UdpListener("isolation", schedulingParser(), new MetricRegistry())
                 .withHost("127.0.0.1")
                 .withPort(0);
@@ -47,8 +55,8 @@ class UdpListenerSchedulerIsolationTest {
                     .collect(Collectors.toSet());
 
             assertThat(loopThreads)
-                    .as("the parser's scheduled housekeeping must not run on the socket's event loop")
-                    .hasSizeGreaterThan(1);
+                    .as("one channel needs one loop; a second means something else took work here")
+                    .hasSize(1);
         } finally {
             listener.stop();
         }
