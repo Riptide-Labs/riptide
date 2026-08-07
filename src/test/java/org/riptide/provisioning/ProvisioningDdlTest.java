@@ -57,11 +57,14 @@ class ProvisioningDdlTest {
         // Additive column upgrades are emitted on every run (before the grants, same
         // table-exists precondition) so re-running onboard upgrades a pre-existing table in place.
         final List<String> sql = ProvisioningDdl.ensureShared("riptide", 50_000_000_000L);
+        final int additive = FlowsSchema.additiveColumnNames().size();
         assertThat(sql.get(0)).isEqualTo(
                 "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS srcCountry LowCardinality(String)");
-        assertThat(sql.subList(0, 5)).allMatch(s -> s.contains("ADD COLUMN IF NOT EXISTS"));
-        assertThat(sql).filteredOn(s -> s.contains("ADD COLUMN")).hasSize(5);
-        assertThat(sql.get(4)).contains("exporterName LowCardinality(String)");
+        // Counted off the additive set rather than a literal, so adding a column here is a
+        // one-line change in FlowsSchema and not a test edit.
+        assertThat(sql.subList(0, additive)).allMatch(s -> s.contains("ADD COLUMN IF NOT EXISTS"));
+        assertThat(sql).filteredOn(s -> s.contains("ADD COLUMN")).hasSize(additive);
+        assertThat(sql.get(additive - 1)).contains("samplingProvenance LowCardinality(String)");
     }
 
     @Test
@@ -69,7 +72,8 @@ class ProvisioningDdlTest {
         assertThat(ProvisioningDdl.bootstrapSchema("riptide", 30).get(1))
                 .contains("srcCountry LowCardinality(String)")
                 .contains("dstCity LowCardinality(String)")
-                .contains("exporterName LowCardinality(String)");
+                .contains("exporterName LowCardinality(String)")
+                .contains("samplingProvenance LowCardinality(String)");
     }
 
     @Test

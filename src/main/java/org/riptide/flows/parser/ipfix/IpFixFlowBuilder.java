@@ -5,13 +5,17 @@
 
 package org.riptide.flows.parser.ipfix;
 
+import com.google.common.base.Supplier;
+import com.google.common.base.Suppliers;
 import com.google.common.primitives.UnsignedLong;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
+import org.riptide.flows.parser.data.Flow.SamplingProvenance;
 import org.riptide.flows.parser.data.Optionals;
+import org.riptide.flows.parser.data.ResolvedRate;
 import org.riptide.flows.parser.data.Timeout;
 import org.riptide.flows.parser.ipfix.proto.Packet;
 
@@ -244,12 +248,15 @@ public class IpFixFlowBuilder {
 
             /**
              * What the record carries, then what the selector algorithm implies, then what the
-             * operator configured, then unsampled. Algorithms 0, 8 and 9 have no expressible
+             * operator configured, then an assumed 1.0. Algorithms 0, 8 and 9 have no expressible
              * interval and yield NaN, which is honest but would land in a Float64 column and
              * poison any aggregate multiplying by it — so it falls through as unknown instead.
+             *
+             * <p>Walked once and memoized: the interval and the rung that produced it are two
+             * views of one resolution, and a second traversal would both drift from the first and
+             * defeat the laziness below.
              */
-            @Override
-            public double getSamplingInterval() {
+            private final Supplier<ResolvedRate> rate = Suppliers.memoize(() -> {
                 // Evaluated in order and lazily: the selector-algorithm derivation divides by
                 // exporter-supplied ranges, so it must not run for a record that already carries
                 // its rate — a degenerate range would then cost the whole packet's batch.
@@ -258,13 +265,27 @@ public class IpFixFlowBuilder {
                                 usable(rawFlow.samplerRandomInterval))
                         .orElse(null);
                 if (onRecord != null) {
-                    return onRecord;
+                    return ResolvedRate.of(onRecord, SamplingProvenance.Record);
                 }
                 final Double derived = usable(fromSelectorAlgorithm());
                 if (derived != null) {
-                    return derived;
+                    return ResolvedRate.of(derived, SamplingProvenance.Derived);
                 }
-                return Optionals.first(usable(asDouble(flowSamplingIntervalFallback))).orElse(1.0);
+                final Double configured = usable(asDouble(flowSamplingIntervalFallback));
+                if (configured != null) {
+                    return ResolvedRate.of(configured, SamplingProvenance.Fallback);
+                }
+                return ResolvedRate.assumed();
+            });
+
+            @Override
+            public double getSamplingInterval() {
+                return this.rate.get().interval();
+            }
+
+            @Override
+            public SamplingProvenance getSamplingProvenance() {
+                return this.rate.get().from();
             }
 
             /** RFC 5477 selector algorithms, as an interval where one is expressible. */

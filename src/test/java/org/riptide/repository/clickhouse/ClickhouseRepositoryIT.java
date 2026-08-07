@@ -26,6 +26,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Set;
 
@@ -355,7 +356,7 @@ public class ClickhouseRepositoryIT {
     }
 
     @Test
-    void geoColumnsPersistAndPreGeoTableUpgradesInPlace() throws Exception {
+    void additiveColumnsPersistAndAnOlderTableUpgradesInPlace() throws Exception {
         final var database = "geo_upgrade";
         final var config = configFor(database, true);
         final var repo = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
@@ -368,9 +369,11 @@ public class ClickhouseRepositoryIT {
             queryClient.execute("DROP VIEW IF EXISTS " + FlowsSchema.qualifiedRollupView(database, rollup)).get();
         }
 
-        // Simulate a pre-geo table: keep a persisted row, then drop the geo columns.
+        // Simulate an older table: keep a persisted row, then drop every additive column. Driven
+        // off additiveColumnNames() rather than a literal list, so a column added to the additive
+        // set is covered here without editing this test.
         repo.persist(List.of(testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 60001, 443, 100L)));
-        for (final String column : List.of("srcCountry", "srcCity", "dstCountry", "dstCity", "exporterName")) {
+        for (final String column : FlowsSchema.additiveColumnNames()) {
             queryClient.execute("ALTER TABLE " + database + ".flows DROP COLUMN " + column).get();
         }
 
@@ -381,12 +384,15 @@ public class ClickhouseRepositoryIT {
                 .hasMessageContaining("exporterName")
                 .hasMessageContaining("riptide onboard");
 
-        // Manage mode adds the columns back in place; the pre-geo row survives and reads ''.
+        // Manage mode adds the columns back in place; the older row survives and reads ''.
         final var upgraded = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
         Assertions.assertThatCode(upgraded::start).doesNotThrowAnyException();
         final var legacy = queryClient.queryAll(
-                "SELECT srcCountry FROM " + database + ".flows WHERE srcPort = 60001");
+                "SELECT srcCountry, samplingProvenance FROM " + database + ".flows WHERE srcPort = 60001");
         Assertions.assertThat(legacy.getFirst().getString("srcCountry")).isEmpty();
+        // '' is the marker for "written before the column existed" — distinct from 'assumed',
+        // which is a resolution riptide actually made, and not backfillable into these rows.
+        Assertions.assertThat(legacy.getFirst().getString("samplingProvenance")).isEmpty();
 
         // An enriched flow round-trips its geo fields.
         final var geoFlow = testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 60002, 443, 100L);
@@ -403,6 +409,35 @@ public class ClickhouseRepositoryIT {
         Assertions.assertThat(row.getString("srcCity")).isEqualTo("Fulda");
         Assertions.assertThat(row.getString("dstCountry")).isEqualTo("US");
         Assertions.assertThat(row.getString("dstCity")).isEqualTo("Ashburn");
+    }
+
+    /** Every rung round-trips to a readable token, and the two 1.0 rows stay distinguishable. */
+    @Test
+    void everySamplingProvenanceRoundTripsThroughTheColumn() throws Exception {
+        final var database = "provenance_round_trip";
+        final var repo = new ClickhouseRepository(
+                new ClickhouseRepository$FlowMapperImpl(), configFor(database, true), RESOLVERS);
+        repo.start();
+
+        int port = 61000;
+        final var expected = new LinkedHashMap<Integer, Flow.SamplingProvenance>();
+        for (final var provenance : Flow.SamplingProvenance.values()) {
+            final var flow = testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), port, 443, 100L);
+            flow.setSamplingProvenance(provenance);
+            // Two rungs legitimately produce 1.0; the column is what separates them.
+            flow.setSamplingInterval(provenance == Flow.SamplingProvenance.Assumed ? 1.0 : 1000.0);
+            repo.persist(List.of(flow));
+            expected.put(port, provenance);
+            port++;
+        }
+
+        for (final var entry : expected.entrySet()) {
+            final var row = queryClient.queryAll("SELECT samplingProvenance FROM " + database
+                    + ".flows WHERE srcPort = " + entry.getKey()).getFirst();
+            Assertions.assertThat(row.getString("samplingProvenance"))
+                    .describedAs("provenance for %s", entry.getValue())
+                    .isEqualTo(entry.getValue().token());
+        }
     }
 
     private static ClickhouseConfig configFor(final String database, final boolean manageSchema) {
@@ -468,6 +503,7 @@ public class ClickhouseRepositoryIT {
                 .tos(0)
                 .samplingAlgorithm(Flow.SamplingAlgorithm.Unassigned)
                 .samplingInterval(1.0)
+                .samplingProvenance(Flow.SamplingProvenance.Assumed)
                 .srcLocality(Flow.Locality.PUBLIC)
                 .dstLocality(Flow.Locality.PUBLIC)
                 .flowLocality(Flow.Locality.PUBLIC)

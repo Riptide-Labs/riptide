@@ -128,6 +128,48 @@ Use it for a v5 exporter that samples but leaves the header field at zero, which
 Note the fallback applies to the whole receiver, so exporters sharing a port share it.
 Give exporters that sample at different rates their own receivers and ports, unless they state their rates in the header — in which case each is read individually and the fallback never comes up.
 
+### Where a rate came from
+
+A stored `samplingInterval` of `1` is ambiguous on its own.
+It can mean the exporter stated that it does not sample, which is an answer and outranks a configured fallback, or that nothing stated a rate anywhere and riptide recorded `1` in the absence of one.
+Those are opposite facts, and a query cannot separate them by value.
+
+Every flow therefore carries `samplingProvenance` — the rung of the ladder that supplied its interval:
+
+| value | the rate came from |
+|---|---|
+| `record` | the flow record itself (NetFlow v9 / IPFIX fields 34, 49, 50), or an sFlow sample |
+| `options` | the exporter's sampler options table (NetFlow v9) |
+| `header` | the NetFlow v5 packet header |
+| `derived` | riptide's own arithmetic on an IPFIX selector algorithm and its ranges |
+| `fallback` | the receiver's `flow-sampling-interval-fallback` |
+| `assumed` | nothing stated a rate; `1` was recorded in the absence of one |
+| `''` (empty) | the row was written before this column existed |
+
+Two of these deserve care.
+
+`derived` is not something the exporter said.
+It is a rate riptide computed from the selector algorithm and the ranges the exporter supplied, so it carries less authority than `record` and is the value to distrust first when numbers look wrong.
+
+`record` on an **sFlow** row does not mean the row should be multiplied.
+sFlow rates are always on the sample, but sFlow counters are already scaled at ingest, so the caveat below still applies and `flowProtocol` — not the provenance — is what tells you.
+
+Rows written before this column existed read `''`.
+They are not backfilled, and cannot be: reconstructing them would need each exporter's rate at each past moment, which is precisely the information whose absence this column records.
+
+An exporter alternating between two provenances is worth investigating.
+Firmware that populates the sampling field on some export paths and not others produces an interleaved mix of `header` and `assumed` for one exporter; a v9 sampler options table that expires between refreshes produces the same pattern with `options` and `assumed`:
+
+```sql
+SELECT exporterAddr, samplingProvenance, samplingInterval, count() AS flows
+FROM flows
+WHERE timestamp > now() - INTERVAL 1 HOUR
+GROUP BY exporterAddr, samplingProvenance, samplingInterval
+ORDER BY exporterAddr, flows DESC
+```
+
+More than one provenance for one exporter means its rate is not resolving consistently.
+
 :::warning[NetFlow v5 rates changed]
 Earlier releases ignored the v5 header interval. What they recorded instead depended on the receiver:
 
@@ -138,17 +180,18 @@ Stored `bytes` and `packets` are unchanged either way, and no query errors.
 
 Rows written before the upgrade are not rewritten: correcting them would need each exporter's rate at each past moment, which is exactly what was never recorded. A query spanning the upgrade mixes both conventions.
 
-Find which exporters now report a rate, and when each changed:
+The rows whose meaning changed name themselves. Find which exporters now report a rate, and when each changed:
 
 ```sql
 SELECT exporterAddr, samplingInterval, min(timestamp), max(timestamp)
 FROM flows
-WHERE flowProtocol = 'NetflowV5'
+WHERE flowProtocol = 'NetflowV5' AND samplingProvenance = 'header'
 GROUP BY exporterAddr, samplingInterval
 ORDER BY exporterAddr, min(timestamp)
 ```
 
-More than one row per `exporterAddr` means that exporter's recorded rate changed, and the `min(timestamp)` of the later row is when.
+The `min(timestamp)` of the earliest row per exporter is when that exporter's rate started being read.
+Rows from before the upgrade carry a different provenance (`fallback`, `assumed`, or `''` if they predate the column), so no timestamp guess is needed to tell the two conventions apart.
 
 **If you compensated for this by hardcoding a multiplier** in a dashboard or query — because you knew riptide was not reading these exporters' rates — remove it, or you will now double-count.
 
@@ -161,9 +204,10 @@ Set `flow-sampling-interval-fallback` to the value you were relying on if you ne
 riptide records the sampling rate; it does not scale NetFlow or IPFIX `bytes` and `packets` by it.
 Stored counters are what the exporter reported, and the rate sits alongside them for a query to apply.
 
-Three things to know before writing that query.
+Four things to know before writing that query.
 sFlow already scales at ingest (`bytes = frame_length × sampling_rate`) and still reports its rate, so multiplying sFlow rows again double-counts them: filter them out, or restrict the query to NetFlow and IPFIX.
 The 1-minute rollups carry neither the rate nor a scaled measure, so `SUM(bytes * samplingInterval)` only means anything against the raw `flows` table.
+A rate of `1` is not always a statement that the exporter does not sample — check `samplingProvenance` before treating one as trustworthy, and see [Where a rate came from](#where-a-rate-came-from).
 And if you are coming from **nfdump or pmacct**, check whether counters were being scaled for you.
 Both can multiply NetFlow v5 `bytes` and `packets` by the sampling rate at ingest (in pmacct via `nfacctd_renormalize`, in nfdump depending on how sampling was detected or forced with `-s`), where riptide never does.
 Counters stored here are always as the exporter reported them, so a query ported from either may need the multiplication added rather than removed.

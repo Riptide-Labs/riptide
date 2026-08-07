@@ -9,6 +9,8 @@ package org.riptide.flows.parser.netflow5;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import org.riptide.flows.parser.data.Flow;
+import org.riptide.flows.parser.data.Flow.SamplingProvenance;
+import org.riptide.flows.parser.data.ResolvedRate;
 import org.riptide.flows.parser.netflow5.proto.Header;
 import org.riptide.flows.parser.netflow5.proto.Packet;
 import org.riptide.flows.parser.netflow5.proto.Record;
@@ -16,6 +18,11 @@ import org.riptide.flows.parser.netflow5.proto.Record;
 import java.net.InetAddress;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Collections;
+import java.util.EnumMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Stream;
 
 public final class Netflow5FlowBuilder {
@@ -63,27 +70,36 @@ public final class Netflow5FlowBuilder {
      * {@code ExporterSamplingTable} does. That table is one Spring bean for the whole daemon; this
      * builder is one per parser, so an unscoped name would blend a dedicated v5 receiver with the
      * v5 half of a {@code multi} receiver and hide which one stopped resolving from the header.
+     *
+     * <p>Keyed by the rung itself and named from its token, so the metric and the
+     * {@code samplingProvenance} column cannot drift apart: renaming a rung renames both. Only the
+     * three rungs a v5 packet can reach are registered — the other three would be permanently zero
+     * and would read as "this receiver never resolves that way" rather than "it cannot".
      */
-    private final Meter headerResolved;
-    private final Meter fallbackResolved;
-    private final Meter assumed;
+    private final Map<SamplingProvenance, Meter> rungMeters;
+
+    /** The rungs a v5 packet can resolve through. There is no options table and no record rung. */
+    private static final List<SamplingProvenance> RUNGS =
+            List.of(SamplingProvenance.Header, SamplingProvenance.Fallback, SamplingProvenance.Assumed);
 
     public Netflow5FlowBuilder(final String name, final MetricRegistry metrics) {
-        this.headerResolved = metrics.meter(MetricRegistry.name("parsers", name, "samplingRate", "header"));
-        this.fallbackResolved = metrics.meter(MetricRegistry.name("parsers", name, "samplingRate", "fallback"));
-        // "assumed", not "unsampled": this rung fires when nothing stated a rate, and 1.0 is what
-        // riptide assumes in that case. Naming it "unsampled" would assert the exporter is not
-        // sampling — which is the one thing this rung cannot know, and is exactly the claim an
-        // exporter makes when it states a rate of 1 through the header rung above.
-        this.assumed = metrics.meter(MetricRegistry.name("parsers", name, "samplingRate", "assumed"));
+        final var meters = new EnumMap<SamplingProvenance, Meter>(SamplingProvenance.class);
+        for (final var rung : RUNGS) {
+            meters.put(rung, metrics.meter(MetricRegistry.name("parsers", name, "samplingRate", rung.token())));
+        }
+        this.rungMeters = Collections.unmodifiableMap(meters);
     }
 
     public Stream<Flow> buildFlows(final Instant receivedAt, final Packet packet) {
         // Resolved once for the packet: the rate lives in the header, so it is the same for every
         // record, and resolving per flow would recompute it and over-count the meters.
-        final double samplingInterval = resolveSamplingInterval(packet.header);
+        final ResolvedRate rate = resolveSamplingRate(packet.header);
+        // Fails loudly rather than with a bare NPE if a rung is ever added to the ladder below
+        // without being registered above.
+        Objects.requireNonNull(this.rungMeters.get(rate.from()),
+                () -> "no meter registered for sampling rung " + rate.from()).mark();
         return packet.records.stream()
-                .map(record -> buildFlow(receivedAt, packet.header, record, samplingInterval));
+                .map(record -> buildFlow(receivedAt, packet.header, record, rate));
     }
 
     /**
@@ -107,26 +123,23 @@ public final class Netflow5FlowBuilder {
      * ones would otherwise be read as a rate of 16383 that the operator has no way to suppress.
      * {@code getSamplingAlgorithm} maps 3 to {@code Unassigned} for the same reason.
      */
-    private double resolveSamplingInterval(final Header header) {
+    private ResolvedRate resolveSamplingRate(final Header header) {
         final Double advertised = usable((double) header.samplingInterval);
         final boolean modeSignalled = header.samplingAlgorithm == 1 || header.samplingAlgorithm == 2;
         if (advertised != null && (modeSignalled || this.trustHeaderSamplingInterval)) {
-            this.headerResolved.mark();
-            return advertised;
+            return ResolvedRate.of(advertised, SamplingProvenance.Header);
         }
         final Double configured = usable(asDouble(this.flowSamplingIntervalFallback));
         if (configured != null) {
-            this.fallbackResolved.mark();
-            return configured;
+            return ResolvedRate.of(configured, SamplingProvenance.Fallback);
         }
-        this.assumed.mark();
-        return 1.0;
+        return ResolvedRate.assumed();
     }
 
     private Flow buildFlow(final Instant receivedAt,
                            final Header header,
                            final Record record,
-                           final double samplingInterval) {
+                           final ResolvedRate rate) {
 
         final var timestamp = Instant.ofEpochSecond(header.unixSecs, header.unixNSecs);
         final var bootTime = timestamp.minus(header.sysUptime, ChronoUnit.MILLIS);
@@ -283,10 +296,15 @@ public final class Netflow5FlowBuilder {
                 };
             }
 
-            /** Resolved once for the packet; see {@code resolveSamplingInterval}. */
+            /** Resolved once for the packet; see {@code resolveSamplingRate}. */
             @Override
             public double getSamplingInterval() {
-                return samplingInterval;
+                return rate.interval();
+            }
+
+            @Override
+            public SamplingProvenance getSamplingProvenance() {
+                return rate.from();
             }
         };
     }

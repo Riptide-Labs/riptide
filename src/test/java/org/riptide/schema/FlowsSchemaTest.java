@@ -41,6 +41,42 @@ class FlowsSchemaTest {
                 .contains("PARTITION BY toYYYYMMDD(timestamp)");
     }
 
+    /**
+     * The additive columns are the ones an existing table can gain in place. Both emissions come
+     * off one map, so a fresh table and an upgraded one end up with the same columns in the same
+     * order — the property that keeps the two shapes from diverging over successive upgrades.
+     */
+    @Test
+    void additiveColumnsAppearInBothTheCreateAndTheAlterPath() {
+        final String create = FlowsSchema.createFlowsTable("riptide");
+        final List<String> alters = FlowsSchema.addAdditiveColumns("riptide");
+
+        assertThat(FlowsSchema.additiveColumnNames()).contains("samplingProvenance");
+        assertThat(create).contains("samplingProvenance LowCardinality(String)");
+        assertThat(alters).contains(
+                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS samplingProvenance LowCardinality(String)");
+
+        // Every additive column is emitted by both paths, in the same relative order.
+        final var declarationOrder = FlowsSchema.additiveColumnNames().stream()
+                .sorted(java.util.Comparator.comparingInt(create::indexOf))
+                .toList();
+        final var alterOrder = alters.stream()
+                .map(statement -> statement.replaceAll(".*ADD COLUMN IF NOT EXISTS (\\w+).*", "$1"))
+                .toList();
+        assertThat(alterOrder).containsExactlyElementsOf(declarationOrder);
+    }
+
+    /**
+     * A {@code LowCardinality(String)}, not an {@code Enum8}: the additive path can only add a
+     * column, so a rung added to the vocabulary later must not require an {@code ALTER … MODIFY}.
+     */
+    @Test
+    void provenanceIsAStringSoTheRungSetCanGrow() {
+        assertThat(FlowsSchema.createFlowsTable("riptide"))
+                .contains("samplingProvenance LowCardinality(String)")
+                .doesNotContain("samplingProvenance Enum8");
+    }
+
     @Test
     void timeColumnsPinUtcTimezone() {
         // The schema is timezone-explicit so stored instants display/parse in UTC regardless of the

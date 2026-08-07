@@ -9,7 +9,9 @@ import lombok.Getter;
 import lombok.Setter;
 import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
+import org.riptide.flows.parser.data.Flow.SamplingProvenance;
 import org.riptide.flows.parser.data.Optionals;
+import org.riptide.flows.parser.data.ResolvedRate;
 import org.riptide.flows.parser.data.Timeout;
 import org.riptide.flows.parser.netflow9.proto.Packet;
 import com.google.common.base.Supplier;
@@ -289,18 +291,34 @@ public class Netflow9FlowBuilder {
 
             /**
              * What the exporter put on this record, then what it advertised in its sampler
-             * options table, then what the operator configured, then unsampled. A sampling
+             * options table, then what the operator configured, then an assumed 1.0. A sampling
              * exporter usually states its rate only in the options table, so without the middle
              * rung this reports 1.0 for a router sampling 1:1000.
+             *
+             * <p>Walked once and memoized: the interval and the rung that produced it are two
+             * views of one resolution, and a second traversal would drift from the first.
              */
+            private final Supplier<ResolvedRate> rate = Suppliers.memoize(() ->
+                    Optionals.first(
+                                    usable(raw.SAMPLING_INTERVAL),
+                                    usable(raw.FLOW_SAMPLER_RANDOM_INTERVAL))
+                            .map(interval -> ResolvedRate.of(interval, SamplingProvenance.Record))
+                            .or(() -> advertised.get()
+                                    .map(AdvertisedRate::interval)
+                                    .map(Netflow9FlowBuilder::usable)
+                                    .map(interval -> ResolvedRate.of(interval, SamplingProvenance.Options)))
+                            .or(() -> Optional.ofNullable(usable(asDouble(flowSamplingIntervalFallback)))
+                                    .map(interval -> ResolvedRate.of(interval, SamplingProvenance.Fallback)))
+                            .orElseGet(ResolvedRate::assumed));
+
             @Override
             public double getSamplingInterval() {
-                return Optionals.first(
-                                usable(raw.SAMPLING_INTERVAL),
-                                usable(raw.FLOW_SAMPLER_RANDOM_INTERVAL))
-                        .or(() -> advertised.get().map(AdvertisedRate::interval).map(Netflow9FlowBuilder::usable))
-                        .or(() -> Optional.ofNullable(usable(asDouble(flowSamplingIntervalFallback))))
-                        .orElse(1.0);
+                return this.rate.get().interval();
+            }
+
+            @Override
+            public SamplingProvenance getSamplingProvenance() {
+                return this.rate.get().from();
             }
         };
     }

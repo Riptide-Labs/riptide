@@ -314,5 +314,16 @@ public class ClickhouseRepository implements FlowRepository {
                 case PRIVATE -> (byte) 2;
             };
         }
+
+        /**
+         * A {@code LowCardinality(String)}, not an {@code Enum8} like the four above: the rung set
+         * is riptide's own and still growing, and the additive-column path can only add a column,
+         * never modify one, so an enum that later gained a value would need machinery that does
+         * not exist. The token comes off the constant rather than {@code name()} so renaming a
+         * Java constant cannot silently change what stored rows say.
+         */
+        protected String samplingProvenance(final Flow.SamplingProvenance value) {
+            return value.token();
+        }
     }
 }
