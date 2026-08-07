@@ -131,7 +131,7 @@ class InterfaceSnapshotPollerTest {
         final var poller = poller(thrower, config);
         final var endpoint = endpoint("10.5.0.1");
 
-        poller.resolve(endpoint, 1);
+        poller.trackAndResolve(endpoint, 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, thrower, 1);
 
@@ -157,14 +157,14 @@ class InterfaceSnapshotPollerTest {
         final var poller = poller(snmp, config());
         final var endpoint = endpoint("10.5.0.2");
 
-        poller.resolve(endpoint, 1);
+        poller.trackAndResolve(endpoint, 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 1);
 
         poller.invalidateAll();
 
         // the existing snapshot is still served while the re-walk happens underneath
-        assertThat(poller.resolve(endpoint, 1)).contains(new IfInfo("eth0", "uplink", 1000L));
+        assertThat(poller.trackAndResolve(endpoint, 1)).contains(new IfInfo("eth0", "uplink", 1000L));
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 2);
     }
@@ -182,14 +182,14 @@ class InterfaceSnapshotPollerTest {
         final var poller = poller(snmp, config());
         final var endpoint = endpoint("10.5.0.3");
 
-        poller.resolve(endpoint, 1);
+        poller.trackAndResolve(endpoint, 1);
         poller.tick(this.clock.get());
         assertThat(snmp.entered.await(5, TimeUnit.SECONDS)).isTrue();
 
         // long past the deregistration threshold, but the walk is still parked
         advanceMs(600_000L * 5);
         poller.tick(this.clock.get());
-        poller.resolve(endpoint, 1);
+        poller.trackAndResolve(endpoint, 1);
         poller.tick(this.clock.get());
         assertThat(snmp.walks.get()).isEqualTo(1);
 
@@ -222,13 +222,13 @@ class InterfaceSnapshotPollerTest {
         appender.start();
         logger.addAppender(appender);
         try {
-            poller.resolve(endpoint, 1);
+            poller.trackAndResolve(endpoint, 1);
             poller.tick(this.clock.get());
             awaitWalks(poller, snmp, 1);
 
             // ifIndex 99 is absent from the walked table; 500 flows must not mean 500 warnings
             for (int i = 0; i < 500; i++) {
-                assertThat(poller.resolve(endpoint, 99)).isEmpty();
+                assertThat(poller.trackAndResolve(endpoint, 99)).isEmpty();
             }
             assertThat(missWarnings(appender)).isEqualTo(1);
 
@@ -236,7 +236,7 @@ class InterfaceSnapshotPollerTest {
             advanceMs(700_000);
             poller.tick(this.clock.get());
             awaitWalks(poller, snmp, 2);
-            poller.resolve(endpoint, 99);
+            poller.trackAndResolve(endpoint, 99);
             assertThat(missWarnings(appender)).isEqualTo(2);
         } finally {
             logger.detachAppender(appender);
@@ -255,12 +255,12 @@ class InterfaceSnapshotPollerTest {
         appender.start();
         logger.addAppender(appender);
         try {
-            poller.resolve(endpoint, 1);
+            poller.trackAndResolve(endpoint, 1);
             poller.tick(this.clock.get());
             awaitWalks(poller, snmp, 1);
 
             for (int ifIndex = 1000; ifIndex < 6000; ifIndex++) {
-                poller.resolve(endpoint, ifIndex);
+                poller.trackAndResolve(endpoint, ifIndex);
             }
             assertThat(missWarnings(appender)).isLessThanOrEqualTo(64);
         } finally {
@@ -279,7 +279,7 @@ class InterfaceSnapshotPollerTest {
         final var snmp = new FakeSnmp();
         final var poller = poller(snmp, config());
 
-        // no resolve() call means no registration, however long the scheduler runs
+        // no trackAndResolve() call means no registration, however long the scheduler runs
         poller.tick(this.clock.get());
         advanceMs(600_000);
         poller.tick(this.clock.get());
@@ -294,12 +294,12 @@ class InterfaceSnapshotPollerTest {
         final var endpoint = endpoint("10.0.0.1");
 
         // warmup: registered, but nothing walked yet, so the ladder's SNMP rung is empty
-        assertThat(poller.resolve(endpoint, 1)).isEmpty();
+        assertThat(poller.trackAndResolve(endpoint, 1)).isEmpty();
 
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 1);
 
-        assertThat(poller.resolve(endpoint, 1)).contains(new IfInfo("eth0", "uplink", 1000L));
+        assertThat(poller.trackAndResolve(endpoint, 1)).contains(new IfInfo("eth0", "uplink", 1000L));
     }
 
     @Test
@@ -309,7 +309,7 @@ class InterfaceSnapshotPollerTest {
         final var endpoint = endpoint("10.0.0.2");
 
         for (int ifIndex = 1; ifIndex <= 50; ifIndex++) {
-            poller.resolve(endpoint, ifIndex);
+            poller.trackAndResolve(endpoint, ifIndex);
         }
         assertThat(snmp.walks.get()).isZero();
 
@@ -318,7 +318,7 @@ class InterfaceSnapshotPollerTest {
 
         // and after a snapshot exists, 50 more lookups still cost nothing
         for (int ifIndex = 1; ifIndex <= 50; ifIndex++) {
-            poller.resolve(endpoint, ifIndex);
+            poller.trackAndResolve(endpoint, ifIndex);
         }
         assertThat(snmp.walks.get()).isEqualTo(1);
     }
@@ -329,12 +329,12 @@ class InterfaceSnapshotPollerTest {
         final var poller = poller(snmp, config());
         final var endpoint = endpoint("10.0.0.3");
 
-        poller.resolve(endpoint, 1);
+        poller.trackAndResolve(endpoint, 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 1);
 
         // 99 is not in the walked table: a known absence, not an unknown
-        assertThat(poller.resolve(endpoint, 99)).isEmpty();
+        assertThat(poller.trackAndResolve(endpoint, 99)).isEmpty();
         assertThat(snmp.walks.get()).isEqualTo(1);
     }
 
@@ -344,17 +344,17 @@ class InterfaceSnapshotPollerTest {
         final var poller = poller(snmp, config());
         final var endpoint = endpoint("10.0.0.4");
 
-        poller.resolve(endpoint, 1);
+        poller.trackAndResolve(endpoint, 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 1);
 
         // past the refresh interval but inside the expiry backstop: a name from the previous
         // cycle beats no name, which is the whole reason these are two settings
         advanceMs(700_000);
-        assertThat(poller.resolve(endpoint, 1)).isPresent();
+        assertThat(poller.trackAndResolve(endpoint, 1)).isPresent();
 
         advanceMs(1_200_000); // now beyond snapshotExpiryMs
-        assertThat(poller.resolve(endpoint, 1)).isEmpty();
+        assertThat(poller.trackAndResolve(endpoint, 1)).isEmpty();
     }
 
     @Test
@@ -363,19 +363,19 @@ class InterfaceSnapshotPollerTest {
         final var poller = poller(snmp, config());
         final var endpoint = endpoint("10.0.0.5");
 
-        poller.resolve(endpoint, 1);
+        poller.trackAndResolve(endpoint, 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 1);
 
         // ticks before the interval elapses must not re-walk
         advanceMs(300_000);
-        poller.resolve(endpoint, 1);
+        poller.trackAndResolve(endpoint, 1);
         poller.tick(this.clock.get());
         Thread.sleep(50);
         assertThat(snmp.walks.get()).isEqualTo(1);
 
         advanceMs(400_000); // past refresh + jitter
-        poller.resolve(endpoint, 1);
+        poller.trackAndResolve(endpoint, 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 2);
     }
@@ -388,7 +388,7 @@ class InterfaceSnapshotPollerTest {
         final var poller = poller(snmp, config());
         final var endpoint = endpoint("10.0.0.6");
 
-        poller.resolve(endpoint, 1);
+        poller.trackAndResolve(endpoint, 1);
         poller.tick(this.clock.get());
         assertThat(snmp.entered.await(5, TimeUnit.SECONDS)).isTrue();
 
@@ -411,7 +411,7 @@ class InterfaceSnapshotPollerTest {
         final var poller = poller(snmp, config);
 
         for (int i = 1; i <= 20; i++) {
-            poller.resolve(endpoint("10.1.0." + i), 1);
+            poller.trackAndResolve(endpoint("10.1.0." + i), 1);
         }
         poller.tick(this.clock.get());
 
@@ -433,7 +433,7 @@ class InterfaceSnapshotPollerTest {
         final var poller = poller(snmp, config);
         final var endpoint = endpoint("10.0.0.7");
 
-        poller.resolve(endpoint, 1);
+        poller.trackAndResolve(endpoint, 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 1);
 
@@ -477,7 +477,7 @@ class InterfaceSnapshotPollerTest {
         final var poller = poller(snmp, config);
         final var endpoint = endpoint("10.0.0.8");
 
-        poller.resolve(endpoint, 1);
+        poller.trackAndResolve(endpoint, 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 1);
 
@@ -495,7 +495,7 @@ class InterfaceSnapshotPollerTest {
         poller.tick(this.clock.get());
         Thread.sleep(50);
         assertThat(snmp.walks.get()).isEqualTo(3);
-        assertThat(poller.resolve(endpoint, 1)).isPresent();
+        assertThat(poller.trackAndResolve(endpoint, 1)).isPresent();
     }
 
     @Test
@@ -507,13 +507,13 @@ class InterfaceSnapshotPollerTest {
         final var poller = poller(snmp, config);
         final var endpoint = endpoint("10.0.0.9");
 
-        poller.resolve(endpoint, 1);
+        poller.trackAndResolve(endpoint, 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 1);
 
         // without the reload this endpoint would not be retried for the whole base delay
         poller.invalidateAll();
-        poller.resolve(endpoint, 1);
+        poller.trackAndResolve(endpoint, 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 2);
     }
@@ -524,11 +524,11 @@ class InterfaceSnapshotPollerTest {
         final var poller = poller(snmp, config());
         final var endpoint = endpoint("10.0.0.10");
 
-        poller.resolve(endpoint, 1);
+        poller.trackAndResolve(endpoint, 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 1);
 
-        // silent for deregisterAfter (3) refresh intervals, with no further resolve() calls
+        // silent for deregisterAfter (3) refresh intervals, with no further trackAndResolve() calls
         advanceMs(600_000L * 3 + 1_000);
         poller.tick(this.clock.get());
         Thread.sleep(50);
@@ -548,7 +548,7 @@ class InterfaceSnapshotPollerTest {
 
         // registration follows flow arrival, so a spoofed source population must not grow the heap
         for (int i = 1; i <= 50; i++) {
-            poller.resolve(endpoint("10.2.0." + i), 1);
+            poller.trackAndResolve(endpoint("10.2.0." + i), 1);
         }
 
         poller.tick(this.clock.get());
@@ -572,7 +572,7 @@ class InterfaceSnapshotPollerTest {
         final var poller = poller(snmp, config);
 
         for (int i = 1; i <= 40; i++) {
-            poller.resolve(endpoint("10.4.0." + i), 1);
+            poller.trackAndResolve(endpoint("10.4.0." + i), 1);
         }
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 40); // the cold-start burst, drained by the pool
@@ -616,8 +616,8 @@ class InterfaceSnapshotPollerTest {
         final var second = new FakeSnmp();
         final var pollerB = new InterfaceSnapshotPoller(second, config, new MetricRegistry(), this.clock::get, false);
 
-        pollerA.resolve(endpoint, 1);
-        pollerB.resolve(endpoint, 1);
+        pollerA.trackAndResolve(endpoint, 1);
+        pollerB.trackAndResolve(endpoint, 1);
         pollerA.tick(this.clock.get());
         pollerB.tick(this.clock.get());
         awaitWalks(pollerA, first, 1);

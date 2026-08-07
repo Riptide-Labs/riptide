@@ -38,7 +38,8 @@ import java.util.function.LongSupplier;
  *
  * <p>Three properties are structural rather than enforced:
  * <ul>
- *   <li>Enrichment never walks. {@link #resolve} only reads, so no parser thread can block on SNMP.</li>
+ *   <li>Enrichment never walks. {@link #trackAndResolve} registers and reads but never issues SNMP,
+ *       so no parser thread can block on it.</li>
  *   <li>At most one walk per endpoint is in flight, because each registration carries a single
  *       in-flight flag.</li>
  *   <li>Fleet-wide concurrency is bounded by the walker pool, independently of exporter count.</li>
@@ -102,7 +103,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     private final Meter deregistered;
     /**
      * Counts <em>lookups</em> refused at the exporter bound, not distinct exporters: it is
-     * marked on the resolve path, so a single rejected exporter contributes once per flow and
+     * marked on the trackAndResolve path, so a single rejected exporter contributes once per flow and
      * per direction. It is a pressure signal, not a population count, and cannot be used
      * directly to size {@code max-exporters}; compare it against the exporters gauge instead.
      */
@@ -128,9 +129,9 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         // Fail loudly at startup rather than silently. Each of these otherwise disables SNMP
         // enrichment in a way that looks like a data problem: a non-positive pool width throws
         // from inside the executor factory naming neither property nor class, and non-positive
-        // expiry or exporter bound make every resolve() return empty with only a meter to show
+        // expiry or exporter bound make every trackAndResolve() return empty with only a meter to show
         // for it. Note 0 does not mean "unlimited" here, unlike the negative-cache TTL it
-        // replaces — hence checking rather than reinterpreting.
+        // replaces, so check rather than reinterpreting.
         requirePositive(config.getRefreshIntervalMs(), "riptide.snmp.poll.refresh-interval-ms");
         requirePositive(config.getSnapshotExpiryMs(), "riptide.snmp.poll.snapshot-expiry-ms");
         requirePositive(config.getPoolWidth(), "riptide.snmp.poll.pool-width");
@@ -180,7 +181,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      * static pins and exporter-pushed option data, just without SNMP-derived fields.
      */
     @Override
-    public Optional<IfInfo> resolve(final SnmpEndpoint endpoint, final int ifIndex) {
+    public Optional<IfInfo> trackAndResolve(final SnmpEndpoint endpoint, final int ifIndex) {
         final long now = this.nanoTime.getAsLong();
         final Registration registration = register(endpoint, now);
         if (registration == null) {

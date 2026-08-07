@@ -97,9 +97,11 @@ public class SnmpEnricher implements Enricher {
                 .map(n -> n.definition().getInterfaces().get(ifIndex))
                 .orElse(null);
         final IfInfo options = this.exporterInterfaceTable.lookup(source.identity(), ifIndex).orElse(null);
-        // reads the polled snapshot; registers the exporter on its first flow but never walks
+        // reads the polled snapshot; registers the exporter on its first flow but never walks.
+        // Called even when the pins above already cover every field: the call is what keeps the
+        // exporter in the poll set, so skipping it would cost the interfaces that are not pinned.
         final IfInfo live = snmpEndpoint
-                .flatMap(endpoint -> this.interfaceSource.resolve(endpoint, ifIndex))
+                .flatMap(endpoint -> this.interfaceSource.trackAndResolve(endpoint, ifIndex))
                 .orElse(null);
         final IfInfo merged = IfInfo.merge(pinned, IfInfo.optionsThenSnmp(options, live));
         if (merged != null) {
