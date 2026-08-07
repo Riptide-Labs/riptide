@@ -150,20 +150,24 @@ Two gauges describe what a UDP parser is holding. They are easy to confuse, and 
 ## NetFlow v5 sampling rate resolution
 
 NetFlow v5 has no options table, so a v5 flow's sampling rate resolves from the packet header, then
-the receiver's `flow-sampling-interval-fallback`, then unsampled. Which rung answered is metered per
-**packet** (the rate lives in the header, so every record in a packet resolves identically) and per
-receiver.
+the receiver's `flow-sampling-interval-fallback`, then an assumed `1`. Which rung answered is metered
+per **packet** (the rate lives in the header, so every record in a packet resolves identically) and
+per receiver.
 
 | Metric | Meaning |
 |---|---|
 | `parsers.<name>.samplingRate.header` | packets whose rate came from the exporter's header |
 | `parsers.<name>.samplingRate.fallback` | packets that fell through to the configured rate |
-| `parsers.<name>.samplingRate.unsampled` | packets with no rate anywhere, recorded as `1` |
+| `parsers.<name>.samplingRate.assumed` | packets with no rate anywhere, recorded as `1` |
+
+`assumed` is not the same statement as an exporter reporting a rate of `1`.
+An exporter that states `1` has said it does not sample, and that lands under `header`.
+`assumed` means nothing stated a rate at all, and `1` is what riptide wrote in the absence of one — the stored `samplingInterval` cannot tell the two apart, which is what these meters are for.
 
 These exist because the resolution is invisible in the data path: riptide records the rate without
 applying it, so an exporter that starts or stops advertising changes no counter and raises no error.
-A `header` rate that falls to zero means a fleet stopped advertising and is now being recorded as
-unsampled — or on the configured rate, which may not match. See
+A `header` rate that falls to zero means a fleet stopped advertising and is now being recorded at an
+assumed `1` — or on the configured rate, which may not match. See
 [Sampling rate](../configuration/receivers.md#sampling-rate) for the resolution order and settings.
 
 **What changed in 0.7.0.** `sessionCount` used to report the **template** total, so it overstated by

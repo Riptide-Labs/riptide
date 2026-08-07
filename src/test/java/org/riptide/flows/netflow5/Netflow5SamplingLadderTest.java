@@ -27,7 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.riptide.flows.utils.BufferUtils.slice;
 
 /**
- * The NetFlow v5 sampling ladder: header, then configured fallback, then unsampled.
+ * The NetFlow v5 sampling ladder: header, then configured fallback, then an assumed 1.0.
  *
  * <p>The v5 header packs a 2-bit algorithm and a 14-bit interval into one word, and the two
  * non-zero cases are governed differently. Algorithm 1 or 2 is unambiguous and always read.
@@ -196,7 +196,7 @@ class Netflow5SamplingLadderTest {
                 .as("one packet resolved from the header, not three flows")
                 .isEqualTo(1);
         assertThat(meter(metrics, "fallback")).as("two packets fell through to config").isEqualTo(2);
-        assertThat(meter(metrics, "unsampled")).as("no packet reached the default").isZero();
+        assertThat(meter(metrics, "assumed")).as("no packet reached the default").isZero();
     }
 
     @Test
@@ -205,7 +205,7 @@ class Netflow5SamplingLadderTest {
         assertThat(new Netflow5FlowBuilder("test", metrics).buildFlows(Instant.EPOCH, packet(0, 0)).toList())
                 .hasSize(1);
 
-        assertThat(meter(metrics, "unsampled")).isEqualTo(1);
+        assertThat(meter(metrics, "assumed")).isEqualTo(1);
         assertThat(meter(metrics, "header")).isZero();
     }
 
@@ -222,7 +222,7 @@ class Netflow5SamplingLadderTest {
         assertThat(builder.buildFlows(Instant.EPOCH, packet(0, 0)).toList()).hasSize(1);
 
         assertThat(meter(metrics, "header")).isEqualTo(1);
-        assertThat(meter(metrics, "unsampled")).isEqualTo(1);
+        assertThat(meter(metrics, "assumed")).isEqualTo(1);
         assertThat(meter(metrics, "fallback")).isZero();
     }
 

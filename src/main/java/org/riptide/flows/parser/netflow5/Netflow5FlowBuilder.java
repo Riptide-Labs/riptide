@@ -66,12 +66,16 @@ public final class Netflow5FlowBuilder {
      */
     private final Meter headerResolved;
     private final Meter fallbackResolved;
-    private final Meter unsampled;
+    private final Meter assumed;
 
     public Netflow5FlowBuilder(final String name, final MetricRegistry metrics) {
         this.headerResolved = metrics.meter(MetricRegistry.name("parsers", name, "samplingRate", "header"));
         this.fallbackResolved = metrics.meter(MetricRegistry.name("parsers", name, "samplingRate", "fallback"));
-        this.unsampled = metrics.meter(MetricRegistry.name("parsers", name, "samplingRate", "unsampled"));
+        // "assumed", not "unsampled": this rung fires when nothing stated a rate, and 1.0 is what
+        // riptide assumes in that case. Naming it "unsampled" would assert the exporter is not
+        // sampling — which is the one thing this rung cannot know, and is exactly the claim an
+        // exporter makes when it states a rate of 1 through the header rung above.
+        this.assumed = metrics.meter(MetricRegistry.name("parsers", name, "samplingRate", "assumed"));
     }
 
     public Stream<Flow> buildFlows(final Instant receivedAt, final Packet packet) {
@@ -83,8 +87,8 @@ public final class Netflow5FlowBuilder {
     }
 
     /**
-     * What the exporter put in the packet header, then what the operator configured, then
-     * unsampled. NetFlow v5 has no options-template mechanism, so the header is the only thing the
+     * What the exporter put in the packet header, then what the operator configured, then an
+     * assumed 1.0. NetFlow v5 has no options-template mechanism, so the header is the only thing the
      * exporter itself can say and there is no rung between it and configuration.
      *
      * <p>The header packs a 2-bit algorithm and a 14-bit interval into one word, and the two
@@ -115,7 +119,7 @@ public final class Netflow5FlowBuilder {
             this.fallbackResolved.mark();
             return configured;
         }
-        this.unsampled.mark();
+        this.assumed.mark();
         return 1.0;
     }
 
