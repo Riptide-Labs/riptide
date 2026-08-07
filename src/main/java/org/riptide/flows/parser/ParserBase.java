@@ -22,7 +22,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.function.BiConsumer;
@@ -130,7 +129,7 @@ public abstract class ParserBase implements Parser {
     }
 
     @Override
-    public void start(ScheduledExecutorService executorService) {
+    public void start() {
         // A bounded queue with core == max, so the pool never grows or shrinks and the keep-alive
         // is inert. Replaces a zero-capacity SynchronousQueue whose rejection handler did an
         // unbounded blocking put(): with no capacity, "queue full" was the steady state under load,
@@ -228,7 +227,7 @@ public abstract class ParserBase implements Parser {
     }
 
     /**
-     * Both sizing knobs are read once, in {@link #start(ScheduledExecutorService)}. Silently
+     * Both sizing knobs are read once, in {@link #start()}. Silently
      * accepting a later change would leave the getter and the drop warning reporting a capacity the
      * queue does not have.
      */

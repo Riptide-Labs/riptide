@@ -69,7 +69,7 @@ class UdpParserBaseTest {
     void setUp() {
         this.executor = Executors.newSingleThreadScheduledExecutor();
         this.parser = new StubParser();
-        this.parser.start(this.executor);
+        this.parser.start();
     }
 
     @AfterEach
@@ -124,7 +124,7 @@ class UdpParserBaseTest {
     void gaugesReportExportersAndTemplatesSeparately() throws Exception {
         final var registry = new MetricRegistry();
         final var parser = new StubParser(registry);
-        parser.start(this.executor);
+        parser.start();
         try {
             parse(parser, ADD_TEMPLATE, REMOTE);
             parse(parser, ADD_TEMPLATE, SECOND_REMOTE);
@@ -162,7 +162,7 @@ class UdpParserBaseTest {
     void sessionCountSeparatesObservationDomainsOfOneExporter() throws Exception {
         final var registry = new MetricRegistry();
         final var parser = new StubParser(registry);
-        parser.start(this.executor);
+        parser.start();
         try {
             parse(parser, ADD_TEMPLATE, REMOTE);         // domain 0, template 256
             parse(parser, ADD_SECOND_TEMPLATE, REMOTE);  // domain 0, template 257

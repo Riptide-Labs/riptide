@@ -70,14 +70,15 @@ public class UdpListener implements Listener {
         // double as the parser's ScheduledExecutorService, which is why it could not be sized —
         // UdpParserBase scheduled a 60s sweep on it, and scheduleAtFixedRate dispatches by
         // round-robin, so with one loop every sweep would have landed on the thread draining the
-        // socket (#457). The parser owns its own scheduler now and ignores what it is handed here.
-        // Do not give this group other work to make it earn its keep; give the work its own thread.
+        // socket (#457). The parser owns its scheduler now, and since #459 there is no longer a
+        // parameter to hand this group to. Do not give this group other work to make it earn its
+        // keep; give the work its own thread.
         final var formatName = name.replace("%", "%%");
         this.bossGroup = new MultiThreadIoEventLoopGroup(1, new ThreadFactoryBuilder()
                 .setNameFormat("udp-listener-nio-" + formatName + "-%d")
                 .build(), NioIoHandler.newFactory());
 
-        this.parser.start(this.bossGroup);
+        this.parser.start();
 
         final InetSocketAddress address = this.host != null
                 ? SocketUtils.socketAddress(this.host, this.port)

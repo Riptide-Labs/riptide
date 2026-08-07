@@ -13,7 +13,6 @@ import java.net.InetSocketAddress;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ScheduledExecutorService;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -173,7 +172,7 @@ class ListenerTeardownTest {
             }
 
             @Override
-            public void start(final ScheduledExecutorService executorService) {
+            public void start() {
             }
 
             @Override
@@ -211,7 +210,7 @@ class ListenerTeardownTest {
             }
 
             @Override
-            public void start(final ScheduledExecutorService executorService) {
+            public void start() {
             }
 
             @Override

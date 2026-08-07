@@ -12,8 +12,6 @@ import org.junit.jupiter.api.Test;
 import java.net.InetSocketAddress;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -62,13 +60,15 @@ class UdpListenerSchedulerIsolationTest {
         }
     }
 
-    /** Stands in for {@code UdpParserBase}, which schedules housekeeping on the group it is given. */
+    /**
+     * Stands in for {@code UdpParserBase}. It used to schedule on the executor the listener handed
+     * over — that is what made the old assertion meaningful. Since #459 there is no such executor,
+     * so the stub does nothing and the assertion above rests purely on the listener's own sizing.
+     */
     private static UdpParser schedulingParser() {
         return new UdpParser() {
             @Override
-            public void start(final ScheduledExecutorService executorService) {
-                executorService.scheduleAtFixedRate(() -> {
-                }, 60_000, 60_000, TimeUnit.MILLISECONDS);
+            public void start() {
             }
 
             @Override

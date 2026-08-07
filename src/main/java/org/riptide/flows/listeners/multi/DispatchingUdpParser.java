@@ -17,7 +17,6 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.stream.Collectors;
 
 public class DispatchingUdpParser implements UdpParser {
@@ -73,9 +72,9 @@ public class DispatchingUdpParser implements UdpParser {
     }
 
     @Override
-    public void start(ScheduledExecutorService executorService) {
+    public void start() {
         for (final var parser: this.parsers) {
-            parser.start(executorService);
+            parser.start();
         }
     }
 
