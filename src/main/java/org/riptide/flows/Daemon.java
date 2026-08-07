@@ -28,6 +28,8 @@ import org.riptide.pipeline.FlowException;
 import org.riptide.pipeline.Pipeline;
 import org.riptide.flows.parser.session.ExporterSamplingTable;
 import org.riptide.flows.parser.session.OptionListener;
+import org.riptide.flows.parser.session.SessionAdmission;
+import org.riptide.flows.parser.session.SessionAdmissionConfig;
 import org.riptide.snmp.ExporterInterfaceTable;
 import org.riptide.pipeline.Source;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -57,10 +59,15 @@ public class Daemon implements ApplicationRunner {
                   @Qualifier("netflow9ValueConversionService") final ValueConversionService netflow9ValueConversionService,
                   final ExporterInterfaceTable exporterInterfaceTable,
                   final ExporterSamplingTable exporterSamplingTable,
+                  final SessionAdmissionConfig sessionAdmissionConfig,
                   final DaemonConfig config) {
         final var identity = config.resolveIdentity();
         // One option stream, two readers: interface names and sampler rates.
         final OptionListener optionListener = OptionListener.of(exporterInterfaceTable, exporterSamplingTable);
+        // One oracle for every receiver, so the configured bounds describe the collector's total
+        // retained session state. Per-parser instances would silently multiply the ceiling by the
+        // number of configured receivers and register colliding gauges.
+        final SessionAdmission sessionAdmission = new SessionAdmission(sessionAdmissionConfig, metricRegistry);
 
         this.pipeline = Objects.requireNonNull(pipeline);
         // A packet's records are dispatched as one batch (see ParserBase#transmit), so a failure
@@ -116,6 +123,7 @@ public class Daemon implements ApplicationRunner {
                                 .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback())
                                 .withSamplingTable(exporterSamplingTable);
                         parser.setOptionListener(optionListener);
+                        parser.setSessionAdmission(sessionAdmission);
 
                         return new UdpListener(e.getKey(), parser, metricRegistry)
                                 .withPort(config.getPort())
@@ -132,6 +140,7 @@ public class Daemon implements ApplicationRunner {
                                         .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback());
 
                                 parser.setOptionListener(optionListener);
+                        parser.setSessionAdmission(sessionAdmission);
 
                                 yield new UdpListener(e.getKey(), parser, metricRegistry)
                                         .withPort(config.getPort())
@@ -143,6 +152,10 @@ public class Daemon implements ApplicationRunner {
                                         .withFlowInactiveTimeoutFallback(config.getFlowInactiveTimeoutFallback())
                                         .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback());
 
+                                // No admission oracle here: IPFIX over TCP keeps per-connection
+                                // state in TcpSession, and a connection is already a bounded,
+                                // handshake-verified resource. The unbounded growth this guards
+                                // against is specific to connectionless UDP.
                                 parser.setOptionListener(optionListener);
 
                                 yield new TcpListener(e.getKey(), parser, metricRegistry)
@@ -182,6 +195,7 @@ public class Daemon implements ApplicationRunner {
                                     .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback())
                                     .withSamplingTable(exporterSamplingTable);
                             netflow9.setOptionListener(optionListener);
+                            netflow9.setSessionAdmission(sessionAdmission);
                             parsers.add(netflow9);
                         }
 
@@ -191,6 +205,7 @@ public class Daemon implements ApplicationRunner {
                                     .withFlowInactiveTimeoutFallback(config.getFlowInactiveTimeoutFallback())
                                     .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback());
                             ipfix.setOptionListener(optionListener);
+                            ipfix.setSessionAdmission(sessionAdmission);
                             parsers.add(ipfix);
                         }
 

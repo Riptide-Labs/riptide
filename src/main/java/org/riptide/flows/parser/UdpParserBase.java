@@ -14,6 +14,8 @@ import org.riptide.flows.listeners.UdpParser;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.OptionListener;
+import org.riptide.flows.parser.session.SessionAdmission;
+import org.riptide.flows.parser.session.SessionAdmissionConfig;
 import org.riptide.flows.parser.session.TransactionalSession;
 import org.riptide.flows.parser.session.UdpSessionManager;
 import org.riptide.pipeline.Identity;
@@ -58,6 +60,13 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
     private ScheduledExecutorService housekeeper;
     private Duration templateTimeout = Duration.ofMinutes(30);
     private OptionListener optionListener = OptionListener.NONE;
+    /**
+     * Shared across every parser when the daemon wires one in, so the configured bounds describe
+     * the whole collector rather than each receiver separately. The default keeps a
+     * standalone-constructed parser bounded rather than unbounded.
+     */
+    private SessionAdmission sessionAdmission =
+            new SessionAdmission(new SessionAdmissionConfig(), new MetricRegistry());
 
     public UdpParserBase(final Protocol protocol,
                          final String name,
@@ -127,6 +136,11 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
         this.optionListener = Objects.requireNonNull(optionListener);
     }
 
+    /** Must be set before {@link #start}; the session manager is built there. */
+    public void setSessionAdmission(final SessionAdmission sessionAdmission) {
+        this.sessionAdmission = Objects.requireNonNull(sessionAdmission);
+    }
+
     /**
      * Owns the scheduler that sweeps its sessions.
      *
@@ -145,7 +159,20 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
     @Override
     public void start() {
         super.start();
-        this.sessionManager = new UdpSessionManager(this.templateTimeout, this::sequenceNumberTracker, this.optionListener);
+        // The admission slot and the state it authorises expire on different timers. That is only
+        // harmless while the slot outlives the state: the other way round, a source's budget is
+        // released while its templates are still held, so the retained total can exceed the
+        // configured ceiling for the difference between the two.
+        final Duration idleTimeout = this.sessionAdmission.sourceIdleTimeout();
+        if (this.templateTimeout.compareTo(idleTimeout) > 0) {
+            LOG.warn("Template timeout ({}) outlives riptide.flows.session.source-idle-timeout ({}), so"
+                            + " session state is retained after its admission slot is released. Raise"
+                            + " source-idle-timeout to at least the template timeout to keep the"
+                            + " configured bound exact.",
+                    this.templateTimeout, idleTimeout);
+        }
+        this.sessionManager = new UdpSessionManager(this.templateTimeout, this::sequenceNumberTracker,
+                this.optionListener, this.sessionAdmission);
         // Daemon: ParserBase.stop() already documents that abandoned non-daemon workers wedge JVM
         // exit, and a reaper killed mid-sweep costs nothing — it reads and prunes, it never writes
         // anything a later sweep cannot redo.

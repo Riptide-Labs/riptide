@@ -5,6 +5,7 @@
 
 package org.riptide.flows.parser.session;
 
+import com.codahale.metrics.MetricRegistry;
 import org.riptide.flows.parser.exceptions.MissingTemplateException;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.state.ExporterState;
@@ -63,6 +64,12 @@ public class UdpSessionManager {
 
     private final OptionListener optionListener;
 
+    /**
+     * Bounds the scope identities this manager will allocate state for. Both tables above are keyed
+     * on an identity the sender chooses, so without this they grow until the heap is gone.
+     */
+    private final SessionAdmission admission;
+
     public UdpSessionManager(final Duration timeout, final Supplier<SequenceNumberTracker> sequenceNumberTracker) {
         this(timeout, sequenceNumberTracker, OptionListener.NONE);
     }
@@ -70,9 +77,21 @@ public class UdpSessionManager {
     public UdpSessionManager(final Duration timeout,
                              final Supplier<SequenceNumberTracker> sequenceNumberTracker,
                              final OptionListener optionListener) {
+        // Default bounds rather than none: a manager built without an explicit admission oracle is
+        // still bounded, so forgetting to wire one cannot silently reinstate the unbounded growth
+        // this class exists to prevent.
+        this(timeout, sequenceNumberTracker, optionListener,
+                new SessionAdmission(new SessionAdmissionConfig(), new MetricRegistry()));
+    }
+
+    public UdpSessionManager(final Duration timeout,
+                             final Supplier<SequenceNumberTracker> sequenceNumberTracker,
+                             final OptionListener optionListener,
+                             final SessionAdmission admission) {
         this.timeout = timeout;
         this.sequenceNumberTracker = Objects.requireNonNull(sequenceNumberTracker);
         this.optionListener = Objects.requireNonNull(optionListener);
+        this.admission = Objects.requireNonNull(admission);
     }
 
     public void doHousekeeping() {
@@ -83,6 +102,24 @@ public class UdpSessionManager {
         // re-inserted, trackers are touched on every datagram — evict idle ones so
         // churning sources (NAT, roaming agents) don't accumulate trackers forever
         this.sequenceNumbers.entrySet().removeIf(e -> e.getValue().lastSeen.isBefore(timeout));
+        // Release the admission slots of sources that have gone quiet. The sweeps above already
+        // dropped their state; this drops the reservation. Without it the bound never recovers from
+        // a flood — the slots stay taken until restart and the next real exporter is refused.
+        this.admission.reclaimIdle();
+    }
+
+    /**
+     * Drop every table entry keyed on one scope identity.
+     *
+     * <p>Called when admission displaces or releases a scope. A budget that shrinks without its
+     * tables shrinking would bound nothing, so this is what makes the admission decision real.
+     */
+    private void dropScope(final SessionKey sessionKey, final ExporterIdentity scope) {
+        if (scope instanceof ExporterIdentity.NetflowIpfix netflowIpfix) {
+            // sFlow carries no templates, so only the v9/IPFIX identity maps onto a DomainKey.
+            this.templates.remove(new DomainKey(sessionKey, netflowIpfix.observationDomain()));
+        }
+        this.sequenceNumbers.remove(new TrackerKey(sessionKey, scope));
     }
 
     /**
@@ -316,8 +353,25 @@ public class UdpSessionManager {
             return new DomainKey(this.sessionKey, observationDomainId);
         }
 
+        /**
+         * This session's identity for one observation domain — the key admission budgets against.
+         *
+         * <p>The same shape {@code addOptions} already publishes to the option tap, so the session
+         * tables and the option table are governed by one identity rather than two views of it.
+         */
+        private ExporterIdentity scope(final long observationDomainId) {
+            return new ExporterIdentity.NetflowIpfix(this.sessionKey.getRemoteAddress(), observationDomainId);
+        }
+
         @Override
         public void addTemplate(final long observationDomainId, final Template template) {
+            // Ask before allocating. A refused scope must not reach the compute below: creating the
+            // inner map is the allocation the bound exists to prevent, and a template is the most
+            // expensive thing this class retains.
+            if (!UdpSessionManager.this.admission.admit(this.sessionKey, scope(observationDomainId),
+                    evicted -> UdpSessionManager.this.dropScope(this.sessionKey, evicted))) {
+                return;
+            }
             // The inner mutation happens inside the outer compute on purpose: it keeps the insert
             // atomic against reapEmptyDomains(), which would otherwise be free to drop a
             // freshly-created (still empty) inner map before this thread populates it.
@@ -383,6 +437,14 @@ public class UdpSessionManager {
 
         @Override
         public boolean verifySequenceNumber(final ExporterIdentity scope, final long sequenceNumber, final int sequenceIncrement) {
+            // Refusal degrades rather than denies: without a tracker this datagram simply is not
+            // sequence-checked, and its records still parse and emit. A refused scope is either an
+            // attacker or a misconfigured exporter, and losing sequence accounting for it is a
+            // better outcome than allocating a tracker per forged identity until the heap is gone.
+            if (!UdpSessionManager.this.admission.admit(this.sessionKey, scope,
+                    evicted -> UdpSessionManager.this.dropScope(this.sessionKey, evicted))) {
+                return true;
+            }
             final TrackerKey key = new TrackerKey(this.sessionKey, scope);
             final TrackedSequence tracked = UdpSessionManager.this.sequenceNumbers.computeIfAbsent(key,
                     (k) -> new TrackedSequence(UdpSessionManager.this.sequenceNumberTracker.get()));

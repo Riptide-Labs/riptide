@@ -14,6 +14,7 @@ import org.riptide.flows.parser.ipfix.proto.Packet;
 import org.riptide.flows.parser.session.SequenceNumberTracker;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.TcpSession;
+import org.riptide.flows.parser.session.SessionAdmissionConfig;
 import org.riptide.pipeline.ExporterIdentity;
 import org.riptide.snmp.ExporterInterfaceTable;
 import org.riptide.snmp.IfInfo;
@@ -35,7 +36,7 @@ public class IpfixInterfaceOptionsTest {
     @Test
     public void ipfixIngressScopedOptionsReachTheTable() throws Exception {
         final SnmpOptionsConfig cacheConfig = new SnmpOptionsConfig();
-        final ExporterInterfaceTable table = new ExporterInterfaceTable(cacheConfig, new MetricRegistry());
+        final ExporterInterfaceTable table = new ExporterInterfaceTable(cacheConfig, new SessionAdmissionConfig(), new MetricRegistry());
         final Session session = new TcpSession(InetAddress.getLoopbackAddress(), () -> new SequenceNumberTracker(32), table);
 
         final ByteBuf b = Unpooled.buffer();
