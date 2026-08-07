@@ -17,6 +17,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <build-helper-maven-plugin.version>3.6.0</build-helper-maven-plugin.version>
         <caffeine.version>3.2.4</caffeine.version>
         <common-csv.version>1.14.1</common-csv.version>
         <dnsjava.version>3.6.5</dnsjava.version>
@@ -333,6 +334,45 @@
                         </arg>
                     </compilerArgs>
                 </configuration>
+            </plugin>
+            <!-- The Jazzer fuzz harnesses live in src/fuzz/java, not src/test/java, and this is the
+                 plugin that puts them back on the test classpath. Two reasons for the odd location.
+                 The harnesses are not unit tests: they are non-deterministic, unbounded in runtime,
+                 and only run during a normal build because jazzer-junit replays the committed corpus
+                 as regression tests. And OpenSSF Scorecard's fuzzing check cannot see them under
+                 src/test: its file walker drops every path prefixed src/test/ (isTestdataFile in
+                 checks/fileparser/listing.go) before it greps *.java for the Jazzer import, so a
+                 harness in the conventional Maven location is invisible to the check that exists to
+                 find it, and the repo scores 0 on Fuzzing while fuzzing nightly. See #474.
+
+                 add-test-source, not add-source: the harnesses are test-scoped and must not land in
+                 the shipped jar. Surefire selects them by compiled class name, so `make fuzz` and the
+                 nightly matrix in fuzz.yml need no knowledge of this.
+
+                 The validate binding and the position of this plugin ahead of maven-checkstyle-plugin
+                 are both load-bearing. Checkstyle runs at validate with includeTestSourceDirectory
+                 and reads testCompileSourceRoots; add-test-source defaults to generate-sources, which
+                 is later. At the default phase Checkstyle would stop linting these five files without
+                 failing, just silently covering less. Maven orders same-phase executions by
+                 declaration order, so this must stay above Checkstyle. -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>${build-helper-maven-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>add-fuzz-source</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>add-test-source</goal>
+                        </goals>
+                        <configuration>
+                            <sources>
+                                <source>src/fuzz/java</source>
+                            </sources>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
             <!-- some basic checkstyle rules -->
             <plugin>
