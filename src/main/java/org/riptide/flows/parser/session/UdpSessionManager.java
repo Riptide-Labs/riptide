@@ -271,13 +271,37 @@ public class UdpSessionManager {
         public final Template template;
         public final Map<Set<Value<?>>, TimeWrapper<List<Value<?>>>> options;
 
-        private TemplateOptions(final Template template) {
-            this(template, new ConcurrentHashMap<>());
-        }
-
         private TemplateOptions(final Template template, Map<Set<Value<?>>, TimeWrapper<List<Value<?>>>> options) {
             this.template = Objects.requireNonNull(template);
             this.options = Objects.requireNonNull(options);
+        }
+
+        /**
+         * Build the options holder for a (re-)announced template, allocating a mutable map only when
+         * options can actually land in it.
+         *
+         * <p>Options are recorded only against {@code OPTIONS_TEMPLATE} templates: {@code addOptions}
+         * is reached solely from the options-data-set path (see the {@code ipfix}/{@code netflow9}
+         * {@code Packet} decoders, both guarded on {@code type == OPTIONS_TEMPLATE}). A data
+         * template's option map was allocated for every template, never written, and skipped on read
+         * ({@code lookupOptions} bails on an empty map) — one {@link ConcurrentHashMap} per exporter
+         * template for nothing. Data templates now share the immutable empty map; only options
+         * templates allocate.
+         *
+         * <p>Re-announcement preserves the previous option values, but only when the old and new
+         * template are both options templates: a data template has nothing to preserve, and a
+         * data-to-options upgrade must start from a mutable map so the following {@code addOptions}
+         * does not write to the shared empty one.
+         */
+        static TemplateOptions of(final Template template, final TemplateOptions previous) {
+            if (template.type != Template.Type.OPTIONS_TEMPLATE) {
+                return new TemplateOptions(template, Collections.emptyMap());
+            }
+            final Map<Set<Value<?>>, TimeWrapper<List<Value<?>>>> options =
+                    (previous != null && previous.template.type == Template.Type.OPTIONS_TEMPLATE)
+                            ? previous.options
+                            : new ConcurrentHashMap<>();
+            return new TemplateOptions(template, options);
         }
     }
 
@@ -300,13 +324,10 @@ public class UdpSessionManager {
             UdpSessionManager.this.templates.compute(domain(observationDomainId), (d, byId) -> {
                 final ConcurrentMap<Integer, TimeWrapper<TemplateOptions>> target =
                         byId != null ? byId : new ConcurrentHashMap<>();
-                target.compute(template.id, (id, wrapper) -> {
-                    // preserve the old option values across a template re-announcement
-                    final TemplateOptions options = wrapper == null
-                            ? new TemplateOptions(template)
-                            : new TemplateOptions(template, wrapper.wrapped.options);
-                    return new TimeWrapper<>(options);
-                });
+                // preserve the old option values across a template re-announcement; see
+                // TemplateOptions.of for why a data template allocates no map
+                target.compute(template.id, (id, wrapper) ->
+                        new TimeWrapper<>(TemplateOptions.of(template, wrapper == null ? null : wrapper.wrapped)));
                 return target;
             });
         }
@@ -334,8 +355,16 @@ public class UdpSessionManager {
                                final List<Value<?>> values) {
             // Unchanged failure semantics: a missing template still throws NullPointerException
             // rather than silently dropping the option record.
-            UdpSessionManager.this.templates.get(domain(observationDomainId))
-                    .get(templateId).wrapped.options.put(new HashSet<>(scopes), new TimeWrapper<>(values));
+            final TemplateOptions target = UdpSessionManager.this.templates.get(domain(observationDomainId))
+                    .get(templateId).wrapped;
+            // Only options templates carry a mutable map (see TemplateOptions.of). The decoders reach
+            // addOptions only for an OPTIONS_TEMPLATE, but the same id may be re-announced as a data
+            // template between that guard and here; in that race the record now refers to a data
+            // template, so drop it rather than write to the shared immutable empty map. type and
+            // options are final fields of one instance, so they are a consistent pair.
+            if (target.template.type == Template.Type.OPTIONS_TEMPLATE) {
+                target.options.put(new HashSet<>(scopes), new TimeWrapper<>(values));
+            }
 
             UdpSessionManager.this.optionListener.accept(
                     new ExporterIdentity.NetflowIpfix(this.sessionKey.getRemoteAddress(), observationDomainId),
