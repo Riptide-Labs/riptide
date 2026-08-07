@@ -1,12 +1,18 @@
 
-<!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
+<!-- status -->
 [![Riptide Build](https://github.com/Riptide-Labs/riptide/actions/workflows/build.yml/badge.svg)](https://github.com/Riptide-Labs/riptide/actions/workflows/build.yml)
-[![All Contributors](https://img.shields.io/badge/all_contributors-1-orange.svg?style=flat-square)](#contributors-)
 [![Latest Release](https://img.shields.io/github/v/release/Riptide-Labs/riptide?sort=semver)](https://github.com/Riptide-Labs/riptide/releases)
-[![License](https://img.shields.io/github/license/Riptide-Labs/riptide)](LICENSE)
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13984/badge)](https://www.bestpractices.dev/projects/13984)
 [![Container Image](https://img.shields.io/badge/ghcr.io-riptide-blue?logo=docker)](https://github.com/Riptide-Labs/riptide/pkgs/container/riptide)
 [![Java](https://img.shields.io/badge/dynamic/xml?url=https%3A%2F%2Fraw.githubusercontent.com%2FRiptide-Labs%2Friptide%2Fmain%2Fpom.xml&query=%2F%2F*%5Blocal-name()%3D%27java.version%27%5D&label=Java&logo=openjdk)](pom.xml)
+
+<!-- security & licensing -->
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/13984/badge)](https://www.bestpractices.dev/projects/13984)
+[![OpenSSF Baseline](https://www.bestpractices.dev/projects/13984/baseline)](https://www.bestpractices.dev/en/projects/13984/baseline-1)
+[![License](https://img.shields.io/github/license/Riptide-Labs/riptide)](LICENSE)
+
+<!-- community -->
+<!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
+[![All Contributors](https://img.shields.io/badge/all_contributors-2-orange.svg?style=flat-square)](#contributors-)
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 
 ![riptide-logo](./artwork/riptide-logo.png)
@@ -161,7 +167,7 @@ Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/d
   <tbody>
     <tr>
       <td align="center" valign="top" width="14.28%"><a href="http://open-desk.org"><img src="https://avatars.githubusercontent.com/u/405105?v=4?s=100" width="100px;" alt="Dustin Frisch"/><br /><sub><b>Dustin Frisch</b></sub></a><br /><a href="https://github.com/Riptide-Labs/riptide/commits?author=fooker" title="Code">💻</a> <a href="#research-fooker" title="Research">🔬</a> <a href="https://github.com/Riptide-Labs/riptide/pulls?q=is%3Apr+reviewed-by%3Afooker" title="Reviewed Pull Requests">👀</a> <a href="#ideas-fooker" title="Ideas, Planning, & Feedback">🤔</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://blog.no42.org"><img src="https://avatars.githubusercontent.com/u/1095181?v=4?s=100" width="100px;" alt="Ronny Trommer"/><br /><sub><b>Ronny Trommer</b></sub></a><br /><a href="#infra-indigo423" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://blog.no42.org"><img src="https://avatars.githubusercontent.com/u/1095181?v=4?s=100" width="100px;" alt="Ronny Trommer"/><br /><sub><b>Ronny Trommer</b></sub></a><br /><a href="https://github.com/Riptide-Labs/riptide/commits?author=indigo423" title="Code">💻</a> <a href="https://github.com/Riptide-Labs/riptide/commits?author=indigo423" title="Documentation">📖</a> <a href="#infra-indigo423" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a> <a href="#maintenance-indigo423" title="Maintenance">🚧</a></td>
     </tr>
   </tbody>
 </table>
