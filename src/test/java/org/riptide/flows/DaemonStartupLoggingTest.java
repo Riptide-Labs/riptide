@@ -194,6 +194,32 @@ class DaemonStartupLoggingTest {
     }
 
     /**
+     * Receivers are empty in the shipped {@code application.properties}, so a fresh install reaches
+     * this path legitimately — but it cannot ingest a packet, and the summary line used to announce
+     * that as {@code Listening for flows with 0 receivers \\o/}.
+     */
+    @Test
+    void aDaemonWithNoReceiversSaysSoInsteadOfClaimingSuccess() throws Exception {
+        final var daemon = daemon(Map.of());
+
+        try {
+            daemon.run(new DefaultApplicationArguments());
+
+            assertThat(messages())
+                    .as("a daemon that cannot ingest must not report it as success")
+                    .noneSatisfy(m -> assertThat(m).contains("Listening for flows"));
+            assertThat(events())
+                    .as("and must say why it will not ingest")
+                    .anySatisfy(event -> {
+                        assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                        assertThat(event.getFormattedMessage()).contains("No receivers configured");
+                    });
+        } finally {
+            daemon.stop();
+        }
+    }
+
+    /**
      * The default configuration omits {@code host} — {@code ReceiverConfig.host} has no default, so
      * the listener binds the wildcard. Reading the host back off the channel renders that as
      * {@code 0:0:0:0:0:0:0:0} on a dual-stack JVM, which is materially worse than the {@code *} it

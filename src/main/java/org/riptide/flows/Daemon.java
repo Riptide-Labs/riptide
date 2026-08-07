@@ -238,13 +238,31 @@ public class Daemon implements ApplicationRunner {
                         : t.getClass().getName();
                 log.error("Receiver '{}' failed to start on {}: {}",
                         listener.getName(), listener.getDescription(), reason);
+                // Rethrown without releasing the receivers that already bound, which is safe only
+                // because of what happens next: Spring's handleRunFailure closes the context when a
+                // runner throws, which drives @PreDestroy stop() and releases them. That is a real
+                // dependency on framework behaviour, so it is written down rather than assumed —
+                // outside Spring, or if that ever changes, this leaks every listener started before
+                // the failing one. stop() tolerates a partial start for exactly this reason.
                 throw t;
             }
             log.info("Receiver '{}' listening on {}", listener.getName(), listener.getDescription());
         }
 
         this.started = true;
-        log.info("Listening for flows with {} receivers \\o/", this.listeners.size());
+        if (this.listeners.isEmpty()) {
+            // Not an error: receivers are empty in the shipped application.properties, so a fresh
+            // install reaches here legitimately. But "Listening for flows with 0 receivers \\o/"
+            // reads as success, and this process cannot ingest a packet — say so instead.
+            //
+            // Readiness deliberately still reports UP. Nothing is broken, and a collector that has
+            // not been given receivers yet is misconfigured rather than unhealthy; failing readiness
+            // would turn the default configuration into a pod that never becomes ready.
+            log.warn("No receivers configured — this daemon will not ingest any flows. "
+                    + "Configure riptide.receivers.<name> to receive.");
+        } else {
+            log.info("Listening for flows with {} receivers \\o/", this.listeners.size());
+        }
     }
 
     @PreDestroy
@@ -265,6 +283,11 @@ public class Daemon implements ApplicationRunner {
         // pipeline drain below — silently losing the whole batch buffer, which is the one outcome
         // this method exists to prevent. Shutdown is best-effort per listener for the same reason
         // teardown is best-effort per resource inside them (see Teardown).
+        // The drain must run whatever the loop does, but a plain finally would let a failing drain
+        // replace the loop's throwable outright and lose it. Only log.warn can throw from the loop
+        // body, so this is a narrow case — and a lost root cause during shutdown is exactly the
+        // sort of thing nobody can reconstruct afterwards.
+        Throwable primary = null;
         try {
             for (final var listener : this.listeners) {
                 try {
@@ -273,10 +296,41 @@ public class Daemon implements ApplicationRunner {
                     log.warn("Failed to stop listener {}", listener.getName(), t);
                 }
             }
-        } finally {
-            // In a finally so the drain survives anything the loop itself could throw, not merely
-            // anything stop() throws.
+        } catch (final Throwable t) {
+            primary = t;
+        }
+
+        try {
             this.pipeline.stop();
+        } catch (final Throwable t) {
+            if (primary == null) {
+                primary = t;
+            } else if (t instanceof Error && !(primary instanceof Error)) {
+                // A JVM-level failure outranks a routine shutdown exception. Without this an
+                // OutOfMemoryError in the drain would be attached beneath a listener's
+                // IllegalStateException and read as the lesser problem in Spring's shutdown log.
+                t.addSuppressed(primary);
+                primary = t;
+            } else {
+                primary.addSuppressed(t);
+            }
+        }
+
+        // Rethrown by type rather than cast. `primary` is a Throwable, and a cast to Exception
+        // would raise ClassCastException on anything that is neither Exception nor Error —
+        // discarding the cause this whole block exists to preserve, which is the failure being
+        // fixed rather than a new one.
+        if (primary instanceof Error error) {
+            throw error;
+        }
+        if (primary instanceof RuntimeException runtime) {
+            throw runtime;
+        }
+        if (primary instanceof Exception checked) {
+            throw checked;
+        }
+        if (primary != null) {
+            throw new IllegalStateException("listener shutdown failed", primary);
         }
     }
 
