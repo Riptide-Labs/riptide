@@ -20,6 +20,9 @@ SNAPSHOT_VERSION    := $(MAJOR_VERSION).$(MINOR_VERSION).$(shell expr $(PATCH_VE
 OCI_TAG             := riptide:local
 DATE                := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ") # Date format RFC3339
 JAVA_MAJOR_VERSION  := 25
+# Pinned like actionlint and zizmor: an unpinned `npx all-contributors-cli` would
+# let a new release rewrite README.md and turn the sync check red on its own
+ALL_CONTRIBUTORS_VERSION := 6.26.1
 RELEASE_LOG         := target/release.log
 OK                  := "[ 👍 ]"
 SKIP                := "[ ⏭️ ]"
@@ -58,6 +61,8 @@ help:
 	@echo "  fuzz:         Coverage-guided fuzzing of the flow parsers (Jazzer); FUZZ_TIME=<seconds> per target"
 	@echo "  bench:        Run the JMH microbenchmarks; BENCH_TARGET=<regex> to narrow, BENCH_OPTS=<jmh flags>"
 	@echo "  lint-actions: Lint the GitHub Actions workflows (actionlint + zizmor)"
+	@echo "  contributors: Regenerate the README contributor badge and table from .all-contributorsrc"
+	@echo "  contributors-check: Fail if the README contributor section is out of sync with .all-contributorsrc"
 	@echo "  docs:         Build the Docusaurus documentation site into docs/build"
 	@echo "  docs-serve:   Run the documentation site locally with live reload"
 	@echo "  landing-serve: Serve the landing page locally for preview"
@@ -136,6 +141,26 @@ deps-lint-actions:
 lint-actions: deps-lint-actions
 	actionlint
 	zizmor --persona=regular .github/workflows
+
+.PHONY: deps-contributors
+deps-contributors:
+	command -v npx
+
+# The badge count and the credit table are literals in README.md, rewritten only
+# when the generator runs. .all-contributorsrc is the source of truth; edit it,
+# then run this.
+.PHONY: contributors
+contributors: deps-contributors
+	npx -y all-contributors-cli@$(ALL_CONTRIBUTORS_VERSION) generate
+
+# Fails when the committed README.md no longer matches .all-contributorsrc.
+# Drift is silent otherwise — the badge read 1 while the rc file listed two
+# contributors, and nothing caught it.
+.PHONY: contributors-check
+contributors-check: contributors
+	@git diff --exit-code -- README.md \
+		|| { echo "$(FAIL) README.md is out of sync with .all-contributorsrc — run 'make contributors' and commit the result"; exit 1; }
+	@echo "$(OK) README.md matches .all-contributorsrc"
 
 .PHONY: deps-docs
 deps-docs:
