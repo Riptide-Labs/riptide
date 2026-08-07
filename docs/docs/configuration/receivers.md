@@ -86,7 +86,20 @@ IPFIX does not yet get this correlation: its rate is read only from the flow rec
 
 **NetFlow v5 has no options-table mechanism**, so there is nothing for riptide to correlate.
 A v5 exporter states its rate in the packet header instead, in a single 16-bit field holding a 2-bit sampling mode and a 14-bit interval.
-riptide reads the mode from that field and reports it as the sampling algorithm, but **does not yet read the interval** — so a sampling v5 exporter is recorded as unsampled unless you name the rate yourself.
+riptide reads both, so a sampling v5 exporter is recorded correctly without configuration.
+
+An interval of zero means the exporter is not sampling.
+The mode bits do not carry that meaning: many exporters that sample leave them at zero and populate the interval anyway, because the mode is not a mandatory field — pmacct's own NetFlow v5 exporter never sets it.
+riptide therefore reads a non-zero interval as a rate whether or not the mode is set, which is what nfdump, pmacct, goflow2 and Akvorado all do.
+
+If you need the old behaviour, where the header interval was ignored:
+
+```properties
+riptide.receivers.nf5.trust-header-sampling-interval=false
+```
+
+This governs only the ambiguous case, where the exporter gives an interval but leaves the mode bits at zero.
+A header that states a mode *and* an interval is unambiguous and is always read, so turning this off cannot make riptide ignore an exporter that signalled properly.
 
 For an exporter that never advertises a rate, name it yourself:
 
@@ -98,7 +111,7 @@ For NetFlow v9 and IPFIX this is a last resort, not an override.
 What the exporter says always wins: a rate on the flow record first, then the rate from its sampler options table, then this setting, then unsampled.
 An exporter that explicitly reports an interval of 1 has said it does not sample, and that answer stands over the fallback.
 
-For **NetFlow v5** the same setting is the *only* rung above unsampled rather than a last resort, because the rate a v5 exporter states in its header is not yet read.
+The same holds for **NetFlow v5**, where the rung above the fallback is the packet header rather than an options table.
 It applies to a dedicated `netflow5` receiver and to the v5 half of a `multi` receiver alike:
 
 ```properties
@@ -106,23 +119,42 @@ riptide.receivers.nf5.type=netflow5
 riptide.receivers.nf5.flow-sampling-interval-fallback=1000
 ```
 
-:::caution
-Because the v5 header interval is not read yet, this setting is applied to v5 flows even when the exporter's header states a mode and an interval of its own.
-For v5 only, the fallback is therefore an override in practice, which is the opposite of how it behaves for v9 and IPFIX.
-If your v5 exporters set the sampling mode bits, check what they advertise before configuring a rate here.
-:::
+Use it for a v5 exporter that samples but leaves the header field at zero, which older firmware does.
 
 Note the fallback applies to the whole receiver, so exporters sharing a port share it.
-That matters most for v5, where it is doing all the work: a receiver fronting a mixed fleet gives every v5 exporter behind it the same rate.
-Give exporters that sample at different rates their own receivers and ports.
+Give exporters that sample at different rates their own receivers and ports, unless they state their rates in the header — in which case each is read individually and the fallback never comes up.
+
+:::warning[NetFlow v5 rates changed]
+Earlier releases ignored the v5 header interval and recorded every v5 flow as unsampled (`samplingInterval = 1`).
+Flows from an exporter that advertises a rate now carry that rate instead.
+
+Nothing about stored `bytes` and `packets` changes, and no query breaks — but a query that multiplies by `samplingInterval` will return a different, larger and more correct answer for v5 rows written after the upgrade.
+Rows written before it are not rewritten, because correcting them would need each exporter's rate at each past moment, which is exactly what was never recorded.
+A query spanning the upgrade therefore mixes both, and the earlier rows under-report by each exporter's true rate.
+
+Find which exporters are affected, and when each flipped:
+
+```sql
+SELECT exporterAddr, samplingInterval, min(timestamp), max(timestamp)
+FROM flows
+WHERE flowProtocol = 'NetflowV5' AND samplingInterval != 1
+GROUP BY exporterAddr, samplingInterval
+```
+
+**If you compensated for this by hardcoding a multiplier** in a dashboard or query — because you knew riptide under-reported these exporters — remove it, or you will now double-count.
+
+To keep the previous behaviour while you correct queries, set `trust-header-sampling-interval=false` on the affected receivers.
+:::
 
 :::note
 riptide records the sampling rate; it does not scale NetFlow or IPFIX `bytes` and `packets` by it.
 Stored counters are what the exporter reported, and the rate sits alongside them for a query to apply.
 
-Two things to know before writing that query.
+Three things to know before writing that query.
 sFlow already scales at ingest (`bytes = frame_length × sampling_rate`) and still reports its rate, so multiplying sFlow rows again double-counts them: filter them out, or restrict the query to NetFlow and IPFIX.
-And the 1-minute rollups carry neither the rate nor a scaled measure, so `SUM(bytes * samplingInterval)` only means anything against the raw `flows` table.
+The 1-minute rollups carry neither the rate nor a scaled measure, so `SUM(bytes * samplingInterval)` only means anything against the raw `flows` table.
+And if you are coming from **nfdump or pmacct**, note that both multiply NetFlow v5 `bytes` and `packets` by the rate at ingest, where riptide does not.
+Counters that arrive here are unscaled, so a query ported from either will need the multiplication added rather than removed.
 :::
 
 ## Exporter identity

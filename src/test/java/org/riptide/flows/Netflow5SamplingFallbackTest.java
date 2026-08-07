@@ -56,6 +56,9 @@ class Netflow5SamplingFallbackTest {
     /** Sampling word {@code 0x0000}: this exporter advertises nothing, so only configuration can speak. */
     private static final String UNSAMPLED_CAPTURE = "/flows/netflow5.dat";
 
+    /** Sampling word {@code 0x03e8}: algorithm 0, interval 1000 — the contested case, from a real MX80. */
+    private static final String SAMPLED_CAPTURE = "/flows/netflow5_test_juniper_mx80.dat";
+
     private static final Pattern LISTENING =
             Pattern.compile("listening on UDP 127\\.0\\.0\\.1:(\\d+)");
 
@@ -144,22 +147,71 @@ class Netflow5SamplingFallbackTest {
                 .allSatisfy(flow -> assertThat(flow.getSamplingInterval()).isEqualTo(1.0));
     }
 
+    /**
+     * The header rung reaches a dedicated v5 receiver. This capture advertises 1:1000 with the mode
+     * bits clear, so it is the contested case, resolved by default.
+     */
+    @Test
+    void dedicatedNetflow5ReceiverReadsTheHeaderRate() throws Exception {
+        final var flows = flowsFromDaemonConfigured(Map.of(
+                "riptide.receivers.nf5.type", "netflow5",
+                "riptide.receivers.nf5.host", "127.0.0.1",
+                "riptide.receivers.nf5.port", "0"), SAMPLED_CAPTURE);
+
+        assertThat(flows)
+                .isNotEmpty()
+                .allSatisfy(flow -> assertThat(flow.getSamplingInterval()).isEqualTo(1000.0));
+    }
+
+    /** And the v5 half of a multi receiver, the path that silently dropped the fallback. */
+    @Test
+    void multiReceiverReadsTheHeaderRateForNetflow5() throws Exception {
+        final var flows = flowsFromDaemonConfigured(Map.of(
+                "riptide.receivers.mixed.type", "multi",
+                "riptide.receivers.mixed.host", "127.0.0.1",
+                "riptide.receivers.mixed.port", "0"), SAMPLED_CAPTURE);
+
+        assertThat(flows)
+                .isNotEmpty()
+                .allSatisfy(flow -> assertThat(flow.getSamplingInterval()).isEqualTo(1000.0));
+    }
+
+    /** The opt-out reaches the parser too, or it is not an opt-out. */
+    @Test
+    void pinningTheHeaderOffReachesTheParser() throws Exception {
+        final var flows = flowsFromDaemonConfigured(Map.of(
+                "riptide.receivers.nf5.type", "netflow5",
+                "riptide.receivers.nf5.host", "127.0.0.1",
+                "riptide.receivers.nf5.port", "0",
+                "riptide.receivers.nf5.trust-header-sampling-interval", "false"), SAMPLED_CAPTURE);
+
+        assertThat(flows)
+                .as("the exporter states 1000 with the mode bits clear; the operator pinned it off")
+                .isNotEmpty()
+                .allSatisfy(flow -> assertThat(flow.getSamplingInterval()).isEqualTo(1.0));
+    }
+
     /** Starts a daemon on an ephemeral port, sends one v5 capture at it, and returns what it built. */
     private List<Flow> flowsFromDaemonConfigured(final Map<String, Object> properties) throws Exception {
+        return flowsFromDaemonConfigured(properties, UNSAMPLED_CAPTURE);
+    }
+
+    private List<Flow> flowsFromDaemonConfigured(final Map<String, Object> properties,
+                                                 final String capture) throws Exception {
         final var pipeline = Mockito.mock(Pipeline.class);
         final var daemon = daemon(properties, pipeline);
 
         try {
             daemon.run(new DefaultApplicationArguments());
-            send(boundPort(), payload());
+            send(boundPort(), payload(capture));
             return awaitDispatchedFlows(pipeline);
         } finally {
             daemon.stop();
         }
     }
 
-    private static byte[] payload() throws Exception {
-        final var url = Netflow5SamplingFallbackTest.class.getResource(UNSAMPLED_CAPTURE);
+    private static byte[] payload(final String capture) throws Exception {
+        final var url = Netflow5SamplingFallbackTest.class.getResource(capture);
         return Files.readAllBytes(Paths.get(url.toURI()));
     }
 

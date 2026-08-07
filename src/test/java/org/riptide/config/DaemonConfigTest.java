@@ -147,6 +147,39 @@ class DaemonConfigTest {
         assertThat(nf5.getFlowSamplingIntervalFallback()).isNull();
     }
 
+    /**
+     * Reading the v5 header's contested algorithm-0 case is on by default, matching every
+     * comparable collector. The setting exists so an operator whose queries were calibrated around
+     * riptide ignoring the field can pin the old behaviour while they are corrected.
+     */
+    @Test
+    void trustingTheNetflow5HeaderIsOnUnlessTurnedOff() {
+        final var defaults = (ReceiverConfig.Neflow5Config) bind(Map.of(
+                "riptide.receivers.nf5.type", "netflow5",
+                "riptide.receivers.nf5.port", "2055")).getReceivers().get("nf5");
+        assertThat(defaults.isTrustHeaderSamplingInterval()).isTrue();
+
+        final var pinned = (ReceiverConfig.Neflow5Config) bind(Map.of(
+                "riptide.receivers.nf5.type", "netflow5",
+                "riptide.receivers.nf5.port", "2055",
+                "riptide.receivers.nf5.trust-header-sampling-interval", "false"))
+                .getReceivers().get("nf5");
+        assertThat(pinned.isTrustHeaderSamplingInterval()).isFalse();
+    }
+
+    /** The same setting on a multi receiver, where it governs that receiver's v5 half. */
+    @Test
+    void multiReceiverBindsTrustHeaderSamplingInterval() {
+        final var multi = (ReceiverConfig.MultiConfig) bind(Map.of(
+                "riptide.receivers.mixed.type", "multi",
+                "riptide.receivers.mixed.port", "2055",
+                "riptide.receivers.mixed.trust-header-sampling-interval", "false"))
+                .getReceivers().get("mixed");
+
+        assertThat(multi.isTrustHeaderSamplingInterval()).isFalse();
+        assertThat(multi.isNetflow5()).as("still fronting v5, just not trusting its header").isTrue();
+    }
+
     /** Relaxed binding: the camelCase spelling that used to be the only one accepted still works. */
     @Test
     void receiverBindsCamelCaseKeysAndIsoDurations() {

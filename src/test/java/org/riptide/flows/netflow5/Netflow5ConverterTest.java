@@ -5,6 +5,7 @@
 
 package org.riptide.flows.netflow5;
 
+import com.codahale.metrics.MetricRegistry;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import org.assertj.core.api.Assertions;
@@ -77,7 +78,8 @@ public class Netflow5ConverterTest {
             final ByteBuf buffer = Unpooled.wrappedBuffer(payload);
             final Header header = new Header(slice(buffer, Header.SIZE));
             final Packet packet = new Packet(header, buffer);
-            flows.addAll(new Netflow5FlowBuilder().buildFlows(Instant.EPOCH, packet).toList());
+            flows.addAll(new Netflow5FlowBuilder(new MetricRegistry())
+                    .buildFlows(Instant.EPOCH, packet).toList());
         }
         return flows;
     }

@@ -63,6 +63,15 @@ public abstract sealed class ReceiverConfig {
          */
         Long flowSamplingIntervalFallback = null;
 
+        /**
+         * Whether a header stating algorithm 0 alongside a non-zero interval is read as a rate.
+         *
+         * <p>Governs that case only. A header stating algorithm 1 or 2 is unambiguous and is always
+         * read, so disabling this does not let a configured fallback override an exporter that
+         * signalled its mode properly.
+         */
+        boolean trustHeaderSamplingInterval = true;
+
         @Override
         public <T> T accept(final Cases<T> cases) {
             return cases.match(this);
@@ -123,6 +132,9 @@ public abstract sealed class ReceiverConfig {
         Duration flowActiveTimeoutFallback = null;
         Duration flowInactiveTimeoutFallback = null;
         Long flowSamplingIntervalFallback = null;
+
+        /** NetFlow v5 only; see {@link Neflow5Config#trustHeaderSamplingInterval}. */
+        boolean trustHeaderSamplingInterval = true;
 
         @Override
         public <T> T accept(final Cases<T> cases) {
