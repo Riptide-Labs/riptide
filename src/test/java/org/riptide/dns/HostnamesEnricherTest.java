@@ -66,7 +66,7 @@ public class HostnamesEnricherTest {
         when(flow.getDstAddr()).thenReturn(InetAddress.getByName("192.0.2.2"));
         when(flow.getNextHop()).thenReturn(InetAddress.getByName("192.0.2.3"));
 
-        final var source = new Source("here", InetAddress.getByName("127.0.0.1"));
+        final var source = new Source("here", InetAddress.getLoopbackAddress());
 
         pipeline.process(source, List.of(flow));
 

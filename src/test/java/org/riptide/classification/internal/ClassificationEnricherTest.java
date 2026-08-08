@@ -26,7 +26,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
-@SpringBootTest()
+@SpringBootTest
 public class ClassificationEnricherTest {
 
     private final MetricRegistry metricRegistry = new MetricRegistry();
@@ -49,7 +49,7 @@ public class ClassificationEnricherTest {
         when(flow.getDstAddr()).thenReturn(InetAddress.getByName("10.20.20.10"));
         when(flow.getProtocol()).thenReturn(6); // TCP
 
-        final var source = new Source("here", InetAddress.getByName("127.0.0.1"));
+        final var source = new Source("here", InetAddress.getLoopbackAddress());
 
         pipeline.process(source, List.of(flow));
 

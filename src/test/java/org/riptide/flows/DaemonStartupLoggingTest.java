@@ -150,7 +150,7 @@ class DaemonStartupLoggingTest {
         // would gate it anyway. (On Windows, SO_REUSEADDR does permit hijacking a live socket, so
         // this test assumes POSIX semantics — as does CI.)
         try (var occupied = new ServerSocket()) {
-            occupied.bind(new java.net.InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0));
+            occupied.bind(new java.net.InetSocketAddress(InetAddress.getLoopbackAddress(), 0));
             final int taken = occupied.getLocalPort();
 
             final var daemon = daemon(Map.of(
@@ -287,7 +287,7 @@ class DaemonStartupLoggingTest {
     @Test
     void aSuccessfulAndAFailingReceiverAreBothDistinguishableInTheLog() throws Exception {
         try (var occupied = new ServerSocket()) {
-            occupied.bind(new java.net.InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0));
+            occupied.bind(new java.net.InetSocketAddress(InetAddress.getLoopbackAddress(), 0));
             final int taken = occupied.getLocalPort();
 
             final var daemon = daemon(Map.of(

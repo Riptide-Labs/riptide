@@ -240,7 +240,7 @@ class Netflow5SamplingFallbackTest {
     private static void send(final int port, final byte[] payload) throws Exception {
         try (var socket = new DatagramSocket()) {
             socket.send(new DatagramPacket(
-                    payload, payload.length, InetAddress.getByName("127.0.0.1"), port));
+                    payload, payload.length, InetAddress.getLoopbackAddress(), port));
         }
     }
 
