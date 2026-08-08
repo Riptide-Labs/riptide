@@ -109,9 +109,9 @@ class ParserDispatchTest {
         final var tally = new AtomicInteger();
         final var parser = start(new StubParser("tcp", registry, false, gated(entered, gate, tally)), 1, 1);
 
-        final var unused1 = parser.dispatch();
+        assertThat(parser.dispatch()).isNotNull();
         assertThat(entered.await(10, TimeUnit.SECONDS)).as("worker must pick up the first packet").isTrue();
-        final var unused2 = parser.dispatch();                        // fills the single queue slot
+        assertThat(parser.dispatch()).isNotNull();                        // fills the single queue slot
 
         // Third submission must block, not drop. Run it on a thread of its own rather than via
         // supplyAsync: the main thread is the only one that can open the gate so it must never be
@@ -141,7 +141,7 @@ class ParserDispatchTest {
         final var parser = start(new StubParser("drain", registry, true,
                 gated(entered, gate, new AtomicInteger())), 1, 4);
 
-        final var unused3 = parser.dispatch();                       // taken by the gated worker
+        assertThat(parser.dispatch()).isNotNull();                       // taken by the gated worker
         assertThat(entered.await(10, TimeUnit.SECONDS)).as("worker must pick up the first packet").isTrue();
         final var queued = new ArrayList<CompletableFuture<?>>();
         for (int i = 0; i < 3; i++) {
