@@ -21,6 +21,7 @@ import org.riptide.snmp.IfInfo;
 import org.riptide.snmp.SnmpOptionsConfig;
 
 import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.riptide.flows.utils.BufferUtils.slice;
@@ -51,8 +52,8 @@ public class IpfixInterfaceOptionsTest {
         // data set for template 400: ifIndex 5, "ge-0/0/0", "core-up"
         b.writeShort(400).writeShort(4 + 20);
         b.writeInt(5);
-        b.writeBytes("ge-0/0/0".getBytes());
-        b.writeBytes("core-up\0".getBytes());
+        b.writeBytes("ge-0/0/0".getBytes(StandardCharsets.UTF_8));
+        b.writeBytes("core-up\0".getBytes(StandardCharsets.UTF_8));
         b.setShort(2, b.readableBytes()); // patch message length
 
         final Header header = new Header(slice(b, Header.SIZE));

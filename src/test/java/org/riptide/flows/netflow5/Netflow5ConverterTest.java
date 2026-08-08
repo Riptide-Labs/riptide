@@ -55,8 +55,8 @@ public class Netflow5ConverterTest {
         Assertions.assertThat(flow.getInputSnmp()).isEqualTo(0);
         Assertions.assertThat(flow.getOutputSnmp()).isEqualTo(0);
         Assertions.assertThat(flow.getFirstSwitched()).isEqualTo(Instant.parse("2015-06-21T11:40:52.194328Z"));
-        Assertions.assertThat(flow.getLastSwitched()).isEqualTo((Instant.parse("2015-05-02T18:38:07.476328Z")));
-        Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo((Instant.parse("2015-06-21T11:40:52.194328Z")));
+        Assertions.assertThat(flow.getLastSwitched()).isEqualTo(Instant.parse("2015-05-02T18:38:07.476328Z"));
+        Assertions.assertThat(flow.getDeltaSwitched()).isEqualTo(Instant.parse("2015-06-21T11:40:52.194328Z"));
         Assertions.assertThat(flow.getPackets()).isEqualTo(5L);
         Assertions.assertThat(flow.getDirection()).isEqualTo(Flow.Direction.INGRESS);
         Assertions.assertThat(flow.getNextHop().getHostAddress()).isEqualTo("0.0.0.0");

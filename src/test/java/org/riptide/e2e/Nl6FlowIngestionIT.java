@@ -53,7 +53,7 @@ public class Nl6FlowIngestionIT {
     private static final int IPFIX_PORT = freeUdpPort();
     private static final int SFLOW_PORT = freeUdpPort();
 
-    private static final Instant TEST_START = Instant.now();
+    private static Instant testStart;
 
     private static Client queryClient;
 
@@ -105,6 +105,7 @@ public class Nl6FlowIngestionIT {
 
     @BeforeAll
     static void startTraffic() throws Exception {
+        testStart = Instant.now();
         queryClient = new Client.Builder()
                 .addEndpoint("http://" + CLICKHOUSE.getHost() + ":" + CLICKHOUSE.getMappedPort(8123))
                 .setUsername("riptide")
@@ -254,7 +255,7 @@ public class Nl6FlowIngestionIT {
         // so this failed everywhere except a UTC host. Same trap as #276, this time in the assertion.
         final var window = Duration.ofHours(1);
         Assertions.assertThat(row.getLocalDateTime("minFirst").atOffset(ZoneOffset.UTC).toInstant())
-                .isAfter(TEST_START.minus(window));
+                .isAfter(testStart.minus(window));
         Assertions.assertThat(row.getLocalDateTime("maxLast").atOffset(ZoneOffset.UTC).toInstant())
                 .isBefore(Instant.now().plus(window));
     }

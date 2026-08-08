@@ -70,9 +70,10 @@ public class CsvImporterTest {
      */
     @Test
     void verifyEarlierRuleWinsEphemeralPortCollision() throws IOException, InterruptedException {
-        final var engine = engineFor(
-                "https;tcp;;;;443;;true\n"
-                + "galaxy4d;tcp;;;;8881;;true\n");
+        final var engine = engineFor("""
+                https;tcp;;;;443;;true
+                galaxy4d;tcp;;;;8881;;true
+                """);
 
         // client -> server: dstPort matches https directly, srcPort matches galaxy4d reversed
         assertThat(classify(engine, 8881, 443)).isEqualTo("https");
@@ -80,9 +81,10 @@ public class CsvImporterTest {
         assertThat(classify(engine, 443, 8881)).isEqualTo("https");
 
         // and the order is what decides: with the rows swapped, galaxy4d wins both directions
-        final var swapped = engineFor(
-                "galaxy4d;tcp;;;;8881;;true\n"
-                + "https;tcp;;;;443;;true\n");
+        final var swapped = engineFor("""
+                galaxy4d;tcp;;;;8881;;true
+                https;tcp;;;;443;;true
+                """);
         assertThat(classify(swapped, 8881, 443)).isEqualTo("galaxy4d");
         assertThat(classify(swapped, 443, 8881)).isEqualTo("galaxy4d");
     }
