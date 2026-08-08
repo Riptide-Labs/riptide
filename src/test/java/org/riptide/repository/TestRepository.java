@@ -11,7 +11,7 @@ import org.riptide.pipeline.FlowPersister;
 
 import java.util.Collection;
 import java.util.Collections;
-import java.util.LinkedList;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
@@ -21,7 +21,7 @@ public class TestRepository implements FlowRepository {
 
     private final AtomicLong count = new AtomicLong(0);
 
-    private final List<Collection<EnrichedFlow>> flows = Collections.synchronizedList(new LinkedList<>());
+    private final List<Collection<EnrichedFlow>> flows = Collections.synchronizedList(new ArrayList<>());
     private final MetricRegistry metricRegistry;
 
     public TestRepository(MetricRegistry metricRegistry) {

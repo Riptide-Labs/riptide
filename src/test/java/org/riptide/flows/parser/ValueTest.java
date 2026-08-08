@@ -134,7 +134,7 @@ public class ValueTest {
 
     @Test
     void verifyIPv4AddressValue() throws Exception {
-        final var ipv4AddressValue = (IPv4AddressValue) IPv4AddressValue.parser("ipv4AddressName", null, null).parse(null, Unpooled.wrappedBuffer(InetAddress.getByName("127.0.0.1").getAddress()));
+        final var ipv4AddressValue = (IPv4AddressValue) IPv4AddressValue.parser("ipv4AddressName", null, null).parse(null, Unpooled.wrappedBuffer(InetAddress.getLoopbackAddress().getAddress()));
         assertEquals("ipv4AddressName", ipv4AddressValue.getName());
         assertEquals("127.0.0.1", ipv4AddressValue.getValue().getHostAddress());
     }
@@ -257,14 +257,14 @@ public class ValueTest {
         assertEquals(42L, v2.getValue().longValue());
         assertEquals("name2", v2.getName());
 
-        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith64Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 0, 0, 0, 0, 0, 0, 1}))).getValue().longValue(), 0);
-        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith64Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 0, 0, 0, 0, 0, 1}))).getValue().longValue(), 0);
-        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith64Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 0, 0, 0, 0, 1}))).getValue().longValue(), 0);
-        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith64Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 0, 0, 0, 1}))).getValue().longValue(), 0);
-        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith64Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 0, 0, 1}))).getValue().longValue(), 0);
-        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith64Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 0, 1}))).getValue().longValue(), 0);
-        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith64Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 1}))).getValue().longValue(), 0);
-        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith64Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{1}))).getValue().longValue(), 0);
+        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith64Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 0, 0, 0, 0, 0, 0, 1}))).getValue().longValue());
+        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith64Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 0, 0, 0, 0, 0, 1}))).getValue().longValue());
+        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith64Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 0, 0, 0, 0, 1}))).getValue().longValue());
+        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith64Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 0, 0, 0, 1}))).getValue().longValue());
+        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith64Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 0, 0, 1}))).getValue().longValue());
+        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith64Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 0, 1}))).getValue().longValue());
+        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith64Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 1}))).getValue().longValue());
+        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith64Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{1}))).getValue().longValue());
     }
 
     @Test
@@ -277,10 +277,10 @@ public class ValueTest {
         assertEquals(42L, v2.getValue().longValue());
         assertEquals("name2", v2.getName());
 
-        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith32Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 0, 0, 1}))).getValue().longValue(), 0);
-        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith32Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 0, 1}))).getValue().longValue(), 0);
-        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith32Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 1}))).getValue().longValue(), 0);
-        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith32Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{1}))).getValue().longValue(), 0);
+        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith32Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 0, 0, 1}))).getValue().longValue());
+        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith32Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 0, 1}))).getValue().longValue());
+        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith32Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 1}))).getValue().longValue());
+        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith32Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{1}))).getValue().longValue());
     }
 
     @Test
@@ -293,8 +293,8 @@ public class ValueTest {
         assertEquals(42L, v2.getValue().longValue());
         assertEquals("name2", v2.getName());
 
-        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith16Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 1}))).getValue().longValue(), 0);
-        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith16Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{1}))).getValue().longValue(), 0);
+        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith16Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{0, 1}))).getValue().longValue());
+        assertEquals(1L, ((UnsignedValue) UnsignedValue.parserWith16Bit("name", null, null).parse(null, Unpooled.wrappedBuffer(new byte[]{1}))).getValue().longValue());
     }
 
     @Test

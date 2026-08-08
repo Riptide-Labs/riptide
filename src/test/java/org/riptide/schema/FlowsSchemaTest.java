@@ -7,7 +7,9 @@ package org.riptide.schema;
 
 import org.junit.jupiter.api.Test;
 
+import com.google.common.base.Splitter;
 import java.util.List;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -234,8 +236,9 @@ class FlowsSchemaTest {
 
     /** The column names of a CREATE TABLE body, in declaration order. */
     private static List<String> columnsOf(final String ddl) {
+        final var splitter = Splitter.on(Pattern.compile("\\s+"));
         return between(ddl, "(\n", "\n) ENGINE").lines()
-                .map(line -> line.strip().split(" ")[0])
+                .map(line -> splitter.split(line.strip()).iterator().next())
                 .filter(name -> !name.isEmpty())
                 .toList();
     }

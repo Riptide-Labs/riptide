@@ -61,7 +61,7 @@ public class StaticInterfaceEnricherTest {
         when(flow.getInputSnmp()).thenReturn(1);
         when(flow.getOutputSnmp()).thenReturn(2);
 
-        pipeline.process(new Source("here", InetAddress.getByName("127.0.0.1")), List.of(flow));
+        pipeline.process(new Source("here", InetAddress.getLoopbackAddress()), List.of(flow));
 
         assertThat(repository.count()).isEqualTo(1);
         assertThat(repository.flows()).allSatisfy(enrichedFlow -> {

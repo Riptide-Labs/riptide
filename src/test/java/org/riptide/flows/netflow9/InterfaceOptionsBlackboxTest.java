@@ -21,6 +21,7 @@ import org.riptide.snmp.IfInfo;
 import org.riptide.snmp.SnmpOptionsConfig;
 
 import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -81,8 +82,8 @@ public class InterfaceOptionsBlackboxTest {
         // option data set: template 300, one record: ifIndex 7, "Eth1/0", "uplink"
         b.writeShort(300).writeShort(24);
         b.writeInt(7);
-        b.writeBytes("Eth1/0\0\0".getBytes());
-        b.writeBytes("uplink\0\0".getBytes());
+        b.writeBytes("Eth1/0\0\0".getBytes(StandardCharsets.UTF_8));
+        b.writeBytes("uplink\0\0".getBytes(StandardCharsets.UTF_8));
 
         parseV9(b);
 

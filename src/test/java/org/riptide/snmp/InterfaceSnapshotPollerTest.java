@@ -34,7 +34,7 @@ class InterfaceSnapshotPollerTest {
 
     /** Counts walks and records which endpoints were walked; never touches a network. */
     private static class FakeSnmp implements SnmpService {
-        protected final AtomicInteger walks = new AtomicInteger();
+        final AtomicInteger walks = new AtomicInteger();
         private final Set<String> walked = ConcurrentHashMap.newKeySet();
         private volatile boolean timeout;
         private volatile CountDownLatch entered;

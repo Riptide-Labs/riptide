@@ -56,7 +56,7 @@ public class SnmpInputOutputParserTest {
         raw.unixSecs = Instant.ofEpochSecond(1000);
         raw.sysUpTime = Duration.ofSeconds(1000);
         raw.FIRST_SWITCHED = Duration.ofSeconds(2000);
-        raw.LAST_SWITCHED = Duration.ofSeconds(3000);
+        raw.LAST_SWITCHED = Duration.ofMinutes(50);
         raw.INPUT_SNMP = in;
         raw.OUTPUT_SNMP = out;
         raw.ingressPhysicalInterface = ingress;
