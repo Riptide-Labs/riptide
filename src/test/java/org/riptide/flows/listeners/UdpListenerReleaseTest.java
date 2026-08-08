@@ -11,6 +11,7 @@ import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.channel.socket.DatagramPacket;
 import org.junit.jupiter.api.Test;
 
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.time.Instant;
 import java.util.concurrent.Callable;
@@ -25,8 +26,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class UdpListenerReleaseTest {
 
-    private static final InetSocketAddress SENDER = new InetSocketAddress("127.0.0.1", 40000);
-    private static final InetSocketAddress RECIPIENT = new InetSocketAddress("127.0.0.1", 4739);
+    private static final InetSocketAddress SENDER = new InetSocketAddress(InetAddress.getLoopbackAddress(), 40000);
+    private static final InetSocketAddress RECIPIENT = new InetSocketAddress(InetAddress.getLoopbackAddress(), 4739);
 
     @Test
     void releasesBufferWhenParseThrowsSynchronously() {

@@ -30,8 +30,8 @@ public class FlowTimeoutTest {
         final var raw = new Netflow9RawFlow();
         raw.unixSecs = Instant.EPOCH;
         raw.sysUpTime = Duration.ZERO;
-        raw.FIRST_SWITCHED = Duration.ofMillis(123000);
-        raw.LAST_SWITCHED = Duration.ofMillis(987000);
+        raw.FIRST_SWITCHED = Duration.ofSeconds(123);
+        raw.LAST_SWITCHED = Duration.ofSeconds(987);
 
         final var flowMessage = new Netflow9FlowBuilder(valueConversionService).buildFlow(Instant.EPOCH, raw);
         Assertions.assertThat(flowMessage.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(123000L));
@@ -62,12 +62,12 @@ public class FlowTimeoutTest {
         final var raw = new Netflow9RawFlow();
         raw.unixSecs = Instant.EPOCH;
         raw.sysUpTime = Duration.ZERO;
-        raw.FIRST_SWITCHED = Duration.ofMillis(123_000);
-        raw.LAST_SWITCHED = Duration.ofMillis(987_000);
+        raw.FIRST_SWITCHED = Duration.ofSeconds(123);
+        raw.LAST_SWITCHED = Duration.ofSeconds(987);
         raw.IN_BYTES = 10L;
         raw.IN_PKTS = 10L;
         raw.FLOW_ACTIVE_TIMEOUT = Duration.ofSeconds(10);
-        raw.FLOW_INACTIVE_TIMEOUT = Duration.ofSeconds(300);
+        raw.FLOW_INACTIVE_TIMEOUT = Duration.ofMinutes(5);
 
         final var flowMessage = new Netflow9FlowBuilder(valueConversionService).buildFlow(Instant.EPOCH, raw);
         Assertions.assertThat(flowMessage.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(123000L));

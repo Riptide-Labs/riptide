@@ -65,7 +65,7 @@ public class FlowTimeoutTest {
         raw.octetDeltaCount = 0L;
         raw.packetDeltaCount = 0L;
         raw.flowActiveTimeout = Duration.ofSeconds(10);
-        raw.flowInactiveTimeout = Duration.ofSeconds(300);
+        raw.flowInactiveTimeout = Duration.ofMinutes(5);
 
         final var flow = new IpFixFlowBuilder(conversionService).buildFlow(Instant.EPOCH, raw);
 
