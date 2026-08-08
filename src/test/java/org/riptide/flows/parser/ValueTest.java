@@ -134,7 +134,7 @@ public class ValueTest {
 
     @Test
     void verifyIPv4AddressValue() throws Exception {
-        final var ipv4AddressValue = (IPv4AddressValue) IPv4AddressValue.parser("ipv4AddressName", null, null).parse(null, Unpooled.wrappedBuffer(InetAddress.getLoopbackAddress().getAddress()));
+        final var ipv4AddressValue = (IPv4AddressValue) IPv4AddressValue.parser("ipv4AddressName", null, null).parse(null, Unpooled.wrappedBuffer(InetAddress.getByAddress(new byte[]{127, 0, 0, 1}).getAddress()));
         assertEquals("ipv4AddressName", ipv4AddressValue.getName());
         assertEquals("127.0.0.1", ipv4AddressValue.getValue().getHostAddress());
     }

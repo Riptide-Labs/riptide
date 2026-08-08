@@ -9,9 +9,9 @@ import com.codahale.metrics.MetricRegistry;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowPersister;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
