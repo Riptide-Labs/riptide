@@ -8,6 +8,9 @@ package org.riptide.schema;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.regex.Pattern;
+
+import com.google.common.base.Splitter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -232,10 +235,12 @@ class FlowsSchemaTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    private static final Splitter COLUMN_SPLITTER = Splitter.on(Pattern.compile("\\s+"));
+
     /** The column names of a CREATE TABLE body, in declaration order. */
     private static List<String> columnsOf(final String ddl) {
         return between(ddl, "(\n", "\n) ENGINE").lines()
-                .map(line -> line.strip().split(" ")[0])
+                .map(line -> COLUMN_SPLITTER.split(line.strip()).iterator().next())
                 .filter(name -> !name.isEmpty())
                 .toList();
     }

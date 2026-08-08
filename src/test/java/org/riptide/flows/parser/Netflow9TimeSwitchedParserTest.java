@@ -42,9 +42,9 @@ public class Netflow9TimeSwitchedParserTest {
     void verifyFirstAndLastSwitched() throws Exception {
         final var raw = new Netflow9RawFlow();
         raw.unixSecs = Instant.ofEpochSecond(1000);
-        raw.sysUpTime = Duration.ofMillis(1000);
-        raw.FIRST_SWITCHED = Duration.ofMillis(2000);
-        raw.LAST_SWITCHED = Duration.ofMillis(3000);
+        raw.sysUpTime = Duration.ofSeconds(1);
+        raw.FIRST_SWITCHED = Duration.ofSeconds(2);
+        raw.LAST_SWITCHED = Duration.ofSeconds(3);
         final var flowMessage = new Netflow9FlowBuilder(valueConversionService).buildFlow(Instant.EPOCH, raw);
 
         Assertions.assertThat(flowMessage.getFirstSwitched()).isEqualTo(Instant.ofEpochMilli(1001000L));
@@ -56,7 +56,7 @@ public class Netflow9TimeSwitchedParserTest {
     void verifyFlowStartAndEndMs() throws Exception {
         final var raw = new Netflow9RawFlow();
         raw.unixSecs = Instant.ofEpochSecond(1000);
-        raw.sysUpTime = Duration.ofMillis(1000);
+        raw.sysUpTime = Duration.ofSeconds(1);
         raw.flowStartMilliseconds = Instant.ofEpochMilli(2001000);
         raw.flowEndMilliseconds = Instant.ofEpochMilli(2002000);
         final var flowMessage = new Netflow9FlowBuilder(valueConversionService).buildFlow(Instant.EPOCH, raw);

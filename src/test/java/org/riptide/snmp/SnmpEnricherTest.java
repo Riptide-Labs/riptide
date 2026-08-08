@@ -83,7 +83,7 @@ public class SnmpEnricherTest {
         when(flow.getInputSnmp()).thenReturn(1);
         when(flow.getOutputSnmp()).thenReturn(2);
 
-        final var source = new Source("here", InetAddress.getByName("127.0.0.1"));
+        final var source = new Source("here", InetAddress.getLoopbackAddress());
 
         pipeline.process(source, List.of(flow));
 
@@ -110,7 +110,7 @@ public class SnmpEnricherTest {
         snmpAgent.registerIfTable();
         snmpAgent.registerIfXTable();
 
-        final var source = new Source("here", InetAddress.getByName("127.0.0.1"));
+        final var source = new Source("here", InetAddress.getLoopbackAddress());
 
         // exporter pushed option records for both interfaces (name + description)
         final ExporterInterfaceTable interfaceTable = emptyInterfaceTable();
@@ -202,7 +202,7 @@ public class SnmpEnricherTest {
         when(flow.getInputSnmp()).thenReturn(0);
         when(flow.getOutputSnmp()).thenReturn(0);
 
-        final var source = new Source("here", InetAddress.getByName("127.0.0.1"));
+        final var source = new Source("here", InetAddress.getLoopbackAddress());
 
         pipeline.process(source, List.of(flow));
 
@@ -237,10 +237,10 @@ public class SnmpEnricherTest {
         when(flow.getInputSnmp()).thenReturn(3);
         when(flow.getOutputSnmp()).thenReturn(2);
 
-        final var source = new Source("here", InetAddress.getByName("127.0.0.1"));
+        final var source = new Source("here", InetAddress.getLoopbackAddress());
         pipeline.process(source, List.of(flow));
 
-        final var targetIp = InetAddress.getByName("127.0.0.1");
+        final var targetIp = InetAddress.getLoopbackAddress();
         // the fully pinned interface: the assertion that actually fails if the ladder short-circuits
         Mockito.verify(interfaceSource).trackAndResolve(Mockito.argThat(ep -> ep != null && ep.getInetSocketAddress().getAddress().equals(targetIp)), Mockito.eq(3));
         Mockito.verify(interfaceSource).trackAndResolve(Mockito.argThat(ep -> ep != null && ep.getInetSocketAddress().getAddress().equals(targetIp)), Mockito.eq(2));
@@ -276,7 +276,7 @@ public class SnmpEnricherTest {
         snmpAgent.registerIfTable();
         snmpAgent.registerIfXTable();
 
-        final var source = new Source("here", InetAddress.getByName("127.0.0.1"));
+        final var source = new Source("here", InetAddress.getLoopbackAddress());
 
         final SnmpOptionsConfig cacheConfig = new SnmpOptionsConfig();
         cacheConfig.setRetentionMs(60_000);

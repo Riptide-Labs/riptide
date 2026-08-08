@@ -38,7 +38,7 @@ public class RoutingEnricherTest {
 
     private static void enrich(final RoutingConfig config, final EnrichedFlow flow) throws Exception {
         new RoutingEnricher(config)
-                .enrich(new Source("here", InetAddress.getByName("127.0.0.1")), flow)
+                .enrich(new Source("here", InetAddress.getLoopbackAddress()), flow)
                 .get();
     }
 

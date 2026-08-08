@@ -11,6 +11,7 @@ import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Source;
 
 import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -136,7 +137,7 @@ class GeoIpEnricherTest {
             assertThat(after.getSrcCountry()).isEqualTo("US");
 
             // Corrupt replacement: refresh keeps serving the last good snapshot.
-            replaceByMove(tmp, live, "not an mmdb".getBytes(), 2000);
+            replaceByMove(tmp, live, "not an mmdb".getBytes(StandardCharsets.UTF_8), 2000);
             enricher.refresh();
 
             final var still = flow("203.0.113.7", "198.51.100.9");

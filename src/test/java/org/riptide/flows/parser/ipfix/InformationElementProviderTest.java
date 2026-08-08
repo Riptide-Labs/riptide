@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.riptide.flows.parser.Protocol;
 
 import java.time.LocalDate;
+import java.util.Locale;
 import java.util.stream.Stream;
 
 class InformationElementProviderTest {
@@ -25,7 +26,7 @@ class InformationElementProviderTest {
     void verifyBasicContentOfFile() {
         final var registry = JAXB.unmarshal(getClass().getResourceAsStream(InformationElementProvider.XML_FILE_LOCATION), Registry.class);
         Assertions.assertThat(registry).isNotNull();
-        Assertions.assertThat(registry.getId()).isEqualTo(Protocol.IPFIX.description.toLowerCase());
+        Assertions.assertThat(registry.getId()).isEqualTo(Protocol.IPFIX.description.toLowerCase(Locale.ROOT));
         Assertions.assertThat(registry.getCreated()).isEqualTo(LocalDate.of(2007, 5, 10));
         Assertions.assertThat(registry.getUpdated()).isNotNull();
         Assertions.assertThat(registry.getPeople())
