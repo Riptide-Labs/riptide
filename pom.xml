@@ -43,7 +43,7 @@
         <!-- Overrides Spring Boot's managed netty.version (4.2.15.Final), which governs every
              io.netty:netty-* module and otherwise leaves them a patch behind netty-all. 4.2.16.Final
              patches the Netty advisories in Scorecard alert #120 (GHSA-hpcc-26xq-25fv and 15 more). -->
-        <netty.version>4.2.16.Final</netty.version>
+        <netty.version>4.2.17.Final</netty.version>
         <org-eclipse-persistence-moxy.version>5.0.1</org-eclipse-persistence-moxy.version>
         <resilience4j.version>2.4.0</resilience4j.version>
         <snmp4j.version>3.13.0</snmp4j.version>
