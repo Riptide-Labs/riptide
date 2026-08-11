@@ -17,7 +17,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <build-helper-maven-plugin.version>3.6.0</build-helper-maven-plugin.version>
+        <build-helper-maven-plugin.version>3.6.1</build-helper-maven-plugin.version>
         <caffeine.version>3.2.4</caffeine.version>
         <common-csv.version>1.14.1</common-csv.version>
         <dnsjava.version>3.6.5</dnsjava.version>
