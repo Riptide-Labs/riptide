@@ -18,6 +18,7 @@ import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URI;
@@ -89,6 +90,19 @@ public class McpSseServerTest {
         return client.send(request, HttpResponse.BodyHandlers.ofInputStream());
     }
 
+    /**
+     * Next event line on the stream. The pump writes a {@code : keep-alive} comment frame on every
+     * idle poll window (50ms here), so comment and blank separator lines may precede the event
+     * line at any point and must be skipped rather than asserted on.
+     */
+    private static String nextEventLine(final BufferedReader reader) throws IOException {
+        String line;
+        do {
+            line = reader.readLine();
+        } while (line != null && (line.isEmpty() || line.startsWith(":")));
+        return line;
+    }
+
     @Test
     public void establishesGetSseStreamEndpoint() throws Exception {
         final HttpClient client = HttpClient.newHttpClient();
@@ -129,7 +143,7 @@ public class McpSseServerTest {
             assertThat(postResponse.statusCode()).isEqualTo(202);
             assertThat(postResponse.body()).isEmpty();
 
-            assertThat(reader.readLine()).isEqualTo("event: message");
+            assertThat(nextEventLine(reader)).isEqualTo("event: message");
             assertThat(reader.readLine()).contains("\"id\":7").contains("\"jsonrpc\":\"2.0\"");
         }
     }
