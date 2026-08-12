@@ -17,7 +17,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <build-helper-maven-plugin.version>3.6.0</build-helper-maven-plugin.version>
+        <build-helper-maven-plugin.version>3.6.1</build-helper-maven-plugin.version>
         <caffeine.version>3.2.4</caffeine.version>
         <common-csv.version>1.14.1</common-csv.version>
         <dnsjava.version>3.6.5</dnsjava.version>
@@ -43,13 +43,13 @@
         <!-- Overrides Spring Boot's managed netty.version (4.2.15.Final), which governs every
              io.netty:netty-* module and otherwise leaves them a patch behind netty-all. 4.2.16.Final
              patches the Netty advisories in Scorecard alert #120 (GHSA-hpcc-26xq-25fv and 15 more). -->
-        <netty.version>4.2.16.Final</netty.version>
+        <netty.version>4.2.17.Final</netty.version>
         <org-eclipse-persistence-moxy.version>5.0.1</org-eclipse-persistence-moxy.version>
         <resilience4j.version>2.4.0</resilience4j.version>
-        <snmp4j.version>3.13.0</snmp4j.version>
+        <snmp4j.version>3.13.1</snmp4j.version>
         <error-prone.version>2.50.0</error-prone.version>
         <spotbugs-maven-plugin.version>4.10.3.0</spotbugs-maven-plugin.version>
-        <snmp4j-agent.version>3.10.0</snmp4j-agent.version>
+        <snmp4j-agent.version>3.10.1</snmp4j-agent.version>
         <spring-vault.version>4.1.0</spring-vault.version>
         <dropwizard-metrics.version>4.2.39</dropwizard-metrics.version>
         <clickhouse.version>0.9.8</clickhouse.version>
@@ -74,7 +74,7 @@
             <dependency>
                 <groupId>at.yawk.lz4</groupId>
                 <artifactId>lz4-java</artifactId>
-                <version>1.11.1</version>
+                <version>1.11.2</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
