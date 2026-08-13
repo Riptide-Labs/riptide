@@ -45,6 +45,18 @@ updates:
       include: "scope"
     schedule:
       interval: "weekly"
+    groups:
+      # Any pom change moves the fixed-output mvnHash in nix/package.nix, and per-dependency
+      # PRs each need a different hash on the same line, so they invalidate each other with
+      # every merge (see #499). One grouped PR per cycle needs exactly one hash fix
+      # (`make nix-hash`). Majors stay separate: they need individual review and are rare
+      # enough to take the hash fix on their own PR.
+      maven-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: "npm" # Docusaurus documentation site
     directory: "/docs"
     target-branch: "main"
