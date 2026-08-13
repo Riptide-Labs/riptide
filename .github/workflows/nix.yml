@@ -40,25 +40,56 @@ jobs:
         run: |
           set -o pipefail
           make nix 2>&1 | tee nix-build.log
-      # A stale mvnHash after a pom change is the usual failure here. Surface the expected hash and
-      # the one-command fix in the job summary so it is a glance, not a log dig — see #324.
-      - name: Explain a hash mismatch
+      # A stale mvnHash after a pom change is the usual failure here. For same-repo PRs (including
+      # Dependabot's, which cannot touch nix/package.nix themselves) the corrected hash is pushed
+      # straight back to the PR branch; the push uses the NIX_MVNHASH_TOKEN fine-grained PAT because
+      # a GITHUB_TOKEN push would not re-trigger the required checks. Fork PRs and runs without the
+      # secret fall back to surfacing the expected hash in the job summary — see #324. The job still
+      # fails either way: the tree it tested had the stale hash; the pushed commit gets a fresh run.
+      - name: Fix or explain a hash mismatch
         if: failure() && steps.build.outcome == 'failure'
+        env:
+          PUSH_TOKEN: ${{ secrets.NIX_MVNHASH_TOKEN }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
           got="$(grep -oE 'got:\s+sha256-[A-Za-z0-9+/=]+' nix-build.log | grep -oE 'sha256-[A-Za-z0-9+/=]+' | head -1 || true)"
+          if [ -z "${got}" ]; then
+            {
+              echo "### Nix build failed"
+              echo "No hash mismatch detected — check the build log above for the real cause."
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 1
+          fi
+          if [ "${SAME_REPO}" = "true" ] && [ -n "${PUSH_TOKEN}" ] && [ -n "${HEAD_REF}" ]; then
+            git fetch --depth=1 origin "${HEAD_REF}"
+            git checkout -B "${HEAD_REF}" FETCH_HEAD
+            sed -i -E "s|mvnHash = \"sha256-[^\"]*\";|mvnHash = \"${got}\";|" nix/package.nix
+            if git diff --quiet -- nix/package.nix; then
+              echo "mvnHash on \`${HEAD_REF}\` is already \`${got}\`; this run tested a stale head." >> "${GITHUB_STEP_SUMMARY}"
+              exit 1
+            fi
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add nix/package.nix
+            git commit -m "build(nix): update mvnHash after pom change" \
+              -m "Auto-committed by the nix workflow after a fixed-output hash mismatch."
+            git push "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${HEAD_REF}"
+            {
+              echo "### Stale mvnHash fixed automatically"
+              echo "Pushed the corrected hash (\`${got}\`) to \`${HEAD_REF}\`. The new commit re-runs all checks; this failed run is superseded."
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 1
+          fi
           {
             echo "### Nix build failed"
-            if [ -n "${got}" ]; then
-              echo "The maven-deps hash in \`nix/package.nix\` is stale (a pom change moved it)."
-              echo ""
-              echo "Fix it with **\`make nix-hash\`**, or set \`mvnHash\` to:"
-              echo ""
-              echo "\`\`\`"
-              echo "${got}"
-              echo "\`\`\`"
-            else
-              echo "No hash mismatch detected — check the build log above for the real cause."
-            fi
+            echo "The maven-deps hash in \`nix/package.nix\` is stale (a pom change moved it)."
+            echo ""
+            echo "Fix it with **\`make nix-hash\`**, or set \`mvnHash\` to:"
+            echo ""
+            echo "\`\`\`"
+            echo "${got}"
+            echo "\`\`\`"
           } >> "${GITHUB_STEP_SUMMARY}"
           exit 1
       - name: Run flake checks
