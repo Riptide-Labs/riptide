@@ -61,4 +61,30 @@ public class IfInfoTest {
         assertThat(IfInfo.optionsThenSnmp(null, null)).isNull();
         assertThat(IfInfo.optionsThenSnmp(null, new IfInfo("s", "a", 1L))).isEqualTo(new IfInfo("s", "a", 1L));
     }
+
+    @Test
+    public void optionsHighSpeedSurvivesOnlyWhenSnmpIsAbsent() {
+        final IfInfo options = new IfInfo(null, null, 250L);
+
+        // without an SNMP side the options record passes through whole, speed included...
+        assertThat(IfInfo.optionsThenSnmp(options, null)).isEqualTo(options);
+        // ...but any SNMP record present replaces the speed field unconditionally
+        assertThat(IfInfo.optionsThenSnmp(options, new IfInfo("eth0", null, null)))
+                .isEqualTo(new IfInfo("eth0", null, null));
+    }
+
+    @Test
+    public void threeRungCompositionAppliesPerFieldAuthority() {
+        // pins the pure-function ordering of the enrichment ladder; the real call path
+        // through SnmpEnricher is exercised by SnmpEnricherTest
+        final IfInfo pinned = new IfInfo(null, "pinned-alias", null);
+        final IfInfo options = new IfInfo("opt-name", "opt-desc", null);
+        final IfInfo live = new IfInfo("live-name", "live-alias", 100L);
+
+        final IfInfo merged = IfInfo.merge(pinned, IfInfo.optionsThenSnmp(options, live));
+
+        assertThat(merged.name()).isEqualTo("opt-name");       // options beat live for name
+        assertThat(merged.alias()).isEqualTo("pinned-alias");  // alias: pin > live > options
+        assertThat(merged.highSpeed()).isEqualTo(100L);        // no speed pin here, so SNMP fills it
+    }
 }
