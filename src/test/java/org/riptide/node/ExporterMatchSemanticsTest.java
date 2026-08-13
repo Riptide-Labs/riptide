@@ -185,6 +185,9 @@ class ExporterMatchSemanticsTest {
     }
 
     private static InetAddress host(final String address) {
+        if (address == null) {
+            throw new IllegalArgumentException("address cannot be null");
+        }
         try {
             return InetAddress.getByName(address);
         } catch (final UnknownHostException e) {

@@ -66,9 +66,9 @@ public class IfInfoTest {
     public void optionsHighSpeedSurvivesOnlyWhenSnmpIsAbsent() {
         final IfInfo options = new IfInfo(null, null, 250L);
 
-        // without an SNMP side the options record passes through whole, speed included…
+        // without an SNMP side the options record passes through whole, speed included...
         assertThat(IfInfo.optionsThenSnmp(options, null)).isEqualTo(options);
-        // …but any SNMP record present replaces the speed field unconditionally
+        // ...but any SNMP record present replaces the speed field unconditionally
         assertThat(IfInfo.optionsThenSnmp(options, new IfInfo("eth0", null, null)))
                 .isEqualTo(new IfInfo("eth0", null, null));
     }

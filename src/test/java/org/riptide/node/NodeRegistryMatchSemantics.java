@@ -27,7 +27,9 @@ final class NodeRegistryMatchSemantics implements ExporterMatchSemantics {
                 definition.setSubnetAddress(new IPAddressString(entry.subnet()));
             }
             definition.setObservationDomain(entry.observationDomainPin());
-            nodes.put(entry.name(), definition);
+            if (nodes.put(entry.name(), definition) != null) {
+                throw new IllegalStateException("Duplicate entry name: " + entry.name());
+            }
         }
         final NodeRegistry registry = new NodeRegistry();
         registry.setNodes(nodes);
