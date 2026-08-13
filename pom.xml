@@ -44,6 +44,9 @@
              io.netty:netty-* module and otherwise leaves them a patch behind netty-all. 4.2.16.Final
              patches the Netty advisories in Scorecard alert #120 (GHSA-hpcc-26xq-25fv and 15 more). -->
         <netty.version>4.2.17.Final</netty.version>
+        <!-- Overrides Spring Boot's managed httpcore5.version (5.4.2). 5.4.3 patches the HTTP/1
+             header-parsing DoS in Scorecard alert #120 (GHSA-hf6x-8p5f-cgmf). -->
+        <httpcore5.version>5.4.3</httpcore5.version>
         <org-eclipse-persistence-moxy.version>5.0.1</org-eclipse-persistence-moxy.version>
         <resilience4j.version>2.4.0</resilience4j.version>
         <snmp4j.version>3.13.1</snmp4j.version>
