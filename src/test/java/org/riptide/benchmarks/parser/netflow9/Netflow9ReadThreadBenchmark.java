@@ -109,7 +109,7 @@ import static org.riptide.flows.utils.BufferUtils.slice;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 // Scope.Thread, not Scope.Benchmark: the state below is mutable (the buffer's reader index, the
-// sequence counter) and sharing it across threads corrupts both. Since `make bench` advertises
+// sequence counter) and sharing it across threads corrupts both. Since `make bench-jmh` advertises
 // arbitrary BENCH_OPTS, -t is a flag someone investigating a threading question will reach for, and
 // at Scope.Benchmark it produces interleaved garbage rather than a refusal.
 @State(Scope.Thread)
