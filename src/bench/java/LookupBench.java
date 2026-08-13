@@ -41,6 +41,9 @@ public final class LookupBench {
     private static final int QUICK_WARMUP = 5_000;
     private static final int QUICK_MEASURE = 20_000;
 
+    /** Blackhole: consumed via volatile write so the JIT cannot elide the measured loops. */
+    private static volatile int sinkhole;
+
     private LookupBench() {
     }
 
@@ -57,7 +60,8 @@ public final class LookupBench {
             trieNsByScale.put(n, run(report, n));
         }
 
-        final double flatness = (double) trieNsByScale.get(10_000) / trieNsByScale.get(100);
+        final long baseline = trieNsByScale.get(100);
+        final double flatness = baseline == 0 ? 1.0 : (double) trieNsByScale.get(10_000) / baseline;
         report.assertRatio("lookup.trie-scale-flatness", flatness, TRIE_FLATNESS_MAX);
     }
 
@@ -118,9 +122,7 @@ public final class LookupBench {
             sink += registry.lookup(new ExporterIdentity.NetflowIpfix(addrs[i % addrs.length], 0)).isPresent() ? 1 : 0;
         }
         final long elapsed = System.nanoTime() - start;
-        if (sink < 0) {
-            throw new AssertionError();
-        }
+        sinkhole = sink;
         return elapsed / measure;
     }
 
@@ -136,9 +138,7 @@ public final class LookupBench {
             sink += node != null ? 1 : 0;
         }
         final long elapsed = System.nanoTime() - start;
-        if (sink < 0) {
-            throw new AssertionError();
-        }
+        sinkhole = sink;
         return elapsed / MEASURE;
     }
 

@@ -64,7 +64,8 @@ public final class ShapeBench {
 
         final double perEntry10k = (double) totalNsByScale.get(10_000) / 10_000;
         final double perEntry100k = (double) totalNsByScale.get(100_000) / 100_000;
-        report.assertRatio("parse.direct-linearity", perEntry100k / perEntry10k, DIRECT_LINEARITY_MAX);
+        final double linearity = perEntry10k == 0 ? 1.0 : perEntry100k / perEntry10k;
+        report.assertRatio("parse.direct-linearity", linearity, DIRECT_LINEARITY_MAX);
     }
 
     // ---------------------------------------------------------------- Spring

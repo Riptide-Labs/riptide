@@ -16,8 +16,8 @@ import java.util.Map;
  * map, at inventory scale.
  *
  * Two shapes per node count:
- *   "inline"  — every node carries its own snmp block  (6 keys/node), today's model
- *   "ref"     — every node carries subnet-address only (1 key/node), the floor a
+ *   "inline"  : every node carries its own snmp block  (6 keys/node), today's model
+ *   "ref"     : every node carries subnet-address only (1 key/node), the floor a
  *               profile reference would approach
  *
  * The gap between them is the binding cost profiles would actually remove.
