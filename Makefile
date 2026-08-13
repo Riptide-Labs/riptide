@@ -59,7 +59,8 @@ help:
 	@echo "  coverage:     Run the unit test suite and render the JaCoCo coverage report"
 	@echo "  e2e:          Run integration and e2e tests (*IT, requires Docker) in addition to the unit suite"
 	@echo "  fuzz:         Coverage-guided fuzzing of the flow parsers (Jazzer); FUZZ_TIME=<seconds> per target"
-	@echo "  bench:        Run the JMH microbenchmarks; BENCH_TARGET=<regex> to narrow, BENCH_OPTS=<jmh flags>"
+	@echo "  bench:        Run the FR-1 budget benchmarks (src/bench) with ratio assertions; BENCH_FULL=1 for the full sweep"
+	@echo "  bench-jmh:    Run the JMH microbenchmarks; BENCH_TARGET=<regex> to narrow, BENCH_OPTS=<jmh flags>"
 	@echo "  lint-actions: Lint the GitHub Actions workflows (actionlint + zizmor)"
 	@echo "  contributors: Regenerate the README contributor badge and table from .all-contributorsrc"
 	@echo "  contributors-check: Fail if the README contributor section is out of sync with .all-contributorsrc"
@@ -110,6 +111,25 @@ fuzz: deps-jar
 		-Dtest='org.riptide.flows.fuzz.$(FUZZ_TARGET)' \
 		-Djazzer.max_duration=$(FUZZ_TIME)s
 
+# FR-1 budget benchmarks (src/bench/java, standalone main()s kept outside the Maven source roots;
+# see src/bench/README.md). Not part of `make jar`: opt-in, never a build gate. Absolute numbers are
+# informational; only same-run ratios are asserted, so results stay meaningful on any machine. A
+# failed assertion exits nonzero naming the measured and required values. BENCH_FULL=1 adds the
+# multi-minute Spring-binder sweeps and full-precision registry timings (needed for re-baselining,
+# not for the assertions); BENCH_FULL=0 is quick mode, same as unset.
+# --release pins the bench compile to the same language level Maven targets, so a PATH javac older
+# than the project JDK fails loudly instead of emitting a wrong-class-file-version error later.
+.PHONY: bench
+bench: deps-jar
+	mvn $(BUILD_OPTS) --batch-mode compile \
+		dependency:build-classpath -Dmdep.outputFile=target/bench-cp.txt
+	mkdir -p target/bench-classes
+	javac --release $(JAVA_MAJOR_VERSION) -encoding UTF-8 \
+		-cp "target/classes:$$(cat target/bench-cp.txt)" -d target/bench-classes src/bench/java/*.java
+	java -Xmx4g -cp "target/classes:target/bench-classes:$$(cat target/bench-cp.txt)" \
+		BenchSuite $(if $(filter-out 0,$(BENCH_FULL)),--full)
+	@echo "Budget report: target/bench-report.json"
+
 # JMH microbenchmarks (src/test/java/org/riptide/benchmarks). Not part of `make jar`: a benchmark
 # run takes minutes and its numbers are meaningless on a loaded machine, so it is opt-in and never
 # a build gate. BENCH_TARGET is a JMH regex over benchmark class names.
@@ -123,8 +143,8 @@ fuzz: deps-jar
 # dependency:build-classpath is what lets JMH run from the test classpath without a shade/uber jar.
 BENCH_TARGET ?= .*Benchmark
 BENCH_OPTS   ?= -wi 3 -i 10 -f 2
-.PHONY: bench
-bench: deps-jar
+.PHONY: bench-jmh
+bench-jmh: deps-jar
 	mvn $(BUILD_OPTS) --batch-mode test-compile \
 		dependency:build-classpath -Dmdep.outputFile=target/test-cp.txt -Dmdep.includeScope=test
 	java -cp "target/classes:target/test-classes:$$(cat target/test-cp.txt)" \
