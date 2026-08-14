@@ -4,6 +4,10 @@
  */
 
 import inet.ipaddr.IPAddressString;
+import org.riptide.inventory.CredentialSet;
+import org.riptide.inventory.InventoryLoader;
+import org.riptide.inventory.PollingProfile;
+import org.riptide.inventory.SnmpProfilesConfig;
 import org.riptide.node.NodeDefinition;
 import org.riptide.node.NodeRegistry;
 import org.springframework.boot.context.properties.bind.Bindable;
@@ -26,13 +30,16 @@ import java.util.Map;
  * The proposed shape is 3 keys/node: subnet-address + credentials + polling.
  *
  * Asserted (reference ratio only): the direct parse stays linear from 10k to 100k
- * entries. Binder numbers are informational; story 2.1 activates the
+ * entries. Binder numbers are informational; story 2.1 activated the
  * production-parse budget.
  */
 public final class ShapeBench {
 
     /** Measured baseline 0.66 (2026-08-13, M-series laptop); generous margin for GC and machine noise. */
     static final double DIRECT_LINEARITY_MAX = 3.0;
+
+    /** Measured baseline 1.3 (2026-08-14, M-series laptop); ~3x margin per the README rule. */
+    static final double PRODUCTION_VS_RAW_MAX = 4.0;
 
     private ShapeBench() {
     }
@@ -66,6 +73,78 @@ public final class ShapeBench {
         final double perEntry100k = (double) totalNsByScale.get(100_000) / 100_000;
         final double linearity = perEntry10k == 0 ? 1.0 : perEntry100k / perEntry10k;
         report.assertRatio("parse.direct-linearity", linearity, DIRECT_LINEARITY_MAX);
+
+        productionLoader(report);
+    }
+
+    // ------------------------------------------------- Production loader (FR-5)
+
+    /**
+     * The production-parse budget: InventoryLoader end-to-end (parse + validate +
+     * reference resolution + trie build) vs a raw SnakeYAML load of the same
+     * content, same run.
+     */
+    private static void productionLoader(final BudgetReport report) {
+        System.out.println("\n=== Production InventoryLoader vs raw parse, 10,000 agent ranges ===");
+        System.out.printf("%-12s %12s %12s %8s%n", "entries", "raw ms", "loader ms", "ratio");
+
+        final SnmpProfilesConfig profiles = new SnmpProfilesConfig();
+        profiles.getCredentials().put("corp-v3", new CredentialSet());
+        profiles.getPolling().put("default", new PollingProfile());
+        final String inventory = generateInventoryYaml(10_000);
+
+        // warm both paths once so neither first-run pays class loading alone
+        rawLoad(inventory);
+        InventoryLoader.parse(profiles, inventory, "bench.yaml");
+
+        // best of three paired runs: a GC pause in one window neither trips nor
+        // masks the gate; a real regression raises all three ratios
+        double bestRatio = Double.MAX_VALUE;
+        long bestRawNs = 0;
+        long bestLoaderNs = 0;
+        for (int i = 0; i < 3; i++) {
+            final long t0 = System.nanoTime();
+            rawLoad(inventory);
+            final long t1 = System.nanoTime();
+            InventoryLoader.parse(profiles, inventory, "bench.yaml");
+            final long t2 = System.nanoTime();
+            final long rawNs = t1 - t0;
+            final long loaderNs = t2 - t1;
+            if (rawNs == 0 || loaderNs == 0) {
+                throw new AssertionError("0 ns measured for the parse budget: harness broken");
+            }
+            final double ratio = (double) loaderNs / rawNs;
+            if (ratio < bestRatio) {
+                bestRatio = ratio;
+                bestRawNs = rawNs;
+                bestLoaderNs = loaderNs;
+            }
+        }
+        System.out.printf("%-12d %12d %12d %7.1fx%n",
+                10_000, bestRawNs / 1_000_000, bestLoaderNs / 1_000_000, bestRatio);
+        report.measure("parse", "inventory-raw-ms@10000", bestRawNs / 1_000_000);
+        report.measure("parse", "inventory-loader-ms@10000", bestLoaderNs / 1_000_000);
+        report.assertRatio("parse.production-vs-raw", bestRatio, PRODUCTION_VS_RAW_MAX);
+    }
+
+    private static void rawLoad(final String content) {
+        final LoaderOptions opts = new LoaderOptions();
+        opts.setCodePointLimit(Integer.MAX_VALUE);
+        final Object root = new Yaml(opts).load(content);
+        if (root == null) {
+            throw new AssertionError("nothing parsed");
+        }
+    }
+
+    private static String generateInventoryYaml(final int n) {
+        final StringBuilder sb = new StringBuilder(n * 90);
+        sb.append("riptide:\n  snmp:\n    agents:\n");
+        for (int i = 0; i < n; i++) {
+            sb.append("      \"").append(BenchSuite.cidr(i)).append("\":\n")
+              .append("        credentials: corp-v3\n")
+              .append("        polling: default\n");
+        }
+        return sb.toString();
     }
 
     // ---------------------------------------------------------------- Spring
