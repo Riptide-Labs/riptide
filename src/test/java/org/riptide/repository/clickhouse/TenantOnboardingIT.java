@@ -13,6 +13,7 @@ import org.riptide.provisioning.ProvisioningCommand;
 import org.riptide.schema.FlowsSchema;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
+import org.riptide.e2e.ContainerImages;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
@@ -47,7 +48,7 @@ public class TenantOnboardingIT {
     private static final SecretResolvers RESOLVERS = SecretResolvers.defaults();
 
     @Container
-    private static final GenericContainer<?> CLICKHOUSE = new GenericContainer<>("clickhouse/clickhouse-server:25.3")
+    private static final GenericContainer<?> CLICKHOUSE = new GenericContainer<>(ContainerImages.clickhouse())
             .withEnv("CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT", "1")
             .withCopyFileToContainer(
                     MountableFile.forClasspathResource("clickhouse/custom-settings.xml"),

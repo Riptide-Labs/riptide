@@ -39,7 +39,7 @@ public class Nl6FlowIngestionIT {
     /** Tolerance for v9/IPFIX records legitimately dropped before the first template. */
     private static final double TEMPLATE_EPSILON = 0.05;
 
-    private static final GenericContainer<?> CLICKHOUSE = new GenericContainer<>("clickhouse/clickhouse-server:25.3")
+    private static final GenericContainer<?> CLICKHOUSE = new GenericContainer<>(ContainerImages.clickhouse())
             .withEnv("CLICKHOUSE_DB", "riptide")
             .withEnv("CLICKHOUSE_USER", "riptide")
             .withEnv("CLICKHOUSE_PASSWORD", "riptide")

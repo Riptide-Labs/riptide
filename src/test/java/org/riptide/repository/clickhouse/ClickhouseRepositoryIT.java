@@ -16,6 +16,7 @@ import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.schema.FlowsSchema;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
+import org.riptide.e2e.ContainerImages;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
@@ -38,7 +39,7 @@ import java.util.Set;
 public class ClickhouseRepositoryIT {
 
     @Container
-    private static final GenericContainer<?> CLICKHOUSE = new GenericContainer<>("clickhouse/clickhouse-server:25.3")
+    private static final GenericContainer<?> CLICKHOUSE = new GenericContainer<>(ContainerImages.clickhouse())
             .withEnv("CLICKHOUSE_DB", "riptide")
             .withEnv("CLICKHOUSE_USER", "riptide")
             .withEnv("CLICKHOUSE_PASSWORD", "riptide")

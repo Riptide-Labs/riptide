@@ -88,11 +88,11 @@ jobs:
       # Testcontainers aborts an image pull after 2 minutes, which a cold cache
       # on a slow registry day cannot always meet (main run 31838787435 failed
       # exactly there). Pre-pull the heavyweight images with retries so the
-      # in-test pull is always a cache hit. Tags must match the test sources
-      # (Nl6Container.IMAGE, Nl6SnmpEnrichmentIT/ClickhouseItFlows).
+      # in-test pull is always a cache hit. Tags come from the same stub
+      # Dockerfiles the tests read (.github/e2e-images/, Dependabot-maintained).
       - name: Pre-pull e2e container images
         run: |
-          for image in ghcr.io/labmonkeys-space/nl6:v0.16.0 clickhouse/clickhouse-server:25.3; do
+          grep -h '^FROM ' .github/e2e-images/*.Dockerfile | awk '{print $2}' | while read -r image; do
             for attempt in 1 2 3; do
               if docker pull "${image}"; then
                 break

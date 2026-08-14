@@ -47,7 +47,7 @@ public class Nl6SnmpEnrichmentIT {
     private static final String FIRST_DEVICE = "10.42.0.1";
     private static final long MIN_RECORDS = 50;
 
-    private static final GenericContainer<?> CLICKHOUSE = new GenericContainer<>("clickhouse/clickhouse-server:25.3")
+    private static final GenericContainer<?> CLICKHOUSE = new GenericContainer<>(ContainerImages.clickhouse())
             .withEnv("CLICKHOUSE_DB", "riptide")
             .withEnv("CLICKHOUSE_USER", "riptide")
             .withEnv("CLICKHOUSE_PASSWORD", "riptide")
