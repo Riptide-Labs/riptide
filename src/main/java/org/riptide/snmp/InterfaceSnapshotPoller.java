@@ -142,8 +142,10 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         // expiry or exporter bound make every trackAndResolve() return empty with only a meter to show
         // for it. Note 0 does not mean "unlimited" here, unlike the negative-cache TTL it
         // replaces, so check rather than reinterpreting.
-        requirePositive(config.getRefreshIntervalMs(), "riptide.snmp.poll.refresh-interval-ms");
-        requirePositive(config.getSnapshotExpiryMs(), "riptide.snmp.poll.snapshot-expiry-ms");
+        // cadence is no longer settable here (retired keys fail startup; profiles cut
+        // over in a later story), so these two name the value, not a configurable key
+        requirePositive(config.getRefreshIntervalMs(), "snmp poll refresh interval (built-in)");
+        requirePositive(config.getSnapshotExpiryMs(), "snmp poll snapshot expiry (built-in)");
         requirePositive(config.getPoolWidth(), "riptide.snmp.poll.pool-width");
         requirePositive(config.getDeregisterAfter(), "riptide.snmp.poll.deregister-after");
         requirePositive(config.getDeadEndpointBaseMs(), "riptide.snmp.poll.dead-endpoint-base-ms");
@@ -151,7 +153,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         requirePositive(config.getMaxExporters(), "riptide.snmp.poll.max-exporters");
         if (config.getSnapshotExpiryMs() < config.getRefreshIntervalMs()) {
             // not fatal: it still works, it just throws away data it could have served
-            log.warn("riptide.snmp.poll.snapshot-expiry-ms ({}) is shorter than refresh-interval-ms ({}), "
+            log.warn("snmp poll snapshot expiry ({} ms) is shorter than the refresh interval ({} ms), "
                             + "so a snapshot expires before it is refreshed and enrichment will blank "
                             + "between walks",
                     config.getSnapshotExpiryMs(), config.getRefreshIntervalMs());

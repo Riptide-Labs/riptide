@@ -105,14 +105,21 @@ public final class InventoryLoader {
 
     private static PinnedPrefixMatcher<AgentEntry> agents(final SnmpProfilesConfig profiles,
                                                           final Map<String, Object> agents) {
+        // one instance per build: every range that names no profile shares it (FR-7)
+        final PollingProfile defaultProfile =
+                profiles.polling().getOrDefault("default", PollingProfile.builtInDefault());
         final PinnedPrefixMatcher.Builder<AgentEntry> builder = PinnedPrefixMatcher.builder();
         for (final Map.Entry<String, Object> entry : agents.entrySet()) {
             final Map<String, Object> entryBody = body(entry, "agent range");
             requireEntryKeys(entry.getKey(), "agent range", entryBody, AGENT_KEYS);
             final CredentialSet credentials = resolve(entry.getKey(), "credential set",
                     entryBody.get("credentials"), profiles.credentials());
-            final PollingProfile polling = resolve(entry.getKey(), "polling profile",
-                    entryBody.get("polling"), profiles.polling());
+            final Object pollingReference = entryBody.get("polling");
+            // an explicit "default" is the spelled-out form of the omitted key, so both
+            // resolve identically: operator-defined default wins, built-in otherwise
+            final PollingProfile polling = pollingReference == null || "default".equals(pollingReference)
+                    ? defaultProfile
+                    : resolve(entry.getKey(), "polling profile", pollingReference, profiles.polling());
             builder.add(entry.getKey(), strictAddress(entry.getKey(), "agent range", false), null,
                     new AgentEntry(entry.getKey(), credentials, polling));
         }

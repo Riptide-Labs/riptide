@@ -17,9 +17,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * <p>This exists because the failure is otherwise silent and looks like nothing changed. An
  * operator who tuned {@code riptide.snmp.cache.retention-ms} down to a minute for fresher
  * interface names still has a valid, still-read property — it now only sizes the exporter option
- * table — while actual SNMP freshness reverts to the {@code riptide.snmp.poll.refresh-interval-ms}
- * default of ten minutes. Nothing fails, nothing warns, and the names are simply staler than
- * configured.
+ * table — while actual SNMP freshness reverts to the default poll cadence of ten minutes
+ * (tunable per polling profile, {@code riptide.snmp.polling.<name>.refresh-interval}). Nothing
+ * fails, nothing warns, and the names are simply staler than configured.
  *
  * <p>Bound separately from {@link SnmpCacheConfig} rather than adding a {@code @PostConstruct}
  * there, because the warning has to distinguish "left at the default" from "deliberately set",
@@ -52,11 +52,11 @@ public class SnmpCacheMigrationWarning {
     void warnAboutRepurposedProperties() {
         if (this.retentionMs != null) {
             log.warn("riptide.snmp.cache.retention-ms={} is IGNORED and has NOT been carried over. It was a "
-                            + "cache TTL; the new riptide.snmp.poll.refresh-interval-ms (default 600000) is a "
-                            + "poll interval, so adopting your value would change how often riptide walks your "
-                            + "exporters rather than how long it keeps answers. Set refresh-interval-ms "
-                            + "deliberately if you want a different cadence. To size the exporter option "
-                            + "table, use riptide.snmp.options.retention-ms.",
+                            + "cache TTL; the poll cadence (riptide.snmp.polling.<name>.refresh-interval, "
+                            + "default 10m) is a poll interval, so adopting your value would change how often "
+                            + "riptide walks your exporters rather than how long it keeps answers. Set a "
+                            + "polling profile deliberately if you want a different cadence. To size the "
+                            + "exporter option table, use riptide.snmp.options.retention-ms.",
                     this.retentionMs);
         }
         if (this.negativeRetentionMs != null) {

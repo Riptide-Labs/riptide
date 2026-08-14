@@ -30,5 +30,16 @@ public record SnmpProfilesConfig(Map<String, CredentialSet> credentials, Map<Str
         // sorted so the first-named violation is deterministic across JVM runs
         // (Map.copyOf iteration order is salt-randomized)
         new TreeMap<>(credentials).forEach((name, set) -> set.validate(name));
+        new TreeMap<>(polling).forEach((name, profile) -> {
+            // the binder preserves map-key case, but ranges that omit 'polling'
+            // resolve the exact name "default"; a mis-cased spelling would
+            // validate and then be silently ignored by that lookup
+            if (name.equalsIgnoreCase("default") && !name.equals("default")) {
+                throw new IllegalStateException(
+                        ("Polling profile '%s': the default profile must be spelled exactly 'default', "
+                                + "because agent ranges without a 'polling' key resolve that name.").formatted(name));
+            }
+            profile.validate(name);
+        });
     }
 }

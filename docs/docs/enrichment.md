@@ -83,14 +83,19 @@ Riptide **never issues SNMP on the flow path**. An exporter is registered the fi
 That is the operator-visible reason exporter CPU drops after upgrading: load on a device's SNMP agent is now a function of the poll schedule rather than of how many distinct interfaces its flows happen to reference. Previously each `(exporter, ifIndex)` pair cost its own full table walk, so a busy device with many active interfaces was polled hardest — and walks for different interfaces on the same device could run at the same time.
 
 ```properties
-riptide.snmp.poll.refresh-interval-ms=600000     # how often each exporter is walked
-riptide.snmp.poll.snapshot-expiry-ms=1800000     # how long a snapshot stays usable
+riptide.snmp.polling.default.refresh-interval=10m   # how often each exporter is walked
+riptide.snmp.polling.default.snapshot-expiry=30m    # how long a snapshot stays usable
 riptide.snmp.poll.pool-width=4                   # walks in flight across the whole fleet
 riptide.snmp.poll.deregister-after=3             # silent refresh intervals before polling stops
 riptide.snmp.poll.dead-endpoint-base-ms=60000    # first retry delay after a failed walk
 riptide.snmp.poll.dead-endpoint-ceiling-ms=1800000
 riptide.snmp.poll.max-exporters=4096             # bound on retained snapshots
 ```
+
+Cadence (refresh and expiry) is per polling profile: define profiles under `riptide.snmp.polling.<name>` and reference them from agent ranges in the inventory file.
+The profile named `default` applies to every range that names none; without one, built-in defaults (10 m refresh, 30 m expiry) apply.
+The retired global keys `riptide.snmp.poll.refresh-interval-ms` and `riptide.snmp.poll.snapshot-expiry-ms` fail startup if set, in any file or environment spelling.
+The remaining `riptide.snmp.poll.*` keys above are fleet-level and keep binding as before.
 
 **Refresh and expiry are two settings because they answer two questions.**
 Refresh is how fresh the data is kept.
@@ -115,7 +120,7 @@ An unresolvable `ifIndex` deliberately does **not** trigger an early walk, becau
 
 | Retired | Replacement | Note |
 |---|---|---|
-| `riptide.snmp.cache.retention-ms` | `riptide.snmp.poll.refresh-interval-ms` | **Not carried over automatically.** The old value was a cache TTL (how long an answer stays usable); the new one is a poll interval (how often to ask). Adopting a 60 s retention would mean walking every exporter every minute — ten times the agent load, silently. Set it deliberately. |
+| `riptide.snmp.cache.retention-ms` | `riptide.snmp.polling.<name>.refresh-interval` | **Not carried over automatically.** The old value was a cache TTL (how long an answer stays usable); the new one is a poll interval (how often to ask). Adopting a 60 s retention would mean walking every exporter every minute — ten times the agent load, silently. Set it deliberately, in a polling profile. |
 | `riptide.snmp.cache.negative-retention-ms` | *(none)* | Misses are no longer cached separately: an `ifIndex` absent from a polled snapshot is a known absence, so there is nothing to expire. |
 | `riptide.snmp.cache.dead-endpoint-retention-ms` | `riptide.snmp.poll.dead-endpoint-base-ms` / `-ceiling-ms` | Unreachable endpoints now back off exponentially instead of retrying at a fixed interval. |
 

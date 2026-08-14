@@ -31,7 +31,7 @@ class InventoryWiringTest {
 
     @Configuration
     @EnableConfigurationProperties({SnmpProfilesConfig.class, InventoryConfig.class})
-    @Import({Inventory.class, InventoryMisplacementCheck.class, SecretRefConverter.class})
+    @Import({Inventory.class, InventoryMisplacementCheck.class, PollKeyMigrationCheck.class, SecretRefConverter.class})
     static class WiringConfiguration {
     }
 
@@ -181,6 +181,41 @@ class InventoryWiringTest {
                     assertThat(context.getStartupFailure()).rootCause()
                             .hasMessageContaining("mixed").hasMessageContaining("community");
                 });
+    }
+
+    @Test
+    void pollingProfileShapesAreValidatedAtBind() {
+        this.runner
+                .withPropertyValues("riptide.snmp.polling.hasty.timeout=-5")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure()).rootCause()
+                            .hasMessageContaining("hasty").hasMessageContaining("timeout");
+                });
+
+        // expiry shorter than refresh is a warning, never an error
+        this.runner
+                .withPropertyValues(
+                        "riptide.snmp.polling.tight.refresh-interval=10m",
+                        "riptide.snmp.polling.tight.snapshot-expiry=1m")
+                .run(context -> assertThat(context).hasNotFailed());
+    }
+
+    @Test
+    void retiredGlobalPollKeysFailStartupPointingAtProfiles() {
+        this.runner
+                .withPropertyValues("riptide.snmp.poll.refresh-interval-ms=300000")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure()).rootCause()
+                            .hasMessageContaining("refresh-interval-ms")
+                            .hasMessageContaining("riptide.snmp.polling");
+                });
+
+        // fleet-level keys under the same prefix keep binding
+        this.runner
+                .withPropertyValues("riptide.snmp.poll.pool-width=8", "riptide.snmp.poll.max-exporters=1024")
+                .run(context -> assertThat(context).hasNotFailed());
     }
 
     @Test
