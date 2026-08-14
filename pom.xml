@@ -47,6 +47,14 @@
         <!-- Overrides Spring Boot's managed httpcore5.version (5.4.2). 5.4.3 patches the HTTP/1
              header-parsing DoS in Scorecard alert #120 (GHSA-hf6x-8p5f-cgmf). -->
         <httpcore5.version>5.4.3</httpcore5.version>
+        <!-- Overrides Spring Boot's managed httpclient5.version (5.6.1), pulled in by the
+             ClickHouse client-v2 transport. 5.6.3 patches the Content-Encoding decode
+             connection leak in Scorecard alert #120 (GHSA-hjcp-jmpx-g3qm). -->
+        <httpclient5.version>5.6.3</httpclient5.version>
+        <!-- Overrides Spring Boot's managed log4j2.version (2.25.4), present only as the
+             log4j-to-slf4j bridge. 2.25.5 patches the MapMessage JSON serialization issue
+             in Scorecard alert #120 (GHSA-qv9r-c865-cp47). -->
+        <log4j2.version>2.25.5</log4j2.version>
         <org-eclipse-persistence-moxy.version>5.0.1</org-eclipse-persistence-moxy.version>
         <resilience4j.version>2.4.0</resilience4j.version>
         <snmp4j.version>3.13.1</snmp4j.version>
