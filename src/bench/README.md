@@ -54,6 +54,7 @@ Production budgets activate with the story that lands each production path; no a
 
 - **Story 1.4** (trie matching) activated the production-lookup budget: see the table above.
 - **Story 2.1** (direct-parse inventory) activated the production-parse budget: see the table above. For SM-1 context the absolute load time is recorded informationally (`inventory-loader-ms@10000`, ~51 ms measured, against the 302,597 ms Spring-binder baseline the story replaced).
+- Hot reload (story 2.2) shares `InventoryLoader.parse` with boot, so the parse budget covers both paths; each cycle additionally pays the byte read and content hash, and changed content pays a strict UTF-8 decode before the parse.
 
 Adding a budget is a `report.measure(...)` + `report.assertRatio(name, measured, max)` pair in the harness that exercises the path.
 

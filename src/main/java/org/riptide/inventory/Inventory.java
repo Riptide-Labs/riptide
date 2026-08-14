@@ -10,6 +10,8 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.util.Objects;
+
 /**
  * Owns the published {@link InventorySnapshot}. The loader fails startup before any
  * serving state is published when the inventory file is unreadable or invalid; on
@@ -32,7 +34,18 @@ public class Inventory {
 
     @PostConstruct
     public void load() {
-        this.active = InventoryLoader.load(this.profiles, this.config.getFile());
+        // boot commits through the same path as reload, so the whole-instance swap
+        // stays the only way serving state ever changes
+        swap(InventoryLoader.load(this.profiles, this.config.getFile()));
+    }
+
+    /**
+     * Atomically replaces the serving snapshot (hot reload). One volatile write of a
+     * whole immutable instance is the entire concurrency story (AD-3): readers that
+     * captured views from the previous snapshot keep a consistent pair of trees.
+     */
+    public void swap(final InventorySnapshot snapshot) {
+        this.active = Objects.requireNonNull(snapshot);
     }
 
     /** The current snapshot: exactly one volatile read; capture views from it, not from here. */
