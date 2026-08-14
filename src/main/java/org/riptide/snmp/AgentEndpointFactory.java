@@ -19,9 +19,11 @@ import java.util.Optional;
  * {@code SnmpVersion.getTarget} per walk, never here) and the degrade-on-failure
  * behaviour hold by construction rather than by reimplementation.
  *
- * <p>Not wired to the poller yet: consumers cut over in story 2.8. The UDP port
- * stays the existing 161 default; where a per-range port belongs is undecided in
- * the PRD and tracked with the agent-ranges story.</p>
+ * <p>Not wired to the poller yet: consumers cut over in story 2.8. The UDP port is
+ * fixed at the existing 161 default for 0.9: no configuration surface carries a
+ * per-range port, and adding one would widen the strict agent-range body along with
+ * the legacy-config migration (FR-14) and the operator documentation (FR-15) that
+ * have to describe it, so it is deferred rather than guessed at here.</p>
  */
 public final class AgentEndpointFactory {
 
@@ -30,9 +32,14 @@ public final class AgentEndpointFactory {
 
     /**
      * Builds the endpoint for a matched entry, or empty when the entry carries no
-     * credentials (an uncredentialed range is collected but never polled).
+     * credentials (an uncredentialed range is collected but never polled) or is an
+     * explicit carve-out ({@code enabled: false}), which shadows wider ranges
+     * precisely so the addresses under it are never walked.
      */
     public static Optional<SnmpEndpoint> endpointFor(final AgentEntry entry, final IPAddressString address) {
+        if (!entry.enabled()) {
+            return Optional.empty();
+        }
         final CredentialSet credentials = entry.credentials();
         if (credentials == null) {
             return Optional.empty();

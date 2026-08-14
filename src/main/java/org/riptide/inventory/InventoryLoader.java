@@ -8,6 +8,7 @@ package org.riptide.inventory;
 import inet.ipaddr.IPAddress;
 import inet.ipaddr.IPAddressString;
 import inet.ipaddr.IPAddressStringParameters;
+import lombok.extern.slf4j.Slf4j;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 
@@ -16,12 +17,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * The one pure function from configuration to serving state (AD-4):
  * {@code (Spring-bound profiles, inventory file) -> validated InventorySnapshot},
- * invoked identically at boot and, once the reload story lands, on every reload.
+ * invoked identically at boot and on every reload.
  * Bypasses the Spring property binder: the trees are direct-parsed with SnakeYAML,
  * which is what makes a 10,000-entry inventory load in milliseconds instead of
  * minutes.
@@ -33,15 +36,19 @@ import java.util.Set;
  * here. Secrets never appear in the inventory file; it carries references to named
  * credential sets only.</p>
  */
+@Slf4j
 public final class InventoryLoader {
 
     private static final Set<String> ROOT_KEYS = Set.of("riptide");
     private static final Set<String> RIPTIDE_KEYS = Set.of("snmp", "exporters");
     private static final Set<String> SNMP_KEYS = Set.of("agents");
-    private static final Set<String> AGENT_KEYS = Set.of("credentials", "polling");
+    private static final Set<String> AGENT_KEYS = Set.of("credentials", "polling", "enabled");
     private static final Set<String> EXPORTER_KEYS = Set.of("address", "observation-domain");
 
     private static final long MAX_OBSERVATION_DOMAIN = 0xFFFF_FFFFL;
+
+    // bounded diagnostics: name a readable number of half-finished entries, then count
+    private static final int MAX_NAMED_EMPTY_ENTRIES = 20;
 
     // roughly 700k entries; generous but finite, so a runaway generated file is a
     // named error instead of an OOM
@@ -109,9 +116,11 @@ public final class InventoryLoader {
         final PollingProfile defaultProfile =
                 profiles.polling().getOrDefault("default", PollingProfile.builtInDefault());
         final PinnedPrefixMatcher.Builder<AgentEntry> builder = PinnedPrefixMatcher.builder();
+        int declaredNothing = 0;
         for (final Map.Entry<String, Object> entry : agents.entrySet()) {
             final Map<String, Object> entryBody = body(entry, "agent range");
             requireEntryKeys(entry.getKey(), "agent range", entryBody, AGENT_KEYS);
+            final boolean enabled = enabled(entry.getKey(), entryBody.get("enabled"));
             final CredentialSet credentials = resolve(entry.getKey(), "credential set",
                     entryBody.get("credentials"), profiles.credentials());
             final Object pollingReference = entryBody.get("polling");
@@ -120,10 +129,39 @@ public final class InventoryLoader {
             final PollingProfile polling = pollingReference == null || "default".equals(pollingReference)
                     ? defaultProfile
                     : resolve(entry.getKey(), "polling profile", pollingReference, profiles.polling());
-            builder.add(entry.getKey(), strictAddress(entry.getKey(), "agent range", false), null,
-                    new AgentEntry(entry.getKey(), credentials, polling));
+            // warn only once the key is known to be a usable range: an unparseable
+            // key is about to fail hard, and telling the operator it is live and
+            // shadowing would be the opposite of true
+            final IPAddressString address = strictAddress(entry.getKey(), "agent range", false);
+            if (declaresNothing(entryBody)) {
+                declaredNothing++;
+                if (declaredNothing <= MAX_NAMED_EMPTY_ENTRIES) {
+                    log.warn("Agent range '{}' declares nothing: it still matches, so it can shadow wider ranges, "
+                            + "and with no credential set it is never polled. Give it a credential set, or spell "
+                            + "the exclusion as 'enabled: false' if that is what you meant", entry.getKey());
+                }
+            }
+            builder.add(entry.getKey(), address, null,
+                    new AgentEntry(entry.getKey(), credentials, polling, enabled));
+        }
+        if (declaredNothing > MAX_NAMED_EMPTY_ENTRIES) {
+            // a generated inventory can carry thousands of these; naming every one
+            // would bury the rest of startup (the bounded-diagnostic idiom)
+            log.warn("{} further agent ranges declare nothing and are listed no further",
+                    declaredNothing - MAX_NAMED_EMPTY_ENTRIES);
         }
         return builder.build();
+    }
+
+    /**
+     * An entry is a half-finished edit when it carries no keys at all, or carries
+     * only keys whose values were never filled in ({@code credentials:} with
+     * nothing after it). Both build the same serving state: a range that matches,
+     * shadows, and can never be polled. An entry naming a real value is deliberate,
+     * even when that value implies no polling.
+     */
+    private static boolean declaresNothing(final Map<String, Object> entryBody) {
+        return entryBody.values().stream().allMatch(Objects::isNull);
     }
 
     private static PinnedPrefixMatcher<ExporterEntry> exporters(final Map<String, Object> exporters) {
@@ -233,9 +271,11 @@ public final class InventoryLoader {
                                          final Map<String, Object> map, final Set<String> known) {
         for (final String key : map.keySet()) {
             if (!known.contains(key)) {
+                // sorted: Set.of iteration order is salt-randomized, so the listed
+                // keys would otherwise shuffle between runs of the same binary
                 throw new IllegalStateException(
                         "Inventory file %s: unknown key '%s' under %s; known keys are %s."
-                                .formatted(sourceName, key, where, known));
+                                .formatted(sourceName, key, where, new TreeSet<>(known)));
             }
         }
     }
@@ -246,9 +286,29 @@ public final class InventoryLoader {
             if (!known.contains(key)) {
                 throw new IllegalStateException(
                         "The %s '%s' has an unknown key '%s'; known keys are %s."
-                                .formatted(kind, name, key, known));
+                                .formatted(kind, name, key, new TreeSet<>(known)));
             }
         }
+    }
+
+    /**
+     * The carve-out flag. Absent or an explicit YAML null reads as enabled, matching
+     * how omitted credential and polling references read (a present-but-empty value
+     * is indistinguishable from an absent key at the SnakeYAML layer). Only a real
+     * boolean disables: YAML 1.1 resolves {@code no}/{@code off} to booleans, but a
+     * quoted {@code "false"} is a String, and treating that as truthy would carve
+     * out nothing while looking deliberate in the file.
+     */
+    private static boolean enabled(final String range, final Object value) {
+        if (value == null) {
+            return true;
+        }
+        if (!(value instanceof Boolean flag)) {
+            throw new IllegalStateException(
+                    "Agent range '%s' has a non-boolean enabled value '%s': write it unquoted as true or false."
+                            .formatted(range, value));
+        }
+        return flag;
     }
 
     private static Long observationDomain(final String exporter, final Object value) {

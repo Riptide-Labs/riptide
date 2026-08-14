@@ -10,7 +10,10 @@ import org.junit.jupiter.api.Test;
 import org.riptide.inventory.AgentEntry;
 import org.riptide.inventory.CredentialSet;
 import org.riptide.inventory.CredentialVersion;
+import org.riptide.inventory.InventoryLoader;
+import org.riptide.inventory.InventorySnapshot;
 import org.riptide.inventory.PollingProfile;
+import org.riptide.inventory.SnmpProfilesConfig;
 import org.riptide.secrets.SecretRef;
 import org.snmp4j.fluent.TargetBuilder;
 
@@ -38,11 +41,11 @@ class AgentEndpointFactoryTest {
         v3.setSecurityName("riptide");
 
         final var v1Endpoint = AgentEndpointFactory.endpointFor(
-                new AgentEntry("10.0.0.0/24", v1, null), ADDRESS);
+                new AgentEntry("10.0.0.0/24", v1, null, true), ADDRESS);
         final var v2cEndpoint = AgentEndpointFactory.endpointFor(
-                new AgentEntry("10.0.0.0/24", v2c(SecretRef.of("public")), null), ADDRESS);
+                new AgentEntry("10.0.0.0/24", v2c(SecretRef.of("public")), null, true), ADDRESS);
         final var v3Endpoint = AgentEndpointFactory.endpointFor(
-                new AgentEntry("10.0.0.0/24", v3, null), ADDRESS);
+                new AgentEntry("10.0.0.0/24", v3, null, true), ADDRESS);
 
         assertThat(v1Endpoint).isPresent();
         assertThat(v1Endpoint.get().getSnmpDefinition().getSnmpVersion()).isEqualTo(SnmpVersion.v1);
@@ -66,7 +69,7 @@ class AgentEndpointFactoryTest {
         v3.setPrivPassphrase(SecretRef.of("env://PRIV"));
 
         final var definition = AgentEndpointFactory.endpointFor(
-                new AgentEntry("10.0.0.0/24", v3, null), ADDRESS).get().getSnmpDefinition();
+                new AgentEntry("10.0.0.0/24", v3, null, true), ADDRESS).get().getSnmpDefinition();
 
         assertThat(definition.getAuthProtocol()).isEqualTo(TargetBuilder.AuthProtocol.sha1);
         assertThat(definition.getAuthPassphrase()).isSameAs(v3.getAuthPassphrase());
@@ -81,9 +84,9 @@ class AgentEndpointFactoryTest {
         polling.setRetries(3);
 
         final var withProfile = AgentEndpointFactory.endpointFor(
-                new AgentEntry("10.0.0.0/24", v2c(SecretRef.of("public")), polling), ADDRESS);
+                new AgentEntry("10.0.0.0/24", v2c(SecretRef.of("public")), polling, true), ADDRESS);
         final var withoutProfile = AgentEndpointFactory.endpointFor(
-                new AgentEntry("10.0.0.0/24", v2c(SecretRef.of("public")), null), ADDRESS);
+                new AgentEntry("10.0.0.0/24", v2c(SecretRef.of("public")), null, true), ADDRESS);
 
         assertThat(withProfile.get().getSnmpDefinition().getTimeout()).isEqualTo(2_000);
         assertThat(withProfile.get().getSnmpDefinition().getRetries()).isEqualTo(3);
@@ -98,7 +101,7 @@ class AgentEndpointFactoryTest {
         final SecretRef unresolvable = SecretRef.of("env://RIPTIDE_TEST_MISSING_SECRET");
 
         final var endpoint = AgentEndpointFactory.endpointFor(
-                new AgentEntry("10.0.0.0/24", v2c(unresolvable), null), ADDRESS);
+                new AgentEntry("10.0.0.0/24", v2c(unresolvable), null, true), ADDRESS);
 
         assertThat(endpoint).isPresent();
         assertThat(endpoint.get().getSnmpDefinition().getCommunity()).isSameAs(unresolvable);
@@ -106,7 +109,67 @@ class AgentEndpointFactoryTest {
 
     @Test
     void uncredentialedEntryYieldsEmpty() {
-        assertThat(AgentEndpointFactory.endpointFor(new AgentEntry("10.0.0.0/24", null, null), ADDRESS))
+        assertThat(AgentEndpointFactory.endpointFor(new AgentEntry("10.0.0.0/24", null, null, true), ADDRESS))
+                .isEmpty();
+    }
+
+    @Test
+    void parsedInventoryCarriesCarveOutsAndOmissionsThroughToTheEndpoint() {
+        // the ACs are phrased in terms of endpointFor, so pin the whole seam once:
+        // real YAML through the loader, matched through the view, into the factory.
+        // This lives in org.riptide.snmp because inventory must not import snmp (AD-10)
+        final var profiles = new SnmpProfilesConfig(
+                java.util.Map.of("corp-v3", v3()),
+                java.util.Map.of("default", new PollingProfile()));
+        final var snapshot = InventoryLoader.parse(profiles, """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                      "10.20.99.0/24":
+                        credentials: corp-v3
+                        enabled: false
+                      "10.21.0.0/16":
+                        polling: default
+                """, "seam.yaml");
+
+        assertThat(endpointFor(snapshot, "10.20.5.5")).isPresent();
+        // a credentialed carve-out still yields nothing to poll
+        assertThat(endpointFor(snapshot, "10.20.99.5")).isEmpty();
+        // and an uncredentialed range matches but cannot be polled either
+        assertThat(endpointFor(snapshot, "10.21.5.5")).isEmpty();
+    }
+
+    private static java.util.Optional<SnmpEndpoint> endpointFor(final InventorySnapshot snapshot,
+                                                                final String address) {
+        final var identity = new org.riptide.pipeline.ExporterIdentity.NetflowIpfix(
+                inetAddress(address), 0L);
+        return snapshot.agentView().match(identity)
+                .flatMap(entry -> AgentEndpointFactory.endpointFor(entry, new IPAddressString(address)));
+    }
+
+    private static java.net.InetAddress inetAddress(final String address) {
+        try {
+            return java.net.InetAddress.getByName(address);
+        } catch (final java.net.UnknownHostException e) {
+            throw new IllegalArgumentException(address, e);
+        }
+    }
+
+    private static CredentialSet v3() {
+        final CredentialSet set = new CredentialSet();
+        set.setVersion(CredentialVersion.V3);
+        set.setSecurityName("riptide");
+        return set;
+    }
+
+    @Test
+    void disabledEntryYieldsEmptyEvenWithCredentials() {
+        // the carve-out exists to stop the walk: credentials on a disabled range are
+        // parked configuration, not an instruction to poll
+        assertThat(AgentEndpointFactory.endpointFor(
+                new AgentEntry("10.0.0.0/24", v2c(SecretRef.of("public")), null, false), ADDRESS))
                 .isEmpty();
     }
 
@@ -114,7 +177,7 @@ class AgentEndpointFactoryTest {
     void nullVersionThrowsIllegalStateExceptionNamingRange() {
         final CredentialSet set = new CredentialSet();
         assertThatThrownBy(() -> AgentEndpointFactory.endpointFor(
-                new AgentEntry("10.0.0.0/24", set, null), ADDRESS))
+                new AgentEntry("10.0.0.0/24", set, null, true), ADDRESS))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("10.0.0.0/24")
                 .hasMessageContaining("no version");
