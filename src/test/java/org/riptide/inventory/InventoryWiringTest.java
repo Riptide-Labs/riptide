@@ -60,6 +60,7 @@ class InventoryWiringTest {
                         "riptide.inventory.file=" + file,
                         "riptide.snmp.credentials.corp-v3.version=v3",
                         "riptide.snmp.credentials.corp-v3.security-name=riptide",
+                        "riptide.snmp.credentials.corp-v3.auth-protocol=sha1",
                         "riptide.snmp.credentials.corp-v3.auth-passphrase=env://SNMP_AUTH")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
@@ -70,6 +71,115 @@ class InventoryWiringTest {
                     // the stated reason the profiles stay Spring-bound: SecretRef
                     // values bind through the existing converter
                     assertThat(agent.get().credentials().getAuthPassphrase()).isNotNull();
+                });
+    }
+
+    @Test
+    void malformedCredentialShapesFailBindNamingTheSetAndField() {
+        this.runner
+                .withPropertyValues("riptide.snmp.credentials.legacy.version=v2c")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .rootCause()
+                            .hasMessageContaining("legacy")
+                            .hasMessageContaining("community");
+                });
+
+        this.runner
+                .withPropertyValues("riptide.snmp.credentials.versionless.security-name=riptide")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure())
+                            .rootCause()
+                            .hasMessageContaining("versionless")
+                            .hasMessageContaining("version");
+                });
+    }
+
+    @Test
+    void usmPairingIsValidatedAtBind() {
+        // half-configured auth would be silently dropped at target build, walking
+        // noAuthNoPriv while the operator believes it is authenticated
+        this.runner
+                .withPropertyValues(
+                        "riptide.snmp.credentials.half.version=v3",
+                        "riptide.snmp.credentials.half.security-name=riptide",
+                        "riptide.snmp.credentials.half.auth-passphrase=env://X")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure()).rootCause()
+                            .hasMessageContaining("half").hasMessageContaining("auth-protocol");
+                });
+
+        this.runner
+                .withPropertyValues(
+                        "riptide.snmp.credentials.privonly.version=v3",
+                        "riptide.snmp.credentials.privonly.security-name=riptide",
+                        "riptide.snmp.credentials.privonly.priv-protocol=aes128",
+                        "riptide.snmp.credentials.privonly.priv-passphrase=env://X")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure()).rootCause()
+                            .hasMessageContaining("privonly").hasMessageContaining("priv without auth");
+                });
+    }
+
+    @Test
+    void remainingShapeFailuresAreValidatedAtBind() {
+        this.runner
+                .withPropertyValues("riptide.snmp.credentials.old.version=v1")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure()).rootCause()
+                            .hasMessageContaining("old").hasMessageContaining("community");
+                });
+
+        this.runner
+                .withPropertyValues("riptide.snmp.credentials.anonymous.version=v3")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure()).rootCause()
+                            .hasMessageContaining("anonymous").hasMessageContaining("security-name");
+                });
+
+        // an unknown version string fails in the binder naming the property path
+        this.runner
+                .withPropertyValues("riptide.snmp.credentials.typo.version=v9")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    final StringBuilder chain = new StringBuilder();
+                    for (Throwable cause = context.getStartupFailure(); cause != null; cause = cause.getCause()) {
+                        chain.append(cause.getMessage()).append('\n');
+                    }
+                    assertThat(chain).contains("riptide.snmp.credentials.typo.version");
+                });
+    }
+
+    @Test
+    void foreignFieldsAreRejectedNotSilentlyIgnored() {
+        // leftover USM fields on a community set would read as authenticated while
+        // every walk goes out plaintext; the reverse carries a dead community
+        this.runner
+                .withPropertyValues(
+                        "riptide.snmp.credentials.migrated.version=v2c",
+                        "riptide.snmp.credentials.migrated.community=public",
+                        "riptide.snmp.credentials.migrated.security-name=riptide")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure()).rootCause()
+                            .hasMessageContaining("migrated").hasMessageContaining("v3 fields");
+                });
+
+        this.runner
+                .withPropertyValues(
+                        "riptide.snmp.credentials.mixed.version=v3",
+                        "riptide.snmp.credentials.mixed.security-name=riptide",
+                        "riptide.snmp.credentials.mixed.community=public")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure()).rootCause()
+                            .hasMessageContaining("mixed").hasMessageContaining("community");
                 });
     }
 

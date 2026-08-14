@@ -13,6 +13,7 @@ import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.node.NodeDefinition;
 import org.riptide.node.NodeRegistry;
+import org.riptide.inventory.SnmpProfilesConfig;
 import org.riptide.node.NodesConfigMigrationCheck;
 import org.riptide.routing.RoutingConfig;
 import org.riptide.secrets.SopsSecretResolver;
@@ -225,7 +226,12 @@ public class ConfigFileReloader {
                 .bind("riptide.routing", Bindable.of(RoutingConfig.class))
                 .orElseGet(RoutingConfig::new);
 
-        // validate the candidate with startup's rules; throws → keep-old in poll()
+        // validate the candidate with startup's rules; throws → keep-old in poll().
+        // The credential bind is discarded: profile changes deliberately do not
+        // propagate on reload (AD-6 orchestration comes later), but a malformed
+        // credential edit must fail THIS reload rather than the next boot — the
+        // record constructor runs the shape validation.
+        binder.bind("riptide.snmp", Bindable.of(SnmpProfilesConfig.class));
         final Map<String, NodeDefinition> validatedNodes = NodeRegistry.validated(nodes);
         final RoutingConfig.Parsed parsedRouting = RoutingConfig.parse(routing.getPrefixes(), routing.getAsNames());
 

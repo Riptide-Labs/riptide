@@ -5,6 +5,7 @@
 
 import inet.ipaddr.IPAddressString;
 import org.riptide.inventory.CredentialSet;
+import org.riptide.inventory.CredentialVersion;
 import org.riptide.inventory.InventoryLoader;
 import org.riptide.inventory.PollingProfile;
 import org.riptide.inventory.SnmpProfilesConfig;
@@ -89,7 +90,7 @@ public final class ShapeBench {
         System.out.printf("%-12s %12s %12s %8s%n", "entries", "raw ms", "loader ms", "ratio");
 
         final SnmpProfilesConfig profiles = new SnmpProfilesConfig(
-                Map.of("corp-v3", new CredentialSet()),
+                Map.of("corp-v3", benchCredentials()),
                 Map.of("default", new PollingProfile()));
         final String inventory = generateInventoryYaml(10_000);
 
@@ -125,6 +126,15 @@ public final class ShapeBench {
         report.measure("parse", "inventory-raw-ms@10000", bestRawNs / 1_000_000);
         report.measure("parse", "inventory-loader-ms@10000", bestLoaderNs / 1_000_000);
         report.assertRatio("parse.production-vs-raw", bestRatio, PRODUCTION_VS_RAW_MAX);
+    }
+
+    // deliberate local copy of TestCredentials.v3(): the bench source set cannot
+    // see test roots; update alongside the shared fixture when validation tightens
+    private static CredentialSet benchCredentials() {
+        final CredentialSet set = new CredentialSet();
+        set.setVersion(CredentialVersion.V3);
+        set.setSecurityName("bench");
+        return set;
     }
 
     private static void rawLoad(final String content) {

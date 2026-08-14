@@ -8,6 +8,7 @@ package org.riptide.inventory;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * The small Spring-bound profile maps the inventory loader resolves references
@@ -26,5 +27,8 @@ public record SnmpProfilesConfig(Map<String, CredentialSet> credentials, Map<Str
     public SnmpProfilesConfig {
         credentials = credentials != null ? Map.copyOf(credentials) : Map.of();
         polling = polling != null ? Map.copyOf(polling) : Map.of();
+        // sorted so the first-named violation is deterministic across JVM runs
+        // (Map.copyOf iteration order is salt-randomized)
+        new TreeMap<>(credentials).forEach((name, set) -> set.validate(name));
     }
 }
