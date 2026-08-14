@@ -36,10 +36,12 @@ Asserted today:
 | `lookup.production-vs-reference` | Production `NodeRegistry.lookup` ns/op vs reference trie ns/op at 10k entries | ≤ 8.0 | 2.5 (2026-08-14) |
 | `lookup.production-scale-flatness` | Production `NodeRegistry.lookup` ns/op at 10k entries vs at 100 entries | ≤ 4.5 | 1.3 (2026-08-14) |
 | `parse.direct-linearity` | Direct-parse per-entry cost at 100k entries vs at 10k | ≤ 3.0 | 0.7 (2026-08-13) |
+| `parse.production-vs-raw` | Production `InventoryLoader` (parse + validate + resolve + trie build) vs raw SnakeYAML load at 10k entries | ≤ 4.0 | 1.3 (2026-08-14) |
 
 The first assertion (`lookup.trie-scale-flatness`) is a reference-implementation property (a failure means the harness or environment broke).
 The two production-lookup assertions (`lookup.production-vs-reference`, `lookup.production-scale-flatness`) are the FR-4 budget: they fail when a change makes exporter matching scale with inventory size again.
 The fourth assertion (`parse.direct-linearity`) guards direct YAML parse linearity across scales.
+The fifth (`parse.production-vs-raw`) is the FR-5 budget: it fails when loader overhead (validation, reference resolution, trie build) stops being a small factor over the raw parse.
 
 Deliberately **not** asserted:
 
@@ -51,7 +53,7 @@ Deliberately **not** asserted:
 Production budgets activate with the story that lands each production path; no assertion ever ships expected-fail:
 
 - **Story 1.4** (trie matching) activated the production-lookup budget: see the table above.
-- **Story 2.1** (direct-parse inventory) activates the production-parse budget: production loader within a small factor of the raw direct parse, same run.
+- **Story 2.1** (direct-parse inventory) activated the production-parse budget: see the table above. For SM-1 context the absolute load time is recorded informationally (`inventory-loader-ms@10000`, ~51 ms measured, against the 302,597 ms Spring-binder baseline the story replaced).
 
 Adding a budget is a `report.measure(...)` + `report.assertRatio(name, measured, max)` pair in the harness that exercises the path.
 
@@ -61,7 +63,7 @@ When a threshold needs re-deriving (new hardware class, intentional reference ch
 
 1. Run `make bench BENCH_FULL=1` on an idle machine (check `uptime`); repeat 3 times.
 2. Take the worst (highest) measured ratio across runs as the new baseline.
-3. Set the threshold at roughly 3x the baseline and record both in the constant's javadoc (`TRIE_FLATNESS_MAX`, `PRODUCTION_VS_REFERENCE_MAX`, `PRODUCTION_FLATNESS_MAX`, `DIRECT_LINEARITY_MAX`) and in the table above.
+3. Set the threshold at roughly 3x the baseline and record both in the constant's javadoc (`TRIE_FLATNESS_MAX`, `PRODUCTION_VS_REFERENCE_MAX`, `PRODUCTION_FLATNESS_MAX`, `DIRECT_LINEARITY_MAX`, `PRODUCTION_VS_RAW_MAX`) and in the table above.
 4. Never tighten a threshold in the same change that alters what the harness measures.
 
 ## Report
