@@ -180,6 +180,42 @@ public class SnmpEnricherTest {
     }
 
     @Test
+    public void unmatchedExporterIsCollectedAndOptionEnrichedButNeverPolled() throws Exception {
+        // FR-8: an address covered by no agent range is collected and option-data-enriched,
+        // is never polled, and creates no registration. Pinned on the path that is live
+        // today (nodes); story 2.8 cuts the same behaviour over to the inventory views and
+        // must keep this green. Registration is a side effect of the only method on
+        // InterfaceSource, so "no interaction" is exactly "no registration".
+        final var source = new Source("here", InetAddress.getByName("10.99.0.1"));
+        final InterfaceSource interfaceSource = Mockito.mock(InterfaceSource.class);
+
+        final ExporterInterfaceTable interfaceTable = emptyInterfaceTable();
+        interfaceTable.accept(source.identity(),
+                List.of(new UnsignedValue("SCOPE:INTERFACE", 1)),
+                List.of(new StringValue("IF_NAME", "no-node-if1"), new StringValue("IF_DESC", "pushed")));
+
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(interfaceSource, this.nodeRegistry, interfaceTable));
+        final var repository = new TestRepository(metricRegistry);
+        final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
+
+        final Flow flow = Mockito.mock(Flow.class);
+        when(flow.getSrcAddr()).thenReturn(InetAddress.getByName("10.10.10.10"));
+        when(flow.getDstAddr()).thenReturn(InetAddress.getByName("10.20.20.10"));
+        // non-zero: ifIndex 0 short-circuits the ladder, which would pass for the wrong reason
+        when(flow.getInputSnmp()).thenReturn(1);
+
+        pipeline.process(source, List.of(flow));
+
+        Mockito.verifyNoInteractions(interfaceSource);
+        assertThat(repository.flows()).isNotEmpty().allSatisfy(enrichedFlow -> {
+            assertThat(enrichedFlow.getInputSnmpIfName()).isEqualTo("no-node-if1");
+            assertThat(enrichedFlow.getInputSnmpIfAlias()).isEqualTo("pushed");
+            // the SNMP-only field stays empty: nothing was ever walked
+            assertThat(enrichedFlow.getInputSnmpIfSpeed()).isNull();
+        });
+    }
+
+    @Test
     public void optionTableRetentionBindsFromProperties(@Autowired final SnmpOptionsConfig optionsConfig) {
         // regression: a bare public field never binds, and the option table would then run at a
         // 0 ms TTL — every exporter-pushed interface name expiring the instant it arrived

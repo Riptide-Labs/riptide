@@ -16,9 +16,9 @@ import java.util.Objects;
  * Owns the published {@link InventorySnapshot}. The loader fails startup before any
  * serving state is published when the inventory file is unreadable or invalid; on
  * success one immutable snapshot instance is published behind this single volatile
- * reference, so a whole-instance swap is the entire concurrency story (AD-3) once
- * hot reload lands (story 2.2). This bean performs no IO after startup and serves
- * no consumers yet: the enrichers and the poller cut over in story 2.8.
+ * reference, so a whole-instance swap is the entire concurrency story (AD-3), and a
+ * hot reload is exactly such a swap. This bean performs no IO after startup and
+ * serves no consumers yet: the enrichers and the poller cut over in story 2.8.
  */
 @Component
 @RequiredArgsConstructor

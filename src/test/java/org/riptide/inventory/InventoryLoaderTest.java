@@ -5,9 +5,14 @@
 
 package org.riptide.inventory;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.riptide.pipeline.ExporterIdentity;
+import org.slf4j.LoggerFactory;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
@@ -25,7 +30,7 @@ class InventoryLoaderTest {
     private static SnmpProfilesConfig profiles() {
         return new SnmpProfilesConfig(
                 Map.of("corp-v3", TestCredentials.v3()),
-                Map.of("default", new PollingProfile()));
+                Map.of("default", new PollingProfile(), "slow", new PollingProfile()));
     }
 
     @Test
@@ -397,11 +402,236 @@ class InventoryLoaderTest {
         assertThat(snapshot.agentView().match(netflow("10.1.2.3", 0))).isPresent();
     }
 
+    @Test
+    void disabledRangeShadowsTheWiderCredentialedRange() {
+        // the carve-out is an ordinary trie entry: longest prefix already shadows,
+        // the flag only tells consumers not to poll what it matched
+        final var snapshot = InventoryLoader.parse(profiles(), """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                      "10.20.99.0/24":
+                        enabled: false
+                """, "test.yaml");
+
+        final var carvedOut = snapshot.agentView().match(netflow("10.20.99.5", 0)).orElseThrow();
+        assertThat(carvedOut.range()).isEqualTo("10.20.99.0/24");
+        assertThat(carvedOut.enabled()).isFalse();
+
+        final var covered = snapshot.agentView().match(netflow("10.20.5.5", 0)).orElseThrow();
+        assertThat(covered.enabled()).isTrue();
+        assertThat(covered.credentials()).isNotNull();
+    }
+
+    @Test
+    void enabledAcceptsExplicitTrueAndYamlNullAndRejectsNonBooleans() {
+        // YAML 1.1 turns no/off into booleans but quoted "false" into a String: a
+        // silent truthy string would carve out nothing while looking deliberate
+        final var snapshot = InventoryLoader.parse(profiles(), """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.1.0.0/24":
+                        enabled: true
+                        credentials: corp-v3
+                      "10.2.0.0/24":
+                        enabled:
+                        credentials: corp-v3
+                      "10.3.0.0/24":
+                        enabled: off
+                """, "test.yaml");
+
+        assertThat(snapshot.agentView().match(netflow("10.1.0.5", 0)).orElseThrow().enabled()).isTrue();
+        // explicit YAML null reads as absent, matching credentials/polling
+        assertThat(snapshot.agentView().match(netflow("10.2.0.5", 0)).orElseThrow().enabled()).isTrue();
+        assertThat(snapshot.agentView().match(netflow("10.3.0.5", 0)).orElseThrow().enabled()).isFalse();
+
+        // the offending value must be interpolated: asserting on "false" would be
+        // satisfied by the message's own "true or false" remediation clause
+        assertThatThrownBy(() -> InventoryLoader.parse(profiles(), """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.4.0.0/24":
+                        enabled: nope
+                """, "test.yaml"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("10.4.0.0/24")
+                .hasMessageContaining("nope");
+    }
+
+    @Test
+    void carveOutsOnlyShadowOutwardAndCannotDuplicateTheRangeTheyExclude() {
+        // stated in tests deliberately: an operator who spells the exclusion WIDER
+        // than the range it means to silence gets nothing, because longest prefix
+        // still picks the narrower credentialed range
+        final var inverted = InventoryLoader.parse(profiles(), """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.0.0.0/8":
+                        enabled: false
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """, "test.yaml");
+
+        final var stillPolled = inverted.agentView().match(netflow("10.20.5.5", 0)).orElseThrow();
+        assertThat(stillPolled.range()).isEqualTo("10.20.0.0/16");
+        assertThat(stillPolled.enabled()).isTrue();
+        // the carve-out still applies where nothing narrower covers the address
+        assertThat(inverted.agentView().match(netflow("10.30.5.5", 0)).orElseThrow().enabled()).isFalse();
+
+        // and a carve-out at the same prefix as the range it excludes is a duplicate,
+        // not a winner: ambiguity fails startup naming both entries
+        assertThatThrownBy(() -> InventoryLoader.parse(profiles(), """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.40.0.0/16":
+                        credentials: corp-v3
+                      "10.40.0.0/255.255.0.0":
+                        enabled: false
+                """, "test.yaml"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("10.40.0.0/16")
+                .hasMessageContaining("10.40.0.0/255.255.0.0");
+    }
+
+    @Test
+    void emptyEntryWarnsNamingTheRangeButStillMatches() {
+        final var logger = (Logger) LoggerFactory.getLogger(InventoryLoader.class);
+        final var appender = new ListAppender<ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            final var snapshot = InventoryLoader.parse(profiles(), """
+                    riptide:
+                      snmp:
+                        agents:
+                          "10.50.0.0/24":
+                          "10.51.0.0/24": {}
+                          "10.52.0.0/24":
+                            credentials:
+                    """, "test.yaml");
+
+            assertThat(snapshot.agentView().match(netflow("10.50.0.5", 0))).isPresent();
+            assertThat(snapshot.agentView().match(netflow("10.51.0.5", 0))).isPresent();
+            assertThat(warnings(appender, "10.50.0.0/24")).isEqualTo(1);
+            assertThat(warnings(appender, "10.51.0.0/24")).isEqualTo(1);
+            // the shape operators actually produce: key typed, value not filled in.
+            // It builds the same serving state as {} and must be just as loud
+            assertThat(warnings(appender, "10.52.0.0/24")).isEqualTo(1);
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    void deliberateEntriesNeverWarn() {
+        // a carve-out, a not-polled-but-profiled range, and a parked credentialed
+        // range are all intentional shapes: only a body with nothing in it is a typo
+        final var logger = (Logger) LoggerFactory.getLogger(InventoryLoader.class);
+        final var appender = new ListAppender<ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            InventoryLoader.parse(profiles(), """
+                    riptide:
+                      snmp:
+                        agents:
+                          "10.60.0.0/24":
+                            enabled: false
+                          "10.61.0.0/24":
+                            polling: slow
+                          "10.62.0.0/24":
+                            credentials: corp-v3
+                            enabled: false
+                    """, "test.yaml");
+
+            // filtered to WARN on purpose: this test is about warnings, so a future
+            // log.info in the loader must not break it
+            assertThat(appender.list).noneMatch(event -> event.getLevel() == Level.WARN);
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    void omittedCredentialsStillMatchesAndCarriesTheProfile() {
+        final SnmpProfilesConfig profiles = profiles();
+        final var snapshot = InventoryLoader.parse(profiles, """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.70.0.0/24":
+                        polling: default
+                """, "test.yaml");
+
+        final var entry = snapshot.agentView().match(netflow("10.70.0.5", 0)).orElseThrow();
+        assertThat(entry.credentials()).isNull();
+        assertThat(entry.polling()).isSameAs(profiles.polling().get("default"));
+        assertThat(entry.enabled()).isTrue();
+    }
+
+    @Test
+    void sflowIdentitiesResolveThroughTheAgentViewByAgentAddress() {
+        // AD-11's other half (the UDP source is never consulted for sFlow) is
+        // structural: ExporterIdentity.Sflow carries only the payload agent address,
+        // so no lookup could use the UDP source. What needs pinning here is that an
+        // Sflow identity resolves at all, and that its sub-agent id is irrelevant
+        // because agent ranges carry no observation-domain pin
+        final var snapshot = InventoryLoader.parse(profiles(), """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.80.0.0/24":
+                        credentials: corp-v3
+                """, "test.yaml");
+
+        assertThat(snapshot.agentView().match(sflow("10.80.0.5", 3))).isPresent();
+        assertThat(snapshot.agentView().match(sflow("192.168.1.1", 0))).isEmpty();
+    }
+
+    @Test
+    void addressCoveredByNoRangeYieldsNoAgentEntry() {
+        // the loader half of FR-8's not-polled-but-collected rule: no entry means no
+        // endpoint can ever be built for it. The runtime half (collected, option-data
+        // enriched, never registered) is pinned by
+        // SnmpEnricherTest.unmatchedExporterIsCollectedAndOptionEnrichedButNeverPolled
+        // against the path that is live until the 2.8 cutover
+        final var snapshot = InventoryLoader.parse(profiles(), """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """, "test.yaml");
+
+        assertThat(snapshot.agentView().match(netflow("10.99.0.1", 0))).isEmpty();
+    }
+
+    private static long warnings(final ListAppender<ILoggingEvent> appender, final String range) {
+        return appender.list.stream()
+                .filter(event -> event.getLevel() == Level.WARN)
+                .filter(event -> event.getFormattedMessage().contains(range))
+                .count();
+    }
+
     private static ExporterIdentity netflow(final String address, final long domain) {
         try {
             return new ExporterIdentity.NetflowIpfix(InetAddress.getByName(address), domain);
         } catch (final UnknownHostException e) {
             throw new IllegalArgumentException(address, e);
+        }
+    }
+
+    private static ExporterIdentity sflow(final String agentAddress, final long subAgentId) {
+        try {
+            return new ExporterIdentity.Sflow(InetAddress.getByName(agentAddress), subAgentId);
+        } catch (final UnknownHostException e) {
+            throw new IllegalArgumentException(agentAddress, e);
         }
     }
 }
