@@ -41,9 +41,9 @@ class AgentEndpointFactoryTest {
         v3.setSecurityName("riptide");
 
         final var v1Endpoint = AgentEndpointFactory.endpointFor(
-                new AgentEntry("10.0.0.0/24", v1, null, true), ADDRESS);
+                new AgentEntry("10.0.0.7", v1, null, true), ADDRESS);
         final var v2cEndpoint = AgentEndpointFactory.endpointFor(
-                new AgentEntry("10.0.0.0/24", v2c(SecretRef.of("public")), null, true), ADDRESS);
+                new AgentEntry("10.0.0.7", v2c(SecretRef.of("public")), null, true), ADDRESS);
         final var v3Endpoint = AgentEndpointFactory.endpointFor(
                 new AgentEntry("10.0.0.0/24", v3, null, true), ADDRESS);
 
@@ -84,9 +84,9 @@ class AgentEndpointFactoryTest {
         polling.setRetries(3);
 
         final var withProfile = AgentEndpointFactory.endpointFor(
-                new AgentEntry("10.0.0.0/24", v2c(SecretRef.of("public")), polling, true), ADDRESS);
+                new AgentEntry("10.0.0.7", v2c(SecretRef.of("public")), polling, true), ADDRESS);
         final var withoutProfile = AgentEndpointFactory.endpointFor(
-                new AgentEntry("10.0.0.0/24", v2c(SecretRef.of("public")), null, true), ADDRESS);
+                new AgentEntry("10.0.0.7", v2c(SecretRef.of("public")), null, true), ADDRESS);
 
         assertThat(withProfile.get().getSnmpDefinition().getTimeout()).isEqualTo(2_000);
         assertThat(withProfile.get().getSnmpDefinition().getRetries()).isEqualTo(3);
@@ -101,7 +101,7 @@ class AgentEndpointFactoryTest {
         final SecretRef unresolvable = SecretRef.of("env://RIPTIDE_TEST_MISSING_SECRET");
 
         final var endpoint = AgentEndpointFactory.endpointFor(
-                new AgentEntry("10.0.0.0/24", v2c(unresolvable), null, true), ADDRESS);
+                new AgentEntry("10.0.0.7", v2c(unresolvable), null, true), ADDRESS);
 
         assertThat(endpoint).isPresent();
         assertThat(endpoint.get().getSnmpDefinition().getCommunity()).isSameAs(unresolvable);
@@ -166,10 +166,11 @@ class AgentEndpointFactoryTest {
 
     @Test
     void disabledEntryYieldsEmptyEvenWithCredentials() {
-        // the carve-out exists to stop the walk: credentials on a disabled range are
-        // parked configuration, not an instruction to poll
+        // the carve-out exists to stop the walk: credentials on a disabled entry are
+        // parked configuration, not an instruction to poll. A single host here because
+        // the loader now rejects a wide range carrying a v1/v2c set, disabled or not
         assertThat(AgentEndpointFactory.endpointFor(
-                new AgentEntry("10.0.0.0/24", v2c(SecretRef.of("public")), null, false), ADDRESS))
+                new AgentEntry("10.0.0.7", v2c(SecretRef.of("public")), null, false), ADDRESS))
                 .isEmpty();
     }
 

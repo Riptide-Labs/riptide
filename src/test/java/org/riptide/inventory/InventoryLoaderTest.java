@@ -20,6 +20,7 @@ import java.nio.file.Path;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class InventoryLoaderTest {
@@ -592,6 +593,169 @@ class InventoryLoaderTest {
 
         assertThat(snapshot.agentView().match(sflow("10.80.0.5", 3))).isPresent();
         assertThat(snapshot.agentView().match(sflow("192.168.1.1", 0))).isEmpty();
+    }
+
+    private static SnmpProfilesConfig insecureProfiles() {
+        return new SnmpProfilesConfig(
+                Map.of("corp-v3", TestCredentials.v3(),
+                        "legacy-v2c", TestCredentials.v2c(),
+                        "legacy-v1", TestCredentials.v1()),
+                Map.of("default", new PollingProfile()));
+    }
+
+    private static void parseAgents(final String agentsBlock) {
+        InventoryLoader.parse(insecureProfiles(), """
+                riptide:
+                  snmp:
+                    agents:
+                %s""".formatted(agentsBlock), "test.yaml");
+    }
+
+    @Test
+    void rangeWiderThanOneAddressWithV2cFailsNamingBothPartiesTheReasonAndBothRemediations() {
+        // a credentialed range polls whatever answers from it, so a wide v1/v2c range
+        // would offer its cleartext community to any in-range address that sends a flow
+        assertThatThrownBy(() -> parseAgents("""
+                      "10.90.0.0/16":
+                        credentials: legacy-v2c
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("10.90.0.0/16")
+                .hasMessageContaining("legacy-v2c")
+                // "speaks v2c", not bare "v2c": that substring also occurs inside the
+                // set name, so it would stay green even if the version were dropped
+                .hasMessageContaining("speaks v2c")
+                .hasMessageContaining("wider than a single address")
+                // the reason, which appears in no remediation clause
+                .hasMessageContaining("cleartext community")
+                // both remediations
+                .hasMessageContaining("enumerate")
+                .hasMessageContaining("migrate")
+                // the message names the reference, never the CredentialSet: interpolating
+                // the object would put its community into a startup error and a reload log
+                .hasMessageNotContaining("public");
+    }
+
+    @Test
+    void theWidthBoundaryIsOneAddressNotOneSubnet() {
+        // a /31 or /127 is the tightest range that is still more than one address, so it
+        // is what separates this rule from a looser "smaller than a subnet" reading
+        assertThatThrownBy(() -> parseAgents("""
+                      "10.97.0.0/31":
+                        credentials: legacy-v2c
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("10.97.0.0/31");
+
+        assertThatThrownBy(() -> parseAgents("""
+                      "2001:db8::/127":
+                        credentials: legacy-v2c
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("2001:db8::/127");
+    }
+
+    @Test
+    void disablingAWideRangeDoesNotExemptItFromTheRule() {
+        // the decision handed over by story 2.5: a carve-out becomes a live range with a
+        // one-character edit, and a disabled range already resolves its references, so a
+        // security rule must not be weaker than a naming rule
+        assertThatThrownBy(() -> parseAgents("""
+                      "10.92.0.0/16":
+                        credentials: legacy-v2c
+                        enabled: false
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("10.92.0.0/16")
+                .hasMessageContaining("cleartext community");
+    }
+
+    @Test
+    void wideV1Fails() {
+        assertThatThrownBy(() -> parseAgents("""
+                      "10.91.0.0/16":
+                        credentials: legacy-v1
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("10.91.0.0/16")
+                .hasMessageContaining("legacy-v1")
+                .hasMessageContaining("speaks v1");
+    }
+
+    @Test
+    void singleHostV1AndV2cPassInBothSpellings() {
+        // one parse call each: the two spellings land in the same trie slot and would
+        // fail as duplicates if declared together (duplicateCoverageFailsNamingBothEntries)
+        assertThatCode(() -> parseAgents("""
+                      "10.93.0.7":
+                        credentials: legacy-v2c
+                """)).doesNotThrowAnyException();
+
+        assertThatCode(() -> parseAgents("""
+                      "10.93.0.7/32":
+                        credentials: legacy-v2c
+                """)).doesNotThrowAnyException();
+
+        // FR-9 names the v1 single-host case explicitly; the accept path must not narrow
+        // to v2c only
+        assertThatCode(() -> parseAgents("""
+                      "10.93.0.8":
+                        credentials: legacy-v1
+                """)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void anyWidthV3Passes() {
+        // separate parse calls: one throwing case must not mask the others
+        assertThatCode(() -> parseAgents("""
+                      "10.94.0.0/16":
+                        credentials: corp-v3
+                """)).doesNotThrowAnyException();
+        assertThatCode(() -> parseAgents("""
+                      "0.0.0.0/0":
+                        credentials: corp-v3
+                """)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void wideRangesWithoutACredentialSetPass() {
+        assertThatCode(() -> parseAgents("""
+                      "10.95.0.0/16":
+                        polling: default
+                """)).doesNotThrowAnyException();
+        // an explicitly empty credentials key reads as absent, like credentials: ~
+        assertThatCode(() -> parseAgents("""
+                      "10.96.0.0/16":
+                        credentials:
+                """)).doesNotThrowAnyException();
+        assertThatCode(() -> parseAgents("""
+                      "10.96.1.0/24":
+                        credentials: ~
+                """)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void theRuleAppliesToIpv6InBothDirections() {
+        assertThatThrownBy(() -> parseAgents("""
+                      "2001:db8::/64":
+                        credentials: legacy-v2c
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("2001:db8::/64")
+                .hasMessageContaining("cleartext community");
+
+        assertThatCode(() -> parseAgents("""
+                      "2001:db8::1":
+                        credentials: legacy-v2c
+                """)).doesNotThrowAnyException();
+        assertThatCode(() -> parseAgents("""
+                      "2001:db8::1/128":
+                        credentials: legacy-v2c
+                """)).doesNotThrowAnyException();
+        assertThatCode(() -> parseAgents("""
+                      "::/0":
+                        credentials: corp-v3
+                """)).doesNotThrowAnyException();
     }
 
     @Test

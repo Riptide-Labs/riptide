@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -133,6 +134,8 @@ public final class InventoryLoader {
             // key is about to fail hard, and telling the operator it is live and
             // shadowing would be the opposite of true
             final IPAddressString address = strictAddress(entry.getKey(), "agent range", false);
+            requireSingleAddressForCleartext(entry.getKey(), address, credentials,
+                    entryBody.get("credentials"));
             if (declaresNothing(entryBody)) {
                 declaredNothing++;
                 if (declaredNothing <= MAX_NAMED_EMPTY_ENTRIES) {
@@ -151,6 +154,53 @@ public final class InventoryLoader {
                     declaredNothing - MAX_NAMED_EMPTY_ENTRIES);
         }
         return builder.build();
+    }
+
+    /**
+     * AD-8, enforced here rather than documented: a range wider than one address whose
+     * credential set speaks v1 or v2c fails the build, with no override. Declaring a
+     * credentialed range flips polling from opt-in to opt-out inside it, because a flow
+     * from any in-range address registers that address and polls it, so a wide v1/v2c
+     * range would offer its cleartext community to whatever answers.
+     *
+     * <p>The rule belongs to the (range, credential set) pairing, which is why it cannot
+     * live on {@link CredentialSet#validate}: that runs at bind time before any range
+     * exists, and one set is shared by every range naming it. It deliberately ignores
+     * {@code enabled}: a carve-out becomes a live range with a one-character edit, and a
+     * disabled range already has its references resolved, so a security rule must not be
+     * weaker than a naming rule.</p>
+     */
+    private static void requireSingleAddressForCleartext(final String range, final IPAddressString address,
+                                                         final CredentialSet credentials,
+                                                         final Object reference) {
+        if (credentials == null) {
+            return;
+        }
+        if (credentials.getVersion() == null) {
+            // bind-time validation guarantees a version, but the set is a mutable bean
+            // shared across ranges: name the range instead of surfacing a bare NPE that
+            // escapes the file-naming wrapper
+            throw new IllegalStateException(
+                    "Agent range '%s' uses credential set '%s', which has no version.".formatted(range, reference));
+        }
+        // a switch expression with no default: adding a version becomes a compile error
+        // here rather than a silently insecure pass
+        final boolean cleartext = switch (credentials.getVersion()) {
+            case V1, V2C -> true;
+            case V3 -> false;
+        };
+        // strictAddress has already narrowed this to a host or a single prefix block,
+        // so isMultiple() is exactly "covers more than one address", in either family
+        if (cleartext && address.getAddress().isMultiple()) {
+            throw new IllegalStateException(
+                    ("Agent range '%s' uses credential set '%s', which speaks %s, but is wider than a single "
+                            + "address: the cleartext community would be sent to any in-range address that "
+                            + "emits a flow. Either enumerate the devices as single addresses, or migrate the "
+                            + "segment to a v3 credential set.")
+                            // the raw reference, never the CredentialSet: the set carries no
+                            // name of its own, so the object would not identify what to fix
+                            .formatted(range, reference, credentials.getVersion().name().toLowerCase(Locale.ROOT)));
+        }
     }
 
     /**
