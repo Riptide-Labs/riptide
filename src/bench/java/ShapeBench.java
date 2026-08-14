@@ -88,9 +88,9 @@ public final class ShapeBench {
         System.out.println("\n=== Production InventoryLoader vs raw parse, 10,000 agent ranges ===");
         System.out.printf("%-12s %12s %12s %8s%n", "entries", "raw ms", "loader ms", "ratio");
 
-        final SnmpProfilesConfig profiles = new SnmpProfilesConfig();
-        profiles.getCredentials().put("corp-v3", new CredentialSet());
-        profiles.getPolling().put("default", new PollingProfile());
+        final SnmpProfilesConfig profiles = new SnmpProfilesConfig(
+                Map.of("corp-v3", new CredentialSet()),
+                Map.of("default", new PollingProfile()));
         final String inventory = generateInventoryYaml(10_000);
 
         // warm both paths once so neither first-run pays class loading alone

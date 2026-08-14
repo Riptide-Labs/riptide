@@ -5,10 +5,8 @@
 
 package org.riptide.inventory;
 
-import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -17,12 +15,16 @@ import java.util.Map;
  * property binder (they are small and carry {@link org.riptide.secrets.SecretRef}
  * values); the bulk inventory lives in the direct-parsed file named by
  * {@code riptide.inventory.file}.
+ *
+ * <p>Constructor-bound and defensively copied, so the maps handed out are
+ * immutable: no caller can edit the profile set behind the loader's back
+ * (CodeQL java/internal-representation-exposure).</p>
  */
-@Data
 @ConfigurationProperties(prefix = "riptide.snmp")
-public class SnmpProfilesConfig {
+public record SnmpProfilesConfig(Map<String, CredentialSet> credentials, Map<String, PollingProfile> polling) {
 
-    private Map<String, CredentialSet> credentials = new LinkedHashMap<>();
-
-    private Map<String, PollingProfile> polling = new LinkedHashMap<>();
+    public SnmpProfilesConfig {
+        credentials = credentials != null ? Map.copyOf(credentials) : Map.of();
+        polling = polling != null ? Map.copyOf(polling) : Map.of();
+    }
 }

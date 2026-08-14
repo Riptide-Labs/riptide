@@ -12,6 +12,7 @@ import org.riptide.pipeline.ExporterIdentity;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.file.Path;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -22,10 +23,9 @@ class InventoryLoaderTest {
     Path tempDir;
 
     private static SnmpProfilesConfig profiles() {
-        final SnmpProfilesConfig profiles = new SnmpProfilesConfig();
-        profiles.getCredentials().put("corp-v3", new CredentialSet());
-        profiles.getPolling().put("default", new PollingProfile());
-        return profiles;
+        return new SnmpProfilesConfig(
+                Map.of("corp-v3", new CredentialSet()),
+                Map.of("default", new PollingProfile()));
     }
 
     @Test
@@ -50,8 +50,8 @@ class InventoryLoaderTest {
         final var agent = snapshot.agentView().match(netflow("10.20.5.5", 0));
         assertThat(agent).isPresent();
         // resolved at build time to the object itself, never re-looked-up by name (AD-5)
-        assertThat(agent.get().credentials()).isSameAs(profiles.getCredentials().get("corp-v3"));
-        assertThat(agent.get().polling()).isSameAs(profiles.getPolling().get("default"));
+        assertThat(agent.get().credentials()).isSameAs(profiles.credentials().get("corp-v3"));
+        assertThat(agent.get().polling()).isSameAs(profiles.polling().get("default"));
         assertThat(snapshot.agentView().match(netflow("10.99.0.7", 0))).isPresent();
         assertThat(snapshot.agentView().match(netflow("192.168.1.1", 0))).isEmpty();
 

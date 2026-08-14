@@ -110,9 +110,9 @@ public final class InventoryLoader {
             final Map<String, Object> entryBody = body(entry, "agent range");
             requireEntryKeys(entry.getKey(), "agent range", entryBody, AGENT_KEYS);
             final CredentialSet credentials = resolve(entry.getKey(), "credential set",
-                    entryBody.get("credentials"), profiles.getCredentials());
+                    entryBody.get("credentials"), profiles.credentials());
             final PollingProfile polling = resolve(entry.getKey(), "polling profile",
-                    entryBody.get("polling"), profiles.getPolling());
+                    entryBody.get("polling"), profiles.polling());
             builder.add(entry.getKey(), strictAddress(entry.getKey(), "agent range", false), null,
                     new AgentEntry(entry.getKey(), credentials, polling));
         }
