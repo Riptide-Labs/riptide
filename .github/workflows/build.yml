@@ -85,6 +85,24 @@ jobs:
           sudo ip route add 10.42.0.0/16 via 172.30.42.10
           sudo sysctl -w net.ipv4.conf.all.rp_filter=2
           sudo sysctl -w net.ipv4.conf.default.rp_filter=2
+      # Testcontainers aborts an image pull after 2 minutes, which a cold cache
+      # on a slow registry day cannot always meet (main run 31838787435 failed
+      # exactly there). Pre-pull the heavyweight images with retries so the
+      # in-test pull is always a cache hit. Tags must match the test sources
+      # (Nl6Container.IMAGE, Nl6SnmpEnrichmentIT/ClickhouseItFlows).
+      - name: Pre-pull e2e container images
+        run: |
+          for image in ghcr.io/labmonkeys-space/nl6:v0.16.0 clickhouse/clickhouse-server:25.3; do
+            for attempt in 1 2 3; do
+              if docker pull "${image}"; then
+                break
+              elif [ "${attempt}" = 3 ]; then
+                echo "Failed to pull ${image} after 3 attempts" >&2
+                exit 1
+              fi
+              sleep $((attempt * 20))
+            done
+          done
       - name: Integration and e2e tests
         run: |
           make e2e
