@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Stamps the matched node's name onto every flow as {@code exporterName} — the
+ * Stamps the matched node's name onto every flow as {@code exporterName}: the
  * human-readable identity dashboards prefer over the raw exporter address. Flows from
  * an exporter no node covers keep the field unset (persisted as the empty string).
  *

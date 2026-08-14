@@ -80,12 +80,14 @@ public class ExporterNameEnricherTest {
 
     @Test
     void unmatchedBatchLeavesEveryFlowUnnamed() throws Exception {
+        final CountingRegistry registry = registry();
         final var flows = List.of(EnrichedFlow.builder().build(), EnrichedFlow.builder().build());
         final var source = new Source("default",
                 new ExporterIdentity.NetflowIpfix(InetAddress.getByName("203.0.113.99"), 0));
 
-        new ExporterNameEnricher(registry()).enrich(source, flows).get();
+        new ExporterNameEnricher(registry).enrich(source, flows).get();
 
         assertThat(flows).allSatisfy(flow -> assertThat(flow.getExporterName()).isNull());
+        assertThat(registry.lookups).isEqualTo(1);
     }
 }
