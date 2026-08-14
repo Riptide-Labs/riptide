@@ -193,6 +193,21 @@ public class ConfigFileReloaderTest {
     }
 
     @Test
+    public void retiredPollKeysRejectTheCandidate() throws Exception {
+        // a reload-accepted retired key would otherwise kill the NEXT boot
+        final long failuresBefore = metrics.counter("config.reload.failures").getCount();
+        write("""
+                riptide:
+                  snmp:
+                    poll:
+                      refresh-interval-ms: 60000
+                """);
+        reloader.poll();
+
+        assertThat(metrics.counter("config.reload.failures").getCount()).isEqualTo(failuresBefore + 1);
+    }
+
+    @Test
     public void exporterOptionDataSurvivesReload() throws Exception {
         final var exporter = identity("172.16.0.1", 0);
         exporterInterfaceTable.accept(exporter,
@@ -283,6 +298,33 @@ public class ConfigFileReloaderTest {
 
         assertThat(nodeRegistry.lookup(identity("10.14.1.1", 0))).isPresent();
         assertThat(nodeRegistry.lookup(identity("10.15.1.1", 0))).isEmpty();
+    }
+
+    @Test
+    public void retiredKeysInsideSkippedGatedDocumentsDoNotFailTheReload() throws Exception {
+        // gated documents are never installed on reload, so a retired key in one
+        // must not reject the candidate (it does not fail boot either — inactive
+        // gated documents are never loaded there)
+        final long failuresBefore = metrics.counter("config.reload.failures").getCount();
+        write("""
+                riptide:
+                  nodes:
+                    plain:
+                      subnet-address: 10.14.0.0/16
+                ---
+                spring:
+                  config:
+                    activate:
+                      on-profile: never-active
+                riptide:
+                  snmp:
+                    poll:
+                      refresh-interval-ms: 60000
+                """);
+        reloader.poll();
+
+        assertThat(metrics.counter("config.reload.failures").getCount()).isEqualTo(failuresBefore);
+        assertThat(nodeRegistry.lookup(identity("10.14.1.1", 0))).isPresent();
     }
 
     @Test

@@ -1,0 +1,79 @@
+/*
+ * Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package org.riptide.inventory;
+
+import jakarta.annotation.PostConstruct;
+import org.springframework.core.env.AbstractEnvironment;
+import org.springframework.core.env.EnumerablePropertySource;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.PropertySource;
+import org.springframework.stereotype.Component;
+
+import java.util.Locale;
+import java.util.Objects;
+import java.util.Set;
+
+/**
+ * Per-agent poll cadence moved from the global {@code riptide.snmp.poll.*} keys into
+ * named polling profiles ({@code riptide.snmp.polling.<name>}); the global spellings
+ * would bind into fleet config and silently diverge from what profiles say, so
+ * setting them fails startup loudly instead (the migration-check idiom). Fleet-level
+ * keys under the same prefix (pool-width, max-exporters, deregister-after,
+ * dead-endpoint backoff) keep binding exactly as before.
+ *
+ * <p>Deliberate interim state: until the consumer-cutover stories wire the poller
+ * onto the inventory views, cadence runs on the built-in defaults and cannot be
+ * tuned at all — the old keys are forbidden here and profiles are not consumed yet.
+ * All of 0.9 ships as one release; this window exists only on development builds.</p>
+ */
+@Component
+public class PollKeyMigrationCheck {
+
+    // relaxed binding accepts kebab, camelCase, underscore, and any letter case in files,
+    // and TWO env-var mappings (canonical dashes-removed and legacy underscore-per-word);
+    // a spelling denylist cannot enumerate all of those, so every property name is
+    // normalized the way the binder does (lowercase, separators stripped) and compared
+    // for equality. Equality, not prefix, keeps the new "polling." keys and the
+    // fleet-level "poll." keys out of scope.
+    private static final Set<String> RETIRED_KEYS = Set.of(
+            "riptidesnmppollrefreshintervalms",
+            "riptidesnmppollsnapshotexpiryms");
+
+    private final Environment environment;
+
+    public PollKeyMigrationCheck(final Environment environment) {
+        this.environment = Objects.requireNonNull(environment);
+    }
+
+    @PostConstruct
+    void failOnRetiredPollKeys() {
+        if (!(this.environment instanceof AbstractEnvironment abstractEnvironment)) {
+            return;
+        }
+        failOnRetiredPollKeys(abstractEnvironment.getPropertySources());
+    }
+
+    /** Reusable against any source stack, matching the migration-check idiom. */
+    public static void failOnRetiredPollKeys(final Iterable<PropertySource<?>> sources) {
+        for (final var source : sources) {
+            if (source instanceof EnumerablePropertySource<?> enumerable) {
+                for (final String name : enumerable.getPropertyNames()) {
+                    if (RETIRED_KEYS.contains(normalize(name))) {
+                        throw new IllegalStateException(("Retired per-agent poll key found ('%s'): refresh and "
+                                + "expiry moved into named polling profiles: configure "
+                                + "riptide.snmp.polling.<name>.refresh-interval / .snapshot-expiry and reference "
+                                + "the profile from agent ranges. Fleet-level riptide.snmp.poll.* keys are "
+                                + "unaffected.").formatted(name));
+                    }
+                }
+            }
+        }
+    }
+
+    private static String normalize(final String name) {
+        return name.toLowerCase(Locale.ROOT).replace("-", "").replace("_", "").replace(".", "");
+    }
+}

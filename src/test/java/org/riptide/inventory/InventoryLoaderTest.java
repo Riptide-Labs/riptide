@@ -188,6 +188,62 @@ class InventoryLoaderTest {
     }
 
     @Test
+    void omittedPollingResolvesTheOperatorDefinedDefault() {
+        final SnmpProfilesConfig profiles = profiles();
+        final var snapshot = InventoryLoader.parse(profiles, """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """, "test.yaml");
+
+        assertThat(snapshot.agentView().match(netflow("10.20.5.5", 0)).get().polling())
+                .isSameAs(profiles.polling().get("default"));
+    }
+
+    @Test
+    void omittedPollingFallsBackToTheBuiltInDefault() {
+        // no operator-defined default profile at all
+        final SnmpProfilesConfig profiles = new SnmpProfilesConfig(
+                Map.of("corp-v3", TestCredentials.v3()), Map.of());
+        final var snapshot = InventoryLoader.parse(profiles, """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """, "test.yaml");
+
+        final var polling = snapshot.agentView().match(netflow("10.20.5.5", 0)).get().polling();
+        assertThat(polling).isNotNull();
+        assertThat(polling.getRefreshInterval()).isEqualTo(java.time.Duration.ofMillis(600_000));
+    }
+
+    @Test
+    void explicitDefaultReferenceBehavesLikeTheOmittedKey() {
+        // spelling out "polling: default" must not fail where omission succeeds,
+        // even when the operator defines no default profile
+        final SnmpProfilesConfig profiles = new SnmpProfilesConfig(
+                Map.of("corp-v3", TestCredentials.v3()), Map.of());
+        final var snapshot = InventoryLoader.parse(profiles, """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                        polling: default
+                      "10.30.0.0/16":
+                        credentials: corp-v3
+                """, "test.yaml");
+
+        final var explicit = snapshot.agentView().match(netflow("10.20.5.5", 0)).get().polling();
+        final var omitted = snapshot.agentView().match(netflow("10.30.5.5", 0)).get().polling();
+        assertThat(explicit).isSameAs(omitted);
+        assertThat(explicit.getRefreshInterval()).isEqualTo(java.time.Duration.ofMillis(600_000));
+    }
+
+    @Test
     void ipv6RangesAndExportersWork() {
         final var snapshot = InventoryLoader.parse(profiles(), """
                 riptide:

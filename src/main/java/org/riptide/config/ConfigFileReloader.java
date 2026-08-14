@@ -13,6 +13,7 @@ import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.node.NodeDefinition;
 import org.riptide.node.NodeRegistry;
+import org.riptide.inventory.PollKeyMigrationCheck;
 import org.riptide.inventory.SnmpProfilesConfig;
 import org.riptide.node.NodesConfigMigrationCheck;
 import org.riptide.routing.RoutingConfig;
@@ -205,8 +206,11 @@ public class ConfigFileReloader {
             throw new IllegalStateException("all documents are profile-gated — profile activation is boot-only");
         }
 
-        // legacy indexed keys in the fresh file fail the candidate like they fail boot
-        NodesConfigMigrationCheck.failOnLegacyIndexedNodes(fresh);
+        // legacy indexed keys and retired poll keys fail the candidate like they
+        // fail boot — scanned over the applicable documents only, because
+        // profile-gated documents are never installed on reload
+        NodesConfigMigrationCheck.failOnLegacyIndexedNodes(applicable);
+        PollKeyMigrationCheck.failOnRetiredPollKeys(applicable);
 
         // fidelity by construction: the candidate stack is the live stack with exactly
         // the file layer swapped — env overrides keep their boot-time precedence.
