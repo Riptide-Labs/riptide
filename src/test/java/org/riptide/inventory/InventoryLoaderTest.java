@@ -24,7 +24,7 @@ class InventoryLoaderTest {
 
     private static SnmpProfilesConfig profiles() {
         return new SnmpProfilesConfig(
-                Map.of("corp-v3", new CredentialSet()),
+                Map.of("corp-v3", TestCredentials.v3()),
                 Map.of("default", new PollingProfile()));
     }
 

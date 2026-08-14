@@ -73,6 +73,25 @@ public class ConfigFileReloaderTest {
         Files.deleteIfExists(CONFIG);
     }
 
+    @Test
+    void malformedCredentialEditIsRejectedOnReloadNotAtTheNextBoot() throws Exception {
+        // 2.3's bind-time shape validation must gate reload candidates too: a
+        // half-configured USM pair committing cleanly here would fail the NEXT boot
+        final long failuresBefore = this.metrics.counter("config.reload.failures").getCount();
+        write("""
+                riptide:
+                  snmp:
+                    credentials:
+                      half:
+                        version: v3
+                        security-name: riptide
+                        auth-passphrase: env://X
+                """);
+        this.reloader.poll();
+
+        assertThat(this.metrics.counter("config.reload.failures").getCount()).isEqualTo(failuresBefore + 1);
+    }
+
     private void write(final String yaml) throws IOException {
         Files.writeString(CONFIG, yaml);
     }

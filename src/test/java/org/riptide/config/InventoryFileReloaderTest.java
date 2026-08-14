@@ -11,7 +11,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.riptide.inventory.CredentialSet;
+import org.riptide.inventory.TestCredentials;
 import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventoryConfig;
 import org.riptide.inventory.SnmpProfilesConfig;
@@ -45,7 +45,7 @@ class InventoryFileReloaderTest {
     @BeforeEach
     void setUp() throws IOException {
         this.file = this.tempDir.resolve("inventory.yaml");
-        this.profiles = new SnmpProfilesConfig(Map.of("corp-v3", new CredentialSet()), Map.of());
+        this.profiles = new SnmpProfilesConfig(Map.of("corp-v3", TestCredentials.v3()), Map.of());
 
         final InventoryConfig inventoryConfig = new InventoryConfig();
         inventoryConfig.setFile(this.file);
