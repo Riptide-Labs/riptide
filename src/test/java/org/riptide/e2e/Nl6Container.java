@@ -33,7 +33,7 @@ import java.util.Map;
  */
 public final class Nl6Container extends GenericContainer<Nl6Container> {
 
-    private static final String IMAGE = "ghcr.io/labmonkeys-space/nl6:v0.16.0";
+    private static final String IMAGE = ContainerImages.nl6();
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newHttpClient();

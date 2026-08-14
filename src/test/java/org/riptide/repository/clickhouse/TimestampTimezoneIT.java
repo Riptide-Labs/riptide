@@ -13,6 +13,7 @@ import org.riptide.flows.parser.data.Flow;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
+import org.riptide.e2e.ContainerImages;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
@@ -38,7 +39,7 @@ import java.util.TimeZone;
 public class TimestampTimezoneIT {
 
     @Container
-    private static final GenericContainer<?> CLICKHOUSE = new GenericContainer<>("clickhouse/clickhouse-server:25.3")
+    private static final GenericContainer<?> CLICKHOUSE = new GenericContainer<>(ContainerImages.clickhouse())
             .withEnv("TZ", "Europe/Berlin")
             .withEnv("CLICKHOUSE_DB", "riptide")
             .withEnv("CLICKHOUSE_USER", "riptide")

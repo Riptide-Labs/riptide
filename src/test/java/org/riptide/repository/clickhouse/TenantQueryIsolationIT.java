@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.riptide.config.ClickhouseConfig;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
+import org.riptide.e2e.ContainerImages;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
@@ -54,7 +55,7 @@ public class TenantQueryIsolationIT {
     private static final SecretResolvers RESOLVERS = SecretResolvers.defaults();
 
     @Container
-    private static final GenericContainer<?> CLICKHOUSE = new GenericContainer<>("clickhouse/clickhouse-server:25.3")
+    private static final GenericContainer<?> CLICKHOUSE = new GenericContainer<>(ContainerImages.clickhouse())
             // access management lets the default (admin) user CREATE USER / ROW POLICY.
             .withEnv("CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT", "1")
             .withExposedPorts(8123)
