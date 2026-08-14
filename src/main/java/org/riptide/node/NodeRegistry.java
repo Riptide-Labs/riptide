@@ -7,13 +7,12 @@ package org.riptide.node;
 
 import inet.ipaddr.IPAddressString;
 import jakarta.annotation.PostConstruct;
+import org.riptide.inventory.PinnedPrefixMatcher;
 import org.riptide.pipeline.ExporterIdentity;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.net.InetAddress;
-import java.util.Comparator;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -23,16 +22,18 @@ import java.util.Optional;
  * as receivers); the key is the node's identity in logs and error messages.
  *
  * <p>Bound state and serving state are separate: Spring binds into {@code nodes} at
- * boot, lookups read the volatile {@code active} snapshot published by
- * {@link #validate()} — or by {@link #swap(Map)} on config hot-reload. Lookups are
- * stateless over one snapshot read, so a swap is the whole concurrency story.</p>
+ * boot, lookups read the volatile {@code active} matcher published by
+ * {@link #validate()} — or by {@link #swap(Map)} on config hot-reload. The matcher is
+ * immutable and built off the hot path, so a whole-instance swap is the whole
+ * concurrency story; lookups take exactly one volatile read and never re-read.</p>
  */
 @ConfigurationProperties(prefix = "riptide")
 public class NodeRegistry {
 
     private Map<String, NodeDefinition> nodes = new HashMap<>();
 
-    private volatile Map<String, NodeDefinition> active = Map.of();
+    private volatile PinnedPrefixMatcher<Map.Entry<String, NodeDefinition>> active =
+            PinnedPrefixMatcher.<Map.Entry<String, NodeDefinition>>builder().build();
 
     public Map<String, NodeDefinition> getNodes() {
         return this.nodes;
@@ -63,44 +64,51 @@ public class NodeRegistry {
     }
 
     private Optional<Node> lookup(final InetAddress address, final long domain) {
-        final Map<String, NodeDefinition> snapshot = this.active;
+        final PinnedPrefixMatcher<Map.Entry<String, NodeDefinition>> matcher = this.active;
         final IPAddressString ipAddressString = new IPAddressString(address.getHostAddress());
-        final List<Map.Entry<String, NodeDefinition>> subnetMatches = snapshot.entrySet().stream()
-                .filter(node -> node.getValue().getSubnetAddress().contains(ipAddressString))
-                .toList();
-
-        final List<Map.Entry<String, NodeDefinition>> pinned = subnetMatches.stream()
-                .filter(node -> node.getValue().getObservationDomain() != null
-                        && node.getValue().getObservationDomain() == domain)
-                .toList();
-        final List<Map.Entry<String, NodeDefinition>> pool = !pinned.isEmpty()
-                ? pinned
-                : subnetMatches.stream().filter(node -> node.getValue().getObservationDomain() == null).toList();
-
-        return pool.stream()
-                .max(Comparator.comparingInt(node -> prefixLength(node.getValue().getSubnetAddress())))
+        return matcher.lookup(ipAddressString, domain)
                 .map(node -> new Node(node.getKey(), node.getValue(), ipAddressString));
     }
 
-    /** Validates the boot-time bind and publishes it as the serving snapshot. */
+    /** Validates the boot-time bind and publishes it as the serving matcher. */
     @PostConstruct
     public void validate() {
-        this.active = validated(this.nodes);
+        this.active = matcherOf(validated(this.nodes));
     }
 
-    /** Atomically replaces the serving snapshot with a validated candidate (hot-reload). */
+    /** Atomically replaces the serving matcher with a validated candidate (hot-reload). */
     public void swap(final Map<String, NodeDefinition> candidate) {
-        this.active = validated(candidate);
+        this.active = matcherOf(validated(candidate));
+    }
+
+    /**
+     * Builds the immutable trie-backed matcher from a validated map. For trie-shaped
+     * entries the builder's duplicate detection additionally catches spellings the
+     * canonical-string check treats as distinct (a bare host vs its explicit /32),
+     * naming both entries; side-pool shapes rely on {@link #validated} alone.
+     */
+    private static PinnedPrefixMatcher<Map.Entry<String, NodeDefinition>> matcherOf(
+            final Map<String, NodeDefinition> nodes) {
+        final PinnedPrefixMatcher.Builder<Map.Entry<String, NodeDefinition>> builder = PinnedPrefixMatcher.builder();
+        for (final Map.Entry<String, NodeDefinition> node : nodes.entrySet()) {
+            builder.add(node.getKey(), node.getValue().getSubnetAddress(),
+                    node.getValue().getObservationDomain(), node);
+        }
+        return builder.build();
     }
 
     /**
      * Fails on ambiguous configuration. Equal-length CIDR prefixes are either
      * identical or disjoint, so a true tie is exactly two nodes with the same subnet and
-     * the same pinning state — detection is complete, not heuristic.
+     * the same pinning state — detection is complete, not heuristic. A trial matcher
+     * build runs last, so this method throws for everything {@link #swap(Map)} could
+     * throw for: the reloader pre-validates candidates with this method before
+     * committing its environment swap, and that contract only holds if the real build
+     * cannot fail on input this method accepted.
      *
      * @return an immutable map of the given definitions. The copy is shallow —
-     *         {@link NodeDefinition} is a mutable bean — so isolation of the serving
-     *         snapshot rests on callers passing freshly bound instances and never
+     *         {@link NodeDefinition} is a mutable bean — so isolation of the published
+     *         matcher rests on callers passing freshly bound instances and never
      *         mutating them after publishing (both the boot bind and the hot-reload
      *         candidate bind create fresh instances)
      */
@@ -121,16 +129,8 @@ public class NodeRegistry {
                         .formatted(other, node.getKey()));
             }
         }
+        matcherOf(nodes);
         return Map.copyOf(nodes);
-    }
-
-    private static int prefixLength(final IPAddressString subnet) {
-        final Integer prefix = subnet.getNetworkPrefixLength();
-        if (prefix != null) {
-            return prefix;
-        }
-        // a bare host address is the most specific match possible
-        return subnet.getAddress() != null ? subnet.getAddress().getBitCount() : 0;
     }
 
     private static String canonicalSubnet(final IPAddressString subnet) {
