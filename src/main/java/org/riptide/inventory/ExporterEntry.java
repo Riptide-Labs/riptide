@@ -14,7 +14,10 @@ import java.util.Map;
  * name, which is the value stamped as {@code exporterName}.
  *
  * @param name the entry key, stamped on flows once the cutover story lands
- * @param address the single host address the entry matches
+ * @param address the host address or CIDR prefix block the entry matches. A prefix
+ *         labels and pins every device it covers, which is what a site or role level
+ *         label needs; the name is therefore not a device identity, and making it one
+ *         would break exactly the case prefixes exist for. Most specific wins
  * @param observationDomain the optional observation-domain pin, {@code null} for
  *         wildcard
  * @param interfaces static per-ifIndex pins, empty when the entry declares none;

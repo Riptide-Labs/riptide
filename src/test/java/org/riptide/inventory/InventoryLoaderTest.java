@@ -347,16 +347,83 @@ class InventoryLoaderTest {
     }
 
     @Test
-    void exporterAddressMustBeASingleHost() {
+    void exporterAddressMayBeAPrefixOrAHostAndMostSpecificWins() {
+        // a prefix entry labels and pins every device it covers, which is how a site
+        // scoped label survives the move off riptide.nodes
+        final var snapshot = InventoryLoader.parse(profiles(), """
+                riptide:
+                  exporters:
+                    region:
+                      address: 10.20.0.0/16
+                    site:
+                      address: 10.20.30.0/24
+                      interfaces:
+                        1: { alias: "Uplink, pinned for the whole site" }
+                    one-device:
+                      address: 10.20.30.7
+                """, "test.yaml");
+
+        assertThat(snapshot.exporterView().match(netflow("10.20.99.9", 0)))
+                .map(ExporterEntry::name).hasValue("region");
+        assertThat(snapshot.exporterView().match(netflow("10.20.30.9", 0)))
+                .map(ExporterEntry::name).hasValue("site");
+        // the bare host stays the most specific match, even inside both prefixes
+        assertThat(snapshot.exporterView().match(netflow("10.20.30.7", 0)))
+                .map(ExporterEntry::name).hasValue("one-device");
+        // and a prefix entry's pins reach every device it covers
+        assertThat(snapshot.exporterView().match(netflow("10.20.30.9", 0)).orElseThrow()
+                .interfaces().get(1).alias()).isEqualTo("Uplink, pinned for the whole site");
+    }
+
+    @Test
+    void exporterPrefixesKeepThePinAndDuplicateRules() {
+        // a pinned prefix beats an unpinned one covering the same address, and the
+        // unpinned one still serves every other domain
+        final var snapshot = InventoryLoader.parse(profiles(), """
+                riptide:
+                  exporters:
+                    pinned:
+                      address: 10.21.0.0/24
+                      observation-domain: 42
+                    unpinned:
+                      address: 10.21.0.0/24
+                """, "test.yaml");
+
+        assertThat(snapshot.exporterView().match(netflow("10.21.0.5", 42)))
+                .map(ExporterEntry::name).hasValue("pinned");
+        assertThat(snapshot.exporterView().match(netflow("10.21.0.5", 7)))
+                .map(ExporterEntry::name).hasValue("unpinned");
+
+        // two spellings of one canonical prefix with the same pin are ambiguous, and
+        // the netmask form proves this is canonicalisation rather than string equality
         assertThatThrownBy(() -> InventoryLoader.parse(profiles(), """
                 riptide:
                   exporters:
-                    wide:
-                      address: 10.20.0.0/24
+                    first:
+                      address: 10.22.0.0/24
+                    second:
+                      address: 10.22.0.0/255.255.255.0
                 """, "test.yaml"))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("wide")
-                .hasMessageContaining("single host");
+                .hasMessageContaining("first")
+                .hasMessageContaining("second");
+    }
+
+    @Test
+    void exporterAddressesStayStrictAboutEveryOtherShape() {
+        // lifting host-only must not lift the strictness that catches typos: the
+        // exporters tree shares strictAddress with agent ranges, asserted not assumed
+        for (final String shape : new String[]{"10.0.*.*", "10.0.1-3.*", "*", "10.0.1.5/24", "010.0.0.7", "167772161"}) {
+            assertThatThrownBy(() -> InventoryLoader.parse(profiles(), """
+                    riptide:
+                      exporters:
+                        bad:
+                          address: "%s"
+                    """.formatted(shape), "test.yaml"))
+                    .as("shape %s", shape)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("bad");
+        }
     }
 
     @Test
