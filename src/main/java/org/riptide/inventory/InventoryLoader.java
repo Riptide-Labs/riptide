@@ -43,12 +43,16 @@ public final class InventoryLoader {
     private static final Set<String> ROOT_KEYS = Set.of("riptide");
     private static final Set<String> RIPTIDE_KEYS = Set.of("snmp", "exporters");
     private static final Set<String> SNMP_KEYS = Set.of("agents");
-    private static final Set<String> AGENT_KEYS = Set.of("credentials", "polling", "enabled");
+    private static final Set<String> AGENT_KEYS = Set.of("credentials", "polling", "enabled", "port");
     private static final Set<String> EXPORTER_KEYS = Set.of("address", "observation-domain", "interfaces");
 
     private static final Set<String> PIN_KEYS = Set.of("name", "alias", "high-speed");
 
     private static final long MAX_OBSERVATION_DOMAIN = 0xFFFF_FFFFL;
+
+    private static final int SNMP_DEFAULT_PORT = 161;
+
+    private static final int MAX_PORT = 65535;
 
     /** ifHighSpeed is a Gauge32 in Mbit/s. */
     private static final long MAX_HIGH_SPEED = 0xFFFF_FFFFL;
@@ -153,6 +157,7 @@ public final class InventoryLoader {
             final Map<String, Object> entryBody = body(entry, "agent range");
             requireEntryKeys(entry.getKey(), "agent range", entryBody, AGENT_KEYS);
             final boolean enabled = enabled(entry.getKey(), entryBody.get("enabled"));
+            final int port = port(entry.getKey(), entryBody.get("port"));
             final CredentialSet credentials = resolve(entry.getKey(), "credential set",
                     entryBody.get("credentials"), profiles.credentials());
             final Object pollingReference = entryBody.get("polling");
@@ -176,7 +181,7 @@ public final class InventoryLoader {
                 }
             }
             builder.add(entry.getKey(), address, null,
-                    new AgentEntry(entry.getKey(), credentials, polling, enabled));
+                    new AgentEntry(entry.getKey(), credentials, polling, enabled, port));
         }
         if (declaredNothing > MAX_NAMED_EMPTY_ENTRIES) {
             // a generated inventory can carry thousands of these; naming every one
@@ -374,6 +379,27 @@ public final class InventoryLoader {
                                 .formatted(kind, name, key, new TreeSet<>(known)));
             }
         }
+    }
+
+    /**
+     * The UDP port the agent answers on. Restored for 0.9 after the agent-ranges story
+     * fixed it at 161: the legacy tree exposes a per-node port, the shipped example
+     * uses one, and so do the SNMP tests, so a device on a non-standard port would
+     * silently lose enrichment at the cutover (walks to 161, fail, back off).
+     */
+    private static int port(final String range, final Object value) {
+        if (value == null) {
+            return SNMP_DEFAULT_PORT;
+        }
+        if (!(value instanceof Integer port)) {
+            throw new IllegalStateException(
+                    "Agent range '%s' has a port '%s' that is not a whole number.".formatted(range, value));
+        }
+        if (port < 1 || port > MAX_PORT) {
+            throw new IllegalStateException(
+                    "Agent range '%s' has a port %d outside 1..%d.".formatted(range, port, MAX_PORT));
+        }
+        return port;
     }
 
     /**

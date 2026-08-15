@@ -1034,6 +1034,37 @@ class InventoryLoaderTest {
     }
 
     @Test
+    void portIsPerRangeAndDefaultsTo161() {
+        final var snapshot = InventoryLoader.parse(profiles(), """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.98.0.0/24":
+                        credentials: corp-v3
+                        port: 12345
+                      "10.98.1.0/24":
+                        credentials: corp-v3
+                """, "test.yaml");
+
+        assertThat(snapshot.agentView().match(netflow("10.98.0.5", 0)).orElseThrow().port()).isEqualTo(12345);
+        assertThat(snapshot.agentView().match(netflow("10.98.1.5", 0)).orElseThrow().port()).isEqualTo(161);
+
+        for (final String bad : new String[]{"\"12345\"", "0", "70000"}) {
+            assertThatThrownBy(() -> InventoryLoader.parse(profiles(), """
+                    riptide:
+                      snmp:
+                        agents:
+                          "10.98.2.0/24":
+                            credentials: corp-v3
+                            port: %s
+                    """.formatted(bad), "test.yaml"))
+                    .as("port %s", bad)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("10.98.2.0/24");
+        }
+    }
+
+    @Test
     void addressCoveredByNoRangeYieldsNoAgentEntry() {
         // the loader half of FR-8's not-polled-but-collected rule: no entry means no
         // endpoint can ever be built for it. The runtime half (collected, option-data

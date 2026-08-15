@@ -18,6 +18,8 @@ package org.riptide.inventory;
  *     through direct construction
  * @param enabled {@code false} when the range is an explicit carve-out, which
  *     shadows wider ranges without ever being polled; {@code true} when absent
+ * @param port the UDP port the agent answers on, 161 when absent
  */
-public record AgentEntry(String range, CredentialSet credentials, PollingProfile polling, boolean enabled) {
+public record AgentEntry(String range, CredentialSet credentials, PollingProfile polling, boolean enabled,
+                         int port) {
 }
