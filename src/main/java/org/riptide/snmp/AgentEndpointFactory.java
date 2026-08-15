@@ -44,23 +44,23 @@ public final class AgentEndpointFactory {
         if (credentials == null) {
             return Optional.empty();
         }
-        if (credentials.getVersion() == null) {
+        if (credentials.version() == null) {
             // bind-time validation guarantees a version; this guard names the range
             // instead of surfacing a bare NPE if a mutated set ever slips through
             throw new IllegalStateException(
                     "Agent range '%s' has a credential set with no version.".formatted(entry.range()));
         }
         final SnmpDefinition definition = new SnmpDefinition();
-        definition.setSnmpVersion(version(credentials.getVersion()));
-        definition.setCommunity(credentials.getCommunity());
-        definition.setSecurityName(credentials.getSecurityName());
-        definition.setAuthProtocol(credentials.getAuthProtocol());
-        definition.setAuthPassphrase(credentials.getAuthPassphrase());
-        definition.setPrivProtocol(credentials.getPrivProtocol());
-        definition.setPrivPassphrase(credentials.getPrivPassphrase());
+        definition.setSnmpVersion(version(credentials.version()));
+        definition.setCommunity(credentials.community());
+        definition.setSecurityName(credentials.securityName());
+        definition.setAuthProtocol(credentials.authProtocol());
+        definition.setAuthPassphrase(credentials.authPassphrase());
+        definition.setPrivProtocol(credentials.privProtocol());
+        definition.setPrivPassphrase(credentials.privPassphrase());
         if (entry.polling() != null) {
-            definition.setTimeout(entry.polling().getTimeout());
-            definition.setRetries(entry.polling().getRetries());
+            definition.setTimeout(entry.polling().timeout());
+            definition.setRetries(entry.polling().retries());
         }
         return Optional.of(definition.createEndpoint(address));
     }

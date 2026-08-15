@@ -5,8 +5,8 @@
 
 package org.riptide.inventory;
 
-import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.properties.bind.DefaultValue;
 
 import java.time.Duration;
 
@@ -16,24 +16,43 @@ import java.time.Duration;
  * named {@code default} applies to ranges that name none; when the operator defines
  * no such profile, {@link #builtInDefault()} does, carrying exactly the cadence the
  * old global keys defaulted to, so nothing changes pace.
+ *
+ * <p>A record rather than a bean, because one instance is shared by every unprofiled
+ * range in a snapshot and, when the operator defines {@code default}, by every
+ * snapshot a reload produces. While it was mutable, a single setter would have
+ * retuned the whole fleet with nothing revalidating the result.</p>
+ *
+ * @param refreshInterval how often each exporter is walked
+ * @param snapshotExpiry how long a snapshot stays usable, the staleness backstop
+ * @param timeout the per-walk SNMP timeout in milliseconds
+ * @param retries the per-walk SNMP retry count, zero meaning a single attempt
  */
-@Data
 @Slf4j
-public class PollingProfile {
+public record PollingProfile(@DefaultValue(DEFAULT_REFRESH_INTERVAL) Duration refreshInterval,
+                             @DefaultValue(DEFAULT_SNAPSHOT_EXPIRY) Duration snapshotExpiry,
+                             @DefaultValue(DEFAULT_TIMEOUT) int timeout,
+                             @DefaultValue(DEFAULT_RETRIES) int retries) {
 
     /** Mirrors SnmpPollConfig.refreshIntervalMs, which inherited the old cache retention. */
-    private Duration refreshInterval = Duration.ofMillis(600_000);
+    static final String DEFAULT_REFRESH_INTERVAL = "PT10M";
 
     /** Mirrors SnmpPollConfig.snapshotExpiryMs: the 3x staleness backstop. */
-    private Duration snapshotExpiry = Duration.ofMillis(1_800_000);
+    static final String DEFAULT_SNAPSHOT_EXPIRY = "PT30M";
 
-    private int timeout = 500;
+    static final String DEFAULT_TIMEOUT = "500";
 
-    private int retries = 1;
+    static final String DEFAULT_RETRIES = "1";
 
-    /** The implicit {@code default} profile: a fresh instance carrying the built-in values. */
+    /**
+     * The implicit {@code default} profile. Built from the same constants the binder
+     * defaults to, so the two paths cannot drift; {@code PollingDefaultsGuardTest}
+     * pins the values themselves against the classes the poller still reads.
+     */
     public static PollingProfile builtInDefault() {
-        return new PollingProfile();
+        return new PollingProfile(Duration.parse(DEFAULT_REFRESH_INTERVAL),
+                Duration.parse(DEFAULT_SNAPSHOT_EXPIRY),
+                Integer.parseInt(DEFAULT_TIMEOUT),
+                Integer.parseInt(DEFAULT_RETRIES));
     }
 
     /**

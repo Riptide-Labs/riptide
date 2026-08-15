@@ -36,6 +36,37 @@ class InventoryWiringTest {
     }
 
     @Test
+    void aProfileDeclaredWithNoValuesBindsExactlyTheBuiltInDefault() {
+        // the two default paths must not drift: @DefaultValue feeds the binder, the
+        // constants feed builtInDefault(), and only value equality catches a mismatch.
+        // 'sparse' also proves per-component defaulting, filling the three keys it omits
+        this.runner
+                .withPropertyValues("riptide.snmp.polling.bare.timeout=500",
+                        "riptide.snmp.polling.sparse.retries=4")
+                .run(context -> {
+                    final var polling = context.getBean(SnmpProfilesConfig.class).polling();
+                    assertThat(polling.get("bare")).isEqualTo(PollingProfile.builtInDefault());
+                    assertThat(polling.get("sparse").retries()).isEqualTo(4);
+                    assertThat(polling.get("sparse").refreshInterval())
+                            .isEqualTo(PollingProfile.builtInDefault().refreshInterval());
+                    assertThat(polling.get("sparse").snapshotExpiry())
+                            .isEqualTo(PollingProfile.builtInDefault().snapshotExpiry());
+                    assertThat(polling.get("sparse").timeout())
+                            .isEqualTo(PollingProfile.builtInDefault().timeout());
+                });
+    }
+
+    @Test
+    void boundValueObjectsAreImmutableSoBindTimeValidationIsAnInvariant() {
+        // the point of the refactor: a validated set cannot be retuned afterwards.
+        // If either type regains a setter, this stops compiling
+        assertThat(CredentialSet.class.getMethods())
+                .noneMatch(method -> method.getName().startsWith("set"));
+        assertThat(PollingProfile.class.getMethods())
+                .noneMatch(method -> method.getName().startsWith("set"));
+    }
+
+    @Test
     void startsWithoutAnInventoryFileServingTheEmptyInventory() {
         this.runner.run(context -> {
             assertThat(context).hasNotFailed().hasSingleBean(Inventory.class);
@@ -67,10 +98,10 @@ class InventoryWiringTest {
                     final var agent = context.getBean(Inventory.class).snapshot()
                             .agentView().match(netflow("10.20.5.5", 0));
                     assertThat(agent).isPresent();
-                    assertThat(agent.get().credentials().getSecurityName()).isEqualTo("riptide");
+                    assertThat(agent.get().credentials().securityName()).isEqualTo("riptide");
                     // the stated reason the profiles stay Spring-bound: SecretRef
                     // values bind through the existing converter
-                    assertThat(agent.get().credentials().getAuthPassphrase()).isNotNull();
+                    assertThat(agent.get().credentials().authPassphrase()).isNotNull();
                 });
     }
 

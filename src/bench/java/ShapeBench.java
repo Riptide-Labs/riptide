@@ -91,7 +91,7 @@ public final class ShapeBench {
 
         final SnmpProfilesConfig profiles = new SnmpProfilesConfig(
                 Map.of("corp-v3", benchCredentials()),
-                Map.of("default", new PollingProfile()));
+                Map.of("default", PollingProfile.builtInDefault()));
         final String inventory = generateInventoryYaml(10_000);
 
         // warm both paths once so neither first-run pays class loading alone
@@ -131,10 +131,7 @@ public final class ShapeBench {
     // deliberate local copy of TestCredentials.v3(): the bench source set cannot
     // see test roots; update alongside the shared fixture when validation tightens
     private static CredentialSet benchCredentials() {
-        final CredentialSet set = new CredentialSet();
-        set.setVersion(CredentialVersion.V3);
-        set.setSecurityName("bench");
-        return set;
+        return CredentialSet.usm("bench");
     }
 
     private static void rawLoad(final String content) {
