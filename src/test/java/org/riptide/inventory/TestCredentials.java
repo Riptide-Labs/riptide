@@ -18,25 +18,15 @@ public final class TestCredentials {
     }
 
     public static CredentialSet v3() {
-        final CredentialSet set = new CredentialSet();
-        set.setVersion(CredentialVersion.V3);
-        set.setSecurityName("riptide");
-        return set;
+        return CredentialSet.usm("riptide");
     }
 
     /** Community only: validateCommunity rejects any USM field on v1/v2c. */
     public static CredentialSet v1() {
-        return community(CredentialVersion.V1);
+        return CredentialSet.community(CredentialVersion.V1, SecretRef.of("public"));
     }
 
     public static CredentialSet v2c() {
-        return community(CredentialVersion.V2C);
-    }
-
-    private static CredentialSet community(final CredentialVersion version) {
-        final CredentialSet set = new CredentialSet();
-        set.setVersion(version);
-        set.setCommunity(SecretRef.of("public"));
-        return set;
+        return CredentialSet.community(CredentialVersion.V2C, SecretRef.of("public"));
     }
 }

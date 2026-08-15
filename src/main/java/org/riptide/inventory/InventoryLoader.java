@@ -176,7 +176,7 @@ public final class InventoryLoader {
         if (credentials == null) {
             return;
         }
-        if (credentials.getVersion() == null) {
+        if (credentials.version() == null) {
             // bind-time validation guarantees a version, but the set is a mutable bean
             // shared across ranges: name the range instead of surfacing a bare NPE that
             // escapes the file-naming wrapper
@@ -185,7 +185,7 @@ public final class InventoryLoader {
         }
         // a switch expression with no default: adding a version becomes a compile error
         // here rather than a silently insecure pass
-        final boolean cleartext = switch (credentials.getVersion()) {
+        final boolean cleartext = switch (credentials.version()) {
             case V1, V2C -> true;
             case V3 -> false;
         };
@@ -199,7 +199,7 @@ public final class InventoryLoader {
                             + "segment to a v3 credential set.")
                             // the raw reference, never the CredentialSet: the set carries no
                             // name of its own, so the object would not identify what to fix
-                            .formatted(range, reference, credentials.getVersion().name().toLowerCase(Locale.ROOT)));
+                            .formatted(range, reference, credentials.version().name().toLowerCase(Locale.ROOT)));
         }
     }
 

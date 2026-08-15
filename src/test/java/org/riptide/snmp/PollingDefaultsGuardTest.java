@@ -25,9 +25,9 @@ class PollingDefaultsGuardTest {
         final SnmpDefinition legacyDefinition = new SnmpDefinition();
         final SnmpPollConfig fleetConfig = new SnmpPollConfig();
 
-        assertThat(profile.getTimeout()).isEqualTo(legacyDefinition.getTimeout());
-        assertThat(profile.getRetries()).isEqualTo(legacyDefinition.getRetries());
-        assertThat(profile.getRefreshInterval()).isEqualTo(Duration.ofMillis(fleetConfig.getRefreshIntervalMs()));
-        assertThat(profile.getSnapshotExpiry()).isEqualTo(Duration.ofMillis(fleetConfig.getSnapshotExpiryMs()));
+        assertThat(profile.timeout()).isEqualTo(legacyDefinition.getTimeout());
+        assertThat(profile.retries()).isEqualTo(legacyDefinition.getRetries());
+        assertThat(profile.refreshInterval()).isEqualTo(Duration.ofMillis(fleetConfig.getRefreshIntervalMs()));
+        assertThat(profile.snapshotExpiry()).isEqualTo(Duration.ofMillis(fleetConfig.getSnapshotExpiryMs()));
     }
 }

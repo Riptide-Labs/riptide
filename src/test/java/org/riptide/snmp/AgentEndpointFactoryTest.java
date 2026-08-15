@@ -25,20 +25,13 @@ class AgentEndpointFactoryTest {
     private static final IPAddressString ADDRESS = new IPAddressString("10.0.0.7");
 
     private static CredentialSet v2c(final SecretRef community) {
-        final CredentialSet set = new CredentialSet();
-        set.setVersion(CredentialVersion.V2C);
-        set.setCommunity(community);
-        return set;
+        return CredentialSet.community(CredentialVersion.V2C, community);
     }
 
     @Test
     void buildsEndpointsForEveryVersion() {
-        final CredentialSet v1 = new CredentialSet();
-        v1.setVersion(CredentialVersion.V1);
-        v1.setCommunity(SecretRef.of("legacy"));
-        final CredentialSet v3 = new CredentialSet();
-        v3.setVersion(CredentialVersion.V3);
-        v3.setSecurityName("riptide");
+        final CredentialSet v1 = CredentialSet.community(CredentialVersion.V1, SecretRef.of("legacy"));
+        final CredentialSet v3 = CredentialSet.usm("riptide");
 
         final var v1Endpoint = AgentEndpointFactory.endpointFor(
                 new AgentEntry("10.0.0.7", v1, null, true), ADDRESS);
@@ -60,28 +53,23 @@ class AgentEndpointFactoryTest {
     void mapsEveryUsmFieldOntoTheDefinition() {
         // the factory's whole job is mapping fidelity: a dropped auth field would
         // silently downgrade the walk to noAuthNoPriv
-        final CredentialSet v3 = new CredentialSet();
-        v3.setVersion(CredentialVersion.V3);
-        v3.setSecurityName("riptide");
-        v3.setAuthProtocol(TargetBuilder.AuthProtocol.sha1);
-        v3.setAuthPassphrase(SecretRef.of("env://AUTH"));
-        v3.setPrivProtocol(TargetBuilder.PrivProtocol.aes128);
-        v3.setPrivPassphrase(SecretRef.of("env://PRIV"));
+        final CredentialSet v3 = new CredentialSet(CredentialVersion.V3, null, "riptide",
+                TargetBuilder.AuthProtocol.sha1, SecretRef.of("env://AUTH"),
+                TargetBuilder.PrivProtocol.aes128, SecretRef.of("env://PRIV"));
 
         final var definition = AgentEndpointFactory.endpointFor(
                 new AgentEntry("10.0.0.0/24", v3, null, true), ADDRESS).get().getSnmpDefinition();
 
         assertThat(definition.getAuthProtocol()).isEqualTo(TargetBuilder.AuthProtocol.sha1);
-        assertThat(definition.getAuthPassphrase()).isSameAs(v3.getAuthPassphrase());
+        assertThat(definition.getAuthPassphrase()).isSameAs(v3.authPassphrase());
         assertThat(definition.getPrivProtocol()).isEqualTo(TargetBuilder.PrivProtocol.aes128);
-        assertThat(definition.getPrivPassphrase()).isSameAs(v3.getPrivPassphrase());
+        assertThat(definition.getPrivPassphrase()).isSameAs(v3.privPassphrase());
     }
 
     @Test
     void pollingValuesApplyAndDefaultsHoldWithoutAProfile() {
-        final PollingProfile polling = new PollingProfile();
-        polling.setTimeout(2_000);
-        polling.setRetries(3);
+        final PollingProfile polling = new PollingProfile(
+                java.time.Duration.ofMinutes(10), java.time.Duration.ofMinutes(30), 2_000, 3);
 
         final var withProfile = AgentEndpointFactory.endpointFor(
                 new AgentEntry("10.0.0.7", v2c(SecretRef.of("public")), polling, true), ADDRESS);
@@ -120,7 +108,7 @@ class AgentEndpointFactoryTest {
         // This lives in org.riptide.snmp because inventory must not import snmp (AD-10)
         final var profiles = new SnmpProfilesConfig(
                 java.util.Map.of("corp-v3", v3()),
-                java.util.Map.of("default", new PollingProfile()));
+                java.util.Map.of("default", PollingProfile.builtInDefault()));
         final var snapshot = InventoryLoader.parse(profiles, """
                 riptide:
                   snmp:
@@ -158,10 +146,7 @@ class AgentEndpointFactoryTest {
     }
 
     private static CredentialSet v3() {
-        final CredentialSet set = new CredentialSet();
-        set.setVersion(CredentialVersion.V3);
-        set.setSecurityName("riptide");
-        return set;
+        return CredentialSet.usm("riptide");
     }
 
     @Test
@@ -176,7 +161,7 @@ class AgentEndpointFactoryTest {
 
     @Test
     void nullVersionThrowsIllegalStateExceptionNamingRange() {
-        final CredentialSet set = new CredentialSet();
+        final CredentialSet set = new CredentialSet(null, null, null, null, null, null, null);
         assertThatThrownBy(() -> AgentEndpointFactory.endpointFor(
                 new AgentEntry("10.0.0.0/24", set, null, true), ADDRESS))
                 .isInstanceOf(IllegalStateException.class)

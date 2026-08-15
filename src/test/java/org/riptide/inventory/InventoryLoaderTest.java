@@ -31,7 +31,7 @@ class InventoryLoaderTest {
     private static SnmpProfilesConfig profiles() {
         return new SnmpProfilesConfig(
                 Map.of("corp-v3", TestCredentials.v3()),
-                Map.of("default", new PollingProfile(), "slow", new PollingProfile()));
+                Map.of("default", PollingProfile.builtInDefault(), "slow", PollingProfile.builtInDefault()));
     }
 
     @Test
@@ -223,7 +223,7 @@ class InventoryLoaderTest {
 
         final var polling = snapshot.agentView().match(netflow("10.20.5.5", 0)).get().polling();
         assertThat(polling).isNotNull();
-        assertThat(polling.getRefreshInterval()).isEqualTo(java.time.Duration.ofMillis(600_000));
+        assertThat(polling.refreshInterval()).isEqualTo(java.time.Duration.ofMillis(600_000));
     }
 
     @Test
@@ -246,7 +246,7 @@ class InventoryLoaderTest {
         final var explicit = snapshot.agentView().match(netflow("10.20.5.5", 0)).get().polling();
         final var omitted = snapshot.agentView().match(netflow("10.30.5.5", 0)).get().polling();
         assertThat(explicit).isSameAs(omitted);
-        assertThat(explicit.getRefreshInterval()).isEqualTo(java.time.Duration.ofMillis(600_000));
+        assertThat(explicit.refreshInterval()).isEqualTo(java.time.Duration.ofMillis(600_000));
     }
 
     @Test
@@ -600,7 +600,7 @@ class InventoryLoaderTest {
                 Map.of("corp-v3", TestCredentials.v3(),
                         "legacy-v2c", TestCredentials.v2c(),
                         "legacy-v1", TestCredentials.v1()),
-                Map.of("default", new PollingProfile()));
+                Map.of("default", PollingProfile.builtInDefault()));
     }
 
     private static void parseAgents(final String agentsBlock) {
