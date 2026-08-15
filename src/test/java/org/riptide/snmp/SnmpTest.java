@@ -60,6 +60,13 @@ public class SnmpTest {
         return snmpDefinition.createEndpoint(ipAddressString);
     }
 
+    public static SnmpEndpoint communityV2c(final IPAddressString ipAddressString, final int port,
+                                            final String community, final java.time.Duration refreshInterval,
+                                            final java.time.Duration snapshotExpiry) {
+        final SnmpEndpoint endpoint = communityV2c(ipAddressString, port, community);
+        return endpoint.withCadence(refreshInterval, snapshotExpiry);
+    }
+
     public static SnmpEndpoint communityV2c(final IPAddressString ipAddressString, final int port, final String community) {
         final SnmpDefinition snmpDefinition = new SnmpDefinition();
         snmpDefinition.setPort(port);

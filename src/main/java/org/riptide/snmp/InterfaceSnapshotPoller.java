@@ -207,7 +207,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         }
         // Served while stale but unexpired on purpose: an interface name from the previous cycle
         // beats none, and this is why refresh and expiry are separate settings.
-        final long expiryMs = this.config.getSnapshotExpiryMs();
+        final long expiryMs = expiryMsFor(registration.endpoint);
         if (expiryMs <= 0 || now - snapshot.takenAtNanos() > millisToNanos(expiryMs)) {
             return Optional.empty();
         }
@@ -284,17 +284,19 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     // fires on the shape of the loop, not on the collection's actual contract.
     @SuppressWarnings("ModifyCollectionInEnhancedForLoop")
     void tick(final long now) {
-        final long refreshMs = Math.max(1, this.config.getRefreshIntervalMs());
         final long deregisterAfter = Math.max(1, (long) this.config.getDeregisterAfter());
-        long timeoutNanos;
-        try {
-            timeoutNanos = Math.multiplyExact(millisToNanos(refreshMs), deregisterAfter);
-        } catch (final ArithmeticException e) {
-            timeoutNanos = Long.MAX_VALUE;
-        }
 
         for (final Map.Entry<InetSocketAddress, Registration> entry : this.registrations.entrySet()) {
             final Registration registration = entry.getValue();
+            // silence is measured in the registration's own refresh intervals, so a slow
+            // profile is not deregistered for missing a fast profile's deadline
+            final long refreshMs = Math.max(1, refreshMsFor(registration.endpoint));
+            long timeoutNanos;
+            try {
+                timeoutNanos = Math.multiplyExact(millisToNanos(refreshMs), deregisterAfter);
+            } catch (final ArithmeticException e) {
+                timeoutNanos = Long.MAX_VALUE;
+            }
 
             if (now - registration.lastSeenNanos > timeoutNanos) {
                 // Not while a walk is running: the in-flight flag lives on this object, so
@@ -417,7 +419,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      * on its own schedule.
      */
     private long nextWalkAt(final SnmpEndpoint endpoint, final long now) {
-        final long intervalMs = this.config.getRefreshIntervalMs();
+        final long intervalMs = refreshMsFor(endpoint);
         if (intervalMs <= 0) {
             return now + millisToNanos(60_000);
         }
@@ -502,6 +504,19 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
         z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
         return z ^ (z >>> 31);
+    }
+
+    /** The endpoint's own profile cadence, or the fleet setting for a legacy endpoint. */
+    private long refreshMsFor(final SnmpEndpoint endpoint) {
+        return endpoint.getRefreshInterval() == null
+                ? this.config.getRefreshIntervalMs()
+                : endpoint.getRefreshInterval().toMillis();
+    }
+
+    private long expiryMsFor(final SnmpEndpoint endpoint) {
+        return endpoint.getSnapshotExpiry() == null
+                ? this.config.getSnapshotExpiryMs()
+                : endpoint.getSnapshotExpiry().toMillis();
     }
 
     private static long millisToNanos(final long millis) {

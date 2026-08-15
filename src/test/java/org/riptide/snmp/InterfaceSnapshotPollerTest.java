@@ -36,6 +36,12 @@ class InterfaceSnapshotPollerTest {
     private static class FakeSnmp implements SnmpService {
         final AtomicInteger walks = new AtomicInteger();
         private final Set<String> walked = ConcurrentHashMap.newKeySet();
+        private final Map<String, AtomicInteger> walksPerEndpoint = new ConcurrentHashMap<>();
+
+        int walksFor(final SnmpEndpoint endpoint) {
+            final AtomicInteger count = this.walksPerEndpoint.get(endpoint.getInetSocketAddress().toString());
+            return count == null ? 0 : count.get();
+        }
         private volatile boolean timeout;
         private volatile CountDownLatch entered;
         private volatile CountDownLatch release;
@@ -49,6 +55,8 @@ class InterfaceSnapshotPollerTest {
         public InterfaceTable walkInterfaces(final SnmpEndpoint endpoint) {
             this.walks.incrementAndGet();
             this.walked.add(endpoint.getInetSocketAddress().toString());
+            this.walksPerEndpoint.computeIfAbsent(endpoint.getInetSocketAddress().toString(),
+                    key -> new AtomicInteger()).incrementAndGet();
             if (this.entered != null) {
                 this.entered.countDown();
                 try {
@@ -77,6 +85,57 @@ class InterfaceSnapshotPollerTest {
 
     private InterfaceSnapshotPoller poller(final SnmpService snmp, final SnmpPollConfig config) {
         return new InterfaceSnapshotPoller(snmp, config, this.metrics, this.clock::get, false);
+    }
+
+    /**
+     * The cadence a polling profile asks for must be what the poller uses. Written before
+     * the plumbing existed: profiles were validated, resolved onto every range, and read
+     * by nothing, so an operator could set a one-hour refresh, watch it validate, and be
+     * walked every ten minutes with a green suite.
+     */
+    @Test
+    void eachEndpointIsWalkedOnItsOwnProfileCadence() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var config = config();
+        // the fleet default is deliberately far from both profiles, so a fallback to it
+        // cannot be mistaken for either cadence working
+        config.setRefreshIntervalMs(600_000);
+        final var poller = poller(snmp, config);
+
+        final var brisk = SnmpTest.communityV2c(new IPAddressString("10.7.0.1"), 161, "public",
+                java.time.Duration.ofMinutes(1), java.time.Duration.ofMinutes(30));
+        final var sedate = SnmpTest.communityV2c(new IPAddressString("10.7.0.2"), 161, "public",
+                java.time.Duration.ofMinutes(10), java.time.Duration.ofMinutes(30));
+
+        poller.trackAndResolve(brisk, 1);
+        poller.trackAndResolve(sedate, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 2);
+
+        // ticked finer than either interval on purpose: a tick period equal to the
+        // interval aliases against the spreading phase and undercounts
+        for (int step = 0; step < 60; step++) {
+            advanceMs(10_000);
+            // both exporters keep sending flows: silence is measured in the
+            // registration's OWN refresh intervals, so the one-minute profile would
+            // otherwise be deregistered after three minutes while the ten-minute one lives
+            poller.trackAndResolve(brisk, 1);
+            poller.trackAndResolve(sedate, 1);
+            poller.tick(this.clock.get());
+            Thread.sleep(10);
+        }
+
+        // exact counts are not the contract: walks are spread across the interval by an
+        // address-derived phase plus jitter, so a tick landing exactly on the boundary
+        // sometimes misses and catches up on the next one. The cadence is what is pinned
+        assertThat(snmp.walksFor(brisk))
+                .as("one-minute profile over ten minutes")
+                .isGreaterThanOrEqualTo(8);
+        assertThat(snmp.walksFor(sedate))
+                .as("ten-minute profile over ten minutes")
+                .isLessThanOrEqualTo(2);
+        // and the whole point: the same fleet config, two cadences
+        assertThat(snmp.walksFor(brisk)).isGreaterThan(snmp.walksFor(sedate) * 2);
     }
 
     private static SnmpEndpoint endpoint(final String ip) {
