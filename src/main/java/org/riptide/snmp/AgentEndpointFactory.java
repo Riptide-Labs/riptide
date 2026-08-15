@@ -19,11 +19,9 @@ import java.util.Optional;
  * {@code SnmpVersion.getTarget} per walk, never here) and the degrade-on-failure
  * behaviour hold by construction rather than by reimplementation.
  *
- * <p>Not wired to the poller yet: consumers cut over in story 2.8. The UDP port is
- * fixed at the existing 161 default for 0.9: no configuration surface carries a
- * per-range port, and adding one would widen the strict agent-range body along with
- * the legacy-config migration (FR-14) and the operator documentation (FR-15) that
- * have to describe it, so it is deferred rather than guessed at here.</p>
+ * <p>The UDP port comes from the agent range, defaulting to 161. It was briefly fixed
+ * at 161 on the argument that no configuration surface carried one; that was wrong,
+ * since the legacy tree exposes a per-node port and real deployments use it.</p>
  */
 public final class AgentEndpointFactory {
 
@@ -52,6 +50,7 @@ public final class AgentEndpointFactory {
         }
         final SnmpDefinition definition = new SnmpDefinition();
         definition.setSnmpVersion(version(credentials.version()));
+        definition.setPort(entry.port());
         definition.setCommunity(credentials.community());
         definition.setSecurityName(credentials.securityName());
         definition.setAuthProtocol(credentials.authProtocol());
