@@ -15,7 +15,13 @@ import org.mockito.Mockito;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.ie.values.StringValue;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
-import org.riptide.node.NodeRegistry;
+import org.riptide.inventory.CredentialSet;
+import org.riptide.inventory.CredentialVersion;
+import org.riptide.inventory.Inventory;
+import org.riptide.inventory.InventoryConfig;
+import org.riptide.inventory.InventoryLoader;
+import org.riptide.inventory.SnmpProfilesConfig;
+import org.riptide.secrets.SecretRef;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Pipeline;
@@ -27,24 +33,12 @@ import org.springframework.boot.test.context.SpringBootTest;
 import java.net.InetAddress;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
-@SpringBootTest(properties = {
-        "riptide.nodes.test-agent.subnet-address=127.0.0.1/24",
-        "riptide.nodes.test-agent.snmp.port=12345",
-        "riptide.nodes.test-agent.snmp.snmp-version=v2c",
-        "riptide.nodes.test-agent.snmp.community=" + TestSnmpAgent.COMMUNITY,
-        // enrichment-ladder per-field pin: static alias overrides SNMP, rest is live
-        "riptide.nodes.test-agent.interfaces.1.alias=Uplink pinned by file",
-        // pinned in every field IfInfo carries, so the live rung can add nothing for it —
-        // the case the liveness test below depends on
-        "riptide.nodes.test-agent.interfaces.3.name=ge-0/0/3",
-        "riptide.nodes.test-agent.interfaces.3.alias=Fully pinned by file",
-        "riptide.nodes.test-agent.interfaces.3.high-speed=1000",
-        "riptide.snmp.options.retentionMs=4242"
-})
+@SpringBootTest(properties = "riptide.snmp.options.retentionMs=4242")
 public class SnmpEnricherTest {
 
     private final MetricRegistry metricRegistry = new MetricRegistry();
@@ -61,8 +55,38 @@ public class SnmpEnricherTest {
         return (endpoint, ifIndex) -> this.snmpService.getIfInfo(endpoint, ifIndex);
     }
 
-    @Autowired
-    NodeRegistry nodeRegistry;
+    /**
+     * The inventory these tests run against, always populated. An empty one would make
+     * every "never polled" and "stays unnamed" assertion below true for the wrong
+     * reason, which is the vacuity trap the pre-cutover audit flagged for this cutover.
+     *
+     * <p>The agent range is the loopback host the test agent binds, on its port; the
+     * enrichment entry carries the same per-field pins the legacy properties used to:
+     * ifIndex 1 pins only an alias so the live rung fills the rest, and ifIndex 3 pins
+     * every field IfInfo carries, which is what the liveness test depends on.</p>
+     */
+    private Inventory inventory() {
+        final var profiles = new SnmpProfilesConfig(
+                Map.of("agent-v2c", CredentialSet.community(CredentialVersion.V2C,
+                        SecretRef.of(TestSnmpAgent.COMMUNITY))),
+                Map.of());
+        final var inventory = new Inventory(profiles, new InventoryConfig());
+        inventory.swap(InventoryLoader.parse(profiles, """
+                riptide:
+                  snmp:
+                    agents:
+                      "127.0.0.1":
+                        credentials: agent-v2c
+                        port: 12345
+                  exporters:
+                    test-agent:
+                      address: 127.0.0.1
+                      interfaces:
+                        1: { alias: "Uplink pinned by file" }
+                        3: { name: "ge-0/0/3", alias: "Fully pinned by file", high-speed: 1000 }
+                """, "test.yaml"));
+        return inventory;
+    }
 
     private final EnrichedFlow.FlowMapper flowMapper = Mappers.getMapper(EnrichedFlow.FlowMapper.class);
 
@@ -73,7 +97,7 @@ public class SnmpEnricherTest {
         snmpAgent.registerIfTable();
         snmpAgent.registerIfXTable();
 
-        final var enrichers = List.<Enricher>of(new SnmpEnricher(liveSnmp(), this.nodeRegistry, emptyInterfaceTable()));
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(liveSnmp(), inventory(), emptyInterfaceTable()));
         final var repository = new TestRepository(metricRegistry);
         final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
 
@@ -123,7 +147,7 @@ public class SnmpEnricherTest {
                 List.of(new StringValue("IF_NAME", "opt-if2"),
                         new StringValue("IF_DESC", "opt-desc2")));
 
-        final var enrichers = List.<Enricher>of(new SnmpEnricher(liveSnmp(), this.nodeRegistry, interfaceTable));
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(liveSnmp(), inventory(), interfaceTable));
         final var repository = new TestRepository(metricRegistry);
         final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
 
@@ -161,7 +185,7 @@ public class SnmpEnricherTest {
                 List.of(new UnsignedValue("SCOPE:INTERFACE", 1)),
                 List.of(new StringValue("IF_NAME", "no-node-if1"), new StringValue("IF_DESC", "pushed")));
 
-        final var enrichers = List.<Enricher>of(new SnmpEnricher(liveSnmp(), this.nodeRegistry, interfaceTable));
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(liveSnmp(), inventory(), interfaceTable));
         final var repository = new TestRepository(metricRegistry);
         final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
 
@@ -194,7 +218,7 @@ public class SnmpEnricherTest {
                 List.of(new UnsignedValue("SCOPE:INTERFACE", 1)),
                 List.of(new StringValue("IF_NAME", "no-node-if1"), new StringValue("IF_DESC", "pushed")));
 
-        final var enrichers = List.<Enricher>of(new SnmpEnricher(interfaceSource, this.nodeRegistry, interfaceTable));
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(interfaceSource, inventory(), interfaceTable));
         final var repository = new TestRepository(metricRegistry);
         final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
 
@@ -228,7 +252,7 @@ public class SnmpEnricherTest {
         // side of every flow — that must not hit SNMP at all
         final InterfaceSource interfaceSource = Mockito.mock(InterfaceSource.class);
 
-        final var enrichers = List.<Enricher>of(new SnmpEnricher(interfaceSource, this.nodeRegistry, emptyInterfaceTable()));
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(interfaceSource, inventory(), emptyInterfaceTable()));
         final var repository = new TestRepository(metricRegistry);
         final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
 
@@ -263,7 +287,7 @@ public class SnmpEnricherTest {
         final InterfaceSource interfaceSource = Mockito.mock(InterfaceSource.class);
         when(interfaceSource.trackAndResolve(Mockito.any(), Mockito.anyInt())).thenReturn(java.util.Optional.empty());
 
-        final var enrichers = List.<Enricher>of(new SnmpEnricher(interfaceSource, this.nodeRegistry, emptyInterfaceTable()));
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(interfaceSource, inventory(), emptyInterfaceTable()));
         final var repository = new TestRepository(metricRegistry);
         final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
 
@@ -335,7 +359,7 @@ public class SnmpEnricherTest {
                 .as("the eviction is counted, not silent")
                 .isEqualTo(1);
 
-        final var enrichers = List.<Enricher>of(new SnmpEnricher(liveSnmp(), this.nodeRegistry, interfaceTable));
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(liveSnmp(), inventory(), interfaceTable));
         final var repository = new TestRepository(this.metricRegistry);
         final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
 
