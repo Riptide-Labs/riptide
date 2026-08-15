@@ -67,7 +67,9 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     }
 
     private static final class Registration {
-        private final SnmpEndpoint endpoint;
+        // not final: an inventory reload can repoint the range this was built from, and
+        // the whole point of AD-6 is that the change reaches an agent already being polled
+        private volatile SnmpEndpoint endpoint;
         private final AtomicBoolean walkInFlight = new AtomicBoolean();
         private volatile Snapshot snapshot;
         private volatile long lastSeenNanos;
@@ -100,6 +102,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     private final ScheduledExecutorService scheduler;
 
     private final Meter registered;
+    private final Meter reresolved;
     private final Meter deregistered;
     /**
      * Counts <em>lookups</em> refused at the exporter bound, not distinct exporters: it is
@@ -167,6 +170,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 });
 
         this.registered = metrics.meter(MetricRegistry.name("snmp", "poller", "registered"));
+        this.reresolved = metrics.meter(MetricRegistry.name("snmp", "poller", "reresolved"));
         this.deregistered = metrics.meter(MetricRegistry.name("snmp", "poller", "deregistered"));
         this.rejected = metrics.meter(MetricRegistry.name("snmp", "poller", "rejectedLookups"));
         metrics.gauge(MetricRegistry.name("snmp", "poller", "exporters"), () -> this.registrations::size);
@@ -245,6 +249,10 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         final InetSocketAddress address = endpoint.getInetSocketAddress();
         final Registration existing = this.registrations.get(address);
         if (existing != null) {
+            // the fast path is where the capture bug lived: returning the registration and
+            // dropping the endpoint the caller just resolved is what made a reload a no-op
+            // for every agent already being polled
+            reresolveIfChanged(existing, endpoint, now, address);
             return existing;
         }
         final int maxExporters = this.config.getMaxExporters();
@@ -265,8 +273,34 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 return null;
             }
             this.registered.mark();
+        } else {
+            // lost the race to another thread's computeIfAbsent: same case as the fast path
+            reresolveIfChanged(created, endpoint, now, address);
         }
         return created;
+    }
+
+    /**
+     * Replaces a registration's endpoint when the caller resolved a different one for the
+     * same address, which is how a reload reaches an agent that is already being polled:
+     * credentials, port, timeout or cadence changed, and the next walk must use them.
+     *
+     * <p>An equal endpoint changes nothing, so the common case (every batch re-resolving
+     * the same configuration) does not disturb the schedule.</p>
+     */
+    private void reresolveIfChanged(final Registration registration, final SnmpEndpoint endpoint,
+                                    final long now, final InetSocketAddress address) {
+        if (registration.endpoint.equals(endpoint)) {
+            return;
+        }
+        registration.endpoint = endpoint;
+        // an operator who repoints a range is usually fixing something, so clear the
+        // back-off and walk on the next tick rather than waiting out the ceiling
+        registration.consecutiveFailures.set(0);
+        registration.unreachable = false;
+        registration.nextWalkNanos = now;
+        this.reresolved.mark();
+        log.info("Endpoint for {} re-resolved from the current inventory; walking on the next tick", address);
     }
 
     /**

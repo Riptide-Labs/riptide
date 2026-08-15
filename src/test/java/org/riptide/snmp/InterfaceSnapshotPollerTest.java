@@ -11,6 +11,7 @@ import ch.qos.logback.core.read.ListAppender;
 import com.codahale.metrics.MetricRegistry;
 import inet.ipaddr.IPAddressString;
 import org.junit.jupiter.api.Test;
+import org.riptide.secrets.SecretRef;
 import org.slf4j.LoggerFactory;
 
 import java.util.Map;
@@ -37,6 +38,7 @@ class InterfaceSnapshotPollerTest {
         final AtomicInteger walks = new AtomicInteger();
         private final Set<String> walked = ConcurrentHashMap.newKeySet();
         private final Map<String, AtomicInteger> walksPerEndpoint = new ConcurrentHashMap<>();
+        final java.util.List<SnmpEndpoint> walkedEndpoints = new java.util.concurrent.CopyOnWriteArrayList<>();
 
         int walksFor(final SnmpEndpoint endpoint) {
             final AtomicInteger count = this.walksPerEndpoint.get(endpoint.getInetSocketAddress().toString());
@@ -57,6 +59,7 @@ class InterfaceSnapshotPollerTest {
             this.walked.add(endpoint.getInetSocketAddress().toString());
             this.walksPerEndpoint.computeIfAbsent(endpoint.getInetSocketAddress().toString(),
                     key -> new AtomicInteger()).incrementAndGet();
+            this.walkedEndpoints.add(endpoint);
             if (this.entered != null) {
                 this.entered.countDown();
                 try {
@@ -136,6 +139,60 @@ class InterfaceSnapshotPollerTest {
                 .isLessThanOrEqualTo(2);
         // and the whole point: the same fleet config, two cadences
         assertThat(snmp.walksFor(brisk)).isGreaterThan(snmp.walksFor(sedate) * 2);
+    }
+
+    /**
+     * The endpoint-capture bug: a registration kept the endpoint it was built from and
+     * discarded every later one, so a credential rotation or a repointed range reached
+     * an already-polled agent only after it went silent long enough to be deregistered,
+     * which for an active exporter is never.
+     */
+    @Test
+    void aRepointedRangeReachesAnAlreadyRegisteredAgent() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config());
+        final var address = new IPAddressString("10.8.0.1");
+
+        poller.trackAndResolve(SnmpTest.communityV2c(address, 161, "old-community"), 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        // the next batch of flows resolves the exporter against the new inventory and
+        // hands the poller a different endpoint for the same address
+        poller.trackAndResolve(SnmpTest.communityV2c(address, 161, "new-community"), 1);
+        assertThat(this.metrics.meter("snmp.poller.reresolved").getCount())
+                .as("re-resolution fired").isEqualTo(1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 2);
+
+        assertThat(snmp.walkedEndpoints).hasSize(2);
+        assertThat(snmp.walkedEndpoints.get(0).getSnmpDefinition().getCommunity())
+                .isEqualTo(SecretRef.of("old-community"));
+        // no restart, and no waiting out the refresh interval: repointing is usually an
+        // operator fixing something, so the next tick walks
+        assertThat(snmp.walkedEndpoints.get(1).getSnmpDefinition().getCommunity())
+                .isEqualTo(SecretRef.of("new-community"));
+    }
+
+    @Test
+    void anUnchangedEndpointDoesNotDisturbTheSchedule() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config());
+        final var address = new IPAddressString("10.9.0.1");
+
+        poller.trackAndResolve(SnmpTest.communityV2c(address, 161, "same"), 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        // every batch re-resolves and hands over an equal endpoint: that must not reset
+        // the schedule, or a busy exporter would be walked on every tick
+        for (int batch = 0; batch < 5; batch++) {
+            poller.trackAndResolve(SnmpTest.communityV2c(address, 161, "same"), 1);
+            poller.tick(this.clock.get());
+        }
+        Thread.sleep(50);
+
+        assertThat(snmp.walks.get()).isEqualTo(1);
     }
 
     private static SnmpEndpoint endpoint(final String ip) {
