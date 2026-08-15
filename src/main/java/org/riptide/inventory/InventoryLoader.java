@@ -255,8 +255,11 @@ public final class InventoryLoader {
                 throw new IllegalStateException(
                         "Exporter '%s' has no address — every enrichment entry needs one.".formatted(entry.getKey()));
             }
+            // prefixes allowed, like agent ranges: an entry may label and pin a whole
+            // subnet, which is how a site-scoped label survives the move off the legacy
+            // tree. Most specific still wins, so a bare host beats a prefix covering it
             final IPAddressString parsedAddress = strictAddress(String.valueOf(address),
-                    "exporter '%s' address".formatted(entry.getKey()), true);
+                    "exporter '%s' address".formatted(entry.getKey()), false);
             final Long pin = observationDomain(entry.getKey(), entryBody.get("observation-domain"));
             builder.add(entry.getKey(), parsedAddress, pin,
                     new ExporterEntry(entry.getKey(), parsedAddress, pin,
