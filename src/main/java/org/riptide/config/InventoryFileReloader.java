@@ -23,6 +23,7 @@ import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.Objects;
@@ -80,6 +81,9 @@ public class InventoryFileReloader {
     private byte[] lastAttemptedHash = new byte[0];
     private byte[] lastCommittedHash = new byte[0];
     private boolean warnedMissing = false;
+    // the empty-file condition persists just like the missing-file one, so it gets the
+    // same latch: a truncated file at a 5s interval would otherwise warn forever
+    private boolean warnedEmpty = false;
 
     public InventoryFileReloader(final ConfigReloadProperties properties,
                                  final InventoryConfig inventoryConfig,
@@ -162,14 +166,26 @@ public class InventoryFileReloader {
             }
             this.warnedMissing = false;
 
-            final byte[] content = Files.readAllBytes(this.location);
+            final byte[] content;
+            try {
+                content = Files.readAllBytes(this.location);
+            } catch (final NoSuchFileException e) {
+                // the file vanished between the check and the read: an atomic rm+mv
+                // replacement or a symlink swap, which is the healthy deploy this class
+                // expects, not a failure worth counting
+                return;
+            }
             if (isBlank(content)) {
                 // a shell '>' redirect truncates before writing, and editors flush
                 // whitespace-only intermediate states: indistinguishable from an
                 // intentionally emptied file; never commit on empty or blank
-                log.warn("Inventory file {} is empty: skipping reload cycle (truncate-write race or intentional; keeping the running inventory)", this.location);
+                if (!this.warnedEmpty) {
+                    log.warn("Inventory file {} is empty: skipping reload cycle (truncate-write race or intentional; keeping the running inventory)", this.location);
+                    this.warnedEmpty = true;
+                }
                 return;
             }
+            this.warnedEmpty = false;
             final byte[] hash = MessageDigest.getInstance("SHA-256").digest(content);
             if (MessageDigest.isEqual(hash, this.lastAttemptedHash)) {
                 // unchanged, or the same bad content we already warned about; staleness
@@ -185,7 +201,18 @@ public class InventoryFileReloader {
             // decode is strict like boot's Files.readString: malformed bytes must
             // fail the reload here, not the next restart
             final InventorySnapshot candidate = InventoryLoader.parse(this.profiles,
-                    strictUtf8(content), this.location.toString());
+                    strictUtf8(content, this.location), this.location.toString());
+
+            if (candidate.isEmpty() && !this.inventory.snapshot().isEmpty()) {
+                // content that is non-blank but parses to nothing (a lone '---', or a
+                // header comment a truncate-write has flushed so far) would silently
+                // drop every range and entry. Deleting the file already keeps the old
+                // inventory serving, so refusing this is the same rule, not a new one
+                log.warn("Inventory file {} parsed to no entries while a populated inventory is running: "
+                        + "keeping it (a partially written file reads this way). Delete the file to stop "
+                        + "reloading, or restart to serve an intentionally empty inventory", this.location);
+                return;
+            }
 
             this.inventory.swap(candidate);
             this.lastCommittedHash = this.lastAttemptedHash;
@@ -195,7 +222,7 @@ public class InventoryFileReloader {
         } catch (final Exception e) {
             this.reloadFailures.inc();
             this.stale = true;
-            log.warn("Inventory reload failed, keeping the last good inventory: {}", e.getMessage());
+            log.warn("Inventory reload failed, keeping the last good inventory: {}", e.getMessage(), e);
         }
     }
 
@@ -209,7 +236,7 @@ public class InventoryFileReloader {
         return true;
     }
 
-    private static String strictUtf8(final byte[] content) {
+    private static String strictUtf8(final byte[] content, final Path location) {
         try {
             return StandardCharsets.UTF_8.newDecoder()
                     .onMalformedInput(CodingErrorAction.REPORT)
@@ -217,7 +244,9 @@ public class InventoryFileReloader {
                     .decode(ByteBuffer.wrap(content))
                     .toString();
         } catch (final CharacterCodingException e) {
-            throw new IllegalStateException("not valid UTF-8 (" + e + ")", e);
+            // named like every loader error: two reloaders share this log
+            throw new IllegalStateException(
+                    "Inventory file %s is not valid UTF-8 (%s)".formatted(location, e), e);
         }
     }
 }

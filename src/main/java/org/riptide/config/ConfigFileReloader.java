@@ -32,6 +32,7 @@ import org.springframework.core.io.ByteArrayResource;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.List;
@@ -168,7 +169,14 @@ public class ConfigFileReloader {
             }
             this.warnedMissing = false;
 
-            final byte[] content = Files.readAllBytes(this.location);
+            final byte[] content;
+            try {
+                content = Files.readAllBytes(this.location);
+            } catch (final NoSuchFileException e) {
+                // vanished between the check and the read: an atomic rm+mv replacement
+                // or a symlink swap, the healthy deploy this class expects
+                return;
+            }
             if (content.length == 0) {
                 // a shell '>' redirect truncates before writing — indistinguishable
                 // from an intentionally emptied file; never commit on empty
@@ -189,7 +197,7 @@ public class ConfigFileReloader {
         } catch (final Exception e) {
             this.reloadFailures.inc();
             this.stale = true;
-            log.warn("Config reload failed — keeping the running configuration: {}", e.getMessage());
+            log.warn("Config reload failed — keeping the running configuration: {}", e.getMessage(), e);
         }
     }
 

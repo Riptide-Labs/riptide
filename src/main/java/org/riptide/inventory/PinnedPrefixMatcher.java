@@ -48,10 +48,17 @@ public final class PinnedPrefixMatcher<T> {
 
     private final Map<Long, Pool<T>> pinned;
     private final Pool<T> wildcard;
+    private final int size;
 
-    private PinnedPrefixMatcher(final Map<Long, Pool<T>> pinned, final Pool<T> wildcard) {
+    private PinnedPrefixMatcher(final Map<Long, Pool<T>> pinned, final Pool<T> wildcard, final int size) {
         this.pinned = Map.copyOf(pinned);
         this.wildcard = wildcard;
+        this.size = size;
+    }
+
+    /** How many entries were added, so a caller can tell a populated matcher from an empty one. */
+    public int size() {
+        return this.size;
     }
 
     public static <T> Builder<T> builder() {
@@ -195,7 +202,9 @@ public final class PinnedPrefixMatcher<T> {
         /** Builds the matcher and invalidates this builder. */
         public PinnedPrefixMatcher<T> build() {
             requireUsable();
-            final PinnedPrefixMatcher<T> matcher = new PinnedPrefixMatcher<>(this.pinned, this.wildcard);
+            // seen holds one entry per successful add, keyed by canonical prefix and pin
+            final PinnedPrefixMatcher<T> matcher =
+                    new PinnedPrefixMatcher<>(this.pinned, this.wildcard, this.seen.size());
             invalidate();
             return matcher;
         }

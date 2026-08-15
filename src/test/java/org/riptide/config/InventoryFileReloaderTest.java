@@ -114,6 +114,42 @@ class InventoryFileReloaderTest {
     }
 
     @Test
+    void contentThatParsesToNothingDoesNotWipeAPopulatedInventory() throws Exception {
+        // a non-atomic writer can flush a lone '---' or a header comment: non-blank, so
+        // the blank guard passes, but it parses to zero entries. Committing that would
+        // stop every walk and blank enrichment until the writer finished
+        write("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """);
+        this.reloader.poll();
+        assertThat(successes()).isEqualTo(1);
+
+        write("---\n");
+        this.reloader.poll();
+
+        // the populated inventory keeps serving, and this is a refusal, not a failure:
+        // deleting the file already behaves this way, so it is the same rule
+        assertThat(this.inventory.snapshot().agentView().match(netflow("10.20.5.5"))).isPresent();
+        assertThat(successes()).isEqualTo(1);
+        assertThat(failures()).isZero();
+    }
+
+    @Test
+    void anEmptyInventoryStillLoadsWhenNothingIsRunning() throws Exception {
+        // the refusal is only about not wiping a populated inventory; an empty
+        // candidate over an already-empty one is a normal, committed reload
+        write("riptide: {}\n");
+        this.reloader.poll();
+
+        assertThat(successes()).isEqualTo(1);
+        assertThat(failures()).isZero();
+    }
+
+    @Test
     void sameBadContentIsAttemptedOnlyOnce() throws Exception {
         write("not: [valid");
         this.reloader.poll();

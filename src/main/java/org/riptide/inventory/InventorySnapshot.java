@@ -34,6 +34,11 @@ public final class InventorySnapshot {
                 PinnedPrefixMatcher.<ExporterEntry>builder().build());
     }
 
+    /** True when the build produced no agent ranges and no enrichment entries. */
+    public boolean isEmpty() {
+        return this.agents.size() == 0 && this.exporters.size() == 0;
+    }
+
     public AgentView agentView() {
         return identity -> this.agents.lookup(probe(identity), domain(identity));
     }
