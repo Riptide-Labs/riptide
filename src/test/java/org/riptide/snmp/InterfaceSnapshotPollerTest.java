@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.riptide.secrets.SecretRef;
 import org.slf4j.LoggerFactory;
 
+import java.net.InetAddress;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -193,6 +194,112 @@ class InterfaceSnapshotPollerTest {
         Thread.sleep(50);
 
         assertThat(snmp.walks.get()).isEqualTo(1);
+    }
+
+    private static org.riptide.inventory.InventorySnapshot inventory(final String agentsBlock) {
+        final var profiles = new org.riptide.inventory.SnmpProfilesConfig(
+                Map.of("corp-v3", org.riptide.inventory.CredentialSet.usm("riptide")),
+                Map.of("slow", new org.riptide.inventory.PollingProfile(
+                        java.time.Duration.ofMinutes(30), java.time.Duration.ofMinutes(90), 500, 1)));
+        return org.riptide.inventory.InventoryLoader.parse(profiles, """
+                riptide:
+                  snmp:
+                    agents:
+                %s""".formatted(agentsBlock), "poller.yaml");
+    }
+
+    /**
+     * A carve-out has to take effect on reload. Without the refresh half of
+     * swap-then-refresh an operator can disable a range, watch the reload succeed, and
+     * still be polling the segment until it happens to go silent.
+     */
+    @Test
+    void aCarvedOutRangeStopsBeingPolledOnReload() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config());
+        final var live = inventory("""
+                      "10.30.0.7":
+                        credentials: corp-v3
+                """);
+
+        poller.trackAndResolve(resolveOnly(live, "10.30.0.7"), 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        // the operator carves the address out and the reloader publishes it
+        poller.refreshRegistrations(inventory("""
+                      "10.30.0.7":
+                        enabled: false
+                """));
+
+        advanceMs(600_000);
+        poller.tick(this.clock.get());
+        Thread.sleep(50);
+
+        // no restart, no waiting out the deregistration deadline
+        assertThat(snmp.walks.get()).isEqualTo(1);
+    }
+
+    @Test
+    void aReloadThatRepointsARangeReachesTheRegistration() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config());
+        final var before = inventory("""
+                      "10.31.0.7":
+                        credentials: corp-v3
+                        port: 161
+                """);
+        poller.trackAndResolve(resolveOnly(before, "10.31.0.7"), 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        // same address, slower profile: the registration must adopt it rather than keep
+        // walking on the cadence it was first built with
+        poller.refreshRegistrations(inventory("""
+                      "10.31.0.7":
+                        credentials: corp-v3
+                        port: 161
+                        polling: slow
+                """));
+
+        assertThat(this.metrics.meter("snmp.poller.reresolved").getCount()).isEqualTo(1);
+        // and an identical inventory is not churn: re-publishing the same thing must not
+        // reset schedules across the whole fleet
+        poller.refreshRegistrations(inventory("""
+                      "10.31.0.7":
+                        credentials: corp-v3
+                        port: 161
+                        polling: slow
+                """));
+        assertThat(this.metrics.meter("snmp.poller.reresolved").getCount()).isEqualTo(1);
+    }
+
+    /**
+     * Resolving a registration by address alone is exact because agent ranges carry no
+     * observation-domain pin. This is the assumption {@code refreshRegistrations} rests
+     * on, and the widening it implies: a device is polled whatever domain its flows carry.
+     */
+    @Test
+    void agentRangesResolveRegardlessOfObservationDomain() throws Exception {
+        final var snapshot = inventory("""
+                      "10.32.0.0/24":
+                        credentials: corp-v3
+                """);
+        final var address = InetAddress.getByName("10.32.0.7");
+
+        for (final long domain : new long[]{0L, 42L, 4_294_967_295L}) {
+            assertThat(snapshot.agentView().match(new org.riptide.pipeline.ExporterIdentity.NetflowIpfix(address, domain)))
+                    .as("observation domain %d", domain)
+                    .isPresent();
+        }
+    }
+
+    /** The endpoint an inventory resolves for one address, for tests that then poll it. */
+    private static SnmpEndpoint resolveOnly(final org.riptide.inventory.InventorySnapshot snapshot,
+                                            final String ip) throws Exception {
+        final var identity = new org.riptide.pipeline.ExporterIdentity.NetflowIpfix(InetAddress.getByName(ip), 0L);
+        return AgentEndpointFactory.endpointFor(snapshot.agentView().match(identity).orElseThrow(),
+                new IPAddressString(ip)).orElseThrow();
     }
 
     private static SnmpEndpoint endpoint(final String ip) {

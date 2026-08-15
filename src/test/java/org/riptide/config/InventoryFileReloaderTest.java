@@ -15,6 +15,8 @@ import org.riptide.inventory.TestCredentials;
 import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventoryConfig;
 import org.riptide.inventory.SnmpProfilesConfig;
+import org.riptide.snmp.InterfaceSnapshotPoller;
+import org.riptide.snmp.SnmpPollConfig;
 import org.riptide.pipeline.ExporterIdentity;
 
 import java.io.IOException;
@@ -39,6 +41,20 @@ class InventoryFileReloaderTest {
     private Path file;
     private SnmpProfilesConfig profiles;
     private Inventory inventory;
+    private InterfaceSnapshotPoller poller;
+
+    private static final class NoSnmp implements org.riptide.snmp.SnmpService {
+        @Override
+        public java.util.Optional<org.riptide.snmp.IfInfo> getIfInfo(
+                final org.riptide.snmp.SnmpEndpoint endpoint, final int ifIndex) {
+            return java.util.Optional.empty();
+        }
+
+        @Override
+        public InterfaceTable walkInterfaces(final org.riptide.snmp.SnmpEndpoint endpoint) {
+            return new InterfaceTable(java.util.Map.of(), false);
+        }
+    }
     private MetricRegistry metrics;
     private InventoryFileReloader reloader;
 
@@ -57,7 +73,11 @@ class InventoryFileReloaderTest {
         this.inventory = new Inventory(this.profiles, inventoryConfig);
         this.inventory.load();
         this.metrics = new MetricRegistry();
-        this.reloader = new InventoryFileReloader(properties, inventoryConfig, this.profiles, this.inventory, this.metrics);
+        // a poller with no scheduler and nothing registered: these tests exercise the
+        // reload trigger, and the refresh half has its own tests in the poller suite
+        this.poller = new InterfaceSnapshotPoller(new NoSnmp(), new SnmpPollConfig(), this.metrics);
+        this.reloader = new InventoryFileReloader(properties, inventoryConfig, this.profiles, this.inventory,
+                this.poller, this.metrics);
         this.reloader.start();
     }
 
@@ -295,7 +315,7 @@ class InventoryFileReloaderTest {
         final ConfigReloadProperties properties = new ConfigReloadProperties();
         properties.setReloadInterval(Duration.ofHours(1));
         final InventoryFileReloader disabled = new InventoryFileReloader(
-                properties, noFile, this.profiles, this.inventory, new MetricRegistry());
+                properties, noFile, this.profiles, this.inventory, this.poller, new MetricRegistry());
 
         disabled.start();
         disabled.stop();

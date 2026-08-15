@@ -6,6 +6,9 @@
 package org.riptide.snmp;
 
 import com.codahale.metrics.Meter;
+import inet.ipaddr.IPAddressString;
+import org.riptide.inventory.InventorySnapshot;
+import org.riptide.pipeline.ExporterIdentity;
 import com.codahale.metrics.MetricRegistry;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -310,6 +313,50 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      */
     boolean anyWalkInFlight() {
         return this.registrations.values().stream().anyMatch(r -> r.walkInFlight.get());
+    }
+
+    /**
+     * Re-resolves every registration against a freshly published inventory, which is the
+     * refresh half of swap-then-refresh (AD-6): the reloader commits the snapshot and then
+     * calls this, so ordering lives with the component that owns the swap rather than
+     * being inferred here.
+     *
+     * <p>A registration whose address no longer resolves to a pollable range is
+     * deregistered rather than left walking. That is what makes {@code enabled: false},
+     * a deleted range, or a removed credential reference take effect on reload instead of
+     * waiting out the deregistration deadline: without it an operator can carve a segment
+     * out, see the reload succeed, and still be polling it minutes later.</p>
+     *
+     * <p>Agent ranges carry no observation-domain pin, so resolving by address alone is
+     * exact rather than approximate; {@code agentRangesResolveRegardlessOfObservationDomain}
+     * pins that, and it is the assumption to revisit first if pinning is ever added.</p>
+     */
+    public void refreshRegistrations(final InventorySnapshot snapshot) {
+        final long now = this.nanoTime.getAsLong();
+        for (final Map.Entry<InetSocketAddress, Registration> entry : this.registrations.entrySet()) {
+            final InetSocketAddress address = entry.getKey();
+            final Registration registration = entry.getValue();
+            final Optional<SnmpEndpoint> resolved = resolve(snapshot, address);
+
+            if (resolved.isEmpty() || !resolved.get().getInetSocketAddress().equals(address)) {
+                // gone, carved out, uncredentialed, or moved to another port: stop walking
+                // it. A port change re-registers under its own key on the next flow
+                if (!registration.walkInFlight.get()) {
+                    this.registrations.remove(address, registration);
+                    this.deregistered.mark();
+                    log.info("Stopped polling {}: it no longer resolves to a pollable agent range", address);
+                }
+                continue;
+            }
+            reresolveIfChanged(registration, resolved.get(), now, address);
+        }
+    }
+
+    private static Optional<SnmpEndpoint> resolve(final InventorySnapshot snapshot, final InetSocketAddress address) {
+        final ExporterIdentity identity = new ExporterIdentity.NetflowIpfix(address.getAddress(), 0L);
+        return snapshot.agentView().match(identity)
+                .flatMap(agent -> AgentEndpointFactory.endpointFor(
+                        agent, new IPAddressString(address.getAddress().getHostAddress())));
     }
 
     /** Package-private so tests can advance the schedule without waiting on wall-clock time. */

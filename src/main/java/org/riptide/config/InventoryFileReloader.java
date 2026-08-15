@@ -16,6 +16,7 @@ import org.riptide.inventory.InventoryConfig;
 import org.riptide.inventory.InventoryLoader;
 import org.riptide.inventory.InventorySnapshot;
 import org.riptide.inventory.SnmpProfilesConfig;
+import org.riptide.snmp.InterfaceSnapshotPoller;
 import org.springframework.stereotype.Component;
 
 import java.nio.ByteBuffer;
@@ -70,6 +71,7 @@ public class InventoryFileReloader {
     private final InventoryConfig inventoryConfig;
     private final SnmpProfilesConfig profiles;
     private final Inventory inventory;
+    private final InterfaceSnapshotPoller interfacePoller;
 
     private final Counter reloadSuccesses;
     private final Counter reloadFailures;
@@ -89,11 +91,13 @@ public class InventoryFileReloader {
                                  final InventoryConfig inventoryConfig,
                                  final SnmpProfilesConfig profiles,
                                  final Inventory inventory,
+                                 final InterfaceSnapshotPoller interfacePoller,
                                  final MetricRegistry metrics) {
         this.properties = Objects.requireNonNull(properties);
         this.inventoryConfig = Objects.requireNonNull(inventoryConfig);
         this.profiles = Objects.requireNonNull(profiles);
         this.inventory = Objects.requireNonNull(inventory);
+        this.interfacePoller = Objects.requireNonNull(interfacePoller);
 
         this.reloadSuccesses = metrics.counter(MetricRegistry.name("inventory", "reload", "successes"));
         this.reloadFailures = metrics.counter(MetricRegistry.name("inventory", "reload", "failures"));
@@ -215,6 +219,11 @@ public class InventoryFileReloader {
             }
 
             this.inventory.swap(candidate);
+            // swap, then refresh (AD-6): registrations built from the previous inventory
+            // are re-resolved against this one, so a carve-out or a credential change
+            // reaches an agent that is already being polled instead of waiting out its
+            // deregistration deadline
+            this.interfacePoller.refreshRegistrations(candidate);
             this.lastCommittedHash = this.lastAttemptedHash;
             this.reloadSuccesses.inc();
             this.stale = false;
