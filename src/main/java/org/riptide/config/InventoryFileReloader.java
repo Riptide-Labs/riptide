@@ -204,7 +204,9 @@ public class InventoryFileReloader {
             // throws with entry-and-file-naming messages -> keep-old below. The
             // decode is strict like boot's Files.readString: malformed bytes must
             // fail the reload here, not the next restart
-            final InventorySnapshot candidate = InventoryLoader.parse(this.profiles,
+            // the profiles as they are now, not as they were at boot: a main-config reload
+            // can have rotated a credential since
+            final InventorySnapshot candidate = InventoryLoader.parse(this.inventory.profiles(),
                     strictUtf8(content, this.location), this.location.toString());
 
             if (candidate.isEmpty() && !this.inventory.snapshot().isEmpty()) {

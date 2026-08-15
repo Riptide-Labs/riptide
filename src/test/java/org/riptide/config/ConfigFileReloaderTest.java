@@ -51,6 +51,9 @@ public class ConfigFileReloaderTest {
     @Autowired
     private MetricRegistry metrics;
 
+    @Autowired
+    private org.riptide.inventory.Inventory inventory;
+
     private static Path createTempConfigPath() {
         try {
             return Files.createTempDirectory("riptide-reload-test").resolve("config.yaml");
@@ -190,6 +193,59 @@ public class ConfigFileReloaderTest {
         reloader.poll();
 
         assertThat(metrics.counter("config.reload.failures").getCount()).isEqualTo(failuresBefore + 1);
+    }
+
+    @Test
+    public void rotatingACredentialReachesTheServingInventory() throws Exception {
+        // the regression this closes: riptide.nodes used to carry credentials and
+        // propagated them on reload. It is inert now, so riptide.snmp.credentials is the
+        // only credential surface, and it used to be bound once at boot and never again:
+        // rotating a compromised community would have needed a restart, silently
+        final Path inventoryFile = Files.createTempFile("rotation-inventory", ".yaml");
+        inventoryFile.toFile().deleteOnExit();
+        Files.writeString(inventoryFile, """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.77.0.1":
+                        credentials: corp
+                """);
+
+        write("""
+                riptide:
+                  inventory:
+                    file: "%s"
+                  snmp:
+                    credentials:
+                      corp:
+                        version: v2c
+                        community: old-community
+                """.formatted(inventoryFile));
+        reloader.poll();
+
+        assertThat(resolvedCommunity()).isEqualTo("old-community");
+
+        write("""
+                riptide:
+                  inventory:
+                    file: "%s"
+                  snmp:
+                    credentials:
+                      corp:
+                        version: v2c
+                        community: new-community
+                """.formatted(inventoryFile));
+        reloader.poll();
+
+        // no restart: the profiles and the inventory built from them move together
+        assertThat(resolvedCommunity()).isEqualTo("new-community");
+    }
+
+    private String resolvedCommunity() throws Exception {
+        final var identity = new org.riptide.pipeline.ExporterIdentity.NetflowIpfix(
+                java.net.InetAddress.getByName("10.77.0.1"), 0L);
+        return this.inventory.snapshot().agentView().match(identity).orElseThrow()
+                .credentials().community().getValue();
     }
 
     @Test

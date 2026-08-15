@@ -13,6 +13,10 @@ import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.node.NodeDefinition;
 import org.riptide.node.NodeRegistry;
+import org.riptide.inventory.Inventory;
+import org.riptide.inventory.InventoryConfig;
+import org.riptide.inventory.InventoryLoader;
+import org.riptide.inventory.InventorySnapshot;
 import org.riptide.inventory.InventoryMisplacementCheck;
 import org.riptide.inventory.PollKeyMigrationCheck;
 import org.riptide.inventory.SnmpProfilesConfig;
@@ -76,6 +80,7 @@ public class ConfigFileReloader {
     private final ConfigurableEnvironment environment;
     private final ConfigReloadProperties properties;
     private final NodeRegistry nodeRegistry;
+    private final Inventory inventory;
     private final RoutingConfig routingConfig;
     private final InterfaceSnapshotPoller interfacePoller;
     private final SopsSecretResolver sopsSecretResolver;
@@ -97,6 +102,7 @@ public class ConfigFileReloader {
                               final RoutingConfig routingConfig,
                               final InterfaceSnapshotPoller interfacePoller,
                               final SopsSecretResolver sopsSecretResolver,
+                              final Inventory inventory,
                               final MetricRegistry metrics) {
         this.environment = Objects.requireNonNull(environment);
         this.properties = Objects.requireNonNull(properties);
@@ -104,6 +110,7 @@ public class ConfigFileReloader {
         this.routingConfig = Objects.requireNonNull(routingConfig);
         this.interfacePoller = Objects.requireNonNull(interfacePoller);
         this.sopsSecretResolver = Objects.requireNonNull(sopsSecretResolver);
+        this.inventory = Objects.requireNonNull(inventory);
 
         this.reloadSuccesses = metrics.counter(MetricRegistry.name("config", "reload", "successes"));
         this.reloadFailures = metrics.counter(MetricRegistry.name("config", "reload", "failures"));
@@ -243,11 +250,21 @@ public class ConfigFileReloader {
                 .orElseGet(RoutingConfig::new);
 
         // validate the candidate with startup's rules; throws → keep-old in poll().
-        // The credential bind is discarded: profile changes deliberately do not
-        // propagate on reload (AD-6 orchestration comes later), but a malformed
-        // credential edit must fail THIS reload rather than the next boot — the
-        // record constructor runs the shape validation.
-        binder.bind("riptide.snmp", Bindable.of(SnmpProfilesConfig.class));
+        // Credential and polling profiles live here, and agent ranges resolve them into
+        // objects when the inventory is built (AD-5), so a rotated community only reaches
+        // a walk if the inventory is rebuilt against the new profiles. Both are built as
+        // candidates before anything is committed, so a rotation that breaks a reference
+        // fails THIS reload instead of half-applying.
+        final SnmpProfilesConfig candidateProfiles = binder
+                .bind("riptide.snmp", Bindable.of(SnmpProfilesConfig.class))
+                .orElseGet(() -> new SnmpProfilesConfig(Map.of(), Map.of()));
+        // the file the candidate config names, not the one bound at boot: an operator who
+        // adds riptide.inventory.file in the same edit would otherwise see it ignored
+        final InventoryConfig candidateInventoryConfig = binder
+                .bind("riptide.inventory", Bindable.of(InventoryConfig.class))
+                .orElseGet(InventoryConfig::new);
+        final InventorySnapshot candidateInventory =
+                InventoryLoader.load(candidateProfiles, candidateInventoryConfig.getFile());
         final Map<String, NodeDefinition> validatedNodes = NodeRegistry.validated(nodes);
         final RoutingConfig.Parsed parsedRouting = RoutingConfig.parse(routing.getPrefixes(), routing.getAsNames());
 
@@ -256,7 +273,11 @@ public class ConfigFileReloader {
         this.lastCommittedHash = this.lastAttemptedHash;
         this.nodeRegistry.swap(validatedNodes);
         this.routingConfig.swap(parsedRouting);
-        this.interfacePoller.invalidateAll();
+        // swap, then refresh (AD-6): profiles and the inventory built from them move
+        // together, and the poller re-resolves what it is already walking, which is what
+        // makes a credential rotation reach an agent without a restart
+        this.inventory.swap(candidateProfiles, candidateInventory);
+        this.interfacePoller.refreshRegistrations(candidateInventory);
         this.sopsSecretResolver.invalidateCache();
 
         this.reloadSuccesses.inc();

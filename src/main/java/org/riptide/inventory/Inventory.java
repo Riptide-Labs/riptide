@@ -26,8 +26,11 @@ import java.util.Objects;
 @RequiredArgsConstructor
 public class Inventory {
 
+    // volatile, not final: a main-config reload rebinds the credential and polling
+    // profiles, and the snapshot's entries hold resolved objects from them (AD-5), so the
+    // two have to move together or a rotated credential never reaches a walk
     @NonNull
-    private final SnmpProfilesConfig profiles;
+    private volatile SnmpProfilesConfig profiles;
 
     @NonNull
     private final InventoryConfig config;
@@ -56,6 +59,22 @@ public class Inventory {
      */
     public void swap(final InventorySnapshot snapshot) {
         this.active = Objects.requireNonNull(snapshot);
+    }
+
+    /**
+     * Publishes a snapshot together with the profiles it was built from, which is what a
+     * main-config reload needs: credential sets live in the main config, agent ranges
+     * resolve them into objects at build time, so rotating a community means rebuilding
+     * the inventory rather than swapping either half on its own.
+     */
+    public void swap(final SnmpProfilesConfig profiles, final InventorySnapshot snapshot) {
+        this.profiles = Objects.requireNonNull(profiles);
+        this.active = Objects.requireNonNull(snapshot);
+    }
+
+    /** The profiles the serving snapshot was built from, for a reloader re-parsing the file. */
+    public SnmpProfilesConfig profiles() {
+        return this.profiles;
     }
 
     /** The current snapshot: exactly one volatile read; capture views from it, not from here. */
