@@ -17,6 +17,9 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 
 import java.time.Duration;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Map;
@@ -86,21 +89,44 @@ public class Nl6FlowIngestionIT {
         registry.add("riptide.receivers.sf.host", () -> "0.0.0.0");
         registry.add("riptide.receivers.sf.port", () -> SFLOW_PORT);
 
-        // A node matching the sFlow devices' agent addresses (payload-derived; the
-        // shared-socket UDP source is the nl6 container, which this subnet does NOT
-        // cover) with static interface names — enrichment proves node attribution.
-        registry.add("riptide.nodes.sflow-agents.subnet-address", () -> "10.42.3.0/24");
-        registry.add("riptide.nodes.sflow-agents.interfaces.1.name", () -> "sfl-in");
-        registry.add("riptide.nodes.sflow-agents.interfaces.2.name", () -> "sfl-out");
+        // Enrichment entries matching the sFlow devices' agent addresses (payload-derived;
+        // the shared-socket UDP source is the nl6 container, which these prefixes do NOT
+        // cover) with static interface pins, so enrichment proves attribution. Two entries
+        // share one prefix to prove sub-agent pinning: the pinned entry (observation-domain
+        // = the sub_agent_id) beats the wildcard, and distinct pins tell the query which won.
+        registry.add("riptide.inventory.file", () -> inventoryFile().toString());
+    }
 
-        // Two nodes on one subnet to prove sFlow sub-agent pinning: the pinned node
-        // (observation-domain = the sub_agent_id) beats the wildcard. Distinct static
-        // interface names let the query tell which node matched.
-        registry.add("riptide.nodes.sflow-pinned.subnet-address", () -> "10.42.6.0/24");
-        registry.add("riptide.nodes.sflow-pinned.observation-domain", () -> "7");
-        registry.add("riptide.nodes.sflow-pinned.interfaces.1.name", () -> "pinned-in");
-        registry.add("riptide.nodes.sflow-wild.subnet-address", () -> "10.42.6.0/24");
-        registry.add("riptide.nodes.sflow-wild.interfaces.1.name", () -> "wild-in");
+    /**
+     * Written once per run rather than declared as properties: the inventory is a file by
+     * design, and these entries are exactly what the legacy riptide.nodes tree used to say.
+     */
+    private static Path inventoryFile() {
+        try {
+            final Path file = Files.createTempFile("riptide-e2e-inventory", ".yaml");
+            file.toFile().deleteOnExit();
+            Files.writeString(file, """
+                    riptide:
+                      exporters:
+                        sflow-agents:
+                          address: 10.42.3.0/24
+                          interfaces:
+                            1: { name: sfl-in }
+                            2: { name: sfl-out }
+                        sflow-pinned:
+                          address: 10.42.6.0/24
+                          observation-domain: 7
+                          interfaces:
+                            1: { name: pinned-in }
+                        sflow-wild:
+                          address: 10.42.6.0/24
+                          interfaces:
+                            1: { name: wild-in }
+                    """);
+            return file;
+        } catch (final IOException e) {
+            throw new IllegalStateException("could not write the e2e inventory file", e);
+        }
     }
 
     @BeforeAll

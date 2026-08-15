@@ -83,10 +83,33 @@ public class Nl6SnmpEnrichmentIT {
         registry.add("riptide.receivers.nf9.host", () -> "0.0.0.0");
         registry.add("riptide.receivers.nf9.port", () -> NETFLOW9_PORT);
 
-        registry.add("riptide.nodes.nl6-devices.subnet-address", () -> "10.42.0.0/16");
-        registry.add("riptide.nodes.nl6-devices.snmp.port", () -> 161);
-        registry.add("riptide.nodes.nl6-devices.snmp.snmp-version", () -> "v2c");
-        registry.add("riptide.nodes.nl6-devices.snmp.community", () -> "public");
+        // Credentials live in the main config; the ranges that reference them live in the
+        // inventory file. The devices are enumerated as single addresses rather than
+        // declared as one 10.42.0.0/16 range because a range wider than one host may not
+        // carry a v1/v2c credential set: the community would go to anything in the range
+        // that emits a flow. The nl6 agent speaks v2c, so enumeration is the remedy the
+        // rule itself names. Demonstrating zero-touch onboarding across a whole range
+        // needs a v3-capable agent, which is a question for the nl6 image.
+        registry.add("riptide.snmp.credentials.nl6.version", () -> "v2c");
+        registry.add("riptide.snmp.credentials.nl6.community", () -> "public");
+        registry.add("riptide.inventory.file", () -> inventoryFile().toString());
+    }
+
+    private static java.nio.file.Path inventoryFile() {
+        try {
+            final var file = java.nio.file.Files.createTempFile("riptide-e2e-snmp-inventory", ".yaml");
+            file.toFile().deleteOnExit();
+            final var agents = new StringBuilder("riptide:\n  snmp:\n    agents:\n");
+            for (int device = 1; device <= DEVICE_COUNT; device++) {
+                agents.append("      \"10.42.0.").append(device).append("\":\n")
+                        .append("        credentials: nl6\n")
+                        .append("        port: 161\n");
+            }
+            java.nio.file.Files.writeString(file, agents.toString());
+            return file;
+        } catch (final java.io.IOException e) {
+            throw new IllegalStateException("could not write the e2e inventory file", e);
+        }
     }
 
     @BeforeAll
