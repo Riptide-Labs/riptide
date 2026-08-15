@@ -20,11 +20,27 @@ public final class InventorySnapshot {
 
     private final PinnedPrefixMatcher<AgentEntry> agents;
     private final PinnedPrefixMatcher<ExporterEntry> exporters;
+    private final AgentView agentView;
+    private final ExporterView exporterView;
 
     InventorySnapshot(final PinnedPrefixMatcher<AgentEntry> agents,
                       final PinnedPrefixMatcher<ExporterEntry> exporters) {
         this.agents = agents;
         this.exporters = exporters;
+        // built once here rather than per call: a consumer that captures a view per
+        // batch should pay a volatile read and nothing else
+        this.agentView = identity -> this.agents.lookup(probe(identity), domain(identity));
+        this.exporterView = identity -> this.exporters.lookup(probe(identity), domain(identity));
+    }
+
+    /** How many agent ranges this build carries. */
+    public int agentCount() {
+        return this.agents.size();
+    }
+
+    /** How many enrichment entries this build carries. */
+    public int exporterCount() {
+        return this.exporters.size();
     }
 
     /** The valid empty inventory: no ranges, no enrichment entries. */
@@ -39,12 +55,20 @@ public final class InventorySnapshot {
         return this.agents.size() == 0 && this.exporters.size() == 0;
     }
 
+    /**
+     * Capture once per unit of work and hold it (AD-3). Calling this per flow costs a
+     * volatile read each time and, worse, can straddle a swap inside one batch, which
+     * is exactly what one immutable snapshot exists to prevent. Never hold a view in a
+     * field or expose one as a bean: it would pin the generation it was built from and
+     * hot reload would go quietly nowhere.
+     */
     public AgentView agentView() {
-        return identity -> this.agents.lookup(probe(identity), domain(identity));
+        return this.agentView;
     }
 
+    /** Capture once per unit of work; see {@link #agentView()}. */
     public ExporterView exporterView() {
-        return identity -> this.exporters.lookup(probe(identity), domain(identity));
+        return this.exporterView;
     }
 
     private static IPAddressString probe(final ExporterIdentity identity) {

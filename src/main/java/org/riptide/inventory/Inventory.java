@@ -7,6 +7,7 @@ package org.riptide.inventory;
 
 import jakarta.annotation.PostConstruct;
 import lombok.NonNull;
+import lombok.extern.slf4j.Slf4j;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -20,6 +21,7 @@ import java.util.Objects;
  * hot reload is exactly such a swap. This bean performs no IO after startup and
  * serves no consumers yet: the enrichers and the poller cut over in story 2.8.
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class Inventory {
@@ -36,7 +38,15 @@ public class Inventory {
     public void load() {
         // boot commits through the same path as reload, so the whole-instance swap
         // stays the only way serving state ever changes
-        swap(InventoryLoader.load(this.profiles, this.config.getFile()));
+        final InventorySnapshot loaded = InventoryLoader.load(this.profiles, this.config.getFile());
+        swap(loaded);
+        if (this.config.getFile() == null) {
+            // silence here would read as "working" while every flow goes unenriched
+            log.info("No inventory file configured (riptide.inventory.file): serving the empty inventory");
+        } else {
+            log.info("Inventory loaded from {}: {} agent ranges, {} enrichment entries",
+                    this.config.getFile(), loaded.agentCount(), loaded.exporterCount());
+        }
     }
 
     /**

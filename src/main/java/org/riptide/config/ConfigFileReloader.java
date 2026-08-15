@@ -13,6 +13,7 @@ import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.node.NodeDefinition;
 import org.riptide.node.NodeRegistry;
+import org.riptide.inventory.InventoryMisplacementCheck;
 import org.riptide.inventory.PollKeyMigrationCheck;
 import org.riptide.inventory.SnmpProfilesConfig;
 import org.riptide.node.NodesConfigMigrationCheck;
@@ -219,6 +220,9 @@ public class ConfigFileReloader {
         // profile-gated documents are never installed on reload
         NodesConfigMigrationCheck.failOnLegacyIndexedNodes(applicable);
         PollKeyMigrationCheck.failOnRetiredPollKeys(applicable);
+        // startup rejects an inventory tree in the main config; accepting it here and
+        // silently ignoring it would break this class's own stated contract
+        InventoryMisplacementCheck.failOnMisplacedInventoryTrees(applicable);
 
         // fidelity by construction: the candidate stack is the live stack with exactly
         // the file layer swapped — env overrides keep their boot-time precedence.

@@ -193,6 +193,22 @@ public class ConfigFileReloaderTest {
     }
 
     @Test
+    public void anInventoryTreeInTheMainConfigRejectsTheCandidate() throws Exception {
+        // boot refuses it, so a reload must too: accepting it would silently ignore the
+        // tree until the next restart failed
+        final long failuresBefore = metrics.counter("config.reload.failures").getCount();
+        write("""
+                riptide:
+                  exporters:
+                    core-router:
+                      address: 10.0.0.1
+                """);
+        reloader.poll();
+
+        assertThat(metrics.counter("config.reload.failures").getCount()).isEqualTo(failuresBefore + 1);
+    }
+
+    @Test
     public void retiredPollKeysRejectTheCandidate() throws Exception {
         // a reload-accepted retired key would otherwise kill the NEXT boot
         final long failuresBefore = metrics.counter("config.reload.failures").getCount();
