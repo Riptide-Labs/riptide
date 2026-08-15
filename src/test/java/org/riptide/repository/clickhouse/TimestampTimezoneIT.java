@@ -21,6 +21,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.net.InetAddress;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.TimeZone;
 
@@ -67,7 +68,11 @@ public class TimestampTimezoneIT {
             final var repository = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
             repository.start();
 
-            final var flowEnd = Instant.parse("2026-07-16T12:00:00Z");
+            // relative to now, not a fixed date: the flows table carries
+            // TTL timestamp + INTERVAL 30 DAY, so a hard-coded instant silently becomes
+            // expired-on-arrival once the wall clock passes it and the row is dropped
+            // before the query can read it. Truncated to seconds because the column is.
+            final var flowEnd = Instant.now().truncatedTo(ChronoUnit.SECONDS);
             final var flowStart = flowEnd.minusSeconds(30);
             repository.persist(List.of(flow(flowStart, flowEnd)));
 
