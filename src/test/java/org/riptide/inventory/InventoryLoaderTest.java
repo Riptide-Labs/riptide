@@ -759,6 +759,214 @@ class InventoryLoaderTest {
     }
 
     @Test
+    void interfacePinsParseInBothIfIndexSpellingsAndReachTheEntry() {
+        // unquoted is the spelling operators know from the legacy tree and SnakeYAML
+        // hands it over as an Integer, so both forms are accepted here deliberately
+        final var snapshot = InventoryLoader.parse(profiles(), """
+                riptide:
+                  exporters:
+                    core-router:
+                      address: 10.30.0.1
+                      interfaces:
+                        10: { name: eth0, alias: "Uplink to AS64500", high-speed: 10000 }
+                        "11": { alias: "Only an alias" }
+                    bare-switch:
+                      address: 10.30.0.2
+                """, "test.yaml");
+
+        final var pins = snapshot.exporterView().match(netflow("10.30.0.1", 0)).orElseThrow().interfaces();
+        assertThat(pins).containsOnlyKeys(10, 11);
+        assertThat(pins.get(10)).isEqualTo(new InterfacePin("eth0", "Uplink to AS64500", 10_000L));
+        // a pin may set one field and leave the rest to the rungs below it
+        assertThat(pins.get(11)).isEqualTo(new InterfacePin(null, "Only an alias", null));
+
+        // an exporter without the key carries an empty map, never null
+        assertThat(snapshot.exporterView().match(netflow("10.30.0.2", 0)).orElseThrow().interfaces()).isEmpty();
+    }
+
+    @Test
+    void interfacePinsAreImmutableOnTheBuiltEntry() {
+        final var snapshot = InventoryLoader.parse(profiles(), """
+                riptide:
+                  exporters:
+                    core-router:
+                      address: 10.31.0.1
+                      interfaces:
+                        1: { name: eth0 }
+                """, "test.yaml");
+
+        final var pins = snapshot.exporterView().match(netflow("10.31.0.1", 0)).orElseThrow().interfaces();
+        assertThatThrownBy(() -> pins.put(2, new InterfacePin("late", null, null)))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void badInterfacePinShapesFailNamingTheExporterAndTheInterface() {
+        // ifIndex 4093 throughout: a distinctive number, so asserting on it cannot be
+        // satisfied by boilerplate or by the fixture address the way "0" or "1" would
+        assertThatThrownBy(() -> parseExporter("""
+                      interfaces:
+                        0: { name: eth0 }
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("core-router")
+                .hasMessageContaining("must be positive");
+
+        assertThatThrownBy(() -> parseExporter("""
+                      interfaces:
+                        -5: { name: eth0 }
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("interface -5")
+                .hasMessageContaining("must be positive");
+
+        assertThatThrownBy(() -> parseExporter("""
+                      interfaces:
+                        eth0: { name: eth0 }
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("core-router")
+                .hasMessageContaining("eth0");
+
+        assertThatThrownBy(() -> parseExporter("""
+                      interfaces:
+                        4093: { nmae: eth0 }
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("interface 4093")
+                .hasMessageContaining("nmae");
+
+        assertThatThrownBy(() -> parseExporter("""
+                      interfaces:
+                        4093: { high-speed: "1000" }
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("interface 4093")
+                .hasMessageContaining("not a whole number");
+
+        assertThatThrownBy(() -> parseExporter("""
+                      interfaces: nonsense
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("core-router")
+                // not just the exporter name, which every failure of this fixture carries
+                .hasMessageContaining("must be a mapping");
+    }
+
+    @Test
+    void ifIndexSpellingsThatCouldMeanTwoThingsAreRejected() {
+        // "010" would be 10 quoted and 8 unquoted (YAML 1.1 octal), so the quoted form
+        // is held to canonical decimal rather than allowed to disagree with its twin
+        for (final String key : new String[]{"\"010\"", "\"+8\"", "\" 8 \""}) {
+            assertThatThrownBy(() -> parseExporter("""
+                          interfaces:
+                            %s: { name: eth0 }
+                    """.formatted(key)))
+                    .as("key %s", key)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("plain decimal digits");
+        }
+
+        // the same interface declared both ways is a collision SnakeYAML cannot see,
+        // and silently keeping the last one would discard an operator's pin
+        assertThatThrownBy(() -> parseExporter("""
+                      interfaces:
+                        4093: { name: unquoted }
+                        "4093": { name: quoted }
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("interface 4093 twice");
+
+        // a whole number that no ifIndex can hold says so, rather than claiming it is
+        // not a number at all
+        assertThatThrownBy(() -> parseExporter("""
+                      interfaces:
+                        4294967296: { name: eth0 }
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("outside the ifIndex range");
+    }
+
+    @Test
+    void pinnedValuesMustBeWrittenAsTheTypeTheyPin() {
+        // a pin outranks the walk, so a coerced value would win: `name: on` must not
+        // become "true", and a blank must not pin emptiness over what SNMP found
+        assertThatThrownBy(() -> parseExporter("""
+                      interfaces:
+                        4093: { name: 10 }
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("interface 4093")
+                .hasMessageContaining("not text");
+
+        assertThatThrownBy(() -> parseExporter("""
+                      interfaces:
+                        4093: { alias: [a, b] }
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("not text");
+
+        assertThatThrownBy(() -> parseExporter("""
+                      interfaces:
+                        4093: { name: "   " }
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("blank name");
+
+        for (final String speed : new String[]{"0", "-1", "4294967296"}) {
+            assertThatThrownBy(() -> parseExporter("""
+                          interfaces:
+                            4093: { high-speed: %s }
+                    """.formatted(speed)))
+                    .as("high-speed %s", speed)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("outside 1..");
+        }
+    }
+
+    @Test
+    void twoExportersOnTheSameAddressAndPinFailNamingBoth() {
+        assertThatThrownBy(() -> InventoryLoader.parse(profiles(), """
+                riptide:
+                  exporters:
+                    first:
+                      address: 10.32.0.1
+                      observation-domain: 42
+                    second:
+                      address: 10.32.0.1
+                      observation-domain: 42
+                """, "test.yaml"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("first")
+                .hasMessageContaining("second");
+
+        // the same address under different domains is not a collision
+        final var snapshot = InventoryLoader.parse(profiles(), """
+                riptide:
+                  exporters:
+                    first:
+                      address: 10.33.0.1
+                      observation-domain: 42
+                    second:
+                      address: 10.33.0.1
+                      observation-domain: 7
+                """, "test.yaml");
+        assertThat(snapshot.exporterView().match(netflow("10.33.0.1", 42)))
+                .map(ExporterEntry::name).hasValue("first");
+        assertThat(snapshot.exporterView().match(netflow("10.33.0.1", 7)))
+                .map(ExporterEntry::name).hasValue("second");
+    }
+
+    private static void parseExporter(final String body) {
+        InventoryLoader.parse(profiles(), """
+                riptide:
+                  exporters:
+                    core-router:
+                      address: 10.34.0.1
+                %s""".formatted(body), "test.yaml");
+    }
+
+    @Test
     void addressCoveredByNoRangeYieldsNoAgentEntry() {
         // the loader half of FR-8's not-polled-but-collected rule: no entry means no
         // endpoint can ever be built for it. The runtime half (collected, option-data

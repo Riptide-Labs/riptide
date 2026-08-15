@@ -44,9 +44,16 @@ public final class InventoryLoader {
     private static final Set<String> RIPTIDE_KEYS = Set.of("snmp", "exporters");
     private static final Set<String> SNMP_KEYS = Set.of("agents");
     private static final Set<String> AGENT_KEYS = Set.of("credentials", "polling", "enabled");
-    private static final Set<String> EXPORTER_KEYS = Set.of("address", "observation-domain");
+    private static final Set<String> EXPORTER_KEYS = Set.of("address", "observation-domain", "interfaces");
+
+    private static final Set<String> PIN_KEYS = Set.of("name", "alias", "high-speed");
 
     private static final long MAX_OBSERVATION_DOMAIN = 0xFFFF_FFFFL;
+
+    /** ifHighSpeed is a Gauge32 in Mbit/s. */
+    private static final long MAX_HIGH_SPEED = 0xFFFF_FFFFL;
+
+    private static final java.util.regex.Pattern CANONICAL_IF_INDEX = java.util.regex.Pattern.compile("[1-9][0-9]*");
 
     // bounded diagnostics: name a readable number of half-finished entries, then count
     private static final int MAX_NAMED_EMPTY_ENTRIES = 20;
@@ -228,7 +235,8 @@ public final class InventoryLoader {
                     "exporter '%s' address".formatted(entry.getKey()), true);
             final Long pin = observationDomain(entry.getKey(), entryBody.get("observation-domain"));
             builder.add(entry.getKey(), parsedAddress, pin,
-                    new ExporterEntry(entry.getKey(), parsedAddress, pin));
+                    new ExporterEntry(entry.getKey(), parsedAddress, pin,
+                            interfacePins(entry.getKey(), entryBody.get("interfaces"))));
         }
         return builder.build();
     }
@@ -359,6 +367,175 @@ public final class InventoryLoader {
                             .formatted(range, value));
         }
         return flag;
+    }
+
+    /**
+     * Static per-ifIndex pins for one exporter. ifIndex keys may be written unquoted:
+     * SnakeYAML hands those over as Integers, and unlike everywhere else in this tree
+     * a numeric key here is what an operator means rather than a typo (the legacy
+     * {@code riptide.nodes} spelling is unquoted too). Quoted keys must be canonical
+     * decimal, so the two spellings can never disagree about which interface they
+     * mean, and declaring one ifIndex both ways is an error rather than a silent
+     * last-one-wins.
+     *
+     * <p>Errors fire in document order, which is what makes the first complaint about
+     * a file stable across runs.</p>
+     *
+     * <p>One YAML wart survives and cannot be seen from here: an unquoted {@code 010}
+     * is resolved to 8 by YAML 1.1 octal rules before the loader is handed the key.
+     * Quote it, or write it without the leading zero.</p>
+     */
+    private static Map<Integer, InterfacePin> interfacePins(final String exporter, final Object value) {
+        if (value == null) {
+            return Map.of();
+        }
+        if (!(value instanceof Map<?, ?> pins)) {
+            throw new IllegalStateException(
+                    "Exporter '%s' interfaces must be a mapping of ifIndex to pins, found %s."
+                            .formatted(exporter, value.getClass().getSimpleName()));
+        }
+        final Map<Integer, InterfacePin> parsed = new LinkedHashMap<>(pins.size() * 2);
+        for (final Map.Entry<?, ?> pin : pins.entrySet()) {
+            final int ifIndex = ifIndex(exporter, pin.getKey());
+            final InterfacePin previous = parsed.putIfAbsent(ifIndex, interfacePin(exporter, ifIndex, pin.getValue()));
+            if (previous != null) {
+                // quoted and unquoted spellings are distinct keys to SnakeYAML, so its
+                // own duplicate-key check cannot see this one
+                throw new IllegalStateException(
+                        ("Exporter '%s' pins interface %d twice, once quoted and once not: "
+                                + "keep one spelling.").formatted(exporter, ifIndex));
+            }
+        }
+        return Map.copyOf(parsed);
+    }
+
+    private static int ifIndex(final String exporter, final Object key) {
+        if (key instanceof Integer index) {
+            return requireUsableIfIndex(exporter, index);
+        }
+        if (key instanceof String text) {
+            if (!CANONICAL_IF_INDEX.matcher(text).matches()) {
+                // no leading zeros, sign or padding: "010" would mean 10 here and 8
+                // unquoted, and a spelling that changes meaning is the typo class this
+                // loader refuses everywhere else
+                throw new IllegalStateException(
+                        ("Exporter '%s' has an interface key '%s': write the ifIndex as plain decimal digits, "
+                                + "with no sign, padding or leading zeros.").formatted(exporter, text));
+            }
+            try {
+                return requireUsableIfIndex(exporter, Integer.parseInt(text));
+            } catch (final NumberFormatException e) {
+                throw new IllegalStateException(
+                        "Exporter '%s' has an interface key '%s' outside the ifIndex range."
+                                .formatted(exporter, text), e);
+            }
+        }
+        if (key instanceof Number) {
+            // a Long or BigInteger key is a whole number, just not one an ifIndex can be
+            throw new IllegalStateException(
+                    "Exporter '%s' has an interface key '%s' outside the ifIndex range."
+                            .formatted(exporter, key));
+        }
+        throw new IllegalStateException(
+                "Exporter '%s' has an interface key '%s' that is not a whole number.".formatted(exporter, key));
+    }
+
+    private static int requireUsableIfIndex(final String exporter, final int ifIndex) {
+        if (ifIndex <= 0) {
+            // enrichment treats ifIndex 0 as "unknown interface" and skips the whole
+            // ladder, so a pin there could never apply: a typo, not dead configuration
+            throw new IllegalStateException(
+                    "Exporter '%s' pins interface %d, which is not a usable ifIndex: it must be positive."
+                            .formatted(exporter, ifIndex));
+        }
+        return ifIndex;
+    }
+
+    private static InterfacePin interfacePin(final String exporter, final int ifIndex, final Object value) {
+        final Map<String, Object> body = pinBody(exporter, ifIndex, value);
+        final InterfacePin pin = new InterfacePin(
+                pinText(exporter, ifIndex, "name", body.get("name")),
+                pinText(exporter, ifIndex, "alias", body.get("alias")),
+                highSpeed(exporter, ifIndex, body.get("high-speed")));
+        if (pin.name() == null && pin.alias() == null && pin.highSpeed() == null) {
+            // the agent-range precedent: an entry that declares nothing is a
+            // half-finished edit, and silence about it is how it stays that way
+            log.warn("Exporter '{}' interface {} pins nothing: give it a name, alias or high-speed, "
+                    + "or remove the entry", exporter, ifIndex);
+        }
+        return pin;
+    }
+
+    private static Map<String, Object> pinBody(final String exporter, final int ifIndex, final Object value) {
+        if (value == null) {
+            return Map.of();
+        }
+        if (!(value instanceof Map<?, ?> map)) {
+            throw new IllegalStateException(
+                    "Exporter '%s' interface %d must be a mapping, found %s."
+                            .formatted(exporter, ifIndex, value.getClass().getSimpleName()));
+        }
+        final Map<String, Object> body = new LinkedHashMap<>(map.size() * 2);
+        for (final Map.Entry<?, ?> field : map.entrySet()) {
+            if (!(field.getKey() instanceof String key)) {
+                throw new IllegalStateException(
+                        "Exporter '%s' interface %d has a non-string key '%s'; quote it."
+                                .formatted(exporter, ifIndex, field.getKey()));
+            }
+            if (!PIN_KEYS.contains(key)) {
+                throw new IllegalStateException(
+                        "Exporter '%s' interface %d has an unknown key '%s'; known keys are %s."
+                                .formatted(exporter, ifIndex, key, new TreeSet<>(PIN_KEYS)));
+            }
+            body.put(key, field.getValue());
+        }
+        return body;
+    }
+
+    /**
+     * Pinned text must be written as text. Coercing whatever YAML resolved would pin
+     * {@code on} as "true" and a bare date as a JVM-formatted timestamp that differs
+     * by host timezone, and a pin outranks the walk, so the wrong value would win.
+     */
+    private static String pinText(final String exporter, final int ifIndex, final String field, final Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (!(value instanceof String text)) {
+            throw new IllegalStateException(
+                    "Exporter '%s' interface %d has a %s that is not text ('%s'); quote it."
+                            .formatted(exporter, ifIndex, field, value));
+        }
+        if (text.isBlank()) {
+            // only null falls through to the rungs below, so a blank would pin emptiness
+            // over whatever the walk found
+            throw new IllegalStateException(
+                    "Exporter '%s' interface %d has a blank %s: remove the key to fall back to SNMP."
+                            .formatted(exporter, ifIndex, field));
+        }
+        return text;
+    }
+
+    private static Long highSpeed(final String exporter, final int ifIndex, final Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (!(value instanceof Integer) && !(value instanceof Long)) {
+            // the observation-domain precedent: a quoted "1000" must fail rather than
+            // bind as something that looks numeric to an operator reading the file
+            throw new IllegalStateException(
+                    "Exporter '%s' interface %d has a high-speed '%s' that is not a whole number."
+                            .formatted(exporter, ifIndex, value));
+        }
+        final long speed = ((Number) value).longValue();
+        if (speed <= 0 || speed > MAX_HIGH_SPEED) {
+            // ifHighSpeed is a Gauge32 of Mbit/s; a non-positive or oversized pin would
+            // reach utilization maths as a divide-by-zero or an overflow
+            throw new IllegalStateException(
+                    "Exporter '%s' interface %d has a high-speed %d Mbit/s outside 1..%d."
+                            .formatted(exporter, ifIndex, speed, MAX_HIGH_SPEED));
+        }
+        return speed;
     }
 
     private static Long observationDomain(final String exporter, final Object value) {
