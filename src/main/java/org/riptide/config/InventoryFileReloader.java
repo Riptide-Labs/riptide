@@ -218,7 +218,8 @@ public class InventoryFileReloader {
             this.lastCommittedHash = this.lastAttemptedHash;
             this.reloadSuccesses.inc();
             this.stale = false;
-            log.info("Inventory reloaded from {}", this.location);
+            log.info("Inventory reloaded from {}: {} agent ranges, {} enrichment entries",
+                    this.location, candidate.agentCount(), candidate.exporterCount());
         } catch (final Exception e) {
             this.reloadFailures.inc();
             this.stale = true;

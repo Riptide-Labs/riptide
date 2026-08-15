@@ -62,6 +62,9 @@ public final class InventoryLoader {
     // named error instead of an OOM
     private static final int CODE_POINT_LIMIT = 64 * 1024 * 1024;
 
+    /** Checked before the read, because the code-point limit only bounds the parser. */
+    private static final long MAX_FILE_BYTES = CODE_POINT_LIMIT;
+
     /**
      * No inet_aton joins, no leading zeros, no empty or all-address forms: a typo
      * like "10.0.1" or "010.0.0.7" must fail, not quietly mean a different address.
@@ -86,6 +89,7 @@ public final class InventoryLoader {
         if (file == null) {
             return InventorySnapshot.empty();
         }
+        requireReadableSize(file);
         final String content;
         try {
             content = Files.readString(file);
@@ -94,6 +98,26 @@ public final class InventoryLoader {
                     "Inventory file %s is not readable: %s".formatted(file, e.getMessage()), e);
         }
         return parse(profiles, content, file.toString());
+    }
+
+    /**
+     * The code-point limit bounds the parser, not the read: bytes, chars, a copy and
+     * the object graph are all live before it applies, so a runaway file OOMs first,
+     * and an Error out of a reload cycle kills the schedule for the process lifetime.
+     * Fail on size with the same file-naming message instead.
+     */
+    private static void requireReadableSize(final Path file) {
+        try {
+            final long size = Files.size(file);
+            if (size > MAX_FILE_BYTES) {
+                throw new IllegalStateException(
+                        "Inventory file %s is %d bytes, over the %d byte limit: split it or generate less."
+                                .formatted(file, size, MAX_FILE_BYTES));
+            }
+        } catch (final IOException e) {
+            throw new IllegalStateException(
+                    "Inventory file %s is not readable: %s".formatted(file, e.getMessage()), e);
+        }
     }
 
     /** The pure core: parses and validates inventory content into a snapshot. */
