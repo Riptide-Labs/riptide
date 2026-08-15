@@ -30,8 +30,8 @@ import java.time.Duration;
 @Slf4j
 public record PollingProfile(@DefaultValue(DEFAULT_REFRESH_INTERVAL) Duration refreshInterval,
                              @DefaultValue(DEFAULT_SNAPSHOT_EXPIRY) Duration snapshotExpiry,
-                             @DefaultValue(DEFAULT_TIMEOUT) int timeout,
-                             @DefaultValue(DEFAULT_RETRIES) int retries) {
+                             @DefaultValue("" + DEFAULT_TIMEOUT_MS) int timeout,
+                             @DefaultValue("" + DEFAULT_RETRIES) int retries) {
 
     /** Mirrors SnmpPollConfig.refreshIntervalMs, which inherited the old cache retention. */
     static final String DEFAULT_REFRESH_INTERVAL = "PT10M";
@@ -39,9 +39,12 @@ public record PollingProfile(@DefaultValue(DEFAULT_REFRESH_INTERVAL) Duration re
     /** Mirrors SnmpPollConfig.snapshotExpiryMs: the 3x staleness backstop. */
     static final String DEFAULT_SNAPSHOT_EXPIRY = "PT30M";
 
-    static final String DEFAULT_TIMEOUT = "500";
+    // ints, not strings: the annotation takes a compile-time constant expression
+    // either way, and this keeps a parse out of the code path CodeQL reads as
+    // throwing while the two default paths still share one source of truth
+    static final int DEFAULT_TIMEOUT_MS = 500;
 
-    static final String DEFAULT_RETRIES = "1";
+    static final int DEFAULT_RETRIES = 1;
 
     /**
      * The implicit {@code default} profile. Built from the same constants the binder
@@ -51,8 +54,8 @@ public record PollingProfile(@DefaultValue(DEFAULT_REFRESH_INTERVAL) Duration re
     public static PollingProfile builtInDefault() {
         return new PollingProfile(Duration.parse(DEFAULT_REFRESH_INTERVAL),
                 Duration.parse(DEFAULT_SNAPSHOT_EXPIRY),
-                Integer.parseInt(DEFAULT_TIMEOUT),
-                Integer.parseInt(DEFAULT_RETRIES));
+                DEFAULT_TIMEOUT_MS,
+                DEFAULT_RETRIES);
     }
 
     /**
