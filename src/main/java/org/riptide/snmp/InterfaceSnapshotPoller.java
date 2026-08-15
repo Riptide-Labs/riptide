@@ -83,6 +83,14 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         private final java.util.concurrent.atomic.AtomicInteger consecutiveFailures =
                 new java.util.concurrent.atomic.AtomicInteger();
         private volatile boolean unreachable;
+        /** Set when a refresh found this registration unpollable while a walk was running. */
+        private volatile boolean stopWhenIdle;
+        /**
+         * Bumped whenever the endpoint is re-resolved. A walk that started before the
+         * change must not write back a schedule derived from the endpoint it replaced.
+         */
+        private final java.util.concurrent.atomic.AtomicInteger resolution =
+                new java.util.concurrent.atomic.AtomicInteger();
         /** Cleared whenever a new snapshot lands, so a diagnosis repeats at most once per walk. */
         private final Set<Integer> warnedMissing = ConcurrentHashMap.newKeySet();
 
@@ -294,6 +302,10 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     private void reresolveIfChanged(final Registration registration, final SnmpEndpoint endpoint,
                                     final long now, final InetSocketAddress address) {
         if (registration.endpoint.equals(endpoint)) {
+            // adopt the instance anyway: this runs once per flow per direction, and the
+            // enricher builds a fresh endpoint per batch, so leaving the old instance in
+            // place means every flow pays a deep comparison instead of a reference check
+            registration.endpoint = endpoint;
             return;
         }
         registration.endpoint = endpoint;
@@ -302,6 +314,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         registration.consecutiveFailures.set(0);
         registration.unreachable = false;
         registration.nextWalkNanos = now;
+        registration.resolution.incrementAndGet();
         this.reresolved.mark();
         log.info("Endpoint for {} re-resolved from the current inventory; walking on the next tick", address);
     }
@@ -327,6 +340,13 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      * waiting out the deregistration deadline: without it an operator can carve a segment
      * out, see the reload succeed, and still be polling it minutes later.</p>
      *
+     * <p>Note what this does <em>not</em> reach: the value of a credential set. Ranges are
+     * re-resolved against the published snapshot, but that snapshot resolved its
+     * {@code CredentialSet} objects from the profile beans as they were bound at boot, and
+     * a main-config reload deliberately discards its credential bind. Rotating a community
+     * therefore still needs a restart, which is the orchestration gap the endpoint-refresh
+     * work leaves open.</p>
+     *
      * <p>Agent ranges carry no observation-domain pin, so resolving by address alone is
      * exact rather than approximate; {@code agentRangesResolveRegardlessOfObservationDomain}
      * pins that, and it is the assumption to revisit first if pinning is ever added.</p>
@@ -341,8 +361,18 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             if (resolved.isEmpty() || !resolved.get().getInetSocketAddress().equals(address)) {
                 // gone, carved out, uncredentialed, or moved to another port: stop walking
                 // it. A port change re-registers under its own key on the next flow
-                if (!registration.walkInFlight.get()) {
-                    this.registrations.remove(address, registration);
+                if (registration.walkInFlight.get()) {
+                    // removing it now would let a re-registration mint a fresh in-flight
+                    // flag and start a second concurrent walk. Marking it means the next
+                    // tick finishes the job rather than the carve-out waiting out the
+                    // deregistration deadline, which is what it would do if we just skipped
+                    registration.stopWhenIdle = true;
+                    continue;
+                }
+                if (this.registrations.remove(address, registration)) {
+                    // only when this call is the one that removed it: tick's silence path
+                    // races here, and marking both would make the meter unreconcilable
+                    // against the exporters gauge
                     this.deregistered.mark();
                     log.info("Stopped polling {}: it no longer resolves to a pollable agent range", address);
                 }
@@ -369,6 +399,13 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
 
         for (final Map.Entry<InetSocketAddress, Registration> entry : this.registrations.entrySet()) {
             final Registration registration = entry.getValue();
+            if (registration.stopWhenIdle && !registration.walkInFlight.get()) {
+                if (this.registrations.remove(entry.getKey(), registration)) {
+                    this.deregistered.mark();
+                    log.info("Stopped polling {}: it no longer resolves to a pollable agent range", entry.getKey());
+                }
+                continue;
+            }
             // silence is measured in the registration's own refresh intervals, so a slow
             // profile is not deregistered for missing a fast profile's deadline
             final long refreshMs = Math.max(1, refreshMsFor(registration.endpoint));
@@ -417,6 +454,10 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     }
 
     private void walk(final Registration registration) {
+        // captured before the walk: a re-resolution landing mid-walk asks for an immediate
+        // re-walk on the new endpoint, and writing this walk's schedule back afterwards
+        // would silently defer the new credentials by a whole interval
+        final int resolution = registration.resolution.get();
         try {
             final SnmpService.InterfaceTable table = this.snmpService.walkInterfaces(registration.endpoint);
             final long now = this.nanoTime.getAsLong();
@@ -440,7 +481,9 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             final Map<Integer, IfInfo> rows = table.rows() != null ? table.rows() : Map.of();
             registration.snapshot = new Snapshot(Map.copyOf(rows), now);
             registration.warnedMissing.clear();
-            registration.nextWalkNanos = nextWalkAt(registration.endpoint, now);
+            if (registration.resolution.get() == resolution) {
+                registration.nextWalkNanos = nextWalkAt(registration.endpoint, now);
+            }
         } catch (final RuntimeException e) {
             // Without this the schedule is never advanced for a registration whose walk throws
             // something the SNMP layer does not degrade — an snmp4j target construction failure,

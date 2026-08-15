@@ -219,14 +219,23 @@ public class InventoryFileReloader {
             }
 
             this.inventory.swap(candidate);
-            // swap, then refresh (AD-6): registrations built from the previous inventory
-            // are re-resolved against this one, so a carve-out or a credential change
-            // reaches an agent that is already being polled instead of waiting out its
-            // deregistration deadline
-            this.interfacePoller.refreshRegistrations(candidate);
             this.lastCommittedHash = this.lastAttemptedHash;
             this.reloadSuccesses.inc();
             this.stale = false;
+
+            // swap, then refresh (AD-6): registrations built from the previous inventory
+            // are re-resolved against this one, so a carve-out reaches an agent that is
+            // already being polled instead of waiting out its deregistration deadline.
+            // Guarded separately and after the commit bookkeeping: the snapshot IS serving
+            // by now, so a failure here must not report the reload as failed, latch
+            // staleness against content that is actually live, and then never retry
+            // because the hash already matches
+            try {
+                this.interfacePoller.refreshRegistrations(candidate);
+            } catch (final Exception e) {
+                log.warn("Inventory reloaded, but refreshing polled endpoints failed: registrations keep "
+                        + "their previous endpoints until their next flow or deregistration", e);
+            }
             log.info("Inventory reloaded from {}: {} agent ranges, {} enrichment entries",
                     this.location, candidate.agentCount(), candidate.exporterCount());
         } catch (final Exception e) {

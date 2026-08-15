@@ -82,9 +82,25 @@ public record PollingProfile(@DefaultValue(DEFAULT_REFRESH_INTERVAL) Duration re
             throw new IllegalStateException(
                     "Polling profile '%s' has a non-positive snapshot-expiry (%s).".formatted(name, this.snapshotExpiry));
         }
+        // bounded because these now reach arithmetic the fleet-wide settings used to own:
+        // a duration large enough to overflow a nanosecond conversion either throws out of
+        // the poll tick, killing every registration's schedule, or wraps negative and walks
+        // the endpoint every second
+        requireWithinBound(name, "refresh-interval", this.refreshInterval);
+        requireWithinBound(name, "snapshot-expiry", this.snapshotExpiry);
         if (expiryShorterThanRefresh()) {
             log.warn("Polling profile '{}' expires snapshots ({}) faster than it refreshes them ({}): "
                     + "a single missed walk blanks enrichment for its exporters", name, this.snapshotExpiry, this.refreshInterval);
+        }
+    }
+
+    /** A day is far past any sane poll cadence and far short of anything that overflows. */
+    private static final Duration MAX_CADENCE = Duration.ofDays(1);
+
+    private static void requireWithinBound(final String name, final String field, final Duration value) {
+        if (value.compareTo(MAX_CADENCE) > 0) {
+            throw new IllegalStateException(
+                    "Polling profile '%s' has a %s of %s, over the %s maximum.".formatted(name, field, value, MAX_CADENCE));
         }
     }
 
