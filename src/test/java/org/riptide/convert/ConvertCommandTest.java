@@ -91,13 +91,15 @@ class ConvertCommandTest {
                 "--out-config", config.toString(), "--out-inventory", inventory.toString())).isZero();
 
         // each half carries only its own keys, and a header naming where it belongs.
-        // Anchored on "snmp-version", which only a credential DEFINITION carries: the
+        // Anchored on an indented "version:" line, which only a credential DEFINITION
+        // carries. A bare contains("version:") would also match "snmp-version:", the exact
+        // spelling this PR fixes, so a regression to it would pass. The
         // inventory half legitimately contains "credentials: credentials-1" as a reference,
         // so a doesNotContain("credentials:") would fail for the wrong reason
         assertThat(Files.readString(config))
-                .contains("version:").doesNotContain("exporters:").doesNotContain("agents:");
+                .contains("\n        version:").doesNotContain("exporters:").doesNotContain("agents:");
         assertThat(Files.readString(inventory))
-                .contains("exporters:").contains("agents:").doesNotContain("version:");
+                .contains("exporters:").contains("agents:").doesNotContain("\n        version:");
         assertThat(Files.readString(inventory)).contains("inventory file");
         assertThat(out()).contains("Wrote credential sets").contains("Wrote agent ranges");
     }
@@ -147,7 +149,7 @@ class ConvertCommandTest {
 
         assertThat(run("convert", input.toString(), "--out-config", existing.toString(), "--force"))
                 .isZero();
-        assertThat(Files.readString(existing)).contains("version:");
+        assertThat(Files.readString(existing)).contains("\n        version:");
     }
 
     /**
@@ -188,7 +190,7 @@ class ConvertCommandTest {
         final Path input = this.tempDir.resolve("nodes.yaml");
         Files.writeString(input, LEGACY);
         assertThat(run("convert", input.toString())).isZero();
-        assertThat(err()).contains("riptide.nodes").contains("fails it");
+        assertThat(err()).contains("riptide.nodes").contains("Both fail startup");
     }
 
     @Test

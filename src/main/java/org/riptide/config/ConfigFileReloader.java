@@ -263,10 +263,6 @@ public class ConfigFileReloader {
             log.warn("riptide.inventory.file changed from {} to {}: the running inventory keeps the old "
                     + "path until a restart", this.inventoryConfig.getFile(), candidateInventoryConfig.getFile());
         }
-        // best effort, and never destructive: this reload exists to carry a credential
-        // rotation into the inventory, so failing to read the file (an atomic rm+mv
-        // landing here) or reading one that parses to nothing must leave the running
-        // inventory alone rather than take the config edit down with it or blank the fleet
         final RoutingConfig.Parsed parsedRouting = RoutingConfig.parse(routing.getPrefixes(), routing.getAsNames());
 
         // commit: live environment stays truthful, snapshots swap atomically, caches refresh
@@ -303,7 +299,10 @@ public class ConfigFileReloader {
         // touches exactly the registrations whose endpoint actually changed
         this.reloadSuccesses.inc();
         this.stale = false;
-        log.info("Config reloaded from {}", this.location);
+        // counts, not just the path: the node count used to carry the magnitude of an edit,
+        // and a line with no numbers cannot tell an operator whether anything landed
+        log.info("Config reloaded from {}: {} credential set(s), {} polling profile(s)",
+                this.location, candidateProfiles.credentials().size(), candidateProfiles.polling().size());
     }
 
     /** Profile-gated documents are a boot-only ConfigData feature; reload skips them loudly. */

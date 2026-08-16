@@ -16,8 +16,7 @@ Not part of `make jar`; never a build gate.
 
 | Harness | Measures |
 |---|---|
-| `LookupBench` | `NodeRegistry.lookup` linear scan vs `inet.ipaddr` associative trie, by node count |
-| `BindBench` | Spring `Binder` cost for `riptide.nodes`, inline (6 keys/node) vs minimal (1 key/node) |
+| `LookupBench` | `the production exporter lookup (inventory exporter view)` linear scan vs `inet.ipaddr` associative trie, by node count |
 | `ShapeBench` | Binder cost by keys-per-node at 10k nodes (full mode), plus direct SnakeYAML parse of the 3-key profile shape |
 | `BenchSuite` | Entry point: runs all three into one report |
 
@@ -33,8 +32,8 @@ Asserted today:
 | Assertion | Meaning | Threshold | Baseline (M-series laptop) |
 |---|---|---|---|
 | `lookup.trie-scale-flatness` | Reference trie ns/op at 10k entries vs at 100 entries | ≤ 6.0 | 2.1 (2026-08-13) |
-| `lookup.production-vs-reference` | Production `NodeRegistry.lookup` ns/op vs reference trie ns/op at 10k entries | ≤ 8.0 | 2.5 (2026-08-14) |
-| `lookup.production-scale-flatness` | Production `NodeRegistry.lookup` ns/op at 10k entries vs at 100 entries | ≤ 4.5 | 1.3 (2026-08-14) |
+| `lookup.production-vs-reference` | Production `the production exporter lookup (inventory exporter view)` ns/op vs reference trie ns/op at 10k entries | ≤ 8.0 | 2.5 (2026-08-14) |
+| `lookup.production-scale-flatness` | Production `the production exporter lookup (inventory exporter view)` ns/op at 10k entries vs at 100 entries | ≤ 4.5 | 1.3 (2026-08-14) |
 | `parse.direct-linearity` | Direct-parse per-entry cost at 100k entries vs at 10k | ≤ 3.0 | 0.7 (2026-08-13) |
 | `parse.production-vs-raw` | Production `InventoryLoader` (parse + validate + resolve + trie build) vs raw SnakeYAML load at 10k entries | ≤ 4.0 | 1.3 (2026-08-14) |
 

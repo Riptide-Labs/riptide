@@ -16,7 +16,6 @@ import org.springframework.boot.context.properties.source.ConfigurationPropertyS
 import org.springframework.boot.context.properties.bind.PropertySourcesPlaceholdersResolver;
 import org.springframework.boot.convert.ApplicationConversionService;
 import org.springframework.boot.env.YamlPropertySourceLoader;
-import org.springframework.core.env.StandardEnvironment;
 import org.springframework.core.io.ByteArrayResource;
 import org.yaml.snakeyaml.Yaml;
 
@@ -548,17 +547,20 @@ class LegacyConverterTest {
      * {@code version}.</p>
      */
     private static SnmpProfilesConfig profilesFrom(final String mainConfig) {
-        final var environment = new StandardEnvironment();
+        // an empty source stack, not StandardEnvironment: that one carries systemProperties and
+        // systemEnvironment, so a machine exporting RIPTIDE_SNMP_CREDENTIALS_* would bind its
+        // own values into the object under assertion alongside the converter's output
+        final var sources = new org.springframework.core.env.MutablePropertySources();
         try {
             new YamlPropertySourceLoader()
                     .load("converted", new ByteArrayResource(mainConfig.getBytes(StandardCharsets.UTF_8)))
-                    .forEach(source -> environment.getPropertySources().addFirst(source));
+                    .forEach(sources::addFirst);
         } catch (final java.io.IOException e) {
             throw new IllegalStateException("emitted main config is not loadable YAML", e);
         }
         final var binder = new Binder(
-                ConfigurationPropertySources.from(environment.getPropertySources()),
-                new PropertySourcesPlaceholdersResolver(environment),
+                ConfigurationPropertySources.from(sources),
+                new PropertySourcesPlaceholdersResolver(sources),
                 ApplicationConversionService.getSharedInstance());
         // SnmpProfilesConfig validates every set and profile in its canonical constructor, so
         // binding IS the AD-13 assertion

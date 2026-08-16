@@ -44,6 +44,17 @@ public class LegacyNodesFlagDayCheck {
      */
     private static final String LEGACY_PREFIX = "riptidenodes";
 
+    /**
+     * The boundary that keeps the prefix honest. Stripping separators before a prefix test
+     * makes {@code riptide.node.selector} normalise to {@code riptidenodeselector}, which
+     * starts with {@code riptidenodes} and would hard-fail a deployment over a key that has
+     * nothing to do with the legacy tree. {@code PollKeyMigrationCheck} avoided this by using
+     * equality and says so; node names are unbounded here, so instead the raw name has to show
+     * a real boundary after "nodes".
+     */
+    private static final java.util.regex.Pattern LEGACY_KEY = java.util.regex.Pattern.compile(
+            "(?i)^riptide[._-]?nodes([._\\[]|$).*");
+
     private final Environment environment;
 
     public LegacyNodesFlagDayCheck(final Environment environment) {
@@ -63,12 +74,25 @@ public class LegacyNodesFlagDayCheck {
         for (final var source : sources) {
             if (source instanceof EnumerablePropertySource<?> enumerable) {
                 for (final String name : enumerable.getPropertyNames()) {
-                    if (normalize(name).startsWith(LEGACY_PREFIX)) {
+                    if (normalize(name).startsWith(LEGACY_PREFIX) && LEGACY_KEY.matcher(name).matches()) {
+                        throw new IllegalStateException(message(name));
+                    }
+                    if (isEnvironmentForm(name)) {
                         throw new IllegalStateException(message(name));
                     }
                 }
             }
         }
+    }
+
+    /**
+     * The environment spelling, which has no separators left to anchor on:
+     * {@code RIPTIDE_NODES_CORE_ROUTER_SUBNET_ADDRESS}. Matched on the underscore boundary so
+     * a Kubernetes service link for a service named {@code riptide-node}
+     * ({@code RIPTIDE_NODE_SERVICE_HOST}) does not take the pod down.
+     */
+    private static boolean isEnvironmentForm(final String name) {
+        return name.equals("RIPTIDE_NODES") || name.startsWith("RIPTIDE_NODES_");
     }
 
     private static String message(final String key) {
@@ -81,8 +105,22 @@ public class LegacyNodesFlagDayCheck {
                 + "--out-inventory inventory.yaml%n%n"
                 + "The converter deduplicates credential blocks, keeps every exporter name, and "
                 + "refuses rather than emitting anything 0.9 will not start on. Then remove the "
-                + "riptide.nodes tree from your configuration. See the \"Upgrading from 0.8\" "
-                + "section of the release notes.").formatted(key);
+                + "riptide.nodes tree from your configuration. The 0.9 release notes carry the "
+                + "full upgrade guide.%s").formatted(key, indexedHint(key));
+    }
+
+    /**
+     * An indexed list cannot be converted: the converter reads riptide.nodes as a mapping and
+     * an operator following the instruction above verbatim would be told their file has no
+     * nodes. The old indexed-list check named the concrete fix, and AC 5 requires this one to
+     * be at least as specific, so it keeps that instruction for this shape.
+     */
+    private static String indexedHint(final String key) {
+        return key.contains("[")
+                ? "%n%nThis is the indexed form. Rewrite it as a name-keyed map first "
+                + "(riptide.nodes.<name>.subnet-address rather than riptide.nodes[0]...), which is "
+                + "what the converter reads."
+                : "";
     }
 
     /**

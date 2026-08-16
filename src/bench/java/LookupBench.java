@@ -6,8 +6,9 @@
 import inet.ipaddr.IPAddressString;
 import inet.ipaddr.ipv4.IPv4Address;
 import inet.ipaddr.ipv4.IPv4AddressAssociativeTrie;
-import org.riptide.node.NodeDefinition;
-import org.riptide.node.NodeRegistry;
+import org.riptide.inventory.InventoryLoader;
+import org.riptide.inventory.InventorySnapshot;
+import org.riptide.inventory.SnmpProfilesConfig;
 import org.riptide.pipeline.ExporterIdentity;
 
 import java.net.InetAddress;
@@ -18,7 +19,7 @@ import java.util.Map;
 import java.util.function.IntUnaryOperator;
 
 /**
- * Measures NodeRegistry.lookup cost against node count, and compares it with an
+ * Measures the production exporter lookup cost against entry count, and compares it with an
  * inet.ipaddr associative trie doing the same longest-prefix-match.
  *
  * Not JMH. Deliberately simple: the effect under test is orders of magnitude,
@@ -85,16 +86,18 @@ public final class LookupBench {
     private static Sample run(final BudgetReport report, final int n) throws Exception {
         final List<String> subnets = subnets(n);
 
-        // --- subject 1: NodeRegistry as it exists today
-        final Map<String, NodeDefinition> nodes = new HashMap<>();
+        // --- subject 1: the production lookup path. This was NodeRegistry until 0.9
+        // removed it; the path a flow actually takes now is the inventory's exporter view,
+        // so that is what the budget has to measure. Same trie underneath, same per-lookup
+        // address parse and identity dispatch
+        final StringBuilder yaml = new StringBuilder("riptide:\n  exporters:\n");
         for (int i = 0; i < n; i++) {
-            final NodeDefinition def = new NodeDefinition();
-            def.setSubnetAddress(new IPAddressString(subnets.get(i)));
-            nodes.put("node-" + i, def);
+            yaml.append("    node-").append(i).append(":\n      address: \"")
+                    .append(subnets.get(i)).append("\"\n");
         }
-        final NodeRegistry registry = new NodeRegistry();
-        registry.setNodes(nodes);
-        registry.validate();
+        final InventorySnapshot snapshot = InventoryLoader.parse(
+                new SnmpProfilesConfig(Map.of(), Map.of()), yaml.toString(), "bench.yaml");
+        final var exporters = snapshot.exporterView();
 
         // --- subject 2: a raw associative trie over the same prefixes. This is an
         // intentional lower bound (IPv4-only, un-pinned, pre-parsed probes), so the
@@ -117,7 +120,7 @@ public final class LookupBench {
         }
 
         final long registryNs = time(i ->
-                registry.lookup(new ExporterIdentity.NetflowIpfix(addrs[i % addrs.length], 0)).isPresent() ? 1 : 0);
+                exporters.match(new ExporterIdentity.NetflowIpfix(addrs[i % addrs.length], 0)).isPresent() ? 1 : 0);
         final long trieNs = time(i ->
                 trie.longestPrefixMatchNode(ipv4[i % ipv4.length]) != null ? 1 : 0);
         if (registryNs == 0 || trieNs == 0) {

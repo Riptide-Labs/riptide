@@ -93,6 +93,18 @@ public class ConfigFileReloaderTest {
     @BeforeEach
     void cleanSlate() throws IOException {
         Files.deleteIfExists(CONFIG);
+        // the inventory file is shared and one test rewrites it to reference a credential set
+        // its own config defines. Left in place, every later test whose config omits that set
+        // makes the inventory rebuild throw, which the reloader swallows into a warning: the
+        // profiles then stay stale and any assertion on them fails, depending only on method
+        // order. Reset to something non-empty (an empty inventory over a populated one is
+        // refused) that references nothing
+        Files.writeString(INVENTORY, """
+                riptide:
+                  exporters:
+                    neutral:
+                      address: 198.51.100.1
+                """);
     }
 
     @Test
@@ -141,18 +153,15 @@ public class ConfigFileReloaderTest {
                 """);
         reloader.poll();
 
-        // asserted on the environment rather than on the bound objects: the reload publishes
-        // profiles as part of rebuilding the inventory, which is refused when the inventory
-        // file is empty over a populated one, and this test is about property-source
-        // precedence rather than about publication. The bound path has its own tests
-        assertThat(environment.getProperty("riptide.snmp.credentials.filecred.community"))
-                .isEqualTo("env://RELOAD_TEST_COMMUNITY");
+        // bound, not just present: the SecretRef constructor binding is the part most likely
+        // to break silently, and asserting the raw property string would not exercise it
+        final var credentials = inventory.profiles().credentials();
+        assertThat(credentials.get("filecred").community().getScheme()).isEqualTo("env");
         assertThat(environment.getProperty("riptide.routing.prefixes[203.0.113.0/24].org"))
                 .isEqualTo("Reloaded Org");
 
         // the override layer still wins: the property source outranks the file it sits above
-        assertThat(environment.getProperty("riptide.snmp.credentials.envcred.security-name"))
-                .isEqualTo("from-the-override");
+        assertThat(credentials.get("envcred").securityName()).isEqualTo("from-the-override");
 
         assertThat(metrics.counter("config.reload.successes").getCount()).isPositive();
     }
@@ -203,6 +212,17 @@ public class ConfigFileReloaderTest {
 
     @Test
     public void anyLegacyNodesTreeRejectsTheCandidate() throws Exception {
+        write("""
+                riptide:
+                  snmp:
+                    credentials:
+                      still-serving:
+                        version: v3
+                        security-name: monitoring
+                """);
+        reloader.poll();
+        assertThat(inventory.profiles().credentials()).containsKey("still-serving");
+
         // both spellings: the indexed list this check originally guarded, and the name-keyed
         // map that 0.9 removed outright. A running collector must not accept a reload that
         // adds either, now that nothing reads them
@@ -215,6 +235,9 @@ public class ConfigFileReloaderTest {
             assertThat(metrics.counter("config.reload.failures").getCount())
                     .as("rejected: %s", legacy)
                     .isEqualTo(failuresBefore + 1);
+            // rejected AND still serving: a check that took the collector down with it would
+            // satisfy the counter and fail the requirement
+            assertThat(inventory.profiles().credentials()).containsKey("still-serving");
         }
     }
 
@@ -305,9 +328,11 @@ public class ConfigFileReloaderTest {
 
         write("""
                 riptide:
-                  nodes:
-                    another:
-                      subnet-address: 10.11.0.0/16
+                  snmp:
+                    credentials:
+                      another:
+                        version: v3
+                        security-name: monitoring
                 """);
         reloader.poll();
 
@@ -332,11 +357,15 @@ public class ConfigFileReloaderTest {
     public void unchangedContentDoesNotRecommit() throws Exception {
         write("""
                 riptide:
-                  nodes:
-                    steady:
-                      subnet-address: 10.12.0.0/16
+                  snmp:
+                    credentials:
+                      steady:
+                        version: v3
+                        security-name: monitoring
                 """);
         reloader.poll();
+        // the reload must actually have committed, or "does not recommit" is trivially true
+        assertThat(inventory.profiles().credentials()).containsKey("steady");
         final long successesAfterFirst = metrics.counter("config.reload.successes").getCount();
 
         reloader.poll();

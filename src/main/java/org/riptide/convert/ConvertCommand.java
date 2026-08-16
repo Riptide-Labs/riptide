@@ -179,8 +179,8 @@ public final class ConvertCommand {
         // the operator still has these keys, because it just read them
         summaryStream.println("Before starting 0.9, remove 'riptide.nodes' from your application "
                 + "config, and the retired 'riptide.snmp.poll.refresh-interval-ms' and "
-                + "'.snapshot-expiry-ms' keys if you had them: the first warns at startup and "
-                + "the second fails it.");
+                + "'.snapshot-expiry-ms' keys if you had them. Both fail startup: leaving either "
+                + "in place means the collector will not come up.");
         return 0;
     }
 

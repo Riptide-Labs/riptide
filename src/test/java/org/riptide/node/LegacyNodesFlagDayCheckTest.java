@@ -73,6 +73,8 @@ class LegacyNodesFlagDayCheckTest {
                 .hasMessageContaining("riptide convert <your-config.yaml>")
                 .hasMessageContaining("--out-inventory")
                 .hasMessageContaining("release notes");
+        // NOTE: story 3.3 writes that section. It does not exist in the repo yet, and this
+        // error ships in the same release, so the reference resolves at 0.9 and not before.
     }
 
     /**
@@ -83,10 +85,17 @@ class LegacyNodesFlagDayCheckTest {
     void theCurrentConfigurationSurfacesAreUntouched() {
         for (final String live : List.of(
                 "riptide.inventory.file",
-                "riptide.snmp.credentials.corp-v3.snmp-version",
+                "riptide.snmp.credentials.corp-v3.version",
                 "riptide.snmp.polling.slow.refresh-interval",
                 "riptide.exporters.core-router.address",
                 "riptide.routing.prefixes",
+                // the over-match this check had to be tightened for: a key about a node, not
+                // about the removed nodes tree, and a Kubernetes service link for a service
+                // named riptide-node
+                "riptide.node.selector",
+                "riptide.node-scan.enabled",
+                "RIPTIDE_NODE_SERVICE_HOST",
+                "RIPTIDE_NODE_SERVICE_PORT",
                 "riptide.clickhouse.url",
                 "RIPTIDE_INVENTORY_FILE")) {
             assertThatCode(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
@@ -94,6 +103,18 @@ class LegacyNodesFlagDayCheckTest {
                     .as("must not reject %s", live)
                     .doesNotThrowAnyException();
         }
+    }
+
+    /** The indexed form cannot be fed to the converter, so it keeps its own instruction. */
+    @Test
+    void theIndexedFormKeepsTheSpecificRewriteInstruction() {
+        assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
+                sources("file", Map.of("riptide.nodes[0].subnet-address", "10.0.0.1"))))
+                .hasMessageContaining("name-keyed map");
+        // and a name-keyed tree does not carry that hint, because it converts directly
+        assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
+                sources("file", Map.of("riptide.nodes.core.subnet-address", "10.0.0.1"))))
+                .hasMessageNotContaining("name-keyed map");
     }
 
     @Test
