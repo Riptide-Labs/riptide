@@ -327,14 +327,19 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      * <p>An equal endpoint changes nothing, so the common case (every batch re-resolving
      * the same configuration) does not disturb the schedule.</p>
      */
-    private void reresolveIfChanged(final Registration registration, final SnmpEndpoint endpoint,
+    private boolean reresolveIfChanged(final Registration registration, final SnmpEndpoint endpoint,
                                     final long now, final InetSocketAddress address, final boolean immediate,
                                     final InventorySnapshot resolvedFrom) {
         if (registration.endpoint.equals(endpoint)) {
-            // adopt the instance anyway: this runs once per flow per direction, and the
-            // enricher builds a fresh endpoint per batch, so leaving the old instance in
-            // place means every flow pays a deep comparison instead of a reference check
-            registration.endpoint = endpoint;
+            // adopt the instance when it is a different one: this runs once per flow per
+            // direction, and the enricher builds a fresh endpoint per batch, so leaving the
+            // old instance in place means every flow pays a deep comparison instead of a
+            // reference check. Guarded because the enricher reuses one instance for the
+            // whole batch, so after the first lookup this would be a volatile store per
+            // flow, on an object shared across parser threads, writing back what is there
+            if (registration.endpoint != endpoint) {
+                registration.endpoint = endpoint;
+            }
             if (resolvedFrom != null) {
                 // a sweep or a tick verified this endpoint against a real snapshot, so
                 // record it: without this the stamp is only ever written when the endpoint
@@ -345,7 +350,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 // a later reload may have restored what an earlier one carved out
                 registration.stopWhenIdle = false;
             }
-            return;
+            return false;
         }
         registration.endpoint = endpoint;
         // an operator who repoints a range is usually fixing something, so clear the
@@ -361,6 +366,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         // debug, not info: on the flow path this fires once per batch per direction while a
         // swap is in flight, and the sweep below reports its own total
         log.debug("Endpoint for {} re-resolved from the current inventory", address);
+        return true;
     }
 
     /**
@@ -402,8 +408,11 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     public void refreshRegistrations() {
         final InventorySnapshot snapshot = this.inventory.snapshot();
         final long now = this.nanoTime.getAsLong();
-        final long reresolvedBefore = this.reresolved.getCount();
-        final long deregisteredBefore = this.deregistered.getCount();
+        // counted here rather than as meter deltas around the loop: both meters are also
+        // marked by the flow path and by tick's silence path, so a busy fleet made this
+        // line attribute their work to the reload
+        int reresolvedHere = 0;
+        int stoppedHere = 0;
         for (final Map.Entry<InetSocketAddress, Registration> entry : this.registrations.entrySet()) {
             final InetSocketAddress address = entry.getKey();
             final Registration registration = entry.getValue();
@@ -425,14 +434,17 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                     // races here, and marking both would make the meter unreconcilable
                     // against the exporters gauge
                     this.deregistered.mark();
+                    stoppedHere++;
                     log.debug("Stopped polling {}: it no longer resolves to a pollable agent range", address);
                 }
                 continue;
             }
-            reresolveIfChanged(registration, resolved.get(), now, address, false, snapshot);
+            if (reresolveIfChanged(registration, resolved.get(), now, address, false, snapshot)) {
+                reresolvedHere++;
+            }
         }
-        final long reresolved = this.reresolved.getCount() - reresolvedBefore;
-        final long stopped = this.deregistered.getCount() - deregisteredBefore;
+        final int reresolved = reresolvedHere;
+        final int stopped = stoppedHere;
         if (reresolved > 0 || stopped > 0) {
             // one line per reload, not one per registration: a shared profile edit touches
             // every range that names it
@@ -455,13 +467,21 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     @SuppressWarnings("ModifyCollectionInEnhancedForLoop")
     void tick(final long now) {
         final long deregisterAfter = Math.max(1, (long) this.config.getDeregisterAfter());
-        // one read for the whole sweep: judging registrations against different snapshots
-        // within a single tick would stamp some against one inventory and some against the
-        // next, and the ones stamped against the older would not be re-checked again
-        final InventorySnapshot current = this.inventory.snapshot();
-
+        // summarised, not logged per address. This path is what catches a carve-out the
+        // refresh sweep never saw, so it is exactly where a fleet-wide change lands: one
+        // INFO per registration would be a burst of thousands from the 1 Hz scheduler
+        // thread at the moment an operator most needs to read the log
+        int stoppedHere = 0;
         for (final Map.Entry<InetSocketAddress, Registration> entry : this.registrations.entrySet()) {
             final Registration registration = entry.getValue();
+            // read per registration, not once for the sweep. Hoisting it looks tidier and is
+            // wrong: a reload landing mid-tick would re-resolve and stamp registrations the
+            // sweep had already brought up to date, and this loop would then revert them to
+            // the snapshot it captured on entry. Judging each against whatever is serving at
+            // the moment it is examined cannot revert anything, and a registration left
+            // stamped against a snapshot that goes stale mid-loop simply fails this compare
+            // on the next tick
+            final InventorySnapshot current = this.inventory.snapshot();
             if (registration.resolvedAgainst != current
                     && !registration.walkInFlight.get()) {
                 // resolved against an older inventory: the push either raced this
@@ -476,7 +496,9 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             if (registration.stopWhenIdle && !registration.walkInFlight.get()) {
                 if (this.registrations.remove(entry.getKey(), registration)) {
                     this.deregistered.mark();
-                    log.info("Stopped polling {}: it no longer resolves to a pollable agent range", entry.getKey());
+                    stoppedHere++;
+                    log.debug("Stopped polling {}: it no longer resolves to a pollable agent range",
+                            entry.getKey());
                 }
                 continue;
             }
@@ -514,6 +536,10 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 registration.walkInFlight.set(false);
                 log.warn("Failed to submit SNMP walk task for endpoint {}: {}", registration.endpoint, e.getMessage());
             }
+        }
+        if (stoppedHere > 0) {
+            log.info("Stopped polling {} registration(s) that no longer resolve to a pollable agent "
+                    + "range, of {} polled", stoppedHere, this.registrations.size());
         }
     }
 

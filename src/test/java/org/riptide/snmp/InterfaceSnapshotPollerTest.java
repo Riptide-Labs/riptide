@@ -276,6 +276,14 @@ class InterfaceSnapshotPollerTest {
                 """));
         poller.refreshRegistrations();
 
+        // immediacy is the whole point of the refresh half, and the only thing that
+        // distinguishes it from the tick's verification pass. Without this the sweep could
+        // be gutted to an empty method and the test would still pass one second later, on
+        // the tick, having proved nothing about the reload path
+        assertThat(this.metrics.meter("snmp.poller.deregistered").getCount())
+                .as("stopped by the refresh itself, before any tick")
+                .isEqualTo(1);
+
         advanceMs(600_000);
         poller.tick(this.clock.get());
         Thread.sleep(50);
@@ -497,9 +505,16 @@ class InterfaceSnapshotPollerTest {
      * value is read when the walk builds its target, so rotating the secret behind a
      * reference reaches a polled agent with no configuration change and no reload.
      *
-     * <p>The fake resolves at walk time because that is where the real service resolves.
-     * If a value were ever baked in when the endpoint was built, both walks would carry
-     * the pre-rotation community and this fails.</p>
+     * <p>The fake resolves at walk time because that is where the real service resolves,
+     * which is also this test's limit: it pins that the poller keeps handing over a
+     * reference rather than a value, not the walk path's own resolution.</p>
+     *
+     * <p>Scoped to references that are read on every resolve, which is what {@code file://}
+     * and {@code env://} are. It is deliberately not a claim about every scheme:
+     * {@code sops://} caches decrypted content for the process lifetime and is only
+     * invalidated by a main-config reload, so rotating a value behind a sops reference
+     * alone does <em>not</em> reach a polled agent. That asymmetry is real and belongs in
+     * the operator documentation, not hidden behind a passing test.</p>
      */
     @Test
     void aRotatedSecretValueReachesAPolledAgentWithoutAnyReload() throws Exception {
