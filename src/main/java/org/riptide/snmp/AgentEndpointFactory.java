@@ -61,7 +61,12 @@ public final class AgentEndpointFactory {
             definition.setTimeout(entry.polling().timeout());
             definition.setRetries(entry.polling().retries());
         }
-        return Optional.of(definition.createEndpoint(address));
+        final SnmpEndpoint endpoint = definition.createEndpoint(address);
+        // the profile travels with the endpoint: the poller keys registrations by socket
+        // address and cannot resolve a range itself
+        return Optional.of(entry.polling() == null
+                ? endpoint
+                : endpoint.withCadence(entry.polling().refreshInterval(), entry.polling().snapshotExpiry()));
     }
 
     private static SnmpVersion version(final CredentialVersion version) {

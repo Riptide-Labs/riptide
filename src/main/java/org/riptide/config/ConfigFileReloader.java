@@ -12,7 +12,11 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.node.NodeDefinition;
+import org.riptide.node.LegacyNodesInertCheck;
 import org.riptide.node.NodeRegistry;
+import org.riptide.inventory.Inventory;
+import org.riptide.inventory.InventoryConfig;
+import org.riptide.inventory.InventorySnapshot;
 import org.riptide.inventory.InventoryMisplacementCheck;
 import org.riptide.inventory.PollKeyMigrationCheck;
 import org.riptide.inventory.SnmpProfilesConfig;
@@ -76,6 +80,8 @@ public class ConfigFileReloader {
     private final ConfigurableEnvironment environment;
     private final ConfigReloadProperties properties;
     private final NodeRegistry nodeRegistry;
+    private final Inventory inventory;
+    private final InventoryConfig inventoryConfig;
     private final RoutingConfig routingConfig;
     private final InterfaceSnapshotPoller interfacePoller;
     private final SopsSecretResolver sopsSecretResolver;
@@ -97,6 +103,8 @@ public class ConfigFileReloader {
                               final RoutingConfig routingConfig,
                               final InterfaceSnapshotPoller interfacePoller,
                               final SopsSecretResolver sopsSecretResolver,
+                              final Inventory inventory,
+                              final InventoryConfig inventoryConfig,
                               final MetricRegistry metrics) {
         this.environment = Objects.requireNonNull(environment);
         this.properties = Objects.requireNonNull(properties);
@@ -104,6 +112,8 @@ public class ConfigFileReloader {
         this.routingConfig = Objects.requireNonNull(routingConfig);
         this.interfacePoller = Objects.requireNonNull(interfacePoller);
         this.sopsSecretResolver = Objects.requireNonNull(sopsSecretResolver);
+        this.inventory = Objects.requireNonNull(inventory);
+        this.inventoryConfig = Objects.requireNonNull(inventoryConfig);
 
         this.reloadSuccesses = metrics.counter(MetricRegistry.name("config", "reload", "successes"));
         this.reloadFailures = metrics.counter(MetricRegistry.name("config", "reload", "failures"));
@@ -243,11 +253,29 @@ public class ConfigFileReloader {
                 .orElseGet(RoutingConfig::new);
 
         // validate the candidate with startup's rules; throws → keep-old in poll().
-        // The credential bind is discarded: profile changes deliberately do not
-        // propagate on reload (AD-6 orchestration comes later), but a malformed
-        // credential edit must fail THIS reload rather than the next boot — the
-        // record constructor runs the shape validation.
-        binder.bind("riptide.snmp", Bindable.of(SnmpProfilesConfig.class));
+        // Credential and polling profiles live here, and agent ranges resolve them into
+        // objects when the inventory is built (AD-5), so a rotated community only reaches
+        // a walk if the inventory is rebuilt against the new profiles. Both are built as
+        // candidates before anything is committed, so a rotation that breaks a reference
+        // fails THIS reload instead of half-applying.
+        final SnmpProfilesConfig candidateProfiles = binder
+                .bind("riptide.snmp", Bindable.of(SnmpProfilesConfig.class))
+                .orElseGet(() -> new SnmpProfilesConfig(Map.of(), Map.of()));
+        // the file the candidate config names, not the one bound at boot: an operator who
+        // adds riptide.inventory.file in the same edit would otherwise see it ignored
+        final InventoryConfig candidateInventoryConfig = binder
+                .bind("riptide.inventory", Bindable.of(InventoryConfig.class))
+                .orElseGet(InventoryConfig::new);
+        if (!Objects.equals(candidateInventoryConfig.getFile(), this.inventoryConfig.getFile())) {
+            // the inventory watcher captured its path at start, so following a new one here
+            // would leave the two reloaders publishing different files at each other
+            log.warn("riptide.inventory.file changed from {} to {}: the running inventory keeps the old "
+                    + "path until a restart", this.inventoryConfig.getFile(), candidateInventoryConfig.getFile());
+        }
+        // best effort, and never destructive: this reload exists to carry a credential
+        // rotation into the inventory, so failing to read the file (an atomic rm+mv
+        // landing here) or reading one that parses to nothing must leave the running
+        // inventory alone rather than take the config edit down with it or blank the fleet
         final Map<String, NodeDefinition> validatedNodes = NodeRegistry.validated(nodes);
         final RoutingConfig.Parsed parsedRouting = RoutingConfig.parse(routing.getPrefixes(), routing.getAsNames());
 
@@ -255,10 +283,38 @@ public class ConfigFileReloader {
         substitute(this.environment.getPropertySources(), ordered);
         this.lastCommittedHash = this.lastAttemptedHash;
         this.nodeRegistry.swap(validatedNodes);
+        // the tree still binds and still validates, so a successful reload of a grown one
+        // would otherwise read as "my configuration is live"
+        LegacyNodesInertCheck.warnIfPopulated(validatedNodes.size());
         this.routingConfig.swap(parsedRouting);
-        this.interfacePoller.invalidateAll();
+        // swap, then refresh (AD-6): profiles and the inventory built from them move
+        // together, and the poller re-resolves what it is already walking, which is what
+        // makes a credential rotation reach an agent without a restart
+        // secrets first: a refresh can make a walk due immediately, and it must not read
+        // a value the rotation just replaced
         this.sopsSecretResolver.invalidateCache();
-
+        // rebuilt and published in one monitor-held read, so nothing can change between
+        // validating the candidate and committing it, and guarded because the config is
+        // already serving by now: a throw here must not be reported as a failed reload
+        try {
+            final InventorySnapshot published =
+                    this.inventory.rebuildAndSwap(candidateProfiles, this.inventoryConfig.getFile());
+            if (published == null) {
+                log.warn("Config reloaded, but the inventory was left alone: rebuilding it from {} produced "
+                        + "no entries while a populated one is serving. The credential and profile changes "
+                        + "in this edit are NOT serving", this.inventoryConfig.getFile());
+            } else {
+                this.interfacePoller.refreshRegistrations();
+            }
+        } catch (final RuntimeException e) {
+            log.warn("Config reloaded, but the inventory could not be rebuilt from {} ({}). The credential "
+                    + "and profile changes in this edit are NOT serving: fix the file and edit the config "
+                    + "again, or restart", this.inventoryConfig.getFile(), e.getMessage());
+        }
+        // no invalidateAll() here any more: it reset the whole fleet's next-walk time, so
+        // an unrelated edit (a routing prefix, a receiver port) walked every exporter at
+        // once, against the very spreading the poller exists to do. The refresh above
+        // touches exactly the registrations whose endpoint actually changed
         this.reloadSuccesses.inc();
         this.stale = false;
         log.info("Config reloaded from {}: {} nodes", this.location, validatedNodes.size());

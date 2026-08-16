@@ -7,8 +7,11 @@ package org.riptide.snmp;
 
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import org.riptide.node.Node;
-import org.riptide.node.NodeRegistry;
+import inet.ipaddr.IPAddressString;
+import org.riptide.inventory.AgentEntry;
+import org.riptide.inventory.ExporterEntry;
+import org.riptide.inventory.Inventory;
+import org.riptide.inventory.InventorySnapshot;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Source;
@@ -35,7 +38,7 @@ public class SnmpEnricher implements Enricher {
     private final InterfaceSource interfaceSource;
 
     @NonNull
-    private final NodeRegistry nodeRegistry;
+    private final Inventory inventory;
 
     @NonNull
     private final ExporterInterfaceTable exporterInterfaceTable;
@@ -56,28 +59,44 @@ public class SnmpEnricher implements Enricher {
      */
     @Override
     public CompletableFuture<Void> enrich(final Source source, final List<EnrichedFlow> flows) {
-        // exporter-pushed option data enriches even without a configured node —
-        // it is keyed by exporter identity, not by node
-        final Optional<Node> node = this.nodeRegistry.lookup(source.identity());
-        if (node.isEmpty() && this.exporterInterfaceTable.isEmpty()) {
+        // one capture for the whole batch: both views must come from the same snapshot
+        // instance, and a per-flow read would let a reload split a batch across two
+        // configuration generations (AD-3)
+        final InventorySnapshot snapshot = this.inventory.snapshot();
+        final Optional<AgentEntry> agent = snapshot.agentView().match(source.identity());
+        final ExporterEntry exporter = snapshot.exporterView().match(source.identity()).orElse(null);
+
+        // three independent contributors now, not one: a range says how to walk, an
+        // enrichment entry pins fields, and exporter-pushed option data is keyed by
+        // identity and needs neither. Any one of them is reason enough to continue
+        if (agent.isEmpty() && exporter == null && this.exporterInterfaceTable.isEmpty()) {
             return CompletableFuture.completedFuture(null); // nothing could contribute
         }
 
-        enrichInline(source, flows, node, node.flatMap(Node::snmpEndpoint));
+        // resolved once per batch, never per flow: the endpoint is constant for a source
+        final Optional<SnmpEndpoint> endpoint = agent
+                .flatMap(entry -> AgentEndpointFactory.endpointFor(entry, address(source)));
+        enrichInline(source, flows, exporter, endpoint);
         return CompletableFuture.completedFuture(null);
+    }
+
+    private static IPAddressString address(final Source source) {
+        // the flow's device address, never the range key: a /16 range must walk the
+        // device that sent the flow, not the network address of the range
+        return new IPAddressString(source.identity().deviceAddress().getHostAddress());
     }
 
     private void enrichInline(final Source source,
                               final List<EnrichedFlow> flows,
-                              final Optional<Node> node,
+                              final ExporterEntry exporter,
                               final Optional<SnmpEndpoint> snmpEndpoint) {
         for (final EnrichedFlow flow : flows) {
-            apply(node, snmpEndpoint, source, flow.getInputSnmp(), ifInfo -> {
+            apply(exporter, snmpEndpoint, source, flow.getInputSnmp(), ifInfo -> {
                 flow.setInputSnmpIfName(ifInfo.name());
                 flow.setInputSnmpIfAlias(ifInfo.alias());
                 flow.setInputSnmpIfSpeed(ifInfo.highSpeed());
             });
-            apply(node, snmpEndpoint, source, flow.getOutputSnmp(), ifInfo -> {
+            apply(exporter, snmpEndpoint, source, flow.getOutputSnmp(), ifInfo -> {
                 flow.setOutputSnmpIfName(ifInfo.name());
                 flow.setOutputSnmpIfAlias(ifInfo.alias());
                 flow.setOutputSnmpIfSpeed(ifInfo.highSpeed());
@@ -85,7 +104,7 @@ public class SnmpEnricher implements Enricher {
         }
     }
 
-    private void apply(final Optional<Node> node, final Optional<SnmpEndpoint> snmpEndpoint, final Source source,
+    private void apply(final ExporterEntry exporter, final Optional<SnmpEndpoint> snmpEndpoint, final Source source,
                        final Integer ifIndex, final Consumer<IfInfo> setter) {
         // ifIndex 0 is the NetFlow/IPFIX "unknown interface" marker (valid indexes start at 1,
         // RFC 2863) — exporters tagging a single direction emit it on every flow, and no rung
@@ -93,9 +112,7 @@ public class SnmpEnricher implements Enricher {
         if (ifIndex == null || ifIndex <= 0) {
             return;
         }
-        final IfInfo pinned = node
-                .map(n -> n.definition().getInterfaces().get(ifIndex))
-                .orElse(null);
+        final IfInfo pinned = InventoryPins.pinFor(exporter, ifIndex);
         final IfInfo options = this.exporterInterfaceTable.lookup(source.identity(), ifIndex).orElse(null);
         // reads the polled snapshot; registers the exporter on its first flow but never walks.
         // Called even when the pins above already cover every field: the call is what keeps the

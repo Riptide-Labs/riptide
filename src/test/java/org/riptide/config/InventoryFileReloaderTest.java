@@ -15,6 +15,8 @@ import org.riptide.inventory.TestCredentials;
 import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventoryConfig;
 import org.riptide.inventory.SnmpProfilesConfig;
+import org.riptide.snmp.InterfaceSnapshotPoller;
+import org.riptide.snmp.SnmpPollConfig;
 import org.riptide.pipeline.ExporterIdentity;
 
 import java.io.IOException;
@@ -39,6 +41,35 @@ class InventoryFileReloaderTest {
     private Path file;
     private SnmpProfilesConfig profiles;
     private Inventory inventory;
+    private CountingPoller poller;
+
+    private static final class NoSnmp implements org.riptide.snmp.SnmpService {
+        @Override
+        public java.util.Optional<org.riptide.snmp.IfInfo> getIfInfo(
+                final org.riptide.snmp.SnmpEndpoint endpoint, final int ifIndex) {
+            return java.util.Optional.empty();
+        }
+
+        @Override
+        public InterfaceTable walkInterfaces(final org.riptide.snmp.SnmpEndpoint endpoint) {
+            return new InterfaceTable(java.util.Map.of(), false);
+        }
+    }
+    /** Counts refreshes so the reload trigger is observable; the sweep itself is a no-op here. */
+    private static final class CountingPoller extends InterfaceSnapshotPoller {
+        private int refreshes;
+
+        private CountingPoller(final Inventory inventory, final MetricRegistry metrics) {
+            super(new NoSnmp(), new SnmpPollConfig(), metrics, inventory);
+        }
+
+        @Override
+        public void refreshRegistrations() {
+            this.refreshes++;
+            super.refreshRegistrations();
+        }
+    }
+
     private MetricRegistry metrics;
     private InventoryFileReloader reloader;
 
@@ -57,13 +88,20 @@ class InventoryFileReloaderTest {
         this.inventory = new Inventory(this.profiles, inventoryConfig);
         this.inventory.load();
         this.metrics = new MetricRegistry();
-        this.reloader = new InventoryFileReloader(properties, inventoryConfig, this.profiles, this.inventory, this.metrics);
+        // a poller with no scheduler and nothing registered: these tests exercise the
+        // reload trigger, and the refresh half has its own tests in the poller suite
+        this.poller = new CountingPoller(this.inventory, this.metrics);
+        this.reloader = new InventoryFileReloader(properties, inventoryConfig, this.inventory,
+                this.poller, this.metrics);
         this.reloader.start();
     }
 
     @AfterEach
     void tearDown() {
         this.reloader.stop();
+        // the poller starts a 1 Hz scheduler in its constructor, so one per test method
+        // survived the run without this
+        this.poller.stop();
     }
 
     @Test
@@ -84,6 +122,34 @@ class InventoryFileReloaderTest {
         assertThat(match.get().credentials()).isSameAs(this.profiles.credentials().get("corp-v3"));
         assertThat(successes()).isEqualTo(1);
         assertThat(stale()).isZero();
+    }
+
+    /**
+     * AD-6's ordering on the inventory watcher's side. The config reloader's half has its
+     * own test; this half had none, so deleting the refresh call here left the suite green
+     * while a carve-out written to the inventory file stopped reaching a polled agent.
+     */
+    @Test
+    void aCommittedReloadRefreshesThePollerAndARefusedOneDoesNot() throws Exception {
+        write("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """);
+        this.reloader.poll();
+        assertThat(this.poller.refreshes).as("a committed reload refreshes").isEqualTo(1);
+
+        // parses to nothing over a populated inventory: refused, so nothing was
+        // republished and there is nothing to re-resolve against
+        write("---\n");
+        this.reloader.poll();
+        assertThat(this.poller.refreshes).as("a refused reload refreshes nothing").isEqualTo(1);
+
+        // unchanged content is not recommitted either, so it must not sweep the fleet
+        this.reloader.poll();
+        assertThat(this.poller.refreshes).isEqualTo(1);
     }
 
     @Test
@@ -295,7 +361,7 @@ class InventoryFileReloaderTest {
         final ConfigReloadProperties properties = new ConfigReloadProperties();
         properties.setReloadInterval(Duration.ofHours(1));
         final InventoryFileReloader disabled = new InventoryFileReloader(
-                properties, noFile, this.profiles, this.inventory, new MetricRegistry());
+                properties, noFile, this.inventory, this.poller, new MetricRegistry());
 
         disabled.start();
         disabled.stop();

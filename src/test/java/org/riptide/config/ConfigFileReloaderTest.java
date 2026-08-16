@@ -39,6 +39,26 @@ public class ConfigFileReloaderTest {
 
     private static final Path CONFIG = createTempConfigPath();
 
+    /**
+     * Declared at boot, like a real deployment: the inventory watcher captures its path at
+     * start, so the config reloader deliberately will not follow a path that only appears
+     * in a reloaded file.
+     */
+    private static final Path INVENTORY = createTempInventoryPath();
+
+    private static Path createTempInventoryPath() {
+        try {
+            final Path file = Files.createTempFile("riptide-config-reload-inventory", ".yaml");
+            file.toFile().deleteOnExit();
+            // empty at boot: the config file is not part of the boot environment (only the
+            // reloader reads it), so a credential reference here could not resolve yet
+            Files.writeString(file, "riptide: {}\n");
+            return file;
+        } catch (final IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     @Autowired
     private ConfigFileReloader reloader;
 
@@ -51,9 +71,13 @@ public class ConfigFileReloaderTest {
     @Autowired
     private MetricRegistry metrics;
 
+    @Autowired
+    private org.riptide.inventory.Inventory inventory;
+
     private static Path createTempConfigPath() {
         try {
-            return Files.createTempDirectory("riptide-reload-test").resolve("config.yaml");
+            final Path file = Files.createTempDirectory("riptide-reload-test").resolve("config.yaml");
+            return file;
         } catch (final IOException e) {
             throw new IllegalStateException(e);
         }
@@ -62,6 +86,7 @@ public class ConfigFileReloaderTest {
     @DynamicPropertySource
     static void reloadProperties(final DynamicPropertyRegistry registry) {
         registry.add("spring.config.import", () -> "optional:file:" + CONFIG);
+        registry.add("riptide.inventory.file", () -> INVENTORY.toString());
         registry.add("riptide.config.reload-interval", () -> "1h");
         // stands in for the environment-variable layer: test properties outrank files
         registry.add("riptide.nodes.envnode.subnet-address", () -> "192.0.2.0/24");
@@ -190,6 +215,53 @@ public class ConfigFileReloaderTest {
         reloader.poll();
 
         assertThat(metrics.counter("config.reload.failures").getCount()).isEqualTo(failuresBefore + 1);
+    }
+
+    @Test
+    public void rotatingACredentialReachesTheServingInventory() throws Exception {
+        // the regression this closes: riptide.nodes used to carry credentials and
+        // propagated them on reload. It is inert now, so riptide.snmp.credentials is the
+        // only credential surface, and it used to be bound once at boot and never again:
+        // rotating a compromised community would have needed a restart, silently
+        // the range arrives with the credential that defines it, both through the reload
+        Files.writeString(INVENTORY, """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.77.0.1":
+                        credentials: corp
+                """);
+        write("""
+                riptide:
+                  snmp:
+                    credentials:
+                      corp:
+                        version: v2c
+                        community: old-community
+                """);
+        reloader.poll();
+
+        assertThat(resolvedCommunity()).isEqualTo("old-community");
+
+        write("""
+                riptide:
+                  snmp:
+                    credentials:
+                      corp:
+                        version: v2c
+                        community: new-community
+                """);
+        reloader.poll();
+
+        // no restart: the profiles and the inventory built from them move together
+        assertThat(resolvedCommunity()).isEqualTo("new-community");
+    }
+
+    private String resolvedCommunity() throws Exception {
+        final var identity = new org.riptide.pipeline.ExporterIdentity.NetflowIpfix(
+                java.net.InetAddress.getByName("10.77.0.1"), 0L);
+        return this.inventory.snapshot().agentView().match(identity).orElseThrow()
+                .credentials().community().getValue();
     }
 
     @Test

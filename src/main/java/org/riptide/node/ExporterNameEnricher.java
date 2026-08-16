@@ -6,6 +6,7 @@
 package org.riptide.node;
 
 import lombok.NonNull;
+import org.riptide.inventory.Inventory;
 import lombok.RequiredArgsConstructor;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
@@ -23,7 +24,8 @@ import java.util.concurrent.CompletableFuture;
  * an exporter no node covers keep the field unset (persisted as the empty string).
  *
  * <p>Resolved once per batch: the {@link Source} is constant across a batch, so the
- * matched node is too, and per-flow cost stays independent of inventory size (FR-3).</p>
+ * matched entry is too, and per-flow cost stays independent of inventory size (FR-3).
+ * The name is the entry key, which for a prefix entry labels every device it covers.</p>
  */
 @Component
 @Order(EnricherOrder.EXPORTER_NAME)
@@ -31,12 +33,14 @@ import java.util.concurrent.CompletableFuture;
 public class ExporterNameEnricher implements Enricher {
 
     @NonNull
-    private final NodeRegistry nodeRegistry;
+    private final Inventory inventory;
 
     @Override
     public CompletableFuture<Void> enrich(final Source source, final List<EnrichedFlow> flows) {
-        this.nodeRegistry.lookup(source.identity())
-                .ifPresent(node -> flows.forEach(flow -> flow.setExporterName(node.label())));
+        // captured once for the batch: a per-flow snapshot() read would straddle a
+        // reload inside one batch, which is the split view AD-3 exists to prevent
+        this.inventory.snapshot().exporterView().match(source.identity())
+                .ifPresent(entry -> flows.forEach(flow -> flow.setExporterName(entry.name())));
         return CompletableFuture.completedFuture(null);
     }
 }

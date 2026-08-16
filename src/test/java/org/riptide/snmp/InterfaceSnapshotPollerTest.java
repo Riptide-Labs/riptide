@@ -11,8 +11,10 @@ import ch.qos.logback.core.read.ListAppender;
 import com.codahale.metrics.MetricRegistry;
 import inet.ipaddr.IPAddressString;
 import org.junit.jupiter.api.Test;
+import org.riptide.secrets.SecretRef;
 import org.slf4j.LoggerFactory;
 
+import java.net.InetAddress;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -32,10 +34,25 @@ class InterfaceSnapshotPollerTest {
     private final AtomicLong clock = new AtomicLong(1_000_000_000L);
     private final MetricRegistry metrics = new MetricRegistry();
 
+    /** The published inventory the poller answers to; empty until a test serves one. */
+    private final org.riptide.inventory.Inventory serving = new org.riptide.inventory.Inventory(
+            new org.riptide.inventory.SnmpProfilesConfig(Map.of(), Map.of()),
+            new org.riptide.inventory.InventoryConfig());
+
+    /** Agent ranges served so far, so adding one does not drop the others. */
+    private final java.util.LinkedHashMap<String, String> ranges = new java.util.LinkedHashMap<>();
+
     /** Counts walks and records which endpoints were walked; never touches a network. */
     private static class FakeSnmp implements SnmpService {
         final AtomicInteger walks = new AtomicInteger();
         private final Set<String> walked = ConcurrentHashMap.newKeySet();
+        private final Map<String, AtomicInteger> walksPerEndpoint = new ConcurrentHashMap<>();
+        final java.util.List<SnmpEndpoint> walkedEndpoints = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        int walksFor(final SnmpEndpoint endpoint) {
+            final AtomicInteger count = this.walksPerEndpoint.get(endpoint.getInetSocketAddress().toString());
+            return count == null ? 0 : count.get();
+        }
         private volatile boolean timeout;
         private volatile CountDownLatch entered;
         private volatile CountDownLatch release;
@@ -49,6 +66,9 @@ class InterfaceSnapshotPollerTest {
         public InterfaceTable walkInterfaces(final SnmpEndpoint endpoint) {
             this.walks.incrementAndGet();
             this.walked.add(endpoint.getInetSocketAddress().toString());
+            this.walksPerEndpoint.computeIfAbsent(endpoint.getInetSocketAddress().toString(),
+                    key -> new AtomicInteger()).incrementAndGet();
+            this.walkedEndpoints.add(endpoint);
             if (this.entered != null) {
                 this.entered.countDown();
                 try {
@@ -76,11 +96,508 @@ class InterfaceSnapshotPollerTest {
     }
 
     private InterfaceSnapshotPoller poller(final SnmpService snmp, final SnmpPollConfig config) {
-        return new InterfaceSnapshotPoller(snmp, config, this.metrics, this.clock::get, false);
+        return new InterfaceSnapshotPoller(snmp, config, this.metrics, this.serving, this.clock::get, false);
     }
 
-    private static SnmpEndpoint endpoint(final String ip) {
-        return SnmpTest.communityV2c(new IPAddressString(ip), 161, "public");
+    /**
+     * The cadence a polling profile asks for must be what the poller uses. Written before
+     * the plumbing existed: profiles were validated, resolved onto every range, and read
+     * by nothing, so an operator could set a one-hour refresh, watch it validate, and be
+     * walked every ten minutes with a green suite.
+     */
+    @Test
+    void eachEndpointIsWalkedOnItsOwnProfileCadence() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var config = config();
+        // the fleet defaults must differ from BOTH profiles, or a fallback to them is
+        // indistinguishable from the profile being honoured. The first version of this
+        // test set the fleet refresh to ten minutes and called it "deliberately far",
+        // while the sedate profile was also ten minutes
+        config.setRefreshIntervalMs(3_600_000);
+        config.setSnapshotExpiryMs(7_200_000);
+        final var poller = poller(snmp, config);
+
+        final var brisk = endpoint("10.7.0.1", "polling: brisk");
+        final var sedate = endpoint("10.7.0.2", "polling: sedate");
+        // an hour of fleet cadence would give zero walks in this window, so a sedate count
+        // of one or two can only come from its own ten-minute profile
+
+        poller.trackAndResolve(brisk, 1);
+        poller.trackAndResolve(sedate, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 2);
+
+        // ticked finer than either interval on purpose: a tick period equal to the
+        // interval aliases against the spreading phase and undercounts
+        for (int step = 0; step < 60; step++) {
+            advanceMs(10_000);
+            // both exporters keep sending flows: silence is measured in the
+            // registration's OWN refresh intervals, so the one-minute profile would
+            // otherwise be deregistered after three minutes while the ten-minute one lives
+            poller.trackAndResolve(brisk, 1);
+            poller.trackAndResolve(sedate, 1);
+            poller.tick(this.clock.get());
+            Thread.sleep(10);
+        }
+
+        // exact counts are not the contract: walks are spread across the interval by an
+        // address-derived phase plus jitter, so a tick landing exactly on the boundary
+        // sometimes misses and catches up on the next one. The cadence is what is pinned
+        assertThat(snmp.walksFor(brisk))
+                .as("one-minute profile over ten minutes")
+                .isGreaterThanOrEqualTo(8);
+        assertThat(snmp.walksFor(sedate))
+                .as("ten-minute profile over ten minutes")
+                .isLessThanOrEqualTo(2);
+        // and the whole point: the same fleet config, two cadences
+        assertThat(snmp.walksFor(brisk)).isGreaterThan(snmp.walksFor(sedate) * 2);
+    }
+
+    /**
+     * The endpoint-capture bug: a registration kept the endpoint it was built from and
+     * discarded every later one, so a credential rotation or a repointed range reached
+     * an already-polled agent only after it went silent long enough to be deregistered,
+     * which for an active exporter is never.
+     */
+    @Test
+    void aRepointedRangeReachesAnAlreadyRegisteredAgent() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config());
+        poller.trackAndResolve(endpoint("10.8.0.1", "credentials: old-community"), 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        // the reload lands, and the next batch of flows resolves the exporter against it
+        // and hands the poller a different endpoint for the same address. The refresh
+        // sweep is deliberately not called: the flow path getting there first is the case
+        // the endpoint-capture bug lived in
+        poller.trackAndResolve(endpoint("10.8.0.1", "credentials: new-community"), 1);
+        assertThat(this.metrics.meter("snmp.poller.reresolved").getCount())
+                .as("re-resolution fired").isEqualTo(1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 2);
+
+        assertThat(snmp.walkedEndpoints).hasSize(2);
+        assertThat(snmp.walkedEndpoints.get(0).getSnmpDefinition().getCommunity())
+                .isEqualTo(SecretRef.of("old-community"));
+        // no restart, and no waiting out the refresh interval: repointing is usually an
+        // operator fixing something, so the next tick walks
+        assertThat(snmp.walkedEndpoints.get(1).getSnmpDefinition().getCommunity())
+                .isEqualTo(SecretRef.of("new-community"));
+    }
+
+    @Test
+    void anUnchangedEndpointDoesNotDisturbTheSchedule() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config());
+        final var stable = endpoint("10.9.0.1");
+
+        poller.trackAndResolve(stable, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        // every batch re-resolves and hands over an equal endpoint: that must not reset
+        // the schedule, or a busy exporter would be walked on every tick
+        for (int batch = 0; batch < 5; batch++) {
+            poller.trackAndResolve(endpoint("10.9.0.1"), 1);
+            poller.tick(this.clock.get());
+        }
+        Thread.sleep(50);
+
+        assertThat(snmp.walks.get()).isEqualTo(1);
+    }
+
+    /**
+     * Credential sets named after the community they carry, so a test that cares which
+     * credential reached the agent can name one and then assert on what was walked.
+     */
+    private static org.riptide.inventory.CredentialSet community(final String value) {
+        return org.riptide.inventory.CredentialSet.community(
+                org.riptide.inventory.CredentialVersion.V2C, SecretRef.of(value));
+    }
+
+    private static final org.riptide.inventory.SnmpProfilesConfig PROFILES =
+            new org.riptide.inventory.SnmpProfilesConfig(
+                    Map.of("corp-v3", org.riptide.inventory.CredentialSet.usm("riptide"),
+                            "public", community("public"),
+                            "old-community", community("old-community"),
+                            "new-community", community("new-community"),
+                            "rotated", community("rotated")),
+                    Map.of("slow", new org.riptide.inventory.PollingProfile(
+                                    java.time.Duration.ofMinutes(30), java.time.Duration.ofMinutes(90), 500, 1),
+                            "brisk", new org.riptide.inventory.PollingProfile(
+                                    java.time.Duration.ofMinutes(1), java.time.Duration.ofMinutes(30), 500, 1),
+                            "sedate", new org.riptide.inventory.PollingProfile(
+                                    java.time.Duration.ofMinutes(10), java.time.Duration.ofMinutes(30), 500, 1)));
+
+    private static org.riptide.inventory.InventorySnapshot inventory(final String agentsBlock) {
+        return org.riptide.inventory.InventoryLoader.parse(PROFILES, """
+                riptide:
+                  snmp:
+                    agents:
+                %s""".formatted(agentsBlock), "poller.yaml");
+    }
+
+    /**
+     * Publishes {@code snapshot} as the serving inventory and returns it.
+     *
+     * <p>The poller reads the inventory rather than being handed one, so a test that wants
+     * a reload to have happened has to publish it here. That is the production sequence:
+     * the reloader commits the swap and only then asks for a refresh.
+     */
+    private org.riptide.inventory.InventorySnapshot serve(
+            final org.riptide.inventory.InventorySnapshot snapshot) {
+        this.serving.swap(snapshot);
+        return snapshot;
+    }
+
+    /**
+     * A carve-out has to take effect on reload. Without the refresh half of
+     * swap-then-refresh an operator can disable a range, watch the reload succeed, and
+     * still be polling the segment until it happens to go silent.
+     */
+    @Test
+    void aCarvedOutRangeStopsBeingPolledOnReload() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config());
+        final var live = serve(inventory("""
+                      "10.30.0.7":
+                        credentials: corp-v3
+                """));
+
+        poller.trackAndResolve(resolveOnly(live, "10.30.0.7"), 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        // the operator carves the address out and the reloader publishes it
+        serve(inventory("""
+                      "10.30.0.7":
+                        enabled: false
+                """));
+        poller.refreshRegistrations();
+
+        // immediacy is the whole point of the refresh half, and the only thing that
+        // distinguishes it from the tick's verification pass. Without this the sweep could
+        // be gutted to an empty method and the test would still pass one second later, on
+        // the tick, having proved nothing about the reload path
+        assertThat(this.metrics.meter("snmp.poller.deregistered").getCount())
+                .as("stopped by the refresh itself, before any tick")
+                .isEqualTo(1);
+
+        advanceMs(600_000);
+        poller.tick(this.clock.get());
+        Thread.sleep(50);
+
+        // no restart, no waiting out the deregistration deadline
+        assertThat(snmp.walks.get()).isEqualTo(1);
+    }
+
+    @Test
+    void aReloadThatRepointsARangeReachesTheRegistration() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config());
+        final var before = serve(inventory("""
+                      "10.31.0.7":
+                        credentials: corp-v3
+                        port: 161
+                """));
+        poller.trackAndResolve(resolveOnly(before, "10.31.0.7"), 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        // same address, slower profile: the registration must adopt it rather than keep
+        // walking on the cadence it was first built with
+        serve(inventory("""
+                      "10.31.0.7":
+                        credentials: corp-v3
+                        port: 161
+                        polling: slow
+                """));
+        poller.refreshRegistrations();
+
+        assertThat(this.metrics.meter("snmp.poller.reresolved").getCount()).isEqualTo(1);
+        // and an identical inventory is not churn: re-publishing the same thing must not
+        // reset schedules across the whole fleet
+        serve(inventory("""
+                      "10.31.0.7":
+                        credentials: corp-v3
+                        port: 161
+                        polling: slow
+                """));
+        poller.refreshRegistrations();
+        assertThat(this.metrics.meter("snmp.poller.reresolved").getCount()).isEqualTo(1);
+    }
+
+    /**
+     * Resolving a registration by address alone is exact because agent ranges carry no
+     * observation-domain pin. This is the assumption {@code refreshRegistrations} rests
+     * on, and the widening it implies: a device is polled whatever domain its flows carry.
+     */
+    @Test
+    void agentRangesResolveRegardlessOfObservationDomain() throws Exception {
+        final var snapshot = inventory("""
+                      "10.32.0.0/24":
+                        credentials: corp-v3
+                """);
+        final var address = InetAddress.getByName("10.32.0.7");
+
+        for (final long domain : new long[]{0L, 42L, 4_294_967_295L}) {
+            assertThat(snapshot.agentView().match(new org.riptide.pipeline.ExporterIdentity.NetflowIpfix(address, domain)))
+                    .as("observation domain %d", domain)
+                    .isPresent();
+        }
+    }
+
+    /**
+     * The push cannot see a batch that was already resolving when it ran. Without the
+     * lazy check that registration keeps its pre-carve-out endpoint until it goes silent,
+     * which for an active exporter is never.
+     */
+    @Test
+    void aRegistrationThatRacedTheSweepIsCaughtOnTheNextTick() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config());
+        final var live = inventory("""
+                      "10.40.0.7":
+                        credentials: corp-v3
+                """);
+        final var carvedOut = inventory("""
+                      "10.40.0.7":
+                        enabled: false
+                """);
+
+        // the reload happens first, with nothing registered for it to sweep
+        serve(carvedOut);
+        poller.refreshRegistrations();
+        // and only then does the in-flight batch, holding the old snapshot, register
+        poller.trackAndResolve(resolveOnly(live, "10.40.0.7"), 1);
+
+        poller.tick(this.clock.get());
+        Thread.sleep(50);
+        // the tick noticed it was resolved against an older inventory and stopped it
+        poller.tick(this.clock.get());
+        Thread.sleep(50);
+
+        assertThat(snmp.walks.get()).isZero();
+    }
+
+    /**
+     * The poller used to keep its own copy of "the current inventory", assigned by
+     * whichever reloader called the refresh last. The two reloaders serialise their swaps
+     * inside {@code Inventory} but not their refreshes, so the one that lost the swap can
+     * sweep afterwards and leave that copy holding a snapshot that is no longer serving.
+     * Registrations stamped by the losing sweep then compare equal to the copy forever, so
+     * the winning snapshot's carve-out never reaches a polled agent and both reloaders log
+     * success.
+     *
+     * <p>This pins the invariant that removes the race rather than the interleaving that
+     * exposed it: what is serving decides, and a refresh call only makes it immediate. No
+     * refresh is made here at all, which is what a losing reloader's push amounts to.</p>
+     */
+    @Test
+    void aCarveOutTakesEffectEvenIfNoRefreshEverArrives() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config());
+        final var live = serve(inventory("""
+                      "10.42.0.7":
+                        credentials: corp-v3
+                """));
+
+        poller.trackAndResolve(resolveOnly(live, "10.42.0.7"), 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        // the swap that wins. Its refresh is never seen by this poller
+        serve(inventory("""
+                      "10.42.0.7":
+                        enabled: false
+                """));
+
+        advanceMs(600_000);
+        poller.tick(this.clock.get());
+        Thread.sleep(50);
+        poller.tick(this.clock.get());
+        Thread.sleep(50);
+
+        assertThat(snmp.walks.get()).as("no walk after the carve-out was published").isEqualTo(1);
+        assertThat(this.metrics.meter("snmp.poller.deregistered").getCount()).isEqualTo(1);
+    }
+
+    /**
+     * A carve-out whose walk is in flight cannot be removed on the spot without letting a
+     * re-registration start a second concurrent walk, so it is marked and finished by the
+     * next tick rather than left polling until it goes silent.
+     */
+    @Test
+    void aCarveOutDuringAnInFlightWalkIsCompletedByTheNextTick() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config());
+        final var live = serve(inventory("""
+                      "10.41.0.7":
+                        credentials: corp-v3
+                """));
+        snmp.entered = new CountDownLatch(1);
+        snmp.release = new CountDownLatch(1);
+
+        poller.trackAndResolve(resolveOnly(live, "10.41.0.7"), 1);
+        poller.tick(this.clock.get());
+        assertThat(snmp.entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+        // carved out while the walk is parked in the agent
+        serve(inventory("""
+                      "10.41.0.7":
+                        enabled: false
+                """));
+        poller.refreshRegistrations();
+        snmp.release.countDown();
+        awaitWalks(poller, snmp, 1);
+
+        advanceMs(600_000);
+        poller.tick(this.clock.get());
+        Thread.sleep(50);
+        poller.tick(this.clock.get());
+        Thread.sleep(50);
+
+        // the in-flight walk finished, and no further walk was ever issued
+        assertThat(snmp.walks.get()).isEqualTo(1);
+    }
+
+    /**
+     * AC 5's second half. The cadence test above pins the refresh interval; without this
+     * the expiry could keep falling back to the fleet default and every profile that
+     * widens or narrows the serving window would be silently ignored.
+     *
+     * <p>The fleet expiry is set a day out, so a snapshot that expires here can only be
+     * expiring on its profile's schedule, and the two profiles differ from each other so
+     * one serving while the other blanks cannot be a coincidence of timing.</p>
+     */
+    @Test
+    void snapshotExpiryFollowsTheProfileRatherThanTheFleetDefault() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var config = config();
+        config.setRefreshIntervalMs(3_600_000);
+        config.setSnapshotExpiryMs(86_400_000);
+        final var poller = poller(snmp, config);
+
+        // brisk expires after 30 minutes, slow after 90
+        final var brisk = endpoint("10.43.0.1", "polling: brisk");
+        final var slow = endpoint("10.43.0.2", "polling: slow");
+
+        poller.trackAndResolve(brisk, 1);
+        poller.trackAndResolve(slow, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 2);
+        assertThat(poller.trackAndResolve(brisk, 1)).as("served straight after the walk").isPresent();
+
+        // 45 minutes on, with no tick so neither snapshot is refreshed underneath us
+        advanceMs(2_700_000);
+
+        assertThat(poller.trackAndResolve(brisk, 1))
+                .as("past its own 30-minute expiry, and a day short of the fleet's")
+                .isEmpty();
+        assertThat(poller.trackAndResolve(slow, 1))
+                .as("inside its own 90-minute expiry")
+                .isPresent();
+    }
+
+    /**
+     * AC 7. The endpoint carries {@link SecretRef}s rather than resolved values, and the
+     * value is read when the walk builds its target, so rotating the secret behind a
+     * reference reaches a polled agent with no configuration change and no reload.
+     *
+     * <p>The fake resolves at walk time because that is where the real service resolves,
+     * which is also this test's limit: it pins that the poller keeps handing over a
+     * reference rather than a value, not the walk path's own resolution.</p>
+     *
+     * <p>Scoped to references that are read on every resolve, which is what {@code file://}
+     * and {@code env://} are. It is deliberately not a claim about every scheme:
+     * {@code sops://} caches decrypted content for the process lifetime and is only
+     * invalidated by a main-config reload, so rotating a value behind a sops reference
+     * alone does <em>not</em> reach a polled agent. That asymmetry is real and belongs in
+     * the operator documentation, not hidden behind a passing test.</p>
+     */
+    @Test
+    void aRotatedSecretValueReachesAPolledAgentWithoutAnyReload() throws Exception {
+        final var secret = java.nio.file.Files.createTempDirectory("riptide-rotation").resolve("community");
+        secret.toFile().deleteOnExit();
+        java.nio.file.Files.writeString(secret, "before-rotation");
+
+        final var resolvers = org.riptide.secrets.SecretResolvers.defaults();
+        final var walkedValues = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        final var snmp = new FakeSnmp() {
+            @Override
+            public InterfaceTable walkInterfaces(final SnmpEndpoint endpoint) {
+                walkedValues.add(resolvers.resolve(endpoint.getSnmpDefinition().getCommunity()));
+                return super.walkInterfaces(endpoint);
+            }
+        };
+        final var poller = poller(snmp, config());
+
+        final var profiles = new org.riptide.inventory.SnmpProfilesConfig(
+                Map.of("rotating", org.riptide.inventory.CredentialSet.community(
+                        org.riptide.inventory.CredentialVersion.V2C, SecretRef.of("file://" + secret))),
+                Map.of());
+        final var snapshot = serve(org.riptide.inventory.InventoryLoader.parse(profiles, """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.44.0.1":
+                        credentials: rotating
+                """, "rotation.yaml"));
+        final var endpoint = resolveOnly(snapshot, "10.44.0.1");
+
+        poller.trackAndResolve(endpoint, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        // the operator rotates the value behind the reference. No file the inventory
+        // watcher looks at changed, and no reload is triggered
+        java.nio.file.Files.writeString(secret, "after-rotation");
+
+        // still well inside the deregistration deadline, so the registration is the same one
+        advanceMs(1_200_000);
+        poller.trackAndResolve(endpoint, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 2);
+
+        assertThat(walkedValues).containsExactly("before-rotation", "after-rotation");
+    }
+
+    /** The endpoint an inventory resolves for one address, for tests that then poll it. */
+    private static SnmpEndpoint resolveOnly(final org.riptide.inventory.InventorySnapshot snapshot,
+                                            final String ip) throws Exception {
+        final var identity = new org.riptide.pipeline.ExporterIdentity.NetflowIpfix(InetAddress.getByName(ip), 0L);
+        return AgentEndpointFactory.endpointFor(snapshot.agentView().match(identity).orElseThrow(),
+                new IPAddressString(ip)).orElseThrow();
+    }
+
+    /**
+     * Adds an agent range for {@code ip} to the served inventory and returns the endpoint
+     * that inventory resolves for it.
+     *
+     * <p>Returning the inventory's own endpoint rather than a synthesized one is what keeps
+     * these tests honest. The poller re-resolves any registration not known to agree with
+     * the serving inventory, so a registration built from an endpoint no inventory serves
+     * is a state production cannot reach: the enricher only ever hands over endpoints it
+     * resolved from the same inventory.</p>
+     */
+    private SnmpEndpoint endpoint(final String ip, final String... extraKeys) throws Exception {
+        // keyed, not appended: naming a credential set has to replace the default rather
+        // than add a second "credentials:" line, which is not valid YAML
+        final var keys = new java.util.LinkedHashMap<String, String>();
+        keys.put("credentials", "public");
+        for (final String extra : extraKeys) {
+            final int colon = extra.indexOf(':');
+            keys.put(extra.substring(0, colon).trim(), extra.substring(colon + 1).trim());
+        }
+        final StringBuilder body = new StringBuilder();
+        keys.forEach((key, value) -> body.append(body.isEmpty() ? "" : "\n        ")
+                .append(key).append(": ").append(value));
+        this.ranges.put(ip, body.toString());
+        final StringBuilder block = new StringBuilder();
+        this.ranges.forEach((address, rangeBody) ->
+                block.append("      \"").append(address).append("\":\n        ").append(rangeBody).append('\n'));
+        return resolveOnly(serve(inventory(block.toString())), ip);
     }
 
     private void advanceMs(final long millis) {
@@ -161,10 +678,12 @@ class InterfaceSnapshotPollerTest {
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 1);
 
-        poller.invalidateAll();
+        // a reload that repoints this range: re-resolution schedules an immediate re-walk
+        final var repointed = endpoint("10.5.0.2", "credentials: rotated");
+        poller.trackAndResolve(repointed, 1);
 
         // the existing snapshot is still served while the re-walk happens underneath
-        assertThat(poller.trackAndResolve(endpoint, 1)).contains(new IfInfo("eth0", "uplink", 1000L));
+        assertThat(poller.trackAndResolve(repointed, 1)).contains(new IfInfo("eth0", "uplink", 1000L));
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 2);
     }
@@ -511,9 +1030,9 @@ class InterfaceSnapshotPollerTest {
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 1);
 
-        // without the reload this endpoint would not be retried for the whole base delay
-        poller.invalidateAll();
-        poller.trackAndResolve(endpoint, 1);
+        // without the re-resolution this endpoint would not be retried for the whole base
+        // delay: an operator fixing a credential should not wait out the back-off
+        poller.trackAndResolve(endpoint("10.0.0.9", "credentials: rotated"), 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 2);
     }
@@ -540,7 +1059,7 @@ class InterfaceSnapshotPollerTest {
     }
 
     @Test
-    void theSnapshotStoreIsBoundedByExporterCount() {
+    void theSnapshotStoreIsBoundedByExporterCount() throws Exception {
         final var snmp = new FakeSnmp();
         final var config = config();
         config.setMaxExporters(5);
@@ -614,7 +1133,7 @@ class InterfaceSnapshotPollerTest {
         final var first = new FakeSnmp();
         final var pollerA = poller(first, config);
         final var second = new FakeSnmp();
-        final var pollerB = new InterfaceSnapshotPoller(second, config, new MetricRegistry(), this.clock::get, false);
+        final var pollerB = new InterfaceSnapshotPoller(second, config, new MetricRegistry(), this.serving, this.clock::get, false);
 
         pollerA.trackAndResolve(endpoint, 1);
         pollerB.trackAndResolve(endpoint, 1);

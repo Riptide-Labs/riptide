@@ -11,32 +11,31 @@ import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
 import org.riptide.flows.parser.data.Flow;
-import org.riptide.node.NodeRegistry;
+import org.riptide.inventory.Inventory;
+import org.riptide.inventory.InventoryConfig;
+import org.riptide.inventory.InventoryLoader;
+import org.riptide.inventory.SnmpProfilesConfig;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Pipeline;
 import org.riptide.pipeline.Source;
 import org.riptide.repository.TestRepository;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
 import java.net.InetAddress;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 /**
- * The enrichment ladder's middle rung on its own: a node with a static interface map
- * and no SNMP block enriches without any reachable agent.
+ * The enrichment ladder's middle rung on its own: an enrichment entry with interface
+ * pins and no matching agent range enriches without any reachable agent. After the
+ * cutover that is a real combination rather than an accident, because naming and
+ * pinning live in a different tree from credentials.
  */
-@SpringBootTest(properties = {
-        "riptide.nodes.static-only.subnet-address=127.0.0.1/24",
-        "riptide.nodes.static-only.interfaces.1.name=eth0",
-        "riptide.nodes.static-only.interfaces.1.alias=Uplink to AS64500",
-        "riptide.nodes.static-only.interfaces.1.high-speed=10000",
-        "riptide.nodes.static-only.interfaces.2.name=lo0"
-})
+@SpringBootTest
 public class StaticInterfaceEnricherTest {
 
     private final MetricRegistry metricRegistry = new MetricRegistry();
@@ -44,14 +43,27 @@ public class StaticInterfaceEnricherTest {
     /** Static pins must resolve with no SNMP data at all, so the ladder's live rung is empty. */
     private final InterfaceSource noSnmp = (endpoint, ifIndex) -> java.util.Optional.empty();
 
-    @Autowired
-    NodeRegistry nodeRegistry;
+    /** Pins only, and deliberately no agent range: nothing here is ever walked. */
+    private Inventory inventory() {
+        final var profiles = new SnmpProfilesConfig(Map.of(), Map.of());
+        final var inventory = new Inventory(profiles, new InventoryConfig());
+        inventory.swap(InventoryLoader.parse(profiles, """
+                riptide:
+                  exporters:
+                    static-only:
+                      address: 127.0.0.1
+                      interfaces:
+                        1: { name: eth0, alias: "Uplink to AS64500", high-speed: 10000 }
+                        2: { name: lo0 }
+                """, "test.yaml"));
+        return inventory;
+    }
 
     private final EnrichedFlow.FlowMapper flowMapper = Mappers.getMapper(EnrichedFlow.FlowMapper.class);
 
     @Test
     public void staticMappingEnrichesWithoutSnmp() throws Exception {
-        final var enrichers = List.<Enricher>of(new SnmpEnricher(this.noSnmp, this.nodeRegistry, emptyInterfaceTable()));
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(this.noSnmp, inventory(), emptyInterfaceTable()));
         final var repository = new TestRepository(metricRegistry);
         final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
 

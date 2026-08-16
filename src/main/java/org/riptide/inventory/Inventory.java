@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.nio.file.Path;
 import java.util.Objects;
 
 /**
@@ -26,8 +27,11 @@ import java.util.Objects;
 @RequiredArgsConstructor
 public class Inventory {
 
+    // volatile, not final: a main-config reload rebinds the credential and polling
+    // profiles, and the snapshot's entries hold resolved objects from them (AD-5), so the
+    // two have to move together or a rotated credential never reaches a walk
     @NonNull
-    private final SnmpProfilesConfig profiles;
+    private volatile SnmpProfilesConfig profiles;
 
     @NonNull
     private final InventoryConfig config;
@@ -56,6 +60,66 @@ public class Inventory {
      */
     public void swap(final InventorySnapshot snapshot) {
         this.active = Objects.requireNonNull(snapshot);
+    }
+
+    /**
+     * Publishes a snapshot together with the profiles it was built from, which is what a
+     * main-config reload needs: credential sets live in the main config, agent ranges
+     * resolve them into objects at build time, so rotating a community means rebuilding
+     * the inventory rather than swapping either half on its own.
+     */
+    public synchronized void swap(final SnmpProfilesConfig profiles, final InventorySnapshot snapshot) {
+        this.profiles = Objects.requireNonNull(profiles);
+        this.active = Objects.requireNonNull(snapshot);
+    }
+
+    /**
+     * Publishes a snapshot only if the profiles it was parsed against are still the ones
+     * serving, and reports whether it did.
+     *
+     * <p>Two reloaders publish here on separate threads. The inventory watcher reads the
+     * profiles, parses a file against them, and commits, and a main-config reload rotating
+     * a credential can land in between: committing anyway would pair the new profiles with
+     * a snapshot built from the old ones and silently undo the rotation. Losing the race
+     * means re-reading and re-parsing, which the caller does on its next cycle.</p>
+     */
+    public synchronized boolean swapIfProfilesUnchanged(final SnmpProfilesConfig parsedWith,
+                                                        final InventorySnapshot snapshot) {
+        if (this.profiles != parsedWith) {
+            return false;
+        }
+        this.active = Objects.requireNonNull(snapshot);
+        return true;
+    }
+
+    /**
+     * Rebuilds from {@code file} against {@code profiles} and publishes both, atomically
+     * with respect to {@link #swapIfProfilesUnchanged}.
+     *
+     * <p>The read happens inside the monitor deliberately. A main-config reload rotating a
+     * credential has to load the inventory file to resolve it, and the inventory watcher
+     * can commit newer file content during that load: publishing afterwards would
+     * overwrite it with older content, and neither reloader would notice, because both
+     * would consider their own hashes committed. Holding the monitor makes the watcher's
+     * compare-and-set fail instead, which it handles by re-parsing on its next cycle.</p>
+     */
+    public synchronized InventorySnapshot rebuildAndSwap(final SnmpProfilesConfig profiles, final Path file) {
+        final InventorySnapshot rebuilt = InventoryLoader.load(profiles, file);
+        if (rebuilt.isEmpty() && !this.active.isEmpty()) {
+            // refused, not published: a file caught mid-write parses to nothing without
+            // failing, and publishing that would drop every range and entry at once. The
+            // check lives here, inside the monitor and against the same read that would be
+            // published, so nothing can change between deciding and committing
+            return null;
+        }
+        this.profiles = Objects.requireNonNull(profiles);
+        this.active = rebuilt;
+        return rebuilt;
+    }
+
+    /** The profiles the serving snapshot was built from, for a reloader re-parsing the file. */
+    public SnmpProfilesConfig profiles() {
+        return this.profiles;
     }
 
     /** The current snapshot: exactly one volatile read; capture views from it, not from here. */
