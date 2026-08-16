@@ -53,9 +53,18 @@ public record CredentialSet(CredentialVersion version,
             throw new IllegalStateException(
                     "Credential set '%s' has no version: one of v1, v2c or v3 is required.".formatted(name));
         }
-        switch (this.version) {
-            case V1, V2C -> validateCommunity(name);
-            case V3 -> validateUsm(name);
+        // a switch expression with no default: exhaustiveness is checked by the compiler,
+        // so a new version is a build error rather than a silently unvalidated shape. The
+        // equivalent multi-label statement reads the same to a human and does not
+        // (scanners flag it as missing a case, and nothing enforces the arms)
+        final boolean community = switch (this.version) {
+            case V1, V2C -> true;
+            case V3 -> false;
+        };
+        if (community) {
+            validateCommunity(name);
+        } else {
+            validateUsm(name);
         }
     }
 
