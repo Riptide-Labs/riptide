@@ -98,7 +98,6 @@ public final class ConvertCommand {
             return 1;
         }
 
-        final boolean toFiles = configOut != null || inventoryOut != null;
         try {
             if (configOut != null) {
                 Files.writeString(configOut, converted.mainConfig());
@@ -123,7 +122,9 @@ public final class ConvertCommand {
             out.print(converted.inventory());
         }
 
-        final PrintStream summaryStream = toFiles && configOut != null && inventoryOut != null ? out : err;
+        // the summary shares stdout only when neither document is going there, so a redirect
+        // of stdout never picks up prose
+        final PrintStream summaryStream = configOut != null && inventoryOut != null ? out : err;
         converted.summary().forEach(summaryStream::println);
         if (configOut != null) {
             summaryStream.println("Wrote credential sets and polling profiles to " + configOut);
