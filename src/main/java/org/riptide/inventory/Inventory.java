@@ -105,14 +105,16 @@ public class Inventory {
      */
     public synchronized InventorySnapshot rebuildAndSwap(final SnmpProfilesConfig profiles, final Path file) {
         final InventorySnapshot rebuilt = InventoryLoader.load(profiles, file);
+        if (rebuilt.isEmpty() && !this.active.isEmpty()) {
+            // refused, not published: a file caught mid-write parses to nothing without
+            // failing, and publishing that would drop every range and entry at once. The
+            // check lives here, inside the monitor and against the same read that would be
+            // published, so nothing can change between deciding and committing
+            return null;
+        }
         this.profiles = Objects.requireNonNull(profiles);
         this.active = rebuilt;
         return rebuilt;
-    }
-
-    /** Rebuilds without publishing, for a caller that must inspect the result first. */
-    public synchronized InventorySnapshot rebuildOnly(final SnmpProfilesConfig profiles, final Path file) {
-        return InventoryLoader.load(profiles, file);
     }
 
     /** The profiles the serving snapshot was built from, for a reloader re-parsing the file. */

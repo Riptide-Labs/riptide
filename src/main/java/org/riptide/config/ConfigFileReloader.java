@@ -276,24 +276,6 @@ public class ConfigFileReloader {
         // rotation into the inventory, so failing to read the file (an atomic rm+mv
         // landing here) or reading one that parses to nothing must leave the running
         // inventory alone rather than take the config edit down with it or blank the fleet
-        InventorySnapshot candidateInventory = null;
-        try {
-            // rebuilt first so an empty or unreadable result can be refused before anything
-            // is published; the publish below re-reads under the inventory's monitor so a
-            // concurrent inventory reload cannot be overwritten
-            final InventorySnapshot rebuilt =
-                    this.inventory.rebuildOnly(candidateProfiles, this.inventoryConfig.getFile());
-            if (rebuilt.isEmpty() && !this.inventory.snapshot().isEmpty()) {
-                log.warn("Config reload left the inventory alone: rebuilding it from {} produced no entries "
-                        + "while a populated one is serving", this.inventoryConfig.getFile());
-            } else {
-                candidateInventory = rebuilt;
-            }
-        } catch (final RuntimeException e) {
-            log.warn("Config reload left the inventory alone: it could not be rebuilt ({}). Any credential "
-                    + "or profile change in this edit is NOT serving: fix {} and edit the config again, "
-                    + "or restart", e.getMessage(), this.inventoryConfig.getFile());
-        }
         final Map<String, NodeDefinition> validatedNodes = NodeRegistry.validated(nodes);
         final RoutingConfig.Parsed parsedRouting = RoutingConfig.parse(routing.getPrefixes(), routing.getAsNames());
 
@@ -311,18 +293,23 @@ public class ConfigFileReloader {
         // secrets first: a refresh can make a walk due immediately, and it must not read
         // a value the rotation just replaced
         this.sopsSecretResolver.invalidateCache();
-        if (candidateInventory != null) {
-            // re-read and publish under one monitor: the check above proved the file is
-            // usable, and this makes the publication atomic against the inventory watcher
-            candidateInventory = this.inventory.rebuildAndSwap(candidateProfiles, this.inventoryConfig.getFile());
-            try {
-                this.interfacePoller.refreshRegistrations(candidateInventory);
-            } catch (final RuntimeException e) {
-                // the config is already serving, so a failure here must not be reported as
-                // a failed reload that then never retries because the hash matches
-                log.warn("Config reloaded, but refreshing polled endpoints failed: registrations keep their "
-                        + "previous endpoints until their next flow", e);
+        // rebuilt and published in one monitor-held read, so nothing can change between
+        // validating the candidate and committing it, and guarded because the config is
+        // already serving by now: a throw here must not be reported as a failed reload
+        try {
+            final InventorySnapshot published =
+                    this.inventory.rebuildAndSwap(candidateProfiles, this.inventoryConfig.getFile());
+            if (published == null) {
+                log.warn("Config reloaded, but the inventory was left alone: rebuilding it from {} produced "
+                        + "no entries while a populated one is serving. The credential and profile changes "
+                        + "in this edit are NOT serving", this.inventoryConfig.getFile());
+            } else {
+                this.interfacePoller.refreshRegistrations(published);
             }
+        } catch (final RuntimeException e) {
+            log.warn("Config reloaded, but the inventory could not be rebuilt from {} ({}). The credential "
+                    + "and profile changes in this edit are NOT serving: fix the file and edit the config "
+                    + "again, or restart", this.inventoryConfig.getFile(), e.getMessage());
         }
         // no invalidateAll() here any more: it reset the whole fleet's next-walk time, so
         // an unrelated edit (a routing prefix, a receiver port) walked every exporter at

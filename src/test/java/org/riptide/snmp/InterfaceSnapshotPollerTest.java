@@ -101,15 +101,20 @@ class InterfaceSnapshotPollerTest {
     void eachEndpointIsWalkedOnItsOwnProfileCadence() throws Exception {
         final var snmp = new FakeSnmp();
         final var config = config();
-        // the fleet default is deliberately far from both profiles, so a fallback to it
-        // cannot be mistaken for either cadence working
-        config.setRefreshIntervalMs(600_000);
+        // the fleet defaults must differ from BOTH profiles, or a fallback to them is
+        // indistinguishable from the profile being honoured. The first version of this
+        // test set the fleet refresh to ten minutes and called it "deliberately far",
+        // while the sedate profile was also ten minutes
+        config.setRefreshIntervalMs(3_600_000);
+        config.setSnapshotExpiryMs(7_200_000);
         final var poller = poller(snmp, config);
 
         final var brisk = SnmpTest.communityV2c(new IPAddressString("10.7.0.1"), 161, "public",
                 java.time.Duration.ofMinutes(1), java.time.Duration.ofMinutes(30));
         final var sedate = SnmpTest.communityV2c(new IPAddressString("10.7.0.2"), 161, "public",
                 java.time.Duration.ofMinutes(10), java.time.Duration.ofMinutes(30));
+        // an hour of fleet cadence would give zero walks in this window, so a sedate count
+        // of one or two can only come from its own ten-minute profile
 
         poller.trackAndResolve(brisk, 1);
         poller.trackAndResolve(sedate, 1);
