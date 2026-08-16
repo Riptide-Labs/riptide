@@ -58,7 +58,11 @@ public record LegacyNode(String name,
 
         /** True when this is a community-based version, which is what the FR-9 width rule keys on. */
         public boolean cleartext() {
-            return "v1".equals(this.version) || "v2c".equals(this.version);
+            // case-insensitive, because Spring bound snmp-version to an enum through the
+            // relaxed binder: V2C, V2c and v2C were all legal 0.8 spellings. An exact compare
+            // here would skip the FR-9 carve-out on a real config, which is the one
+            // security-relevant classification this converter makes
+            return "v1".equalsIgnoreCase(this.version) || "v2c".equalsIgnoreCase(this.version);
         }
     }
 

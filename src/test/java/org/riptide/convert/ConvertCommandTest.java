@@ -129,6 +129,68 @@ class ConvertCommandTest {
         assertThat(out()).isEmpty();
     }
 
+    /**
+     * The emitted config is a fragment, and its own header tells the operator it belongs in
+     * application.yaml. Pointing --out-config at that file used to truncate it: every other
+     * riptide setting gone, exit code 0, and a summary line reporting success.
+     */
+    @Test
+    void anExistingOutputFileIsNotOverwrittenWithoutForce() throws Exception {
+        final Path input = this.tempDir.resolve("nodes.yaml");
+        Files.writeString(input, LEGACY);
+        final Path existing = this.tempDir.resolve("application.yaml");
+        Files.writeString(existing, "riptide:\n  clickhouse:\n    url: http://ch:8123\n");
+
+        assertThat(run("convert", input.toString(), "--out-config", existing.toString())).isEqualTo(1);
+        assertThat(Files.readString(existing)).contains("clickhouse");
+        assertThat(err()).contains("already exists").contains("--force");
+
+        assertThat(run("convert", input.toString(), "--out-config", existing.toString(), "--force"))
+                .isZero();
+        assertThat(Files.readString(existing)).contains("snmp-version");
+    }
+
+    /**
+     * The both-or-neither invariant, at the point it was actually broken. The config was
+     * written first and the inventory second, so an unwritable inventory path left half the
+     * pair on disk while the command reported failure.
+     */
+    @Test
+    void anUnwritableSecondPathLeavesNeitherFileBehind() throws Exception {
+        final Path input = this.tempDir.resolve("nodes.yaml");
+        Files.writeString(input, LEGACY);
+        final Path config = this.tempDir.resolve("out-config.yaml");
+        final Path unwritable = this.tempDir.resolve("no-such-dir").resolve("inv.yaml");
+
+        assertThat(run("convert", input.toString(),
+                "--out-config", config.toString(), "--out-inventory", unwritable.toString()))
+                .isEqualTo(1);
+        assertThat(Files.exists(config)).as("the first half must not survive the failure").isFalse();
+    }
+
+    @Test
+    void unknownOptionsAreNamedRatherThanTreatedAsTheInputPath() throws Exception {
+        final Path input = this.tempDir.resolve("nodes.yaml");
+        Files.writeString(input, LEGACY);
+        assertThat(run("convert", input.toString(), "--out-inventroy", "x.yaml")).isEqualTo(2);
+        assertThat(err()).contains("unknown option --out-inventroy");
+    }
+
+    @Test
+    void helpIsAvailableAndSucceeds() {
+        assertThat(run("convert", "--help")).isZero();
+        assertThat(out()).contains("usage: riptide convert");
+    }
+
+    /** The converter is the only thing that knows the operator still has the retired keys. */
+    @Test
+    void theSummarySaysToRemoveTheLegacyKeys() throws Exception {
+        final Path input = this.tempDir.resolve("nodes.yaml");
+        Files.writeString(input, LEGACY);
+        assertThat(run("convert", input.toString())).isZero();
+        assertThat(err()).contains("riptide.nodes").contains("fails it");
+    }
+
     @Test
     void noArgumentsPrintsUsageAndExitsTwo() {
         assertThat(run("convert")).isEqualTo(2);

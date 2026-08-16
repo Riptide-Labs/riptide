@@ -8,6 +8,11 @@ package org.riptide.convert;
 import inet.ipaddr.IPAddress;
 import inet.ipaddr.IPAddressString;
 import inet.ipaddr.IPAddressStringParameters;
+import org.riptide.inventory.CredentialSet;
+import org.riptide.inventory.CredentialVersion;
+import org.riptide.inventory.PollingProfile;
+import org.riptide.secrets.SecretRef;
+import org.snmp4j.fluent.TargetBuilder;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -45,6 +50,8 @@ public final class LegacyConverter {
             .toParams();
 
     private static final int DEFAULT_PORT = 161;
+    private static final int MAX_PORT = 65535;
+    private static final long MAX_OBSERVATION_DOMAIN = 0xFFFF_FFFFL;
     private static final int DEFAULT_TIMEOUT_MS = 500;
     private static final int DEFAULT_RETRIES = 1;
 
@@ -70,11 +77,27 @@ public final class LegacyConverter {
         int disabled = 0;
         int ranges = 0;
 
+        // legacy nodes could share an address and be told apart by observation-domain, which
+        // NodeRegistry validated on the pair. 0.9 agent ranges have no domain concept, so two
+        // such nodes collapse onto one range key: emitting both produces a duplicate YAML key
+        // and an inventory that cannot load, reported against a generated line number
+        final Map<String, String> rangeOwners = new LinkedHashMap<>();
+
         // sorted, not map order: the same input has to convert to byte-identical output, and
         // a diff between two runs of the same file would be unreviewable
         for (final LegacyNode node : new TreeMap<>(legacy.nodes()).values()) {
             final IPAddress address = strictAddress(node);
+            requireEmittableNode(node);
             if (node.snmp() != null) {
+                final String owner = rangeOwners.putIfAbsent(address.toCanonicalString(), node.name());
+                if (owner != null) {
+                    throw new IllegalStateException(
+                            ("Nodes '%s' and '%s' are both polled at %s. 0.8 told them apart by "
+                                    + "observation-domain, which 0.9 agent ranges do not carry, so they "
+                                    + "would become one range. Merge them, or drop the snmp block from "
+                                    + "one: their names both survive as enrichment entries either way.")
+                                    .formatted(owner, node.name(), node.subnetAddress()));
+                }
                 ranges++;
                 final boolean carveOut = node.snmp().cleartext() && address.isMultiple();
                 // registered even for a carve-out. The set is unreferenced and harmless, and
@@ -102,6 +125,103 @@ public final class LegacyConverter {
                     + "or by moving the segment to v3. Both are in the comment above each entry.");
         }
         return new Converted(mainConfig(credentials, profiles), inventory(agents, exporters), summary);
+    }
+
+    /**
+     * Builds the 0.9 objects this node will become and validates them, before a byte is
+     * emitted.
+     *
+     * <p>This is what makes AD-13 a property rather than a claim. The legacy tree accepted
+     * shapes 0.9 rejects — a v3 set with no security-name, auth without a passphrase, priv
+     * without auth, a v2c set carrying leftover v3 fields, a non-positive timeout, a port
+     * outside the legal range — and every one of them converted cleanly and then failed the
+     * operator's next startup. Failing here names the node, which is a thing in their file;
+     * failing at boot names a generated credential set, which is not.</p>
+     */
+    private static void requireEmittableNode(final LegacyNode node) {
+        if (node.observationDomain() != null
+                && (node.observationDomain() < 0 || node.observationDomain() > MAX_OBSERVATION_DOMAIN)) {
+            throw new IllegalStateException(
+                    ("Node '%s' has observation-domain %d, outside the unsigned 32-bit range 0.9 "
+                            + "accepts.").formatted(node.name(), node.observationDomain()));
+        }
+        node.interfaces().forEach((ifIndex, pin) -> {
+            requireNonBlank(node, ifIndex, "name", pin.name());
+            requireNonBlank(node, ifIndex, "alias", pin.alias());
+        });
+        if (node.snmp() == null) {
+            return;
+        }
+        final LegacyNode.LegacySnmp snmp = node.snmp();
+        if (snmp.port() != null && (snmp.port() < 1 || snmp.port() > MAX_PORT)) {
+            throw new IllegalStateException(
+                    "Node '%s' has snmp port %d, outside 1..%d.".formatted(node.name(), snmp.port(), MAX_PORT));
+        }
+        // the real records, validated by their own contract: a shape check written here would
+        // drift from the one that actually runs at startup
+        credentialSet(node).validate("the credentials of node '" + node.name() + "'");
+        new PollingProfile(Duration.ofMinutes(10), Duration.ofMinutes(30),
+                snmp.timeout() == null ? DEFAULT_TIMEOUT_MS : snmp.timeout(),
+                snmp.retries() == null ? DEFAULT_RETRIES : snmp.retries())
+                .validate("the polling settings of node '" + node.name() + "'");
+    }
+
+    private static void requireNonBlank(final LegacyNode node, final int ifIndex,
+                                        final String field, final String value) {
+        if (value != null && value.isBlank()) {
+            throw new IllegalStateException(
+                    ("Node '%s' interface %d has a blank %s. 0.9 rejects it, because only an absent "
+                            + "pin falls through to the rungs below: remove the key.")
+                            .formatted(node.name(), ifIndex, field));
+        }
+    }
+
+    /** The legacy snmp block as the {@link CredentialSet} it will be emitted as. */
+    private static CredentialSet credentialSet(final LegacyNode node) {
+        final LegacyNode.LegacySnmp snmp = node.snmp();
+        final CredentialVersion version;
+        try {
+            version = CredentialVersion.valueOf(snmp.version().toUpperCase(java.util.Locale.ROOT));
+        } catch (final IllegalArgumentException e) {
+            throw new IllegalStateException(
+                    ("Node '%s' has snmp-version '%s'; 0.9 accepts v1, v2c and v3.")
+                            .formatted(node.name(), snmp.version()), e);
+        }
+        return new CredentialSet(version,
+                snmp.community() == null ? null : SecretRef.of(snmp.community()),
+                snmp.securityName(),
+                authProtocol(node, snmp.authProtocol()),
+                snmp.authPassphrase() == null ? null : SecretRef.of(snmp.authPassphrase()),
+                privProtocol(node, snmp.privProtocol()),
+                snmp.privPassphrase() == null ? null : SecretRef.of(snmp.privPassphrase()));
+    }
+
+    private static TargetBuilder.AuthProtocol authProtocol(final LegacyNode node, final String value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return TargetBuilder.AuthProtocol.valueOf(value);
+        } catch (final IllegalArgumentException e) {
+            throw new IllegalStateException(
+                    ("Node '%s' has auth-protocol '%s', which is not one of %s.")
+                            .formatted(node.name(), value,
+                                    java.util.Arrays.toString(TargetBuilder.AuthProtocol.values())), e);
+        }
+    }
+
+    private static TargetBuilder.PrivProtocol privProtocol(final LegacyNode node, final String value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return TargetBuilder.PrivProtocol.valueOf(value);
+        } catch (final IllegalArgumentException e) {
+            throw new IllegalStateException(
+                    ("Node '%s' has priv-protocol '%s', which is not one of %s.")
+                            .formatted(node.name(), value,
+                                    java.util.Arrays.toString(TargetBuilder.PrivProtocol.values())), e);
+        }
     }
 
     private static IPAddress strictAddress(final LegacyNode node) {
@@ -183,10 +303,17 @@ public final class LegacyConverter {
     private static String mainConfig(final Credentials credentials, final Profiles profiles) {
         final StringBuilder out = new StringBuilder();
         out.append("# Generated by 'riptide convert'. This half belongs in the main configuration\n")
-                .append("# (application.yaml), not in the inventory file.\n")
-                .append("riptide:\n")
-                .append("  snmp:\n")
-                .append("    credentials:\n");
+                .append("# (application.yaml), not in the inventory file.\n");
+        if (credentials.names.isEmpty() && profiles.emitted.isEmpty()) {
+            // a label-only legacy file polls nothing, so this half has no content. Saying so
+            // beats handing the operator a file whose whole body is an empty mapping
+            return out.append("# Nothing to add here: no node in the legacy file was polled.\n")
+                    .toString();
+        }
+        out.append("riptide:\n").append("  snmp:\n");
+        if (!credentials.names.isEmpty()) {
+            out.append("    credentials:\n");
+        }
         for (final Map.Entry<String, LegacyNode.LegacySnmp> set : credentials.byName().entrySet()) {
             out.append("      ").append(set.getKey()).append(":\n")
                     .append("        snmp-version: ").append(quote(set.getValue().version())).append('\n');
@@ -239,7 +366,28 @@ public final class LegacyConverter {
      * does not parse.
      */
     private static String quote(final String value) {
-        return '"' + value.replace("\\", "\\\\").replace("\"", "\\\"") + '"';
+        final StringBuilder out = new StringBuilder(value.length() + 2).append('"');
+        for (int i = 0; i < value.length(); i++) {
+            final char c = value.charAt(i);
+            switch (c) {
+                case '\\' -> out.append("\\\\");
+                case '"' -> out.append("\\\"");
+                case '\n' -> out.append("\\n");
+                case '\r' -> out.append("\\r");
+                case '\t' -> out.append("\\t");
+                default -> {
+                    if (c < 0x20 || c == 0x7F) {
+                        // a raw control character makes the emitted file unreadable to the YAML
+                        // reader; a raw newline is worse, because it folds into a space and the
+                        // file parses with a silently different value
+                        out.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        out.append(c);
+                    }
+                }
+            }
+        }
+        return out.append('"').toString();
     }
 
     /** Deduplicates identical credential blocks, naming them in first-seen sorted order. */

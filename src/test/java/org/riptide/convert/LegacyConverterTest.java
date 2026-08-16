@@ -14,7 +14,10 @@ import org.riptide.inventory.PollingProfile;
 import org.riptide.inventory.SnmpProfilesConfig;
 import org.riptide.pipeline.ExporterIdentity;
 import org.riptide.secrets.SecretRef;
+import org.snmp4j.fluent.TargetBuilder;
+import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import java.net.InetAddress;
 import java.time.Duration;
@@ -293,6 +296,237 @@ class LegacyConverterTest {
                 .hasMessageContaining("no nodes");
     }
 
+    // ---- regressions from the three-layer review of PR 530 ----
+
+    /**
+     * The security classification the converter makes, against the spelling Spring accepted.
+     * 0.8 bound snmp-version to an enum case-insensitively, so V2C was legal and an exact
+     * compare skipped the FR-9 carve-out entirely: a live wide cleartext range, no comment,
+     * no summary line, and a config that 0.9 refuses to start.
+     */
+    @Test
+    void anUppercaseVersionStillTriggersTheCarveOut() throws Exception {
+        final var converted = convert("""
+                riptide:
+                  nodes:
+                    access:
+                      subnet-address: 10.20.0.0/16
+                      snmp: {snmp-version: V2C, community: "env://C"}
+                """);
+        assertThat(converted.inventory()).contains("enabled: false");
+        assertThat(converted.summary()).anySatisfy(line -> assertThat(line).contains("access"));
+        boot(converted);
+    }
+
+    /**
+     * 0.8 let two nodes share an address and told them apart by observation-domain, which
+     * NodeRegistry validated on the pair. 0.9 agent ranges carry no domain, so both would
+     * emit the same range key: a duplicate YAML key, and an inventory that cannot load with
+     * an error pointing at a generated line number instead of the two node names.
+     */
+    @Test
+    void twoPolledNodesOnOneAddressAreRefusedByName() {
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  nodes:
+                    core-a:
+                      subnet-address: 10.0.0.1
+                      observation-domain: 1
+                      snmp: {snmp-version: v3, security-name: mon}
+                    core-b:
+                      subnet-address: 10.0.0.1
+                      observation-domain: 2
+                      snmp: {snmp-version: v3, security-name: mon}
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("core-a").hasMessageContaining("core-b")
+                .hasMessageContaining("observation-domain");
+    }
+
+    /**
+     * Credential shapes 0.8 tolerated and 0.9 rejects. Each converted cleanly and detonated
+     * at the operator's next startup, naming a credential set the converter had invented,
+     * which appears nowhere in their file. They now fail naming the node.
+     */
+    @Test
+    void credentialShapesThe09LoaderRejectsFailDuringConversion() {
+        record Case(String label, String snmp) { }
+        for (final Case bad : new Case[] {
+                new Case("v3 without security-name", "{snmp-version: v3}"),
+                new Case("v2c without community", "{snmp-version: v2c}"),
+                new Case("v3 carrying a community",
+                        "{snmp-version: v3, security-name: mon, community: \"public\"}"),
+                new Case("v2c carrying v3 fields",
+                        "{snmp-version: v2c, community: \"public\", security-name: mon}"),
+                new Case("auth without passphrase",
+                        "{snmp-version: v3, security-name: mon, auth-protocol: hmac192sha256}"),
+                new Case("an unknown version", "{snmp-version: v4, community: \"public\"}")}) {
+            assertThatThrownBy(() -> convert("""
+                    riptide:
+                      nodes:
+                        core-router:
+                          subnet-address: 10.0.0.1
+                          snmp: %s
+                    """.formatted(bad.snmp())))
+                    .as(bad.label())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("core-router");
+        }
+    }
+
+    /** Numeric fields 0.8 left unchecked that 0.9 bounds. Each used to convert and fail at boot. */
+    @Test
+    void outOfRangeNumbersFailDuringConversion() {
+        record Case(String label, String body) { }
+        for (final Case bad : new Case[] {
+                new Case("port above 65535", "snmp: {snmp-version: v3, security-name: m, port: 70000}"),
+                new Case("port zero", "snmp: {snmp-version: v3, security-name: m, port: 0}"),
+                new Case("non-positive timeout", "snmp: {snmp-version: v3, security-name: m, timeout: 0}"),
+                new Case("negative retries", "snmp: {snmp-version: v3, security-name: m, retries: -1}"),
+                new Case("observation-domain above 2^32-1", "observation-domain: 4294967296"),
+                new Case("negative observation-domain", "observation-domain: -1")}) {
+            assertThatThrownBy(() -> convert("""
+                    riptide:
+                      nodes:
+                        core-router:
+                          subnet-address: 10.0.0.1
+                          %s
+                    """.formatted(bad.body())))
+                    .as(bad.label())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("core-router");
+        }
+    }
+
+    /** A blank pin is rejected by 0.9, so it must not be emitted; 0.8 accepted the empty string. */
+    @Test
+    void aBlankPinFieldFailsDuringConversion() {
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  nodes:
+                    core-router:
+                      subnet-address: 10.0.0.1
+                      interfaces:
+                        1: {alias: ""}
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("core-router").hasMessageContaining("blank");
+    }
+
+    /**
+     * The quoting helper escaped only backslash and quote. A newline inside an alias folded
+     * into a space and the file parsed clean, silently renaming an interface; a newline in a
+     * node name made the inventory unloadable.
+     */
+    @Test
+    void controlCharactersInOperatorTextSurviveExactly() throws Exception {
+        final var converted = convert("""
+                riptide:
+                  nodes:
+                    "odd\\tname":
+                      subnet-address: 10.0.0.1
+                      interfaces:
+                        1: {alias: "up\\nlink"}
+                """);
+        final InventorySnapshot snapshot = boot(converted);
+        final var entry = snapshot.exporterView()
+                .match(new ExporterIdentity.NetflowIpfix(InetAddress.getByName("10.0.0.1"), 0L))
+                .orElseThrow();
+        // the YAML escapes above mean the legacy VALUES really contain a tab and a newline;
+        // written unescaped they would fold at parse time and this would prove nothing
+        assertThat(entry.name()).isEqualTo("odd\tname");
+        assertThat(entry.interfaces().get(1).alias()).isEqualTo("up\nlink");
+    }
+
+    /** One ifIndex in both spellings: SnakeYAML sees two keys, so a pin would silently vanish. */
+    @Test
+    void oneIfIndexInBothSpellingsIsRefused() {
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  nodes:
+                    core-router:
+                      subnet-address: 10.0.0.1
+                      interfaces:
+                        1: {name: "a"}
+                        "1": {name: "b"}
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("1");
+    }
+
+    /** A node key that YAML types as something other than text would name an exporter "true". */
+    @Test
+    void aNodeNameThatIsNotTextIsRefused() {
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  nodes:
+                    on:
+                      subnet-address: 10.0.0.1
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("quote it");
+    }
+
+    /** An unmappable key in a subtree the converter actively reads is a dropped setting. */
+    @Test
+    void anUnknownKeyUnderThePollSubtreeIsAnError() {
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  snmp:
+                    poll:
+                      refresh-interval-ms: 300000
+                      typo-key: 5
+                  nodes:
+                    r: {subnet-address: 10.0.0.1}
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("typokey");
+    }
+
+    /** A Spring application.yaml with profile documents is common; it is not a syntax error. */
+    @Test
+    void aMultiDocumentFileIsNamedRatherThanCalledInvalidYaml() {
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  nodes:
+                    r: {subnet-address: 10.0.0.1}
+                ---
+                spring:
+                  config:
+                    activate:
+                      on-profile: prod
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("YAML documents")
+                .hasMessageContaining("profile");
+    }
+
+    /** An empty 'snmp:' key is a null value, not a wrong type, and bound fine in 0.8. */
+    @Test
+    void anEmptySnmpSectionDoesNotAbortAConvertibleFile() throws Exception {
+        boot(convert("""
+                riptide:
+                  snmp:
+                  nodes:
+                    r: {subnet-address: 10.0.0.5}
+                """));
+    }
+
+    /** The relaxed lookup must reach the poll subtree too, or the cadence is silently lost. */
+    @Test
+    void theGlobalCadenceIsReadThroughEitherSpelling() {
+        assertThat(convert("""
+                riptide:
+                  SNMP:
+                    poll:
+                      refreshIntervalMs: 300000
+                  nodes:
+                    r:
+                      subnet-address: 10.0.0.1
+                      snmp: {snmp-version: v3, security-name: mon}
+                """).mainConfig()).contains("PT5M");
+    }
+
     /** Boots the emitted pair through the real 0.9 loader: this is the AD-13 proof. */
     private static InventorySnapshot boot(final LegacyConverter.Converted converted) {
         return InventoryLoader.parse(profilesFrom(converted.mainConfig()),
@@ -300,37 +534,73 @@ class LegacyConverterTest {
     }
 
     /**
-     * Builds the profiles the way Spring would from the emitted main config. Hand-mapped
-     * rather than run through a Spring context so the test stays a unit test; the shapes are
-     * the record constructors themselves, so a mis-emitted key still fails here.
+     * Builds the profiles from the emitted main config the way the running collector does:
+     * every credential field is read, and both records are validated.
+     *
+     * <p>The first version of this helper read three keys and dropped auth-protocol,
+     * auth-passphrase, priv-protocol and priv-passphrase on the floor, then built a
+     * {@code usm(securityName)} set the converter had never emitted. Four classes of invalid
+     * credential shape booted green through it, so AD-13 was asserted rather than tested. Any
+     * key the converter mis-spells is now invisible to nobody: it fails to appear here, and
+     * {@code validate} runs on the result.</p>
      */
     @SuppressWarnings("unchecked")
     private static SnmpProfilesConfig profilesFrom(final String mainConfig) {
-        final Map<String, Object> root = new Yaml().load(mainConfig);
+        final LoaderOptions options = new LoaderOptions();
+        options.setAllowDuplicateKeys(false);
+        final Map<String, Object> root = new Yaml(new SafeConstructor(options)).load(mainConfig);
+        if (root == null || root.get("riptide") == null) {
+            // a legacy file that polls nothing emits no credentials and no profiles
+            return new SnmpProfilesConfig(Map.of(), Map.of());
+        }
         final Map<String, Object> snmp =
                 (Map<String, Object>) ((Map<String, Object>) root.get("riptide")).get("snmp");
 
         final Map<String, CredentialSet> credentials = new LinkedHashMap<>();
         ((Map<String, Map<String, Object>>) snmp.getOrDefault("credentials", Map.of()))
-                .forEach((name, body) -> credentials.put(name, credentialSet(body)));
+                .forEach((name, body) -> {
+                    final CredentialSet set = credentialSet(body);
+                    set.validate(name);
+                    credentials.put(name, set);
+                });
 
         final Map<String, PollingProfile> polling = new LinkedHashMap<>();
         ((Map<String, Map<String, Object>>) snmp.getOrDefault("polling", Map.of()))
-                .forEach((name, body) -> polling.put(name, new PollingProfile(
-                        Duration.parse((String) body.get("refresh-interval")),
-                        Duration.parse((String) body.get("snapshot-expiry")),
-                        (Integer) body.get("timeout"),
-                        (Integer) body.get("retries"))));
+                .forEach((name, body) -> {
+                    // the record's own @DefaultValue strings, so an omitted key behaves here
+                    // exactly as the binder would make it behave
+                    final PollingProfile profile = new PollingProfile(
+                            // the record's @DefaultValue literals, inlined because they are
+                            // package-private; PollingDefaultsGuardTest pins them in step
+                            Duration.parse((String) body.getOrDefault("refresh-interval", "PT10M")),
+                            Duration.parse((String) body.getOrDefault("snapshot-expiry",
+                                    "PT30M")),
+                            (Integer) body.getOrDefault("timeout", 500),
+                            (Integer) body.getOrDefault("retries", 1));
+                    profile.validate(name);
+                    polling.put(name, profile);
+                });
 
         return new SnmpProfilesConfig(credentials, polling);
     }
 
+    /** Every field, so a dropped or mis-spelled one changes the object under validation. */
     private static CredentialSet credentialSet(final Map<String, Object> body) {
-        final CredentialVersion version =
-                CredentialVersion.valueOf(((String) body.get("snmp-version")).toUpperCase(java.util.Locale.ROOT));
-        return version == CredentialVersion.V3
-                ? CredentialSet.usm((String) body.get("security-name"))
-                : CredentialSet.community(version, SecretRef.of((String) body.get("community")));
+        return new CredentialSet(
+                CredentialVersion.valueOf(
+                        ((String) body.get("snmp-version")).toUpperCase(java.util.Locale.ROOT)),
+                ref(body.get("community")),
+                (String) body.get("security-name"),
+                body.get("auth-protocol") == null ? null
+                        : TargetBuilder.AuthProtocol.valueOf((String) body.get("auth-protocol")),
+                ref(body.get("auth-passphrase")),
+                body.get("priv-protocol") == null ? null
+                        : TargetBuilder.PrivProtocol.valueOf((String) body.get("priv-protocol")),
+                ref(body.get("priv-passphrase")));
+    }
+
+    private static SecretRef ref(final Object value) {
+        return value == null ? null : SecretRef.of((String) value);
     }
 
     private static Map<String, Object> credentialsOf(final LegacyConverter.Converted converted) {
