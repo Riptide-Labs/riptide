@@ -240,6 +240,52 @@ public class SnmpEnricherTest {
     }
 
     @Test
+    public void aBatchCapturesTheInventoryExactlyOnce() throws Exception {
+        // the regression that matters is a per-flow capture: it compiles, reads correctly,
+        // and lets a reload land mid-batch so some flows are enriched from one generation
+        // and the rest from another. Counting matches would not see it; counting captures
+        // does, which is why the double counts snapshot() rather than view lookups
+        final var counting = new CountingInventory(inventory());
+        final var enrichers = List.<Enricher>of(
+                new SnmpEnricher(liveSnmp(), counting, emptyInterfaceTable()));
+        final var repository = new TestRepository(metricRegistry);
+        final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
+
+        final var flows = new java.util.ArrayList<Flow>();
+        for (int i = 0; i < 25; i++) {
+            final Flow flow = Mockito.mock(Flow.class);
+            when(flow.getSrcAddr()).thenReturn(InetAddress.getByName("10.10.10.10"));
+            when(flow.getDstAddr()).thenReturn(InetAddress.getByName("10.20.20.10"));
+            when(flow.getInputSnmp()).thenReturn(1);
+            when(flow.getOutputSnmp()).thenReturn(2);
+            flows.add(flow);
+        }
+
+        pipeline.process(new Source("here", InetAddress.getLoopbackAddress()), flows);
+
+        assertThat(repository.count()).isEqualTo(25);
+        assertThat(counting.captures).hasValue(1);
+    }
+
+    /** Counts snapshot captures, the only place a per-flow read is visible. */
+    private static final class CountingInventory extends Inventory {
+        private final java.util.concurrent.atomic.AtomicInteger captures =
+                new java.util.concurrent.atomic.AtomicInteger();
+        private final Inventory delegate;
+
+        private CountingInventory(final Inventory delegate) {
+            super(new SnmpProfilesConfig(Map.of(), Map.of()), new InventoryConfig());
+            this.delegate = delegate;
+        }
+
+        @Override
+        public org.riptide.inventory.InventorySnapshot snapshot() {
+            this.captures.incrementAndGet();
+            return this.delegate.snapshot();
+        }
+    }
+
+    @Test
     public void optionTableRetentionBindsFromProperties(@Autowired final SnmpOptionsConfig optionsConfig) {
         // regression: a bare public field never binds, and the option table would then run at a
         // 0 ms TTL — every exporter-pushed interface name expiring the instant it arrived

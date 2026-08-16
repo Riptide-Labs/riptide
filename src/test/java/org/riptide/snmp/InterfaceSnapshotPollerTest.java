@@ -384,10 +384,12 @@ class InterfaceSnapshotPollerTest {
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 1);
 
-        poller.invalidateAll();
+        // a reload that repoints this range: re-resolution schedules an immediate re-walk
+        final var repointed = SnmpTest.communityV2c(new IPAddressString("10.5.0.2"), 161, "rotated");
+        poller.trackAndResolve(repointed, 1);
 
         // the existing snapshot is still served while the re-walk happens underneath
-        assertThat(poller.trackAndResolve(endpoint, 1)).contains(new IfInfo("eth0", "uplink", 1000L));
+        assertThat(poller.trackAndResolve(repointed, 1)).contains(new IfInfo("eth0", "uplink", 1000L));
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 2);
     }
@@ -734,9 +736,9 @@ class InterfaceSnapshotPollerTest {
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 1);
 
-        // without the reload this endpoint would not be retried for the whole base delay
-        poller.invalidateAll();
-        poller.trackAndResolve(endpoint, 1);
+        // without the re-resolution this endpoint would not be retried for the whole base
+        // delay: an operator fixing a credential should not wait out the back-off
+        poller.trackAndResolve(SnmpTest.communityV2c(new IPAddressString("10.0.0.9"), 161, "fixed"), 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 2);
     }

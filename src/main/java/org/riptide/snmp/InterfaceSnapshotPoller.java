@@ -578,29 +578,6 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 .orElse(0L);
     }
 
-    /**
-     * Configuration hot-reload: endpoints or credentials may have changed, so everything is due
-     * for a fresh walk immediately and any accumulated back-off is abandoned.
-     *
-     * <p>Snapshots are deliberately <em>kept</em> rather than dropped. Under the demand-filled
-     * design clearing was free because the next flow refilled synchronously; here a cleared
-     * snapshot is a real gap, and every reload — including one that changed nothing about SNMP —
-     * would blank interface names for the whole fleet until each exporter was re-walked. The
-     * existing data is served, staleness-bounded as always, while the re-walk happens underneath.
-     *
-     * <p>Registrations are kept for a second reason: dropping one whose walk is still in flight
-     * would let a re-registration create a fresh in-flight flag and start a concurrent walk
-     * against the same agent, breaking the one-walk-per-endpoint guarantee.
-     */
-    public void invalidateAll() {
-        final long now = this.nanoTime.getAsLong();
-        for (final Registration registration : this.registrations.values()) {
-            registration.consecutiveFailures.set(0);
-            registration.unreachable = false;
-            registration.nextWalkNanos = now;
-        }
-    }
-
     @PreDestroy
     void stop() {
         if (this.scheduler != null) {

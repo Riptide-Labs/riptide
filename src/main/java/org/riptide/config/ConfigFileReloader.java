@@ -278,6 +278,10 @@ public class ConfigFileReloader {
         // makes a credential rotation reach an agent without a restart
         this.inventory.swap(candidateProfiles, candidateInventory);
         this.interfacePoller.refreshRegistrations(candidateInventory);
+        // no invalidateAll() here any more: it reset the whole fleet's next-walk time, so
+        // an unrelated edit (a routing prefix, a receiver port) walked every exporter at
+        // once, against the very spreading the poller exists to do. The refresh above
+        // touches exactly the registrations whose endpoint actually changed
         this.sopsSecretResolver.invalidateCache();
 
         this.reloadSuccesses.inc();
