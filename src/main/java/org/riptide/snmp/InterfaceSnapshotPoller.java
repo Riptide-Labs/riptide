@@ -344,7 +344,9 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         registration.nextWalkNanos = immediate ? now : spreadWalkAt(endpoint, now);
         registration.resolution.incrementAndGet();
         this.reresolved.mark();
-        log.info("Endpoint for {} re-resolved from the current inventory; walking on the next tick", address);
+        // debug, not info: on the flow path this fires once per batch per direction while a
+        // swap is in flight, and the sweep below reports its own total
+        log.debug("Endpoint for {} re-resolved from the current inventory", address);
     }
 
     /**
@@ -381,6 +383,8 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         // with the new snapshot and needs no second pass
         this.published = snapshot;
         final long now = this.nanoTime.getAsLong();
+        final long reresolvedBefore = this.reresolved.getCount();
+        final long deregisteredBefore = this.deregistered.getCount();
         for (final Map.Entry<InetSocketAddress, Registration> entry : this.registrations.entrySet()) {
             final InetSocketAddress address = entry.getKey();
             final Registration registration = entry.getValue();
@@ -402,11 +406,19 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                     // races here, and marking both would make the meter unreconcilable
                     // against the exporters gauge
                     this.deregistered.mark();
-                    log.info("Stopped polling {}: it no longer resolves to a pollable agent range", address);
+                    log.debug("Stopped polling {}: it no longer resolves to a pollable agent range", address);
                 }
                 continue;
             }
             reresolveIfChanged(registration, resolved.get(), now, address, false, snapshot);
+        }
+        final long reresolved = this.reresolved.getCount() - reresolvedBefore;
+        final long stopped = this.deregistered.getCount() - deregisteredBefore;
+        if (reresolved > 0 || stopped > 0) {
+            // one line per reload, not one per registration: a shared profile edit touches
+            // every range that names it
+            log.info("Inventory refresh: {} registration(s) re-resolved, {} stopped, of {} polled",
+                    reresolved, stopped, this.registrations.size());
         }
     }
 
@@ -657,15 +669,19 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     }
 
     /**
-     * A soon-but-spread next walk, for a re-resolution that arrived with a whole reload
-     * rather than from one operator gesture. Setting every changed registration to
-     * {@code now} would make the affected fleet due on the same tick, which is the herd
-     * the address-derived phase exists to avoid; a minute is soon enough to be a fix and
-     * wide enough to spread.
+     * A spread next walk, for a re-resolution that arrived with a whole reload rather than
+     * from one operator gesture. Setting every changed registration to {@code now} would
+     * make the affected fleet due on the same tick, and a shared credential or profile is
+     * exactly what one edit changes across thousands of ranges.
+     *
+     * <p>Spread across the registration's own refresh interval, using the same
+     * address-derived phase the ordinary schedule uses, so the re-walk arrives on the
+     * cadence the operator asked for rather than compressed into a burst the pool then
+     * drains at its width.</p>
      */
     private long spreadWalkAt(final SnmpEndpoint endpoint, final long now) {
-        final long window = Math.min(millisToNanos(Math.max(1, refreshMsFor(endpoint))), millisToNanos(60_000));
-        return now + Math.floorMod(mix(endpoint.getInetSocketAddress().hashCode()), Math.max(1, window));
+        final long interval = millisToNanos(Math.max(1, refreshMsFor(endpoint)));
+        return now + Math.floorMod(mix(endpoint.getInetSocketAddress().hashCode()), Math.max(1, interval));
     }
 
     /** The endpoint's own profile cadence, or the fleet setting for a legacy endpoint. */

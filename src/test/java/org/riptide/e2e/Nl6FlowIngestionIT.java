@@ -66,6 +66,9 @@ public class Nl6FlowIngestionIT {
         NL6.start();
     }
 
+    /** Resolved once: a dynamic-property supplier runs on every lookup. */
+    private static final String INVENTORY_FILE = inventoryFile().toString();
+
     @DynamicPropertySource
     static void riptideProperties(final DynamicPropertyRegistry registry) {
         registry.add("riptide.clickhouse.endpoint",
@@ -94,7 +97,7 @@ public class Nl6FlowIngestionIT {
         // cover) with static interface pins, so enrichment proves attribution. Two entries
         // share one prefix to prove sub-agent pinning: the pinned entry (observation-domain
         // = the sub_agent_id) beats the wildcard, and distinct pins tell the query which won.
-        registry.add("riptide.inventory.file", () -> inventoryFile().toString());
+        registry.add("riptide.inventory.file", () -> INVENTORY_FILE);
     }
 
     /**

@@ -29,13 +29,21 @@ public class LegacyNodesInertCheck {
 
     @PostConstruct
     void warnWhenLegacyNodesAreNoLongerRead() {
-        final int nodes = this.nodeRegistry.getNodes().size();
+        warnIfPopulated(this.nodeRegistry.getNodes().size());
+    }
+
+    /**
+     * Callable from the reload path, which is where an operator is most likely to conclude
+     * their edit is live: a hot reload of a grown {@code riptide.nodes} tree logs a node
+     * count and commits happily, and without this says nothing about the tree being inert.
+     */
+    public static void warnIfPopulated(final int nodes) {
         if (nodes == 0) {
             return;
         }
         log.warn("riptide.nodes still declares {} node(s), and none of it reaches enrichment any more: "
                 + "exporter names, interface pins and SNMP credentials now come from the inventory file "
-                + "(riptide.inventory.file). The declarations are inert, not broken. Convert them and "
-                + "remove the tree", nodes);
+                + "(riptide.inventory.file). The declarations are inert, not broken. The converter story "
+                + "rewrites them; until then, convert by hand and remove the tree", nodes);
     }
 }

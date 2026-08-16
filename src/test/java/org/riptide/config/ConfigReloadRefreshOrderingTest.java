@@ -27,14 +27,26 @@ import static org.assertj.core.api.Assertions.assertThat;
  * AD-6's ordering is swap, then refresh, and until now it was asserted by a code comment:
  * deleting the refresh call, or moving it above the swap, left the whole suite green.
  */
-@SpringBootTest(properties = {
-        "riptide.config.reload-interval=1h",
-        "spring.config.import=optional:file:${java.io.tmpdir}/riptide-refresh-ordering.yaml"
-})
+@SpringBootTest(properties = "riptide.config.reload-interval=1h")
 class ConfigReloadRefreshOrderingTest {
 
-    private static final Path CONFIG = Path.of(System.getProperty("java.io.tmpdir"),
-            "riptide-refresh-ordering.yaml");
+    /** Unique per run: a fixed shared path poisons the next run after a crash. */
+    private static final Path CONFIG = createConfig();
+
+    private static Path createConfig() {
+        try {
+            final Path file = Files.createTempDirectory("riptide-refresh-ordering").resolve("config.yaml");
+            file.toFile().deleteOnExit();
+            return file;
+        } catch (final IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @org.springframework.test.context.DynamicPropertySource
+    static void configLocation(final org.springframework.test.context.DynamicPropertyRegistry registry) {
+        registry.add("spring.config.import", () -> "optional:file:" + CONFIG);
+    }
 
     @Autowired
     private ConfigFileReloader reloader;

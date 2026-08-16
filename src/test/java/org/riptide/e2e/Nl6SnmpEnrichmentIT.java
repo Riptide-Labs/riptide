@@ -72,6 +72,9 @@ public class Nl6SnmpEnrichmentIT {
         NL6.start();
     }
 
+    /** Resolved once: a dynamic-property supplier runs on every lookup. */
+    private static final String INVENTORY_FILE = inventoryFile().toString();
+
     @DynamicPropertySource
     static void riptideProperties(final DynamicPropertyRegistry registry) {
         registry.add("riptide.clickhouse.endpoint",
@@ -92,7 +95,7 @@ public class Nl6SnmpEnrichmentIT {
         // needs a v3-capable agent, which is a question for the nl6 image.
         registry.add("riptide.snmp.credentials.nl6.version", () -> "v2c");
         registry.add("riptide.snmp.credentials.nl6.community", () -> "public");
-        registry.add("riptide.inventory.file", () -> inventoryFile().toString());
+        registry.add("riptide.inventory.file", () -> INVENTORY_FILE);
     }
 
     private static java.nio.file.Path inventoryFile() {

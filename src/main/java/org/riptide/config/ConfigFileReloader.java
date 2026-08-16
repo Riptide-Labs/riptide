@@ -12,6 +12,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.node.NodeDefinition;
+import org.riptide.node.LegacyNodesInertCheck;
 import org.riptide.node.NodeRegistry;
 import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventoryConfig;
@@ -298,6 +299,9 @@ public class ConfigFileReloader {
         substitute(this.environment.getPropertySources(), ordered);
         this.lastCommittedHash = this.lastAttemptedHash;
         this.nodeRegistry.swap(validatedNodes);
+        // the tree still binds and still validates, so a successful reload of a grown one
+        // would otherwise read as "my configuration is live"
+        LegacyNodesInertCheck.warnIfPopulated(validatedNodes.size());
         this.routingConfig.swap(parsedRouting);
         // swap, then refresh (AD-6): profiles and the inventory built from them move
         // together, and the poller re-resolves what it is already walking, which is what
