@@ -35,6 +35,7 @@ import java.net.InetAddress;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
@@ -304,8 +305,12 @@ public class SnmpEnricherTest {
         // and the rest from another. Counting matches would not see it; counting captures
         // does, which is why the double counts snapshot() rather than view lookups
         final var counting = new CountingInventory(inventory());
+        // not liveSnmp(): no agent is bound for this range, so every one of the fifty
+        // lookups below waited out the SNMP timeout and this test alone took most of a
+        // minute. What it asserts is how often the inventory is read, which the interface
+        // rung does not participate in
         final var enrichers = List.<Enricher>of(
-                new SnmpEnricher(liveSnmp(), counting, emptyInterfaceTable()));
+                new SnmpEnricher((endpoint, ifIndex) -> Optional.empty(), counting, emptyInterfaceTable()));
         final var repository = new TestRepository(metricRegistry);
         final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
 

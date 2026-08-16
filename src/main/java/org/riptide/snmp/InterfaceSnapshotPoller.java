@@ -662,7 +662,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     }
 
     @PreDestroy
-    void stop() {
+    public void stop() {
         if (this.scheduler != null) {
             this.scheduler.shutdownNow();
         }

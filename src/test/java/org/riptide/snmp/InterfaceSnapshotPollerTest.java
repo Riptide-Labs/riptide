@@ -454,6 +454,100 @@ class InterfaceSnapshotPollerTest {
         assertThat(snmp.walks.get()).isEqualTo(1);
     }
 
+    /**
+     * AC 5's second half. The cadence test above pins the refresh interval; without this
+     * the expiry could keep falling back to the fleet default and every profile that
+     * widens or narrows the serving window would be silently ignored.
+     *
+     * <p>The fleet expiry is set a day out, so a snapshot that expires here can only be
+     * expiring on its profile's schedule, and the two profiles differ from each other so
+     * one serving while the other blanks cannot be a coincidence of timing.</p>
+     */
+    @Test
+    void snapshotExpiryFollowsTheProfileRatherThanTheFleetDefault() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var config = config();
+        config.setRefreshIntervalMs(3_600_000);
+        config.setSnapshotExpiryMs(86_400_000);
+        final var poller = poller(snmp, config);
+
+        // brisk expires after 30 minutes, slow after 90
+        final var brisk = endpoint("10.43.0.1", "polling: brisk");
+        final var slow = endpoint("10.43.0.2", "polling: slow");
+
+        poller.trackAndResolve(brisk, 1);
+        poller.trackAndResolve(slow, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 2);
+        assertThat(poller.trackAndResolve(brisk, 1)).as("served straight after the walk").isPresent();
+
+        // 45 minutes on, with no tick so neither snapshot is refreshed underneath us
+        advanceMs(2_700_000);
+
+        assertThat(poller.trackAndResolve(brisk, 1))
+                .as("past its own 30-minute expiry, and a day short of the fleet's")
+                .isEmpty();
+        assertThat(poller.trackAndResolve(slow, 1))
+                .as("inside its own 90-minute expiry")
+                .isPresent();
+    }
+
+    /**
+     * AC 7. The endpoint carries {@link SecretRef}s rather than resolved values, and the
+     * value is read when the walk builds its target, so rotating the secret behind a
+     * reference reaches a polled agent with no configuration change and no reload.
+     *
+     * <p>The fake resolves at walk time because that is where the real service resolves.
+     * If a value were ever baked in when the endpoint was built, both walks would carry
+     * the pre-rotation community and this fails.</p>
+     */
+    @Test
+    void aRotatedSecretValueReachesAPolledAgentWithoutAnyReload() throws Exception {
+        final var secret = java.nio.file.Files.createTempDirectory("riptide-rotation").resolve("community");
+        secret.toFile().deleteOnExit();
+        java.nio.file.Files.writeString(secret, "before-rotation");
+
+        final var resolvers = org.riptide.secrets.SecretResolvers.defaults();
+        final var walkedValues = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        final var snmp = new FakeSnmp() {
+            @Override
+            public InterfaceTable walkInterfaces(final SnmpEndpoint endpoint) {
+                walkedValues.add(resolvers.resolve(endpoint.getSnmpDefinition().getCommunity()));
+                return super.walkInterfaces(endpoint);
+            }
+        };
+        final var poller = poller(snmp, config());
+
+        final var profiles = new org.riptide.inventory.SnmpProfilesConfig(
+                Map.of("rotating", org.riptide.inventory.CredentialSet.community(
+                        org.riptide.inventory.CredentialVersion.V2C, SecretRef.of("file://" + secret))),
+                Map.of());
+        final var snapshot = serve(org.riptide.inventory.InventoryLoader.parse(profiles, """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.44.0.1":
+                        credentials: rotating
+                """, "rotation.yaml"));
+        final var endpoint = resolveOnly(snapshot, "10.44.0.1");
+
+        poller.trackAndResolve(endpoint, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        // the operator rotates the value behind the reference. No file the inventory
+        // watcher looks at changed, and no reload is triggered
+        java.nio.file.Files.writeString(secret, "after-rotation");
+
+        // still well inside the deregistration deadline, so the registration is the same one
+        advanceMs(1_200_000);
+        poller.trackAndResolve(endpoint, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 2);
+
+        assertThat(walkedValues).containsExactly("before-rotation", "after-rotation");
+    }
+
     /** The endpoint an inventory resolves for one address, for tests that then poll it. */
     private static SnmpEndpoint resolveOnly(final org.riptide.inventory.InventorySnapshot snapshot,
                                             final String ip) throws Exception {

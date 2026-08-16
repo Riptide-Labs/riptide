@@ -41,7 +41,7 @@ class InventoryFileReloaderTest {
     private Path file;
     private SnmpProfilesConfig profiles;
     private Inventory inventory;
-    private InterfaceSnapshotPoller poller;
+    private CountingPoller poller;
 
     private static final class NoSnmp implements org.riptide.snmp.SnmpService {
         @Override
@@ -55,6 +55,21 @@ class InventoryFileReloaderTest {
             return new InterfaceTable(java.util.Map.of(), false);
         }
     }
+    /** Counts refreshes so the reload trigger is observable; the sweep itself is a no-op here. */
+    private static final class CountingPoller extends InterfaceSnapshotPoller {
+        private int refreshes;
+
+        private CountingPoller(final Inventory inventory, final MetricRegistry metrics) {
+            super(new NoSnmp(), new SnmpPollConfig(), metrics, inventory);
+        }
+
+        @Override
+        public void refreshRegistrations() {
+            this.refreshes++;
+            super.refreshRegistrations();
+        }
+    }
+
     private MetricRegistry metrics;
     private InventoryFileReloader reloader;
 
@@ -75,7 +90,7 @@ class InventoryFileReloaderTest {
         this.metrics = new MetricRegistry();
         // a poller with no scheduler and nothing registered: these tests exercise the
         // reload trigger, and the refresh half has its own tests in the poller suite
-        this.poller = new InterfaceSnapshotPoller(new NoSnmp(), new SnmpPollConfig(), this.metrics, this.inventory);
+        this.poller = new CountingPoller(this.inventory, this.metrics);
         this.reloader = new InventoryFileReloader(properties, inventoryConfig, this.inventory,
                 this.poller, this.metrics);
         this.reloader.start();
@@ -84,6 +99,9 @@ class InventoryFileReloaderTest {
     @AfterEach
     void tearDown() {
         this.reloader.stop();
+        // the poller starts a 1 Hz scheduler in its constructor, so one per test method
+        // survived the run without this
+        this.poller.stop();
     }
 
     @Test
@@ -104,6 +122,34 @@ class InventoryFileReloaderTest {
         assertThat(match.get().credentials()).isSameAs(this.profiles.credentials().get("corp-v3"));
         assertThat(successes()).isEqualTo(1);
         assertThat(stale()).isZero();
+    }
+
+    /**
+     * AD-6's ordering on the inventory watcher's side. The config reloader's half has its
+     * own test; this half had none, so deleting the refresh call here left the suite green
+     * while a carve-out written to the inventory file stopped reaching a polled agent.
+     */
+    @Test
+    void aCommittedReloadRefreshesThePollerAndARefusedOneDoesNot() throws Exception {
+        write("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """);
+        this.reloader.poll();
+        assertThat(this.poller.refreshes).as("a committed reload refreshes").isEqualTo(1);
+
+        // parses to nothing over a populated inventory: refused, so nothing was
+        // republished and there is nothing to re-resolve against
+        write("---\n");
+        this.reloader.poll();
+        assertThat(this.poller.refreshes).as("a refused reload refreshes nothing").isEqualTo(1);
+
+        // unchanged content is not recommitted either, so it must not sweep the fleet
+        this.reloader.poll();
+        assertThat(this.poller.refreshes).isEqualTo(1);
     }
 
     @Test
