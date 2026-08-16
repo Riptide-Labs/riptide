@@ -34,6 +34,14 @@ class InterfaceSnapshotPollerTest {
     private final AtomicLong clock = new AtomicLong(1_000_000_000L);
     private final MetricRegistry metrics = new MetricRegistry();
 
+    /** The published inventory the poller answers to; empty until a test serves one. */
+    private final org.riptide.inventory.Inventory serving = new org.riptide.inventory.Inventory(
+            new org.riptide.inventory.SnmpProfilesConfig(Map.of(), Map.of()),
+            new org.riptide.inventory.InventoryConfig());
+
+    /** Agent ranges served so far, so adding one does not drop the others. */
+    private final java.util.LinkedHashMap<String, String> ranges = new java.util.LinkedHashMap<>();
+
     /** Counts walks and records which endpoints were walked; never touches a network. */
     private static class FakeSnmp implements SnmpService {
         final AtomicInteger walks = new AtomicInteger();
@@ -88,7 +96,7 @@ class InterfaceSnapshotPollerTest {
     }
 
     private InterfaceSnapshotPoller poller(final SnmpService snmp, final SnmpPollConfig config) {
-        return new InterfaceSnapshotPoller(snmp, config, this.metrics, this.clock::get, false);
+        return new InterfaceSnapshotPoller(snmp, config, this.metrics, this.serving, this.clock::get, false);
     }
 
     /**
@@ -109,10 +117,8 @@ class InterfaceSnapshotPollerTest {
         config.setSnapshotExpiryMs(7_200_000);
         final var poller = poller(snmp, config);
 
-        final var brisk = SnmpTest.communityV2c(new IPAddressString("10.7.0.1"), 161, "public",
-                java.time.Duration.ofMinutes(1), java.time.Duration.ofMinutes(30));
-        final var sedate = SnmpTest.communityV2c(new IPAddressString("10.7.0.2"), 161, "public",
-                java.time.Duration.ofMinutes(10), java.time.Duration.ofMinutes(30));
+        final var brisk = endpoint("10.7.0.1", "polling: brisk");
+        final var sedate = endpoint("10.7.0.2", "polling: sedate");
         // an hour of fleet cadence would give zero walks in this window, so a sedate count
         // of one or two can only come from its own ten-minute profile
 
@@ -157,15 +163,15 @@ class InterfaceSnapshotPollerTest {
     void aRepointedRangeReachesAnAlreadyRegisteredAgent() throws Exception {
         final var snmp = new FakeSnmp();
         final var poller = poller(snmp, config());
-        final var address = new IPAddressString("10.8.0.1");
-
-        poller.trackAndResolve(SnmpTest.communityV2c(address, 161, "old-community"), 1);
+        poller.trackAndResolve(endpoint("10.8.0.1", "credentials: old-community"), 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 1);
 
-        // the next batch of flows resolves the exporter against the new inventory and
-        // hands the poller a different endpoint for the same address
-        poller.trackAndResolve(SnmpTest.communityV2c(address, 161, "new-community"), 1);
+        // the reload lands, and the next batch of flows resolves the exporter against it
+        // and hands the poller a different endpoint for the same address. The refresh
+        // sweep is deliberately not called: the flow path getting there first is the case
+        // the endpoint-capture bug lived in
+        poller.trackAndResolve(endpoint("10.8.0.1", "credentials: new-community"), 1);
         assertThat(this.metrics.meter("snmp.poller.reresolved").getCount())
                 .as("re-resolution fired").isEqualTo(1);
         poller.tick(this.clock.get());
@@ -184,16 +190,16 @@ class InterfaceSnapshotPollerTest {
     void anUnchangedEndpointDoesNotDisturbTheSchedule() throws Exception {
         final var snmp = new FakeSnmp();
         final var poller = poller(snmp, config());
-        final var address = new IPAddressString("10.9.0.1");
+        final var stable = endpoint("10.9.0.1");
 
-        poller.trackAndResolve(SnmpTest.communityV2c(address, 161, "same"), 1);
+        poller.trackAndResolve(stable, 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 1);
 
         // every batch re-resolves and hands over an equal endpoint: that must not reset
         // the schedule, or a busy exporter would be walked on every tick
         for (int batch = 0; batch < 5; batch++) {
-            poller.trackAndResolve(SnmpTest.communityV2c(address, 161, "same"), 1);
+            poller.trackAndResolve(endpoint("10.9.0.1"), 1);
             poller.tick(this.clock.get());
         }
         Thread.sleep(50);
@@ -201,16 +207,48 @@ class InterfaceSnapshotPollerTest {
         assertThat(snmp.walks.get()).isEqualTo(1);
     }
 
+    /**
+     * Credential sets named after the community they carry, so a test that cares which
+     * credential reached the agent can name one and then assert on what was walked.
+     */
+    private static org.riptide.inventory.CredentialSet community(final String value) {
+        return org.riptide.inventory.CredentialSet.community(
+                org.riptide.inventory.CredentialVersion.V2C, SecretRef.of(value));
+    }
+
+    private static final org.riptide.inventory.SnmpProfilesConfig PROFILES =
+            new org.riptide.inventory.SnmpProfilesConfig(
+                    Map.of("corp-v3", org.riptide.inventory.CredentialSet.usm("riptide"),
+                            "public", community("public"),
+                            "old-community", community("old-community"),
+                            "new-community", community("new-community"),
+                            "rotated", community("rotated")),
+                    Map.of("slow", new org.riptide.inventory.PollingProfile(
+                                    java.time.Duration.ofMinutes(30), java.time.Duration.ofMinutes(90), 500, 1),
+                            "brisk", new org.riptide.inventory.PollingProfile(
+                                    java.time.Duration.ofMinutes(1), java.time.Duration.ofMinutes(30), 500, 1),
+                            "sedate", new org.riptide.inventory.PollingProfile(
+                                    java.time.Duration.ofMinutes(10), java.time.Duration.ofMinutes(30), 500, 1)));
+
     private static org.riptide.inventory.InventorySnapshot inventory(final String agentsBlock) {
-        final var profiles = new org.riptide.inventory.SnmpProfilesConfig(
-                Map.of("corp-v3", org.riptide.inventory.CredentialSet.usm("riptide")),
-                Map.of("slow", new org.riptide.inventory.PollingProfile(
-                        java.time.Duration.ofMinutes(30), java.time.Duration.ofMinutes(90), 500, 1)));
-        return org.riptide.inventory.InventoryLoader.parse(profiles, """
+        return org.riptide.inventory.InventoryLoader.parse(PROFILES, """
                 riptide:
                   snmp:
                     agents:
                 %s""".formatted(agentsBlock), "poller.yaml");
+    }
+
+    /**
+     * Publishes {@code snapshot} as the serving inventory and returns it.
+     *
+     * <p>The poller reads the inventory rather than being handed one, so a test that wants
+     * a reload to have happened has to publish it here. That is the production sequence:
+     * the reloader commits the swap and only then asks for a refresh.
+     */
+    private org.riptide.inventory.InventorySnapshot serve(
+            final org.riptide.inventory.InventorySnapshot snapshot) {
+        this.serving.swap(snapshot);
+        return snapshot;
     }
 
     /**
@@ -222,20 +260,21 @@ class InterfaceSnapshotPollerTest {
     void aCarvedOutRangeStopsBeingPolledOnReload() throws Exception {
         final var snmp = new FakeSnmp();
         final var poller = poller(snmp, config());
-        final var live = inventory("""
+        final var live = serve(inventory("""
                       "10.30.0.7":
                         credentials: corp-v3
-                """);
+                """));
 
         poller.trackAndResolve(resolveOnly(live, "10.30.0.7"), 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 1);
 
         // the operator carves the address out and the reloader publishes it
-        poller.refreshRegistrations(inventory("""
+        serve(inventory("""
                       "10.30.0.7":
                         enabled: false
                 """));
+        poller.refreshRegistrations();
 
         advanceMs(600_000);
         poller.tick(this.clock.get());
@@ -249,33 +288,35 @@ class InterfaceSnapshotPollerTest {
     void aReloadThatRepointsARangeReachesTheRegistration() throws Exception {
         final var snmp = new FakeSnmp();
         final var poller = poller(snmp, config());
-        final var before = inventory("""
+        final var before = serve(inventory("""
                       "10.31.0.7":
                         credentials: corp-v3
                         port: 161
-                """);
+                """));
         poller.trackAndResolve(resolveOnly(before, "10.31.0.7"), 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 1);
 
         // same address, slower profile: the registration must adopt it rather than keep
         // walking on the cadence it was first built with
-        poller.refreshRegistrations(inventory("""
+        serve(inventory("""
                       "10.31.0.7":
                         credentials: corp-v3
                         port: 161
                         polling: slow
                 """));
+        poller.refreshRegistrations();
 
         assertThat(this.metrics.meter("snmp.poller.reresolved").getCount()).isEqualTo(1);
         // and an identical inventory is not churn: re-publishing the same thing must not
         // reset schedules across the whole fleet
-        poller.refreshRegistrations(inventory("""
+        serve(inventory("""
                       "10.31.0.7":
                         credentials: corp-v3
                         port: 161
                         polling: slow
                 """));
+        poller.refreshRegistrations();
         assertThat(this.metrics.meter("snmp.poller.reresolved").getCount()).isEqualTo(1);
     }
 
@@ -318,7 +359,8 @@ class InterfaceSnapshotPollerTest {
                 """);
 
         // the reload happens first, with nothing registered for it to sweep
-        poller.refreshRegistrations(carvedOut);
+        serve(carvedOut);
+        poller.refreshRegistrations();
         // and only then does the in-flight batch, holding the old snapshot, register
         poller.trackAndResolve(resolveOnly(live, "10.40.0.7"), 1);
 
@@ -332,6 +374,48 @@ class InterfaceSnapshotPollerTest {
     }
 
     /**
+     * The poller used to keep its own copy of "the current inventory", assigned by
+     * whichever reloader called the refresh last. The two reloaders serialise their swaps
+     * inside {@code Inventory} but not their refreshes, so the one that lost the swap can
+     * sweep afterwards and leave that copy holding a snapshot that is no longer serving.
+     * Registrations stamped by the losing sweep then compare equal to the copy forever, so
+     * the winning snapshot's carve-out never reaches a polled agent and both reloaders log
+     * success.
+     *
+     * <p>This pins the invariant that removes the race rather than the interleaving that
+     * exposed it: what is serving decides, and a refresh call only makes it immediate. No
+     * refresh is made here at all, which is what a losing reloader's push amounts to.</p>
+     */
+    @Test
+    void aCarveOutTakesEffectEvenIfNoRefreshEverArrives() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config());
+        final var live = serve(inventory("""
+                      "10.42.0.7":
+                        credentials: corp-v3
+                """));
+
+        poller.trackAndResolve(resolveOnly(live, "10.42.0.7"), 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        // the swap that wins. Its refresh is never seen by this poller
+        serve(inventory("""
+                      "10.42.0.7":
+                        enabled: false
+                """));
+
+        advanceMs(600_000);
+        poller.tick(this.clock.get());
+        Thread.sleep(50);
+        poller.tick(this.clock.get());
+        Thread.sleep(50);
+
+        assertThat(snmp.walks.get()).as("no walk after the carve-out was published").isEqualTo(1);
+        assertThat(this.metrics.meter("snmp.poller.deregistered").getCount()).isEqualTo(1);
+    }
+
+    /**
      * A carve-out whose walk is in flight cannot be removed on the spot without letting a
      * re-registration start a second concurrent walk, so it is marked and finished by the
      * next tick rather than left polling until it goes silent.
@@ -340,10 +424,10 @@ class InterfaceSnapshotPollerTest {
     void aCarveOutDuringAnInFlightWalkIsCompletedByTheNextTick() throws Exception {
         final var snmp = new FakeSnmp();
         final var poller = poller(snmp, config());
-        final var live = inventory("""
+        final var live = serve(inventory("""
                       "10.41.0.7":
                         credentials: corp-v3
-                """);
+                """));
         snmp.entered = new CountDownLatch(1);
         snmp.release = new CountDownLatch(1);
 
@@ -352,10 +436,11 @@ class InterfaceSnapshotPollerTest {
         assertThat(snmp.entered.await(5, TimeUnit.SECONDS)).isTrue();
 
         // carved out while the walk is parked in the agent
-        poller.refreshRegistrations(inventory("""
+        serve(inventory("""
                       "10.41.0.7":
                         enabled: false
                 """));
+        poller.refreshRegistrations();
         snmp.release.countDown();
         awaitWalks(poller, snmp, 1);
 
@@ -377,8 +462,33 @@ class InterfaceSnapshotPollerTest {
                 new IPAddressString(ip)).orElseThrow();
     }
 
-    private static SnmpEndpoint endpoint(final String ip) {
-        return SnmpTest.communityV2c(new IPAddressString(ip), 161, "public");
+    /**
+     * Adds an agent range for {@code ip} to the served inventory and returns the endpoint
+     * that inventory resolves for it.
+     *
+     * <p>Returning the inventory's own endpoint rather than a synthesized one is what keeps
+     * these tests honest. The poller re-resolves any registration not known to agree with
+     * the serving inventory, so a registration built from an endpoint no inventory serves
+     * is a state production cannot reach: the enricher only ever hands over endpoints it
+     * resolved from the same inventory.</p>
+     */
+    private SnmpEndpoint endpoint(final String ip, final String... extraKeys) throws Exception {
+        // keyed, not appended: naming a credential set has to replace the default rather
+        // than add a second "credentials:" line, which is not valid YAML
+        final var keys = new java.util.LinkedHashMap<String, String>();
+        keys.put("credentials", "public");
+        for (final String extra : extraKeys) {
+            final int colon = extra.indexOf(':');
+            keys.put(extra.substring(0, colon).trim(), extra.substring(colon + 1).trim());
+        }
+        final StringBuilder body = new StringBuilder();
+        keys.forEach((key, value) -> body.append(body.isEmpty() ? "" : "\n        ")
+                .append(key).append(": ").append(value));
+        this.ranges.put(ip, body.toString());
+        final StringBuilder block = new StringBuilder();
+        this.ranges.forEach((address, rangeBody) ->
+                block.append("      \"").append(address).append("\":\n        ").append(rangeBody).append('\n'));
+        return resolveOnly(serve(inventory(block.toString())), ip);
     }
 
     private void advanceMs(final long millis) {
@@ -460,7 +570,7 @@ class InterfaceSnapshotPollerTest {
         awaitWalks(poller, snmp, 1);
 
         // a reload that repoints this range: re-resolution schedules an immediate re-walk
-        final var repointed = SnmpTest.communityV2c(new IPAddressString("10.5.0.2"), 161, "rotated");
+        final var repointed = endpoint("10.5.0.2", "credentials: rotated");
         poller.trackAndResolve(repointed, 1);
 
         // the existing snapshot is still served while the re-walk happens underneath
@@ -813,7 +923,7 @@ class InterfaceSnapshotPollerTest {
 
         // without the re-resolution this endpoint would not be retried for the whole base
         // delay: an operator fixing a credential should not wait out the back-off
-        poller.trackAndResolve(SnmpTest.communityV2c(new IPAddressString("10.0.0.9"), 161, "fixed"), 1);
+        poller.trackAndResolve(endpoint("10.0.0.9", "credentials: rotated"), 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 2);
     }
@@ -840,7 +950,7 @@ class InterfaceSnapshotPollerTest {
     }
 
     @Test
-    void theSnapshotStoreIsBoundedByExporterCount() {
+    void theSnapshotStoreIsBoundedByExporterCount() throws Exception {
         final var snmp = new FakeSnmp();
         final var config = config();
         config.setMaxExporters(5);
@@ -914,7 +1024,7 @@ class InterfaceSnapshotPollerTest {
         final var first = new FakeSnmp();
         final var pollerA = poller(first, config);
         final var second = new FakeSnmp();
-        final var pollerB = new InterfaceSnapshotPoller(second, config, new MetricRegistry(), this.clock::get, false);
+        final var pollerB = new InterfaceSnapshotPoller(second, config, new MetricRegistry(), this.serving, this.clock::get, false);
 
         pollerA.trackAndResolve(endpoint, 1);
         pollerB.trackAndResolve(endpoint, 1);

@@ -242,7 +242,7 @@ public class InventoryFileReloader {
             // staleness against content that is actually live, and then never retry
             // because the hash already matches
             try {
-                this.interfacePoller.refreshRegistrations(candidate);
+                this.interfacePoller.refreshRegistrations();
             } catch (final Exception e) {
                 log.warn("Inventory reloaded, but refreshing polled endpoints failed: registrations keep "
                         + "their previous endpoints until their next flow or deregistration", e);

@@ -7,6 +7,7 @@ package org.riptide.snmp;
 
 import com.codahale.metrics.Meter;
 import inet.ipaddr.IPAddressString;
+import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventorySnapshot;
 import org.riptide.pipeline.ExporterIdentity;
 import com.codahale.metrics.MetricRegistry;
@@ -117,12 +118,16 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     private final Map<InetSocketAddress, Registration> registrations = new ConcurrentHashMap<>();
 
     /**
-     * The most recently published inventory, held so {@code tick} can notice a
-     * registration resolved against an older one. The push in
-     * {@link #refreshRegistrations} makes the common case immediate; this makes it
-     * eventually correct even for a registration that raced the push.
+     * The published inventory is read from here rather than cached in a field of our own.
+     * Two reloaders publish on separate threads, and while their swaps are serialised
+     * inside {@link Inventory}, their follow-up refreshes are not: the thread that lost
+     * the swap can run its sweep last. A local copy would then hold a snapshot that is no
+     * longer serving, and because a registration is judged by comparing its stamp against
+     * that copy, every registration the losing sweep stamped would look verified forever.
+     * The carve-out or rotated credential in the winning snapshot would never reach a
+     * polled agent, with both reloaders having logged success.
      */
-    private volatile InventorySnapshot published;
+    private final Inventory inventory;
 
     private final ExecutorService walkers;
     private final ScheduledExecutorService scheduler;
@@ -141,8 +146,9 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     @Autowired
     public InterfaceSnapshotPoller(final SnmpService snmpService,
                                    final SnmpPollConfig config,
-                                   final MetricRegistry metrics) {
-        this(snmpService, config, metrics, System::nanoTime, true);
+                                   final MetricRegistry metrics,
+                                   final Inventory inventory) {
+        this(snmpService, config, metrics, inventory, System::nanoTime, true);
     }
 
     /** Test seam: a controllable clock, and the option not to start the background scheduler. */
@@ -159,10 +165,12 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     InterfaceSnapshotPoller(final SnmpService snmpService,
                             final SnmpPollConfig config,
                             final MetricRegistry metrics,
+                            final Inventory inventory,
                             final LongSupplier nanoTime,
                             final boolean startScheduler) {
         this.snmpService = Objects.requireNonNull(snmpService);
         this.config = Objects.requireNonNull(config);
+        this.inventory = Objects.requireNonNull(inventory);
         this.nanoTime = Objects.requireNonNull(nanoTime);
 
         // Fail loudly at startup rather than silently. Each of these otherwise disables SNMP
@@ -383,11 +391,16 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      * <p>Agent ranges carry no observation-domain pin, so resolving by address alone is
      * exact rather than approximate; {@code agentRangesResolveRegardlessOfObservationDomain}
      * pins that, and it is the assumption to revisit first if pinning is ever added.</p>
+     *
+     * <p>Takes no snapshot argument on purpose. A caller passing the snapshot it just
+     * published would be passing what it <em>believes</em> is serving, and a reloader that
+     * lost the swap believes wrongly. Reading it here means the sweep always works from
+     * what is actually serving, and a sweep that is overtaken mid-flight leaves its
+     * registrations stamped against a snapshot that is no longer current, which is exactly
+     * the condition {@link #tick} re-checks.</p>
      */
-    public void refreshRegistrations(final InventorySnapshot snapshot) {
-        // published before the sweep, so a registration created while it runs is stamped
-        // with the new snapshot and needs no second pass
-        this.published = snapshot;
+    public void refreshRegistrations() {
+        final InventorySnapshot snapshot = this.inventory.snapshot();
         final long now = this.nanoTime.getAsLong();
         final long reresolvedBefore = this.reresolved.getCount();
         final long deregisteredBefore = this.deregistered.getCount();
@@ -442,11 +455,14 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     @SuppressWarnings("ModifyCollectionInEnhancedForLoop")
     void tick(final long now) {
         final long deregisterAfter = Math.max(1, (long) this.config.getDeregisterAfter());
+        // one read for the whole sweep: judging registrations against different snapshots
+        // within a single tick would stamp some against one inventory and some against the
+        // next, and the ones stamped against the older would not be re-checked again
+        final InventorySnapshot current = this.inventory.snapshot();
 
         for (final Map.Entry<InetSocketAddress, Registration> entry : this.registrations.entrySet()) {
             final Registration registration = entry.getValue();
-            final InventorySnapshot current = this.published;
-            if (current != null && registration.resolvedAgainst != current
+            if (registration.resolvedAgainst != current
                     && !registration.walkInFlight.get()) {
                 // resolved against an older inventory: the push either raced this
                 // registration into existence or never saw it

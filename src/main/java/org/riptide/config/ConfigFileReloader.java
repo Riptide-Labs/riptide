@@ -304,7 +304,7 @@ public class ConfigFileReloader {
                         + "no entries while a populated one is serving. The credential and profile changes "
                         + "in this edit are NOT serving", this.inventoryConfig.getFile());
             } else {
-                this.interfacePoller.refreshRegistrations(published);
+                this.interfacePoller.refreshRegistrations();
             }
         } catch (final RuntimeException e) {
             log.warn("Config reloaded, but the inventory could not be rebuilt from {} ({}). The credential "

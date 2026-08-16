@@ -8,7 +8,6 @@ package org.riptide.config;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventorySnapshot;
@@ -54,7 +53,7 @@ class ConfigReloadRefreshOrderingTest {
     @Autowired
     private Inventory inventory;
 
-    /** Mocked so the call itself, its argument and its ordering are observable. */
+    /** Mocked so the call itself and its ordering against the swap are observable. */
     @MockitoBean
     private InterfaceSnapshotPoller interfacePoller;
 
@@ -71,7 +70,17 @@ class ConfigReloadRefreshOrderingTest {
     }
 
     @Test
-    void aCommittedReloadRefreshesThePollerWithTheSnapshotItJustPublished() throws Exception {
+    void aCommittedReloadRefreshesThePollerOnlyAfterPublishingTheSnapshot() throws Exception {
+        final InventorySnapshot before = this.inventory.snapshot();
+        // what is serving at the moment the refresh is called. The poller now reads the
+        // inventory rather than being handed a snapshot, so the ordering has to be observed
+        // where it matters instead of inferred from an argument
+        final var servingWhenRefreshed = new java.util.concurrent.atomic.AtomicReference<InventorySnapshot>();
+        Mockito.doAnswer(invocation -> {
+            servingWhenRefreshed.set(this.inventory.snapshot());
+            return null;
+        }).when(this.interfacePoller).refreshRegistrations();
+
         Files.writeString(CONFIG, """
                 riptide:
                   routing:
@@ -81,11 +90,12 @@ class ConfigReloadRefreshOrderingTest {
 
         this.reloader.poll();
 
-        final var captured = ArgumentCaptor.forClass(InventorySnapshot.class);
-        Mockito.verify(this.interfacePoller).refreshRegistrations(captured.capture());
-        // reference identity is the ordering proof: the snapshot handed to the poller is
-        // the one now serving, so the swap had already happened when the call was made
-        assertThat(captured.getValue()).isSameAs(this.inventory.snapshot());
+        Mockito.verify(this.interfacePoller).refreshRegistrations();
+        // the reload really did republish, or "serving then" and "serving now" would be
+        // the same object for the uninteresting reason
+        assertThat(this.inventory.snapshot()).isNotSameAs(before);
+        // and the refresh saw the new one: it cannot have run before the swap it follows
+        assertThat(servingWhenRefreshed.get()).isSameAs(this.inventory.snapshot());
     }
 
     @Test
