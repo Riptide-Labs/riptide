@@ -95,9 +95,9 @@ class ConvertCommandTest {
         // inventory half legitimately contains "credentials: credentials-1" as a reference,
         // so a doesNotContain("credentials:") would fail for the wrong reason
         assertThat(Files.readString(config))
-                .contains("snmp-version:").doesNotContain("exporters:").doesNotContain("agents:");
+                .contains("version:").doesNotContain("exporters:").doesNotContain("agents:");
         assertThat(Files.readString(inventory))
-                .contains("exporters:").contains("agents:").doesNotContain("snmp-version:");
+                .contains("exporters:").contains("agents:").doesNotContain("version:");
         assertThat(Files.readString(inventory)).contains("inventory file");
         assertThat(out()).contains("Wrote credential sets").contains("Wrote agent ranges");
     }
@@ -147,7 +147,7 @@ class ConvertCommandTest {
 
         assertThat(run("convert", input.toString(), "--out-config", existing.toString(), "--force"))
                 .isZero();
-        assertThat(Files.readString(existing)).contains("snmp-version");
+        assertThat(Files.readString(existing)).contains("version:");
     }
 
     /**

@@ -1,0 +1,120 @@
+/*
+ * Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package org.riptide.node;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.core.env.MapPropertySource;
+import org.springframework.core.env.MutablePropertySources;
+import org.springframework.core.env.SystemEnvironmentPropertySource;
+
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/**
+ * The 0.9 flag day. Driven through real {@code PropertySource} implementations rather than a
+ * stub, because the whole risk here is which spellings actually reach Spring: a check that
+ * passes against a canned list of dotted keys and waves through an environment-configured
+ * container would be worse than no check, since the operator would read a clean startup as
+ * confirmation their configuration is live.
+ */
+class LegacyNodesFlagDayCheckTest {
+
+    private static MutablePropertySources sources(final String name, final Map<String, Object> properties) {
+        final MutablePropertySources sources = new MutablePropertySources();
+        sources.addFirst(new MapPropertySource(name, properties));
+        return sources;
+    }
+
+    @Test
+    void theNameKeyedMapFailsStartup() {
+        assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
+                sources("file", Map.of("riptide.nodes.core-router.subnet-address", "10.0.0.1"))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("riptide.nodes.core-router.subnet-address");
+    }
+
+    /** The shape the retired indexed-list check guarded; now one case of the general rule. */
+    @Test
+    void theIndexedListFailsStartup() {
+        assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
+                sources("file", Map.of("riptide.nodes[0].subnet-address", "10.0.0.1"))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("riptide.nodes[0]");
+    }
+
+    /**
+     * The form most likely to be carrying a legacy tree, and the one a check written against
+     * the dotted spelling alone would miss entirely.
+     */
+    @Test
+    void theEnvironmentVariableFormFailsStartup() {
+        final MutablePropertySources sources = new MutablePropertySources();
+        sources.addFirst(new SystemEnvironmentPropertySource("env",
+                Map.of("RIPTIDE_NODES_CORE_ROUTER_SUBNET_ADDRESS", "10.0.0.1")));
+
+        assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(sources))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("RIPTIDE_NODES_CORE_ROUTER_SUBNET_ADDRESS");
+    }
+
+    /** An operator who reads only the error has to be able to act on it. */
+    @Test
+    void theErrorNamesTheConverterInvocationAndTheReleaseNotes() {
+        assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
+                sources("file", Map.of("riptide.nodes.core.subnet-address", "10.0.0.1"))))
+                // the exact invocation, not just the word "convert", which appears in prose
+                .hasMessageContaining("riptide convert <your-config.yaml>")
+                .hasMessageContaining("--out-inventory")
+                .hasMessageContaining("release notes");
+    }
+
+    /**
+     * The 0.9 surfaces must not trip it. A sloppier match on "nodes" would take the whole
+     * configuration down on a key that is entirely correct.
+     */
+    @Test
+    void theCurrentConfigurationSurfacesAreUntouched() {
+        for (final String live : List.of(
+                "riptide.inventory.file",
+                "riptide.snmp.credentials.corp-v3.snmp-version",
+                "riptide.snmp.polling.slow.refresh-interval",
+                "riptide.exporters.core-router.address",
+                "riptide.routing.prefixes",
+                "riptide.clickhouse.url",
+                "RIPTIDE_INVENTORY_FILE")) {
+            assertThatCode(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
+                    sources("live", Map.of(live, "x"))))
+                    .as("must not reject %s", live)
+                    .doesNotThrowAnyException();
+        }
+    }
+
+    @Test
+    void anEmptySourceStackIsFine() {
+        assertThatCode(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(new MutablePropertySources()))
+                .doesNotThrowAnyException();
+    }
+
+    /** The message has to name which key, or a large configuration is a search problem. */
+    @Test
+    void theOffendingKeyIsNamed() {
+        assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
+                sources("file", Map.of("riptide.nodes.the-one-that-is-wrong.subnet-address", "10.0.0.1"))))
+                .hasMessageContaining("the-one-that-is-wrong");
+    }
+
+    @Test
+    void aCamelCaseSpellingIsCaught() {
+        assertThat(sources("file", Map.of("riptideNodes.core.subnetAddress", "10.0.0.1"))).isNotNull();
+        assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
+                sources("file", Map.of("riptideNodes.core.subnetAddress", "10.0.0.1"))))
+                .isInstanceOf(IllegalStateException.class);
+    }
+}

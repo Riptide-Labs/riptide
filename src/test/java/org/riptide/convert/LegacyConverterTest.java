@@ -6,22 +6,23 @@
 package org.riptide.convert;
 
 import org.junit.jupiter.api.Test;
-import org.riptide.inventory.CredentialSet;
-import org.riptide.inventory.CredentialVersion;
 import org.riptide.inventory.InventoryLoader;
 import org.riptide.inventory.InventorySnapshot;
-import org.riptide.inventory.PollingProfile;
 import org.riptide.inventory.SnmpProfilesConfig;
 import org.riptide.pipeline.ExporterIdentity;
-import org.riptide.secrets.SecretRef;
-import org.snmp4j.fluent.TargetBuilder;
-import org.yaml.snakeyaml.LoaderOptions;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
+import org.springframework.boot.context.properties.bind.PropertySourcesPlaceholdersResolver;
+import org.springframework.boot.convert.ApplicationConversionService;
+import org.springframework.boot.env.YamlPropertySourceLoader;
+import org.springframework.core.env.StandardEnvironment;
+import org.springframework.core.io.ByteArrayResource;
 import org.yaml.snakeyaml.Yaml;
-import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -534,73 +535,35 @@ class LegacyConverterTest {
     }
 
     /**
-     * Builds the profiles from the emitted main config the way the running collector does:
-     * every credential field is read, and both records are validated.
+     * Binds the emitted main config with Spring's own {@code Binder}, exactly as
+     * {@code ConfigFileReloader} does.
      *
-     * <p>The first version of this helper read three keys and dropped auth-protocol,
-     * auth-passphrase, priv-protocol and priv-passphrase on the floor, then built a
-     * {@code usm(securityName)} set the converter had never emitted. Four classes of invalid
-     * credential shape booted green through it, so AD-13 was asserted rather than tested. Any
-     * key the converter mis-spells is now invisible to nobody: it fails to appear here, and
-     * {@code validate} runs on the result.</p>
+     * <p>Two earlier versions of this helper were wrong in the same way. The first read three
+     * keys by name and dropped the rest; the second read all of them by name. Both agreed with
+     * whatever the converter emitted, so neither could see a mis-spelled key — and
+     * {@code @ConfigurationProperties} defaults to {@code ignoreUnknownFields = true}, which
+     * means a wrong key binds to nothing and fails startup with a message about a missing
+     * value. That is exactly the bug this caught once running through the real binder:
+     * the emitted credential key was {@code snmp-version}, and the record component is
+     * {@code version}.</p>
      */
-    @SuppressWarnings("unchecked")
     private static SnmpProfilesConfig profilesFrom(final String mainConfig) {
-        final LoaderOptions options = new LoaderOptions();
-        options.setAllowDuplicateKeys(false);
-        final Map<String, Object> root = new Yaml(new SafeConstructor(options)).load(mainConfig);
-        if (root == null || root.get("riptide") == null) {
-            // a legacy file that polls nothing emits no credentials and no profiles
-            return new SnmpProfilesConfig(Map.of(), Map.of());
+        final var environment = new StandardEnvironment();
+        try {
+            new YamlPropertySourceLoader()
+                    .load("converted", new ByteArrayResource(mainConfig.getBytes(StandardCharsets.UTF_8)))
+                    .forEach(source -> environment.getPropertySources().addFirst(source));
+        } catch (final java.io.IOException e) {
+            throw new IllegalStateException("emitted main config is not loadable YAML", e);
         }
-        final Map<String, Object> snmp =
-                (Map<String, Object>) ((Map<String, Object>) root.get("riptide")).get("snmp");
-
-        final Map<String, CredentialSet> credentials = new LinkedHashMap<>();
-        ((Map<String, Map<String, Object>>) snmp.getOrDefault("credentials", Map.of()))
-                .forEach((name, body) -> {
-                    final CredentialSet set = credentialSet(body);
-                    set.validate(name);
-                    credentials.put(name, set);
-                });
-
-        final Map<String, PollingProfile> polling = new LinkedHashMap<>();
-        ((Map<String, Map<String, Object>>) snmp.getOrDefault("polling", Map.of()))
-                .forEach((name, body) -> {
-                    // the record's own @DefaultValue strings, so an omitted key behaves here
-                    // exactly as the binder would make it behave
-                    final PollingProfile profile = new PollingProfile(
-                            // the record's @DefaultValue literals, inlined because they are
-                            // package-private; PollingDefaultsGuardTest pins them in step
-                            Duration.parse((String) body.getOrDefault("refresh-interval", "PT10M")),
-                            Duration.parse((String) body.getOrDefault("snapshot-expiry",
-                                    "PT30M")),
-                            (Integer) body.getOrDefault("timeout", 500),
-                            (Integer) body.getOrDefault("retries", 1));
-                    profile.validate(name);
-                    polling.put(name, profile);
-                });
-
-        return new SnmpProfilesConfig(credentials, polling);
-    }
-
-    /** Every field, so a dropped or mis-spelled one changes the object under validation. */
-    private static CredentialSet credentialSet(final Map<String, Object> body) {
-        return new CredentialSet(
-                CredentialVersion.valueOf(
-                        ((String) body.get("snmp-version")).toUpperCase(java.util.Locale.ROOT)),
-                ref(body.get("community")),
-                (String) body.get("security-name"),
-                body.get("auth-protocol") == null ? null
-                        : TargetBuilder.AuthProtocol.valueOf((String) body.get("auth-protocol")),
-                ref(body.get("auth-passphrase")),
-                body.get("priv-protocol") == null ? null
-                        : TargetBuilder.PrivProtocol.valueOf((String) body.get("priv-protocol")),
-                ref(body.get("priv-passphrase")));
-    }
-
-    private static SecretRef ref(final Object value) {
-        return value == null ? null : SecretRef.of((String) value);
+        final var binder = new Binder(
+                ConfigurationPropertySources.from(environment.getPropertySources()),
+                new PropertySourcesPlaceholdersResolver(environment),
+                ApplicationConversionService.getSharedInstance());
+        // SnmpProfilesConfig validates every set and profile in its canonical constructor, so
+        // binding IS the AD-13 assertion
+        return binder.bind("riptide.snmp", Bindable.of(SnmpProfilesConfig.class))
+                .orElseGet(() -> new SnmpProfilesConfig(Map.of(), Map.of()));
     }
 
     private static Map<String, Object> credentialsOf(final LegacyConverter.Converted converted) {

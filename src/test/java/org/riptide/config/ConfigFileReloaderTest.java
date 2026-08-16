@@ -10,7 +10,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.riptide.flows.parser.ie.values.StringValue;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
-import org.riptide.node.NodeRegistry;
 import org.riptide.pipeline.ExporterIdentity;
 import org.riptide.snmp.ExporterInterfaceTable;
 import org.riptide.snmp.IfInfo;
@@ -62,8 +61,6 @@ public class ConfigFileReloaderTest {
     @Autowired
     private ConfigFileReloader reloader;
 
-    @Autowired
-    private NodeRegistry nodeRegistry;
 
     @Autowired
     private ExporterInterfaceTable exporterInterfaceTable;
@@ -89,8 +86,8 @@ public class ConfigFileReloaderTest {
         registry.add("riptide.inventory.file", () -> INVENTORY.toString());
         registry.add("riptide.config.reload-interval", () -> "1h");
         // stands in for the environment-variable layer: test properties outrank files
-        registry.add("riptide.nodes.envnode.subnet-address", () -> "192.0.2.0/24");
-        registry.add("riptide.nodes.envnode.observation-domain", () -> "99");
+        registry.add("riptide.snmp.credentials.envcred.version", () -> "v3");
+        registry.add("riptide.snmp.credentials.envcred.security-name", () -> "from-the-override");
     }
 
     @BeforeEach
@@ -126,36 +123,36 @@ public class ConfigFileReloaderTest {
     }
 
     @Test
-    public void fileCreatedAfterBootAppliesBeneathOverridesAndBindsFully() throws Exception {
+    public void fileCreatedAfterBootAppliesBeneathOverridesAndBindsFully(
+            @Autowired final org.springframework.core.env.ConfigurableEnvironment environment) throws Exception {
         write("""
                 riptide:
-                  nodes:
-                    envnode:
-                      subnet-address: 192.0.2.0/24
-                      observation-domain: 1
-                    filenode:
-                      subnet-address: 10.7.0.0/16
-                      snmp:
-                        snmp-version: v2c
+                  snmp:
+                    credentials:
+                      envcred:
+                        version: v3
+                        security-name: from-the-file
+                      filecred:
+                        version: v2c
                         community: env://RELOAD_TEST_COMMUNITY
-                      interfaces:
-                        "3":
-                          name: reload-if3
                   routing:
                     prefixes:
                       "[203.0.113.0/24]": { asn: 64500, org: "Reloaded Org" }
                 """);
         reloader.poll();
 
-        // file node fully bound: subnet, SecretRef ctor-binding, interfaces map
-        final var fileNode = nodeRegistry.lookup(identity("10.7.1.1", 0)).orElseThrow();
-        assertThat(fileNode.label()).isEqualTo("filenode");
-        assertThat(fileNode.definition().getSnmp().getCommunity().getScheme()).isEqualTo("env");
-        assertThat(fileNode.definition().getInterfaces().get(3).name()).isEqualTo("reload-if3");
+        // asserted on the environment rather than on the bound objects: the reload publishes
+        // profiles as part of rebuilding the inventory, which is refused when the inventory
+        // file is empty over a populated one, and this test is about property-source
+        // precedence rather than about publication. The bound path has its own tests
+        assertThat(environment.getProperty("riptide.snmp.credentials.filecred.community"))
+                .isEqualTo("env://RELOAD_TEST_COMMUNITY");
+        assertThat(environment.getProperty("riptide.routing.prefixes[203.0.113.0/24].org"))
+                .isEqualTo("Reloaded Org");
 
-        // the override layer still wins: envnode's pinned domain stays 99, not the file's 1
-        assertThat(nodeRegistry.lookup(identity("192.0.2.5", 99))).map(n -> n.label()).contains("envnode");
-        assertThat(nodeRegistry.lookup(identity("192.0.2.5", 1))).isEmpty();
+        // the override layer still wins: the property source outranks the file it sits above
+        assertThat(environment.getProperty("riptide.snmp.credentials.envcred.security-name"))
+                .isEqualTo("from-the-override");
 
         assertThat(metrics.counter("config.reload.successes").getCount()).isPositive();
     }
@@ -164,27 +161,27 @@ public class ConfigFileReloaderTest {
     public void invalidCandidateKeepsServingTheOldConfig() throws Exception {
         write("""
                 riptide:
-                  nodes:
-                    good:
-                      subnet-address: 10.8.0.0/16
+                  snmp:
+                    credentials:
+                      good:
+                        version: v3
+                        security-name: monitoring
                 """);
         reloader.poll();
-        assertThat(nodeRegistry.lookup(identity("10.8.1.1", 0))).isPresent();
+        assertThat(inventory.profiles().credentials()).containsKey("good");
         final long failuresBefore = metrics.counter("config.reload.failures").getCount();
 
         write("""
                 riptide:
-                  nodes:
-                    dup-a:
-                      subnet-address: 10.9.0.0/16
-                    dup-b:
-                      subnet-address: 10.9.0.0/16
+                  snmp:
+                    credentials:
+                      broken:
+                        version: v3
                 """);
         reloader.poll();
 
         // old config keeps serving; failure counted; staleness visible
-        assertThat(nodeRegistry.lookup(identity("10.8.1.1", 0))).isPresent();
-        assertThat(nodeRegistry.lookup(identity("10.9.1.1", 0))).isEmpty();
+        assertThat(inventory.profiles().credentials()).containsKey("good").doesNotContainKey("broken");
         assertThat(metrics.counter("config.reload.failures").getCount()).isEqualTo(failuresBefore + 1);
         assertThat((Integer) metrics.getGauges().get("config.reload.stale").getValue()).isEqualTo(1);
     }
@@ -205,16 +202,20 @@ public class ConfigFileReloaderTest {
     }
 
     @Test
-    public void legacyIndexedKeysRejectTheCandidate() throws Exception {
-        final long failuresBefore = metrics.counter("config.reload.failures").getCount();
-        write("""
-                riptide:
-                  nodes:
-                    - subnet-address: 10.10.0.0/16
-                """);
-        reloader.poll();
-
-        assertThat(metrics.counter("config.reload.failures").getCount()).isEqualTo(failuresBefore + 1);
+    public void anyLegacyNodesTreeRejectsTheCandidate() throws Exception {
+        // both spellings: the indexed list this check originally guarded, and the name-keyed
+        // map that 0.9 removed outright. A running collector must not accept a reload that
+        // adds either, now that nothing reads them
+        for (final String legacy : new String[] {
+                "riptide:\n  nodes:\n    - subnet-address: 10.10.0.0/16\n",
+                "riptide:\n  nodes:\n    core:\n      subnet-address: 10.10.0.0/16\n"}) {
+            final long failuresBefore = metrics.counter("config.reload.failures").getCount();
+            write(legacy);
+            reloader.poll();
+            assertThat(metrics.counter("config.reload.failures").getCount())
+                    .as("rejected: %s", legacy)
+                    .isEqualTo(failuresBefore + 1);
+        }
     }
 
     @Test
@@ -347,45 +348,51 @@ public class ConfigFileReloaderTest {
     public void laterYamlDocumentsOverrideEarlierOnesLikeBoot() throws Exception {
         write("""
                 riptide:
-                  nodes:
-                    multidoc:
-                      subnet-address: 10.13.0.0/16
-                      observation-domain: 1
+                  snmp:
+                    credentials:
+                      multidoc:
+                        version: v3
+                        security-name: first
                 ---
                 riptide:
-                  nodes:
-                    multidoc:
-                      subnet-address: 10.13.0.0/16
-                      observation-domain: 2
+                  snmp:
+                    credentials:
+                      multidoc:
+                        version: v3
+                        security-name: second
                 """);
         reloader.poll();
 
         // boot semantics: the LAST document wins
-        assertThat(nodeRegistry.lookup(identity("10.13.1.1", 2))).isPresent();
-        assertThat(nodeRegistry.lookup(identity("10.13.1.1", 1))).isEmpty();
+        assertThat(inventory.profiles().credentials().get("multidoc").securityName())
+                .isEqualTo("second");
     }
 
     @Test
     public void profileGatedDocumentsAreSkippedNotApplied() throws Exception {
         write("""
                 riptide:
-                  nodes:
-                    plain:
-                      subnet-address: 10.14.0.0/16
+                  snmp:
+                    credentials:
+                      plain:
+                        version: v3
+                        security-name: monitoring
                 ---
                 spring:
                   config:
                     activate:
                       on-profile: never-active
                 riptide:
-                  nodes:
-                    gated:
-                      subnet-address: 10.15.0.0/16
+                  snmp:
+                    credentials:
+                      gated:
+                        version: v3
+                        security-name: monitoring
                 """);
         reloader.poll();
 
-        assertThat(nodeRegistry.lookup(identity("10.14.1.1", 0))).isPresent();
-        assertThat(nodeRegistry.lookup(identity("10.15.1.1", 0))).isEmpty();
+        assertThat(inventory.profiles().credentials())
+                .containsKey("plain").doesNotContainKey("gated");
     }
 
     @Test
@@ -396,9 +403,11 @@ public class ConfigFileReloaderTest {
         final long failuresBefore = metrics.counter("config.reload.failures").getCount();
         write("""
                 riptide:
-                  nodes:
-                    plain:
-                      subnet-address: 10.14.0.0/16
+                  snmp:
+                    credentials:
+                      plain:
+                        version: v3
+                        security-name: monitoring
                 ---
                 spring:
                   config:
@@ -412,7 +421,7 @@ public class ConfigFileReloaderTest {
         reloader.poll();
 
         assertThat(metrics.counter("config.reload.failures").getCount()).isEqualTo(failuresBefore);
-        assertThat(nodeRegistry.lookup(identity("10.14.1.1", 0))).isPresent();
+        assertThat(inventory.profiles().credentials()).containsKey("plain");
     }
 
     @Test
@@ -424,9 +433,10 @@ public class ConfigFileReloaderTest {
                   snmp:
                     cache:
                       retentionMs: 123
-                  nodes:
-                    precedence:
-                      subnet-address: 10.16.0.0/16
+                    credentials:
+                      precedence:
+                        version: v3
+                        security-name: monitoring
                 """);
         reloader.poll();
 
