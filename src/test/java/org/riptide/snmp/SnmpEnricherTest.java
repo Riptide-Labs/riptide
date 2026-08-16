@@ -22,6 +22,7 @@ import org.riptide.inventory.InventoryConfig;
 import org.riptide.inventory.InventoryLoader;
 import org.riptide.inventory.SnmpProfilesConfig;
 import org.riptide.secrets.SecretRef;
+import org.snmp4j.fluent.TargetBuilder;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Pipeline;
@@ -236,6 +237,63 @@ public class SnmpEnricherTest {
             assertThat(enrichedFlow.getInputSnmpIfAlias()).isEqualTo("pushed");
             // the SNMP-only field stays empty: nothing was ever walked
             assertThat(enrichedFlow.getInputSnmpIfSpeed()).isNull();
+        });
+    }
+
+    /**
+     * UJ-1, the milestone's headline promise: a device inside a credentialed range, named
+     * in no configuration tree of its own, ends up with SNMP-derived interface names on
+     * its flows. Zero-touch is the whole claim, so the range has to be wider than one host
+     * and the device must not be enumerated anywhere, which is why this needs v3: a range
+     * wider than a host may not carry a cleartext community.
+     *
+     * <p>At the integration tier rather than the e2e on purpose. The SNMP e2e is gated
+     * behind an environment variable and a host route, so it runs on nobody's build; this
+     * runs on every one.</p>
+     */
+    @Test
+    public void aDeviceInACredentialedRangeIsEnrichedWithoutBeingConfigured(@TempDir Path temporaryFolder)
+            throws Exception {
+        final TestSnmpAgent snmpAgent = new TestSnmpAgent("127.0.0.1/12345", temporaryFolder);
+        snmpAgent.start();
+        snmpAgent.registerIfTable();
+        snmpAgent.registerIfXTable();
+
+        // a v3 credential set and one wide range; 127.0.0.1 appears nowhere else, and there
+        // is no enrichment entry for it at all, so nothing here names the device
+        final var profiles = new SnmpProfilesConfig(
+                Map.of("corp-v3", new CredentialSet(CredentialVersion.V3, null,
+                        TestSnmpAgent.AUTHNOPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1,
+                        SecretRef.of(TestSnmpAgent.AUTHNOPRIV_AUTH_PASSHRASE), null, null)),
+                Map.of());
+        final var zeroTouch = new Inventory(profiles, new InventoryConfig());
+        zeroTouch.swap(InventoryLoader.parse(profiles, """
+                riptide:
+                  snmp:
+                    agents:
+                      "127.0.0.0/24":
+                        credentials: corp-v3
+                        port: 12345
+                """, "zero-touch.yaml"));
+
+        final var enrichers = List.<Enricher>of(new SnmpEnricher(liveSnmp(), zeroTouch, emptyInterfaceTable()));
+        final var repository = new TestRepository(metricRegistry);
+        final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
+
+        final Flow flow = Mockito.mock(Flow.class);
+        when(flow.getSrcAddr()).thenReturn(InetAddress.getByName("10.10.10.10"));
+        when(flow.getDstAddr()).thenReturn(InetAddress.getByName("10.20.20.10"));
+        when(flow.getInputSnmp()).thenReturn(1);
+        when(flow.getOutputSnmp()).thenReturn(2);
+
+        pipeline.process(new Source("here", InetAddress.getLoopbackAddress()), List.of(flow));
+        snmpAgent.stop();
+
+        assertThat(repository.flows()).isNotEmpty().allSatisfy(enrichedFlow -> {
+            // walked, not pinned: nothing in the configuration carries these values
+            assertThat(enrichedFlow.getInputSnmpIfName()).isEqualTo("eth0-x");
+            assertThat(enrichedFlow.getInputSnmpIfAlias()).isEqualTo("My ethernet interface");
+            assertThat(enrichedFlow.getOutputSnmpIfName()).isEqualTo("lo0-x");
         });
     }
 
