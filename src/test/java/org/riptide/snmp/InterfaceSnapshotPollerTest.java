@@ -294,6 +294,76 @@ class InterfaceSnapshotPollerTest {
         }
     }
 
+    /**
+     * The push cannot see a batch that was already resolving when it ran. Without the
+     * lazy check that registration keeps its pre-carve-out endpoint until it goes silent,
+     * which for an active exporter is never.
+     */
+    @Test
+    void aRegistrationThatRacedTheSweepIsCaughtOnTheNextTick() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config());
+        final var live = inventory("""
+                      "10.40.0.7":
+                        credentials: corp-v3
+                """);
+        final var carvedOut = inventory("""
+                      "10.40.0.7":
+                        enabled: false
+                """);
+
+        // the reload happens first, with nothing registered for it to sweep
+        poller.refreshRegistrations(carvedOut);
+        // and only then does the in-flight batch, holding the old snapshot, register
+        poller.trackAndResolve(resolveOnly(live, "10.40.0.7"), 1);
+
+        poller.tick(this.clock.get());
+        Thread.sleep(50);
+        // the tick noticed it was resolved against an older inventory and stopped it
+        poller.tick(this.clock.get());
+        Thread.sleep(50);
+
+        assertThat(snmp.walks.get()).isZero();
+    }
+
+    /**
+     * A carve-out whose walk is in flight cannot be removed on the spot without letting a
+     * re-registration start a second concurrent walk, so it is marked and finished by the
+     * next tick rather than left polling until it goes silent.
+     */
+    @Test
+    void aCarveOutDuringAnInFlightWalkIsCompletedByTheNextTick() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config());
+        final var live = inventory("""
+                      "10.41.0.7":
+                        credentials: corp-v3
+                """);
+        snmp.entered = new CountDownLatch(1);
+        snmp.release = new CountDownLatch(1);
+
+        poller.trackAndResolve(resolveOnly(live, "10.41.0.7"), 1);
+        poller.tick(this.clock.get());
+        assertThat(snmp.entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+        // carved out while the walk is parked in the agent
+        poller.refreshRegistrations(inventory("""
+                      "10.41.0.7":
+                        enabled: false
+                """));
+        snmp.release.countDown();
+        awaitWalks(poller, snmp, 1);
+
+        advanceMs(600_000);
+        poller.tick(this.clock.get());
+        Thread.sleep(50);
+        poller.tick(this.clock.get());
+        Thread.sleep(50);
+
+        // the in-flight walk finished, and no further walk was ever issued
+        assertThat(snmp.walks.get()).isEqualTo(1);
+    }
+
     /** The endpoint an inventory resolves for one address, for tests that then poll it. */
     private static SnmpEndpoint resolveOnly(final org.riptide.inventory.InventorySnapshot snapshot,
                                             final String ip) throws Exception {

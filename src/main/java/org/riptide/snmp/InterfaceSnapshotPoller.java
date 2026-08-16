@@ -86,6 +86,13 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         /** Set when a refresh found this registration unpollable while a walk was running. */
         private volatile boolean stopWhenIdle;
         /**
+         * The snapshot this registration's endpoint is known to agree with, compared by
+         * reference. {@code null} until verified, which is how a registration created by a
+         * batch holding an older snapshot gets checked: the next tick re-resolves anything
+         * not known to match the published inventory.
+         */
+        private volatile InventorySnapshot resolvedAgainst;
+        /**
          * Bumped whenever the endpoint is re-resolved. A walk that started before the
          * change must not write back a schedule derived from the endpoint it replaced.
          */
@@ -108,6 +115,14 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     private final LongSupplier nanoTime;
 
     private final Map<InetSocketAddress, Registration> registrations = new ConcurrentHashMap<>();
+
+    /**
+     * The most recently published inventory, held so {@code tick} can notice a
+     * registration resolved against an older one. The push in
+     * {@link #refreshRegistrations} makes the common case immediate; this makes it
+     * eventually correct even for a registration that raced the push.
+     */
+    private volatile InventorySnapshot published;
 
     private final ExecutorService walkers;
     private final ScheduledExecutorService scheduler;
@@ -263,7 +278,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             // the fast path is where the capture bug lived: returning the registration and
             // dropping the endpoint the caller just resolved is what made a reload a no-op
             // for every agent already being polled
-            reresolveIfChanged(existing, endpoint, now, address);
+            reresolveIfChanged(existing, endpoint, now, address, true);
             return existing;
         }
         final int maxExporters = this.config.getMaxExporters();
@@ -275,6 +290,11 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         final Registration created =
                 this.registrations.computeIfAbsent(address, key -> {
                     isNew.set(true);
+                    // deliberately left unstamped: the caller resolved this endpoint
+                    // against whatever snapshot its batch was holding, which may already
+                    // be older than the published one. Claiming the current snapshot here
+                    // is what would let a registration that raced a carve-out look
+                    // verified. Unstamped means the next tick checks it
                     return new Registration(endpoint, now);
                 });
         if (isNew.get()) {
@@ -286,7 +306,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             this.registered.mark();
         } else {
             // lost the race to another thread's computeIfAbsent: same case as the fast path
-            reresolveIfChanged(created, endpoint, now, address);
+            reresolveIfChanged(created, endpoint, now, address, true);
         }
         return created;
     }
@@ -300,20 +320,22 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      * the same configuration) does not disturb the schedule.</p>
      */
     private void reresolveIfChanged(final Registration registration, final SnmpEndpoint endpoint,
-                                    final long now, final InetSocketAddress address) {
+                                    final long now, final InetSocketAddress address, final boolean immediate) {
         if (registration.endpoint.equals(endpoint)) {
             // adopt the instance anyway: this runs once per flow per direction, and the
             // enricher builds a fresh endpoint per batch, so leaving the old instance in
             // place means every flow pays a deep comparison instead of a reference check
             registration.endpoint = endpoint;
+            registration.resolvedAgainst = this.published;
             return;
         }
         registration.endpoint = endpoint;
         // an operator who repoints a range is usually fixing something, so clear the
-        // back-off and walk on the next tick rather than waiting out the ceiling
+        // back-off and walk soon rather than waiting out the ceiling
         registration.consecutiveFailures.set(0);
         registration.unreachable = false;
-        registration.nextWalkNanos = now;
+        registration.resolvedAgainst = this.published;
+        registration.nextWalkNanos = immediate ? now : spreadWalkAt(endpoint, now);
         registration.resolution.incrementAndGet();
         this.reresolved.mark();
         log.info("Endpoint for {} re-resolved from the current inventory; walking on the next tick", address);
@@ -352,6 +374,9 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      * pins that, and it is the assumption to revisit first if pinning is ever added.</p>
      */
     public void refreshRegistrations(final InventorySnapshot snapshot) {
+        // published before the sweep, so a registration created while it runs is stamped
+        // with the new snapshot and needs no second pass
+        this.published = snapshot;
         final long now = this.nanoTime.getAsLong();
         for (final Map.Entry<InetSocketAddress, Registration> entry : this.registrations.entrySet()) {
             final InetSocketAddress address = entry.getKey();
@@ -378,7 +403,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 }
                 continue;
             }
-            reresolveIfChanged(registration, resolved.get(), now, address);
+            reresolveIfChanged(registration, resolved.get(), now, address, false);
         }
     }
 
@@ -399,6 +424,19 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
 
         for (final Map.Entry<InetSocketAddress, Registration> entry : this.registrations.entrySet()) {
             final Registration registration = entry.getValue();
+            final InventorySnapshot current = this.published;
+            if (current != null && registration.resolvedAgainst != current
+                    && !registration.walkInFlight.get()) {
+                // resolved against an older inventory: the push either raced this
+                // registration into existence or never saw it
+                final Optional<SnmpEndpoint> resolved = resolve(current, entry.getKey());
+                if (resolved.isEmpty() || !resolved.get().getInetSocketAddress().equals(entry.getKey())) {
+                    registration.stopWhenIdle = true;
+                } else {
+                    reresolveIfChanged(registration, resolved.get(), now, entry.getKey(), false);
+                    registration.resolvedAgainst = current;
+                }
+            }
             if (registration.stopWhenIdle && !registration.walkInFlight.get()) {
                 if (this.registrations.remove(entry.getKey(), registration)) {
                     this.deregistered.mark();
@@ -605,6 +643,18 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
         z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
         return z ^ (z >>> 31);
+    }
+
+    /**
+     * A soon-but-spread next walk, for a re-resolution that arrived with a whole reload
+     * rather than from one operator gesture. Setting every changed registration to
+     * {@code now} would make the affected fleet due on the same tick, which is the herd
+     * the address-derived phase exists to avoid; a minute is soon enough to be a fix and
+     * wide enough to spread.
+     */
+    private long spreadWalkAt(final SnmpEndpoint endpoint, final long now) {
+        final long window = Math.min(millisToNanos(Math.max(1, refreshMsFor(endpoint))), millisToNanos(60_000));
+        return now + Math.floorMod(mix(endpoint.getInetSocketAddress().hashCode()), Math.max(1, window));
     }
 
     /** The endpoint's own profile cadence, or the fleet setting for a legacy endpoint. */
