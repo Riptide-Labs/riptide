@@ -278,7 +278,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             // the fast path is where the capture bug lived: returning the registration and
             // dropping the endpoint the caller just resolved is what made a reload a no-op
             // for every agent already being polled
-            reresolveIfChanged(existing, endpoint, now, address, true);
+            reresolveIfChanged(existing, endpoint, now, address, true, null);
             return existing;
         }
         final int maxExporters = this.config.getMaxExporters();
@@ -306,7 +306,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             this.registered.mark();
         } else {
             // lost the race to another thread's computeIfAbsent: same case as the fast path
-            reresolveIfChanged(created, endpoint, now, address, true);
+            reresolveIfChanged(created, endpoint, now, address, true, null);
         }
         return created;
     }
@@ -320,13 +320,17 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      * the same configuration) does not disturb the schedule.</p>
      */
     private void reresolveIfChanged(final Registration registration, final SnmpEndpoint endpoint,
-                                    final long now, final InetSocketAddress address, final boolean immediate) {
+                                    final long now, final InetSocketAddress address, final boolean immediate,
+                                    final InventorySnapshot resolvedFrom) {
         if (registration.endpoint.equals(endpoint)) {
             // adopt the instance anyway: this runs once per flow per direction, and the
             // enricher builds a fresh endpoint per batch, so leaving the old instance in
             // place means every flow pays a deep comparison instead of a reference check
             registration.endpoint = endpoint;
-            registration.resolvedAgainst = this.published;
+            // only the caller knows which snapshot produced this endpoint; a batch can be
+            // holding an older one, so claiming the published snapshot here would mark it
+            // verified when it is not
+            registration.resolvedAgainst = resolvedFrom;
             return;
         }
         registration.endpoint = endpoint;
@@ -334,7 +338,9 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         // back-off and walk soon rather than waiting out the ceiling
         registration.consecutiveFailures.set(0);
         registration.unreachable = false;
-        registration.resolvedAgainst = this.published;
+        registration.resolvedAgainst = resolvedFrom;
+        // a later reload may have restored what an earlier one carved out
+        registration.stopWhenIdle = false;
         registration.nextWalkNanos = immediate ? now : spreadWalkAt(endpoint, now);
         registration.resolution.incrementAndGet();
         this.reresolved.mark();
@@ -362,12 +368,9 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      * waiting out the deregistration deadline: without it an operator can carve a segment
      * out, see the reload succeed, and still be polling it minutes later.</p>
      *
-     * <p>Note what this does <em>not</em> reach: the value of a credential set. Ranges are
-     * re-resolved against the published snapshot, but that snapshot resolved its
-     * {@code CredentialSet} objects from the profile beans as they were bound at boot, and
-     * a main-config reload deliberately discards its credential bind. Rotating a community
-     * therefore still needs a restart, which is the orchestration gap the endpoint-refresh
-     * work leaves open.</p>
+     * <p>Credential values reach a polled agent through the same path: a main-config
+     * reload rebuilds the inventory against the rebound profiles and publishes both
+     * together, so the snapshot handed here already carries the rotated value.</p>
      *
      * <p>Agent ranges carry no observation-domain pin, so resolving by address alone is
      * exact rather than approximate; {@code agentRangesResolveRegardlessOfObservationDomain}
@@ -403,7 +406,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 }
                 continue;
             }
-            reresolveIfChanged(registration, resolved.get(), now, address, false);
+            reresolveIfChanged(registration, resolved.get(), now, address, false, snapshot);
         }
     }
 
@@ -433,8 +436,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 if (resolved.isEmpty() || !resolved.get().getInetSocketAddress().equals(entry.getKey())) {
                     registration.stopWhenIdle = true;
                 } else {
-                    reresolveIfChanged(registration, resolved.get(), now, entry.getKey(), false);
-                    registration.resolvedAgainst = current;
+                    reresolveIfChanged(registration, resolved.get(), now, entry.getKey(), false, current);
                 }
             }
             if (registration.stopWhenIdle && !registration.walkInFlight.get()) {
@@ -501,7 +503,11 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             final long now = this.nanoTime.getAsLong();
 
             if (table.walkFailed()) {
-                backOff(registration, now);
+                if (registration.resolution.get() == resolution) {
+                    // a re-resolution during this walk already scheduled the new endpoint;
+                    // backing off here would charge the replacement for the old one's failure
+                    backOff(registration, now);
+                }
                 if (!registration.unreachable) {
                     registration.unreachable = true;
                     // transitions are logged, not attempts: a per-retry warning would scale with
@@ -528,7 +534,12 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             // say — and the 1 Hz scheduler would re-submit that endpoint every second forever,
             // with a stack trace each time. Back off exactly as a failed walk does, so an
             // endpoint that throws is treated no more kindly than one that does not answer.
-            backOff(registration, this.nanoTime.getAsLong());
+            if (registration.resolution.get() == resolution) {
+                // same guard as the success path: a re-resolution that landed mid-walk asked
+                // for an immediate re-walk on the new endpoint, and backing off the endpoint
+                // that just failed would defer the operator's fix
+                backOff(registration, this.nanoTime.getAsLong());
+            }
             if (!registration.unreachable) {
                 registration.unreachable = true;
                 log.warn("Interface walk of {} failed unexpectedly, backing off", registration.endpoint, e);

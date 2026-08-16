@@ -76,7 +76,7 @@ class InventoryFileReloaderTest {
         // a poller with no scheduler and nothing registered: these tests exercise the
         // reload trigger, and the refresh half has its own tests in the poller suite
         this.poller = new InterfaceSnapshotPoller(new NoSnmp(), new SnmpPollConfig(), this.metrics);
-        this.reloader = new InventoryFileReloader(properties, inventoryConfig, this.profiles, this.inventory,
+        this.reloader = new InventoryFileReloader(properties, inventoryConfig, this.inventory,
                 this.poller, this.metrics);
         this.reloader.start();
     }
@@ -315,7 +315,7 @@ class InventoryFileReloaderTest {
         final ConfigReloadProperties properties = new ConfigReloadProperties();
         properties.setReloadInterval(Duration.ofHours(1));
         final InventoryFileReloader disabled = new InventoryFileReloader(
-                properties, noFile, this.profiles, this.inventory, this.poller, new MetricRegistry());
+                properties, noFile, this.inventory, this.poller, new MetricRegistry());
 
         disabled.start();
         disabled.stop();

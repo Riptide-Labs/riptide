@@ -67,9 +67,28 @@ public class Inventory {
      * resolve them into objects at build time, so rotating a community means rebuilding
      * the inventory rather than swapping either half on its own.
      */
-    public void swap(final SnmpProfilesConfig profiles, final InventorySnapshot snapshot) {
+    public synchronized void swap(final SnmpProfilesConfig profiles, final InventorySnapshot snapshot) {
         this.profiles = Objects.requireNonNull(profiles);
         this.active = Objects.requireNonNull(snapshot);
+    }
+
+    /**
+     * Publishes a snapshot only if the profiles it was parsed against are still the ones
+     * serving, and reports whether it did.
+     *
+     * <p>Two reloaders publish here on separate threads. The inventory watcher reads the
+     * profiles, parses a file against them, and commits, and a main-config reload rotating
+     * a credential can land in between: committing anyway would pair the new profiles with
+     * a snapshot built from the old ones and silently undo the rotation. Losing the race
+     * means re-reading and re-parsing, which the caller does on its next cycle.</p>
+     */
+    public synchronized boolean swapIfProfilesUnchanged(final SnmpProfilesConfig parsedWith,
+                                                        final InventorySnapshot snapshot) {
+        if (this.profiles != parsedWith) {
+            return false;
+        }
+        this.active = Objects.requireNonNull(snapshot);
+        return true;
     }
 
     /** The profiles the serving snapshot was built from, for a reloader re-parsing the file. */

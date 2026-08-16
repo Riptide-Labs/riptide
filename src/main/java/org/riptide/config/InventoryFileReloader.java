@@ -55,13 +55,12 @@ import java.util.concurrent.TimeUnit;
  * a failing reload keeps the last good snapshot serving, warns with the loader's
  * entry-naming message, and counts the failure with a staleness gauge.</p>
  *
- * <p><b>Deliberate non-propagation</b>: the Spring-bound profile maps (credential
- * sets, polling profiles) are read as the beans currently hold them. A main-config
- * hot reload does not rebind those beans, so a profile edit in the main file does
- * not reach the snapshot through this reloader: that propagation is the reload
- * orchestrator's job in later stories (AD-6), not an accident here. The same holds
- * for {@code riptide.inventory.file} itself: the location is captured at start, and
- * a path change via main-config reload is not picked up without a restart.</p>
+ * <p><b>Where profiles come from</b>: the candidate is parsed against the profiles the
+ * {@link Inventory} currently holds, not a copy captured at boot, because a main-config
+ * reload republishes both the profiles and an inventory rebuilt from them. That is what
+ * lets a credential rotation reach a range edited afterwards. The location is still
+ * captured at start, so changing {@code riptide.inventory.file} needs a restart before
+ * this watcher follows it.</p>
  */
 @Slf4j
 @Component
@@ -69,7 +68,6 @@ public class InventoryFileReloader {
 
     private final ConfigReloadProperties properties;
     private final InventoryConfig inventoryConfig;
-    private final SnmpProfilesConfig profiles;
     private final Inventory inventory;
     private final InterfaceSnapshotPoller interfacePoller;
 
@@ -89,13 +87,11 @@ public class InventoryFileReloader {
 
     public InventoryFileReloader(final ConfigReloadProperties properties,
                                  final InventoryConfig inventoryConfig,
-                                 final SnmpProfilesConfig profiles,
                                  final Inventory inventory,
                                  final InterfaceSnapshotPoller interfacePoller,
                                  final MetricRegistry metrics) {
         this.properties = Objects.requireNonNull(properties);
         this.inventoryConfig = Objects.requireNonNull(inventoryConfig);
-        this.profiles = Objects.requireNonNull(profiles);
         this.inventory = Objects.requireNonNull(inventory);
         this.interfacePoller = Objects.requireNonNull(interfacePoller);
 
@@ -206,7 +202,12 @@ public class InventoryFileReloader {
             // fail the reload here, not the next restart
             // the profiles as they are now, not as they were at boot: a main-config reload
             // can have rotated a credential since
-            final InventorySnapshot candidate = InventoryLoader.parse(this.inventory.profiles(),
+            // captured, then republished with the candidate: parsing against one set of
+            // profiles and committing while another is live would pair a snapshot with
+            // profiles it was not built from, and the config reloader can commit between
+            // these two lines
+            final SnmpProfilesConfig parsedWith = this.inventory.profiles();
+            final InventorySnapshot candidate = InventoryLoader.parse(parsedWith,
                     strictUtf8(content, this.location), this.location.toString());
 
             if (candidate.isEmpty() && !this.inventory.snapshot().isEmpty()) {
@@ -220,7 +221,15 @@ public class InventoryFileReloader {
                 return;
             }
 
-            this.inventory.swap(candidate);
+            if (!this.inventory.swapIfProfilesUnchanged(parsedWith, candidate)) {
+                // a main-config reload republished the profiles while this candidate was
+                // being parsed; committing would undo it. Leave the attempted hash unset so
+                // the next cycle re-parses against what is now serving
+                this.lastAttemptedHash = this.lastCommittedHash;
+                log.info("Inventory reload deferred: the credential and polling profiles changed while {} "
+                        + "was being parsed, so it is re-read on the next cycle", this.location);
+                return;
+            }
             this.lastCommittedHash = this.lastAttemptedHash;
             this.reloadSuccesses.inc();
             this.stale = false;
