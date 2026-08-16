@@ -16,7 +16,6 @@ import org.riptide.node.LegacyNodesInertCheck;
 import org.riptide.node.NodeRegistry;
 import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventoryConfig;
-import org.riptide.inventory.InventoryLoader;
 import org.riptide.inventory.InventorySnapshot;
 import org.riptide.inventory.InventoryMisplacementCheck;
 import org.riptide.inventory.PollKeyMigrationCheck;
@@ -279,18 +278,21 @@ public class ConfigFileReloader {
         // inventory alone rather than take the config edit down with it or blank the fleet
         InventorySnapshot candidateInventory = null;
         try {
+            // rebuilt first so an empty or unreadable result can be refused before anything
+            // is published; the publish below re-reads under the inventory's monitor so a
+            // concurrent inventory reload cannot be overwritten
             final InventorySnapshot rebuilt =
-                    InventoryLoader.load(candidateProfiles, this.inventoryConfig.getFile());
+                    this.inventory.rebuildOnly(candidateProfiles, this.inventoryConfig.getFile());
             if (rebuilt.isEmpty() && !this.inventory.snapshot().isEmpty()) {
                 log.warn("Config reload left the inventory alone: rebuilding it from {} produced no entries "
-                        + "while a populated one is serving", candidateInventoryConfig.getFile());
+                        + "while a populated one is serving", this.inventoryConfig.getFile());
             } else {
                 candidateInventory = rebuilt;
             }
         } catch (final RuntimeException e) {
             log.warn("Config reload left the inventory alone: it could not be rebuilt ({}). Any credential "
-                    + "or profile change in this edit is NOT serving: fix the inventory file and edit the "
-                    + "config again, or restart", e.getMessage());
+                    + "or profile change in this edit is NOT serving: fix {} and edit the config again, "
+                    + "or restart", e.getMessage(), this.inventoryConfig.getFile());
         }
         final Map<String, NodeDefinition> validatedNodes = NodeRegistry.validated(nodes);
         final RoutingConfig.Parsed parsedRouting = RoutingConfig.parse(routing.getPrefixes(), routing.getAsNames());
@@ -310,7 +312,9 @@ public class ConfigFileReloader {
         // a value the rotation just replaced
         this.sopsSecretResolver.invalidateCache();
         if (candidateInventory != null) {
-            this.inventory.swap(candidateProfiles, candidateInventory);
+            // re-read and publish under one monitor: the check above proved the file is
+            // usable, and this makes the publication atomic against the inventory watcher
+            candidateInventory = this.inventory.rebuildAndSwap(candidateProfiles, this.inventoryConfig.getFile());
             try {
                 this.interfacePoller.refreshRegistrations(candidateInventory);
             } catch (final RuntimeException e) {

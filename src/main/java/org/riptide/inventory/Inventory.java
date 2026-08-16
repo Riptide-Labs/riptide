@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.nio.file.Path;
 import java.util.Objects;
 
 /**
@@ -89,6 +90,29 @@ public class Inventory {
         }
         this.active = Objects.requireNonNull(snapshot);
         return true;
+    }
+
+    /**
+     * Rebuilds from {@code file} against {@code profiles} and publishes both, atomically
+     * with respect to {@link #swapIfProfilesUnchanged}.
+     *
+     * <p>The read happens inside the monitor deliberately. A main-config reload rotating a
+     * credential has to load the inventory file to resolve it, and the inventory watcher
+     * can commit newer file content during that load: publishing afterwards would
+     * overwrite it with older content, and neither reloader would notice, because both
+     * would consider their own hashes committed. Holding the monitor makes the watcher's
+     * compare-and-set fail instead, which it handles by re-parsing on its next cycle.</p>
+     */
+    public synchronized InventorySnapshot rebuildAndSwap(final SnmpProfilesConfig profiles, final Path file) {
+        final InventorySnapshot rebuilt = InventoryLoader.load(profiles, file);
+        this.profiles = Objects.requireNonNull(profiles);
+        this.active = rebuilt;
+        return rebuilt;
+    }
+
+    /** Rebuilds without publishing, for a caller that must inspect the result first. */
+    public synchronized InventorySnapshot rebuildOnly(final SnmpProfilesConfig profiles, final Path file) {
+        return InventoryLoader.load(profiles, file);
     }
 
     /** The profiles the serving snapshot was built from, for a reloader re-parsing the file. */

@@ -327,10 +327,10 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             // enricher builds a fresh endpoint per batch, so leaving the old instance in
             // place means every flow pays a deep comparison instead of a reference check
             registration.endpoint = endpoint;
-            // only the caller knows which snapshot produced this endpoint; a batch can be
-            // holding an older one, so claiming the published snapshot here would mark it
-            // verified when it is not
-            registration.resolvedAgainst = resolvedFrom;
+            // the stamp is left alone. It records that this endpoint VALUE was verified
+            // against a snapshot, and the value has not changed, so it is still true.
+            // Clearing it here would make every flow un-verify its own registration and
+            // put the whole active fleet through re-resolution on every tick
             return;
         }
         registration.endpoint = endpoint;
