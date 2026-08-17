@@ -516,7 +516,11 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 // Not while a walk is running: the in-flight flag lives on this object, so
                 // removing it lets a re-registration mint a fresh flag and start a second
                 // concurrent walk against an agent whose first walk is still parked in its
-                // timeout. Deregistration can wait a tick.
+                // timeout. Deregistration can wait a tick — boundedly: snmp4j's timeout
+                // bounds each round-trip, and the walk's own budget bounds the number of
+                // round-trips (SnmpUtils.WALK_BUDGET_CEILING, #536), so "wait a tick"
+                // cannot become "wait forever" even against an agent that never stops
+                // answering.
                 if (!registration.walkInFlight.get()) {
                     this.registrations.remove(entry.getKey(), registration);
                     this.deregistered.mark();
