@@ -6,8 +6,6 @@
 package org.riptide.convert;
 
 import inet.ipaddr.IPAddress;
-import inet.ipaddr.IPAddressString;
-import inet.ipaddr.IPAddressStringParameters;
 import org.riptide.inventory.CredentialSet;
 import org.riptide.inventory.CredentialVersion;
 import org.riptide.inventory.PollingProfile;
@@ -40,14 +38,6 @@ import java.util.TreeMap;
  */
 public final class LegacyConverter {
 
-    /** The same strictness the 0.9 loader applies, so a bad address fails here with context. */
-    private static final IPAddressStringParameters STRICT_ADDRESSES = new IPAddressStringParameters.Builder()
-            .allowEmpty(false)
-            .allowAll(false)
-            .allow_inet_aton(false)
-            .getIPv4AddressParametersBuilder().allowLeadingZeros(false).getParentBuilder()
-            .getIPv6AddressParametersBuilder().allowLeadingZeros(false).getParentBuilder()
-            .toParams();
 
     private static final int DEFAULT_PORT = 161;
     private static final int MAX_PORT = 65535;
@@ -225,17 +215,17 @@ public final class LegacyConverter {
     }
 
     private static IPAddress strictAddress(final LegacyNode node) {
-        final IPAddress address = new IPAddressString(node.subnetAddress(), STRICT_ADDRESSES).getAddress();
-        final boolean host = address != null && !address.isMultiple() && !address.isPrefixed();
-        final boolean block = address != null && address.isPrefixed() && address.isSinglePrefixBlock();
-        if (!host && !block) {
+        try {
+            // the loader's parser, not a copy of it: the converter's whole audience is
+            // operators pasting 0.8 configs full of exactly the spellings the diagnosis
+            // ladder names (netmasks, leading zeros, inet_aton shorthand)
+            return org.riptide.inventory.StrictAddresses.parse(node.subnetAddress(), false).getAddress();
+        } catch (final IllegalArgumentException e) {
             throw new IllegalStateException(
-                    ("Node '%s' has subnet-address '%s', which 0.9 does not accept: it must be a host "
-                            + "address or a CIDR prefix with no host bits set, written without "
-                            + "leading zeros. Fix it in the legacy file and convert again.")
-                            .formatted(node.name(), node.subnetAddress()));
+                    ("Node '%s' has subnet-address '%s', which 0.9 does not accept: it %s "
+                            + "Fix it in the legacy file and convert again.")
+                            .formatted(node.name(), node.subnetAddress(), e.getMessage()));
         }
-        return address;
     }
 
     private static String agentRange(final LegacyNode node, final String credentialName,

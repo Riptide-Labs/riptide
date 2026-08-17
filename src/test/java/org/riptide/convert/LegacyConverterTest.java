@@ -259,6 +259,32 @@ class LegacyConverterTest {
         }
     }
 
+    /**
+     * The converter routes through the shared strict parser (#538), so a legacy netmask
+     * spelling fails conversion with the same diagnosis the loader gives — proven, not
+     * assumed, because the two used to carry independent parameter copies.
+     */
+    @Test
+    void aNetmaskSubnetAddressFailsConversionWithTheSharedDiagnosis() {
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  nodes:
+                    n:
+                      subnet-address: "10.90.0.0/255.0.255.0"
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("n")
+                .hasMessageContaining("non-contiguous netmask")
+                .hasMessageContaining("10.0.0.0");
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  nodes:
+                    n:
+                      subnet-address: "10.90.0.0/255.255.0.0"
+                """))
+                .hasMessageContaining("10.90.0.0/16");
+    }
+
     @Test
     void aNodeWithAnSnmpBlockButNoVersionIsAnError() {
         assertThatThrownBy(() -> convert("""
