@@ -21,17 +21,21 @@ The failure is deliberate: nothing reads that tree any more, and a collector tha
    The deb/rpm packages and the container image ship the jar without a `riptide` wrapper; there the invocation is:
 
    ```bash
-   java -jar /usr/share/riptide/riptide.jar convert /etc/riptide/application.yaml \
+   java -jar /usr/share/riptide/riptide.jar convert /etc/riptide/config.yaml \
        --out-config config-fragment.yaml --out-inventory inventory.yaml
    ```
+
+   (`/etc/riptide/config.yaml` is where the deb/rpm packages install the configuration.)
 
    Docker, against the same mount the service uses, **before** switching the service to the 0.9 image:
 
    ```bash
    docker run --rm -v /srv/riptide:/etc/riptide ghcr.io/riptide-labs/riptide:0.9 \
-       convert /etc/riptide/application.yaml --out-config /etc/riptide/config-fragment.yaml \
-       --out-inventory /etc/riptide/inventory.yaml
+       -jar /app/riptide.jar convert /etc/riptide/config.yaml \
+       --out-config /etc/riptide/config-fragment.yaml --out-inventory /etc/riptide/inventory.yaml
    ```
+
+   (The image's entrypoint is `java`, so the arguments restate `-jar /app/riptide.jar`; without them Docker would try to run a class named `convert`.)
 
 2. **Merge the config fragment** (credential sets, polling profiles) into your `application.yaml`, and set `riptide.inventory.file` to the emitted inventory.
 3. **Remove the old keys**: the whole `riptide.nodes` tree, and `riptide.snmp.poll.refresh-interval-ms` / `.snapshot-expiry-ms` if you had them (cadence lives on [polling profiles](configuration/agent-configuration.md#polling-profiles) now). All of them fail startup if left behind.
@@ -50,7 +54,7 @@ Two cases deserve attention:
 
 ## Behaviour changes to expect
 
-- Secret **value** rotation behind `file://` and `env://` references needs no reload at all; `sops://` values are cached until a main-config reload.
+- Secret **value** rotation behind `file://` references needs no reload at all; `env://` needs a restart (process environments are immutable); `sops://` values are cached until a main-config reload.
 - Each range walks on its profile's own cadence rather than one fleet-wide interval.
 - A device inside a credentialed range is polled from its first flow with no per-device configuration (zero-touch onboarding); the registration cap (`riptide.snmp.poll.max-exporters`) and pool width bound the blast radius.
 - The inventory file hot-reloads on content change; a rejected edit keeps the last good inventory serving and raises `inventory.reload.stale`.

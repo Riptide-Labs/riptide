@@ -50,7 +50,7 @@ binding): uppercase, dots and dashes become underscores, list indexes become `_0
 |---|---|
 | `riptide.clickhouse.endpoint` | `RIPTIDE_CLICKHOUSE_ENDPOINT` |
 | `riptide.receivers.ipfix.port` | `RIPTIDE_RECEIVERS_IPFIX_PORT` |
-| `riptide.snmp.credentials.corp-v3.security-name` | `RIPTIDE_SNMP_CREDENTIALS_CORPV3_SECURITYNAME` |
+| `riptide.snmp.credentials.monitoring.security-name` | `RIPTIDE_SNMP_CREDENTIALS_MONITORING_SECURITYNAME` |
 | `riptide.inventory.file` | `RIPTIDE_INVENTORY_FILE` |
 
 Agent ranges and enrichment entries are the exception: they live in the
@@ -62,8 +62,11 @@ means a restart. File-based configuration can
 [hot-reload](operations.md#config-hot-reload) instead.
 
 Environment variables suit flat settings and containerized deployments (the compose stack
-configures ClickHouse this way). Prefer the config file for nodes — Spring flattens map
-keys arriving from the environment (case and dashes are lost).
+configures ClickHouse this way). Prefer the config file for anything map-keyed, such as
+credential sets and polling profiles: Spring flattens map keys arriving from the
+environment (case and dashes are lost), so `RIPTIDE_SNMP_CREDENTIALS_CORPV3_SECURITYNAME`
+defines a set named `corpv3` — and an inventory entry saying `credentials: corp-v3` then
+fails the load with a dangling reference.
 
 Secret references (`env://`, `file://`, `vault://`, `sops://`) work the same in both —
 see [Secret references](../configuration/secret-references.md).

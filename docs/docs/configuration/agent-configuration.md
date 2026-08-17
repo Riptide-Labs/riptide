@@ -38,9 +38,11 @@ riptide.snmp.credentials.legacy-v2c.community=env://RIPTIDE_SNMP_COMMUNITY
 Shapes are validated at startup, per set: no version, v1/v2c without a community, v3 without a security name, a set carrying the other version's fields, or an incomplete auth/priv pair each fail loudly naming the set.
 The v3 security level is implicit in which fields you configure (noAuthNoPriv, authNoPriv, authPriv), and the engine ID is never configured; it is discovered at runtime (RFC 3414).
 
-Credential values are always [secret references](secret-references.md), never plaintext.
-`file://` and `env://` references are re-read on every poll, so rotating the value behind them reaches a polled agent with **no configuration change and no reload**.
-`sops://` is the exception: decrypted content is cached for the process lifetime and refreshed only by a main-config reload, so rotating a value behind a sops reference needs a config edit (or restart) to land.
+Credential values should be [secret references](secret-references.md); a scheme-less value binds as a plain literal (kept for migration and tests), so nothing stops plaintext, but nothing excuses it either.
+Rotation differs by scheme.
+`file://` is re-read on every poll, so rotating the file content reaches a polled agent with **no configuration change and no reload**.
+`env://` is also re-read, but a process environment is immutable, so rotating it means a restart.
+`sops://` decrypted content is cached for the process lifetime and refreshed only by a main-config reload.
 
 ### Protocol values
 
