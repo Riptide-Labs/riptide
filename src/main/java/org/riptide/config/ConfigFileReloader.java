@@ -280,9 +280,26 @@ public class ConfigFileReloader {
         if (fresh.isEmpty()) {
             throw new IllegalStateException("file parsed to no property sources — keeping the running config");
         }
-        final List<PropertySource<?>> applicable = fresh.stream()
-                .filter(this::withoutProfileActivation)
-                .toList();
+        // partitioned in one pass by identity, not name-equality: PropertySource.equals is
+        // name-based, and the gated/active split must not depend on Spring's internal
+        // document-naming scheme staying collision-free
+        final List<PropertySource<?>> applicable = new java.util.ArrayList<>();
+        final List<PropertySource<?>> gated = new java.util.ArrayList<>();
+        for (final PropertySource<?> document : fresh) {
+            (withoutProfileActivation(document) ? applicable : gated).add(document);
+        }
+
+        // gated documents commit nothing and fail nothing (pinned posture: dormant
+        // configuration is not wrong, it is dormant) — but dormant-and-fatal deserves a
+        // voice, because activating that gate later converts a working deployment into
+        // a startup failure, and this reload is the only moment anything reads the
+        // document before that boot (#537). BEFORE the all-gated rejection below: a file
+        // staged entirely for a future profile is exactly the shape most likely to be
+        // all landmine, and rejecting it silently would defeat the warning's purpose
+        warnAboutGatedLandmines(gated);
+        // and where the reload knowingly cannot check — imports are boot-only — it says so
+        warnAboutNestedImports(fresh);
+
         if (applicable.isEmpty()) {
             throw new IllegalStateException("all documents are profile-gated — profile activation is boot-only");
         }
@@ -398,6 +415,92 @@ public class ConfigFileReloader {
         final SnmpProfilesConfig serving = this.inventory.profiles();
         log.info("Config reloaded from {}: {} credential set(s), {} polling profile(s) serving",
                 this.location, serving.credentials().size(), serving.polling().size());
+    }
+
+    /**
+     * Scans the documents the reload deliberately ignores for keys that fail a boot.
+     * WARN, never reject: rejecting would punish an edit that changes nothing about what
+     * is serving. Repetition is bounded by the content-hash latch — one warning per
+     * content version. Scope is the three fatal startup checks only: a malformed gated
+     * credential set fails its future boot with a good, named error, which is the system
+     * working; these are the keys that refuse to boot at all.
+     */
+    private void warnAboutGatedLandmines(final List<PropertySource<?>> gated) {
+        for (final PropertySource<?> document : gated) {
+            final List<PropertySource<?>> one = List.of(document);
+            LegacyNodesFlagDayCheck.findLegacyNodesKey(one)
+                    .ifPresent(key -> warnLandmine(document, key));
+            PollKeyMigrationCheck.findRetiredPollKey(one)
+                    .ifPresent(key -> warnLandmine(document, key));
+            InventoryMisplacementCheck.findMisplacedInventoryKey(one)
+                    .ifPresent(key -> warnLandmine(document, key));
+        }
+    }
+
+    private void warnLandmine(final PropertySource<?> document, final String key) {
+        log.warn("A gated document in {} ({}) carries '{}', which fails any boot where that "
+                + "activation matches. Reloads never install gated documents, so this warning is "
+                + "the only signal before that boot refuses to come up",
+                this.location, describeGate(document), key);
+    }
+
+    /**
+     * Every activation condition the document carries, verbatim. The first version read the
+     * single exact key {@code spring.config.activate.on-profile} — and printed
+     * {@code profile 'null'} for exactly the shapes the gate accepts, because a
+     * multi-profile list flattens to {@code on-profile[0]}/{@code [1]} and
+     * {@code on-cloud-platform} is not a profile at all. The gate matches on the prefix, so
+     * the description enumerates the same prefix.
+     */
+    private static String describeGate(final PropertySource<?> document) {
+        if (!(document instanceof org.springframework.core.env.EnumerablePropertySource<?> enumerable)) {
+            return "gated";
+        }
+        final StringBuilder gate = new StringBuilder();
+        for (final String name : enumerable.getPropertyNames()) {
+            if (name.startsWith("spring.config.activate.")) {
+                if (!gate.isEmpty()) {
+                    gate.append(", ");
+                }
+                gate.append(name.substring("spring.config.activate.".length()))
+                        .append('=').append(document.getProperty(name));
+            }
+        }
+        return gate.isEmpty() ? "gated" : "gated on " + gate;
+    }
+
+    /**
+     * A {@code spring.config.import} inside the watched file is a boot-only mechanism:
+     * Spring's ConfigData follows imports-from-imports, this reloader substitutes only the
+     * watched file's own documents. A reload that introduces one commits a half-view — for
+     * any key behind the import, not just the fatal ones — so it is named, mirroring the
+     * riptide.inventory.file-changed precedent above. Not rejected: import sources that
+     * existed at boot remain in the live stack during substitution, so nothing regresses;
+     * only the new import's contents are invisible until the next restart.
+     */
+    private void warnAboutNestedImports(final List<PropertySource<?>> fresh) {
+        // all of them, not the first: a multi-import list flattens to import[0]/[1] and a
+        // warning naming one file while omitting another would read as complete
+        final List<Object> imports = new java.util.ArrayList<>();
+        for (final PropertySource<?> document : fresh) {
+            if (document instanceof org.springframework.core.env.EnumerablePropertySource<?> enumerable) {
+                for (final String name : enumerable.getPropertyNames()) {
+                    if (name.equals("spring.config.import") || name.startsWith("spring.config.import[")) {
+                        imports.add(document.getProperty(name));
+                    }
+                }
+            }
+        }
+        if (!imports.isEmpty()) {
+            // outcome-neutral wording: this fires before the candidate is accepted or
+            // rejected, so it must be true either way. Fires once per content version —
+            // including for an import present since boot — which is the reminder working,
+            // not a defect: the guidance is to keep hot-reloaded config in the watched file
+            log.warn("{} names nested spring.config.import(s) {}: imports are boot-only, so reloads "
+                    + "never include those files' contents; only a restart reads them. Keep "
+                    + "hot-reloaded configuration in the watched file itself",
+                    this.location, imports);
+        }
     }
 
     /** Profile-gated documents are a boot-only ConfigData feature; reload skips them loudly. */

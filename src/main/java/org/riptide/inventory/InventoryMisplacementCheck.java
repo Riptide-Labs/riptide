@@ -12,6 +12,7 @@ import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
 import org.springframework.stereotype.Component;
 
+import java.util.Optional;
 import java.util.Objects;
 import java.util.regex.Pattern;
 
@@ -44,17 +45,25 @@ public class InventoryMisplacementCheck {
 
     /** Reusable against any source stack, matching the migration-check idiom. */
     public static void failOnMisplacedInventoryTrees(final Iterable<PropertySource<?>> sources) {
+        findMisplacedInventoryKey(sources).ifPresent(name -> {
+            throw new IllegalStateException(("Inventory tree found in the main configuration ('%s'): "
+                    + "riptide.snmp.agents and riptide.exporters live only in the dedicated inventory "
+                    + "file named by riptide.inventory.file — they bind to nothing here and would be "
+                    + "silently ignored.").formatted(name));
+        });
+    }
+
+    /** Non-throwing probe for the reloader's gated-document scan (#537); one walk per class. */
+    public static Optional<String> findMisplacedInventoryKey(final Iterable<PropertySource<?>> sources) {
         for (final var source : sources) {
             if (source instanceof EnumerablePropertySource<?> enumerable) {
                 for (final String name : enumerable.getPropertyNames()) {
                     if (MISPLACED_TREE.matcher(name).find()) {
-                        throw new IllegalStateException(("Inventory tree found in the main configuration ('%s'): "
-                                + "riptide.snmp.agents and riptide.exporters live only in the dedicated inventory "
-                                + "file named by riptide.inventory.file — they bind to nothing here and would be "
-                                + "silently ignored.").formatted(name));
+                        return Optional.of(name);
                     }
                 }
             }
         }
+        return Optional.empty();
     }
 }

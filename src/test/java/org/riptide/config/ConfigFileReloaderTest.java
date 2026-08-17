@@ -152,11 +152,7 @@ public class ConfigFileReloaderTest {
      */
     @Test
     public void aBlankPairedSecretIsRejectedWithBootsOwnError() throws Exception {
-        final var logger = (ch.qos.logback.classic.Logger)
-                org.slf4j.LoggerFactory.getLogger(ConfigFileReloader.class);
-        final var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
-        appender.start();
-        logger.addAppender(appender);
+        final var appender = captureReloaderLog();
         try {
             final long failuresBefore = metrics.counter("config.reload.failures").getCount();
             write("""
@@ -186,7 +182,7 @@ public class ConfigFileReloaderTest {
                         .doesNotContain("must not be blank");
             });
         } finally {
-            logger.detachAppender(appender);
+            releaseReloaderLog(appender);
         }
     }
 
@@ -257,6 +253,192 @@ public class ConfigFileReloaderTest {
         reloader.poll();
         assertThat(inventory.profiles().credentials()).containsKey("rotated");
         assertThat((Integer) metrics.getGauges().get("config.reload.stale").getValue()).isZero();
+    }
+
+    /**
+     * #537, the landmine half. A profile-gated document carrying a fatal startup key
+     * commits nothing and fails nothing (pinned posture), but activating that profile
+     * later converts a working deployment into a boot that refuses to come up — and the
+     * reload is the only moment anything reads the document before then. It must say so.
+     */
+    @Test
+    public void aGatedDocumentCarryingAFatalKeyWarnsButStillCommits() throws Exception {
+        final var captured = captureReloaderLog();
+        try {
+            final long successesBefore = metrics.counter("config.reload.successes").getCount();
+            write("""
+                    riptide:
+                      snmp:
+                        credentials:
+                          plain:
+                            version: v3
+                            security-name: monitoring
+                    ---
+                    spring:
+                      config:
+                        activate:
+                          on-profile: some-day
+                    riptide:
+                      nodes:
+                        dormant:
+                          subnet-address: 10.0.0.1
+                    ---
+                    spring:
+                      config:
+                        activate:
+                          on-profile: [alpha, beta]
+                    riptide:
+                      snmp:
+                        poll:
+                          refresh-interval-ms: 60000
+                    ---
+                    spring:
+                      config:
+                        activate:
+                          on-cloud-platform: kubernetes
+                    riptide:
+                      snmp:
+                        agents:
+                          "10.0.0.0/24":
+                            credentials: plain
+                    """);
+            reloader.poll();
+
+            // the pinned posture holds: dormant configuration commits the active half
+            assertThat(metrics.counter("config.reload.successes").getCount()).isEqualTo(successesBefore + 1);
+            assertThat(inventory.profiles().credentials()).containsKey("plain");
+            // the landmine is named: gate and key, neither of which boilerplate contains
+            assertThat(captured.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                    .contains("some-day")
+                    .contains("riptide.nodes.dormant")
+                    .contains("only signal before that boot"));
+            // a multi-profile gate flattens to on-profile[0]/[1]; the first version of the
+            // warn read the exact scalar key and printed "profile 'null'" for exactly the
+            // shapes the gate accepts — both names must appear, and 'null' must not
+            assertThat(captured.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                    .contains("alpha").contains("beta")
+                    .contains("refresh-interval-ms")
+                    .doesNotContain("null"));
+            // and a cloud-platform gate is not a profile; the retired-key and misplaced-tree
+            // probes cover the other two fatal checks through the same path
+            assertThat(captured.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                    .contains("kubernetes")
+                    .contains("riptide.snmp.agents"));
+        } finally {
+            releaseReloaderLog(captured);
+        }
+    }
+
+    /**
+     * A file staged entirely for a future profile is the shape most likely to be all
+     * landmine, and the first version rejected it before the landmine scan ran — the
+     * warning's whole purpose defeated on the file that needed it most. The rejection
+     * stands (nothing is applicable); the warning now precedes it.
+     */
+    @Test
+    public void anAllGatedFileStillGetsItsLandmineWarningBeforeRejection() throws Exception {
+        final var captured = captureReloaderLog();
+        try {
+            final long failuresBefore = metrics.counter("config.reload.failures").getCount();
+            write("""
+                    spring:
+                      config:
+                        activate:
+                          on-profile: some-day
+                    riptide:
+                      nodes:
+                        dormant:
+                          subnet-address: 10.0.0.1
+                    """);
+            reloader.poll();
+
+            assertThat(metrics.counter("config.reload.failures").getCount()).isEqualTo(failuresBefore + 1);
+            assertThat(captured.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                    .contains("some-day").contains("riptide.nodes.dormant"));
+        } finally {
+            releaseReloaderLog(captured);
+        }
+    }
+
+    /**
+     * #537, the half-view half. A nested spring.config.import is boot-only: this reload
+     * substitutes only the watched file's own documents, so whatever is behind the import
+     * is invisible until the next restart — for any key, not just the fatal ones.
+     */
+    @Test
+    public void aNestedImportWarnsOncePerContentVersionNamingEveryImport() throws Exception {
+        final var captured = captureReloaderLog();
+        try {
+            write("""
+                    spring:
+                      config:
+                        import: [optional:file:/etc/riptide/more.yaml, optional:file:/etc/riptide/extra.yaml]
+                    riptide:
+                      snmp:
+                        credentials:
+                          plain:
+                            version: v3
+                            security-name: monitoring
+                    """);
+            reloader.poll();
+
+            assertThat(inventory.profiles().credentials()).containsKey("plain");
+            // every import named, not just the first: a warning naming one file while
+            // omitting another would read as complete
+            assertThat(captured.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                    .contains("more.yaml").contains("extra.yaml")
+                    .contains("only a restart reads them"));
+
+            // unchanged content: the hash latch means no reload at all, so no repetition
+            final long importWarns = importWarnCount(captured);
+            reloader.poll();
+            assertThat(importWarnCount(captured)).isEqualTo(importWarns);
+
+            // a NEW content version still carrying the import warns again: once per content
+            // version is the documented semantics — the reminder working, not a defect
+            write("""
+                    spring:
+                      config:
+                        import: [optional:file:/etc/riptide/more.yaml, optional:file:/etc/riptide/extra.yaml]
+                    riptide:
+                      snmp:
+                        credentials:
+                          plain:
+                            version: v3
+                            security-name: monitoring
+                          second:
+                            version: v3
+                            security-name: monitoring
+                    """);
+            reloader.poll();
+            assertThat(importWarnCount(captured)).isEqualTo(importWarns + 1);
+        } finally {
+            releaseReloaderLog(captured);
+        }
+    }
+
+    private static long importWarnCount(
+            final ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> captured) {
+        return captured.list.stream()
+                .filter(event -> event.getFormattedMessage().contains("nested spring.config.import"))
+                .count();
+    }
+
+    private static ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> captureReloaderLog() {
+        final var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(ConfigFileReloader.class);
+        final var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        return appender;
+    }
+
+    private static void releaseReloaderLog(
+            final ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender) {
+        final var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(ConfigFileReloader.class);
+        logger.detachAppender(appender);
+        appender.stop();
     }
 
     @Test

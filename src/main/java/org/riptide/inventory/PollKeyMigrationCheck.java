@@ -12,6 +12,7 @@ import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
 import org.springframework.stereotype.Component;
 
+import java.util.Optional;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
@@ -58,19 +59,31 @@ public class PollKeyMigrationCheck {
 
     /** Reusable against any source stack, matching the migration-check idiom. */
     public static void failOnRetiredPollKeys(final Iterable<PropertySource<?>> sources) {
+        findRetiredPollKey(sources).ifPresent(name -> {
+            throw new IllegalStateException(("Retired per-agent poll key found ('%s'): refresh and "
+                    + "expiry moved into named polling profiles: configure "
+                    + "riptide.snmp.polling.<name>.refresh-interval / .snapshot-expiry and reference "
+                    + "the profile from agent ranges. Fleet-level riptide.snmp.poll.* keys are "
+                    + "unaffected.").formatted(name));
+        });
+    }
+
+    /**
+     * The non-throwing probe the throwing path delegates to. Exists so the reloader can
+     * scan profile-gated documents it deliberately does not fail on (#537) without this
+     * class growing a second copy of the walk.
+     */
+    public static Optional<String> findRetiredPollKey(final Iterable<PropertySource<?>> sources) {
         for (final var source : sources) {
             if (source instanceof EnumerablePropertySource<?> enumerable) {
                 for (final String name : enumerable.getPropertyNames()) {
                     if (RETIRED_KEYS.contains(normalize(name))) {
-                        throw new IllegalStateException(("Retired per-agent poll key found ('%s'): refresh and "
-                                + "expiry moved into named polling profiles: configure "
-                                + "riptide.snmp.polling.<name>.refresh-interval / .snapshot-expiry and reference "
-                                + "the profile from agent ranges. Fleet-level riptide.snmp.poll.* keys are "
-                                + "unaffected.").formatted(name));
+                        return Optional.of(name);
                     }
                 }
             }
         }
+        return Optional.empty();
     }
 
     private static String normalize(final String name) {
