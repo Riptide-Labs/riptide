@@ -259,6 +259,102 @@ public class ConfigFileReloaderTest {
         assertThat((Integer) metrics.getGauges().get("config.reload.stale").getValue()).isZero();
     }
 
+    /**
+     * #537, the landmine half. A profile-gated document carrying a fatal startup key
+     * commits nothing and fails nothing (pinned posture), but activating that profile
+     * later converts a working deployment into a boot that refuses to come up — and the
+     * reload is the only moment anything reads the document before then. It must say so.
+     */
+    @Test
+    public void aGatedDocumentCarryingAFatalKeyWarnsButStillCommits() throws Exception {
+        final var captured = captureReloaderLog();
+        try {
+            final long successesBefore = metrics.counter("config.reload.successes").getCount();
+            write("""
+                    riptide:
+                      snmp:
+                        credentials:
+                          plain:
+                            version: v3
+                            security-name: monitoring
+                    ---
+                    spring:
+                      config:
+                        activate:
+                          on-profile: some-day
+                    riptide:
+                      nodes:
+                        dormant:
+                          subnet-address: 10.0.0.1
+                    """);
+            reloader.poll();
+
+            // the pinned posture holds: dormant configuration commits the active half
+            assertThat(metrics.counter("config.reload.successes").getCount()).isEqualTo(successesBefore + 1);
+            assertThat(inventory.profiles().credentials()).containsKey("plain");
+            // and the landmine is named: profile and key, neither of which boilerplate contains
+            assertThat(captured.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                    .contains("some-day")
+                    .contains("riptide.nodes.dormant")
+                    .contains("only signal before that boot"));
+        } finally {
+            releaseReloaderLog(captured);
+        }
+    }
+
+    /**
+     * #537, the half-view half. A nested spring.config.import is boot-only: this reload
+     * substitutes only the watched file's own documents, so whatever is behind the import
+     * is invisible until the next restart — for any key, not just the fatal ones.
+     */
+    @Test
+    public void aNestedImportWarnsThatItIsBootOnlyAndDoesNotRepeat() throws Exception {
+        final var captured = captureReloaderLog();
+        try {
+            write("""
+                    spring:
+                      config:
+                        import: optional:file:/etc/riptide/more.yaml
+                    riptide:
+                      snmp:
+                        credentials:
+                          plain:
+                            version: v3
+                            security-name: monitoring
+                    """);
+            reloader.poll();
+
+            assertThat(inventory.profiles().credentials()).containsKey("plain");
+            assertThat(captured.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                    .contains("nested spring.config.import")
+                    .contains("more.yaml")
+                    .contains("next restart"));
+
+            // unchanged content: the hash latch means no reload, so no warning repetition
+            final int warnsAfterFirst = captured.list.size();
+            reloader.poll();
+            assertThat(captured.list).hasSize(warnsAfterFirst);
+        } finally {
+            releaseReloaderLog(captured);
+        }
+    }
+
+    private static ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> captureReloaderLog() {
+        final var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(ConfigFileReloader.class);
+        final var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        return appender;
+    }
+
+    private static void releaseReloaderLog(
+            final ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender) {
+        final var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(ConfigFileReloader.class);
+        logger.detachAppender(appender);
+    }
+
     @Test
     void malformedCredentialEditIsRejectedOnReloadNotAtTheNextBoot() throws Exception {
         // 2.3's bind-time shape validation must gate reload candidates too: a
