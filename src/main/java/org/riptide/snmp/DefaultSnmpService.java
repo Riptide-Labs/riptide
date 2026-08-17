@@ -37,6 +37,8 @@ public class DefaultSnmpService implements SnmpService {
     private final Timer walkDuration;
     private final Meter walksSucceeded;
     private final Meter walksTimedOut;
+    /** Walks stopped at riptide's own bounds (budget or row cap), not by the agent going quiet. */
+    private final Meter walksAbandoned;
     private final Meter walksFailed;
 
     public DefaultSnmpService(final SecretResolvers secretResolvers, final MetricRegistry metrics) {
@@ -46,6 +48,7 @@ public class DefaultSnmpService implements SnmpService {
         this.walkDuration = metrics.timer(MetricRegistry.name("snmp", "walkDuration"));
         this.walksSucceeded = metrics.meter(MetricRegistry.name("snmp", "walks", "succeeded"));
         this.walksTimedOut = metrics.meter(MetricRegistry.name("snmp", "walks", "timedOut"));
+        this.walksAbandoned = metrics.meter(MetricRegistry.name("snmp", "walks", "abandoned"));
         this.walksFailed = metrics.meter(MetricRegistry.name("snmp", "walks", "failed"));
     }
 
@@ -66,6 +69,7 @@ public class DefaultSnmpService implements SnmpService {
                 case OK -> this.walksSucceeded.mark();
                 case TIMEOUT -> this.walksTimedOut.mark();
                 case ERROR -> this.walksFailed.mark();
+                case ABANDONED -> this.walksAbandoned.mark();
             }
             // any non-OK outcome is a failed walk: an error PDU is no more worth retrying
             // immediately than a timeout, and the meters above keep the distinction

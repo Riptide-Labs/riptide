@@ -5,7 +5,6 @@
 
 package org.riptide.snmp;
 
-import inet.ipaddr.IPAddressString;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.snmp4j.util.TableEvent;
@@ -34,6 +33,9 @@ class WalkBoundsTest {
     private static TableEvent row(final int index) {
         final TableEvent event = Mockito.mock(TableEvent.class);
         Mockito.when(event.isError()).thenReturn(false);
+        // production row events always carry an index (snmp4j delivers one event per row);
+        // stubbing it keeps the fixture honest if the collector ever starts reading it
+        Mockito.when(event.getIndex()).thenReturn(new org.snmp4j.smi.OID(new int[] {index}));
         return event;
     }
 
@@ -64,6 +66,8 @@ class WalkBoundsTest {
         // the cap stopped delivery: snmp4j sees false and stops issuing requests
         assertThat(accepted).isEqualTo(99);
         assertThat(collector.capped()).isTrue();
+        // the heap bound the cap javadoc promises: nothing past the cap is retained
+        assertThat(collector.events()).hasSize(100);
         // the waiter is released without any finished() call: the cap is the terminal event
         assertThat(collector.await(Duration.ofMillis(1).toNanos())).isTrue();
         assertThat(collector.isFinished()).isTrue();
@@ -106,7 +110,9 @@ class WalkBoundsTest {
         final Thread dispatcher = new Thread(() -> {
             collector.next(row(1));
             collector.next(row(2));
-            collector.finished(row(0));
+            // a normal finish event carries status only, no row index; a finish event
+            // WITH an index is the last-row-piggyback shape, which finished() must keep
+            collector.finished(Mockito.mock(TableEvent.class));
             delivered.countDown();
         }, "fake-snmp4j-dispatcher");
         dispatcher.start();
@@ -126,23 +132,8 @@ class WalkBoundsTest {
 
         assertThat(collector.next(error)).isFalse();
         assertThat(collector.capped()).as("an error is not the cap").isFalse();
-        assertThat(collector.await(1)).isTrue();
+        assertThat(collector.await(Duration.ofSeconds(1).toNanos())).isTrue();
         assertThat(collector.events()).hasSize(1);
         assertThat(collector.events().getFirst().isError()).isTrue();
-    }
-
-    /** The budget derivation: a walk may not outlive its own cadence, and the ceiling rules. */
-    @Test
-    void theBudgetIsTheCadenceCappedByTheCeiling() {
-        final var brisk = SnmpTest.communityV2c(new IPAddressString("10.0.0.1"), 161, "public",
-                Duration.ofSeconds(30), Duration.ofMinutes(30));
-        assertThat(SnmpUtils.walkBudget(brisk)).isEqualTo(Duration.ofSeconds(30));
-
-        final var slow = SnmpTest.communityV2c(new IPAddressString("10.0.0.1"), 161, "public",
-                Duration.ofDays(1), Duration.ofDays(2));
-        assertThat(SnmpUtils.walkBudget(slow)).isEqualTo(SnmpUtils.WALK_BUDGET_CEILING);
-
-        final var noCadence = SnmpTest.communityV2c(new IPAddressString("10.0.0.1"), 161, "public");
-        assertThat(SnmpUtils.walkBudget(noCadence)).isEqualTo(SnmpUtils.WALK_BUDGET_CEILING);
     }
 }

@@ -41,20 +41,34 @@ public final class SnmpUtils {
     /**
      * Upper bound on one whole {@link #getIfInfoMap} call, including the ifTable fallback
      * walk. snmp4j's timeout and retries bound each <em>round-trip</em>; nothing in snmp4j
-     * bounds how many round-trips a table walk takes, so walk duration is agent-paced. A
-     * full getBulk walk of thousands of interfaces is seconds, so two minutes is generous
-     * by orders of magnitude; the effective budget is {@code min(refresh-interval, this)},
-     * because a walk that outlives its own cadence is definitionally pathological (#536).
+     * bounds how many round-trips a table walk takes, so walk duration is agent-paced
+     * (#536).
+     *
+     * <p>A constant, deliberately not derived from the endpoint's cadence. The first
+     * version used {@code min(refresh-interval, ceiling)}, and review produced the
+     * counterexample: a 5,000-interface device at WAN latency needs ~50 s of sequential
+     * round-trips, and under a 30 s profile every walk was abandoned forever — a device
+     * the unbounded code enriched, starved by the bound. Two minutes admits every
+     * real-sized table at real latencies (walks do not overlap regardless: the in-flight
+     * flag serialises them per endpoint), while still bounding a hostile agent to two
+     * minutes of one pool slot per back-off cycle.</p>
      */
-    static final Duration WALK_BUDGET_CEILING = Duration.ofMinutes(2);
+    static final Duration WALK_BUDGET = Duration.ofMinutes(2);
 
     /**
-     * Upper bound on collected rows. Real devices top out in the low thousands of
-     * interfaces; this exists because the row count is agent-controlled, and an agent
-     * serving a strictly increasing, never-ending table (each response inside the
+     * Upper bound on collected rows. This exists because the row count is agent-controlled:
+     * an agent serving a strictly increasing, never-ending table (each response inside the
      * per-request timeout) would otherwise walk forever while the collected list grows
      * without bound. snmp4j already rejects non-increasing OIDs; this closes the
-     * increasing-forever case.
+     * increasing-forever case, and is also handed to {@code TableUtils.setRowLimit} so the
+     * library stops issuing requests at the same boundary rather than relying on the
+     * listener's refusal alone.
+     *
+     * <p>Known limitation, documented rather than hidden: subscriber-facing gear (BNG/BRAS)
+     * can legitimately exceed this many ifTable entries; such a device is not enrichable
+     * and its walks land on the abandoned outcome. Raising the cap is a memory trade
+     * (collected rows are buffered before the poller snapshots them, times pool width in
+     * the adversarial case) and should happen against a real request, not speculation.</p>
      */
     static final int MAX_TABLE_ROWS = 65_536;
 
@@ -62,7 +76,13 @@ public final class SnmpUtils {
     }
 
     enum WalkOutcome {
-        OK, TIMEOUT, ERROR
+        OK, TIMEOUT, ERROR,
+        /**
+         * The walk was stopped at our bounds (wall-clock budget or row cap), not by the
+         * agent failing to answer. Kept distinct from {@link #TIMEOUT} so the meters and
+         * logs cannot claim an agent "did not answer" when it answered too much.
+         */
+        ABANDONED
     }
 
     public record WalkResult(Map<Integer, IfInfo> rows, WalkOutcome outcome) {
@@ -71,26 +91,43 @@ public final class SnmpUtils {
     private static WalkResult walkColumns(final Snmp snmp, final Target<?> target, final SnmpEndpoint snmpEndpoint,
                                           final OID[] columns, final Function<List<VariableBinding>, IfInfo> row,
                                           final long deadlineNanos) {
+        if (deadlineNanos - System.nanoTime() <= 0) {
+            // checked before the request reaches the wire: the fallback walk after a slow
+            // ifXTable walk would otherwise fire a real GETBULK, abandon it instantly, and
+            // leave snmp4j delivering into a closing session
+            return new WalkResult(new TreeMap<>(), WalkOutcome.ABANDONED);
+        }
         final TableUtils tableUtils = new TableUtils(snmp, new DefaultPDUFactory());
+        // belt and braces with the collector's own cap: the library stops issuing requests
+        // at the same boundary instead of relying on the listener's refusal alone
+        tableUtils.setRowLimit(MAX_TABLE_ROWS);
         // the listener variant, not the synchronous one: with getTable(target, columns,
         // lower, upper) the blocking wait belongs to snmp4j and the loop termination
         // belongs to the AGENT — walk duration and heap were both agent-controlled. Here
-        // the wait is ours (bounded below) and the collector stops at the row cap
+        // the wait is ours. (The synchronous timeout variant was considered and rejected:
+        // its wait is a bare listener.wait with a single !finished check — spurious-wakeup
+        // prone — at one-second granularity.)
         final WalkCollector collector = new WalkCollector(MAX_TABLE_ROWS);
         tableUtils.getTable(target, columns, collector, null, null, null);
 
         if (!collector.await(deadlineNanos - System.nanoTime())) {
-            // rate-bounded by the poller's back-off, which the TIMEOUT outcome engages
-            log.warn("Interface walk of {} exceeded its budget and was abandoned; rows collected "
+            if (Thread.currentThread().isInterrupted()) {
+                // shutdown, not the agent's fault: the walker pool was interrupted while a
+                // walk was in flight. Quietly abandoned; the process is exiting
+                return new WalkResult(new TreeMap<>(), WalkOutcome.ABANDONED);
+            }
+            // rate-bounded by the poller's back-off, which the failed outcome engages
+            log.warn("Interface walk of {} exceeded its {} budget and was abandoned; rows collected "
                     + "so far are discarded (an incomplete table must not be cached as complete)",
-                    snmpEndpoint);
-            return new WalkResult(new TreeMap<>(), WalkOutcome.TIMEOUT);
+                    snmpEndpoint, WALK_BUDGET);
+            return new WalkResult(new TreeMap<>(), WalkOutcome.ABANDONED);
         }
         if (collector.capped()) {
-            log.warn("Interface walk of {} stopped at the {}-row cap: the table kept growing, which "
-                    + "no real device does. Rows are discarded and the endpoint backs off",
-                    snmpEndpoint, MAX_TABLE_ROWS);
-            return new WalkResult(new TreeMap<>(), WalkOutcome.TIMEOUT);
+            log.warn("Interface walk of {} stopped at the {}-row cap and was abandoned: either the "
+                    + "table keeps growing (no real access device does this) or the device carries "
+                    + "more interfaces than riptide enriches. Rows are discarded and the endpoint "
+                    + "backs off", snmpEndpoint, MAX_TABLE_ROWS);
+            return new WalkResult(new TreeMap<>(), WalkOutcome.ABANDONED);
         }
 
         final Map<Integer, IfInfo> interfaces = new TreeMap<>();
@@ -172,9 +209,15 @@ public final class SnmpUtils {
 
         /**
          * Waits for the walk to finish, up to the remaining budget. Returns false on
-         * expiry, after which late deliveries are dropped ({@code next} answers false and
-         * snmp4j stops). The wait being ours is the whole point: no failure mode inside
-         * snmp4j — undelivered response, dead dispatcher — can keep the walker thread.
+         * expiry, after which late deliveries are dropped ({@code next} answers false).
+         * The wait being ours is the whole point: no failure mode inside snmp4j —
+         * undelivered response, dead dispatcher — can keep the walker thread.
+         *
+         * <p>What actually stops the round-trips after an abandonment is
+         * {@code getIfInfoMap}'s try-with-resources: {@code Snmp.close()} cancels the
+         * pending request and delivers a final refused event. TableUtils never consults
+         * {@code isFinished()} on its own, so the refusing {@code next} plus the close are
+         * the whole mechanism — an invariant this class depends on and must keep.</p>
          */
         boolean await(final long remainingNanos) {
             if (remainingNanos <= 0) {
@@ -238,11 +281,16 @@ public final class SnmpUtils {
      * falling back to the legacy ifTable (ifDescr only) — unless the first walk timed out.
      */
     public static WalkResult getIfInfoMap(final SnmpEndpoint snmpEndpoint, final SecretResolvers secretResolvers) throws IOException {
+        return getIfInfoMap(snmpEndpoint, secretResolvers, WALK_BUDGET.toNanos());
+    }
+
+    /** Test seam: the budget parameter lets the abandonment paths run against a real agent. */
+    static WalkResult getIfInfoMap(final SnmpEndpoint snmpEndpoint, final SecretResolvers secretResolvers,
+                                   final long budgetNanos) throws IOException {
         final SnmpBuilder snmpBuilder = snmpEndpoint.getSnmpDefinition().getSnmpVersion().getSnmpBuilder();
         // one deadline for the whole call: the fallback walk shares the budget rather than
-        // doubling it, and a walk may not outlive its own cadence (a shorter profile
-        // refresh tightens the budget; the ceiling does the work for slow cadences)
-        final long deadlineNanos = System.nanoTime() + walkBudget(snmpEndpoint).toNanos();
+        // doubling it
+        final long deadlineNanos = System.nanoTime() + budgetNanos;
         try (Snmp snmp = snmpBuilder.build()) {
             final Target<?> target = snmpEndpoint.getSnmpDefinition().getSnmpVersion().getTarget(snmp, snmpBuilder, snmpEndpoint, secretResolvers);
             final var ifXTable = walkColumns(snmp, target, snmpEndpoint, new OID[]{IFX_NAME, IFX_HIGH_SPEED, IFX_ALIAS}, SnmpUtils::ifXRow, deadlineNanos);
@@ -253,12 +301,7 @@ public final class SnmpUtils {
         }
     }
 
-    static Duration walkBudget(final SnmpEndpoint snmpEndpoint) {
-        final Duration cadence = snmpEndpoint.getRefreshInterval();
-        return cadence == null || cadence.compareTo(WALK_BUDGET_CEILING) > 0
-                ? WALK_BUDGET_CEILING
-                : cadence;
-    }
+
 
     /**
      * The fallback exists for agents that lack ifXTable: v2c/v3 agents answer clean-empty (OK),
@@ -267,7 +310,8 @@ public final class SnmpUtils {
      */
     static boolean shouldFallback(final WalkResult ifXTableResult) {
         return switch (ifXTableResult.outcome()) {
-            case TIMEOUT -> false;
+            // an abandoned walk would only be abandoned again: the bound is ours, not the table's
+            case TIMEOUT, ABANDONED -> false;
             case ERROR -> true;
             case OK -> ifXTableResult.rows().isEmpty();
         };

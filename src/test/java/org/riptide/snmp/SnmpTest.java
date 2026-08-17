@@ -119,6 +119,34 @@ public class SnmpTest {
         return snmpDefinition.createEndpoint(ipAddressString);
     }
 
+    /**
+     * The abandonment path (#536), end to end against a real agent through the real
+     * listener wiring: a zero budget abandons before the request reaches the wire, rows
+     * are discarded, and the outcome is ABANDONED — never TIMEOUT, which would let the
+     * poller log that a responsive agent "did not answer".
+     */
+    @Test
+    public void anExhaustedBudgetAbandonsTheWalkWithoutCachingPartialRows(@TempDir Path temporaryFolder)
+            throws Exception {
+        final int port = getNextPort();
+        currentAgent = new TestSnmpAgent("127.0.0.1/" + port, temporaryFolder);
+        currentAgent.start();
+        currentAgent.registerIfTable();
+        currentAgent.registerIfXTable();
+
+        final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.COMMUNITY);
+        final var abandoned = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS, 0L);
+
+        assertThat(abandoned.outcome()).isEqualTo(SnmpUtils.WalkOutcome.ABANDONED);
+        Assertions.assertThat(abandoned.rows()).as("an incomplete table must not be cached as complete").isEmpty();
+
+        // and the same agent with a real budget serves the full table: the abandonment was
+        // the budget's doing, not the agent's
+        final var full = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS);
+        assertThat(full.outcome()).isEqualTo(SnmpUtils.WalkOutcome.OK);
+        Assertions.assertThat(full.rows()).containsKey(1);
+    }
+
     @Test
     public void testSnmpV2(@TempDir Path temporaryFolder) throws Exception {
         final int port = getNextPort();
