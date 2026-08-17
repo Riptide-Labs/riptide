@@ -50,8 +50,12 @@ binding): uppercase, dots and dashes become underscores, list indexes become `_0
 |---|---|
 | `riptide.clickhouse.endpoint` | `RIPTIDE_CLICKHOUSE_ENDPOINT` |
 | `riptide.receivers.ipfix.port` | `RIPTIDE_RECEIVERS_IPFIX_PORT` |
-| `riptide.nodes.core-router.subnet-address` | `RIPTIDE_NODES_COREROUTER_SUBNETADDRESS` |
-| `riptide.nodes.core-router.snmp.community` | `RIPTIDE_NODES_COREROUTER_SNMP_COMMUNITY` |
+| `riptide.snmp.credentials.corp-v3.security-name` | `RIPTIDE_SNMP_CREDENTIALS_CORPV3_SECURITYNAME` |
+| `riptide.inventory.file` | `RIPTIDE_INVENTORY_FILE` |
+
+Agent ranges and enrichment entries are the exception: they live in the
+[inventory file](../configuration/agent-configuration.md) and cannot be supplied
+through environment variables at all.
 
 Environment-variable configuration is fixed for the process lifetime — changing it
 means a restart. File-based configuration can

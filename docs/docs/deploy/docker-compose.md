@@ -60,7 +60,7 @@ named or `defaultDatabase`-pinned datasource.
 
 Point a NetFlow v5/v9, IPFIX or sFlow exporter at UDP `9999` and watch rows arrive in `riptide.flows` via ch-ui.
 The compose file configures a single `multi` [receiver](../configuration/receivers.md) on that port.
-Further settings — more [receivers](../configuration/receivers.md) or the [node inventory](../configuration/nodes-and-snmp.md) for exporter names and SNMP enrichment — go through environment variables in the compose file (see [Plain JAR](plain-jar.md#environment-variables) for the `RIPTIDE_*` scheme) or an external config file.
+Further settings — more [receivers](../configuration/receivers.md) or the [credential sets](../configuration/agent-configuration.md) — go through environment variables in the compose file (see [Plain JAR](plain-jar.md#environment-variables) for the `RIPTIDE_*` scheme) or an external config file. Agent ranges and [enrichment entries](../configuration/exporter-enrichment.md) live in the inventory file, which must be on the mount: it cannot be supplied through environment variables.
 
 ## Variants
 

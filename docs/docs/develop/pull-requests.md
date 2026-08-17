@@ -59,3 +59,7 @@ throughout the codebase:
 
 Branch from `main`, keep PRs focused, make CI green — reviews happen on GitHub. Bug
 reports with a pcap (see [Run & debug](run-and-debug.md)) are the fastest path to a fix.
+
+## Cutting issues
+
+Every claim in an issue carries its evidence **inline**: the command, the output excerpt, the measurement. Never cite local working documents (research notes, benchmark scratch files, anything gitignored) as the source: they do not exist for anyone else, and an issue that says "see the research doc" is unreviewable the moment the branch is gone. If the evidence matters, paste it; if it is too long, attach it.

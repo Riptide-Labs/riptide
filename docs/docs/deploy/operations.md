@@ -68,8 +68,12 @@ the reloaded file are boot-only; `env://` secret references cannot rotate in-pro
 
 Compose: `docker compose pull && docker compose up -d`. Plain JAR: replace the jar,
 restart. Configuration is backward-compatible within a minor line; breaking configuration
-moves are logged loudly at startup (e.g. the pre-0.1.0 `riptide.snmp.config.definitions`
-tree logs an explicit error pointing at `riptide.nodes`).
+moves **fail startup loudly** rather than half-applying. The 0.9 flag day is the big one:
+any surviving `riptide.nodes` key, in any spelling including the `RIPTIDE_NODES_*`
+environment form, stops the collector with an error naming the key and the converter —
+see [Upgrading from 0.8](../upgrading-from-0.8.md). Plan it as a migration step, not as a
+log-review item: under systemd or Kubernetes a missed key means a restart loop until the
+configuration is converted.
 
 Upgrading to 0.7.0 also changes what one **metric** means rather than any configuration key — see
 [Parser gauges: exporters and templates](#parser-gauges-exporters-and-templates) before relying on
