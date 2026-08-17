@@ -12,6 +12,7 @@ import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
 import org.springframework.stereotype.Component;
 
+import java.util.Optional;
 import java.util.Objects;
 
 /**
@@ -56,7 +57,7 @@ public class LegacyNodesFlagDayCheck {
     }
 
     /** Non-throwing probe for the reloader's gated-document scan (#537); one walk per class. */
-    public static java.util.Optional<String> findLegacyNodesKey(final Iterable<PropertySource<?>> sources) {
+    public static Optional<String> findLegacyNodesKey(final Iterable<PropertySource<?>> sources) {
         for (final var source : sources) {
             if (source instanceof EnumerablePropertySource<?> enumerable) {
                 for (final String name : enumerable.getPropertyNames()) {
@@ -68,12 +69,12 @@ public class LegacyNodesFlagDayCheck {
                     // The regex alone decides; a normalize-and-startsWith conjunct used to sit
                     // here and was fully implied by it, two matching theories where one does
                     if (LEGACY_KEY.matcher(name).lookingAt() && !isServiceLink(name)) {
-                        return java.util.Optional.of(name);
+                        return Optional.of(name);
                     }
                 }
             }
         }
-        return java.util.Optional.empty();
+        return Optional.empty();
     }
 
     /**

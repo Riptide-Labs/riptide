@@ -12,6 +12,7 @@ import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
 import org.springframework.stereotype.Component;
 
+import java.util.Optional;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
@@ -72,17 +73,17 @@ public class PollKeyMigrationCheck {
      * scan profile-gated documents it deliberately does not fail on (#537) without this
      * class growing a second copy of the walk.
      */
-    public static java.util.Optional<String> findRetiredPollKey(final Iterable<PropertySource<?>> sources) {
+    public static Optional<String> findRetiredPollKey(final Iterable<PropertySource<?>> sources) {
         for (final var source : sources) {
             if (source instanceof EnumerablePropertySource<?> enumerable) {
                 for (final String name : enumerable.getPropertyNames()) {
                     if (RETIRED_KEYS.contains(normalize(name))) {
-                        return java.util.Optional.of(name);
+                        return Optional.of(name);
                     }
                 }
             }
         }
-        return java.util.Optional.empty();
+        return Optional.empty();
     }
 
     private static String normalize(final String name) {

@@ -12,6 +12,7 @@ import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
 import org.springframework.stereotype.Component;
 
+import java.util.Optional;
 import java.util.Objects;
 import java.util.regex.Pattern;
 
@@ -53,16 +54,16 @@ public class InventoryMisplacementCheck {
     }
 
     /** Non-throwing probe for the reloader's gated-document scan (#537); one walk per class. */
-    public static java.util.Optional<String> findMisplacedInventoryKey(final Iterable<PropertySource<?>> sources) {
+    public static Optional<String> findMisplacedInventoryKey(final Iterable<PropertySource<?>> sources) {
         for (final var source : sources) {
             if (source instanceof EnumerablePropertySource<?> enumerable) {
                 for (final String name : enumerable.getPropertyNames()) {
                     if (MISPLACED_TREE.matcher(name).find()) {
-                        return java.util.Optional.of(name);
+                        return Optional.of(name);
                     }
                 }
             }
         }
-        return java.util.Optional.empty();
+        return Optional.empty();
     }
 }
