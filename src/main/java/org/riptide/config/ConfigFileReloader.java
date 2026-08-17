@@ -89,6 +89,18 @@ public class ConfigFileReloader {
 
     private final Counter reloadSuccesses;
     private final Counter reloadFailures;
+    /** Config committed but the inventory rebuild did not publish: the edit is only partly serving. */
+    private final Counter reloadPartial;
+
+    /**
+     * The profiles a committed config edit could not carry into the inventory, retried on
+     * every poll until they publish. Non-null is the partial state: the config half is
+     * serving, the inventory half is not, and the stale gauge must say so for as long as
+     * that holds — the first version of this fix latched a boolean that the very next
+     * unchanged-content poll recomputed away, so the gauge showed 1 for at most one
+     * interval while the rotation stayed stranded.
+     */
+    private volatile SnmpProfilesConfig pendingProfiles;
     private volatile boolean stale = false;
 
     /** Boot's binding conversion, reproduced: defaults plus the context's binding converters. */
@@ -136,7 +148,9 @@ public class ConfigFileReloader {
 
         this.reloadSuccesses = metrics.counter(MetricRegistry.name("config", "reload", "successes"));
         this.reloadFailures = metrics.counter(MetricRegistry.name("config", "reload", "failures"));
-        metrics.register(MetricRegistry.name("config", "reload", "stale"), (Gauge<Integer>) () -> this.stale ? 1 : 0);
+        this.reloadPartial = metrics.counter(MetricRegistry.name("config", "reload", "partial"));
+        metrics.register(MetricRegistry.name("config", "reload", "stale"),
+                (Gauge<Integer>) () -> this.stale || this.pendingProfiles != null ? 1 : 0);
     }
 
     @PostConstruct
@@ -169,6 +183,34 @@ public class ConfigFileReloader {
         }
         if (this.executor != null) {
             this.executor.shutdownNow();
+        }
+    }
+
+    /**
+     * Retries carrying a partially applied edit's profiles into the inventory, once per
+     * poll while the state persists. This is what heals a rotation whose inventory file
+     * was unreadable or mid-write at commit time: the inventory watcher cannot do it,
+     * because it re-parses against the SERVING profiles, which a partial edit never
+     * updated. Success is logged and clears the partial state; failure stays quiet, the
+     * WARN at commit time already named the condition and the gauge holds it visible.
+     */
+    private void retryPendingRebuild() {
+        final SnmpProfilesConfig pending = this.pendingProfiles;
+        if (pending == null) {
+            return;
+        }
+        try {
+            final InventorySnapshot published =
+                    this.inventory.rebuildAndSwap(pending, this.inventoryConfig.getFile());
+            if (published != null) {
+                this.pendingProfiles = null;
+                this.interfacePoller.refreshRegistrations();
+                log.info("Recovered: the credential and profile changes from the last config edit are "
+                        + "now fully serving ({} credential set(s), {} polling profile(s))",
+                        pending.credentials().size(), pending.polling().size());
+            }
+        } catch (final RuntimeException e) {
+            log.debug("Pending inventory rebuild still failing: {}", e.getMessage());
         }
     }
 
@@ -219,6 +261,7 @@ public class ConfigFileReloader {
                 // reflects whether the file matches what is running (a transient read
                 // failure must not latch the gauge)
                 this.stale = !MessageDigest.isEqual(hash, this.lastCommittedHash);
+                retryPendingRebuild();
                 return;
             }
             this.lastAttemptedHash = hash;
@@ -303,6 +346,10 @@ public class ConfigFileReloader {
         // rebuilt and published in one monitor-held read, so nothing can change between
         // validating the candidate and committing it, and guarded because the config is
         // already serving by now: a throw here must not be reported as a failed reload
+        boolean inventoryPublished = false;
+        // a new edit supersedes whatever an earlier partial left pending: retrying old
+        // profiles after a newer commit would publish a rotation the operator replaced
+        this.pendingProfiles = null;
         try {
             final InventorySnapshot published =
                     this.inventory.rebuildAndSwap(candidateProfiles, this.inventoryConfig.getFile());
@@ -311,6 +358,7 @@ public class ConfigFileReloader {
                         + "no entries while a populated one is serving. The credential and profile changes "
                         + "in this edit are NOT serving", this.inventoryConfig.getFile());
             } else {
+                inventoryPublished = true;
                 this.interfacePoller.refreshRegistrations();
             }
         } catch (final RuntimeException e) {
@@ -328,7 +376,15 @@ public class ConfigFileReloader {
         // operator whose credential rotation never reached a walk saw a success counter, a
         // clean gauge and a reloaded log line (#534). Partial keeps it latched, counted on
         // its own meter; the remediation is the one the WARN above names
-        this.stale = false;
+        if (inventoryPublished) {
+            this.stale = false;
+        } else {
+            // counted once per edit, not once per retry; the pending profiles keep the
+            // stale gauge at 1 until a retry or a newer edit publishes. Note partial is a
+            // subset of successes: the config half committed and successes counts that
+            this.reloadPartial.inc();
+            this.pendingProfiles = candidateProfiles;
+        }
         // the SERVING counts, read back from the inventory, not the candidate's. Both paths
         // above can leave the candidate profiles unpublished while this line still runs, and
         // quoting the candidate would report credential sets that never reached a walk right

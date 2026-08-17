@@ -185,6 +185,73 @@ public class ConfigFileReloaderTest {
         }
     }
 
+    /**
+     * #534, the full contract. A reload whose inventory rebuild does not publish used to
+     * count a success and clear the stale gauge — and the first fix latched a boolean the
+     * very next unchanged-content poll recomputed away, so the gauge showed 1 for one
+     * interval and then lied again. The contract: stale reads 1 for as long as the edit is
+     * not fully serving, and the pending half retries each poll until it heals.
+     */
+    @Test
+    public void aPartialReloadStaysVisibleUntilItHeals() throws Exception {
+        // seed: a committed reload against a publishable inventory, so the "populated
+        // inventory refuses an empty candidate" precondition holds by construction rather
+        // than by sibling-test ordering (this class has been order-dependent before)
+        write("""
+                riptide:
+                  snmp:
+                    credentials:
+                      seed:
+                        version: v3
+                        security-name: monitoring
+                """);
+        reloader.poll();
+        assertThat(inventory.profiles().credentials()).containsKey("seed");
+        assertThat(inventory.snapshot().exporterCount()).isPositive();
+
+        // the inventory file turns unpublishable (parses to no entries over a populated
+        // inventory), and the operator rotates a credential in the main config
+        Files.writeString(INVENTORY, "---\n");
+        final long successesBefore = metrics.counter("config.reload.successes").getCount();
+        final long partialBefore = metrics.counter("config.reload.partial").getCount();
+        write("""
+                riptide:
+                  snmp:
+                    credentials:
+                      rotated:
+                        version: v3
+                        security-name: monitoring
+                """);
+        reloader.poll();
+
+        // the config half committed and says so; the edit is not fully serving and the
+        // gauge must not claim it is
+        assertThat(metrics.counter("config.reload.successes").getCount()).isEqualTo(successesBefore + 1);
+        assertThat(metrics.counter("config.reload.partial").getCount()).isEqualTo(partialBefore + 1);
+        assertThat((Integer) metrics.getGauges().get("config.reload.stale").getValue()).isEqualTo(1);
+        assertThat(inventory.profiles().credentials()).doesNotContainKey("rotated");
+
+        // the next poll sees unchanged content. The first fix cleared the gauge here
+        reloader.poll();
+        assertThat((Integer) metrics.getGauges().get("config.reload.stale").getValue())
+                .as("stale must hold while the edit is not fully serving")
+                .isEqualTo(1);
+        // counted per edit, not per retry
+        assertThat(metrics.counter("config.reload.partial").getCount()).isEqualTo(partialBefore + 1);
+
+        // the inventory file is fixed; the next unchanged-content poll retries the pending
+        // rebuild and the rotation finally serves, with no further config edit
+        Files.writeString(INVENTORY, """
+                riptide:
+                  exporters:
+                    neutral:
+                      address: 198.51.100.1
+                """);
+        reloader.poll();
+        assertThat(inventory.profiles().credentials()).containsKey("rotated");
+        assertThat((Integer) metrics.getGauges().get("config.reload.stale").getValue()).isZero();
+    }
+
     @Test
     void malformedCredentialEditIsRejectedOnReloadNotAtTheNextBoot() throws Exception {
         // 2.3's bind-time shape validation must gate reload candidates too: a
