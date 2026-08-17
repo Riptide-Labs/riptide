@@ -204,6 +204,87 @@ class InventoryFileReloaderTest {
         assertThat(failures()).isZero();
     }
 
+    /**
+     * The per-tree torn-write guard (#535), at the watcher level: the pre-check and the
+     * monitor-held guard both sit on this path, and deleting either used to leave this
+     * suite green because only the whole-file case was tested.
+     */
+    @Test
+    void aTornOneTreeFileIsRefusedAndTheFullWriteHeals() throws Exception {
+        write("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                  exporters:
+                    core:
+                      address: 10.20.0.1
+                """);
+        this.reloader.poll();
+        assertThat(this.inventory.snapshot().agentCount()).isEqualTo(1);
+        assertThat(this.inventory.snapshot().exporterCount()).isEqualTo(1);
+
+        // a torn read: exporters flushed, agents truncated. Refusal, not failure — the
+        // same rule as deletion, and the operator remediation lives in the warn
+        write("""
+                riptide:
+                  exporters:
+                    core:
+                      address: 10.20.0.1
+                """);
+        this.reloader.poll();
+        assertThat(this.inventory.snapshot().agentCount())
+                .as("the polled fleet must survive a torn read").isEqualTo(1);
+        assertThat(failures()).isZero();
+
+        // the writer finishes; the changed content re-parses and publishes
+        write("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                      "10.30.0.0/16":
+                        credentials: corp-v3
+                  exporters:
+                    core:
+                      address: 10.20.0.1
+                """);
+        this.reloader.poll();
+        assertThat(this.inventory.snapshot().agentCount()).isEqualTo(2);
+    }
+
+    /** The authored decommission: an explicit empty mapping publishes through poll(). */
+    @Test
+    void anExplicitlyEmptyTreeDecommissionsThroughTheWatcher() throws Exception {
+        write("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                  exporters:
+                    core:
+                      address: 10.20.0.1
+                """);
+        this.reloader.poll();
+        assertThat(this.inventory.snapshot().agentCount()).isEqualTo(1);
+
+        write("""
+                riptide:
+                  snmp:
+                    agents: {}
+                  exporters:
+                    core:
+                      address: 10.20.0.1
+                """);
+        this.reloader.poll();
+        assertThat(this.inventory.snapshot().agentCount()).isZero();
+        assertThat(this.inventory.snapshot().exporterCount()).isEqualTo(1);
+        assertThat(failures()).isZero();
+    }
+
     @Test
     void anEmptyInventoryStillLoadsWhenNothingIsRunning() throws Exception {
         // the refusal is only about not wiping a populated inventory; an empty

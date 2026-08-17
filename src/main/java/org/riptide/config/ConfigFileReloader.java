@@ -354,9 +354,12 @@ public class ConfigFileReloader {
             final InventorySnapshot published =
                     this.inventory.rebuildAndSwap(candidateProfiles, this.inventoryConfig.getFile());
             if (published == null) {
-                log.warn("Config reloaded, but the inventory was left alone: rebuilding it from {} produced "
-                        + "no entries while a populated one is serving. The credential and profile changes "
-                        + "in this edit are NOT serving", this.inventoryConfig.getFile());
+                log.warn("Config reloaded, but the inventory was left alone: rebuilding it from {} would "
+                        + "have dropped a whole tree that is currently serving (a partially written file "
+                        + "reads this way; write atomically via mv, or declare a deliberate decommission "
+                        + "as an explicit empty mapping, e.g. agents: {{}}). The credential and profile "
+                        + "changes in this edit are NOT serving until the file is whole; they are retried "
+                        + "every poll", this.inventoryConfig.getFile());
             } else {
                 inventoryPublished = true;
                 this.interfacePoller.refreshRegistrations();

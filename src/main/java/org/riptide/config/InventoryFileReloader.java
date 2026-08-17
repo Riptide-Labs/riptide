@@ -219,7 +219,7 @@ public class InventoryFileReloader {
                 // serving, so refusing this is the same rule, not a new one. This is a
                 // pre-check for the message; the monitor-held guard in Inventory decides
                 log.warn("Inventory file {} would drop a whole tree ({} -> {} agent range(s), {} -> {} "
-                        + "enrichment entrie(s)): keeping the running inventory (a partially written "
+                        + "enrichment entry/entries): keeping the running inventory (a partially written "
                         + "file reads this way; write atomically via mv). To deliberately empty a "
                         + "tree, write it as an explicit empty mapping (agents: {} / exporters: {}); "
                         + "to stop polling while keeping entries, set enabled: false on a covering "

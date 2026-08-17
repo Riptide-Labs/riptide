@@ -60,12 +60,16 @@ public class Inventory {
      * every other publication path — this used to be neither, which made it both the
      * method a future publisher would reach for and the one that bypassed the torn-write
      * guard entirely, and let it interleave unseen inside {@link #rebuildAndSwap}'s
-     * monitor-held read-then-write (#535). Boot and every test publisher put a first
-     * snapshot into a fresh instance, so the guard passes trivially for them.
+     * monitor-held read-then-write (#535). Boot publishes over the fresh empty, so the
+     * guard passes trivially there; test publishers that re-swap must keep their
+     * sequences non-regressive or declare the empty tree, same as an operator.
      *
      * @throws IllegalStateException on a publish that would drop an entire tree
      */
     public synchronized void swap(final InventorySnapshot snapshot) {
+        // throwing is right here: the callers are boot (guard trivially passes over the
+        // fresh empty) and test publishers, where a regressive publish is a broken fixture
+        // that deserves a loud failure, not a deferral nothing retries
         requireNotRegressive(snapshot);
         this.active = Objects.requireNonNull(snapshot);
     }
@@ -87,9 +91,15 @@ public class Inventory {
         }
         // the caller pre-checks against its own read of the serving snapshot and logs the
         // operator-facing refusal; this monitor-held check closes the window between that
-        // read and this commit. Reaching it means the race actually happened, and loud —
-        // the caller counts a failure — beats silently publishing a fleet-dropping file
-        requireNotRegressive(snapshot);
+        // read and this commit. Deferral, not a throw: reaching it means the serving
+        // snapshot changed mid-parse, which is exactly the condition the false return
+        // already means — the caller resets its attempted hash and re-parses next cycle
+        // against what is serving by then. A throw here landed in the caller's failure
+        // path and left the attempted hash committed, wedging retries until the file
+        // changed again
+        if (snapshot.isRegressiveOver(this.active)) {
+            return false;
+        }
         this.active = Objects.requireNonNull(snapshot);
         return true;
     }

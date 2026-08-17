@@ -69,7 +69,9 @@ class InventoryPublicationGuardTest {
                             core:
                               address: 10.0.0.1
                         """),
-                new Torn("both truncated", "riptide: {}\n")}) {
+                // a tear dies at a bare key; the literal `riptide: {}` is authored and
+                // is now the sanctioned whole-empty spelling, tested separately
+                new Torn("both truncated", "riptide:\n")}) {
             assertThatThrownBy(() -> serving(BOTH_TREES).swap(parse(torn.yaml())))
                     .as(torn.label())
                     .isInstanceOf(IllegalStateException.class)
@@ -170,12 +172,52 @@ class InventoryPublicationGuardTest {
         assertThat(inventory.snapshot().agentCount()).isZero();
     }
 
-    /** The monitor-held check in the CAS path closes the caller's read-then-commit window. */
+    /**
+     * The monitor-held check in the CAS path closes the caller's read-then-commit window
+     * by DEFERRING, not throwing: false is what the caller already handles by re-parsing
+     * next cycle against whatever is serving by then. The first version threw, which
+     * landed in the watcher's failure path with the attempted hash committed — wedging
+     * retries of that content until the file changed again.
+     */
     @Test
-    void theCasPathIsGuardedMonitorHeldToo() {
+    void theCasPathDefersARegressiveCandidateInsteadOfPublishingOrThrowing() {
         final Inventory inventory = serving(BOTH_TREES);
-        assertThatThrownBy(() -> inventory.swapIfProfilesUnchanged(PROFILES, parse("riptide: {}\n")))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("drops a whole tree");
+        // "---" parses to nothing with no marker anywhere: regressive over both trees
+        assertThat(inventory.swapIfProfilesUnchanged(PROFILES, parse("riptide:\n"))).isFalse();
+        assertThat(inventory.snapshot().agentCount()).isEqualTo(1);
+        // and a marked candidate still publishes through the same path
+        assertThat(inventory.swapIfProfilesUnchanged(PROFILES, parse("riptide: {}\n"))).isTrue();
+        assertThat(inventory.snapshot().isEmpty()).isTrue();
+    }
+
+    /**
+     * The marker is honoured at any ancestor, because the tear argument is the
+     * ancestor's too: truncation dies at a bare or missing key, and an explicit empty
+     * mapping at any level can only be authored.
+     */
+    @Test
+    void anExplicitlyEmptyAncestorDeclaresTheTreesBelowIt() {
+        // snmp: {} declares agents-empty while exporters survive
+        final Inventory viaSnmp = serving(BOTH_TREES);
+        viaSnmp.swap(parse("""
+                riptide:
+                  snmp: {}
+                  exporters:
+                    core:
+                      address: 10.0.0.1
+                """));
+        assertThat(viaSnmp.snapshot().agentCount()).isZero();
+
+        // riptide: {} declares both: the authored spelling of a whole empty inventory
+        final Inventory viaRoot = serving(BOTH_TREES);
+        viaRoot.swap(parse("riptide: {}\n"));
+        assertThat(viaRoot.snapshot().isEmpty()).isTrue();
+
+        // but the bare-key spellings of the same levels stay refused: a tear produces those
+        for (final String torn : new String[] {"riptide:\n", "riptide:\n  snmp:\n"}) {
+            assertThatThrownBy(() -> serving(BOTH_TREES).swap(parse(torn)))
+                    .as("bare key: %s", torn.replace("\n", "\\n"))
+                    .isInstanceOf(IllegalStateException.class);
+        }
     }
 }
