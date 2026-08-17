@@ -31,6 +31,6 @@ Build from source, debug locally, send a pull request.
 - [Pull requests](develop/pull-requests.md) — quality gates, DCO, commit conventions
 
 Both paths share the [configuration reference](configuration/receivers.md) —
-receivers, [nodes & SNMP](configuration/nodes-and-snmp.md),
+receivers, [SNMP agents](configuration/agent-configuration.md),
 [secret references](configuration/secret-references.md), and
 [ClickHouse](configuration/clickhouse.md).

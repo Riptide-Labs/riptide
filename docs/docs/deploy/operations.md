@@ -33,8 +33,10 @@ retention accordingly if a version upgrade requires dropping the table.
 
 ## Config hot-reload
 
-Node and routing configuration can reload from `/etc/riptide/config.yaml` without a
-restart — adding a device or changing a subnet applies within one poll. Opt in with:
+Credential sets, polling profiles and routing reload from `/etc/riptide/config.yaml`
+without a restart, and the [inventory file](../configuration/agent-configuration.md)
+reloads on its own content changes — adding a device or carving a range out applies
+within one poll. Opt in with:
 
 ```properties
 riptide.config.reload-interval=30s   # absent or 0 = disabled (the default)
@@ -68,8 +70,14 @@ the reloaded file are boot-only; `env://` secret references cannot rotate in-pro
 
 Compose: `docker compose pull && docker compose up -d`. Plain JAR: replace the jar,
 restart. Configuration is backward-compatible within a minor line; breaking configuration
-moves are logged loudly at startup (e.g. the pre-0.1.0 `riptide.snmp.config.definitions`
-tree logs an explicit error pointing at `riptide.nodes`).
+moves are impossible to miss: the removed trees **fail startup** (`riptide.nodes` and the
+retired fleet poll keys), while superseded-but-harmless ones log an explicit error and are
+ignored (`riptide.snmp.config.definitions`). The 0.9 flag day is the big one:
+any surviving `riptide.nodes` key, in any spelling including the `RIPTIDE_NODES_*`
+environment form, stops the collector with an error naming the key and the converter —
+see [Upgrading from 0.8](../upgrading-from-0.8.md). Plan it as a migration step, not as a
+log-review item: under systemd or Kubernetes a missed key means a restart loop until the
+configuration is converted.
 
 Upgrading to 0.7.0 also changes what one **metric** means rather than any configuration key — see
 [Parser gauges: exporters and templates](#parser-gauges-exporters-and-templates) before relying on

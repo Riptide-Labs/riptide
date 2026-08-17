@@ -18,7 +18,7 @@ gracefully** — in the worst case a flow carries exactly what the packets said:
 |---|---|---|
 | 2 — live | SNMP IF-MIB, reverse DNS | reachable agents/resolvers |
 | 1.5 — exporter-pushed | v9/IPFIX interface option records (`option interface-table`) | the exporter sending them — nothing on riptide's side |
-| 1 — static | operator mapping files (node `interfaces`, routing mapping) | a config file |
+| 1 — static | operator mapping files (enrichment-entry `interfaces`, routing mapping) | a config file |
 | 0.5 — global databases | GeoIP mmdb files ([`riptide.geoip`](configuration/geoip.md)) | database files on disk |
 | 0 — packet | ifIndex numbers, exporter-sent AS numbers, addresses, next hop | nothing — always available |
 
@@ -46,26 +46,26 @@ absent. Undecodable is not an error.
 
 ## Static interface mapping
 
-A node may carry its own interface table — the middle rung, for devices without
-(reachable) SNMP:
+An [enrichment entry](configuration/exporter-enrichment.md) may carry its own interface
+table — the middle rung, for devices without (reachable) SNMP:
 
 ```yaml
 riptide:
-  nodes:
+  exporters:
     core-router:
-      subnet-address: 10.20.30.0/24
+      address: 10.20.30.0/24
       interfaces:
         "10": { name: eth0, alias: "Uplink to AS64500", high-speed: 10000 }
         "12": { name: eth2 }
 ```
 
-With an `snmp` block present too, file fields pin and SNMP fills the rest — e.g. a
-pinned `alias` with live `name`/`high-speed`. `high-speed` is Mbit/s, matching
-`ifHighSpeed`.
+With the device also inside a credentialed [agent range](configuration/agent-configuration.md),
+pinned fields win and SNMP fills the rest — e.g. a pinned `alias` with live
+`name`/`high-speed`. `high-speed` is Mbit/s, matching `ifHighSpeed`.
 
 ## SNMP interface data
 
-When a flow's exporter matches a [node](configuration/nodes-and-snmp.md) with SNMP
+When a flow's exporter falls inside a credentialed [agent range](configuration/agent-configuration.md) with SNMP
 configuration, the numeric `ifIndex` values carried by the flow (`INPUT_SNMP` /
 `OUTPUT_SNMP` in NetFlow v9; `ingressInterface` / `egressInterface` in IPFIX) are
 resolved against the device's IF-MIB:

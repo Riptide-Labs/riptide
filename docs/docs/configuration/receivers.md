@@ -219,7 +219,7 @@ Flows are attributed to their exporter by **source address plus observation doma
 (IPFIX, RFC 7011) or **source ID** (NetFlow v9) — two observation domains behind one
 exporter IP are distinct identities. NetFlow v5 has no such concept; its engine type/ID
 are mapped onto the domain. The identity drives node matching — see
-[Nodes & SNMP](nodes-and-snmp.md).
+[SNMP agents](agent-configuration.md).
 
 **sFlow identity lives in the payload**: the datagram's `agent_address` plus
 `sub_agent_id` — *not* the UDP source address, which may be a different management IP

@@ -24,10 +24,11 @@ UDP/TCP ingest (NetFlow v5 · NetFlow v9 · IPFIX · sFlow)
 
 - **Flow protocols:** NetFlow v5, NetFlow v9, IPFIX, and sFlow (UDP; IPFIX also via
   TCP). See [Receivers](configuration/receivers.md).
-- **Node model:** a thin registry (`riptide.nodes.<name>`) matches exporters by subnet —
-  optionally pinned to one observation domain — and carries the SNMP agent
-  configuration used to enrich that device's flows. See
-  [Nodes & SNMP](configuration/nodes-and-snmp.md).
+- **Inventory model:** named credential sets and polling profiles in the main config;
+  agent ranges and exporter enrichment entries in a hot-reloaded inventory file. A device
+  inside a credentialed range is polled from its first flow, with no per-device
+  configuration. See [SNMP agents](configuration/agent-configuration.md) and
+  [Exporter enrichment](configuration/exporter-enrichment.md).
 - **Secrets:** SNMP credentials are **references** (`env://`, `file://`, `vault://`,
   `sops://`), never plaintext in configuration. See
   [Secret references](configuration/secret-references.md).
@@ -53,7 +54,8 @@ Java 25 · Spring Boot · Netty · SNMP4J · ClickHouse. Licensed
 - 🚀 [Deploy Riptide](deploy/docker-compose.md) — run the published image (Compose or plain JAR)
 - 🛠 [Develop & Contribute](develop/environment.md) — build, debug, test, send PRs
 - [Receivers](configuration/receivers.md) — configure flow listeners
-- [Nodes & SNMP](configuration/nodes-and-snmp.md) — the node model and SNMP v1/v2c/v3
+- [SNMP agents](configuration/agent-configuration.md) — credential sets, polling profiles, agent ranges
+- [Exporter enrichment](configuration/exporter-enrichment.md) — naming exporters and pinning interfaces
 - [Secret references](configuration/secret-references.md) — Vault, SOPS, env, file
 - [MCP Server](configuration/mcp-server.md) — native AI Agent integration & skills
 - [ClickHouse](configuration/clickhouse.md) — persistence
