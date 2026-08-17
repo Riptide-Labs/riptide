@@ -12,7 +12,6 @@ import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
 import org.springframework.stereotype.Component;
 
-import java.util.Locale;
 import java.util.Objects;
 
 /**
@@ -32,28 +31,8 @@ import java.util.Objects;
 @Component
 public class LegacyNodesFlagDayCheck {
 
-    /**
-     * Compared against normalised property names, so every spelling that reaches Spring is
-     * caught: {@code riptide.nodes.core-router...}, {@code riptide.nodes[0]...}, camelCase,
-     * and the {@code RIPTIDE_NODES_CORE_ROUTER_SUBNET_ADDRESS} environment form.
-     *
-     * <p>The env-var form is the one that matters most and is easiest to miss. A container
-     * configured entirely through the environment is exactly the deployment most likely to be
-     * carrying a legacy tree, and a check written against the dotted spelling alone would wave
-     * it through.</p>
-     */
-    private static final String LEGACY_PREFIX = "riptidenodes";
-
-    /**
-     * The boundary that keeps the prefix honest. Stripping separators before a prefix test
-     * makes {@code riptide.node.selector} normalise to {@code riptidenodeselector}, which
-     * starts with {@code riptidenodes} and would hard-fail a deployment over a key that has
-     * nothing to do with the legacy tree. {@code PollKeyMigrationCheck} avoided this by using
-     * equality and says so; node names are unbounded here, so instead the raw name has to show
-     * a real boundary after "nodes".
-     */
     private static final java.util.regex.Pattern LEGACY_KEY = java.util.regex.Pattern.compile(
-            "(?i)^riptide[._-]?nodes([._\\[-]|$)");
+            "(?i)^riptide[._-]?nodes([._\\[\\-\\s]|$)");
 
     private final Environment environment;
 
@@ -77,10 +56,11 @@ public class LegacyNodesFlagDayCheck {
                     // lookingAt, not matches: matches() must consume the whole name, and '.'
                     // excludes line terminators, so a key carrying a newline after "nodes" —
                     // which a quoted YAML key or a .properties line can both produce — slipped
-                    // through the boundary check entirely and left the tree silently inert
-                    if (normalize(name).startsWith(LEGACY_PREFIX)
-                            && LEGACY_KEY.matcher(name).lookingAt()
-                            && !isServiceLink(name)) {
+                    // through the boundary check entirely and left the tree silently inert.
+                    // \s in the boundary class covers the terminator AT the boundary too.
+                    // The regex alone decides; a normalize-and-startsWith conjunct used to sit
+                    // here and was fully implied by it, two matching theories where one does
+                    if (LEGACY_KEY.matcher(name).lookingAt() && !isServiceLink(name)) {
                         throw new IllegalStateException(message(name));
                     }
                 }
@@ -89,15 +69,29 @@ public class LegacyNodesFlagDayCheck {
     }
 
     /**
-     * Container service links, which are environment variables the platform injects and the
-     * operator never wrote. A Kubernetes or Docker Service named {@code riptide-nodes} produces
-     * {@code RIPTIDE_NODES_SERVICE_HOST} and friends; failing startup on those would take a pod
-     * down over configuration that does not exist, and there is no way to fix it from inside
-     * the namespace except renaming the Service.
+     * Container service links: environment variables the platform injects, which the operator
+     * never wrote. A Kubernetes Service named {@code riptide-nodes} (or {@code riptide-nodes-
+     * anything}) produces {@code ..._SERVICE_HOST} and friends; failing startup on those takes
+     * a pod down over configuration that does not exist, with no in-namespace remedy but
+     * renaming the Service.
+     *
+     * <p>Anchored at the end, not matched by prefix. The first version used unanchored
+     * alternatives, which failed in both directions: a legacy node named {@code port-mirror}
+     * produced {@code RIPTIDE_NODES_PORT_MIRROR_SUBNET_ADDRESS}, matched the {@code PORT}
+     * alternative, and was waved through silently — while a Service named
+     * {@code riptide-nodes-headless} was not exempted and crash-looped. The suffixes below are
+     * exactly the shapes the platforms generate, and no legacy node key can end in them,
+     * because node properties always continue with a field name. Docker legacy-link
+     * {@code _ENV_*} variables are deliberately not exempted: they are indistinguishable from
+     * a node named {@code env-…}, and failing loudly on museum-grade Docker links beats
+     * missing real configuration.</p>
      */
     private static boolean isServiceLink(final String name) {
-        return name.matches("RIPTIDE_NODES_(SERVICE_HOST|SERVICE_PORT|PORT|NAME|ENV_)\\w*")
-                || name.matches("RIPTIDE_NODES_PORT_\\d+_\\w+");
+        return name.endsWith("_SERVICE_HOST")
+                || name.matches(".*_SERVICE_PORT(_\\w+)?")
+                || name.matches(".*_PORT_\\d+_(TCP|UDP)(_\\w+)?")
+                || name.equals("RIPTIDE_NODES_PORT")
+                || name.equals("RIPTIDE_NODES_NAME");
     }
 
     private static String message(final String key) {
@@ -131,17 +125,4 @@ public class LegacyNodesFlagDayCheck {
                 : "";
     }
 
-    /**
-     * Spring's relaxed binding, reduced to what a prefix test needs: separators stripped and
-     * lowercased, which folds the dotted, camelCase, indexed and environment spellings onto
-     * one form. Matches {@code PollKeyMigrationCheck}.
-     *
-     * <p>A prefix rather than equality, because node names are unbounded. It stays narrow
-     * enough not to touch the 0.9 surfaces: {@code riptide.inventory}, {@code riptide.snmp}
-     * and {@code riptide.exporters} do not begin with these characters.</p>
-     */
-    private static String normalize(final String name) {
-        return name.replace("-", "").replace("_", "").replace(".", "")
-                .toLowerCase(Locale.ROOT);
-    }
 }

@@ -129,7 +129,10 @@ class LegacyNodesFlagDayCheckTest {
         for (final String key : List.of(
                 "riptide.nodes.core\nrouter.subnet-address",
                 "riptide.nodes\n",
-                "riptide.nodes.core\u2028router.subnet-address")) {
+                "riptide.nodes.core\u2028router.subnet-address",
+                // the terminator AT the boundary position, which the first fix still missed:
+                // "nodes\ncore" is what Spring flattens a quoted YAML key into
+                "riptide.nodes\ncore.subnet-address")) {
             assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
                     sources("file", Map.of(key, "10.0.0.1"))))
                     .as("must reject %s", key.replace("\n", "\\n"))
@@ -146,19 +149,32 @@ class LegacyNodesFlagDayCheckTest {
         for (final String link : List.of(
                 "RIPTIDE_NODES_SERVICE_HOST",
                 "RIPTIDE_NODES_SERVICE_PORT",
+                "RIPTIDE_NODES_SERVICE_PORT_METRICS",
                 "RIPTIDE_NODES_PORT",
                 "RIPTIDE_NODES_PORT_8080_TCP_ADDR",
                 "RIPTIDE_NODES_NAME",
-                "RIPTIDE_NODES_ENV_PATH")) {
+                // a Service named riptide-nodes-headless: the platform generates these too,
+                // and the first exemption crash-looped on them
+                "RIPTIDE_NODES_HEADLESS_SERVICE_HOST",
+                "RIPTIDE_NODES_METRICS_SERVICE_PORT")) {
             assertThatCode(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
                     sources("env", Map.of(link, "10.0.0.1"))))
                     .as("must not reject the service link %s", link)
                     .doesNotThrowAnyException();
         }
-        // and the real environment form is still caught alongside them
-        assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
-                sources("env", Map.of("RIPTIDE_NODES_CORE_SUBNET_ADDRESS", "10.0.0.1"))))
-                .isInstanceOf(IllegalStateException.class);
+        // and the real environment forms are still caught alongside them — including nodes
+        // whose names START like the platform suffixes, which the first exemption's
+        // unanchored alternatives waved through silently
+        for (final String legacy : List.of(
+                "RIPTIDE_NODES_CORE_SUBNET_ADDRESS",
+                "RIPTIDE_NODES_PORT_MIRROR_SUBNET_ADDRESS",
+                "RIPTIDE_NODES_NAME_SERVER_SUBNET_ADDRESS",
+                "RIPTIDE_NODES_ENV_A_SUBNET_ADDRESS")) {
+            assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
+                    sources("env", Map.of(legacy, "10.0.0.1"))))
+                    .as("must catch the legacy node behind %s", legacy)
+                    .isInstanceOf(IllegalStateException.class);
+        }
     }
 
     /** A %n inside a %s substitution is never processed, so the hint printed literal "%n". */

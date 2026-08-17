@@ -38,7 +38,7 @@ public final class ShapeBench {
     /** Measured baseline 0.66 (2026-08-13, M-series laptop); generous margin for GC and machine noise. */
     static final double DIRECT_LINEARITY_MAX = 3.0;
 
-    /** Measured baseline 1.3 (2026-08-14, M-series laptop); ~3x margin per the README rule. */
+    /** Measured baseline 1.3 (2026-08-17, M-series laptop, re-confirmed after the binder sweep was retired); ~3x margin per the README rule. */
     static final double PRODUCTION_VS_RAW_MAX = 4.0;
 
     private ShapeBench() {

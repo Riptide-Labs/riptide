@@ -37,10 +37,10 @@ public final class LookupBench {
     /** Measured baseline 2.1 (2026-08-13, M-series laptop); ~3x margin for JIT and machine noise. */
     static final double TRIE_FLATNESS_MAX = 6.0;
 
-    /** Measured baseline 2.5 (2026-08-14, M-series laptop, trie-backed registry); ~3x margin. */
+    /** Measured baseline 2.5 (2026-08-17, M-series laptop, exporter-view subject after 0.9 removed the registry); ~3x margin. */
     static final double PRODUCTION_VS_REFERENCE_MAX = 8.0;
 
-    /** Measured baseline 1.3 (2026-08-14, M-series laptop); ~3x margin per the README rule. */
+    /** Measured baseline 1.6 (2026-08-17, M-series laptop, exporter-view subject); ~3x margin per the README rule. */
     static final double PRODUCTION_FLATNESS_MAX = 4.5;
 
     private static final int[] SCALES = {100, 1_000, 5_000, 10_000};
