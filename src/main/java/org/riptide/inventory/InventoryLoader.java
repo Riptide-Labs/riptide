@@ -137,7 +137,11 @@ public final class InventoryLoader {
         final Map<String, Object> exporters = section(riptide, "exporters", sourceName);
 
         try {
-            return new InventorySnapshot(agents(profiles, agents), exporters(exporters));
+            // declaredness travels with the build: an explicit `agents: {}` is a deliberate
+            // decommission, an absent tree over a populated one is a torn read (AD-3 guard)
+            return new InventorySnapshot(agents(profiles, agents), exporters(exporters),
+                    snmp.get("agents") instanceof java.util.Map,
+                    riptide.get("exporters") instanceof java.util.Map);
         } catch (final IllegalStateException e) {
             // uniform operator experience: every entry-level error names the file,
             // including the matcher's duplicate-coverage errors

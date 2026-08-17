@@ -22,11 +22,23 @@ public final class InventorySnapshot {
     private final PinnedPrefixMatcher<ExporterEntry> exporters;
     private final AgentView agentView;
     private final ExporterView exporterView;
+    /** The tree's key was written as a mapping in the source; see {@link #isRegressiveOver}. */
+    private final boolean agentsDeclared;
+    private final boolean exportersDeclared;
 
     InventorySnapshot(final PinnedPrefixMatcher<AgentEntry> agents,
                       final PinnedPrefixMatcher<ExporterEntry> exporters) {
+        this(agents, exporters, false, false);
+    }
+
+    InventorySnapshot(final PinnedPrefixMatcher<AgentEntry> agents,
+                      final PinnedPrefixMatcher<ExporterEntry> exporters,
+                      final boolean agentsDeclared,
+                      final boolean exportersDeclared) {
         this.agents = agents;
         this.exporters = exporters;
+        this.agentsDeclared = agentsDeclared;
+        this.exportersDeclared = exportersDeclared;
         // built once here rather than per call: a consumer that captures a view per
         // batch should pay a volatile read and nothing else
         this.agentView = identity -> this.agents.lookup(probe(identity), domain(identity));
@@ -53,6 +65,30 @@ public final class InventorySnapshot {
     /** True when the build produced no agent ranges and no enrichment entries. */
     public boolean isEmpty() {
         return this.agents.size() == 0 && this.exporters.size() == 0;
+    }
+
+    /**
+     * True when publishing this snapshot over {@code previous} would drop an entire tree
+     * without saying so: a tree going populated to empty is refused unless the source
+     * wrote it as an explicit empty mapping ({@code agents: {}}). That distinction is what
+     * separates a deliberate decommission from a torn read: a non-atomic writer flushes
+     * the trees in file order, so a mid-write read is missing a tree entirely — it never
+     * contains one it replaced with a literal {@code {}}. Both loss directions are live:
+     * the converter emits {@code agents} first (a torn read drops every exporter name),
+     * and an in-place editor can flush either tree last (a torn read deregisters the
+     * whole polled fleet). The whole-file rule this replaces refused only total
+     * annihilation and missed both.
+     *
+     * <p>Empty over empty stays legal, so boot and an intentionally empty fleet are
+     * unchanged. A tree shrinking without vanishing also stays legal: bounded churn that
+     * self-heals when the full write lands, and refusing it would mean shrink-ratio
+     * heuristics rather than a binary, explainable rule. A bare {@code agents:} key with
+     * no value does not count as declared — the marker requires an actual mapping, so a
+     * write torn exactly on the key line is still refused.</p>
+     */
+    public boolean isRegressiveOver(final InventorySnapshot previous) {
+        return (previous.agentCount() > 0 && agentCount() == 0 && !this.agentsDeclared)
+                || (previous.exporterCount() > 0 && exporterCount() == 0 && !this.exportersDeclared);
     }
 
     /**

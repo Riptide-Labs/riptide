@@ -210,14 +210,22 @@ public class InventoryFileReloader {
             final InventorySnapshot candidate = InventoryLoader.parse(parsedWith,
                     strictUtf8(content, this.location), this.location.toString());
 
-            if (candidate.isEmpty() && !this.inventory.snapshot().isEmpty()) {
-                // content that is non-blank but parses to nothing (a lone '---', or a
-                // header comment a truncate-write has flushed so far) would silently
-                // drop every range and entry. Deleting the file already keeps the old
-                // inventory serving, so refusing this is the same rule, not a new one
-                log.warn("Inventory file {} parsed to no entries while a populated inventory is running: "
-                        + "keeping it (a partially written file reads this way). Delete the file to stop "
-                        + "reloading, or restart to serve an intentionally empty inventory", this.location);
+            final InventorySnapshot serving = this.inventory.snapshot();
+            if (candidate.isRegressiveOver(serving)) {
+                // per tree, not whole-file: a non-atomic writer flushes the trees in file
+                // order, so a mid-write read has one tree populated and one empty, and
+                // publishing it would deregister the whole polled fleet or drop every
+                // exporter name. Deleting the file already keeps the old inventory
+                // serving, so refusing this is the same rule, not a new one. This is a
+                // pre-check for the message; the monitor-held guard in Inventory decides
+                log.warn("Inventory file {} would drop a whole tree ({} -> {} agent range(s), {} -> {} "
+                        + "enrichment entrie(s)): keeping the running inventory (a partially written "
+                        + "file reads this way; write atomically via mv). To deliberately empty a "
+                        + "tree, write it as an explicit empty mapping (agents: {} / exporters: {}); "
+                        + "to stop polling while keeping entries, set enabled: false on a covering "
+                        + "range", this.location,
+                        serving.agentCount(), candidate.agentCount(),
+                        serving.exporterCount(), candidate.exporterCount());
                 return;
             }
 
