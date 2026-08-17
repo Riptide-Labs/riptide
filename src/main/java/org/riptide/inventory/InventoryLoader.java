@@ -67,7 +67,6 @@ public final class InventoryLoader {
     /** Checked before the read, because the code-point limit only bounds the parser. */
     private static final long MAX_FILE_BYTES = CODE_POINT_LIMIT;
 
-
     private InventoryLoader() {
     }
 

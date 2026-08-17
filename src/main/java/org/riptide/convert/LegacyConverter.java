@@ -5,6 +5,8 @@
 
 package org.riptide.convert;
 
+import org.riptide.inventory.StrictAddresses;
+
 import inet.ipaddr.IPAddress;
 import org.riptide.inventory.CredentialSet;
 import org.riptide.inventory.CredentialVersion;
@@ -37,7 +39,6 @@ import java.util.TreeMap;
  * rather than trusting this comment.
  */
 public final class LegacyConverter {
-
 
     private static final int DEFAULT_PORT = 161;
     private static final int MAX_PORT = 65535;
@@ -75,7 +76,21 @@ public final class LegacyConverter {
 
         // sorted, not map order: the same input has to convert to byte-identical output, and
         // a diff between two runs of the same file would be unreviewable
-        for (final LegacyNode node : new TreeMap<>(legacy.nodes()).values()) {
+        for (final LegacyNode raw : new TreeMap<>(legacy.nodes()).values()) {
+            // 0.8 accepted the contiguous-netmask spelling and this tool's charter is a
+            // mechanical rewrite, so it is translated to CIDR rather than refused — the
+            // node is rewritten up front so every downstream use (emission, dedup,
+            // messages) sees one spelling. A non-contiguous mask still fails: it has no
+            // CIDR equivalent and 0.8 silently mis-read it (#538)
+            final LegacyNode node = StrictAddresses
+                    .cidrFormOfContiguousNetmask(raw.subnetAddress())
+                    .map(cidr -> {
+                        summary.add("Rewrote node '%s' subnet-address '%s' to the CIDR form '%s'."
+                                .formatted(raw.name(), raw.subnetAddress(), cidr));
+                        return new LegacyNode(raw.name(), cidr, raw.observationDomain(),
+                                raw.snmp(), raw.interfaces());
+                    })
+                    .orElse(raw);
             final IPAddress address = strictAddress(node);
             requireEmittableNode(node);
             if (node.snmp() != null) {
@@ -219,7 +234,7 @@ public final class LegacyConverter {
             // the loader's parser, not a copy of it: the converter's whole audience is
             // operators pasting 0.8 configs full of exactly the spellings the diagnosis
             // ladder names (netmasks, leading zeros, inet_aton shorthand)
-            return org.riptide.inventory.StrictAddresses.parse(node.subnetAddress(), false).getAddress();
+            return StrictAddresses.parse(node.subnetAddress(), false).getAddress();
         } catch (final IllegalArgumentException e) {
             throw new IllegalStateException(
                     ("Node '%s' has subnet-address '%s', which 0.9 does not accept: it %s "
