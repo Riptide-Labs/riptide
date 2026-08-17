@@ -27,10 +27,12 @@ public class SnmpConfigMigrationWarning {
     @PostConstruct
     void warnAboutLegacyConfiguration() {
         if (!this.definitions.isEmpty()) {
-            log.error("riptide.snmp.config.definitions has moved and is IGNORED: configure nodes via "
-                    + "riptide.nodes.<name>.{subnet-address,observation-domain,snmp.*} instead "
-                    + "(see the NODES EXAMPLE in application.properties). SNMP enrichment is NOT "
-                    + "active for the {} legacy definition(s).", this.definitions.size());
+            // this used to point at riptide.nodes, which 0.9 removed and now fails startup:
+            // an operator following it exactly would have been killed by the next boot
+            log.error("riptide.snmp.config.definitions has moved and is IGNORED: declare credential "
+                    + "sets under riptide.snmp.credentials.<name> and agent ranges in the inventory "
+                    + "file named by riptide.inventory.file. SNMP enrichment is NOT active for the "
+                    + "{} legacy definition(s).", this.definitions.size());
         }
     }
 }

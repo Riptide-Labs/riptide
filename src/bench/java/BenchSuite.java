@@ -33,7 +33,10 @@ public final class BenchSuite {
         final BudgetReport report = new BudgetReport(BudgetReport.isFull(args));
         LookupBench.run(report);
         ShapeBench.run(report);
-        BindBench.run(report);
+        // BindBench is gone with the shape it measured. It was informational only: it
+        // documented the binding cost of the legacy riptide.nodes map, which is the motivation
+        // FR-5 acted on, and 0.9 removed that map. Benchmarking it now would mean inventing a
+        // class to represent a configuration nobody can write.
         System.exit(report.finish(REPORT) ? 0 : 1);
     }
 }

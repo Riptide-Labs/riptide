@@ -15,7 +15,7 @@ import java.util.List;
 /**
  * The semantics seam bound directly to {@link PinnedPrefixMatcher}, proving the
  * standalone component honours the characterisation contract without the
- * {@link NodeRegistry} facade in front of it.
+ * {@code NodeRegistry} facade that used to sit in front of it (removed in 0.9).
  */
 final class PinnedPrefixMatcherMatchSemantics implements ExporterMatchSemantics {
 

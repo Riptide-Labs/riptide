@@ -316,7 +316,10 @@ public final class LegacyConverter {
         }
         for (final Map.Entry<String, LegacyNode.LegacySnmp> set : credentials.byName().entrySet()) {
             out.append("      ").append(set.getKey()).append(":\n")
-                    .append("        snmp-version: ").append(quote(set.getValue().version())).append('\n');
+                    // 'version', not 'snmp-version': that is the CredentialSet record component,
+                    // and @ConfigurationProperties ignores unknown fields, so the wrong spelling
+                    // bound to nothing and failed startup with "has no version"
+                    .append("        version: ").append(quote(set.getValue().version())).append('\n');
             appendIfPresent(out, "community", set.getValue().community());
             appendIfPresent(out, "security-name", set.getValue().securityName());
             appendIfPresent(out, "auth-protocol", set.getValue().authProtocol());

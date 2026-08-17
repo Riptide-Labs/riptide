@@ -77,7 +77,8 @@ public final class InventorySnapshot {
 
     private static long domain(final ExporterIdentity identity) {
         // instanceof instead of an exhaustive switch pattern only because checkstyle
-        // cannot parse switch record patterns (the NodeRegistry.lookup constraint);
+        // cannot parse switch record patterns (the same constraint the retired node
+        // registry's lookup carried);
         // new ExporterIdentity variants must be handled here
         if (identity instanceof ExporterIdentity.NetflowIpfix netflowIpfix) {
             return netflowIpfix.observationDomain();
