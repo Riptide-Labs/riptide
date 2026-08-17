@@ -54,22 +54,23 @@ public class Inventory {
     }
 
     /**
-     * Atomically replaces the serving snapshot (hot reload). One volatile write of a
-     * whole immutable instance is the entire concurrency story (AD-3): readers that
-     * captured views from the previous snapshot keep a consistent pair of trees.
+     * Atomically replaces the serving snapshot. One volatile write of a whole immutable
+     * instance is the concurrency story for readers (AD-3): views captured from the
+     * previous snapshot keep a consistent pair of trees. Synchronized and guarded like
+     * every other publication path — this used to be neither, which made it both the
+     * method a future publisher would reach for and the one that bypassed the torn-write
+     * guard entirely, and let it interleave unseen inside {@link #rebuildAndSwap}'s
+     * monitor-held read-then-write (#535). Boot publishes over the fresh empty, so the
+     * guard passes trivially there; test publishers that re-swap must keep their
+     * sequences non-regressive or declare the empty tree, same as an operator.
+     *
+     * @throws IllegalStateException on a publish that would drop an entire tree
      */
-    public void swap(final InventorySnapshot snapshot) {
-        this.active = Objects.requireNonNull(snapshot);
-    }
-
-    /**
-     * Publishes a snapshot together with the profiles it was built from, which is what a
-     * main-config reload needs: credential sets live in the main config, agent ranges
-     * resolve them into objects at build time, so rotating a community means rebuilding
-     * the inventory rather than swapping either half on its own.
-     */
-    public synchronized void swap(final SnmpProfilesConfig profiles, final InventorySnapshot snapshot) {
-        this.profiles = Objects.requireNonNull(profiles);
+    public synchronized void swap(final InventorySnapshot snapshot) {
+        // throwing is right here: the callers are boot (guard trivially passes over the
+        // fresh empty) and test publishers, where a regressive publish is a broken fixture
+        // that deserves a loud failure, not a deferral nothing retries
+        requireNotRegressive(snapshot);
         this.active = Objects.requireNonNull(snapshot);
     }
 
@@ -86,6 +87,17 @@ public class Inventory {
     public synchronized boolean swapIfProfilesUnchanged(final SnmpProfilesConfig parsedWith,
                                                         final InventorySnapshot snapshot) {
         if (this.profiles != parsedWith) {
+            return false;
+        }
+        // the caller pre-checks against its own read of the serving snapshot and logs the
+        // operator-facing refusal; this monitor-held check closes the window between that
+        // read and this commit. Deferral, not a throw: reaching it means the serving
+        // snapshot changed mid-parse, which is exactly the condition the false return
+        // already means — the caller resets its attempted hash and re-parses next cycle
+        // against what is serving by then. A throw here landed in the caller's failure
+        // path and left the attempted hash committed, wedging retries until the file
+        // changed again
+        if (snapshot.isRegressiveOver(this.active)) {
             return false;
         }
         this.active = Objects.requireNonNull(snapshot);
@@ -105,16 +117,35 @@ public class Inventory {
      */
     public synchronized InventorySnapshot rebuildAndSwap(final SnmpProfilesConfig profiles, final Path file) {
         final InventorySnapshot rebuilt = InventoryLoader.load(profiles, file);
-        if (rebuilt.isEmpty() && !this.active.isEmpty()) {
-            // refused, not published: a file caught mid-write parses to nothing without
-            // failing, and publishing that would drop every range and entry at once. The
-            // check lives here, inside the monitor and against the same read that would be
-            // published, so nothing can change between deciding and committing
+        if (rebuilt.isRegressiveOver(this.active)) {
+            // refused, not published: a file caught mid-write parses cleanly with one tree
+            // missing, and publishing that would either deregister the whole polled fleet
+            // or drop every exporter name at once, depending on which tree the writer
+            // flushed first. The check lives here, inside the monitor and against the same
+            // read that would be published, so nothing can change between deciding and
+            // committing. Null keeps the existing contract: ConfigFileReloader parks the
+            // profiles as pending and retries each poll until the full write lands
             return null;
         }
         this.profiles = Objects.requireNonNull(profiles);
         this.active = rebuilt;
         return rebuilt;
+    }
+
+    /** The guard for the throwing publication paths; names the loss the way an operator reads it. */
+    private void requireNotRegressive(final InventorySnapshot snapshot) {
+        Objects.requireNonNull(snapshot);
+        if (snapshot.isRegressiveOver(this.active)) {
+            throw new IllegalStateException(
+                    ("Refusing to publish an inventory that drops a whole tree: %d -> %d agent "
+                            + "range(s), %d -> %d enrichment entrie(s). A partially written file "
+                            + "reads this way; write the inventory atomically (write then mv). To "
+                            + "deliberately empty a tree, write it as an explicit empty mapping "
+                            + "(agents: {} / exporters: {}); to stop polling a fleet while keeping "
+                            + "its entries, set enabled: false on a covering range.")
+                            .formatted(this.active.agentCount(), snapshot.agentCount(),
+                                    this.active.exporterCount(), snapshot.exporterCount()));
+        }
     }
 
     /** The profiles the serving snapshot was built from, for a reloader re-parsing the file. */

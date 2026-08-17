@@ -137,7 +137,16 @@ public final class InventoryLoader {
         final Map<String, Object> exporters = section(riptide, "exporters", sourceName);
 
         try {
-            return new InventorySnapshot(agents(profiles, agents), exporters(exporters));
+            // declaredness travels with the build: an explicit empty mapping is a deliberate
+            // decommission, an absent tree over a populated one is a torn read. The marker is
+            // honoured at any ancestor, because the reasoning is the ancestor's too: a torn
+            // write dies at a bare or missing key, and `snmp: {}` or `riptide: {}` can only
+            // be authored — truncation never replaces a populated tree with a literal {}
+            final boolean riptideEmpty = root.get("riptide") instanceof java.util.Map<?, ?> r && r.isEmpty();
+            final boolean snmpEmpty = riptide.get("snmp") instanceof java.util.Map<?, ?> m && m.isEmpty();
+            return new InventorySnapshot(agents(profiles, agents), exporters(exporters),
+                    snmp.get("agents") instanceof java.util.Map || snmpEmpty || riptideEmpty,
+                    riptide.get("exporters") instanceof java.util.Map || riptideEmpty);
         } catch (final IllegalStateException e) {
             // uniform operator experience: every entry-level error names the file,
             // including the matcher's duplicate-coverage errors

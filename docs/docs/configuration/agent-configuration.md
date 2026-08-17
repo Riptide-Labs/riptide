@@ -106,4 +106,7 @@ Size `pool-width` for the number of *active* devices you expect and their profil
 ## Hot reload
 
 With [config hot-reload](../deploy/operations.md#config-hot-reload) enabled, the inventory file reloads on content change: new ranges take effect, a carve-out stops an already-polled agent without a restart, and a rejected file (parse error, unknown key, dangling reference) keeps the last good inventory serving while `inventory.reload.stale` goes to 1.
+Write the file atomically (write a temp file, then `mv`): the reloader also refuses a file in which a previously populated `agents` or `exporters` tree is simply absent, because that is what a partially written file looks like.
+To deliberately empty a tree, write it as an explicit empty mapping (`agents: {}`, `exporters: {}`, or `riptide: {}` for a whole empty inventory) — truncation can never produce that spelling, so it is read as authored.
+The protection is against total loss of a tree; a tree that shrinks without vanishing publishes normally.
 Editing **credential sets or polling profiles** in the main config also propagates on reload: the inventory is rebuilt against the new profiles and already-registered agents re-resolve, so a rotated community reaches running walks without a restart.

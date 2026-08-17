@@ -99,8 +99,13 @@ public class ConfigFileReloaderTest {
         // profiles then stay stale and any assertion on them fails, depending only on method
         // order. Reset to something non-empty (an empty inventory over a populated one is
         // refused) that references nothing
+        // agents declared explicitly empty: a test can leave agent ranges serving, and an
+        // ABSENT tree over a populated one is refused by the torn-write guard (#535). The
+        // marker is the sanctioned spelling of "deliberately none"
         Files.writeString(INVENTORY, """
                 riptide:
+                  snmp:
+                    agents: {}
                   exporters:
                     neutral:
                       address: 198.51.100.1
@@ -243,6 +248,8 @@ public class ConfigFileReloaderTest {
         // rebuild and the rotation finally serves, with no further config edit
         Files.writeString(INVENTORY, """
                 riptide:
+                  snmp:
+                    agents: {}
                   exporters:
                     neutral:
                       address: 198.51.100.1
@@ -407,12 +414,18 @@ public class ConfigFileReloaderTest {
         // only credential surface, and it used to be bound once at boot and never again:
         // rotating a compromised community would have needed a restart, silently
         // the range arrives with the credential that defines it, both through the reload
+        // both trees populated: replacing the fixture's exporters-only inventory with an
+        // agents-only one is indistinguishable from a torn write (one tree flushed, the
+        // other truncated) and is now refused by the per-tree guard (#535)
         Files.writeString(INVENTORY, """
                 riptide:
                   snmp:
                     agents:
                       "10.77.0.1":
                         credentials: corp
+                  exporters:
+                    neutral:
+                      address: 198.51.100.1
                 """);
         write("""
                 riptide:
