@@ -24,7 +24,12 @@ import org.riptide.snmp.InterfaceSnapshotPoller;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.context.properties.ConfigurationPropertiesBinding;
 import org.springframework.boot.convert.ApplicationConversionService;
+import org.springframework.core.convert.ConversionService;
+import org.springframework.core.convert.converter.Converter;
+import org.springframework.core.convert.converter.GenericConverter;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.boot.context.properties.bind.PropertySourcesPlaceholdersResolver;
 import org.springframework.core.env.ConfigurableEnvironment;
@@ -86,6 +91,9 @@ public class ConfigFileReloader {
     private final Counter reloadFailures;
     private volatile boolean stale = false;
 
+    /** Boot's binding conversion, reproduced: defaults plus the context's binding converters. */
+    private final ConversionService conversionService;
+
     private ScheduledExecutorService executor;
     private ScheduledFuture<?> polling;
     private Path location;
@@ -100,7 +108,9 @@ public class ConfigFileReloader {
                               final SopsSecretResolver sopsSecretResolver,
                               final Inventory inventory,
                               final InventoryConfig inventoryConfig,
-                              final MetricRegistry metrics) {
+                              final MetricRegistry metrics,
+                              @Qualifier(ConfigurationPropertiesBinding.VALUE) final List<Converter<?, ?>> bindingConverters,
+                              @Qualifier(ConfigurationPropertiesBinding.VALUE) final List<GenericConverter> bindingGenericConverters) {
         this.environment = Objects.requireNonNull(environment);
         this.properties = Objects.requireNonNull(properties);
         this.routingConfig = Objects.requireNonNull(routingConfig);
@@ -108,6 +118,21 @@ public class ConfigFileReloader {
         this.sopsSecretResolver = Objects.requireNonNull(sopsSecretResolver);
         this.inventory = Objects.requireNonNull(inventory);
         this.inventoryConfig = Objects.requireNonNull(inventoryConfig);
+
+        // the converters boot binding applies, injected by their qualifier (the annotation
+        // itself does not target parameters, so the parameters name its qualifier VALUE),
+        // so a future Converter or GenericConverter joins this path automatically.
+        // Formatters carrying the qualifier would not — none exist, and adding one means
+        // widening this. A fresh ApplicationConversionService, never the shared instance:
+        // the shared one is a JVM-global singleton, and without the context's converters it
+        // binds SecretRef through the reflective of(String) fallback, which agrees with
+        // SecretRefConverter on every input except blank — where boot reads "no secret" and
+        // this reloader threw, permanently failing every reload after a boot that
+        // succeeded (#533)
+        final ApplicationConversionService reloadConversion = new ApplicationConversionService();
+        bindingConverters.forEach(reloadConversion::addConverter);
+        bindingGenericConverters.forEach(reloadConversion::addConverter);
+        this.conversionService = reloadConversion;
 
         this.reloadSuccesses = metrics.counter(MetricRegistry.name("config", "reload", "successes"));
         this.reloadFailures = metrics.counter(MetricRegistry.name("config", "reload", "failures"));
@@ -238,7 +263,7 @@ public class ConfigFileReloader {
         final Binder binder = new Binder(
                 ConfigurationPropertySources.from(candidate),
                 new PropertySourcesPlaceholdersResolver(candidate),
-                ApplicationConversionService.getSharedInstance());
+                this.conversionService);
         final RoutingConfig routing = binder
                 .bind("riptide.routing", Bindable.of(RoutingConfig.class))
                 .orElseGet(RoutingConfig::new);
@@ -298,6 +323,11 @@ public class ConfigFileReloader {
         // once, against the very spreading the poller exists to do. The refresh above
         // touches exactly the registrations whose endpoint actually changed
         this.reloadSuccesses.inc();
+        // the stale contract: 0 means "what is serving matches the files". A partial reload
+        // (config committed, inventory rebuild unpublished) used to clear it anyway, so an
+        // operator whose credential rotation never reached a walk saw a success counter, a
+        // clean gauge and a reloaded log line (#534). Partial keeps it latched, counted on
+        // its own meter; the remediation is the one the WARN above names
         this.stale = false;
         // the SERVING counts, read back from the inventory, not the candidate's. Both paths
         // above can leave the candidate profiles unpublished while this line still runs, and

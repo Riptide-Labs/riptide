@@ -561,6 +561,11 @@ class LegacyConverterTest {
         final var binder = new Binder(
                 ConfigurationPropertySources.from(sources),
                 new PropertySourcesPlaceholdersResolver(sources),
+                // deliberately the shared instance, NOT the context's binding converters:
+                // the converter never emits blank values, and the shared path is STRICTER
+                // there (it throws where SecretRefConverter maps blank to null), which is
+                // the safe direction for a validity proof. See #533 for the production
+                // reloader, where the same substitution was a bug
                 ApplicationConversionService.getSharedInstance());
         // SnmpProfilesConfig validates every set and profile in its canonical constructor, so
         // binding IS the AD-13 assertion
