@@ -516,7 +516,11 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 // Not while a walk is running: the in-flight flag lives on this object, so
                 // removing it lets a re-registration mint a fresh flag and start a second
                 // concurrent walk against an agent whose first walk is still parked in its
-                // timeout. Deregistration can wait a tick.
+                // timeout. Deregistration can wait a tick — boundedly: snmp4j's timeout
+                // bounds each round-trip, and the walker's own bounded wait plus the
+                // session close on return bound the walk itself (SnmpUtils.WALK_BUDGET,
+                // #536), so "wait a tick" cannot become "wait forever" even against an
+                // agent that never stops answering.
                 if (!registration.walkInFlight.get()) {
                     this.registrations.remove(entry.getKey(), registration);
                     this.deregistered.mark();
@@ -572,7 +576,11 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                     registration.unreachable = true;
                     // transitions are logged, not attempts: a per-retry warning would scale with
                     // how long a device stays down
-                    log.warn("SNMP endpoint {} did not answer usably, backing off", registration.endpoint);
+                    // "did not produce", not "did not answer": an abandoned walk (budget or
+                    // row cap) is an agent that answered too much, and the walk-level warn
+                    // already named which; this transition log must not contradict it
+                    log.warn("SNMP endpoint {} did not produce a usable interface table, backing off",
+                            registration.endpoint);
                 }
                 return;
             }
