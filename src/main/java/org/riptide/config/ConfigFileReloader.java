@@ -24,7 +24,12 @@ import org.riptide.snmp.InterfaceSnapshotPoller;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.context.properties.ConfigurationPropertiesBinding;
 import org.springframework.boot.convert.ApplicationConversionService;
+import org.springframework.core.convert.ConversionService;
+import org.springframework.core.convert.converter.Converter;
+import org.springframework.core.convert.converter.GenericConverter;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.boot.context.properties.bind.PropertySourcesPlaceholdersResolver;
 import org.springframework.core.env.ConfigurableEnvironment;
@@ -84,7 +89,22 @@ public class ConfigFileReloader {
 
     private final Counter reloadSuccesses;
     private final Counter reloadFailures;
+    /** Config committed but the inventory rebuild did not publish: the edit is only partly serving. */
+    private final Counter reloadPartial;
+
+    /**
+     * The profiles a committed config edit could not carry into the inventory, retried on
+     * every poll until they publish. Non-null is the partial state: the config half is
+     * serving, the inventory half is not, and the stale gauge must say so for as long as
+     * that holds — the first version of this fix latched a boolean that the very next
+     * unchanged-content poll recomputed away, so the gauge showed 1 for at most one
+     * interval while the rotation stayed stranded.
+     */
+    private volatile SnmpProfilesConfig pendingProfiles;
     private volatile boolean stale = false;
+
+    /** Boot's binding conversion, reproduced: defaults plus the context's binding converters. */
+    private final ConversionService conversionService;
 
     private ScheduledExecutorService executor;
     private ScheduledFuture<?> polling;
@@ -100,7 +120,9 @@ public class ConfigFileReloader {
                               final SopsSecretResolver sopsSecretResolver,
                               final Inventory inventory,
                               final InventoryConfig inventoryConfig,
-                              final MetricRegistry metrics) {
+                              final MetricRegistry metrics,
+                              @Qualifier(ConfigurationPropertiesBinding.VALUE) final List<Converter<?, ?>> bindingConverters,
+                              @Qualifier(ConfigurationPropertiesBinding.VALUE) final List<GenericConverter> bindingGenericConverters) {
         this.environment = Objects.requireNonNull(environment);
         this.properties = Objects.requireNonNull(properties);
         this.routingConfig = Objects.requireNonNull(routingConfig);
@@ -109,9 +131,26 @@ public class ConfigFileReloader {
         this.inventory = Objects.requireNonNull(inventory);
         this.inventoryConfig = Objects.requireNonNull(inventoryConfig);
 
+        // the converters boot binding applies, injected by their qualifier (the annotation
+        // itself does not target parameters, so the parameters name its qualifier VALUE),
+        // so a future Converter or GenericConverter joins this path automatically.
+        // Formatters carrying the qualifier would not — none exist, and adding one means
+        // widening this. A fresh ApplicationConversionService, never the shared instance:
+        // the shared one is a JVM-global singleton, and without the context's converters it
+        // binds SecretRef through the reflective of(String) fallback, which agrees with
+        // SecretRefConverter on every input except blank — where boot reads "no secret" and
+        // this reloader threw, permanently failing every reload after a boot that
+        // succeeded (#533)
+        final ApplicationConversionService reloadConversion = new ApplicationConversionService();
+        bindingConverters.forEach(reloadConversion::addConverter);
+        bindingGenericConverters.forEach(reloadConversion::addConverter);
+        this.conversionService = reloadConversion;
+
         this.reloadSuccesses = metrics.counter(MetricRegistry.name("config", "reload", "successes"));
         this.reloadFailures = metrics.counter(MetricRegistry.name("config", "reload", "failures"));
-        metrics.register(MetricRegistry.name("config", "reload", "stale"), (Gauge<Integer>) () -> this.stale ? 1 : 0);
+        this.reloadPartial = metrics.counter(MetricRegistry.name("config", "reload", "partial"));
+        metrics.register(MetricRegistry.name("config", "reload", "stale"),
+                (Gauge<Integer>) () -> this.stale || this.pendingProfiles != null ? 1 : 0);
     }
 
     @PostConstruct
@@ -144,6 +183,34 @@ public class ConfigFileReloader {
         }
         if (this.executor != null) {
             this.executor.shutdownNow();
+        }
+    }
+
+    /**
+     * Retries carrying a partially applied edit's profiles into the inventory, once per
+     * poll while the state persists. This is what heals a rotation whose inventory file
+     * was unreadable or mid-write at commit time: the inventory watcher cannot do it,
+     * because it re-parses against the SERVING profiles, which a partial edit never
+     * updated. Success is logged and clears the partial state; failure stays quiet, the
+     * WARN at commit time already named the condition and the gauge holds it visible.
+     */
+    private void retryPendingRebuild() {
+        final SnmpProfilesConfig pending = this.pendingProfiles;
+        if (pending == null) {
+            return;
+        }
+        try {
+            final InventorySnapshot published =
+                    this.inventory.rebuildAndSwap(pending, this.inventoryConfig.getFile());
+            if (published != null) {
+                this.pendingProfiles = null;
+                this.interfacePoller.refreshRegistrations();
+                log.info("Recovered: the credential and profile changes from the last config edit are "
+                        + "now fully serving ({} credential set(s), {} polling profile(s))",
+                        pending.credentials().size(), pending.polling().size());
+            }
+        } catch (final RuntimeException e) {
+            log.debug("Pending inventory rebuild still failing: {}", e.getMessage());
         }
     }
 
@@ -194,6 +261,7 @@ public class ConfigFileReloader {
                 // reflects whether the file matches what is running (a transient read
                 // failure must not latch the gauge)
                 this.stale = !MessageDigest.isEqual(hash, this.lastCommittedHash);
+                retryPendingRebuild();
                 return;
             }
             this.lastAttemptedHash = hash;
@@ -238,7 +306,7 @@ public class ConfigFileReloader {
         final Binder binder = new Binder(
                 ConfigurationPropertySources.from(candidate),
                 new PropertySourcesPlaceholdersResolver(candidate),
-                ApplicationConversionService.getSharedInstance());
+                this.conversionService);
         final RoutingConfig routing = binder
                 .bind("riptide.routing", Bindable.of(RoutingConfig.class))
                 .orElseGet(RoutingConfig::new);
@@ -278,6 +346,10 @@ public class ConfigFileReloader {
         // rebuilt and published in one monitor-held read, so nothing can change between
         // validating the candidate and committing it, and guarded because the config is
         // already serving by now: a throw here must not be reported as a failed reload
+        boolean inventoryPublished = false;
+        // a new edit supersedes whatever an earlier partial left pending: retrying old
+        // profiles after a newer commit would publish a rotation the operator replaced
+        this.pendingProfiles = null;
         try {
             final InventorySnapshot published =
                     this.inventory.rebuildAndSwap(candidateProfiles, this.inventoryConfig.getFile());
@@ -286,6 +358,7 @@ public class ConfigFileReloader {
                         + "no entries while a populated one is serving. The credential and profile changes "
                         + "in this edit are NOT serving", this.inventoryConfig.getFile());
             } else {
+                inventoryPublished = true;
                 this.interfacePoller.refreshRegistrations();
             }
         } catch (final RuntimeException e) {
@@ -298,7 +371,20 @@ public class ConfigFileReloader {
         // once, against the very spreading the poller exists to do. The refresh above
         // touches exactly the registrations whose endpoint actually changed
         this.reloadSuccesses.inc();
-        this.stale = false;
+        // the stale contract: 0 means "what is serving matches the files". A partial reload
+        // (config committed, inventory rebuild unpublished) used to clear it anyway, so an
+        // operator whose credential rotation never reached a walk saw a success counter, a
+        // clean gauge and a reloaded log line (#534). Partial keeps it latched, counted on
+        // its own meter; the remediation is the one the WARN above names
+        if (inventoryPublished) {
+            this.stale = false;
+        } else {
+            // counted once per edit, not once per retry; the pending profiles keep the
+            // stale gauge at 1 until a retry or a newer edit publishes. Note partial is a
+            // subset of successes: the config half committed and successes counts that
+            this.reloadPartial.inc();
+            this.pendingProfiles = candidateProfiles;
+        }
         // the SERVING counts, read back from the inventory, not the candidate's. Both paths
         // above can leave the candidate profiles unpublished while this line still runs, and
         // quoting the candidate would report credential sets that never reached a walk right

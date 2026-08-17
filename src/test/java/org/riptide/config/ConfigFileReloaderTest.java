@@ -112,6 +112,146 @@ public class ConfigFileReloaderTest {
         assertThat(Files.readString(INVENTORY)).contains("neutral");
     }
 
+    /**
+     * #533. The reload binder used the shared ApplicationConversionService, which lacks the
+     * context's SecretRefConverter and falls back to SecretRef.of via reflection. The two
+     * agree on every input except blank: boot reads "no secret", the reload threw — so a
+     * blank optional secret booted fine and then permanently failed every reload.
+     */
+    @Test
+    public void aBlankOptionalSecretCommitsOnReloadJustAsItBootsCleanly() throws Exception {
+        final long successesBefore = metrics.counter("config.reload.successes").getCount();
+        write("""
+                riptide:
+                  snmp:
+                    credentials:
+                      opt:
+                        version: v3
+                        security-name: monitoring
+                        priv-passphrase: ""
+                """);
+        reloader.poll();
+
+        assertThat(metrics.counter("config.reload.successes").getCount()).isEqualTo(successesBefore + 1);
+        // serving, with the blank read as "no secret", exactly as boot reads it
+        final var opt = inventory.profiles().credentials().get("opt");
+        assertThat(opt).isNotNull();
+        assertThat(opt.privPassphrase()).isNull();
+        assertThat((Integer) metrics.getGauges().get("config.reload.stale").getValue()).isZero();
+    }
+
+    /**
+     * The other half of the #533 agreement: a blank PAIRED secret must be rejected with the
+     * same shape error boot gives (blank binds to null, and null fails the auth pairing),
+     * not with the reflective path's "must not be blank" throw.
+     */
+    @Test
+    public void aBlankPairedSecretIsRejectedWithBootsOwnError() throws Exception {
+        final var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(ConfigFileReloader.class);
+        final var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            final long failuresBefore = metrics.counter("config.reload.failures").getCount();
+            write("""
+                    riptide:
+                      snmp:
+                        credentials:
+                          half:
+                            version: v3
+                            security-name: monitoring
+                            auth-protocol: hmac192sha256
+                            auth-passphrase: ""
+                    """);
+            reloader.poll();
+
+            assertThat(metrics.counter("config.reload.failures").getCount()).isEqualTo(failuresBefore + 1);
+            // the pairing error is the CAUSE of the bind failure, so it lives in the logged
+            // exception chain rather than the message text. Under the old shared-instance
+            // binder this chain carried "must not be blank" instead — the wrong error, from
+            // the reflective fallback rather than from boot's own validation
+            assertThat(appender.list).anySatisfy(event -> {
+                final StringBuilder chain = new StringBuilder(event.getFormattedMessage());
+                for (var proxy = event.getThrowableProxy(); proxy != null; proxy = proxy.getCause()) {
+                    chain.append('\n').append(proxy.getMessage());
+                }
+                assertThat(chain.toString())
+                        .contains("pairs auth-protocol and auth-passphrase incompletely")
+                        .doesNotContain("must not be blank");
+            });
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    /**
+     * #534, the full contract. A reload whose inventory rebuild does not publish used to
+     * count a success and clear the stale gauge — and the first fix latched a boolean the
+     * very next unchanged-content poll recomputed away, so the gauge showed 1 for one
+     * interval and then lied again. The contract: stale reads 1 for as long as the edit is
+     * not fully serving, and the pending half retries each poll until it heals.
+     */
+    @Test
+    public void aPartialReloadStaysVisibleUntilItHeals() throws Exception {
+        // seed: a committed reload against a publishable inventory, so the "populated
+        // inventory refuses an empty candidate" precondition holds by construction rather
+        // than by sibling-test ordering (this class has been order-dependent before)
+        write("""
+                riptide:
+                  snmp:
+                    credentials:
+                      seed:
+                        version: v3
+                        security-name: monitoring
+                """);
+        reloader.poll();
+        assertThat(inventory.profiles().credentials()).containsKey("seed");
+        assertThat(inventory.snapshot().exporterCount()).isPositive();
+
+        // the inventory file turns unpublishable (parses to no entries over a populated
+        // inventory), and the operator rotates a credential in the main config
+        Files.writeString(INVENTORY, "---\n");
+        final long successesBefore = metrics.counter("config.reload.successes").getCount();
+        final long partialBefore = metrics.counter("config.reload.partial").getCount();
+        write("""
+                riptide:
+                  snmp:
+                    credentials:
+                      rotated:
+                        version: v3
+                        security-name: monitoring
+                """);
+        reloader.poll();
+
+        // the config half committed and says so; the edit is not fully serving and the
+        // gauge must not claim it is
+        assertThat(metrics.counter("config.reload.successes").getCount()).isEqualTo(successesBefore + 1);
+        assertThat(metrics.counter("config.reload.partial").getCount()).isEqualTo(partialBefore + 1);
+        assertThat((Integer) metrics.getGauges().get("config.reload.stale").getValue()).isEqualTo(1);
+        assertThat(inventory.profiles().credentials()).doesNotContainKey("rotated");
+
+        // the next poll sees unchanged content. The first fix cleared the gauge here
+        reloader.poll();
+        assertThat((Integer) metrics.getGauges().get("config.reload.stale").getValue())
+                .as("stale must hold while the edit is not fully serving")
+                .isEqualTo(1);
+        // counted per edit, not per retry
+        assertThat(metrics.counter("config.reload.partial").getCount()).isEqualTo(partialBefore + 1);
+
+        // the inventory file is fixed; the next unchanged-content poll retries the pending
+        // rebuild and the rotation finally serves, with no further config edit
+        Files.writeString(INVENTORY, """
+                riptide:
+                  exporters:
+                    neutral:
+                      address: 198.51.100.1
+                """);
+        reloader.poll();
+        assertThat(inventory.profiles().credentials()).containsKey("rotated");
+        assertThat((Integer) metrics.getGauges().get("config.reload.stale").getValue()).isZero();
+    }
+
     @Test
     void malformedCredentialEditIsRejectedOnReloadNotAtTheNextBoot() throws Exception {
         // 2.3's bind-time shape validation must gate reload candidates too: a
