@@ -394,15 +394,18 @@ class InventoryLoaderTest {
         assertThat(snapshot.exporterView().match(netflow("10.21.0.5", 7)))
                 .map(ExporterEntry::name).hasValue("unpinned");
 
-        // two spellings of one canonical prefix with the same pin are ambiguous, and
-        // the netmask form proves this is canonicalisation rather than string equality
+        // two spellings of one canonical coverage with the same pin are ambiguous; the
+        // host-vs-/32 pair proves this is canonicalisation rather than string equality.
+        // (The netmask form used to be the proof here; #538 rejects the whole netmask
+        // spelling class at the parse boundary, which subsumes that ambiguity — pinned
+        // in StrictAddressDiagnosisTest)
         assertThatThrownBy(() -> InventoryLoader.parse(profiles(), """
                 riptide:
                   exporters:
                     first:
-                      address: 10.22.0.0/24
+                      address: 10.22.0.7
                     second:
-                      address: 10.22.0.0/255.255.255.0
+                      address: 10.22.0.7/32
                 """, "test.yaml"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("first")

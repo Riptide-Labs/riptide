@@ -259,6 +259,40 @@ class LegacyConverterTest {
         }
     }
 
+    /**
+     * The converter routes through the shared strict parser (#538). A CONTIGUOUS netmask
+     * is a legal 0.8 spelling with an exact CIDR equivalent, and this tool's charter is a
+     * mechanical rewrite — so it translates, emits the CIDR form, and says so in the
+     * summary. A non-contiguous mask still fails: it has no CIDR equivalent, and 0.8
+     * silently mis-read it as an address the operator never wrote.
+     */
+    @Test
+    void aContiguousNetmaskIsTranslatedAndANonContiguousOneRefused() throws Exception {
+        final var converted = convert("""
+                riptide:
+                  nodes:
+                    masked:
+                      subnet-address: "10.90.0.0/255.255.0.0"
+                      snmp: {snmp-version: v3, security-name: mon}
+                """);
+        assertThat(converted.inventory()).contains("\"10.90.0.0/16\"").doesNotContain("255.255.0.0");
+        assertThat(converted.summary()).anySatisfy(line -> assertThat(line)
+                .contains("masked").contains("10.90.0.0/255.255.0.0").contains("10.90.0.0/16"));
+        // and the emitted form boots: the translation is real, not cosmetic
+        boot(converted);
+
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  nodes:
+                    n:
+                      subnet-address: "10.90.0.0/255.0.255.0"
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("n")
+                .hasMessageContaining("non-contiguous netmask")
+                .hasMessageContaining("10.0.0.0");
+    }
+
     @Test
     void aNodeWithAnSnmpBlockButNoVersionIsAnError() {
         assertThatThrownBy(() -> convert("""

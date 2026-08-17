@@ -5,9 +5,7 @@
 
 package org.riptide.inventory;
 
-import inet.ipaddr.IPAddress;
 import inet.ipaddr.IPAddressString;
-import inet.ipaddr.IPAddressStringParameters;
 import lombok.extern.slf4j.Slf4j;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
@@ -68,18 +66,6 @@ public final class InventoryLoader {
 
     /** Checked before the read, because the code-point limit only bounds the parser. */
     private static final long MAX_FILE_BYTES = CODE_POINT_LIMIT;
-
-    /**
-     * No inet_aton joins, no leading zeros, no empty or all-address forms: a typo
-     * like "10.0.1" or "010.0.0.7" must fail, not quietly mean a different address.
-     */
-    private static final IPAddressStringParameters STRICT_ADDRESSES = new IPAddressStringParameters.Builder()
-            .allowEmpty(false)
-            .allowAll(false)
-            .allow_inet_aton(false)
-            .getIPv4AddressParametersBuilder().allowLeadingZeros(false).getParentBuilder()
-            .getIPv6AddressParametersBuilder().allowLeadingZeros(false).getParentBuilder()
-            .toParams();
 
     private InventoryLoader() {
     }
@@ -623,15 +609,12 @@ public final class InventoryLoader {
      * surprises, no silent dead entries.
      */
     private static IPAddressString strictAddress(final String value, final String what, final boolean hostOnly) {
-        final IPAddressString parsed = new IPAddressString(value, STRICT_ADDRESSES);
-        final IPAddress address = parsed.getAddress();
-        final boolean host = address != null && !address.isMultiple() && !address.isPrefixed();
-        final boolean block = address != null && address.isPrefixed() && address.isSinglePrefixBlock();
-        if (hostOnly ? !host : !(host || block)) {
-            throw new IllegalStateException(hostOnly
-                    ? "The %s '%s' is not a single host address.".formatted(what, value)
-                    : "The %s '%s' is not a host address or CIDR prefix.".formatted(what, value));
+        try {
+            return StrictAddresses.parse(value, hostOnly);
+        } catch (final IllegalArgumentException e) {
+            // the diagnosis clause completes the entry-naming sentence, so the operator
+            // reads which entry, which rule, and the exact string to write instead
+            throw new IllegalStateException("The %s '%s' %s".formatted(what, value, e.getMessage()));
         }
-        return parsed;
     }
 }
