@@ -233,10 +233,25 @@ class InventoryFileReloaderTest {
                     core:
                       address: 10.20.0.1
                 """);
-        this.reloader.poll();
+        final var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(InventoryFileReloader.class);
+        final var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            this.reloader.poll();
+        } finally {
+            logger.detachAppender(appender);
+        }
         assertThat(this.inventory.snapshot().agentCount())
                 .as("the polled fleet must survive a torn read").isEqualTo(1);
         assertThat(failures()).isZero();
+        // RENDERED, not the format string: the braces in "agents: {}" are SLF4J
+        // placeholders unless escaped, and the unescaped form ate its own arguments —
+        // the message teaching the idiom printed garbage counts (CodeQL 150/151)
+        assertThat(appender.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                .contains("agents: {}")
+                .contains("1 -> 0 agent range(s)"));
 
         // the writer finishes; the changed content re-parses and publishes
         write("""

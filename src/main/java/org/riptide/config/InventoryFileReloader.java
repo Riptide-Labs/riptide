@@ -218,14 +218,17 @@ public class InventoryFileReloader {
                 // exporter name. Deleting the file already keeps the old inventory
                 // serving, so refusing this is the same rule, not a new one. This is a
                 // pre-check for the message; the monitor-held guard in Inventory decides
-                log.warn("Inventory file {} would drop a whole tree ({} -> {} agent range(s), {} -> {} "
+                // pre-formatted, not SLF4J placeholders: the message teaches the literal
+                // "agents: {}" idiom, and {} in an SLF4J format string IS a placeholder —
+                // the first version consumed its own arguments and printed shifted counts
+                log.warn(("Inventory file %s would drop a whole tree (%d -> %d agent range(s), %d -> %d "
                         + "enrichment entry/entries): keeping the running inventory (a partially written "
                         + "file reads this way; write atomically via mv). To deliberately empty a "
                         + "tree, write it as an explicit empty mapping (agents: {} / exporters: {}); "
                         + "to stop polling while keeping entries, set enabled: false on a covering "
-                        + "range", this.location,
+                        + "range").formatted(this.location,
                         serving.agentCount(), candidate.agentCount(),
-                        serving.exporterCount(), candidate.exporterCount());
+                        serving.exporterCount(), candidate.exporterCount()));
                 return;
             }
 
