@@ -16,9 +16,9 @@ Not part of `make jar`; never a build gate.
 
 | Harness | Measures |
 |---|---|
-| `LookupBench` | `the production exporter lookup (inventory exporter view)` linear scan vs `inet.ipaddr` associative trie, by node count |
-| `ShapeBench` | Binder cost by keys-per-node at 10k nodes (full mode), plus direct SnakeYAML parse of the 3-key profile shape |
-| `BenchSuite` | Entry point: runs all three into one report |
+| `LookupBench` | `InventorySnapshot.exporterView().match` (trie-backed since 1.4) vs a raw `inet.ipaddr` associative trie, by entry count |
+| `ShapeBench` | Direct-parse linearity and production loader vs raw parse, by entry count |
+| `BenchSuite` | Entry point: runs both into one report |
 
 Each harness also runs standalone (same classpath, its own `main`); a standalone run writes a partial report to `target/bench-report-<name>.json` and never touches the combined suite report.
 
@@ -32,10 +32,10 @@ Asserted today:
 | Assertion | Meaning | Threshold | Baseline (M-series laptop) |
 |---|---|---|---|
 | `lookup.trie-scale-flatness` | Reference trie ns/op at 10k entries vs at 100 entries | ≤ 6.0 | 2.1 (2026-08-13) |
-| `lookup.production-vs-reference` | Production `the production exporter lookup (inventory exporter view)` ns/op vs reference trie ns/op at 10k entries | ≤ 8.0 | 2.5 (2026-08-14) |
-| `lookup.production-scale-flatness` | Production `the production exporter lookup (inventory exporter view)` ns/op at 10k entries vs at 100 entries | ≤ 4.5 | 1.3 (2026-08-14) |
+| `lookup.production-vs-reference` | Production `exporterView().match` ns/op vs reference trie ns/op at 10k entries | ≤ 8.0 | 2.5 (2026-08-17, re-measured: 0.9 removed NodeRegistry, so the subject is now the exporter view) |
+| `lookup.production-scale-flatness` | Production `exporterView().match` ns/op at 10k entries vs at 100 entries | ≤ 4.5 | 1.6 (2026-08-17, re-measured on the new subject) |
 | `parse.direct-linearity` | Direct-parse per-entry cost at 100k entries vs at 10k | ≤ 3.0 | 0.7 (2026-08-13) |
-| `parse.production-vs-raw` | Production `InventoryLoader` (parse + validate + resolve + trie build) vs raw SnakeYAML load at 10k entries | ≤ 4.0 | 1.3 (2026-08-14) |
+| `parse.production-vs-raw` | Production `InventoryLoader` (parse + validate + resolve + trie build) vs raw SnakeYAML load at 10k entries | ≤ 4.0 | 1.6 (2026-08-17, re-measured on the new subject) |
 
 The first assertion (`lookup.trie-scale-flatness`) is a reference-implementation property (a failure means the harness or environment broke).
 The two production-lookup assertions (`lookup.production-vs-reference`, `lookup.production-scale-flatness`) are the FR-4 budget: they fail when a change makes exporter matching scale with inventory size again.
@@ -61,7 +61,7 @@ Adding a budget is a `report.measure(...)` + `report.assertRatio(name, measured,
 
 When a threshold needs re-deriving (new hardware class, intentional reference change):
 
-1. Run `make bench BENCH_FULL=1` on an idle machine (check `uptime`); repeat 3 times.
+1. Run `make bench` on an idle machine (check `uptime`); repeat 3 times.
 2. Take the worst (highest) measured ratio across runs as the new baseline.
 3. Set the threshold at roughly 3x the baseline and record both in the constant's javadoc (`TRIE_FLATNESS_MAX`, `PRODUCTION_VS_REFERENCE_MAX`, `PRODUCTION_FLATNESS_MAX`, `DIRECT_LINEARITY_MAX`, `PRODUCTION_VS_RAW_MAX`) and in the table above.
 4. Never tighten a threshold in the same change that alters what the harness measures.

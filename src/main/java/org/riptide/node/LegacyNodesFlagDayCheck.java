@@ -53,7 +53,7 @@ public class LegacyNodesFlagDayCheck {
      * a real boundary after "nodes".
      */
     private static final java.util.regex.Pattern LEGACY_KEY = java.util.regex.Pattern.compile(
-            "(?i)^riptide[._-]?nodes([._\\[]|$).*");
+            "(?i)^riptide[._-]?nodes([._\\[-]|$)");
 
     private final Environment environment;
 
@@ -74,10 +74,13 @@ public class LegacyNodesFlagDayCheck {
         for (final var source : sources) {
             if (source instanceof EnumerablePropertySource<?> enumerable) {
                 for (final String name : enumerable.getPropertyNames()) {
-                    if (normalize(name).startsWith(LEGACY_PREFIX) && LEGACY_KEY.matcher(name).matches()) {
-                        throw new IllegalStateException(message(name));
-                    }
-                    if (isEnvironmentForm(name)) {
+                    // lookingAt, not matches: matches() must consume the whole name, and '.'
+                    // excludes line terminators, so a key carrying a newline after "nodes" —
+                    // which a quoted YAML key or a .properties line can both produce — slipped
+                    // through the boundary check entirely and left the tree silently inert
+                    if (normalize(name).startsWith(LEGACY_PREFIX)
+                            && LEGACY_KEY.matcher(name).lookingAt()
+                            && !isServiceLink(name)) {
                         throw new IllegalStateException(message(name));
                     }
                 }
@@ -86,13 +89,15 @@ public class LegacyNodesFlagDayCheck {
     }
 
     /**
-     * The environment spelling, which has no separators left to anchor on:
-     * {@code RIPTIDE_NODES_CORE_ROUTER_SUBNET_ADDRESS}. Matched on the underscore boundary so
-     * a Kubernetes service link for a service named {@code riptide-node}
-     * ({@code RIPTIDE_NODE_SERVICE_HOST}) does not take the pod down.
+     * Container service links, which are environment variables the platform injects and the
+     * operator never wrote. A Kubernetes or Docker Service named {@code riptide-nodes} produces
+     * {@code RIPTIDE_NODES_SERVICE_HOST} and friends; failing startup on those would take a pod
+     * down over configuration that does not exist, and there is no way to fix it from inside
+     * the namespace except renaming the Service.
      */
-    private static boolean isEnvironmentForm(final String name) {
-        return name.equals("RIPTIDE_NODES") || name.startsWith("RIPTIDE_NODES_");
+    private static boolean isServiceLink(final String name) {
+        return name.matches("RIPTIDE_NODES_(SERVICE_HOST|SERVICE_PORT|PORT|NAME|ENV_)\\w*")
+                || name.matches("RIPTIDE_NODES_PORT_\\d+_\\w+");
     }
 
     private static String message(final String key) {
@@ -106,7 +111,10 @@ public class LegacyNodesFlagDayCheck {
                 + "The converter deduplicates credential blocks, keeps every exporter name, and "
                 + "refuses rather than emitting anything 0.9 will not start on. Then remove the "
                 + "riptide.nodes tree from your configuration. The 0.9 release notes carry the "
-                + "full upgrade guide.%s").formatted(key, indexedHint(key));
+                + "full upgrade guide."
+                // appended to the format string, not passed as an argument: a %n inside a %s
+                // substitution is never processed and the operator reads a literal "%n%n"
+                + indexedHint(key)).formatted(key);
     }
 
     /**

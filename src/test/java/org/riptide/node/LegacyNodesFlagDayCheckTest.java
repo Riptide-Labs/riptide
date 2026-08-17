@@ -96,6 +96,7 @@ class LegacyNodesFlagDayCheckTest {
                 "riptide.node-scan.enabled",
                 "RIPTIDE_NODE_SERVICE_HOST",
                 "RIPTIDE_NODE_SERVICE_PORT",
+                "riptide.nodesource.url",
                 "riptide.clickhouse.url",
                 "RIPTIDE_INVENTORY_FILE")) {
             assertThatCode(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
@@ -115,6 +116,58 @@ class LegacyNodesFlagDayCheckTest {
         assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
                 sources("file", Map.of("riptide.nodes.core.subnet-address", "10.0.0.1"))))
                 .hasMessageNotContaining("name-keyed map");
+    }
+
+    /**
+     * The boundary check used {@code matches()} with a trailing {@code .*}, which cannot cross
+     * a line terminator, so a key carrying a newline after "nodes" passed straight through and
+     * the operator kept a silently inert device configuration. Both a quoted YAML key and a
+     * {@code .properties} line can produce exactly this name.
+     */
+    @Test
+    void aKeyCarryingALineTerminatorStillFails() {
+        for (final String key : List.of(
+                "riptide.nodes.core\nrouter.subnet-address",
+                "riptide.nodes\n",
+                "riptide.nodes.core\u2028router.subnet-address")) {
+            assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
+                    sources("file", Map.of(key, "10.0.0.1"))))
+                    .as("must reject %s", key.replace("\n", "\\n"))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+    }
+
+    /**
+     * A Service named riptide-nodes makes the platform inject these; the operator never wrote
+     * them, and failing on them takes a pod down with no in-namespace remedy but a rename.
+     */
+    @Test
+    void containerServiceLinksAreNotConfiguration() {
+        for (final String link : List.of(
+                "RIPTIDE_NODES_SERVICE_HOST",
+                "RIPTIDE_NODES_SERVICE_PORT",
+                "RIPTIDE_NODES_PORT",
+                "RIPTIDE_NODES_PORT_8080_TCP_ADDR",
+                "RIPTIDE_NODES_NAME",
+                "RIPTIDE_NODES_ENV_PATH")) {
+            assertThatCode(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
+                    sources("env", Map.of(link, "10.0.0.1"))))
+                    .as("must not reject the service link %s", link)
+                    .doesNotThrowAnyException();
+        }
+        // and the real environment form is still caught alongside them
+        assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
+                sources("env", Map.of("RIPTIDE_NODES_CORE_SUBNET_ADDRESS", "10.0.0.1"))))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    /** A %n inside a %s substitution is never processed, so the hint printed literal "%n". */
+    @Test
+    void theIndexedHintIsFormattedNotPrintedLiterally() {
+        assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
+                sources("file", Map.of("riptide.nodes[0].subnet-address", "10.0.0.1"))))
+                .hasMessageNotContaining("%n")
+                .hasMessageContaining("name-keyed map");
     }
 
     @Test

@@ -299,10 +299,13 @@ public class ConfigFileReloader {
         // touches exactly the registrations whose endpoint actually changed
         this.reloadSuccesses.inc();
         this.stale = false;
-        // counts, not just the path: the node count used to carry the magnitude of an edit,
-        // and a line with no numbers cannot tell an operator whether anything landed
-        log.info("Config reloaded from {}: {} credential set(s), {} polling profile(s)",
-                this.location, candidateProfiles.credentials().size(), candidateProfiles.polling().size());
+        // the SERVING counts, read back from the inventory, not the candidate's. Both paths
+        // above can leave the candidate profiles unpublished while this line still runs, and
+        // quoting the candidate would report credential sets that never reached a walk right
+        // underneath the warning saying they did not
+        final SnmpProfilesConfig serving = this.inventory.profiles();
+        log.info("Config reloaded from {}: {} credential set(s), {} polling profile(s) serving",
+                this.location, serving.credentials().size(), serving.polling().size());
     }
 
     /** Profile-gated documents are a boot-only ConfigData feature; reload skips them loudly. */

@@ -105,6 +105,11 @@ public class ConfigFileReloaderTest {
                     neutral:
                       address: 198.51.100.1
                 """);
+        // fixture-critical and asserted as such: an empty inventory here would be refused by
+        // rebuildAndSwap, the reloader would log a warning and still count a success, and the
+        // profiles would silently keep the previous test's values — which is exactly the
+        // order-dependence this reset exists to remove, returning with nothing pointing at it
+        assertThat(Files.readString(INVENTORY)).contains("neutral");
     }
 
     @Test
@@ -212,6 +217,13 @@ public class ConfigFileReloaderTest {
 
     @Test
     public void anyLegacyNodesTreeRejectsTheCandidate() throws Exception {
+        final var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(ConfigFileReloader.class);
+        final var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        final var captured = appender.list;
+        try {
         write("""
                 riptide:
                   snmp:
@@ -238,6 +250,13 @@ public class ConfigFileReloaderTest {
             // rejected AND still serving: a check that took the collector down with it would
             // satisfy the counter and fail the requirement
             assertThat(inventory.profiles().credentials()).containsKey("still-serving");
+        }
+        // and rejected by THIS check: without naming the cause, an unrelated validation
+        // failure would keep the counter moving and the test green with the check deleted
+        assertThat(captured).anySatisfy(event ->
+                assertThat(event.getFormattedMessage()).contains("Legacy node configuration found"));
+        } finally {
+            logger.detachAppender(appender);
         }
     }
 
@@ -336,6 +355,9 @@ public class ConfigFileReloaderTest {
                 """);
         reloader.poll();
 
+        // the reload has to have committed, or an untouched interface table proves nothing:
+        // a rejected candidate leaves the table alone too, and the test would pass either way
+        assertThat(inventory.profiles().credentials()).containsKey("another");
         assertThat(exporterInterfaceTable.lookup(exporter, 7)).contains(new IfInfo("persistent", null, null));
     }
 

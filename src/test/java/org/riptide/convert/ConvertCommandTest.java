@@ -99,7 +99,7 @@ class ConvertCommandTest {
         assertThat(Files.readString(config))
                 .contains("\n        version:").doesNotContain("exporters:").doesNotContain("agents:");
         assertThat(Files.readString(inventory))
-                .contains("exporters:").contains("agents:").doesNotContain("\n        version:");
+                .contains("exporters:").contains("agents:").doesNotContain("version:");
         assertThat(Files.readString(inventory)).contains("inventory file");
         assertThat(out()).contains("Wrote credential sets").contains("Wrote agent ranges");
     }

@@ -5,13 +5,9 @@
 
 import inet.ipaddr.IPAddressString;
 import org.riptide.inventory.CredentialSet;
-import org.riptide.inventory.CredentialVersion;
 import org.riptide.inventory.InventoryLoader;
 import org.riptide.inventory.PollingProfile;
 import org.riptide.inventory.SnmpProfilesConfig;
-import org.springframework.boot.context.properties.bind.Bindable;
-import org.springframework.boot.context.properties.bind.Binder;
-import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 
@@ -29,7 +25,7 @@ import java.util.Map;
  * The proposed shape is 3 keys/node: subnet-address + credentials + polling.
  *
  * Asserted (reference ratio only): the direct parse stays linear from 10k to 100k
- * entries. Binder numbers are informational; story 2.1 activated the
+ * entries. Direct-parse numbers are informational; story 2.1 activated the
  * production-parse budget.
  */
 public final class ShapeBench {
@@ -61,7 +57,7 @@ public final class ShapeBench {
         // bound the legacy riptide.nodes tree, which 0.9 removed. The decision it informed has
         // shipped; the production loader below is what measures the shape that exists.
 
-        System.out.println("\n=== Direct parse (SnakeYAML -> setters), proposed 3-key shape ===");
+        System.out.println("\n=== Direct parse (SnakeYAML -> setters), 3-key entry shape ===");
         System.out.printf("%-12s %12s %12s %12s%n", "nodes", "yaml ms", "build ms", "total ms");
         final Map<Integer, Long> totalNsByScale = new LinkedHashMap<>();
         for (final int n : new int[]{1_000, 10_000, 50_000, 100_000}) {
