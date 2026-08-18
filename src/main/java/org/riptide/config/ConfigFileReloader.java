@@ -190,6 +190,26 @@ public class ConfigFileReloader {
     }
 
     /**
+     * Shutdown recognition for the rebuild-path catches, where the poll-level belt cannot
+     * reach: {@code InventoryLoader.load} wraps an interrupted read's
+     * {@link ClosedByInterruptException} into its "not readable" IllegalStateException,
+     * so both the flag and the cause chain must be consulted. Untestable
+     * deterministically for the same reason as the poll-level belt (the interrupt must
+     * land mid-cycle, past the top-of-poll check); verified by inspection.
+     */
+    private static boolean interruptedShutdown(final Exception e) {
+        if (Thread.currentThread().isInterrupted()) {
+            return true;
+        }
+        for (Throwable cause = e; cause != null; cause = cause.getCause()) {
+            if (cause instanceof ClosedByInterruptException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Remove-then-register, NOT Dropwizard's get-or-create {@code gauge(name, supplier)}:
      * get-or-create would hand a restarted bean (devtools, cached test contexts) the OLD
      * bean's gauge lambda, permanently reading dead fields. Plain register threw instead.
@@ -227,6 +247,13 @@ public class ConfigFileReloader {
         try {
             published = this.inventory.rebuildAndSwap(pending, this.inventoryConfig.getFile());
         } catch (final RuntimeException e) {
+            if (interruptedShutdown(e)) {
+                // a shutdown artifact must not be remembered as a failure cause: the
+                // wrapped message would mismatch the real cause and WARN "now with"
+                Thread.currentThread().interrupt();
+                log.debug("Pending inventory rebuild interrupted (shutdown)");
+                return;
+            }
             // quiet on repetition (the commit-time WARN named the cause, the gauge holds
             // it visible), but a CHANGED cause is new information the operator otherwise
             // never sees: the file was edited and now fails differently
@@ -461,8 +488,23 @@ public class ConfigFileReloader {
                         + "every poll").formatted(this.inventoryConfig.getFile()));
             } else {
                 inventoryPublished = true;
+                // the supersede, at the earliest true point: the edit is fully published,
+                // and a scrape during the refresh below must not read stale=1 off a
+                // pending this publish just replaced
+                this.pendingProfiles = null;
+                this.lastPendingRetryFailure = null;
             }
         } catch (final RuntimeException e) {
+            if (interruptedShutdown(e)) {
+                // the poll-level belt structurally cannot see this one: the loader wraps
+                // the interrupted read's ClosedByInterruptException into its "not
+                // readable" IllegalStateException, so shutdown must be recognized HERE —
+                // otherwise an orderly stop mid-rebuild WARNed "NOT serving", counted a
+                // partial, and parked a pending edit off a shutdown artifact
+                Thread.currentThread().interrupt();
+                log.debug("Config reload interrupted during the inventory rebuild (shutdown): {}", e.getMessage());
+                return;
+            }
             // this lands in the same latched-and-retried state as the null return above,
             // so the two messages must prescribe the same remediation. The first version
             // said "edit the config again, or restart" here — a needless restart for a
@@ -495,10 +537,6 @@ public class ConfigFileReloader {
         // clean gauge and a reloaded log line (#534). Partial keeps it latched, counted on
         // its own meter; the remediation is the one the WARN above names
         if (inventoryPublished) {
-            // the supersede, on the success path: whatever an earlier partial left
-            // pending is now replaced by this fully-served edit
-            this.pendingProfiles = null;
-            this.lastPendingRetryFailure = null;
             this.stale = false;
         } else {
             // counted once per edit, not once per retry; the pending profiles keep the
