@@ -77,20 +77,34 @@ public final class LegacyConverter {
         // sorted, not map order: the same input has to convert to byte-identical output, and
         // a diff between two runs of the same file would be unreviewable
         for (final LegacyNode raw : new TreeMap<>(legacy.nodes()).values()) {
+            // 0.8 accepted zoned spellings and its matcher was equally zone-blind, so the
+            // zone is stripped rather than refused (#553) — same charter as the netmask
+            // translation below. A spelling combining zone AND netmask matches neither
+            // translation and is refused with the combined diagnosis
+            final LegacyNode dezoned = StrictAddresses
+                    .zoneStrippedForm(raw.subnetAddress())
+                    .map(stripped -> {
+                        summary.add(("Rewrote node '%s' subnet-address '%s' to '%s' (zone ids are "
+                                + "ignored in matching).")
+                                .formatted(raw.name(), raw.subnetAddress(), stripped));
+                        return new LegacyNode(raw.name(), stripped, raw.observationDomain(),
+                                raw.snmp(), raw.interfaces());
+                    })
+                    .orElse(raw);
             // 0.8 accepted the contiguous-netmask spelling and this tool's charter is a
             // mechanical rewrite, so it is translated to CIDR rather than refused — the
             // node is rewritten up front so every downstream use (emission, dedup,
             // messages) sees one spelling. A non-contiguous mask still fails: it has no
             // CIDR equivalent and 0.8 silently mis-read it (#538)
             final LegacyNode node = StrictAddresses
-                    .cidrFormOfContiguousNetmask(raw.subnetAddress())
+                    .cidrFormOfContiguousNetmask(dezoned.subnetAddress())
                     .map(cidr -> {
                         summary.add("Rewrote node '%s' subnet-address '%s' to the CIDR form '%s'."
-                                .formatted(raw.name(), raw.subnetAddress(), cidr));
-                        return new LegacyNode(raw.name(), cidr, raw.observationDomain(),
-                                raw.snmp(), raw.interfaces());
+                                .formatted(dezoned.name(), dezoned.subnetAddress(), cidr));
+                        return new LegacyNode(dezoned.name(), cidr, dezoned.observationDomain(),
+                                dezoned.snmp(), dezoned.interfaces());
                     })
-                    .orElse(raw);
+                    .orElse(dezoned);
             final IPAddress address = strictAddress(node);
             requireEmittableNode(node);
             if (node.snmp() != null) {

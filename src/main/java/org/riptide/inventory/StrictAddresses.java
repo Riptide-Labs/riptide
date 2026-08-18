@@ -23,7 +23,10 @@ import inet.ipaddr.IPAddressStringParameters;
  * sailed past the v1/v2c width rule. {@code allowMask(false)} rejects the whole netmask
  * class, contiguous forms and IPv6 mask spellings included: one accepted spelling per
  * meaning is the posture, and two spellings for one thing is exactly the ambiguity that
- * hid the trap.</p>
+ * hid the trap. Zone ids ({@code fe80::1%eth0}) are rejected for the inverse reason
+ * (#553, probe-verified): matching ignores zones — a zoned entry matches flows from ANY
+ * interface, numeric-scope and foreign-zone probes included — so the spelling promises
+ * an interface constraint that nothing enforces.</p>
  *
  * <p>On failure, a diagnosis ladder re-parses with one rule relaxed at a time and names
  * the rule that fired plus a suggestion that is guaranteed to round-trip through this
@@ -46,17 +49,33 @@ public final class StrictAddresses {
     private static final IPAddressStringParameters MASKS_ALLOWED = strictBuilder()
             .toParams();
 
-    private static final IPAddressStringParameters ZEROS_ALLOWED = new IPAddressStringParameters.Builder()
-            .allowEmpty(false)
-            .allowAll(false)
-            .allowSingleSegment(false)
-            .allow_inet_aton(false)
-            .allowMask(false)
-            .toParams();
+    private static final IPAddressStringParameters ZEROS_ALLOWED = zerosAllowedParams();
+
+    private static IPAddressStringParameters zerosAllowedParams() {
+        final IPAddressStringParameters.Builder builder = new IPAddressStringParameters.Builder()
+                .allowEmpty(false)
+                .allowAll(false)
+                .allowSingleSegment(false)
+                .allow_inet_aton(false)
+                .allowMask(false);
+        // one relaxation per arm: zones stay banned here, chosen explicitly rather than
+        // inherited from the builder default, so a zoned spelling never gets a
+        // leading-zeros diagnosis
+        builder.getIPv6AddressParametersBuilder().allowZone(false);
+        return builder.toParams();
+    }
 
     private static final IPAddressStringParameters ATON_ALLOWED = strictBuilder()
             .allowMask(false)
             .allow_inet_aton(true)
+            .toParams();
+
+    /**
+     * One rule relaxed: the zone. Masks stay banned, so a zoned netmask spelling falls
+     * to the combined arm rather than getting a half-right zone-only message.
+     */
+    private static final IPAddressStringParameters ZONES_ALLOWED = zoneTolerantBuilder()
+            .allowMask(false)
             .toParams();
 
     /**
@@ -67,14 +86,33 @@ public final class StrictAddresses {
      * refuses. A spelling combining inet_aton with the others falls to the generic
      * message instead of a wrong suggestion.
      */
-    private static final IPAddressStringParameters MASKS_AND_ZEROS_ALLOWED = new IPAddressStringParameters.Builder()
-            .allowEmpty(false)
-            .allowAll(false)
-            .allowSingleSegment(false)
-            .allow_inet_aton(false)
-            .toParams();
+    private static final IPAddressStringParameters MASKS_AND_ZEROS_ALLOWED = masksAndZerosParams();
+
+    private static IPAddressStringParameters masksAndZerosParams() {
+        final IPAddressStringParameters.Builder builder = new IPAddressStringParameters.Builder()
+                .allowEmpty(false)
+                .allowAll(false)
+                .allowSingleSegment(false)
+                .allow_inet_aton(false);
+        // zones explicitly allowed (the builder default, chosen rather than inherited):
+        // this is the catch-all for spellings combining several rejected forms, zone
+        // included — and the arm de-zones before suggesting, so the fix still parses
+        builder.getIPv6AddressParametersBuilder().allowZone(true);
+        return builder.toParams();
+    }
 
     private static IPAddressStringParameters.Builder strictBuilder() {
+        final IPAddressStringParameters.Builder builder = zoneTolerantBuilder();
+        // zone ids are rejected because matching ignores them (#553, probe-verified):
+        // fe80::1%eth0 reads as "this address on eth0" but would match a flow from ANY
+        // interface — the spelling promises a constraint nothing enforces, and the
+        // ambiguity guard already treats zoned and unzoned as the same canonical prefix
+        builder.getIPv6AddressParametersBuilder().allowZone(false);
+        return builder;
+    }
+
+    /** {@link #strictBuilder()} minus the zone ban: the base for the zone ladder arm. */
+    private static IPAddressStringParameters.Builder zoneTolerantBuilder() {
         final IPAddressStringParameters.Builder builder = new IPAddressStringParameters.Builder()
                 .allowEmpty(false)
                 .allowAll(false)
@@ -122,6 +160,24 @@ public final class StrictAddresses {
         final IPAddress masked = new IPAddressString(value, MASKS_ALLOWED).getAddress();
         return masked != null && masked.isPrefixed() && masked.isSinglePrefixBlock()
                 ? Optional.of(masked.toCanonicalString())
+                : Optional.empty();
+    }
+
+    /**
+     * The zone-stripped form of a zoned spelling, for the legacy converter: 0.8 accepted
+     * zones and its matcher was equally zone-blind (#553), so the converter translates
+     * the spelling rather than refusing it — meaning preserved, which is its charter.
+     * Empty for anything else, including a zoned NETMASK spelling: that combines two
+     * translations, and it is refused with the combined-arm diagnosis instead of
+     * translated in a silently compound step.
+     */
+    public static Optional<String> zoneStrippedForm(final String value) {
+        if (new IPAddressString(value, STRICT).getAddress() != null) {
+            return Optional.empty();
+        }
+        final IPAddress zoned = new IPAddressString(value, ZONES_ALLOWED).getAddress();
+        return zoned != null
+                ? Optional.of(zoned.toIPv6().removeZone().toCanonicalString())
                 : Optional.empty();
     }
 
@@ -186,6 +242,27 @@ public final class StrictAddresses {
             return generic(false);
         }
 
+        final IPAddress zoned = new IPAddressString(value, ZONES_ALLOWED).getAddress();
+        if (zoned != null) {
+            // guaranteed IPv6: ZONES_ALLOWED differs from STRICT only in the v6 zone, so
+            // an address parsing here and not there carries one. The zone is UNQUOTED in
+            // the message deliberately: every single-quoted string in a diagnosis must
+            // round-trip through this parser (pinned by test), and '%eth0' never would
+            final IPAddress stripped = zoned.toIPv6().removeZone();
+            final String zone = zoned.toIPv6().getZone();
+            final String fix = suggestion(stripped, hostOnly);
+            if (fix == null) {
+                return generic(hostOnly);
+            }
+            if (acceptable(stripped, hostOnly)) {
+                return ("has a zone id (%%%s); matching ignores zones, so the entry would silently "
+                        + "mean '%s' from any interface; write '%s'.").formatted(zone, fix, fix);
+            }
+            // the stripped form itself violates a shape rule too; claiming the entry
+            // "would mean" the derived fix overstates — name the zone and the fix only
+            return "has a zone id (%%%s); matching ignores zones; write '%s'.".formatted(zone, fix);
+        }
+
         final IPAddress zeros = new IPAddressString(value, ZEROS_ALLOWED).getAddress();
         if (zeros != null) {
             final String fix = suggestion(zeros, hostOnly);
@@ -203,7 +280,12 @@ public final class StrictAddresses {
 
         final IPAddress combined = new IPAddressString(value, MASKS_AND_ZEROS_ALLOWED).getAddress();
         if (combined != null) {
-            final String fix = suggestion(combined, hostOnly);
+            // de-zone before suggesting: a zoned combined spelling would otherwise have
+            // its zoned canonical form suggested — a string this same parser rejects
+            final IPAddress dezoned = combined.isIPv6() && combined.toIPv6().hasZone()
+                    ? combined.toIPv6().removeZone()
+                    : combined;
+            final String fix = suggestion(dezoned, hostOnly);
             return fix == null ? generic(hostOnly)
                     : "combines several rejected spellings; write '%s'.".formatted(fix);
         }

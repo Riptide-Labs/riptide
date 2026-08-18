@@ -293,6 +293,40 @@ class LegacyConverterTest {
                 .hasMessageContaining("10.0.0.0");
     }
 
+    /**
+     * The inert-zone translation (#553), same charter as the netmask rewrite: 0.8
+     * accepted zoned spellings and its matcher was equally zone-blind, so the converter
+     * strips the zone with a summary line — and the emitted form boots. A spelling
+     * combining zone AND netmask matches neither single translation and refuses with
+     * the combined diagnosis instead of a silently compound rewrite.
+     */
+    @Test
+    void aZonedAddressIsTranslatedAndAZonedNetmaskRefused() throws Exception {
+        final var converted = convert("""
+                riptide:
+                  nodes:
+                    zoned:
+                      subnet-address: "fe80::1%eth0"
+                      snmp: {snmp-version: v3, security-name: mon}
+                """);
+        assertThat(converted.inventory()).contains("\"fe80::1\"").doesNotContain("%eth0");
+        assertThat(converted.summary()).anySatisfy(line -> assertThat(line)
+                .contains("zoned").contains("fe80::1%eth0").contains("fe80::1")
+                .contains("zone ids are ignored in matching"));
+        // and the emitted form boots: the translation is real, not cosmetic
+        boot(converted);
+
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  nodes:
+                    zm:
+                      subnet-address: "fe80::%eth0/ffff::"
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("zm")
+                .hasMessageContaining("combines several rejected spellings");
+    }
+
     @Test
     void aNodeWithAnSnmpBlockButNoVersionIsAnError() {
         assertThatThrownBy(() -> convert("""
