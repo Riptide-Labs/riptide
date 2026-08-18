@@ -73,6 +73,10 @@ public final class LegacyConverter {
         // such nodes collapse onto one range key: emitting both produces a duplicate YAML key
         // and an inventory that cannot load, reported against a generated line number
         final Map<String, String> rangeOwners = new LinkedHashMap<>();
+        // the FILE's spelling behind each claimed range key: a collision surfacing only
+        // after a zone-strip or netmask rewrite must name what the operator can grep
+        // for — the summary line explaining the rewrite is discarded by the throw
+        final Map<String, String> rangeSpellings = new LinkedHashMap<>();
 
         // sorted, not map order: the same input has to convert to byte-identical output, and
         // a diff between two runs of the same file would be unreviewable
@@ -108,15 +112,19 @@ public final class LegacyConverter {
             final IPAddress address = strictAddress(node);
             requireEmittableNode(node);
             if (node.snmp() != null) {
-                final String owner = rangeOwners.putIfAbsent(address.toCanonicalString(), node.name());
+                final String canonical = address.toCanonicalString();
+                final String owner = rangeOwners.putIfAbsent(canonical, node.name());
                 if (owner != null) {
                     throw new IllegalStateException(
                             ("Nodes '%s' and '%s' are both polled at %s. 0.8 told them apart by "
                                     + "observation-domain, which 0.9 agent ranges do not carry, so they "
                                     + "would become one range. Merge them, or drop the snmp block from "
-                                    + "one: their names both survive as enrichment entries either way.")
-                                    .formatted(owner, node.name(), node.subnetAddress()));
+                                    + "one: their names both survive as enrichment entries either way.%s%s")
+                                    .formatted(owner, node.name(), node.subnetAddress(),
+                                            respelled(owner, rangeSpellings.get(canonical), node.subnetAddress()),
+                                            respelled(node.name(), raw.subnetAddress(), node.subnetAddress())));
                 }
+                rangeSpellings.put(canonical, raw.subnetAddress());
                 ranges++;
                 final boolean carveOut = node.snmp().cleartext() && address.isMultiple();
                 // registered even for a carve-out. The set is unreferenced and harmless, and
@@ -241,6 +249,13 @@ public final class LegacyConverter {
                             .formatted(node.name(), value,
                                     java.util.Arrays.toString(TargetBuilder.PrivProtocol.values())), e);
         }
+    }
+
+    /** Names a collided node's FILE spelling when a rewrite hid it from the message. */
+    private static String respelled(final String name, final String fileSpelling, final String printed) {
+        return fileSpelling == null || fileSpelling.equals(printed)
+                ? ""
+                : " Node '%s' spells it '%s' in the file.".formatted(name, fileSpelling);
     }
 
     private static IPAddress strictAddress(final LegacyNode node) {

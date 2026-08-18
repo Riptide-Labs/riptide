@@ -334,6 +334,29 @@ class LegacyConverterTest {
      * 'fe80::5/64', a string that appears nowhere in the operator's file, with the
      * summary line explaining the rewrite discarded by the throw.
      */
+    /**
+     * A collision that only exists after a rewrite names the FILE spellings: the error
+     * used to print the stripped form ('fe80::1') for a node the file spells
+     * 'fe80::1%eth0', with the summary line explaining the strip discarded by the throw.
+     */
+    @Test
+    void aPostRewriteCollisionNamesTheFileSpellings() {
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  nodes:
+                    a:
+                      subnet-address: "fe80::1"
+                      snmp: {snmp-version: v3, security-name: mon}
+                    b:
+                      subnet-address: "fe80::1%eth0"
+                      snmp: {snmp-version: v3, security-name: mon}
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("'a'")
+                .hasMessageContaining("'b'")
+                .hasMessageContaining("spells it 'fe80::1%eth0' in the file");
+    }
+
     @Test
     void aZonedSpellingWithHostBitsRefusesNamingTheOriginal() {
         assertThatThrownBy(() -> convert("""

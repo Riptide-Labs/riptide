@@ -222,6 +222,11 @@ class StrictAddressDiagnosisTest {
                 .hasMessageContaining("dangling zone marker (%)")
                 .hasMessageNotContaining("null")
                 .hasMessageContaining("'fe80::1'");
+        // hostOnly with a zoned BLOCK: no host fix derives, but the zone rule is still
+        // named — the bare generic made the operator discover it on a second submission
+        assertThatThrownBy(() -> StrictAddresses.parse("fe80::%eth0/64", true))
+                .hasMessageContaining("zone id (%eth0)")
+                .hasMessageContaining("is not a single host address");
     }
 
     /** The loader wrap around the zone diagnosis, entry-named like every other refusal. */

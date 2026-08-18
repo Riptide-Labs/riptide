@@ -52,12 +52,7 @@ public final class StrictAddresses {
     private static final IPAddressStringParameters ZEROS_ALLOWED = zerosAllowedParams();
 
     private static IPAddressStringParameters zerosAllowedParams() {
-        final IPAddressStringParameters.Builder builder = new IPAddressStringParameters.Builder()
-                .allowEmpty(false)
-                .allowAll(false)
-                .allowSingleSegment(false)
-                .allow_inet_aton(false)
-                .allowMask(false);
+        final IPAddressStringParameters.Builder builder = baseBuilder().allowMask(false);
         // one relaxation per arm: zones stay banned here, chosen explicitly rather than
         // inherited from the builder default, so a zoned spelling never gets a
         // leading-zeros diagnosis
@@ -89,16 +84,25 @@ public final class StrictAddresses {
     private static final IPAddressStringParameters MASKS_AND_ZEROS_ALLOWED = masksAndZerosParams();
 
     private static IPAddressStringParameters masksAndZerosParams() {
-        final IPAddressStringParameters.Builder builder = new IPAddressStringParameters.Builder()
-                .allowEmpty(false)
-                .allowAll(false)
-                .allowSingleSegment(false)
-                .allow_inet_aton(false);
+        final IPAddressStringParameters.Builder builder = baseBuilder();
         // zones explicitly allowed (the builder default, chosen rather than inherited):
         // this is the catch-all for spellings combining several rejected forms, zone
         // included — and the arm de-zones before suggesting, so the fix still parses
         builder.getIPv6AddressParametersBuilder().allowZone(true);
         return builder.toParams();
+    }
+
+    /**
+     * The four base rules every param set shares, stated once: this class exists because
+     * parameter copies drift (see the class javadoc), and the ladder's arm builders were
+     * about to become the third copy of this list.
+     */
+    private static IPAddressStringParameters.Builder baseBuilder() {
+        return new IPAddressStringParameters.Builder()
+                .allowEmpty(false)
+                .allowAll(false)
+                .allowSingleSegment(false)
+                .allow_inet_aton(false);
     }
 
     private static IPAddressStringParameters.Builder strictBuilder() {
@@ -113,11 +117,7 @@ public final class StrictAddresses {
 
     /** {@link #strictBuilder()} minus the zone ban: the base for the zone ladder arm. */
     private static IPAddressStringParameters.Builder zoneTolerantBuilder() {
-        final IPAddressStringParameters.Builder builder = new IPAddressStringParameters.Builder()
-                .allowEmpty(false)
-                .allowAll(false)
-                .allowSingleSegment(false)
-                .allow_inet_aton(false);
+        final IPAddressStringParameters.Builder builder = baseBuilder();
         // allowPrefixLengthLeadingZeros(false) is deliberately NOT set: the library
         // treats the lone 0 in /0 as a leading zero, so the flag rejects the legitimate
         // any-width spellings 0.0.0.0/0 and ::/0 (probe-verified). /016 therefore stays
@@ -179,7 +179,7 @@ public final class StrictAddresses {
         if (zoned == null) {
             return Optional.empty();
         }
-        final IPAddress stripped = zoned.toIPv6().removeZone();
+        final IPAddress stripped = dezoned(zoned);
         // shape-guarded like the netmask sibling: a zoned spelling whose STRIPPED form
         // still violates a shape rule (host bits, ranges) is not translated — the
         // converter would otherwise fail naming a spelling that is not in the operator's
@@ -188,6 +188,13 @@ public final class StrictAddresses {
         return acceptable(stripped, false)
                 ? Optional.of(stripped.toCanonicalString())
                 : Optional.empty();
+    }
+
+    /** The zone-stripped address, spelled once for the three sites that need it. */
+    private static IPAddress dezoned(final IPAddress address) {
+        return address.isIPv6() && address.toIPv6().hasZone()
+                ? address.toIPv6().removeZone()
+                : address;
     }
 
     private static boolean acceptable(final IPAddress address, final boolean hostOnly) {
@@ -260,23 +267,26 @@ public final class StrictAddresses {
             // false. The zone is UNQUOTED in the message deliberately: every
             // single-quoted string in a diagnosis must round-trip through this parser
             // (pinned by test), and '%eth0' never would
-            final IPAddress stripped = zoned.toIPv6().removeZone();
+            final IPAddress stripped = dezoned(zoned);
             final String zone = zoned.toIPv6().getZone();
+            final String marker = zone == null ? "a dangling zone marker (%)" : "a zone id (%" + zone + ")";
             final String fix = suggestion(stripped, hostOnly);
             if (fix == null) {
-                return generic(hostOnly);
+                // still name the zone rule: falling to the bare generic made the operator
+                // discover it only on a second failed submission (error ping-pong)
+                return "has %s and %s".formatted(marker, generic(hostOnly));
             }
             if (zone == null) {
-                // name the dangling marker, not "%null"
-                return "has a dangling zone marker (%%); write '%s'.".formatted(fix);
+                // a dangling marker has no zone for matching to ignore — name it, not "%null"
+                return "has %s; write '%s'.".formatted(marker, fix);
             }
             if (acceptable(stripped, hostOnly)) {
-                return ("has a zone id (%%%s); matching ignores zones, so the entry would silently "
-                        + "mean '%s' from any interface; write '%s'.").formatted(zone, fix, fix);
+                return ("has %s; matching ignores zones, so the entry would silently "
+                        + "mean '%s' from any interface; write '%s'.").formatted(marker, fix, fix);
             }
             // the stripped form itself violates a shape rule too; claiming the entry
             // "would mean" the derived fix overstates — name the zone and the fix only
-            return "has a zone id (%%%s); matching ignores zones; write '%s'.".formatted(zone, fix);
+            return "has %s; matching ignores zones; write '%s'.".formatted(marker, fix);
         }
 
         final IPAddress zeros = new IPAddressString(value, ZEROS_ALLOWED).getAddress();
@@ -298,10 +308,7 @@ public final class StrictAddresses {
         if (combined != null) {
             // de-zone before suggesting: a zoned combined spelling would otherwise have
             // its zoned canonical form suggested — a string this same parser rejects
-            final IPAddress dezoned = combined.isIPv6() && combined.toIPv6().hasZone()
-                    ? combined.toIPv6().removeZone()
-                    : combined;
-            final String fix = suggestion(dezoned, hostOnly);
+            final String fix = suggestion(dezoned(combined), hostOnly);
             return fix == null ? generic(hostOnly)
                     : "combines several rejected spellings; write '%s'.".formatted(fix);
         }
