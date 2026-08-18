@@ -173,6 +173,48 @@ class InventoryPublicationGuardTest {
     }
 
     /**
+     * #539 on the rebuild path: the loader's walk warnings flush only past the guard. A
+     * refused candidate's warnings would read as though the warned-about state went
+     * live; the published retry of the same content flushes them, once.
+     */
+    @Test
+    void rebuildFlushesWalkWarningsOnlyPastTheGuard(@TempDir final Path dir) throws Exception {
+        final Path file = dir.resolve("inventory.yaml");
+        final Inventory inventory = serving(BOTH_TREES);
+        // exporters torn away (refused over BOTH_TREES) AND a warning-worthy range
+        final String warningWorthy = """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.7":
+                        credentials: corp
+                      "10.99.0.0/24": {}
+                """;
+        Files.writeString(file, warningWorthy);
+
+        final var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(InventoryLoader.class);
+        final var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            assertThat(inventory.rebuildAndSwap(PROFILES, file)).isNull();
+            assertThat(appender.list)
+                    .as("a refused candidate's warnings stay unflushed")
+                    .noneMatch(event -> event.getFormattedMessage().contains("declares nothing"));
+
+            Files.writeString(file, warningWorthy.replace("riptide:", "riptide:\n  exporters:\n    core:\n      address: 10.0.0.1"));
+            assertThat(inventory.rebuildAndSwap(PROFILES, file)).isNotNull();
+            assertThat(appender.list)
+                    .filteredOn(event -> event.getFormattedMessage().contains("declares nothing"))
+                    .as("the published candidate's warnings flush, once")
+                    .hasSize(1);
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    /**
      * The monitor-held check in the CAS path closes the caller's read-then-commit window
      * by DEFERRING, not throwing: false is what the caller already handles by re-parsing
      * next cycle against whatever is serving by then. The first version threw, which
