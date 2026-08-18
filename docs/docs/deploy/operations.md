@@ -260,7 +260,7 @@ application web server).
 | Endpoint | Meaning |
 |---|---|
 | `GET /livez` | **Liveness** — the receiver event loops are alive. Returns `200` while booting and once running; `503` only if a started receiver's socket has died. **Never** checks ClickHouse. |
-| `GET /readyz` | **Readiness** — all configured receivers are bound and listening (`200`), else `503`. |
+| `GET /readyz` | **Readiness** — all configured receivers are bound and listening (`200`), else `503`. Zero configured receivers reports ready (see the contract notes below). |
 | `GET /metrics` | **Metrics** — the full metric registry in Prometheus text format. See below. |
 
 Configure via `riptide.management.*`:
@@ -272,10 +272,18 @@ riptide.management.bind-address=0.0.0.0
 riptide.management.metrics-enabled=true # set false to serve probes but not /metrics
 ```
 
-**Readiness deliberately excludes ClickHouse.** There is no write buffer and a single collector has
-no failover, so making the collector "not ready" during a ClickHouse blip would only drain the load
-balancer (with `externalTrafficPolicy: Local`) and lose *more* flows at the edges — for no benefit.
-Readiness reflects receiver health only; a ClickHouse outage keeps the collector receiving.
+**Readiness deliberately excludes ClickHouse.**
+Flows arrive as UDP push: a "not ready" collector does not stop the packets, it only moves the loss to another layer (a drained load balancer under `externalTrafficPolicy: Local`, or the wire).
+When ClickHouse recovers, readiness convergence typically loses more flows than the bounded batching queue (`riptide.clickhouse.batch.queue-capacity`, 40,000 rows by default) absorbs.
+At the measured ~11.8k rows/s the queue covers ~3.4 s, well under a probe period plus endpoint propagation.
+And where Prometheus scrapes through the Service, "not ready" can remove the pod from the endpoints and take `/metrics` down with it.
+That blinds the one signal that explains the outage, exactly when it fires.
+A ClickHouse outage keeps the collector receiving.
+Probes are for scheduling; saturation is for alerting: watch a sustained `persister.batch.droppedRows` rate and `persister.batch.queueDepth` approaching the queue capacity.
+
+**Readiness also deliberately tolerates zero configured receivers.**
+The shipped configuration declares none, so failing readiness there would turn a fresh install into a pod that never becomes ready.
+A collector without receivers logs a startup WARN ("No receivers configured") and reports ready: misconfigured, not unhealthy.
 
 Kubernetes probe mapping:
 
@@ -335,5 +343,5 @@ jcmd <pid> Thread.dump_to_file -format=json /tmp/threads.json
 | Port | Protocol | What |
 |---|---|---|
 | `9999/udp` | NetFlow/IPFIX | default flow ingest (container `EXPOSE`; receivers are configurable) |
-| `8080` | HTTP | management / health endpoints (`/livez`, `/readyz`) |
+| `8080` | HTTP | management endpoints (`/livez`, `/readyz`, `/metrics`) |
 | `8123` | HTTP | ClickHouse (stack-internal unless you expose it) |
