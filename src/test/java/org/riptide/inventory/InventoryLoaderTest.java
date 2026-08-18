@@ -70,7 +70,7 @@ class InventoryLoaderTest {
 
     @Test
     void unsetFileYieldsTheValidEmptyInventory() {
-        final var snapshot = InventoryLoader.load(profiles(), null);
+        final var snapshot = InventoryLoader.load(profiles(), null).snapshot();
 
         assertThat(snapshot.agentView().match(netflow("10.0.0.1", 0))).isEmpty();
         assertThat(snapshot.exporterView().match(netflow("10.0.0.1", 0))).isEmpty();

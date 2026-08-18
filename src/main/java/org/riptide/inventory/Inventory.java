@@ -41,9 +41,13 @@ public class Inventory {
     @PostConstruct
     public void load() {
         // boot commits through the same path as reload, so the whole-instance swap
-        // stays the only way serving state ever changes
-        final InventorySnapshot loaded = InventoryLoader.load(this.profiles, this.config.getFile());
+        // stays the only way serving state ever changes. Warnings flush after the swap:
+        // boot either publishes or dies, and the log must never describe a candidate
+        // that did not go live (#539)
+        final InventoryLoader.ParseResult result = InventoryLoader.load(this.profiles, this.config.getFile());
+        final InventorySnapshot loaded = result.snapshot();
         swap(loaded);
+        result.flushWarnings();
         if (this.config.getFile() == null) {
             // silence here would read as "working" while every flow goes unenriched
             log.info("No inventory file configured (riptide.inventory.file): serving the empty inventory");
@@ -116,7 +120,8 @@ public class Inventory {
      * compare-and-set fail instead, which it handles by re-parsing on its next cycle.</p>
      */
     public synchronized InventorySnapshot rebuildAndSwap(final SnmpProfilesConfig profiles, final Path file) {
-        final InventorySnapshot rebuilt = InventoryLoader.load(profiles, file);
+        final InventoryLoader.ParseResult result = InventoryLoader.load(profiles, file);
+        final InventorySnapshot rebuilt = result.snapshot();
         if (rebuilt.isRegressiveOver(this.active)) {
             // refused, not published: a file caught mid-write parses cleanly with one tree
             // missing, and publishing that would either deregister the whole polled fleet
@@ -129,6 +134,9 @@ public class Inventory {
         }
         this.profiles = Objects.requireNonNull(profiles);
         this.active = rebuilt;
+        // flush only past the guard: a refused candidate's warnings would read as
+        // though the warned-about state went live when nothing changed (#539)
+        result.flushWarnings();
         return rebuilt;
     }
 

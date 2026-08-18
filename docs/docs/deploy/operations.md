@@ -61,6 +61,16 @@ Semantics:
   devices, not configuration. Reloads trigger on **config-file changes only**: after
   rotating a SOPS secrets file, touch or edit `config.yaml` so the decrypted cache
   drops and the next poll picks up the new secret.
+- **The gauges exist only while reloading is enabled** — `config.reload.stale` /
+  `inventory.reload.stale` and the dead-schedule gauges below are absent when
+  reloading is disabled. Absence means "not watching"; a 0 always means "watching and
+  in sync". Alert on absence separately if hot-reload is mandatory in your deployment.
+- **A dead schedule is visible** — `config.reload.dead` / `inventory.reload.dead`
+  read 1 if the poll schedule stopped and will never run again (the realistic cause:
+  an `Error` such as OOM on an oversized file mid-read). Alert on `> 0`; the only
+  recovery is a restart.
+- **Shutdown counts nothing** — an interrupt landing mid-poll during an orderly stop
+  is not a reload failure: no counter moves and no stale latch is set.
 
 Limitations: profile-activated YAML documents and nested `spring.config.import` inside
 the reloaded file are boot-only; `env://` secret references cannot rotate in-process

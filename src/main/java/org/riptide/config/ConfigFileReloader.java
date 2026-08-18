@@ -38,6 +38,7 @@ import org.springframework.core.env.PropertySource;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.stereotype.Component;
 
+import java.nio.channels.ClosedByInterruptException;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
@@ -87,6 +88,7 @@ public class ConfigFileReloader {
     private final InterfaceSnapshotPoller interfacePoller;
     private final SopsSecretResolver sopsSecretResolver;
 
+    private final MetricRegistry metrics;
     private final Counter reloadSuccesses;
     private final Counter reloadFailures;
     /** Config committed but the inventory rebuild did not publish: the edit is only partly serving. */
@@ -148,11 +150,14 @@ public class ConfigFileReloader {
         bindingGenericConverters.forEach(reloadConversion::addConverter);
         this.conversionService = reloadConversion;
 
+        // counters stay here: a zero counter is true when reloading is disabled. The
+        // gauges register from start(), after the disabled early-returns (#539): a gauge
+        // registered here published a constant 0 with reloading disabled, which reads as
+        // "the file matches what is serving" for a file that is never read again
+        this.metrics = metrics;
         this.reloadSuccesses = metrics.counter(MetricRegistry.name("config", "reload", "successes"));
         this.reloadFailures = metrics.counter(MetricRegistry.name("config", "reload", "failures"));
         this.reloadPartial = metrics.counter(MetricRegistry.name("config", "reload", "partial"));
-        metrics.register(MetricRegistry.name("config", "reload", "stale"),
-                (Gauge<Integer>) () -> this.stale || this.pendingProfiles != null ? 1 : 0);
     }
 
     @PostConstruct
@@ -172,10 +177,26 @@ public class ConfigFileReloader {
                 runnable -> new Thread(runnable, "ConfigFileReloader"));
         // The handle is kept and cancelled explicitly rather than discarded. poll() swallows every
         // Exception itself, so a bad reload cycle cannot silently cancel the schedule and leave
-        // hot-reload dead for the process lifetime — which is the failure this return value exists
-        // to make visible.
+        // hot-reload dead for the process lifetime — and the dead gauge below is what finally
+        // makes that visible: an Error (the realistic one: OOM on an oversized file mid-read)
+        // still propagates and cancels the task, deliberately — catching Throwable and marching
+        // on would hide a process in real trouble. Fail-visible, not resilience theater
         this.polling = this.executor.scheduleWithFixedDelay(this::poll, millis, millis, TimeUnit.MILLISECONDS);
+        registerGauge(MetricRegistry.name("config", "reload", "stale"),
+                () -> this.stale || this.pendingProfiles != null ? 1 : 0);
+        registerGauge(MetricRegistry.name("config", "reload", "dead"),
+                () -> this.polling.isDone() ? 1 : 0);
         log.info("Config hot-reload enabled: watching {} every {}", this.location, this.properties.getReloadInterval());
+    }
+
+    /**
+     * Remove-then-register, NOT Dropwizard's get-or-create {@code gauge(name, supplier)}:
+     * get-or-create would hand a restarted bean (devtools, cached test contexts) the OLD
+     * bean's gauge lambda, permanently reading dead fields. Plain register threw instead.
+     */
+    private void registerGauge(final String name, final Gauge<Integer> gauge) {
+        this.metrics.remove(name);
+        this.metrics.register(name, gauge);
     }
 
     @PreDestroy
@@ -253,6 +274,13 @@ public class ConfigFileReloader {
     // visible for the scheduled task and tests; never throws (a throwing scheduled
     // task would silently cancel the schedule)
     void poll() {
+        if (Thread.currentThread().isInterrupted()) {
+            // orderly shutdown: polling.cancel(true) interrupts this thread, and a cycle
+            // that begins interrupted must not read, count, or latch anything — counting
+            // it corrupted the failure counter's meaning for alerting (#539)
+            log.debug("Config reload poll skipped: thread interrupted (shutdown)");
+            return;
+        }
         try {
             if (!Files.isRegularFile(this.location)) {
                 if (!this.warnedMissing) {
@@ -297,6 +325,15 @@ public class ConfigFileReloader {
 
             reload(content);
         } catch (final Exception e) {
+            if (e instanceof ClosedByInterruptException || Thread.currentThread().isInterrupted()) {
+                // the belt for an interrupt DELIVERED mid-read (the check above catches
+                // one already pending): same shutdown, same silence. Untestable
+                // deterministically — a pre-set flag does not fault the read on this
+                // JDK — kept for the delivered-interrupt race and verified by inspection
+                Thread.currentThread().interrupt();
+                log.debug("Config reload poll interrupted mid-cycle (shutdown): {}", e.getMessage());
+                return;
+            }
             this.reloadFailures.inc();
             this.stale = true;
             log.warn("Config reload failed — keeping the running configuration: {}", e.getMessage(), e);
@@ -397,17 +434,22 @@ public class ConfigFileReloader {
         // validating the candidate and committing it, and guarded because the config is
         // already serving by now: a throw here must not be reported as a failed reload
         boolean inventoryPublished = false;
-        // a new edit supersedes whatever an earlier partial left pending: retrying old
-        // profiles after a newer commit would publish a rotation the operator replaced.
-        // The last-failure memory dies with the episode it belongs to — left alone, a
-        // LATER pending episode whose retry throws the same cause would be DEBUG'd as a
-        // repetition of a message this episode never showed the operator
-        this.pendingProfiles = null;
-        this.lastPendingRetryFailure = null;
+        // a new edit supersedes whatever an earlier partial left pending — but the
+        // supersede is assigned at the OUTCOME points below, not cleared here: clearing
+        // before the rebuild outcome is known let a metrics scrape during the file read
+        // see stale=0 with a rotation still unserved. Scrape-only: poll() is
+        // single-threaded, so the retry can never interleave mid-reload. The last-failure
+        // memory dies with its episode at the same points — left alone, a LATER pending
+        // episode whose retry throws the same cause would be DEBUG'd as a repetition of a
+        // message this episode never showed the operator
         try {
             final InventorySnapshot published =
                     this.inventory.rebuildAndSwap(candidateProfiles, this.inventoryConfig.getFile());
             if (published == null) {
+                // a new episode with no named cause: the failure memory resets so the
+                // FIRST throwing retry of this episode WARNs rather than matching a
+                // long-dead episode's message
+                this.lastPendingRetryFailure = null;
                 // pre-formatted for the same reason as the inventory watcher's refusal WARN:
                 // the taught idiom "agents: {}" is an SLF4J placeholder unless the whole
                 // message bypasses SLF4J formatting
@@ -453,6 +495,10 @@ public class ConfigFileReloader {
         // clean gauge and a reloaded log line (#534). Partial keeps it latched, counted on
         // its own meter; the remediation is the one the WARN above names
         if (inventoryPublished) {
+            // the supersede, on the success path: whatever an earlier partial left
+            // pending is now replaced by this fully-served edit
+            this.pendingProfiles = null;
+            this.lastPendingRetryFailure = null;
             this.stale = false;
         } else {
             // counted once per edit, not once per retry; the pending profiles keep the

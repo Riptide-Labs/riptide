@@ -469,6 +469,198 @@ class InventoryFileReloaderTest {
         disabled.stop();
     }
 
+    /**
+     * #539: gauges register from start(), so a reloader disabled by a missing interval
+     * or a missing file publishes NO stale/dead gauges. A constant 0 read as "the file
+     * matches what is serving" for a file that is never read again.
+     */
+    @Test
+    void aDisabledReloaderRegistersNoGauges() {
+        final MetricRegistry fresh = new MetricRegistry();
+        final InventoryConfig withFile = new InventoryConfig();
+        withFile.setFile(this.file);
+        final var noInterval = new InventoryFileReloader(
+                new ConfigReloadProperties(), withFile, this.inventory, this.poller, fresh);
+        noInterval.start();
+
+        final ConfigReloadProperties hourly = new ConfigReloadProperties();
+        hourly.setReloadInterval(Duration.ofHours(1));
+        final var noFile = new InventoryFileReloader(
+                hourly, new InventoryConfig(), this.inventory, this.poller, fresh);
+        noFile.start();
+
+        assertThat(fresh.getGauges()).doesNotContainKeys("inventory.reload.stale", "inventory.reload.dead");
+        // the counters exist and truthfully read zero
+        assertThat(fresh.counter("inventory.reload.successes").getCount()).isZero();
+        noInterval.stop();
+        noFile.stop();
+    }
+
+    /**
+     * #539: registration is remove-then-register, so a restarted bean (devtools, cached
+     * test contexts) re-binds instead of throwing — and the gauges read the NEW
+     * instance. Dropwizard's get-or-create would keep the OLD bean's lambda reading
+     * dead fields, which is exactly what the final assert refutes: the ORIGINAL
+     * reloader's schedule is still alive, so dead=1 can only come from the restarted
+     * instance's cancelled one. The same cancelled handle is the dead-schedule gauge's
+     * contract: an Error out of poll() cancels the task the same way.
+     */
+    @Test
+    void gaugesRebindToARestartedInstanceAndReportItsDeath() throws IOException {
+        final InventoryConfig config = new InventoryConfig();
+        config.setFile(this.file);
+        final ConfigReloadProperties properties = new ConfigReloadProperties();
+        properties.setReloadInterval(Duration.ofHours(1));
+        final var restarted = new InventoryFileReloader(
+                properties, config, this.inventory, this.poller, this.metrics);
+        restarted.start();
+        assertThat(dead()).as("a live schedule is not a corpse").isZero();
+
+        restarted.stop();
+        assertThat(dead()).as("a cancelled schedule is a visible corpse").isEqualTo(1);
+    }
+
+    /**
+     * #539: a poll that begins interrupted is shutdown, not a reload failure — it must
+     * not read, count, or latch anything. (The mid-read ClosedByInterruptException belt
+     * in the catch is deliberately untested: a PRE-SET flag does not fault the read on
+     * this JDK — the first version of this test assumed it did and was vacuous, the
+     * removal of the whole quiet path survived it.)
+     */
+    @Test
+    void aPollBeginningInterruptedConsumesAndCountsNothing() throws Exception {
+        write("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """);
+        Thread.currentThread().interrupt();
+        try {
+            this.reloader.poll();
+        } finally {
+            // clear the flag or it poisons the next test on this thread
+            Thread.interrupted();
+        }
+        assertThat(successes()).as("an interrupted poll reads nothing").isZero();
+        assertThat(failures()).as("shutdown is not a failure").isZero();
+        assertThat(stale()).isZero();
+
+        // the content was never consumed, so the next clean poll serves it normally
+        this.reloader.poll();
+        assertThat(successes()).isEqualTo(1);
+    }
+
+    /**
+     * #539: the loader's walk warnings describe live state ("it still matches, so it
+     * can shadow wider ranges"), so a candidate that FAILS discards them unlogged — the
+     * log used to read as though the warned-about state went live when nothing changed.
+     */
+    @Test
+    void aRejectedCandidatesWarningsNeverReachTheLog() throws Exception {
+        final var appender = capture(org.riptide.inventory.InventoryLoader.class);
+        try {
+            // an early entry worth a warning, a later entry that throws: the whole
+            // candidate dies, and the warning must die with it
+            write("""
+                    riptide:
+                      snmp:
+                        agents:
+                          "10.99.0.0/24": {}
+                      exporters:
+                        bad: {}
+                    """);
+            this.reloader.poll();
+
+            assertThat(failures()).isEqualTo(1);
+            assertThat(appender.list)
+                    .noneMatch(event -> event.getFormattedMessage().contains("declares nothing"));
+        } finally {
+            release(org.riptide.inventory.InventoryLoader.class, appender);
+        }
+    }
+
+    /** The other half: a PUBLISHED candidate's warnings flush, exactly once. */
+    @Test
+    void aPublishedCandidatesWarningsFlushExactlyOnce() throws Exception {
+        final var appender = capture(org.riptide.inventory.InventoryLoader.class);
+        try {
+            write("""
+                    riptide:
+                      snmp:
+                        agents:
+                          "10.99.0.0/24": {}
+                    """);
+            this.reloader.poll();
+
+            assertThat(successes()).isEqualTo(1);
+            assertThat(appender.list)
+                    .filteredOn(event -> event.getFormattedMessage().contains(
+                            "Agent range '10.99.0.0/24' declares nothing"))
+                    .hasSize(1);
+        } finally {
+            release(org.riptide.inventory.InventoryLoader.class, appender);
+        }
+    }
+
+    /**
+     * And the refusal path (#535's guard): a torn one-tree candidate carrying a
+     * warning-worthy entry logs the refusal, never the walk warning — the warned-about
+     * pin does not exist in what is serving.
+     */
+    @Test
+    void aRefusedTornCandidatesWarningsStayUnflushed() throws Exception {
+        write("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """);
+        this.reloader.poll();
+        assertThat(this.inventory.snapshot().agentCount()).isEqualTo(1);
+
+        final var appender = capture(org.riptide.inventory.InventoryLoader.class);
+        try {
+            // agents tree gone (torn) + a pins-nothing interface worth a warning
+            write("""
+                    riptide:
+                      exporters:
+                        core:
+                          address: 10.20.0.1
+                          interfaces:
+                            3: {}
+                    """);
+            this.reloader.poll();
+
+            assertThat(this.inventory.snapshot().agentCount())
+                    .as("refused: the fleet survives").isEqualTo(1);
+            assertThat(appender.list)
+                    .noneMatch(event -> event.getFormattedMessage().contains("pins nothing"));
+        } finally {
+            release(org.riptide.inventory.InventoryLoader.class, appender);
+        }
+    }
+
+    private int dead() {
+        return (Integer) ((Gauge<?>) this.metrics.getGauges().get("inventory.reload.dead")).getValue();
+    }
+
+    private static ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> capture(
+            final Class<?> loggerClass) {
+        final var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(loggerClass);
+        final var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        return appender;
+    }
+
+    private static void release(final Class<?> loggerClass,
+            final ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender) {
+        ((ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(loggerClass)).detachAppender(appender);
+    }
+
     private void write(final String yaml) throws IOException {
         Files.writeString(this.file, yaml);
     }

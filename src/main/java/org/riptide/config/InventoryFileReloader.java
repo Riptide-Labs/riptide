@@ -20,6 +20,7 @@ import org.riptide.snmp.InterfaceSnapshotPoller;
 import org.springframework.stereotype.Component;
 
 import java.nio.ByteBuffer;
+import java.nio.channels.ClosedByInterruptException;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
@@ -71,6 +72,7 @@ public class InventoryFileReloader {
     private final Inventory inventory;
     private final InterfaceSnapshotPoller interfacePoller;
 
+    private final MetricRegistry metrics;
     private final Counter reloadSuccesses;
     private final Counter reloadFailures;
     private volatile boolean stale = false;
@@ -95,9 +97,13 @@ public class InventoryFileReloader {
         this.inventory = Objects.requireNonNull(inventory);
         this.interfacePoller = Objects.requireNonNull(interfacePoller);
 
+        // counters stay here: a zero counter is true when reloading is disabled. The
+        // gauges register from start(), after the disabled early-returns (#539): a gauge
+        // registered here published a constant 0 with reloading disabled, which reads as
+        // "the file matches what is serving" for a file that is never read again
+        this.metrics = metrics;
         this.reloadSuccesses = metrics.counter(MetricRegistry.name("inventory", "reload", "successes"));
         this.reloadFailures = metrics.counter(MetricRegistry.name("inventory", "reload", "failures"));
-        metrics.register(MetricRegistry.name("inventory", "reload", "stale"), (Gauge<Integer>) () -> this.stale ? 1 : 0);
     }
 
     @PostConstruct
@@ -121,7 +127,23 @@ public class InventoryFileReloader {
         // hot-reload dead for the process lifetime (which is the failure this return value exists
         // to make visible).
         this.polling = this.executor.scheduleWithFixedDelay(this::poll, millis, millis, TimeUnit.MILLISECONDS);
+        // after the early-returns and the scheduling: the gauges exist only when a
+        // schedule exists (absence is the honest disabled signal), and the dead gauge can
+        // rely on a non-null handle. An Error out of poll() still cancels the schedule,
+        // deliberately (fail-visible); this gauge is what makes the corpse visible
+        registerGauge(MetricRegistry.name("inventory", "reload", "stale"), () -> this.stale ? 1 : 0);
+        registerGauge(MetricRegistry.name("inventory", "reload", "dead"), () -> this.polling.isDone() ? 1 : 0);
         log.info("Inventory hot-reload enabled: watching {} every {}", this.location, this.properties.getReloadInterval());
+    }
+
+    /**
+     * Remove-then-register, NOT Dropwizard's get-or-create {@code gauge(name, supplier)}:
+     * get-or-create would hand a restarted bean (devtools, cached test contexts) the OLD
+     * bean's gauge lambda, permanently reading dead fields. Plain register threw instead.
+     */
+    private void registerGauge(final String name, final Gauge<Integer> gauge) {
+        this.metrics.remove(name);
+        this.metrics.register(name, gauge);
     }
 
     /**
@@ -155,6 +177,13 @@ public class InventoryFileReloader {
     // visible for the scheduled task and tests; never throws (a throwing scheduled
     // task would silently cancel the schedule)
     void poll() {
+        if (Thread.currentThread().isInterrupted()) {
+            // orderly shutdown: polling.cancel(true) interrupts this thread, and a cycle
+            // that begins interrupted must not read, count, or latch anything — counting
+            // it corrupted the failure counter's meaning for alerting (#539)
+            log.debug("Inventory reload poll skipped: thread interrupted (shutdown)");
+            return;
+        }
         try {
             if (!Files.isRegularFile(this.location)) {
                 if (!this.warnedMissing) {
@@ -207,8 +236,12 @@ public class InventoryFileReloader {
             // profiles it was not built from, and the config reloader can commit between
             // these two lines
             final SnmpProfilesConfig parsedWith = this.inventory.profiles();
-            final InventorySnapshot candidate = InventoryLoader.parse(parsedWith,
+            // parseWithWarnings, not parse: the walk's warnings describe the candidate
+            // as if it were live, so they flush only after the swap below commits — a
+            // refused or deferred candidate logs nothing from the walk (#539)
+            final InventoryLoader.ParseResult parsed = InventoryLoader.parseWithWarnings(parsedWith,
                     strictUtf8(content, this.location), this.location.toString());
+            final InventorySnapshot candidate = parsed.snapshot();
 
             final InventorySnapshot serving = this.inventory.snapshot();
             if (candidate.isRegressiveOver(serving)) {
@@ -249,6 +282,7 @@ public class InventoryFileReloader {
             this.lastCommittedHash = this.lastAttemptedHash;
             this.reloadSuccesses.inc();
             this.stale = false;
+            parsed.flushWarnings();
 
             // swap, then refresh (AD-6): registrations built from the previous inventory
             // are re-resolved against this one, so a carve-out reaches an agent that is
@@ -266,6 +300,15 @@ public class InventoryFileReloader {
             log.info("Inventory reloaded from {}: {} agent ranges, {} enrichment entries",
                     this.location, candidate.agentCount(), candidate.exporterCount());
         } catch (final Exception e) {
+            if (e instanceof ClosedByInterruptException || Thread.currentThread().isInterrupted()) {
+                // the belt for an interrupt DELIVERED mid-read (the check above catches
+                // one already pending): same shutdown, same silence. Untestable
+                // deterministically — a pre-set flag does not fault the read on this
+                // JDK — kept for the delivered-interrupt race and verified by inspection
+                Thread.currentThread().interrupt();
+                log.debug("Inventory reload poll interrupted mid-cycle (shutdown): {}", e.getMessage());
+                return;
+            }
             this.reloadFailures.inc();
             this.stale = true;
             log.warn("Inventory reload failed, keeping the last good inventory: {}", e.getMessage(), e);

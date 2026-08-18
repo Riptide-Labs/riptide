@@ -435,6 +435,47 @@ public class ConfigFileReloaderTest {
         assertThat((Integer) metrics.getGauges().get("config.reload.stale").getValue()).isZero();
     }
 
+    /**
+     * #539, config half: a poll that begins interrupted is shutdown, not a reload
+     * failure — it must not read, count, or commit anything. (The mid-read
+     * ClosedByInterruptException belt in the catch is deliberately untested: a PRE-SET
+     * flag does not fault the read on this JDK.) The same test pins the dead-schedule
+     * gauge's healthy reading, registered from start().
+     */
+    @Test
+    public void aPollBeginningInterruptedConsumesAndCountsNothing() throws Exception {
+        final long failuresBefore = metrics.counter("config.reload.failures").getCount();
+        final long successesBefore = metrics.counter("config.reload.successes").getCount();
+        write("""
+                riptide:
+                  snmp:
+                    credentials:
+                      interrupted:
+                        version: v3
+                        security-name: monitoring
+                """);
+        Thread.currentThread().interrupt();
+        try {
+            reloader.poll();
+        } finally {
+            // clear the flag or it poisons the next test on this thread
+            Thread.interrupted();
+        }
+
+        assertThat(metrics.counter("config.reload.successes").getCount())
+                .as("an interrupted poll commits nothing").isEqualTo(successesBefore);
+        assertThat(metrics.counter("config.reload.failures").getCount())
+                .as("shutdown is not a failure").isEqualTo(failuresBefore);
+        assertThat((Integer) ((com.codahale.metrics.Gauge<?>)
+                metrics.getGauges().get("config.reload.dead")).getValue())
+                .as("the schedule is alive").isZero();
+
+        // the content was never consumed, so the next clean poll serves it normally
+        reloader.poll();
+        assertThat(metrics.counter("config.reload.successes").getCount()).isEqualTo(successesBefore + 1);
+        assertThat(inventory.profiles().credentials()).containsKey("interrupted");
+    }
+
     /** Seeds a committed reload, then latches a partial edit carrying {@code credential}. */
     private void latchPendingPartial(final String credential) throws Exception {
         // seed against a publishable inventory, so the "populated inventory refuses an

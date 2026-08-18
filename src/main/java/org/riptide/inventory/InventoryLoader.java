@@ -13,7 +13,9 @@ import org.yaml.snakeyaml.Yaml;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -75,9 +77,9 @@ public final class InventoryLoader {
      * inventory, which is valid; a set but unreadable file is an error naming the
      * problem.
      */
-    public static InventorySnapshot load(final SnmpProfilesConfig profiles, final Path file) {
+    public static ParseResult load(final SnmpProfilesConfig profiles, final Path file) {
         if (file == null) {
-            return InventorySnapshot.empty();
+            return new ParseResult(InventorySnapshot.empty(), List.of());
         }
         requireReadableSize(file);
         final String content;
@@ -87,7 +89,7 @@ public final class InventoryLoader {
             throw new IllegalStateException(
                     "Inventory file %s is not readable: %s".formatted(file, e.getMessage()), e);
         }
-        return parse(profiles, content, file.toString());
+        return parseWithWarnings(profiles, content, file.toString());
     }
 
     /**
@@ -110,9 +112,44 @@ public final class InventoryLoader {
         }
     }
 
-    /** The pure core: parses and validates inventory content into a snapshot. */
+    /**
+     * A parsed candidate plus the operator-facing warnings its walk produced,
+     * pre-formatted (no SLF4J placeholders — the {@code agents: {}} lesson).
+     */
+    public record ParseResult(InventorySnapshot snapshot, List<String> warnings) {
+        public ParseResult {
+            warnings = List.copyOf(warnings);
+        }
+
+        /** Flushes through the loader's own logger, so grep-by-logger stays stable. */
+        public void flushWarnings() {
+            this.warnings.forEach(log::warn);
+        }
+    }
+
+    /**
+     * Parse-and-warn-immediately convenience where parsing IS the publication: tests,
+     * benches and the converter round-trip harness. Production publication paths (boot,
+     * both reloaders) go through {@link #parseWithWarnings} or {@link #load} and flush
+     * only on publication — a rejected candidate whose warnings already hit the log
+     * reads as though the warned-about state went live when nothing changed (#539).
+     */
     public static InventorySnapshot parse(final SnmpProfilesConfig profiles, final String content,
                                           final String sourceName) {
+        final ParseResult result = parseWithWarnings(profiles, content, sourceName);
+        result.flushWarnings();
+        return result.snapshot();
+    }
+
+    /**
+     * The pure core: parses and validates inventory content into a snapshot, collecting
+     * warnings instead of logging them. The walk's warnings read as descriptions of
+     * live state ("it still matches, so it can shadow wider ranges"), so the caller
+     * flushes them only once the candidate is actually published.
+     */
+    public static ParseResult parseWithWarnings(final SnmpProfilesConfig profiles, final String content,
+                                                final String sourceName) {
+        final List<String> warnings = new ArrayList<>();
         final Map<String, Object> root = parseYaml(content, sourceName);
         requireKnownKeys(sourceName, "the file root", root, ROOT_KEYS);
         final Map<String, Object> riptide = section(root, "riptide", sourceName);
@@ -130,9 +167,10 @@ public final class InventoryLoader {
             // be authored — truncation never replaces a populated tree with a literal {}
             final boolean riptideEmpty = root.get("riptide") instanceof java.util.Map<?, ?> r && r.isEmpty();
             final boolean snmpEmpty = riptide.get("snmp") instanceof java.util.Map<?, ?> m && m.isEmpty();
-            return new InventorySnapshot(agents(profiles, agents), exporters(exporters),
+            return new ParseResult(new InventorySnapshot(
+                    agents(profiles, agents, warnings), exporters(exporters, warnings),
                     snmp.get("agents") instanceof java.util.Map || snmpEmpty || riptideEmpty,
-                    riptide.get("exporters") instanceof java.util.Map || riptideEmpty);
+                    riptide.get("exporters") instanceof java.util.Map || riptideEmpty), warnings);
         } catch (final IllegalStateException e) {
             // uniform operator experience: every entry-level error names the file,
             // including the matcher's duplicate-coverage errors
@@ -142,7 +180,8 @@ public final class InventoryLoader {
     }
 
     private static PinnedPrefixMatcher<AgentEntry> agents(final SnmpProfilesConfig profiles,
-                                                          final Map<String, Object> agents) {
+                                                          final Map<String, Object> agents,
+                                                          final List<String> warnings) {
         // one instance per build: every range that names no profile shares it (FR-7)
         final PollingProfile defaultProfile =
                 profiles.polling().getOrDefault("default", PollingProfile.builtInDefault());
@@ -170,9 +209,10 @@ public final class InventoryLoader {
             if (declaresNothing(entryBody)) {
                 declaredNothing++;
                 if (declaredNothing <= MAX_NAMED_EMPTY_ENTRIES) {
-                    log.warn("Agent range '{}' declares nothing: it still matches, so it can shadow wider ranges, "
-                            + "and with no credential set it is never polled. Give it a credential set, or spell "
-                            + "the exclusion as 'enabled: false' if that is what you meant", entry.getKey());
+                    warnings.add(("Agent range '%s' declares nothing: it still matches, so it can shadow wider "
+                            + "ranges, and with no credential set it is never polled. Give it a credential set, "
+                            + "or spell the exclusion as 'enabled: false' if that is what you meant")
+                            .formatted(entry.getKey()));
                 }
             }
             builder.add(entry.getKey(), address, null,
@@ -181,8 +221,8 @@ public final class InventoryLoader {
         if (declaredNothing > MAX_NAMED_EMPTY_ENTRIES) {
             // a generated inventory can carry thousands of these; naming every one
             // would bury the rest of startup (the bounded-diagnostic idiom)
-            log.warn("{} further agent ranges declare nothing and are listed no further",
-                    declaredNothing - MAX_NAMED_EMPTY_ENTRIES);
+            warnings.add("%d further agent ranges declare nothing and are listed no further"
+                    .formatted(declaredNothing - MAX_NAMED_EMPTY_ENTRIES));
         }
         return builder.build();
     }
@@ -245,7 +285,8 @@ public final class InventoryLoader {
         return entryBody.values().stream().allMatch(Objects::isNull);
     }
 
-    private static PinnedPrefixMatcher<ExporterEntry> exporters(final Map<String, Object> exporters) {
+    private static PinnedPrefixMatcher<ExporterEntry> exporters(final Map<String, Object> exporters,
+                                                                final List<String> warnings) {
         final PinnedPrefixMatcher.Builder<ExporterEntry> builder = PinnedPrefixMatcher.builder();
         for (final Map.Entry<String, Object> entry : exporters.entrySet()) {
             final Map<String, Object> entryBody = body(entry, "exporter");
@@ -263,7 +304,7 @@ public final class InventoryLoader {
             final Long pin = observationDomain(entry.getKey(), entryBody.get("observation-domain"));
             builder.add(entry.getKey(), parsedAddress, pin,
                     new ExporterEntry(entry.getKey(), parsedAddress, pin,
-                            interfacePins(entry.getKey(), entryBody.get("interfaces"))));
+                            interfacePins(entry.getKey(), entryBody.get("interfaces"), warnings)));
         }
         return builder.build();
     }
@@ -433,7 +474,8 @@ public final class InventoryLoader {
      * is resolved to 8 by YAML 1.1 octal rules before the loader is handed the key.
      * Quote it, or write it without the leading zero.</p>
      */
-    private static Map<Integer, InterfacePin> interfacePins(final String exporter, final Object value) {
+    private static Map<Integer, InterfacePin> interfacePins(final String exporter, final Object value,
+                                                            final List<String> warnings) {
         if (value == null) {
             return Map.of();
         }
@@ -445,7 +487,8 @@ public final class InventoryLoader {
         final Map<Integer, InterfacePin> parsed = new LinkedHashMap<>(pins.size() * 2);
         for (final Map.Entry<?, ?> pin : pins.entrySet()) {
             final int ifIndex = ifIndex(exporter, pin.getKey());
-            final InterfacePin previous = parsed.putIfAbsent(ifIndex, interfacePin(exporter, ifIndex, pin.getValue()));
+            final InterfacePin previous = parsed.putIfAbsent(ifIndex,
+                    interfacePin(exporter, ifIndex, pin.getValue(), warnings));
             if (previous != null) {
                 // quoted and unquoted spellings are distinct keys to SnakeYAML, so its
                 // own duplicate-key check cannot see this one
@@ -499,7 +542,8 @@ public final class InventoryLoader {
         return ifIndex;
     }
 
-    private static InterfacePin interfacePin(final String exporter, final int ifIndex, final Object value) {
+    private static InterfacePin interfacePin(final String exporter, final int ifIndex, final Object value,
+                                             final List<String> warnings) {
         final Map<String, Object> body = pinBody(exporter, ifIndex, value);
         final InterfacePin pin = new InterfacePin(
                 pinText(exporter, ifIndex, "name", body.get("name")),
@@ -508,8 +552,8 @@ public final class InventoryLoader {
         if (pin.name() == null && pin.alias() == null && pin.highSpeed() == null) {
             // the agent-range precedent: an entry that declares nothing is a
             // half-finished edit, and silence about it is how it stays that way
-            log.warn("Exporter '{}' interface {} pins nothing: give it a name, alias or high-speed, "
-                    + "or remove the entry", exporter, ifIndex);
+            warnings.add(("Exporter '%s' interface %d pins nothing: give it a name, alias or high-speed, "
+                    + "or remove the entry").formatted(exporter, ifIndex));
         }
         return pin;
     }
