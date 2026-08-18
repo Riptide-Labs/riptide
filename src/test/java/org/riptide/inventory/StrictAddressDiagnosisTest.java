@@ -127,7 +127,9 @@ class StrictAddressDiagnosisTest {
                 "10.90.0.5/255.255.0.0", "2001:0db8::1", "010.0.0.7", "010.0.0.5/24",
                 "10.0.1", "10.0.1/24", "10.0.0.*", "10.0.1.5/24", "010.0.0.0/255.0.0.0",
                 "1::1/ffff::", "010.0.*.0", "010.0.0.1-5",
-                "10.1-5.0.0/255.255.0.0", "10.0.1-5.5/24"};
+                "10.1-5.0.0/255.255.0.0", "10.0.1-5.5/24",
+                "fe80::1%eth0", "fe80::1%2", "fe80::%eth0/64", "fe80::5%eth0/64", "fe80::01%eth0",
+                "fe80::1%"};
         final java.util.regex.Pattern quoted = java.util.regex.Pattern.compile("'([^']+)'");
         for (final String value : rejected) {
             for (final boolean hostOnly : new boolean[] {false, true}) {
@@ -182,6 +184,66 @@ class StrictAddressDiagnosisTest {
                 .hasMessageContaining("only a single host address is allowed")
                 .hasMessageContaining("'10.90.0.0'")
                 .hasMessageNotContaining("keeps host bits");
+    }
+
+    /**
+     * The inert-zone rejection (#553): probe-verified, a zoned entry matches flows from
+     * ANY interface — numeric scopes and foreign zone names included — so the spelling
+     * promises an interface constraint nothing enforces. The message says so and hands
+     * over the stripped fix. The zone appears UNQUOTED: every quoted string in a
+     * diagnosis must round-trip through this parser, and '%eth0' never would.
+     */
+    @Test
+    void aZonedAddressIsRefusedNamingTheInertZone() {
+        assertThatThrownBy(() -> StrictAddresses.parse("fe80::1%eth0", false))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("zone id (%eth0)")
+                .hasMessageContaining("matching ignores zones")
+                .hasMessageContaining("from any interface")
+                .hasMessageContaining("'fe80::1'");
+        // a zoned block strips to its CIDR form
+        assertThatThrownBy(() -> StrictAddresses.parse("fe80::%eth0/64", false))
+                .hasMessageContaining("zone id (%eth0)")
+                .hasMessageContaining("'fe80::/64'");
+        // zone + host bits: the stripped form still breaks a shape rule, so the message
+        // names the zone and the fix without overclaiming what the entry "would mean"
+        assertThatThrownBy(() -> StrictAddresses.parse("fe80::5%eth0/64", false))
+                .hasMessageContaining("zone id (%eth0)")
+                .hasMessageContaining("'fe80::/64'")
+                .hasMessageNotContaining("would silently mean");
+        // zone combined with leading zeros: one honest de-zoned suggestion, not the
+        // zoned canonical form the same parser would reject
+        assertThatThrownBy(() -> StrictAddresses.parse("fe80::01%eth0", false))
+                .hasMessageContaining("combines several rejected spellings")
+                .hasMessageContaining("'fe80::1'");
+        // a bare trailing '%' parses with a NULL zone (the library accepts an empty
+        // marker) — the first version printed the literal "%null"
+        assertThatThrownBy(() -> StrictAddresses.parse("fe80::1%", false))
+                .hasMessageContaining("dangling zone marker (%)")
+                .hasMessageNotContaining("null")
+                .hasMessageContaining("'fe80::1'");
+        // hostOnly with a zoned BLOCK: no host fix derives, but the zone rule is still
+        // named — the bare generic made the operator discover it on a second submission
+        assertThatThrownBy(() -> StrictAddresses.parse("fe80::%eth0/64", true))
+                .hasMessageContaining("zone id (%eth0)")
+                .hasMessageContaining("is not a single host address");
+    }
+
+    /** The loader wrap around the zone diagnosis, entry-named like every other refusal. */
+    @Test
+    void theLoaderNamesTheEntryAroundTheZoneDiagnosis() {
+        assertThatThrownBy(() -> InventoryLoader.parse(
+                new SnmpProfilesConfig(java.util.Map.of(), java.util.Map.of()), """
+                riptide:
+                  snmp:
+                    agents:
+                      "fe80::1%eth0":
+                        enabled: false
+                """, "test.yaml"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("agent range")
+                .hasMessageContaining("fe80::1%eth0")
+                .hasMessageContaining("zone id");
     }
 
     /** No operator with a well-formed inventory sees any difference. */

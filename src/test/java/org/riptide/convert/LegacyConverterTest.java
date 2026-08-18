@@ -293,6 +293,84 @@ class LegacyConverterTest {
                 .hasMessageContaining("10.0.0.0");
     }
 
+    /**
+     * The inert-zone translation (#553), same charter as the netmask rewrite: 0.8
+     * accepted zoned spellings and its matcher was equally zone-blind, so the converter
+     * strips the zone with a summary line — and the emitted form boots. A spelling
+     * combining zone AND netmask matches neither single translation and refuses with
+     * the combined diagnosis instead of a silently compound rewrite.
+     */
+    @Test
+    void aZonedAddressIsTranslatedAndAZonedNetmaskRefused() throws Exception {
+        final var converted = convert("""
+                riptide:
+                  nodes:
+                    zoned:
+                      subnet-address: "fe80::1%eth0"
+                      snmp: {snmp-version: v3, security-name: mon}
+                """);
+        assertThat(converted.inventory()).contains("\"fe80::1\"").doesNotContain("%eth0");
+        assertThat(converted.summary()).anySatisfy(line -> assertThat(line)
+                .contains("zoned").contains("fe80::1%eth0").contains("fe80::1")
+                .contains("zone ids are ignored in matching"));
+        // and the emitted form boots: the translation is real, not cosmetic
+        boot(converted);
+
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  nodes:
+                    zm:
+                      subnet-address: "fe80::%eth0/ffff::"
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("zm")
+                .hasMessageContaining("combines several rejected spellings");
+    }
+
+    /**
+     * The translation is shape-guarded like the netmask sibling: a zoned spelling whose
+     * STRIPPED form still violates a shape rule is refused naming the ORIGINAL spelling
+     * through the zone arm — the first version stripped first and then failed naming
+     * 'fe80::5/64', a string that appears nowhere in the operator's file, with the
+     * summary line explaining the rewrite discarded by the throw.
+     */
+    /**
+     * A collision that only exists after a rewrite names the FILE spellings: the error
+     * used to print the stripped form ('fe80::1') for a node the file spells
+     * 'fe80::1%eth0', with the summary line explaining the strip discarded by the throw.
+     */
+    @Test
+    void aPostRewriteCollisionNamesTheFileSpellings() {
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  nodes:
+                    a:
+                      subnet-address: "fe80::1"
+                      snmp: {snmp-version: v3, security-name: mon}
+                    b:
+                      subnet-address: "fe80::1%eth0"
+                      snmp: {snmp-version: v3, security-name: mon}
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("'a'")
+                .hasMessageContaining("'b'")
+                .hasMessageContaining("spells it 'fe80::1%eth0' in the file");
+    }
+
+    @Test
+    void aZonedSpellingWithHostBitsRefusesNamingTheOriginal() {
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  nodes:
+                    zhb:
+                      subnet-address: "fe80::5%eth0/64"
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("fe80::5%eth0/64")
+                .hasMessageContaining("zone id (%eth0)")
+                .hasMessageNotContaining("'fe80::5/64'");
+    }
+
     @Test
     void aNodeWithAnSnmpBlockButNoVersionIsAnError() {
         assertThatThrownBy(() -> convert("""

@@ -73,36 +73,58 @@ public final class LegacyConverter {
         // such nodes collapse onto one range key: emitting both produces a duplicate YAML key
         // and an inventory that cannot load, reported against a generated line number
         final Map<String, String> rangeOwners = new LinkedHashMap<>();
+        // the FILE's spelling behind each claimed range key: a collision surfacing only
+        // after a zone-strip or netmask rewrite must name what the operator can grep
+        // for — the summary line explaining the rewrite is discarded by the throw
+        final Map<String, String> rangeSpellings = new LinkedHashMap<>();
 
         // sorted, not map order: the same input has to convert to byte-identical output, and
         // a diff between two runs of the same file would be unreviewable
         for (final LegacyNode raw : new TreeMap<>(legacy.nodes()).values()) {
+            // 0.8 accepted zoned spellings and its matcher was equally zone-blind, so the
+            // zone is stripped rather than refused (#553) — same charter as the netmask
+            // translation below. A spelling combining zone AND netmask matches neither
+            // translation and is refused with the combined diagnosis
+            final LegacyNode dezoned = StrictAddresses
+                    .zoneStrippedForm(raw.subnetAddress())
+                    .map(stripped -> {
+                        summary.add(("Rewrote node '%s' subnet-address '%s' to '%s' (zone ids are "
+                                + "ignored in matching).")
+                                .formatted(raw.name(), raw.subnetAddress(), stripped));
+                        return new LegacyNode(raw.name(), stripped, raw.observationDomain(),
+                                raw.snmp(), raw.interfaces());
+                    })
+                    .orElse(raw);
             // 0.8 accepted the contiguous-netmask spelling and this tool's charter is a
             // mechanical rewrite, so it is translated to CIDR rather than refused — the
             // node is rewritten up front so every downstream use (emission, dedup,
             // messages) sees one spelling. A non-contiguous mask still fails: it has no
             // CIDR equivalent and 0.8 silently mis-read it (#538)
             final LegacyNode node = StrictAddresses
-                    .cidrFormOfContiguousNetmask(raw.subnetAddress())
+                    .cidrFormOfContiguousNetmask(dezoned.subnetAddress())
                     .map(cidr -> {
                         summary.add("Rewrote node '%s' subnet-address '%s' to the CIDR form '%s'."
-                                .formatted(raw.name(), raw.subnetAddress(), cidr));
-                        return new LegacyNode(raw.name(), cidr, raw.observationDomain(),
-                                raw.snmp(), raw.interfaces());
+                                .formatted(dezoned.name(), dezoned.subnetAddress(), cidr));
+                        return new LegacyNode(dezoned.name(), cidr, dezoned.observationDomain(),
+                                dezoned.snmp(), dezoned.interfaces());
                     })
-                    .orElse(raw);
+                    .orElse(dezoned);
             final IPAddress address = strictAddress(node);
             requireEmittableNode(node);
             if (node.snmp() != null) {
-                final String owner = rangeOwners.putIfAbsent(address.toCanonicalString(), node.name());
+                final String canonical = address.toCanonicalString();
+                final String owner = rangeOwners.putIfAbsent(canonical, node.name());
                 if (owner != null) {
                     throw new IllegalStateException(
                             ("Nodes '%s' and '%s' are both polled at %s. 0.8 told them apart by "
                                     + "observation-domain, which 0.9 agent ranges do not carry, so they "
                                     + "would become one range. Merge them, or drop the snmp block from "
-                                    + "one: their names both survive as enrichment entries either way.")
-                                    .formatted(owner, node.name(), node.subnetAddress()));
+                                    + "one: their names both survive as enrichment entries either way.%s%s")
+                                    .formatted(owner, node.name(), node.subnetAddress(),
+                                            respelled(owner, rangeSpellings.get(canonical), node.subnetAddress()),
+                                            respelled(node.name(), raw.subnetAddress(), node.subnetAddress())));
                 }
+                rangeSpellings.put(canonical, raw.subnetAddress());
                 ranges++;
                 final boolean carveOut = node.snmp().cleartext() && address.isMultiple();
                 // registered even for a carve-out. The set is unreferenced and harmless, and
@@ -227,6 +249,13 @@ public final class LegacyConverter {
                             .formatted(node.name(), value,
                                     java.util.Arrays.toString(TargetBuilder.PrivProtocol.values())), e);
         }
+    }
+
+    /** Names a collided node's FILE spelling when a rewrite hid it from the message. */
+    private static String respelled(final String name, final String fileSpelling, final String printed) {
+        return fileSpelling == null || fileSpelling.equals(printed)
+                ? ""
+                : " Node '%s' spells it '%s' in the file.".formatted(name, fileSpelling);
     }
 
     private static IPAddress strictAddress(final LegacyNode node) {
