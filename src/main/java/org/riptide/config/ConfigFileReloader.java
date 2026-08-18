@@ -101,6 +101,8 @@ public class ConfigFileReloader {
      * interval while the rotation stayed stranded.
      */
     private volatile SnmpProfilesConfig pendingProfiles;
+    /** Last pending-retry failure message; retries repeat quietly, a changed cause WARNs. */
+    private String lastPendingRetryFailure;
     private volatile boolean stale = false;
 
     /** Boot's binding conversion, reproduced: defaults plus the context's binding converters. */
@@ -191,27 +193,48 @@ public class ConfigFileReloader {
      * poll while the state persists. This is what heals a rotation whose inventory file
      * was unreadable or mid-write at commit time: the inventory watcher cannot do it,
      * because it re-parses against the SERVING profiles, which a partial edit never
-     * updated. Success is logged and clears the partial state; failure stays quiet, the
-     * WARN at commit time already named the condition and the gauge holds it visible.
+     * updated. Success is logged and clears the partial state; a repeated failure stays
+     * quiet (the WARN at commit time named the cause and the gauge holds it visible), a
+     * changed cause WARNs once.
      */
     private void retryPendingRebuild() {
         final SnmpProfilesConfig pending = this.pendingProfiles;
         if (pending == null) {
             return;
         }
+        final InventorySnapshot published;
         try {
-            final InventorySnapshot published =
-                    this.inventory.rebuildAndSwap(pending, this.inventoryConfig.getFile());
-            if (published != null) {
-                this.pendingProfiles = null;
-                this.interfacePoller.refreshRegistrations();
-                log.info("Recovered: the credential and profile changes from the last config edit are "
-                        + "now fully serving ({} credential set(s), {} polling profile(s))",
-                        pending.credentials().size(), pending.polling().size());
-            }
+            published = this.inventory.rebuildAndSwap(pending, this.inventoryConfig.getFile());
         } catch (final RuntimeException e) {
-            log.debug("Pending inventory rebuild still failing: {}", e.getMessage());
+            // quiet on repetition (the commit-time WARN named the cause, the gauge holds
+            // it visible), but a CHANGED cause is new information the operator otherwise
+            // never sees: the file was edited and now fails differently
+            if (!Objects.equals(e.getMessage(), this.lastPendingRetryFailure)) {
+                this.lastPendingRetryFailure = e.getMessage();
+                log.warn("Pending inventory rebuild still failing, now with: {}", e.getMessage());
+            } else {
+                log.debug("Pending inventory rebuild still failing: {}", e.getMessage());
+            }
+            return;
         }
+        if (published == null) {
+            // still torn or regressive: stays latched, retried next poll, quietly
+            return;
+        }
+        this.lastPendingRetryFailure = null;
+        this.pendingProfiles = null;
+        // outside the state-clearing block above: the rebuild SUCCEEDED and the gauge just
+        // dropped, so a refresh failure must not be logged as "still failing" (the first
+        // version caught it that way, at DEBUG, and swallowed the recovery INFO with it)
+        try {
+            this.interfacePoller.refreshRegistrations();
+        } catch (final Exception e) {
+            log.warn("Recovered inventory published, but refreshing polled endpoints failed: registrations "
+                    + "keep their previous endpoints until their next flow or deregistration", e);
+        }
+        log.info("Recovered: the credential and profile changes from the last config edit are "
+                + "now fully serving ({} credential set(s), {} polling profile(s))",
+                pending.credentials().size(), pending.polling().size());
     }
 
     /** The imported config file, or {@code null} when there is none to watch. */
@@ -237,6 +260,10 @@ public class ConfigFileReloader {
                             + "(deletion and atomic replacement are indistinguishable; keeping the running config)", this.location);
                     this.warnedMissing = true;
                 }
+                // a pending partial heals from the INVENTORY file, which this branch says
+                // nothing about — suspending the retry here would falsify the commit-time
+                // WARN's "retried every poll" exactly in the degraded states
+                retryPendingRebuild();
                 return;
             }
             this.warnedMissing = false;
@@ -247,12 +274,14 @@ public class ConfigFileReloader {
             } catch (final NoSuchFileException e) {
                 // vanished between the check and the read: an atomic rm+mv replacement
                 // or a symlink swap, the healthy deploy this class expects
+                retryPendingRebuild();
                 return;
             }
             if (content.length == 0) {
                 // a shell '>' redirect truncates before writing — indistinguishable
                 // from an intentionally emptied file; never commit on empty
                 log.warn("Config file {} is empty — skipping reload cycle (truncate-write race or intentional; keeping the running config)", this.location);
+                retryPendingRebuild();
                 return;
             }
             final byte[] hash = MessageDigest.getInstance("SHA-256").digest(content);
@@ -271,6 +300,10 @@ public class ConfigFileReloader {
             this.reloadFailures.inc();
             this.stale = true;
             log.warn("Config reload failed — keeping the running configuration: {}", e.getMessage(), e);
+            // a rejected CANDIDATE neither supersedes nor retries the pending edit (the
+            // supersede sits after validation), so without this a continuously churning
+            // broken config file would starve the retry while both WARNs promise it
+            retryPendingRebuild();
         }
     }
 
@@ -365,8 +398,12 @@ public class ConfigFileReloader {
         // already serving by now: a throw here must not be reported as a failed reload
         boolean inventoryPublished = false;
         // a new edit supersedes whatever an earlier partial left pending: retrying old
-        // profiles after a newer commit would publish a rotation the operator replaced
+        // profiles after a newer commit would publish a rotation the operator replaced.
+        // The last-failure memory dies with the episode it belongs to — left alone, a
+        // LATER pending episode whose retry throws the same cause would be DEBUG'd as a
+        // repetition of a message this episode never showed the operator
         this.pendingProfiles = null;
+        this.lastPendingRetryFailure = null;
         try {
             final InventorySnapshot published =
                     this.inventory.rebuildAndSwap(candidateProfiles, this.inventoryConfig.getFile());
@@ -382,12 +419,28 @@ public class ConfigFileReloader {
                         + "every poll").formatted(this.inventoryConfig.getFile()));
             } else {
                 inventoryPublished = true;
-                this.interfacePoller.refreshRegistrations();
             }
         } catch (final RuntimeException e) {
+            // this lands in the same latched-and-retried state as the null return above,
+            // so the two messages must prescribe the same remediation. The first version
+            // said "edit the config again, or restart" here — a needless restart for a
+            // state the next poll heals once the inventory file is fixed
+            this.lastPendingRetryFailure = e.getMessage();
             log.warn("Config reloaded, but the inventory could not be rebuilt from {} ({}). The credential "
-                    + "and profile changes in this edit are NOT serving: fix the file and edit the config "
-                    + "again, or restart", this.inventoryConfig.getFile(), e.getMessage());
+                    + "and profile changes in this edit are NOT serving until the inventory file is fixed; "
+                    + "they are retried every poll", this.inventoryConfig.getFile(), e.getMessage());
+        }
+        if (inventoryPublished) {
+            // outside the rebuild try: the snapshot IS serving by now, so a refresh failure
+            // must not be reported as a failed rebuild ("NOT serving" would be false on
+            // both clauses). Same guard and wording as the inventory watcher's
+            try {
+                this.interfacePoller.refreshRegistrations();
+            } catch (final Exception e) {
+                log.warn("Config reloaded and the inventory published, but refreshing polled endpoints "
+                        + "failed: registrations keep their previous endpoints until their next flow or "
+                        + "deregistration", e);
+            }
         }
         // no invalidateAll() here any more: it reset the whole fleet's next-walk time, so
         // an unrelated edit (a routing prefix, a receiver port) walked every exporter at

@@ -63,14 +63,34 @@ class WalkBoundsTest {
             accepted++;
         }
 
-        // the cap stopped delivery: snmp4j sees false and stops issuing requests
-        assertThat(accepted).isEqualTo(99);
+        // the cap stopped delivery: snmp4j sees false and stops issuing requests. The
+        // bound is exclusive, so the trip happens on the cap-exceeding row — one row past
+        // the cap is retained as the detector, and the whole list is discarded anyway
+        assertThat(accepted).isEqualTo(100);
         assertThat(collector.capped()).isTrue();
-        // the heap bound the cap javadoc promises: nothing past the cap is retained
-        assertThat(collector.events()).hasSize(100);
+        assertThat(collector.events()).hasSize(101);
         // the waiter is released without any finished() call: the cap is the terminal event
         assertThat(collector.await(Duration.ofMillis(1).toNanos())).isTrue();
         assertThat(collector.isFinished()).isTrue();
+    }
+
+    /**
+     * The boundary is exact: a device whose table completes at exactly the cap is a clean
+     * walk, not an abandonment. The first version capped on the cap-th row itself, so a
+     * complete boundary table was discarded and the endpoint backed off forever, with a
+     * warn whose both explanations ("keeps growing" / "carries more") were untrue.
+     */
+    @Test
+    void aTableCompletingAtExactlyTheCapFinishesClean() throws Exception {
+        final var collector = new SnmpUtils.WalkCollector(100);
+        for (int i = 1; i <= 100; i++) {
+            assertThat(collector.next(row(i))).as("row %d is within the bound", i).isTrue();
+        }
+        collector.finished(Mockito.mock(TableEvent.class));
+
+        assertThat(collector.await(Duration.ofSeconds(1).toNanos())).isTrue();
+        assertThat(collector.capped()).as("exactly-at-cap is complete, not capped").isFalse();
+        assertThat(collector.events()).hasSize(100);
     }
 
     /**

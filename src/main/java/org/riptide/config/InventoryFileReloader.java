@@ -229,6 +229,11 @@ public class InventoryFileReloader {
                         + "range").formatted(this.location,
                         serving.agentCount(), candidate.agentCount(),
                         serving.exporterCount(), candidate.exporterCount()));
+                // latch immediately, like the failure path below: the file on disk does
+                // not match what is serving. Without this the gauge read 0 until the next
+                // cycle's unchanged-content recompute flipped it — a one-interval blink
+                // the docs' "a rejected file raises inventory.reload.stale" never had
+                this.stale = true;
                 return;
             }
 

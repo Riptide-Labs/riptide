@@ -246,6 +246,12 @@ class InventoryFileReloaderTest {
         assertThat(this.inventory.snapshot().agentCount())
                 .as("the polled fleet must survive a torn read").isEqualTo(1);
         assertThat(failures()).isZero();
+        // like the failure path: the file on disk does not match what is serving, and the
+        // gauge must say so NOW — the first version left it at 0 until the next cycle's
+        // unchanged-content recompute, a one-interval blink the docs never described
+        assertThat(stale())
+                .as("a refusal latches staleness immediately, not one poll later")
+                .isEqualTo(1);
         // RENDERED, not the format string: the braces in "agents: {}" are SLF4J
         // placeholders unless escaped, and the unescaped form ate its own arguments —
         // the message teaching the idiom printed garbage counts (CodeQL 150/151)

@@ -159,29 +159,53 @@ public final class StrictAddresses {
                 return ("uses a non-contiguous netmask, which would mean an address you never wrote "
                         + "(%s); it has no CIDR equivalent.").formatted(masked.toCanonicalString());
             }
-            if (masked.isSinglePrefixBlock() && !hostOnly) {
+            if (hostOnly) {
+                // a netmask can only spell a block or a range, which a host-only caller
+                // never accepts — the "keeps host bits" clause below would be false for a
+                // whole-block mask, and its block suggestion rejected by the same caller
+                return ("uses a netmask where only a single host address is allowed; write a plain "
+                        + "host (e.g. '%s').").formatted(
+                        masked.getLower().withoutPrefixLength().toCanonicalString());
+            }
+            if (masked.isSinglePrefixBlock()) {
                 return "uses a netmask; write the CIDR form '%s'.".formatted(masked.toCanonicalString());
             }
-            return ("uses a netmask and keeps host bits; write '%s' (the covered block) or '%s' "
-                    + "(the single host).").formatted(
-                    masked.toPrefixBlock().toCanonicalString(),
-                    masked.withoutPrefixLength().toCanonicalString());
+            // guarded like every other suggestion: a mask combined with a RANGED address
+            // part (10.1-5.0.0/255.255.0.0) derives a block that is no single block and a
+            // "host" that is no host — both un-parseable, so the generic message is honest
+            // guarded like every other suggestion: a mask combined with a RANGED address
+            // part (10.1-5.0.0/255.255.0.0) derives a block that is no single block and a
+            // "host" that is no host — both un-parseable, so the generic message is honest
+            final IPAddress coveredBlock = masked.toPrefixBlock();
+            final IPAddress singleHost = masked.withoutPrefixLength();
+            if (acceptable(coveredBlock, false) && acceptable(singleHost, true)) {
+                return ("uses a netmask and keeps host bits; write '%s' (the covered block) or '%s' "
+                        + "(the single host).").formatted(
+                        coveredBlock.toCanonicalString(), singleHost.toCanonicalString());
+            }
+            return generic(false);
         }
 
         final IPAddress zeros = new IPAddressString(value, ZEROS_ALLOWED).getAddress();
         if (zeros != null) {
-            return ("has leading zeros; write '%s' (some tools read leading zeros as octal — "
-                    + "confirm that is the address you meant).").formatted(suggestion(zeros, hostOnly));
+            final String fix = suggestion(zeros, hostOnly);
+            return fix == null ? generic(hostOnly)
+                    : ("has leading zeros; write '%s' (some tools read leading zeros as octal — "
+                    + "confirm that is the address you meant).").formatted(fix);
         }
 
         final IPAddress aton = new IPAddressString(value, ATON_ALLOWED).getAddress();
         if (aton != null) {
-            return "is inet_aton shorthand; write all four octets ('%s').".formatted(suggestion(aton, hostOnly));
+            final String fix = suggestion(aton, hostOnly);
+            return fix == null ? generic(hostOnly)
+                    : "is inet_aton shorthand; write all four octets ('%s').".formatted(fix);
         }
 
         final IPAddress combined = new IPAddressString(value, MASKS_AND_ZEROS_ALLOWED).getAddress();
         if (combined != null) {
-            return "combines several rejected spellings; write '%s'.".formatted(suggestion(combined, hostOnly));
+            final String fix = suggestion(combined, hostOnly);
+            return fix == null ? generic(hostOnly)
+                    : "combines several rejected spellings; write '%s'.".formatted(fix);
         }
 
         return generic(hostOnly);
@@ -193,11 +217,19 @@ public final class StrictAddresses {
             return "is not a single host address.";
         }
         if (address.isPrefixed() && !address.isSinglePrefixBlock()) {
-            return ("has host bits set for its /%d prefix; write '%s' (the covered block) or '%s' "
-                    + "(the single host).").formatted(
-                    address.getNetworkPrefixLength(),
-                    address.toPrefixBlock().toCanonicalString(),
-                    address.withoutPrefixLength().toCanonicalString());
+            // same guard as the netmask arm: a ranged address part (10.0.1-5.5/24)
+            // derives two un-parseable "fixes", and the generic message beats both
+            // same guard as the netmask arm: a ranged address part (10.0.1-5.5/24)
+            // derives two un-parseable "fixes", and the generic message beats both
+            final IPAddress coveredBlock = address.toPrefixBlock();
+            final IPAddress singleHost = address.withoutPrefixLength();
+            if (acceptable(coveredBlock, false) && acceptable(singleHost, true)) {
+                return ("has host bits set for its /%d prefix; write '%s' (the covered block) or '%s' "
+                        + "(the single host).").formatted(
+                        address.getNetworkPrefixLength(),
+                        coveredBlock.toCanonicalString(), singleHost.toCanonicalString());
+            }
+            return generic(false);
         }
         if (address.isMultiple()) {
             final IPAddress block = address.assignPrefixForSingleBlock();
@@ -210,26 +242,28 @@ public final class StrictAddresses {
 
     /**
      * A suggestion guaranteed to satisfy the shape rule: the arm's canonical form when it
-     * already does, else the nearest form that does. Without this, "write '10.0.0.5/24'"
-     * (leading zeros fixed, host bits still set) sent the operator into error ping-pong.
+     * already does, else the nearest form that does, else {@code null} — and the arms fall
+     * back to the generic message on null. Without the guarantee, "write '10.0.0.5/24'"
+     * (leading zeros fixed, host bits still set) sent the operator into error ping-pong;
+     * without the null fallback, a relaxed multi-address covering no single block (e.g.
+     * {@code 010.0.*.0}) had its canonical form suggested — a string this same parser
+     * rejects. The derived candidate is re-checked against the shape rule, never assumed.
      */
     private static String suggestion(final IPAddress address, final boolean hostOnly) {
         if (acceptable(address, hostOnly)) {
             return address.toCanonicalString();
         }
-        if (address.isPrefixed() && !address.isSinglePrefixBlock() && !hostOnly) {
-            return address.toPrefixBlock().toCanonicalString();
+        final IPAddress derived;
+        if (address.isPrefixed() && !hostOnly) {
+            derived = address.toPrefixBlock();
+        } else if (address.isPrefixed() && !address.isMultiple()) {
+            derived = address.withoutPrefixLength();
+        } else if (address.isMultiple() && !hostOnly) {
+            derived = address.assignPrefixForSingleBlock();
+        } else {
+            derived = null;
         }
-        if (address.isPrefixed() && hostOnly) {
-            return address.withoutPrefixLength().toCanonicalString();
-        }
-        if (address.isMultiple() && !hostOnly) {
-            final IPAddress block = address.assignPrefixForSingleBlock();
-            if (block != null) {
-                return block.toCanonicalString();
-            }
-        }
-        return address.toCanonicalString();
+        return derived != null && acceptable(derived, hostOnly) ? derived.toCanonicalString() : null;
     }
 
     private static String generic(final boolean hostOnly) {
