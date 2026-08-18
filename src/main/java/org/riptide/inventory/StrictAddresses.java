@@ -176,8 +176,17 @@ public final class StrictAddresses {
             return Optional.empty();
         }
         final IPAddress zoned = new IPAddressString(value, ZONES_ALLOWED).getAddress();
-        return zoned != null
-                ? Optional.of(zoned.toIPv6().removeZone().toCanonicalString())
+        if (zoned == null) {
+            return Optional.empty();
+        }
+        final IPAddress stripped = zoned.toIPv6().removeZone();
+        // shape-guarded like the netmask sibling: a zoned spelling whose STRIPPED form
+        // still violates a shape rule (host bits, ranges) is not translated — the
+        // converter would otherwise fail naming a spelling that is not in the operator's
+        // file, with the summary line explaining the rewrite discarded by the throw.
+        // Left untranslated, the refusal diagnoses the ORIGINAL through the zone arm
+        return acceptable(stripped, false)
+                ? Optional.of(stripped.toCanonicalString())
                 : Optional.empty();
     }
 
@@ -245,14 +254,21 @@ public final class StrictAddresses {
         final IPAddress zoned = new IPAddressString(value, ZONES_ALLOWED).getAddress();
         if (zoned != null) {
             // guaranteed IPv6: ZONES_ALLOWED differs from STRICT only in the v6 zone, so
-            // an address parsing here and not there carries one. The zone is UNQUOTED in
-            // the message deliberately: every single-quoted string in a diagnosis must
-            // round-trip through this parser (pinned by test), and '%eth0' never would
+            // an address parsing here and not there carries a zone MARKER — though not
+            // necessarily a zone: a bare trailing '%' parses with getZone() == null
+            // (probe-verified), so the shortcut "parses here implies has a zone" is
+            // false. The zone is UNQUOTED in the message deliberately: every
+            // single-quoted string in a diagnosis must round-trip through this parser
+            // (pinned by test), and '%eth0' never would
             final IPAddress stripped = zoned.toIPv6().removeZone();
             final String zone = zoned.toIPv6().getZone();
             final String fix = suggestion(stripped, hostOnly);
             if (fix == null) {
                 return generic(hostOnly);
+            }
+            if (zone == null) {
+                // name the dangling marker, not "%null"
+                return "has a dangling zone marker (%%); write '%s'.".formatted(fix);
             }
             if (acceptable(stripped, hostOnly)) {
                 return ("has a zone id (%%%s); matching ignores zones, so the entry would silently "

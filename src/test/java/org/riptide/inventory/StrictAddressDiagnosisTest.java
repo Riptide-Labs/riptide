@@ -128,7 +128,8 @@ class StrictAddressDiagnosisTest {
                 "10.0.1", "10.0.1/24", "10.0.0.*", "10.0.1.5/24", "010.0.0.0/255.0.0.0",
                 "1::1/ffff::", "010.0.*.0", "010.0.0.1-5",
                 "10.1-5.0.0/255.255.0.0", "10.0.1-5.5/24",
-                "fe80::1%eth0", "fe80::1%2", "fe80::%eth0/64", "fe80::5%eth0/64", "fe80::01%eth0"};
+                "fe80::1%eth0", "fe80::1%2", "fe80::%eth0/64", "fe80::5%eth0/64", "fe80::01%eth0",
+                "fe80::1%"};
         final java.util.regex.Pattern quoted = java.util.regex.Pattern.compile("'([^']+)'");
         for (final String value : rejected) {
             for (final boolean hostOnly : new boolean[] {false, true}) {
@@ -214,6 +215,12 @@ class StrictAddressDiagnosisTest {
         // zoned canonical form the same parser would reject
         assertThatThrownBy(() -> StrictAddresses.parse("fe80::01%eth0", false))
                 .hasMessageContaining("combines several rejected spellings")
+                .hasMessageContaining("'fe80::1'");
+        // a bare trailing '%' parses with a NULL zone (the library accepts an empty
+        // marker) — the first version printed the literal "%null"
+        assertThatThrownBy(() -> StrictAddresses.parse("fe80::1%", false))
+                .hasMessageContaining("dangling zone marker (%)")
+                .hasMessageNotContaining("null")
                 .hasMessageContaining("'fe80::1'");
     }
 

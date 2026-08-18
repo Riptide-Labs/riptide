@@ -327,6 +327,27 @@ class LegacyConverterTest {
                 .hasMessageContaining("combines several rejected spellings");
     }
 
+    /**
+     * The translation is shape-guarded like the netmask sibling: a zoned spelling whose
+     * STRIPPED form still violates a shape rule is refused naming the ORIGINAL spelling
+     * through the zone arm — the first version stripped first and then failed naming
+     * 'fe80::5/64', a string that appears nowhere in the operator's file, with the
+     * summary line explaining the rewrite discarded by the throw.
+     */
+    @Test
+    void aZonedSpellingWithHostBitsRefusesNamingTheOriginal() {
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  nodes:
+                    zhb:
+                      subnet-address: "fe80::5%eth0/64"
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("fe80::5%eth0/64")
+                .hasMessageContaining("zone id (%eth0)")
+                .hasMessageNotContaining("'fe80::5/64'");
+    }
+
     @Test
     void aNodeWithAnSnmpBlockButNoVersionIsAnError() {
         assertThatThrownBy(() -> convert("""
