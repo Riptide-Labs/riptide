@@ -170,10 +170,20 @@ public final class StrictAddresses {
             if (masked.isSinglePrefixBlock()) {
                 return "uses a netmask; write the CIDR form '%s'.".formatted(masked.toCanonicalString());
             }
-            return ("uses a netmask and keeps host bits; write '%s' (the covered block) or '%s' "
-                    + "(the single host).").formatted(
-                    masked.toPrefixBlock().toCanonicalString(),
-                    masked.withoutPrefixLength().toCanonicalString());
+            // guarded like every other suggestion: a mask combined with a RANGED address
+            // part (10.1-5.0.0/255.255.0.0) derives a block that is no single block and a
+            // "host" that is no host — both un-parseable, so the generic message is honest
+            // guarded like every other suggestion: a mask combined with a RANGED address
+            // part (10.1-5.0.0/255.255.0.0) derives a block that is no single block and a
+            // "host" that is no host — both un-parseable, so the generic message is honest
+            final IPAddress coveredBlock = masked.toPrefixBlock();
+            final IPAddress singleHost = masked.withoutPrefixLength();
+            if (acceptable(coveredBlock, false) && acceptable(singleHost, true)) {
+                return ("uses a netmask and keeps host bits; write '%s' (the covered block) or '%s' "
+                        + "(the single host).").formatted(
+                        coveredBlock.toCanonicalString(), singleHost.toCanonicalString());
+            }
+            return generic(false);
         }
 
         final IPAddress zeros = new IPAddressString(value, ZEROS_ALLOWED).getAddress();
@@ -207,11 +217,19 @@ public final class StrictAddresses {
             return "is not a single host address.";
         }
         if (address.isPrefixed() && !address.isSinglePrefixBlock()) {
-            return ("has host bits set for its /%d prefix; write '%s' (the covered block) or '%s' "
-                    + "(the single host).").formatted(
-                    address.getNetworkPrefixLength(),
-                    address.toPrefixBlock().toCanonicalString(),
-                    address.withoutPrefixLength().toCanonicalString());
+            // same guard as the netmask arm: a ranged address part (10.0.1-5.5/24)
+            // derives two un-parseable "fixes", and the generic message beats both
+            // same guard as the netmask arm: a ranged address part (10.0.1-5.5/24)
+            // derives two un-parseable "fixes", and the generic message beats both
+            final IPAddress coveredBlock = address.toPrefixBlock();
+            final IPAddress singleHost = address.withoutPrefixLength();
+            if (acceptable(coveredBlock, false) && acceptable(singleHost, true)) {
+                return ("has host bits set for its /%d prefix; write '%s' (the covered block) or '%s' "
+                        + "(the single host).").formatted(
+                        address.getNetworkPrefixLength(),
+                        coveredBlock.toCanonicalString(), singleHost.toCanonicalString());
+            }
+            return generic(false);
         }
         if (address.isMultiple()) {
             final IPAddress block = address.assignPrefixForSingleBlock();

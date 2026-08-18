@@ -285,6 +285,105 @@ public class ConfigFileReloaderTest {
         reloader.poll();
 
         assertThat(inventory.profiles().credentials()).containsKey("rotempty");
+        assertThat((Integer) metrics.getGauges().get("config.reload.stale").getValue()).isZero();
+    }
+
+    /**
+     * "Retried every poll" includes polls whose CHANGED content fails validation: a
+     * rejected candidate neither supersedes the pending edit nor — in the first version —
+     * retried it, so a continuously churning broken config file starved a stranded
+     * rotation indefinitely while both WARNs promised otherwise.
+     */
+    @Test
+    public void aPendingPartialHealsEvenWhileTheConfigFileChurnsInvalid() throws Exception {
+        latchPendingPartial("rotchurn");
+        healInventory();
+
+        // changed content that fails validation BEFORE the commit/supersede (the blank
+        // paired secret, the same shape aBlankPairedSecretIsRejectedWithBootsOwnError
+        // proves is rejected), so the pending edit survives — and must still be retried
+        // this very poll
+        Files.writeString(CONFIG, """
+                riptide:
+                  snmp:
+                    credentials:
+                      churnbad:
+                        version: v3
+                        security-name: monitoring
+                        auth-protocol: hmac192sha256
+                        auth-passphrase: ""
+                """);
+        reloader.poll();
+
+        assertThat(inventory.profiles().credentials()).containsKey("rotchurn");
+    }
+
+    /**
+     * The last-failure memory dies with its pending episode. Episode A's rebuild throws
+     * cause M and remembers it; a torn-file edit then latches a NEW episode via the
+     * null path (which names no cause); the inventory starts throwing M again. To this
+     * episode M is new information and must WARN — the first version kept the memory
+     * across the supersede and DEBUG'd M as a repetition the operator never saw.
+     */
+    @Test
+    public void aRetryCauseRecurringAcrossEpisodesStillWarns() throws Exception {
+        // episode A: the rebuild throws (dangling credential reference), memory = M
+        Files.writeString(INVENTORY, """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.88.0.2":
+                        credentials: not-defined-anywhere
+                  exporters:
+                    neutral:
+                      address: 198.51.100.1
+                """);
+        write("""
+                riptide:
+                  snmp:
+                    credentials:
+                      epia:
+                        version: v3
+                        security-name: monitoring
+                """);
+        reloader.poll();
+
+        // a new edit supersedes episode A but goes partial itself, via the torn-file
+        // NULL path — no cause is named for this episode
+        Files.writeString(INVENTORY, "---\n");
+        write("""
+                riptide:
+                  snmp:
+                    credentials:
+                      epib:
+                        version: v3
+                        security-name: monitoring
+                """);
+        reloader.poll();
+
+        // the inventory starts throwing M again: WARN, not a DEBUG'd "repetition"
+        Files.writeString(INVENTORY, """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.88.0.2":
+                        credentials: not-defined-anywhere
+                  exporters:
+                    neutral:
+                      address: 198.51.100.1
+                """);
+        final var appender = captureReloaderLog();
+        try {
+            reloader.poll();
+            assertThat(appender.list).anySatisfy(event -> {
+                assertThat(event.getLevel()).hasToString("WARN");
+                assertThat(event.getFormattedMessage())
+                        .contains("still failing, now with")
+                        .contains("not-defined-anywhere");
+            });
+        } finally {
+            releaseReloaderLog(appender);
+        }
     }
 
     /**

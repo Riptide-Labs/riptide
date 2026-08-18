@@ -126,7 +126,8 @@ class StrictAddressDiagnosisTest {
                 "10.90.0.0/255.0.255.0", "10.90.0.0/255.255.0.0", "10.0.0.7/255.255.255.255",
                 "10.90.0.5/255.255.0.0", "2001:0db8::1", "010.0.0.7", "010.0.0.5/24",
                 "10.0.1", "10.0.1/24", "10.0.0.*", "10.0.1.5/24", "010.0.0.0/255.0.0.0",
-                "1::1/ffff::", "010.0.*.0", "010.0.0.1-5"};
+                "1::1/ffff::", "010.0.*.0", "010.0.0.1-5",
+                "10.1-5.0.0/255.255.0.0", "10.0.1-5.5/24"};
         final java.util.regex.Pattern quoted = java.util.regex.Pattern.compile("'([^']+)'");
         for (final String value : rejected) {
             for (final boolean hostOnly : new boolean[] {false, true}) {
@@ -159,6 +160,13 @@ class StrictAddressDiagnosisTest {
     void aMultiAddressRelaxationFallsBackToGenericInsteadOfAFalseSuggestion() {
         assertThatThrownBy(() -> StrictAddresses.parse("010.0.*.0", false))
                 .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("is not a host address or CIDR prefix.");
+        // the same rule in the two-suggestion branches: a mask or prefix combined with a
+        // RANGED address part derives a "block" that is no single block and a "host"
+        // that is no host — generic beats two un-parseable fixes
+        assertThatThrownBy(() -> StrictAddresses.parse("10.1-5.0.0/255.255.0.0", false))
+                .hasMessage("is not a host address or CIDR prefix.");
+        assertThatThrownBy(() -> StrictAddresses.parse("10.0.1-5.5/24", false))
                 .hasMessage("is not a host address or CIDR prefix.");
     }
 

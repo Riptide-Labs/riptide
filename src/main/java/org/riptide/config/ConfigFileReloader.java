@@ -300,6 +300,10 @@ public class ConfigFileReloader {
             this.reloadFailures.inc();
             this.stale = true;
             log.warn("Config reload failed — keeping the running configuration: {}", e.getMessage(), e);
+            // a rejected CANDIDATE neither supersedes nor retries the pending edit (the
+            // supersede sits after validation), so without this a continuously churning
+            // broken config file would starve the retry while both WARNs promise it
+            retryPendingRebuild();
         }
     }
 
@@ -394,8 +398,12 @@ public class ConfigFileReloader {
         // already serving by now: a throw here must not be reported as a failed reload
         boolean inventoryPublished = false;
         // a new edit supersedes whatever an earlier partial left pending: retrying old
-        // profiles after a newer commit would publish a rotation the operator replaced
+        // profiles after a newer commit would publish a rotation the operator replaced.
+        // The last-failure memory dies with the episode it belongs to — left alone, a
+        // LATER pending episode whose retry throws the same cause would be DEBUG'd as a
+        // repetition of a message this episode never showed the operator
         this.pendingProfiles = null;
+        this.lastPendingRetryFailure = null;
         try {
             final InventorySnapshot published =
                     this.inventory.rebuildAndSwap(candidateProfiles, this.inventoryConfig.getFile());
