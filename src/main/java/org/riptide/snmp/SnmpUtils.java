@@ -60,9 +60,11 @@ public final class SnmpUtils {
      * an agent serving a strictly increasing, never-ending table (each response inside the
      * per-request timeout) would otherwise walk forever while the collected list grows
      * without bound. snmp4j already rejects non-increasing OIDs; this closes the
-     * increasing-forever case, and is also handed to {@code TableUtils.setRowLimit} so the
-     * library stops issuing requests at the same boundary rather than relying on the
-     * listener's refusal alone.
+     * increasing-forever case; {@code TableUtils.setRowLimit} gets the cap plus one so the
+     * library stops issuing requests one row past it rather than relying on the listener's
+     * refusal alone. The bound is exclusive: a table completing at exactly this many rows
+     * is a clean walk (the first version capped on the cap-th row itself, before the clean
+     * {@code finished()} could arrive, abandoning a complete boundary table forever).
      *
      * <p>Known limitation, documented rather than hidden: subscriber-facing gear (BNG/BRAS)
      * can legitimately exceed this many ifTable entries; such a device is not enrichable
@@ -99,8 +101,10 @@ public final class SnmpUtils {
         }
         final TableUtils tableUtils = new TableUtils(snmp, new DefaultPDUFactory());
         // belt and braces with the collector's own cap: the library stops issuing requests
-        // at the same boundary instead of relying on the listener's refusal alone
-        tableUtils.setRowLimit(MAX_TABLE_ROWS);
+        // at the same boundary instead of relying on the listener's refusal alone. Plus
+        // one because the cap is exclusive — the collector must see a cap-exceeding row
+        // to distinguish "more than the cap" from "complete at exactly the cap"
+        tableUtils.setRowLimit(MAX_TABLE_ROWS + 1);
         // the listener variant, not the synchronous one: with getTable(target, columns,
         // lower, upper) the blocking wait belongs to snmp4j and the loop termination
         // belongs to the AGENT — walk duration and heap were both agent-controlled. Here
@@ -182,7 +186,9 @@ public final class SnmpUtils {
                 return false;
             }
             this.events.add(event);
-            if (event.isError() || this.events.size() >= this.maxRows) {
+            // strictly greater: the maxRows-th row may be the table's last, and its clean
+            // finished() must win over a false cap
+            if (event.isError() || this.events.size() > this.maxRows) {
                 this.capped = !event.isError();
                 this.finished = true;
                 this.done.countDown();

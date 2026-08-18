@@ -113,10 +113,12 @@ class StrictAddressDiagnosisTest {
     }
 
     /**
-     * Every suggestion the ladder emits must round-trip through this parser: an error that
-     * hands the operator a string the same parser then rejects is worse than a generic
-     * one, and the first version did exactly that ("write '10.0.0.5/24'" after fixing
-     * leading zeros on a host-bits spelling).
+     * Every suggestion the ladder emits must round-trip through this parser — under the
+     * same {@code hostOnly} flag that produced it: an error that hands the operator a
+     * string the same parser then rejects is worse than a generic one. The first version
+     * did exactly that twice ("write '10.0.0.5/24'" after fixing leading zeros on a
+     * host-bits spelling; and the hostOnly path was unpinned entirely, where the mask arm
+     * suggested a block the host-only caller rejects).
      */
     @Test
     void everySuggestedFixRoundTrips() {
@@ -124,24 +126,54 @@ class StrictAddressDiagnosisTest {
                 "10.90.0.0/255.0.255.0", "10.90.0.0/255.255.0.0", "10.0.0.7/255.255.255.255",
                 "10.90.0.5/255.255.0.0", "2001:0db8::1", "010.0.0.7", "010.0.0.5/24",
                 "10.0.1", "10.0.1/24", "10.0.0.*", "10.0.1.5/24", "010.0.0.0/255.0.0.0",
-                "1::1/ffff::"};
+                "1::1/ffff::", "010.0.*.0", "010.0.0.1-5"};
         final java.util.regex.Pattern quoted = java.util.regex.Pattern.compile("'([^']+)'");
         for (final String value : rejected) {
-            String message;
-            try {
-                StrictAddresses.parse(value, false);
-                continue; // accepted spellings have nothing to round-trip
-            } catch (final IllegalArgumentException e) {
-                message = e.getMessage();
-            }
-            final var matcher = quoted.matcher(message);
-            while (matcher.find()) {
-                final String suggested = matcher.group(1);
-                assertThatCode(() -> StrictAddresses.parse(suggested, false))
-                        .as("'%s' suggested for '%s' must itself parse", suggested, value)
-                        .doesNotThrowAnyException();
+            for (final boolean hostOnly : new boolean[] {false, true}) {
+                String message;
+                try {
+                    StrictAddresses.parse(value, hostOnly);
+                    continue; // accepted spellings have nothing to round-trip
+                } catch (final IllegalArgumentException e) {
+                    message = e.getMessage();
+                }
+                final var matcher = quoted.matcher(message);
+                while (matcher.find()) {
+                    final String suggested = matcher.group(1);
+                    assertThatCode(() -> StrictAddresses.parse(suggested, hostOnly))
+                            .as("'%s' suggested for '%s' (hostOnly=%s) must itself parse",
+                                    suggested, value, hostOnly)
+                            .doesNotThrowAnyException();
+                }
             }
         }
+    }
+
+    /**
+     * A relaxed spelling that still covers no single block has nothing honest to offer:
+     * the ladder falls back to the generic message rather than suggesting the relaxed
+     * canonical form — a string this same parser rejects (the first version did exactly
+     * that: "write '10.0.*.0'", error ping-pong).
+     */
+    @Test
+    void aMultiAddressRelaxationFallsBackToGenericInsteadOfAFalseSuggestion() {
+        assertThatThrownBy(() -> StrictAddresses.parse("010.0.*.0", false))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("is not a host address or CIDR prefix.");
+    }
+
+    /**
+     * The hostOnly mask arm: a whole-block netmask keeps no host bits, so the general
+     * "keeps host bits" clause was false there, and its block suggestion was rejected by
+     * the very caller that produced it. Latent until now (production passes
+     * hostOnly=false everywhere), pinned before the first hostOnly caller inherits it.
+     */
+    @Test
+    void aNetmaskUnderAHostOnlyCallerIsDiagnosedTruthfully() {
+        assertThatThrownBy(() -> StrictAddresses.parse("10.90.0.0/255.255.0.0", true))
+                .hasMessageContaining("only a single host address is allowed")
+                .hasMessageContaining("'10.90.0.0'")
+                .hasMessageNotContaining("keeps host bits");
     }
 
     /** No operator with a well-formed inventory sees any difference. */

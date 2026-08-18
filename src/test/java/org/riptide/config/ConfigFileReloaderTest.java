@@ -256,6 +256,130 @@ public class ConfigFileReloaderTest {
     }
 
     /**
+     * The "retried every poll" promise holds in the degraded states too. A pending
+     * partial heals from the INVENTORY file, which the missing-config branch says nothing
+     * about — but the first version returned from the missing-file and empty-file
+     * branches before the only retryPendingRebuild() call, so deleting or truncating the
+     * CONFIG file suspended a stranded rotation exactly when the deployment was already
+     * having a bad day.
+     */
+    @Test
+    public void aPendingPartialHealsWhileTheConfigFileIsMissing() throws Exception {
+        latchPendingPartial("rotmiss");
+
+        Files.delete(CONFIG);
+        healInventory();
+        reloader.poll();
+
+        assertThat(inventory.profiles().credentials()).containsKey("rotmiss");
+        assertThat((Integer) metrics.getGauges().get("config.reload.stale").getValue()).isZero();
+    }
+
+    /** The truncated-file sibling of the missing-file case above. */
+    @Test
+    public void aPendingPartialHealsWhileTheConfigFileIsEmpty() throws Exception {
+        latchPendingPartial("rotempty");
+
+        Files.writeString(CONFIG, "");
+        healInventory();
+        reloader.poll();
+
+        assertThat(inventory.profiles().credentials()).containsKey("rotempty");
+    }
+
+    /**
+     * The throw path lands in the same latched-and-retried state as the refusal path, so
+     * its WARN must prescribe the same remediation. The first version said "fix the file
+     * and edit the config again, or restart" — steering the operator to a needless
+     * restart (or a needless second edit) for a state the next poll heals once the
+     * inventory file alone is fixed. The healing is asserted, not just the wording.
+     */
+    @Test
+    public void aRebuildThrowNamesTheRetryNotARestart() throws Exception {
+        // the inventory references a credential set the candidate config does not
+        // define, so rebuildAndSwap THROWS (the refusal path returns null instead)
+        Files.writeString(INVENTORY, """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.88.0.1":
+                        credentials: not-defined-anywhere
+                  exporters:
+                    neutral:
+                      address: 198.51.100.1
+                """);
+        final var appender = captureReloaderLog();
+        try {
+            write("""
+                    riptide:
+                      snmp:
+                        credentials:
+                          rotthrow:
+                            version: v3
+                            security-name: monitoring
+                    """);
+            reloader.poll();
+
+            assertThat((Integer) metrics.getGauges().get("config.reload.stale").getValue()).isEqualTo(1);
+            assertThat(appender.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                    .contains("could not be rebuilt")
+                    .contains("retried every poll")
+                    .doesNotContain("restart"));
+        } finally {
+            releaseReloaderLog(appender);
+        }
+
+        // the promise is kept: fixing the inventory file alone heals it, no second edit
+        healInventory();
+        reloader.poll();
+        assertThat(inventory.profiles().credentials()).containsKey("rotthrow");
+        assertThat((Integer) metrics.getGauges().get("config.reload.stale").getValue()).isZero();
+    }
+
+    /** Seeds a committed reload, then latches a partial edit carrying {@code credential}. */
+    private void latchPendingPartial(final String credential) throws Exception {
+        // seed against a publishable inventory, so the "populated inventory refuses an
+        // empty candidate" precondition holds by construction (same reasoning as
+        // aPartialReloadStaysVisibleUntilItHeals)
+        write("""
+                riptide:
+                  snmp:
+                    credentials:
+                      seed-%s:
+                        version: v3
+                        security-name: monitoring
+                """.formatted(credential));
+        reloader.poll();
+        assertThat(inventory.snapshot().exporterCount()).isPositive();
+
+        Files.writeString(INVENTORY, "---\n");
+        write("""
+                riptide:
+                  snmp:
+                    credentials:
+                      %s:
+                        version: v3
+                        security-name: monitoring
+                """.formatted(credential));
+        reloader.poll();
+        assertThat(inventory.profiles().credentials())
+                .as("precondition: the edit latched as a partial")
+                .doesNotContainKey(credential);
+    }
+
+    /** The sanctioned neutral inventory: declared-empty agents, one exporter. */
+    private void healInventory() throws IOException {
+        Files.writeString(INVENTORY, """
+                riptide:
+                  snmp:
+                    agents: {}
+                  exporters:
+                    neutral:
+                      address: 198.51.100.1
+                """);
+    }
+
+    /**
      * #537, the landmine half. A profile-gated document carrying a fatal startup key
      * commits nothing and fails nothing (pinned posture), but activating that profile
      * later converts a working deployment into a boot that refuses to come up — and the
