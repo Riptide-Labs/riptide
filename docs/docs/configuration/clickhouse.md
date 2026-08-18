@@ -165,11 +165,8 @@ logged by the flusher and counted in `persister.batch.failedRows`, and ingestion
 synchronous per-insert error signal (e.g. the `469 VIOLATED_CONSTRAINT` rejection in provisioned
 mode) only exists with `batch.enabled=false` (and coalescing off).
 
-Today the operator-facing signal is therefore the flusher's **`ERROR` log line** (`Failed to
-persist a batch of N flows`) — alert on it. The `persister.batch.*` metrics live only in the
-in-process registry: riptide currently ships **no metrics reporter or exporter** (the management
-server serves `/livez` and `/readyz` only), so they cannot be scraped or graphed yet. They are
-wired and ready for the day an exporter lands — a known gap, not a monitoring recommendation.
+The operator-facing signals are the flusher's **`ERROR` log line** (`Failed to persist a batch of N flows`) and the **`persister.batch.*` metrics**, scrapeable from the management server's [`/metrics` endpoint](../deploy/operations.md#metrics-endpoint) in Prometheus format.
+Alert on a sustained `persister.batch.droppedRows` rate and on `persister.batch.queueDepth` approaching `queue-capacity`; the [readiness contract](../deploy/operations.md#health-endpoints--probes) deliberately keeps ClickHouse out of `/readyz`, so these metrics are the whole story.
 
 Note also that the pre-existing `logPersisting.persister` timer now measures only the **enqueue**
 latency (the hand-off into the buffer, normally microseconds) rather than insert duration; the

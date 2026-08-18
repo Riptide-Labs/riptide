@@ -10,10 +10,15 @@ import org.riptide.flows.listeners.Listener;
 import org.springframework.stereotype.Component;
 
 /**
- * Evaluates collector health for the management endpoints. Deliberately never references ClickHouse:
- * the only write buffer is the small bounded batching queue (flushed within seconds, drained on
- * shutdown) and a single collector has no failover, so gating readiness on ClickHouse would only
- * add load-balancer convergence loss for no benefit (see the add-health-endpoints design).
+ * Evaluates collector health for the management endpoints. Deliberately never references
+ * ClickHouse. That was decided before the bounded batching queue existed (#382) and holds with it
+ * (#541): flows are UDP push, so "not ready" only moves the loss to another layer; recovery
+ * convergence typically loses more flows than the queue absorbs; and where Prometheus scrapes
+ * through the Service, "not ready" can take /metrics down with it, blinding the signal that
+ * explains the outage exactly when it fires. Probes are for scheduling; saturation is for alerting
+ * ({@code persister.batch.droppedRows}, {@code persister.batch.queueDepth}). Zero configured
+ * receivers likewise reports ready: the shipped configuration declares none, and a fresh install
+ * must be able to become ready (the startup WARN in Daemon is the operator signal).
  */
 @Component
 public class HealthService {
