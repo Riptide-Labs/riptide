@@ -21,6 +21,7 @@ import org.riptide.node.LegacyNodesFlagDayCheck;
 import org.riptide.routing.RoutingConfig;
 import org.riptide.secrets.SopsSecretResolver;
 import org.riptide.snmp.InterfaceSnapshotPoller;
+import org.riptide.utils.PropertyNames;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
@@ -87,6 +88,12 @@ public class ConfigFileReloader {
     private final RoutingConfig routingConfig;
     private final InterfaceSnapshotPoller interfacePoller;
     private final SopsSecretResolver sopsSecretResolver;
+
+    /** The gate prefix, not an exact key: multi-profile lists flatten to on-profile[0]/[1]
+     * and on-cloud-platform is not a profile at all (#537). */
+    private static final String ACTIVATE_PREFIX = "spring.config.activate.";
+    /** Bare key or indexed, since a multi-import list flattens to import[0]/[1]. */
+    private static final String IMPORT_KEY = "spring.config.import";
 
     private final MetricRegistry metrics;
     private final Counter reloadSuccesses;
@@ -290,7 +297,7 @@ public class ConfigFileReloader {
         // spring.config.import (not additional-location, which Spring ignores when set
         // inside the packaged application.properties) of the documented shape:
         // optional:file:/etc/riptide/config.yaml
-        final String raw = this.environment.getProperty("spring.config.import", "");
+        final String raw = this.environment.getProperty(IMPORT_KEY, "");
         final String stripped = raw.replace("optional:", "").replace("file:", "").trim();
         if (stripped.isEmpty() || stripped.contains(",")) {
             return null;
@@ -590,19 +597,14 @@ public class ConfigFileReloader {
      * the description enumerates the same prefix.
      */
     private static String describeGate(final PropertySource<?> document) {
-        if (!(document instanceof org.springframework.core.env.EnumerablePropertySource<?> enumerable)) {
-            return "gated";
-        }
-        final StringBuilder gate = new StringBuilder();
-        for (final String name : enumerable.getPropertyNames()) {
-            if (name.startsWith("spring.config.activate.")) {
-                if (!gate.isEmpty()) {
-                    gate.append(", ");
-                }
-                gate.append(name.substring("spring.config.activate.".length()))
-                        .append('=').append(document.getProperty(name));
-            }
-        }
+        // the document stays in scope: this reads values as well as names, so the
+        // per-source overload is the right one — a flattened stack loses the owner
+        final String gate = PropertyNames.in(document)
+                .filter(name -> name.startsWith(ACTIVATE_PREFIX))
+                .map(name -> name.substring(ACTIVATE_PREFIX.length()) + "=" + document.getProperty(name))
+                .collect(java.util.stream.Collectors.joining(", "));
+        // one fallback for both "cannot enumerate" and "enumerable but carries no gate
+        // key": they always produced the same word, and collapsing them here keeps it
         return gate.isEmpty() ? "gated" : "gated on " + gate;
     }
 
@@ -618,15 +620,14 @@ public class ConfigFileReloader {
     private void warnAboutNestedImports(final List<PropertySource<?>> fresh) {
         // all of them, not the first: a multi-import list flattens to import[0]/[1] and a
         // warning naming one file while omitting another would read as complete
+        // per document, not over the flattened stack: the value belongs to the document
+        // that declared it, and getProperty needs that owner
         final List<Object> imports = new java.util.ArrayList<>();
         for (final PropertySource<?> document : fresh) {
-            if (document instanceof org.springframework.core.env.EnumerablePropertySource<?> enumerable) {
-                for (final String name : enumerable.getPropertyNames()) {
-                    if (name.equals("spring.config.import") || name.startsWith("spring.config.import[")) {
-                        imports.add(document.getProperty(name));
-                    }
-                }
-            }
+            PropertyNames.in(document)
+                    .filter(name -> name.equals(IMPORT_KEY) || name.startsWith(IMPORT_KEY + "["))
+                    .map(document::getProperty)
+                    .forEach(imports::add);
         }
         if (!imports.isEmpty()) {
             // outcome-neutral wording: this fires before the candidate is accepted or
@@ -642,13 +643,11 @@ public class ConfigFileReloader {
 
     /** Profile-gated documents are a boot-only ConfigData feature; reload skips them loudly. */
     private boolean withoutProfileActivation(final PropertySource<?> document) {
-        if (document instanceof org.springframework.core.env.EnumerablePropertySource<?> enumerable) {
-            for (final String name : enumerable.getPropertyNames()) {
-                if (name.startsWith("spring.config.activate.")) {
-                    log.warn("Config reload skips profile-gated document '{}' — profile activation applies at boot only", document.getName());
-                    return false;
-                }
-            }
+        // anyMatch short-circuits like the old early return; the WARN stays here because
+        // it names the document, which the shared walk knows nothing about
+        if (PropertyNames.in(document).anyMatch(name -> name.startsWith(ACTIVATE_PREFIX))) {
+            log.warn("Config reload skips profile-gated document '{}' — profile activation applies at boot only", document.getName());
+            return false;
         }
         return true;
     }
