@@ -6,7 +6,7 @@
 package org.riptide.node;
 
 import jakarta.annotation.PostConstruct;
-import org.riptide.utils.PropertySources;
+import org.riptide.utils.PropertyNames;
 import org.springframework.core.env.AbstractEnvironment;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
@@ -56,7 +56,7 @@ public class LegacyNodesFlagDayCheck {
         });
     }
 
-    /** Non-throwing probe for the reloader's gated-document scan (#537); one walk per class. */
+    /** Non-throwing probe for the reloader's gated-document scan (#537); one probe per class, over the shared walk. */
     public static Optional<String> findLegacyNodesKey(final Iterable<PropertySource<?>> sources) {
         // lookingAt, not matches: matches() must consume the whole name, and '.'
         // excludes line terminators, so a key carrying a newline after "nodes" —
@@ -65,7 +65,7 @@ public class LegacyNodesFlagDayCheck {
         // \s in the boundary class covers the terminator AT the boundary too.
         // The regex alone decides; a normalize-and-startsWith conjunct used to sit
         // here and was fully implied by it, two matching theories where one does
-        return PropertySources.propertyNames(sources)
+        return PropertyNames.in(sources)
                 .filter(name -> LEGACY_KEY.matcher(name).lookingAt() && !isServiceLink(name))
                 .findFirst();
     }

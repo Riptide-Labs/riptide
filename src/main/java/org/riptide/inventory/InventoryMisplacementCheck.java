@@ -6,7 +6,7 @@
 package org.riptide.inventory;
 
 import jakarta.annotation.PostConstruct;
-import org.riptide.utils.PropertySources;
+import org.riptide.utils.PropertyNames;
 import org.springframework.core.env.AbstractEnvironment;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
@@ -53,9 +53,9 @@ public class InventoryMisplacementCheck {
         });
     }
 
-    /** Non-throwing probe for the reloader's gated-document scan (#537); one walk per class. */
+    /** Non-throwing probe for the reloader's gated-document scan (#537); one probe per class, over the shared walk. */
     public static Optional<String> findMisplacedInventoryKey(final Iterable<PropertySource<?>> sources) {
-        return PropertySources.propertyNames(sources)
+        return PropertyNames.in(sources)
                 .filter(name -> MISPLACED_TREE.matcher(name).find())
                 .findFirst();
     }

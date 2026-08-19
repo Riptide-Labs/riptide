@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * contribute nothing, and the stack is walked lazily — are invisible to the callers'
  * tests, which is why they are pinned here.
  */
-class PropertySourcesTest {
+class PropertyNamesTest {
 
     private static MapPropertySource source(final String name, final String... keys) {
         final Map<String, Object> values = new java.util.LinkedHashMap<>();
@@ -33,8 +33,25 @@ class PropertySourcesTest {
 
     @Test
     void anEnumerableSourceYieldsItsNamesInOrder() {
-        assertThat(PropertySources.propertyNames(source("one", "a", "b", "c")))
+        assertThat(PropertyNames.in(source("one", "a", "b", "c")))
                 .containsExactly("a", "b", "c");
+    }
+
+    /**
+     * The skip is load-bearing, not a latent hole. Spring Boot contributes non-enumerable
+     * sources to every environment, and {@code configurationProperties} is the sharp one:
+     * it is a view over the whole rest of the stack, so visiting it would double-count
+     * every key and misattribute ownership. Its class is package-private, so this pins the
+     * other one structurally — the review that produced this test found the javadoc had
+     * claimed the opposite ("every source Spring itself contributes is enumerable"), which
+     * would have invited a "fix" that breaks the callers.
+     */
+    @Test
+    void springBootContributesNonEnumerableSources() {
+        assertThat(EnumerablePropertySource.class
+                .isAssignableFrom(org.springframework.boot.env.RandomValuePropertySource.class))
+                .as("RandomValuePropertySource cannot enumerate random.int/random.uuid/...")
+                .isFalse();
     }
 
     /**
@@ -50,7 +67,7 @@ class PropertySourcesTest {
             }
         };
 
-        assertThat(PropertySources.propertyNames(opaque)).isEmpty();
+        assertThat(PropertyNames.in(opaque)).isEmpty();
     }
 
     @Test
@@ -63,7 +80,7 @@ class PropertySourcesTest {
         };
         final List<PropertySource<?>> stack = List.of(source("first", "a"), opaque, source("second", "b"));
 
-        assertThat(PropertySources.propertyNames(stack)).containsExactly("a", "b");
+        assertThat(PropertyNames.in(stack)).containsExactly("a", "b");
     }
 
     /**
@@ -86,12 +103,12 @@ class PropertySourcesTest {
         };
         final List<PropertySource<?>> stack = List.of(source("first", "riptide.nodes.core"), explodes);
 
-        assertThat(PropertySources.propertyNames(stack).filter(name -> name.startsWith("riptide.nodes")).findFirst())
+        assertThat(PropertyNames.in(stack).filter(name -> name.startsWith("riptide.nodes")).findFirst())
                 .contains("riptide.nodes.core");
-        assertThat(PropertySources.propertyNames(stack).anyMatch(name -> name.startsWith("riptide.nodes"))).isTrue();
+        assertThat(PropertyNames.in(stack).anyMatch(name -> name.startsWith("riptide.nodes"))).isTrue();
 
         // and the guard itself is honest: a terminal that must see everything does explode
-        assertThatThrownBy(() -> PropertySources.propertyNames(stack).count())
+        assertThatThrownBy(() -> PropertyNames.in(stack).count())
                 .isInstanceOf(AssertionError.class);
     }
 }

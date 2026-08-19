@@ -6,7 +6,7 @@
 package org.riptide.inventory;
 
 import jakarta.annotation.PostConstruct;
-import org.riptide.utils.PropertySources;
+import org.riptide.utils.PropertyNames;
 import org.springframework.core.env.AbstractEnvironment;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
@@ -71,10 +71,10 @@ public class PollKeyMigrationCheck {
     /**
      * The non-throwing probe the throwing path delegates to. Exists so the reloader can
      * scan profile-gated documents it deliberately does not fail on (#537) without this
-     * class growing a second copy of the walk.
+     * class growing a second matching rule of its own.
      */
     public static Optional<String> findRetiredPollKey(final Iterable<PropertySource<?>> sources) {
-        return PropertySources.propertyNames(sources)
+        return PropertyNames.in(sources)
                 .filter(name -> RETIRED_KEYS.contains(normalize(name)))
                 .findFirst();
     }
