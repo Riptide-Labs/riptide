@@ -6,8 +6,8 @@
 package org.riptide.node;
 
 import jakarta.annotation.PostConstruct;
+import org.riptide.utils.PropertySources;
 import org.springframework.core.env.AbstractEnvironment;
-import org.springframework.core.env.EnumerablePropertySource;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
 import org.springframework.stereotype.Component;
@@ -58,23 +58,16 @@ public class LegacyNodesFlagDayCheck {
 
     /** Non-throwing probe for the reloader's gated-document scan (#537); one walk per class. */
     public static Optional<String> findLegacyNodesKey(final Iterable<PropertySource<?>> sources) {
-        for (final var source : sources) {
-            if (source instanceof EnumerablePropertySource<?> enumerable) {
-                for (final String name : enumerable.getPropertyNames()) {
-                    // lookingAt, not matches: matches() must consume the whole name, and '.'
-                    // excludes line terminators, so a key carrying a newline after "nodes" —
-                    // which a quoted YAML key or a .properties line can both produce — slipped
-                    // through the boundary check entirely and left the tree silently inert.
-                    // \s in the boundary class covers the terminator AT the boundary too.
-                    // The regex alone decides; a normalize-and-startsWith conjunct used to sit
-                    // here and was fully implied by it, two matching theories where one does
-                    if (LEGACY_KEY.matcher(name).lookingAt() && !isServiceLink(name)) {
-                        return Optional.of(name);
-                    }
-                }
-            }
-        }
-        return Optional.empty();
+        // lookingAt, not matches: matches() must consume the whole name, and '.'
+        // excludes line terminators, so a key carrying a newline after "nodes" —
+        // which a quoted YAML key or a .properties line can both produce — slipped
+        // through the boundary check entirely and left the tree silently inert.
+        // \s in the boundary class covers the terminator AT the boundary too.
+        // The regex alone decides; a normalize-and-startsWith conjunct used to sit
+        // here and was fully implied by it, two matching theories where one does
+        return PropertySources.propertyNames(sources)
+                .filter(name -> LEGACY_KEY.matcher(name).lookingAt() && !isServiceLink(name))
+                .findFirst();
     }
 
     /**

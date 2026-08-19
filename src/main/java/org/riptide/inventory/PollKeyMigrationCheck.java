@@ -6,8 +6,8 @@
 package org.riptide.inventory;
 
 import jakarta.annotation.PostConstruct;
+import org.riptide.utils.PropertySources;
 import org.springframework.core.env.AbstractEnvironment;
-import org.springframework.core.env.EnumerablePropertySource;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
 import org.springframework.stereotype.Component;
@@ -74,16 +74,9 @@ public class PollKeyMigrationCheck {
      * class growing a second copy of the walk.
      */
     public static Optional<String> findRetiredPollKey(final Iterable<PropertySource<?>> sources) {
-        for (final var source : sources) {
-            if (source instanceof EnumerablePropertySource<?> enumerable) {
-                for (final String name : enumerable.getPropertyNames()) {
-                    if (RETIRED_KEYS.contains(normalize(name))) {
-                        return Optional.of(name);
-                    }
-                }
-            }
-        }
-        return Optional.empty();
+        return PropertySources.propertyNames(sources)
+                .filter(name -> RETIRED_KEYS.contains(normalize(name)))
+                .findFirst();
     }
 
     private static String normalize(final String name) {
