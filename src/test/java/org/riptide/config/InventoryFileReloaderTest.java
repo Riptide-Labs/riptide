@@ -58,6 +58,8 @@ class InventoryFileReloaderTest {
     /** Counts refreshes so the reload trigger is observable; the sweep itself is a no-op here. */
     private static final class CountingPoller extends InterfaceSnapshotPoller {
         private int refreshes;
+        /** #559: the refresh is made, then fails — the aftermath is what is under test. */
+        private boolean throwOnRefresh;
 
         private CountingPoller(final Inventory inventory, final MetricRegistry metrics) {
             super(new NoSnmp(), new SnmpPollConfig(), metrics, inventory);
@@ -66,6 +68,9 @@ class InventoryFileReloaderTest {
         @Override
         public void refreshRegistrations() {
             this.refreshes++;
+            if (this.throwOnRefresh) {
+                throw new IllegalStateException("poller is having a day");
+            }
             super.refreshRegistrations();
         }
     }
@@ -641,6 +646,42 @@ class InventoryFileReloaderTest {
         } finally {
             release(org.riptide.inventory.InventoryLoader.class, appender);
         }
+    }
+
+    /**
+     * The double fault (#559): the snapshot publishes and then the refresh throws. The
+     * inventory IS serving, so this must not be counted or latched as a failed reload —
+     * the guard here predates #555, is unpinned, and removing it sends the throw into
+     * poll()'s catch, which would report a live snapshot as a failure.
+     */
+    @Test
+    void aCommittedReloadSurvivesARefreshFailure() throws Exception {
+        this.poller.throwOnRefresh = true;
+        final var appender = capture(InventoryFileReloader.class);
+        try {
+            write("""
+                    riptide:
+                      snmp:
+                        agents:
+                          "10.44.0.0/16":
+                            credentials: corp-v3
+                      exporters:
+                        core:
+                          address: 10.44.0.1
+                    """);
+            this.reloader.poll();
+        } finally {
+            release(InventoryFileReloader.class, appender);
+        }
+
+        // the refresh was attempted, and the content it was meant to re-resolve IS serving
+        assertThat(this.poller.refreshes).isEqualTo(1);
+        assertThat(this.inventory.snapshot().agentView().match(netflow("10.44.5.5"))).isPresent();
+        assertThat(successes()).isEqualTo(1);
+        assertThat(failures()).as("a live snapshot is not a failed reload").isZero();
+        assertThat(stale()).as("what is serving matches the file").isZero();
+        assertThat(appender.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                .contains("refreshing polled endpoints failed"));
     }
 
     private int dead() {
