@@ -57,12 +57,16 @@ class ConfigReloadRefreshOrderingTest {
     @MockitoBean
     private InterfaceSnapshotPoller interfacePoller;
 
+    @Autowired
+    private com.codahale.metrics.MetricRegistry metrics;
+
     @BeforeEach
     void writeInitialConfig() throws IOException {
         Files.writeString(CONFIG, "riptide:\n  routing:\n    prefixes: {}\n");
         this.reloader.poll();
         Mockito.clearInvocations(this.interfacePoller);
     }
+
 
     @AfterEach
     void cleanUp() throws IOException {
@@ -112,5 +116,71 @@ class ConfigReloadRefreshOrderingTest {
 
         // the candidate never committed, so there is nothing for the poller to re-resolve
         Mockito.verifyNoInteractions(this.interfacePoller);
+    }
+
+    /**
+     * The double fault (#555, pinned by #559): the inventory publishes and then the refresh
+     * throws. The edit IS serving, so the reload must not report itself as partial — before
+     * #555 the refresh sat inside the rebuild try, so a throwing refresh was caught as a
+     * failed rebuild, which fired config.reload.partial, latched config.reload.stale to 1
+     * and warned "NOT serving" about configuration that was serving fine.
+     *
+     * <p>The assertions lead with the metrics rather than the log text: a version that
+     * silently stopped publishing would still produce a plausible-looking warning.</p>
+     */
+    @Test
+    void aPublishedReloadSurvivesARefreshFailure() throws Exception {
+        final long partialBefore = this.metrics.counter("config.reload.partial").getCount();
+        Mockito.doThrow(new IllegalStateException("poller is having a day"))
+                .when(this.interfacePoller).refreshRegistrations();
+
+        final var appender = captureReloaderLog();
+        try {
+            Files.writeString(CONFIG, """
+                    riptide:
+                      snmp:
+                        credentials:
+                          refresh-fault:
+                            version: v3
+                            security-name: monitoring
+                    """);
+            this.reloader.poll();
+        } finally {
+            releaseReloaderLog(appender);
+        }
+
+        // the edit really did commit: this is the claim the honest message rests on
+        assertThat(this.inventory.profiles().credentials()).containsKey("refresh-fault");
+        assertThat(this.metrics.counter("config.reload.partial").getCount())
+                .as("a published edit is not a partial reload")
+                .isEqualTo(partialBefore);
+        assertThat((Integer) ((com.codahale.metrics.Gauge<?>)
+                this.metrics.getGauges().get("config.reload.stale")).getValue())
+                .as("what is serving matches the file")
+                .isZero();
+        assertThat(appender.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                .contains("refreshing polled endpoints"));
+        // over the WHOLE log, not chained onto the event above: no message in this class
+        // contains both substrings, so asserting the absence on the refresh WARN itself
+        // could never fail, and a version that published, failed the refresh AND ALSO
+        // emitted a spurious "NOT serving" — the regression this test exists for — would
+        // have passed
+        assertThat(appender.list).noneSatisfy(event -> assertThat(event.getFormattedMessage())
+                .contains("NOT serving"));
+    }
+
+    private static ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> captureReloaderLog() {
+        final var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(ConfigFileReloader.class);
+        final var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        appender.start();
+        logger.addAppender(appender);
+        return appender;
+    }
+
+    private static void releaseReloaderLog(
+            final ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender) {
+        ((ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(ConfigFileReloader.class))
+                .detachAppender(appender);
     }
 }
