@@ -58,7 +58,9 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
     /** Held so {@link #stop()} can deregister them: a stopped parser reports nothing. */
     private final String sessionCountGauge;
     private final String templateCountGauge;
-    private final MetricRegistry metricRegistry;
+    /** The gauges this instance registered, so stop() removes only its own. */
+    private Gauge<Integer> sessionGauge;
+    private Gauge<Integer> templateGauge;
 
     private ScheduledFuture<?> housekeepingFuture;
     /** Owned, not borrowed — see {@link #start}. */
@@ -80,7 +82,6 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
                          final MetricRegistry metricRegistry) {
         super(protocol, name, dispatcher, identity, metricRegistry);
 
-        this.metricRegistry = metricRegistry;
         this.packetsReceived = metricRegistry.meter(MetricRegistry.name("parsers",  name, "packetsReceived"));
         this.parserErrors = metricRegistry.counter(MetricRegistry.name("parsers",  name, "parserErrors"));
 
@@ -193,12 +194,14 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
         // exporters — so it once overstated by however many templates each exporter announces.
         // domainCount() is the quantity the name promises: one per (session, observation domain).
         this.metricRegistry.remove(this.sessionCountGauge);
-        this.metricRegistry.register(this.sessionCountGauge,
-                (Gauge<Integer>) () -> (this.sessionManager != null) ? this.sessionManager.domainCount() : null);
+        // no null guard on sessionManager: registration happens here, after the assignment above,
+        // and stop() deregisters rather than clearing the field, so the gauge cannot outlive it
+        this.sessionGauge = () -> this.sessionManager.domainCount();
+        this.metricRegistry.register(this.sessionCountGauge, this.sessionGauge);
         // Template cardinality is what drives the parse-path cost, under a name that says so.
         this.metricRegistry.remove(this.templateCountGauge);
-        this.metricRegistry.register(this.templateCountGauge,
-                (Gauge<Integer>) () -> (this.sessionManager != null) ? this.sessionManager.count() : null);
+        this.templateGauge = () -> this.sessionManager.count();
+        this.metricRegistry.register(this.templateCountGauge, this.templateGauge);
 
         this.housekeepingFuture = this.housekeeper.scheduleAtFixedRate(this.sessionManager::doHousekeeping,
                 HOUSEKEEPING_INTERVAL,
@@ -223,8 +226,8 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
         // signal for "not running" — the rule the reloader gauges settled on (#539), where a
         // constant value read as healthy for something that was not running at all. remove() on
         // an absent name is a no-op, so a second stop() is well defined like the two above.
-        this.metricRegistry.remove(this.sessionCountGauge);
-        this.metricRegistry.remove(this.templateCountGauge);
+        ParserBase.deregisterIfOwned(this.metricRegistry, this.sessionCountGauge, this.sessionGauge);
+        ParserBase.deregisterIfOwned(this.metricRegistry, this.templateCountGauge, this.templateGauge);
 
         super.stop();
     }

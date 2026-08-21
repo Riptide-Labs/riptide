@@ -198,7 +198,10 @@ class UdpParserBaseTest {
 
         assertThat(registry.getGauges()).doesNotContainKeys(
                 MetricRegistry.name("parsers", "stub", "sessionCount"),
-                MetricRegistry.name("parsers", "stub", "templateCount"));
+                MetricRegistry.name("parsers", "stub", "templateCount"),
+                // the ParserBase half of the same contract: left registered, this one reads 0
+                // once the executor is nulled, i.e. "queue empty, healthy" for a stopped parser
+                MetricRegistry.name("parsers", "stub", "dispatchQueueDepth"));
     }
 
     /**
@@ -239,6 +242,35 @@ class UdpParserBaseTest {
             }
         } finally {
             first.stop();
+        }
+    }
+
+    /**
+     * #546: the inverse of the takeover case. Once a same-named successor owns the gauges, the
+     * parser it replaced must not deregister them on its way out — that would make absence mean
+     * "running" for a parser that is still ingesting. Removal is by ownership, not by name.
+     */
+    @Test
+    void anOutgoingParserDoesNotDeregisterItsSuccessorsGauges() throws Exception {
+        final var registry = new MetricRegistry();
+
+        final var first = new StubParser(registry);
+        first.start();
+        final var second = new StubParser(registry);
+        second.start();
+        try {
+            parse(second, ADD_TEMPLATE, REMOTE);
+
+            // the incumbent goes away AFTER the successor took the names over
+            first.stop();
+
+            assertThat(gauge(registry, "sessionCount"))
+                    .as("the live parser's gauge survives its predecessor stopping")
+                    .isEqualTo(1);
+            assertThat(registry.getGauges())
+                    .containsKey(MetricRegistry.name("parsers", "stub", "dispatchQueueDepth"));
+        } finally {
+            second.stop();
         }
     }
 
