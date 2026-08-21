@@ -202,45 +202,69 @@ class UdpParserBaseTest {
     }
 
     /**
-     * #546, the defect the old register-if-absent guard caused: a parser restarted under the
-     * same name registered nothing, so both gauges stayed bound to the previous instance's
-     * session manager and reported its final counts forever. Here the second parser sees a
-     * different number of exporters than the first, so a gauge still reading the dead one is
-     * unambiguous.
+     * #546: remove-then-register, pinned WITHOUT stop() masking it. A second parser starting
+     * under the same name while the first is still running must take the gauges over; with
+     * register-if-absent both stay bound to the first instance's session manager. This is the
+     * shape the earlier version of this test missed: it stopped the first parser first, which
+     * deregisters the names, so register-if-absent looked correct and the constructor change
+     * was pinned by nothing.
      */
     @Test
-    void gaugesFollowAParserRestartedUnderTheSameName() throws Exception {
+    void asecondParserStartingUnderTheSameNameTakesTheGaugesOver() throws Exception {
         final var registry = new MetricRegistry();
 
         final var first = new StubParser(registry);
         first.start();
-        parse(first, ADD_TEMPLATE, REMOTE);
-        parse(first, ADD_TEMPLATE, SECOND_REMOTE);
-        assertThat(gauge(registry, "sessionCount")).isEqualTo(2);
-        first.stop();
-
-        final var second = new StubParser(registry);
-        second.start();
         try {
-            parse(second, ADD_TEMPLATE, REMOTE);
+            parse(first, ADD_TEMPLATE, REMOTE);
+            parse(first, ADD_TEMPLATE, SECOND_REMOTE);
+            parse(first, ADD_SECOND_TEMPLATE, REMOTE);
+            assertThat(gauge(registry, "sessionCount")).isEqualTo(2);
+            assertThat(gauge(registry, "templateCount")).isEqualTo(3);
 
-            assertThat(gauge(registry, "sessionCount"))
-                    .as("the gauge reads the live parser, not the one it replaced")
-                    .isEqualTo(1);
+            // the first is still running and never stopped, so nothing has deregistered its names
+            final var second = new StubParser(registry);
+            second.start();
+            try {
+                parse(second, ADD_TEMPLATE, REMOTE);
+
+                assertThat(gauge(registry, "sessionCount"))
+                        .as("the newcomer owns the gauge, not the incumbent")
+                        .isEqualTo(1);
+                assertThat(gauge(registry, "templateCount"))
+                        .as("both gauges move, not just the first one registered")
+                        .isEqualTo(1);
+            } finally {
+                second.stop();
+            }
         } finally {
-            second.stop();
+            first.stop();
         }
     }
 
-    /** stop() is idempotent, like the housekeeper and future handling it sits beside. */
+    /**
+     * #546: registration lives in start(), so a parser stopped and started again publishes its
+     * gauges again. Registering in the constructor instead would leave a running, ingesting
+     * parser publishing nothing — absence would then mean "running", inverting the contract.
+     */
     @Test
-    void aSecondStopIsANoOp() throws Exception {
+    void aRestartedParserPublishesItsGaugesAgain() throws Exception {
         final var registry = new MetricRegistry();
         final var parser = new StubParser(registry);
         parser.start();
         parser.stop();
 
-        assertThatCode(parser::stop).doesNotThrowAnyException();
+        parser.start();
+        try {
+            parse(parser, ADD_TEMPLATE, REMOTE);
+
+            assertThat(gauge(registry, "sessionCount"))
+                    .as("a restarted parser reports again")
+                    .isEqualTo(1);
+            assertThat(gauge(registry, "templateCount")).isEqualTo(1);
+        } finally {
+            parser.stop();
+        }
     }
 
     private static int gauge(final MetricRegistry registry, final String name) {

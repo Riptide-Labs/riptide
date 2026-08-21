@@ -164,6 +164,10 @@ public abstract class ParserBase implements Parser {
 
     @Override
     public void stop() {
+        // same contract as the session gauges in UdpParserBase: a stopped parser publishes
+        // nothing. Left registered, this one reads 0 once the executor is nulled — "queue empty,
+        // healthy" for something that is not running, which is the #539 anti-pattern verbatim.
+        this.metricRegistry.remove(MetricRegistry.name("parsers", this.name, "dispatchQueueDepth"));
         if (this.executor != null) {
             this.executor.shutdown();
             try {
