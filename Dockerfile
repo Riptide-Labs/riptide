@@ -20,7 +20,7 @@ LABEL org.opencontainers.image.created="${DATE}" \
       org.opencontainers.image.source="https://github.com/Riptide-Labs/riptide" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${GIT_SHORT_HASH}" \
-      org.opencontainers.image.vendor="RiptideLabs" \
+      org.opencontainers.image.vendor="Riptide Labs" \
       org.opencontainers.image.licenses="GPL-3.0-or-later"
 
 ## Runtime information to listen for Flows on UDP port 9999 by default
