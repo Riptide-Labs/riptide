@@ -60,7 +60,11 @@ public abstract class ParserBase implements Parser {
 
     private final Counter sequenceErrors;
 
-    private final MetricRegistry metricRegistry;
+    /** protected: subclasses register their own gauges against the same registry. */
+    protected final MetricRegistry metricRegistry;
+
+    /** The depth gauge this instance registered, so stop() removes only its own. */
+    private Gauge<Integer> depthGauge;
 
     /** volatile: written on the wiring thread, read by start() and by the event loops. */
     private volatile int threads = DEFAULT_NUM_THREADS;
@@ -155,11 +159,11 @@ public abstract class ParserBase implements Parser {
         // is the early warning, the drop counter is the damage report.
         final String depthGauge = MetricRegistry.name("parsers", this.name, "dispatchQueueDepth");
         this.metricRegistry.remove(depthGauge);
-        this.metricRegistry.register(depthGauge,
-                (Gauge<Integer>) () -> {
-                    final var p = this.executor;
-                    return p != null ? p.getQueue().size() : 0;
-                });
+        this.depthGauge = (Gauge<Integer>) () -> {
+            final var p = this.executor;
+            return p != null ? p.getQueue().size() : 0;
+        };
+        this.metricRegistry.register(depthGauge, this.depthGauge);
     }
 
     @Override
@@ -179,7 +183,26 @@ public abstract class ParserBase implements Parser {
                 log.warn("Interrupted while stopping parser {}; cancelling remaining dispatches", this.name);
                 abandon(this.executor.shutdownNow());
             }
+            // deregistered AFTER the drain, not before: the wait above runs up to 5s and can end
+            // in abandon() discarding queued records, which is exactly when "is the queue
+            // draining?" is a live question — removing the gauge first blinds the operator for
+            // the one window that matters. Same contract as the session gauges in UdpParserBase:
+            // once stopped, a parser publishes nothing rather than a 0 that reads as healthy.
+            deregisterIfOwned(this.metricRegistry, MetricRegistry.name("parsers", this.name, "dispatchQueueDepth"),
+                    this.depthGauge);
             this.executor = null;
+        }
+    }
+
+    /**
+     * Removes a gauge only if the registry still holds <em>this</em> instance's. A parser stopping
+     * after a same-named successor took the name over would otherwise deregister the live parser's
+     * gauge — the inverse of the case start()'s remove-then-register exists to handle, and it would
+     * make absence mean "running".
+     */
+    static void deregisterIfOwned(final MetricRegistry registry, final String name, final Gauge<?> owned) {
+        if (owned != null && registry.getGauges().get(name) == owned) {
+            registry.remove(name);
         }
     }
 

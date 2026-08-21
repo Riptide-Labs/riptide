@@ -181,6 +181,124 @@ class UdpParserBaseTest {
         }
     }
 
+    /**
+     * #546: a stopped parser must report nothing rather than its final counts. Absence is the
+     * signal for "not running" — the rule the reloader gauges settled on (#539), where a
+     * constant value read as healthy for something that had stopped running entirely.
+     */
+    @Test
+    void aStoppedParserDeregistersItsGauges() throws Exception {
+        final var registry = new MetricRegistry();
+        final var parser = new StubParser(registry);
+        parser.start();
+        parse(parser, ADD_TEMPLATE, REMOTE);
+        assertThat(gauge(registry, "sessionCount")).isEqualTo(1);
+
+        parser.stop();
+
+        assertThat(registry.getGauges()).doesNotContainKeys(
+                MetricRegistry.name("parsers", "stub", "sessionCount"),
+                MetricRegistry.name("parsers", "stub", "templateCount"),
+                // the ParserBase half of the same contract: left registered, this one reads 0
+                // once the executor is nulled, i.e. "queue empty, healthy" for a stopped parser
+                MetricRegistry.name("parsers", "stub", "dispatchQueueDepth"));
+    }
+
+    /**
+     * #546: remove-then-register, pinned WITHOUT stop() masking it. A second parser starting
+     * under the same name while the first is still running must take the gauges over; with
+     * register-if-absent both stay bound to the first instance's session manager. This is the
+     * shape the earlier version of this test missed: it stopped the first parser first, which
+     * deregisters the names, so register-if-absent looked correct and the constructor change
+     * was pinned by nothing.
+     */
+    @Test
+    void asecondParserStartingUnderTheSameNameTakesTheGaugesOver() throws Exception {
+        final var registry = new MetricRegistry();
+
+        final var first = new StubParser(registry);
+        first.start();
+        try {
+            parse(first, ADD_TEMPLATE, REMOTE);
+            parse(first, ADD_TEMPLATE, SECOND_REMOTE);
+            parse(first, ADD_SECOND_TEMPLATE, REMOTE);
+            assertThat(gauge(registry, "sessionCount")).isEqualTo(2);
+            assertThat(gauge(registry, "templateCount")).isEqualTo(3);
+
+            // the first is still running and never stopped, so nothing has deregistered its names
+            final var second = new StubParser(registry);
+            second.start();
+            try {
+                parse(second, ADD_TEMPLATE, REMOTE);
+
+                assertThat(gauge(registry, "sessionCount"))
+                        .as("the newcomer owns the gauge, not the incumbent")
+                        .isEqualTo(1);
+                assertThat(gauge(registry, "templateCount"))
+                        .as("both gauges move, not just the first one registered")
+                        .isEqualTo(1);
+            } finally {
+                second.stop();
+            }
+        } finally {
+            first.stop();
+        }
+    }
+
+    /**
+     * #546: the inverse of the takeover case. Once a same-named successor owns the gauges, the
+     * parser it replaced must not deregister them on its way out — that would make absence mean
+     * "running" for a parser that is still ingesting. Removal is by ownership, not by name.
+     */
+    @Test
+    void anOutgoingParserDoesNotDeregisterItsSuccessorsGauges() throws Exception {
+        final var registry = new MetricRegistry();
+
+        final var first = new StubParser(registry);
+        first.start();
+        final var second = new StubParser(registry);
+        second.start();
+        try {
+            parse(second, ADD_TEMPLATE, REMOTE);
+
+            // the incumbent goes away AFTER the successor took the names over
+            first.stop();
+
+            assertThat(gauge(registry, "sessionCount"))
+                    .as("the live parser's gauge survives its predecessor stopping")
+                    .isEqualTo(1);
+            assertThat(registry.getGauges())
+                    .containsKey(MetricRegistry.name("parsers", "stub", "dispatchQueueDepth"));
+        } finally {
+            second.stop();
+        }
+    }
+
+    /**
+     * #546: registration lives in start(), so a parser stopped and started again publishes its
+     * gauges again. Registering in the constructor instead would leave a running, ingesting
+     * parser publishing nothing — absence would then mean "running", inverting the contract.
+     */
+    @Test
+    void aRestartedParserPublishesItsGaugesAgain() throws Exception {
+        final var registry = new MetricRegistry();
+        final var parser = new StubParser(registry);
+        parser.start();
+        parser.stop();
+
+        parser.start();
+        try {
+            parse(parser, ADD_TEMPLATE, REMOTE);
+
+            assertThat(gauge(registry, "sessionCount"))
+                    .as("a restarted parser reports again")
+                    .isEqualTo(1);
+            assertThat(gauge(registry, "templateCount")).isEqualTo(1);
+        } finally {
+            parser.stop();
+        }
+    }
+
     private static int gauge(final MetricRegistry registry, final String name) {
         final var gaugeMetric = registry.getGauges().get(MetricRegistry.name("parsers", "stub", name));
         assertThat(gaugeMetric).as("gauge parsers.stub.%s is registered", name).isNotNull();

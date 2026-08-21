@@ -176,6 +176,9 @@ Two gauges describe what a UDP parser is holding. They are easy to confuse, and 
 | `parsers.<name>.sessionCount` | exporters — one per `(session, observation domain)` pair |
 | `parsers.<name>.templateCount` | templates held across all exporters |
 
+These three (with `dispatchQueueDepth` above) are **registered while the parser runs and deregistered when it stops**, so a stopped receiver publishes no series at all rather than a final or zero reading.
+Alert on absence, not on a value: a rule like `parsers_<name>_sessionCount == 0` goes stale instead of firing, because a stopped parser previously reported its last counts forever while a stopped dispatch queue read `0`, which is indistinguishable from healthy.
+
 ## NetFlow v5 sampling rate resolution
 
 NetFlow v5 has no options table, so a v5 flow's sampling rate resolves from the packet header, then
