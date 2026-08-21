@@ -11,6 +11,7 @@ import com.sun.net.httpserver.HttpServer;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
+import org.riptide.utils.HttpServerConfig;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -20,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 /**
@@ -30,6 +32,15 @@ import java.util.function.Supplier;
 @Slf4j
 @Component
 public class ManagementServer {
+
+    /**
+     * Total shutdown budget, shared across stopping the server and draining the executor —
+     * not per phase. Kept small on purpose: Spring destroys {@code @PreDestroy} beans
+     * sequentially, so this server, the MCP transport and the parsers each spend from one
+     * container grace period, and no compose file sets {@code stop_grace_period} (Docker's
+     * default is 10s). Two seconds is generous for a probe that answers in milliseconds.
+     */
+    private static final long SHUTDOWN_BUDGET_MILLIS = 2_000L;
 
     private final RiptideManagementProperties properties;
     private final HealthService health;
@@ -53,6 +64,9 @@ public class ManagementServer {
             return;
         }
 
+        // before create(), not after: the JDK reads its server config in a static
+        // initializer that runs on the first HttpServer in the process (#545)
+        HttpServerConfig.ensureApplied();
         this.server = HttpServer.create(
                 new InetSocketAddress(this.properties.getBindAddress(), this.properties.getPort()), 0);
         // Virtual threads are always daemon, so the factory carries no setDaemon: keep that in mind
@@ -69,19 +83,61 @@ public class ManagementServer {
         this.server.start();
 
         log.info("Management server listening on {}:{} (/livez, /readyz{})",
-                this.properties.getBindAddress(), this.properties.getPort(),
+                this.properties.getBindAddress(), getPort(),
                 this.properties.isMetricsEnabled() ? ", /metrics" : "");
     }
 
+    /**
+     * The port actually bound, which differs from the configured one when that is 0. Mirrors
+     * {@code McpSseServer.getPort()}. Reporting it matters beyond tests: a 0 in the config
+     * would otherwise be echoed back in the startup log instead of the real port.
+     */
+    public int getPort() {
+        return this.server != null ? this.server.getAddress().getPort() : this.properties.getPort();
+    }
+
+    /**
+     * Bounded rather than immediate (#545). {@code stop(0)} returns at once and
+     * {@code shutdownNow()} interrupts whatever is mid-response, so a probe in flight became
+     * a connection reset during an orderly shutdown — a load balancer reads that as a
+     * transport error rather than an answer. The delay lets in-flight exchanges finish; the
+     * budget stops a stuck one from holding shutdown open, and says so instead of exiting
+     * quietly.
+     */
     @PreDestroy
     void stop() {
+        final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SHUTDOWN_BUDGET_MILLIS);
         if (this.server != null) {
-            this.server.stop(0);
+            this.server.stop(graceSeconds(deadline));
         }
         if (this.executor != null) {
             // stop() does not shut down a user-set executor
-            this.executor.shutdownNow();
+            this.executor.shutdown();
+            try {
+                if (!this.executor.awaitTermination(remaining(deadline), TimeUnit.NANOSECONDS)) {
+                    log.warn("Management server still had requests in flight after {}ms; interrupting them",
+                            SHUTDOWN_BUDGET_MILLIS);
+                    this.executor.shutdownNow();
+                }
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+                this.executor.shutdownNow();
+            }
         }
+    }
+
+    /** Nanoseconds left of the shutdown budget, never negative. */
+    private static long remaining(final long deadlineNanos) {
+        return Math.max(0L, deadlineNanos - System.nanoTime());
+    }
+
+    /**
+     * Whole seconds left, rounded up and never below one. Truncating gave away most of a
+     * second and, worse, would silently become {@code stop(0)} — the immediate close this
+     * change exists to replace — if the budget ever shrank below two seconds.
+     */
+    private static int graceSeconds(final long deadlineNanos) {
+        return (int) Math.max(1L, (remaining(deadlineNanos) + 999_999_999L) / 1_000_000_000L);
     }
 
     /**

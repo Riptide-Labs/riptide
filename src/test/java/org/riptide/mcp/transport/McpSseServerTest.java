@@ -54,6 +54,27 @@ public class McpSseServerTest {
         return server;
     }
 
+    /**
+     * A server with a PRODUCTION-length keep-alive. The shared fixture uses 50ms, which makes
+     * a parked pump wake on its own almost immediately and hides whether shutdown actually
+     * releases it — the blindness that let the #545 reorder ship claiming something it did
+     * not do. 15s is the shipped default (McpProperties).
+     */
+    private static McpSseServer newServerWithProductionKeepAlive() throws Exception {
+        final McpProperties properties = new McpProperties();
+        properties.setEnabled(true);
+        properties.setTransport("sse");
+        properties.setSsePort(0);
+        properties.setSseKeepAliveInterval(java.time.Duration.ofSeconds(15));
+
+        final McpAuthService authService = new McpAuthService(authDisabled(), SecretResolvers.defaults());
+        final McpMessageHandler messageHandler =
+                new McpMessageHandler(authService, new SkillRegistry(), List.of(), new ObjectMapper());
+        final McpSseServer server = new McpSseServer(properties, messageHandler, authService, new ObjectMapper());
+        server.run();
+        return server;
+    }
+
     private static McpAuthProperties authDisabled() {
         final McpAuthProperties authProperties = new McpAuthProperties();
         authProperties.setEnabled(false);
@@ -274,5 +295,43 @@ public class McpSseServerTest {
                 authService, new ObjectMapper());
 
         assertThatThrownBy(collidingServer::run).isInstanceOf(java.net.BindException.class);
+    }
+
+    /**
+     * #545: shutting down with a live SSE stream must not burn the whole grace period and
+     * then kill the handler by interrupt. The pump parks in a keep-alive poll, so closing a
+     * session has to WAKE it, not just set a flag — with a 15s keep-alive and a 5s budget,
+     * a close that does not wake takes >10s and ends in shutdownNow(). This asserts the
+     * shutdown is prompt, which is only true if the wake-up works.
+     */
+    @Test
+    void shutdownWithALiveStreamReleasesTheParkedHandlerPromptly() throws Exception {
+        final McpSseServer server = newServerWithProductionKeepAlive();
+        final int livePort = server.getPort();
+
+        final Thread client = new Thread(() -> {
+            try {
+                final java.net.HttpURLConnection c = (java.net.HttpURLConnection)
+                        java.net.URI.create("http://127.0.0.1:" + livePort + "/mcp/sse").toURL().openConnection();
+                c.setReadTimeout(20_000);
+                try (var in = c.getInputStream()) {
+                    in.read();  // the endpoint event; then the stream stays open
+                    in.read();  // parks until the server tears the stream down
+                }
+            } catch (final Exception ignored) {
+                // the stream ending during shutdown is the expected outcome here
+            }
+        }, "sse-client");
+        client.setDaemon(true);
+        client.start();
+        awaitSessionCount(server, 1);
+
+        final long start = System.nanoTime();
+        server.stop();
+        final long elapsedMillis = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+
+        assertThat(elapsedMillis)
+                .as("a parked SSE pump must be woken by close(), not waited out (was %dms)", elapsedMillis)
+                .isLessThan(4_000L);
     }
 }

@@ -17,6 +17,7 @@ import org.riptide.mcp.config.ConditionalOnMcpEnabled;
 import org.riptide.mcp.config.McpProperties;
 import org.riptide.mcp.protocol.JsonRpcMessage;
 import org.riptide.mcp.service.McpMessageHandler;
+import org.riptide.utils.HttpServerConfig;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
@@ -55,6 +56,9 @@ import java.util.concurrent.TimeUnit;
 @Component
 public class McpSseServer implements CommandLineRunner {
 
+    /** Total shutdown budget, shared across both phases — see ManagementServer for why. */
+    private static final long SHUTDOWN_BUDGET_MILLIS = 2_000L;
+
     /**
      * Query-string splitting. Guava rather than {@code String.split}, whose single-argument form
      * silently drops trailing empty fields — a {@code ?a=1&b=} would lose its last parameter.
@@ -70,6 +74,12 @@ public class McpSseServer implements CommandLineRunner {
     private final Map<String, SseSession> activeSessions = new ConcurrentHashMap<>();
     private HttpServer server;
     private ExecutorService executor;
+    /**
+     * Set before the sessions are closed, so a GET that registers in the window between
+     * that sweep and the listening socket closing does not park a fresh pump for the whole
+     * grace period — the exact stall this change exists to remove.
+     */
+    private volatile boolean stopping;
 
     public McpSseServer(final McpProperties properties,
                         final McpMessageHandler messageHandler,
@@ -95,6 +105,9 @@ public class McpSseServer implements CommandLineRunner {
         final int port = properties.getSsePort();
         log.info("Starting Riptide MCP Server HTTP/SSE Transport on {}:{}...", bindAddress, port);
 
+        // before create(), not after: the JDK reads its server config in a static
+        // initializer that runs on the first HttpServer in the process (#545)
+        HttpServerConfig.ensureApplied();
         // A failure here is fatal on purpose: the operator asked for the SSE transport, and a
         // logged-and-swallowed bind error leaves the process reporting healthy while every MCP
         // client gets connection refused.
@@ -116,18 +129,49 @@ public class McpSseServer implements CommandLineRunner {
         return server != null ? server.getAddress().getPort() : properties.getSsePort();
     }
 
+    /**
+     * Sessions first, then a bounded stop (#545). The order is the point: every live SSE
+     * stream is a GET handler parked for as long as the stream lives, so stopping the server
+     * first would spend the whole grace period waiting for exchanges that end only when
+     * their session is closed. {@link SseSession#close()} both clears the flag and wakes the
+     * parked pump — closing without the wake-up left the handler asleep in its keep-alive
+     * poll, so the budget expired and {@code shutdownNow()} killed it by interrupt anyway,
+     * which is precisely what bounding the shutdown exists to avoid.
+     */
     @PreDestroy
     public void stop() {
         if (server == null) {
             return;
         }
-        server.stop(0);
+        stopping = true;
         activeSessions.values().forEach(SseSession::close);
         activeSessions.clear();
+        final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SHUTDOWN_BUDGET_MILLIS);
+        server.stop(graceSeconds(deadline));
         if (executor != null) {
-            executor.shutdownNow();
+            executor.shutdown();
+            try {
+                if (!executor.awaitTermination(Math.max(0L, deadline - System.nanoTime()), TimeUnit.NANOSECONDS)) {
+                    log.warn("MCP SSE transport still had exchanges in flight after {}ms; interrupting them",
+                            SHUTDOWN_BUDGET_MILLIS);
+                    executor.shutdownNow();
+                }
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+                executor.shutdownNow();
+            }
         }
         log.info("Stopped Riptide MCP Server HTTP/SSE Transport.");
+    }
+
+    /**
+     * Whole seconds left, rounded up and never below one. Truncating gave away most of a
+     * second and, worse, would silently become {@code stop(0)} — the immediate close this
+     * change exists to replace — if the budget ever shrank below two seconds.
+     */
+    private static int graceSeconds(final long deadlineNanos) {
+        final long remaining = Math.max(0L, deadlineNanos - System.nanoTime());
+        return (int) Math.max(1L, (remaining + 999_999_999L) / 1_000_000_000L);
     }
 
     public int getActiveSessionCount() {
@@ -139,6 +183,9 @@ public class McpSseServer implements CommandLineRunner {
      * owns the writing; everything else only ever hands it a frame.
      */
     private static final class SseSession {
+        /** Queued by close() purely to end the pump's poll; never written to the wire. */
+        private static final String WAKE = "";
+
         private final BlockingQueue<String> pending = new LinkedBlockingQueue<>();
         private volatile boolean open = true;
 
@@ -146,8 +193,17 @@ public class McpSseServer implements CommandLineRunner {
             return open && pending.offer(frame);
         }
 
+        /**
+         * Closes the stream AND wakes the pump. Setting the flag alone was not enough: the
+         * pump re-reads it only after its keep-alive poll returns, so at the default 15s
+         * interval a shutdown waited out the poll and then killed the handler by interrupt —
+         * the very thing bounding the shutdown was meant to avoid. The sentinel goes onto the
+         * queue directly, bypassing offer()'s own open-check, which by then is false.
+         */
         void close() {
             open = false;
+            // add, not offer: the queue is unbounded, so this cannot fail, and add() says so
+            pending.add(WAKE);
         }
     }
 
@@ -183,6 +239,14 @@ public class McpSseServer implements CommandLineRunner {
             final String sessionId = UUID.randomUUID().toString();
             final SseSession session = new SseSession();
             activeSessions.put(sessionId, session);
+            if (stopping) {
+                // registered after stop()'s sweep had already run: close it here or its pump
+                // parks for the keep-alive interval and burns the whole grace period
+                session.close();
+                activeSessions.remove(sessionId);
+                sendJsonResponse(exchange, 503, JsonRpcMessage.createError(null, -32000, "Server is shutting down"));
+                return;
+            }
 
             exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
             exchange.getResponseHeaders().set("Cache-Control", "no-cache");
@@ -218,6 +282,13 @@ public class McpSseServer implements CommandLineRunner {
                             properties.getSseKeepAliveInterval().toMillis(), TimeUnit.MILLISECONDS);
                 } catch (final InterruptedException e) {
                     Thread.currentThread().interrupt();
+                    return;
+                }
+                if (SseSession.WAKE.equals(frame)) {
+                    // the wake-up from close(), not a frame. Keyed on the sentinel rather
+                    // than on session.open: a real frame already dequeued must still be
+                    // written, because deliver() answered its POST with 202 — a promise
+                    // that the response goes out on the stream
                     return;
                 }
                 write(os, frame != null ? frame : ": keep-alive\n\n");
