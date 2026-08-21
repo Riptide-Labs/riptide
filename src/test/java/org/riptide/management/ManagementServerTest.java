@@ -148,23 +148,27 @@ class ManagementServerTest {
             }
         });
 
-        // a request parked inside the handler, so it is genuinely in flight when stop() runs
-        final var response = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+        // dedicated threads, not commonPool: the sibling test below records why — a
+        // supplyAsync queues behind whatever else the suite is running on the shared pool,
+        // and under a saturated pool the request never even reaches the handler
+        final var status = new java.util.concurrent.atomic.AtomicInteger();
+        final Thread request = new Thread(() -> {
             try {
-                return get(port, "/livez").statusCode();
+                status.set(get(port, "/livez").statusCode());
             } catch (final Exception e) {
-                throw new java.util.concurrent.CompletionException(e);
+                throw new IllegalStateException(e);
             }
-        });
+        }, "in-flight-request");
+        request.start();
         assertThat(handlerEntered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
 
-        final var shutdown = java.util.concurrent.CompletableFuture.runAsync(() -> this.server.stop());
+        final Thread shutdown = new Thread(() -> this.server.stop(), "shutdown");
+        shutdown.start();
         releaseHandler.countDown();
 
-        assertThat(response.get(10, java.util.concurrent.TimeUnit.SECONDS))
-                .as("the in-flight probe is answered, not reset")
-                .isEqualTo(200);
-        shutdown.get(10, java.util.concurrent.TimeUnit.SECONDS);
+        request.join(10_000);
+        shutdown.join(10_000);
+        assertThat(status.get()).as("the in-flight probe is answered, not reset").isEqualTo(200);
         this.server = null; // already stopped; keep tearDown from stopping it twice
     }
 

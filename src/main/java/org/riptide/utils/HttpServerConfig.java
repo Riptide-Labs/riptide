@@ -5,6 +5,8 @@
 
 package org.riptide.utils;
 
+import lombok.extern.slf4j.Slf4j;
+
 /**
  * JVM-wide configuration for the JDK's {@code com.sun.net.httpserver}, applied before the
  * first server is created (#545).
@@ -28,6 +30,7 @@ package org.riptide.utils;
  * never finishes sending its <em>request</em> never reaches a handler, takes no permit, and
  * was bounded by nothing at all — which is what {@code maxReqTime} closes.</p>
  */
+@Slf4j
 public final class HttpServerConfig {
 
     /**
@@ -53,8 +56,19 @@ public final class HttpServerConfig {
      * an escape hatch, not a tuning knob worth advertising.</p>
      */
     public static void ensureApplied() {
-        if (System.getProperty(MAX_REQUEST_TIME_PROPERTY) == null) {
+        final String supplied = System.getProperty(MAX_REQUEST_TIME_PROPERTY);
+        if (supplied == null) {
             System.setProperty(MAX_REQUEST_TIME_PROPERTY, MAX_REQUEST_SECONDS);
+            return;
+        }
+        // an operator value wins, but it does not get to disable the rail in silence: the
+        // JDK swallows a malformed or empty value and falls back to -1 (no deadline), so a
+        // truncated JAVA_OPTS line would otherwise turn the protection off with no signal
+        if (Long.getLong(MAX_REQUEST_TIME_PROPERTY, -1L) <= 0L) {
+            log.warn("{}={} leaves HTTP requests without a deadline: a client that opens a connection "
+                    + "and never finishes sending is bounded by nothing. Set a positive number of seconds "
+                    + "(riptide's default is {}) unless this is deliberate.",
+                    MAX_REQUEST_TIME_PROPERTY, supplied, MAX_REQUEST_SECONDS);
         }
     }
 }

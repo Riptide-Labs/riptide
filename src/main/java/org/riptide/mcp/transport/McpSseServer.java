@@ -56,8 +56,8 @@ import java.util.concurrent.TimeUnit;
 @Component
 public class McpSseServer implements CommandLineRunner {
 
-    /** Grace for in-flight exchanges at shutdown, and the ceiling on waiting for them. */
-    private static final int SHUTDOWN_SECONDS = 5;
+    /** Total shutdown budget, shared across both phases — see ManagementServer for why. */
+    private static final long SHUTDOWN_BUDGET_MILLIS = 5_000L;
 
     /**
      * Query-string splitting. Guava rather than {@code String.split}, whose single-argument form
@@ -127,9 +127,10 @@ public class McpSseServer implements CommandLineRunner {
      * Sessions first, then a bounded stop (#545). The order is the point: every live SSE
      * stream is a GET handler parked for as long as the stream lives, so stopping the server
      * first would spend the whole grace period waiting for exchanges that end only when
-     * their session is closed. Closing the sessions unparks those handlers, after which the
-     * delay is spent on ordinary in-flight requests — which {@code stop(0)} used to truncate
-     * into a connection reset.
+     * their session is closed. {@link SseSession#close()} both clears the flag and wakes the
+     * parked pump — closing without the wake-up left the handler asleep in its keep-alive
+     * poll, so the budget expired and {@code shutdownNow()} killed it by interrupt anyway,
+     * which is precisely what bounding the shutdown exists to avoid.
      */
     @PreDestroy
     public void stop() {
@@ -138,13 +139,14 @@ public class McpSseServer implements CommandLineRunner {
         }
         activeSessions.values().forEach(SseSession::close);
         activeSessions.clear();
-        server.stop(SHUTDOWN_SECONDS);
+        final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SHUTDOWN_BUDGET_MILLIS);
+        server.stop((int) TimeUnit.NANOSECONDS.toSeconds(Math.max(0L, deadline - System.nanoTime())));
         if (executor != null) {
             executor.shutdown();
             try {
-                if (!executor.awaitTermination(SHUTDOWN_SECONDS, TimeUnit.SECONDS)) {
-                    log.warn("MCP SSE transport still had exchanges in flight after {}s; interrupting them",
-                            SHUTDOWN_SECONDS);
+                if (!executor.awaitTermination(Math.max(0L, deadline - System.nanoTime()), TimeUnit.NANOSECONDS)) {
+                    log.warn("MCP SSE transport still had exchanges in flight after {}ms; interrupting them",
+                            SHUTDOWN_BUDGET_MILLIS);
                     executor.shutdownNow();
                 }
             } catch (final InterruptedException e) {
@@ -164,6 +166,9 @@ public class McpSseServer implements CommandLineRunner {
      * owns the writing; everything else only ever hands it a frame.
      */
     private static final class SseSession {
+        /** Queued by close() purely to end the pump's poll; never written to the wire. */
+        private static final String WAKE = "";
+
         private final BlockingQueue<String> pending = new LinkedBlockingQueue<>();
         private volatile boolean open = true;
 
@@ -171,8 +176,17 @@ public class McpSseServer implements CommandLineRunner {
             return open && pending.offer(frame);
         }
 
+        /**
+         * Closes the stream AND wakes the pump. Setting the flag alone was not enough: the
+         * pump re-reads it only after its keep-alive poll returns, so at the default 15s
+         * interval a shutdown waited out the poll and then killed the handler by interrupt —
+         * the very thing bounding the shutdown was meant to avoid. The sentinel goes onto the
+         * queue directly, bypassing offer()'s own open-check, which by then is false.
+         */
         void close() {
             open = false;
+            // add, not offer: the queue is unbounded, so this cannot fail, and add() says so
+            pending.add(WAKE);
         }
     }
 
@@ -243,6 +257,11 @@ public class McpSseServer implements CommandLineRunner {
                             properties.getSseKeepAliveInterval().toMillis(), TimeUnit.MILLISECONDS);
                 } catch (final InterruptedException e) {
                     Thread.currentThread().interrupt();
+                    return;
+                }
+                if (!session.open) {
+                    // woken by close(): the loop condition below would catch this anyway, but
+                    // not before writing the sentinel to a stream that is being torn down
                     return;
                 }
                 write(os, frame != null ? frame : ": keep-alive\n\n");

@@ -33,8 +33,13 @@ import java.util.function.Supplier;
 @Component
 public class ManagementServer {
 
-    /** Grace for in-flight exchanges at shutdown, and the ceiling on waiting for them. */
-    private static final int SHUTDOWN_SECONDS = 5;
+    /**
+     * Total shutdown budget, shared across stopping the server and draining the executor —
+     * not per phase. Two independent 5s waits meant a single stuck handler could hold
+     * shutdown for 10s, and compose sets no stop_grace_period, so Docker's 10s default left
+     * nothing for the rest of the beans before SIGKILL.
+     */
+    private static final long SHUTDOWN_BUDGET_MILLIS = 5_000L;
 
     private final RiptideManagementProperties properties;
     private final HealthService health;
@@ -100,16 +105,17 @@ public class ManagementServer {
      */
     @PreDestroy
     void stop() {
+        final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SHUTDOWN_BUDGET_MILLIS);
         if (this.server != null) {
-            this.server.stop(SHUTDOWN_SECONDS);
+            this.server.stop((int) TimeUnit.NANOSECONDS.toSeconds(remaining(deadline)));
         }
         if (this.executor != null) {
             // stop() does not shut down a user-set executor
             this.executor.shutdown();
             try {
-                if (!this.executor.awaitTermination(SHUTDOWN_SECONDS, TimeUnit.SECONDS)) {
-                    log.warn("Management server still had requests in flight after {}s; interrupting them",
-                            SHUTDOWN_SECONDS);
+                if (!this.executor.awaitTermination(remaining(deadline), TimeUnit.NANOSECONDS)) {
+                    log.warn("Management server still had requests in flight after {}ms; interrupting them",
+                            SHUTDOWN_BUDGET_MILLIS);
                     this.executor.shutdownNow();
                 }
             } catch (final InterruptedException e) {
@@ -117,6 +123,11 @@ public class ManagementServer {
                 this.executor.shutdownNow();
             }
         }
+    }
+
+    /** Nanoseconds left of the shutdown budget, never negative. */
+    private static long remaining(final long deadlineNanos) {
+        return Math.max(0L, deadlineNanos - System.nanoTime());
     }
 
     /**
