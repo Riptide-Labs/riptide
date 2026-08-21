@@ -57,7 +57,7 @@ import java.util.concurrent.TimeUnit;
 public class McpSseServer implements CommandLineRunner {
 
     /** Total shutdown budget, shared across both phases — see ManagementServer for why. */
-    private static final long SHUTDOWN_BUDGET_MILLIS = 5_000L;
+    private static final long SHUTDOWN_BUDGET_MILLIS = 2_000L;
 
     /**
      * Query-string splitting. Guava rather than {@code String.split}, whose single-argument form
@@ -74,6 +74,12 @@ public class McpSseServer implements CommandLineRunner {
     private final Map<String, SseSession> activeSessions = new ConcurrentHashMap<>();
     private HttpServer server;
     private ExecutorService executor;
+    /**
+     * Set before the sessions are closed, so a GET that registers in the window between
+     * that sweep and the listening socket closing does not park a fresh pump for the whole
+     * grace period — the exact stall this change exists to remove.
+     */
+    private volatile boolean stopping;
 
     public McpSseServer(final McpProperties properties,
                         final McpMessageHandler messageHandler,
@@ -137,10 +143,11 @@ public class McpSseServer implements CommandLineRunner {
         if (server == null) {
             return;
         }
+        stopping = true;
         activeSessions.values().forEach(SseSession::close);
         activeSessions.clear();
         final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SHUTDOWN_BUDGET_MILLIS);
-        server.stop((int) TimeUnit.NANOSECONDS.toSeconds(Math.max(0L, deadline - System.nanoTime())));
+        server.stop(graceSeconds(deadline));
         if (executor != null) {
             executor.shutdown();
             try {
@@ -155,6 +162,16 @@ public class McpSseServer implements CommandLineRunner {
             }
         }
         log.info("Stopped Riptide MCP Server HTTP/SSE Transport.");
+    }
+
+    /**
+     * Whole seconds left, rounded up and never below one. Truncating gave away most of a
+     * second and, worse, would silently become {@code stop(0)} — the immediate close this
+     * change exists to replace — if the budget ever shrank below two seconds.
+     */
+    private static int graceSeconds(final long deadlineNanos) {
+        final long remaining = Math.max(0L, deadlineNanos - System.nanoTime());
+        return (int) Math.max(1L, (remaining + 999_999_999L) / 1_000_000_000L);
     }
 
     public int getActiveSessionCount() {
@@ -222,6 +239,14 @@ public class McpSseServer implements CommandLineRunner {
             final String sessionId = UUID.randomUUID().toString();
             final SseSession session = new SseSession();
             activeSessions.put(sessionId, session);
+            if (stopping) {
+                // registered after stop()'s sweep had already run: close it here or its pump
+                // parks for the keep-alive interval and burns the whole grace period
+                session.close();
+                activeSessions.remove(sessionId);
+                sendJsonResponse(exchange, 503, JsonRpcMessage.createError(null, -32000, "Server is shutting down"));
+                return;
+            }
 
             exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
             exchange.getResponseHeaders().set("Cache-Control", "no-cache");
@@ -259,9 +284,11 @@ public class McpSseServer implements CommandLineRunner {
                     Thread.currentThread().interrupt();
                     return;
                 }
-                if (!session.open) {
-                    // woken by close(): the loop condition below would catch this anyway, but
-                    // not before writing the sentinel to a stream that is being torn down
+                if (SseSession.WAKE.equals(frame)) {
+                    // the wake-up from close(), not a frame. Keyed on the sentinel rather
+                    // than on session.open: a real frame already dequeued must still be
+                    // written, because deliver() answered its POST with 202 — a promise
+                    // that the response goes out on the stream
                     return;
                 }
                 write(os, frame != null ? frame : ": keep-alive\n\n");

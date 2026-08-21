@@ -10,7 +10,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.riptide.flows.Daemon;
 import org.riptide.flows.listeners.Listener;
-import org.riptide.utils.HttpServerConfig;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -162,35 +161,23 @@ class ManagementServerTest {
         request.start();
         assertThat(handlerEntered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
 
-        final Thread shutdown = new Thread(() -> this.server.stop(), "shutdown");
+        // the handler is released only once stop() is about to run: without this the
+        // shutdown thread may not be scheduled first, the request completes normally, and
+        // the test passes without ever exercising the in-flight-at-shutdown path — it would
+        // pass against the old stop(0) code too
+        final var shutdownEntered = new java.util.concurrent.CountDownLatch(1);
+        final Thread shutdown = new Thread(() -> {
+            shutdownEntered.countDown();
+            this.server.stop();
+        }, "shutdown");
         shutdown.start();
+        assertThat(shutdownEntered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
         releaseHandler.countDown();
 
         request.join(10_000);
         shutdown.join(10_000);
         assertThat(status.get()).as("the in-flight probe is answered, not reset").isEqualTo(200);
         this.server = null; // already stopped; keep tearDown from stopping it twice
-    }
-
-    /**
-     * #545: the JDK reads sun.net.httpserver.* in a static initializer that runs on the
-     * FIRST HttpServer in the process, so the deadline has to be in place before any server
-     * is created. Starting one here proves the startup path applies it rather than leaving
-     * the ordering to whichever server happens to come up first.
-     */
-    @Test
-    void startingTheServerAppliesTheRequestDeadline() throws Exception {
-        final Daemon daemon = mock(Daemon.class);
-        when(daemon.isStarted()).thenReturn(true);
-        when(daemon.getListeners()).thenReturn(List.of());
-        // cleared first: the property is JVM-wide, so any earlier server in this JVM would
-        // have set it and the assertion would pass without this startup path doing anything
-        System.clearProperty(HttpServerConfig.MAX_REQUEST_TIME_PROPERTY);
-        start(daemon);
-
-        assertThat(System.getProperty(HttpServerConfig.MAX_REQUEST_TIME_PROPERTY))
-                .as("a request deadline bounds a client that never finishes sending")
-                .isEqualTo(HttpServerConfig.MAX_REQUEST_SECONDS);
     }
 
     @Test

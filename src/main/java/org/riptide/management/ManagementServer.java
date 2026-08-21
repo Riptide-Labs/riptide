@@ -35,11 +35,12 @@ public class ManagementServer {
 
     /**
      * Total shutdown budget, shared across stopping the server and draining the executor —
-     * not per phase. Two independent 5s waits meant a single stuck handler could hold
-     * shutdown for 10s, and compose sets no stop_grace_period, so Docker's 10s default left
-     * nothing for the rest of the beans before SIGKILL.
+     * not per phase. Kept small on purpose: Spring destroys {@code @PreDestroy} beans
+     * sequentially, so this server, the MCP transport and the parsers each spend from one
+     * container grace period, and no compose file sets {@code stop_grace_period} (Docker's
+     * default is 10s). Two seconds is generous for a probe that answers in milliseconds.
      */
-    private static final long SHUTDOWN_BUDGET_MILLIS = 5_000L;
+    private static final long SHUTDOWN_BUDGET_MILLIS = 2_000L;
 
     private final RiptideManagementProperties properties;
     private final HealthService health;
@@ -107,7 +108,7 @@ public class ManagementServer {
     void stop() {
         final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SHUTDOWN_BUDGET_MILLIS);
         if (this.server != null) {
-            this.server.stop((int) TimeUnit.NANOSECONDS.toSeconds(remaining(deadline)));
+            this.server.stop(graceSeconds(deadline));
         }
         if (this.executor != null) {
             // stop() does not shut down a user-set executor
@@ -128,6 +129,15 @@ public class ManagementServer {
     /** Nanoseconds left of the shutdown budget, never negative. */
     private static long remaining(final long deadlineNanos) {
         return Math.max(0L, deadlineNanos - System.nanoTime());
+    }
+
+    /**
+     * Whole seconds left, rounded up and never below one. Truncating gave away most of a
+     * second and, worse, would silently become {@code stop(0)} — the immediate close this
+     * change exists to replace — if the budget ever shrank below two seconds.
+     */
+    private static int graceSeconds(final long deadlineNanos) {
+        return (int) Math.max(1L, (remaining(deadlineNanos) + 999_999_999L) / 1_000_000_000L);
     }
 
     /**
