@@ -11,6 +11,7 @@ import com.sun.net.httpserver.HttpServer;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
+import org.riptide.utils.HttpServerConfig;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -20,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 /**
@@ -30,6 +32,9 @@ import java.util.function.Supplier;
 @Slf4j
 @Component
 public class ManagementServer {
+
+    /** Grace for in-flight exchanges at shutdown, and the ceiling on waiting for them. */
+    private static final int SHUTDOWN_SECONDS = 5;
 
     private final RiptideManagementProperties properties;
     private final HealthService health;
@@ -53,6 +58,9 @@ public class ManagementServer {
             return;
         }
 
+        // before create(), not after: the JDK reads its server config in a static
+        // initializer that runs on the first HttpServer in the process (#545)
+        HttpServerConfig.ensureApplied();
         this.server = HttpServer.create(
                 new InetSocketAddress(this.properties.getBindAddress(), this.properties.getPort()), 0);
         // Virtual threads are always daemon, so the factory carries no setDaemon: keep that in mind
@@ -69,18 +77,45 @@ public class ManagementServer {
         this.server.start();
 
         log.info("Management server listening on {}:{} (/livez, /readyz{})",
-                this.properties.getBindAddress(), this.properties.getPort(),
+                this.properties.getBindAddress(), getPort(),
                 this.properties.isMetricsEnabled() ? ", /metrics" : "");
     }
 
+    /**
+     * The port actually bound, which differs from the configured one when that is 0. Mirrors
+     * {@code McpSseServer.getPort()}. Reporting it matters beyond tests: a 0 in the config
+     * would otherwise be echoed back in the startup log instead of the real port.
+     */
+    public int getPort() {
+        return this.server != null ? this.server.getAddress().getPort() : this.properties.getPort();
+    }
+
+    /**
+     * Bounded rather than immediate (#545). {@code stop(0)} returns at once and
+     * {@code shutdownNow()} interrupts whatever is mid-response, so a probe in flight became
+     * a connection reset during an orderly shutdown — a load balancer reads that as a
+     * transport error rather than an answer. The delay lets in-flight exchanges finish; the
+     * budget stops a stuck one from holding shutdown open, and says so instead of exiting
+     * quietly.
+     */
     @PreDestroy
     void stop() {
         if (this.server != null) {
-            this.server.stop(0);
+            this.server.stop(SHUTDOWN_SECONDS);
         }
         if (this.executor != null) {
             // stop() does not shut down a user-set executor
-            this.executor.shutdownNow();
+            this.executor.shutdown();
+            try {
+                if (!this.executor.awaitTermination(SHUTDOWN_SECONDS, TimeUnit.SECONDS)) {
+                    log.warn("Management server still had requests in flight after {}s; interrupting them",
+                            SHUTDOWN_SECONDS);
+                    this.executor.shutdownNow();
+                }
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+                this.executor.shutdownNow();
+            }
         }
     }
 

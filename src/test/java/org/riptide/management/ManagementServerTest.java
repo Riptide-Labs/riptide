@@ -10,8 +10,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.riptide.flows.Daemon;
 import org.riptide.flows.listeners.Listener;
+import org.riptide.utils.HttpServerConfig;
 
-import java.net.ServerSocket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -54,12 +54,12 @@ class ManagementServerTest {
     private int start(final Daemon daemon,
                       final int maxConcurrentRequests,
                       final java.util.function.Consumer<Thread> onHandle) throws Exception {
-        final int port;
-        try (ServerSocket probe = new ServerSocket(0)) {
-            port = probe.getLocalPort();
-        }
+        // port 0: the server binds an ephemeral port and reports it (#564). The previous
+        // helper probed a free port with a ServerSocket, CLOSED it, and only then let the
+        // server bind — leaving a window in which anything on the machine could take that
+        // number, which showed up as intermittent BindException failures.
         final var properties = new RiptideManagementProperties();
-        properties.setPort(port);
+        properties.setPort(0);
         properties.setBindAddress("127.0.0.1");
         properties.setMaxConcurrentRequests(maxConcurrentRequests);
 
@@ -79,7 +79,7 @@ class ManagementServerTest {
 
         this.server = new ManagementServer(properties, health, this.registry);
         this.server.start();
-        return port;
+        return this.server.getPort();
     }
 
     /**
@@ -126,23 +126,84 @@ class ManagementServerTest {
                 .contains("flows_dropped 7.0");
     }
 
+    /**
+     * #545: stop() used to call stop(0) and shutdownNow(), which interrupts whatever is
+     * mid-response — a probe in flight became a connection reset rather than an answer,
+     * which a load balancer reads as a transport error during an orderly shutdown.
+     */
+    @Test
+    void aRequestInFlightAtShutdownStillGetsItsResponse() throws Exception {
+        final Daemon daemon = mock(Daemon.class);
+        when(daemon.isStarted()).thenReturn(true);
+        when(daemon.getListeners()).thenReturn(List.of());
+
+        final var handlerEntered = new java.util.concurrent.CountDownLatch(1);
+        final var releaseHandler = new java.util.concurrent.CountDownLatch(1);
+        final int port = start(daemon, thread -> {
+            handlerEntered.countDown();
+            try {
+                releaseHandler.await(5, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        // a request parked inside the handler, so it is genuinely in flight when stop() runs
+        final var response = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+            try {
+                return get(port, "/livez").statusCode();
+            } catch (final Exception e) {
+                throw new java.util.concurrent.CompletionException(e);
+            }
+        });
+        assertThat(handlerEntered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+        final var shutdown = java.util.concurrent.CompletableFuture.runAsync(() -> this.server.stop());
+        releaseHandler.countDown();
+
+        assertThat(response.get(10, java.util.concurrent.TimeUnit.SECONDS))
+                .as("the in-flight probe is answered, not reset")
+                .isEqualTo(200);
+        shutdown.get(10, java.util.concurrent.TimeUnit.SECONDS);
+        this.server = null; // already stopped; keep tearDown from stopping it twice
+    }
+
+    /**
+     * #545: the JDK reads sun.net.httpserver.* in a static initializer that runs on the
+     * FIRST HttpServer in the process, so the deadline has to be in place before any server
+     * is created. Starting one here proves the startup path applies it rather than leaving
+     * the ordering to whichever server happens to come up first.
+     */
+    @Test
+    void startingTheServerAppliesTheRequestDeadline() throws Exception {
+        final Daemon daemon = mock(Daemon.class);
+        when(daemon.isStarted()).thenReturn(true);
+        when(daemon.getListeners()).thenReturn(List.of());
+        // cleared first: the property is JVM-wide, so any earlier server in this JVM would
+        // have set it and the assertion would pass without this startup path doing anything
+        System.clearProperty(HttpServerConfig.MAX_REQUEST_TIME_PROPERTY);
+        start(daemon);
+
+        assertThat(System.getProperty(HttpServerConfig.MAX_REQUEST_TIME_PROPERTY))
+                .as("a request deadline bounds a client that never finishes sending")
+                .isEqualTo(HttpServerConfig.MAX_REQUEST_SECONDS);
+    }
+
     @Test
     void metricsEndpointCanBeDisabledWithoutLosingProbes() throws Exception {
         final Daemon daemon = mock(Daemon.class);
         when(daemon.isStarted()).thenReturn(true);
         when(daemon.getListeners()).thenReturn(List.of());
 
-        final int port;
-        try (ServerSocket probe = new ServerSocket(0)) {
-            port = probe.getLocalPort();
-        }
+        // port 0, read back after start — see the helper above (#564)
         final var properties = new RiptideManagementProperties();
-        properties.setPort(port);
+        properties.setPort(0);
         properties.setBindAddress("127.0.0.1");
         properties.setMetricsEnabled(false);
 
         this.server = new ManagementServer(properties, new HealthService(daemon), this.registry);
         this.server.start();
+        final int port = this.server.getPort();
 
         assertThat(status(port, "/livez")).isEqualTo(200);
         // no context registered, so the JDK server answers 404 rather than an empty scrape

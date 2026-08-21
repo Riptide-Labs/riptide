@@ -17,6 +17,7 @@ import org.riptide.mcp.config.ConditionalOnMcpEnabled;
 import org.riptide.mcp.config.McpProperties;
 import org.riptide.mcp.protocol.JsonRpcMessage;
 import org.riptide.mcp.service.McpMessageHandler;
+import org.riptide.utils.HttpServerConfig;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
@@ -54,6 +55,9 @@ import java.util.concurrent.TimeUnit;
 @ConditionalOnMcpEnabled
 @Component
 public class McpSseServer implements CommandLineRunner {
+
+    /** Grace for in-flight exchanges at shutdown, and the ceiling on waiting for them. */
+    private static final int SHUTDOWN_SECONDS = 5;
 
     /**
      * Query-string splitting. Guava rather than {@code String.split}, whose single-argument form
@@ -95,6 +99,9 @@ public class McpSseServer implements CommandLineRunner {
         final int port = properties.getSsePort();
         log.info("Starting Riptide MCP Server HTTP/SSE Transport on {}:{}...", bindAddress, port);
 
+        // before create(), not after: the JDK reads its server config in a static
+        // initializer that runs on the first HttpServer in the process (#545)
+        HttpServerConfig.ensureApplied();
         // A failure here is fatal on purpose: the operator asked for the SSE transport, and a
         // logged-and-swallowed bind error leaves the process reporting healthy while every MCP
         // client gets connection refused.
@@ -116,16 +123,34 @@ public class McpSseServer implements CommandLineRunner {
         return server != null ? server.getAddress().getPort() : properties.getSsePort();
     }
 
+    /**
+     * Sessions first, then a bounded stop (#545). The order is the point: every live SSE
+     * stream is a GET handler parked for as long as the stream lives, so stopping the server
+     * first would spend the whole grace period waiting for exchanges that end only when
+     * their session is closed. Closing the sessions unparks those handlers, after which the
+     * delay is spent on ordinary in-flight requests — which {@code stop(0)} used to truncate
+     * into a connection reset.
+     */
     @PreDestroy
     public void stop() {
         if (server == null) {
             return;
         }
-        server.stop(0);
         activeSessions.values().forEach(SseSession::close);
         activeSessions.clear();
+        server.stop(SHUTDOWN_SECONDS);
         if (executor != null) {
-            executor.shutdownNow();
+            executor.shutdown();
+            try {
+                if (!executor.awaitTermination(SHUTDOWN_SECONDS, TimeUnit.SECONDS)) {
+                    log.warn("MCP SSE transport still had exchanges in flight after {}s; interrupting them",
+                            SHUTDOWN_SECONDS);
+                    executor.shutdownNow();
+                }
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+                executor.shutdownNow();
+            }
         }
         log.info("Stopped Riptide MCP Server HTTP/SSE Transport.");
     }
