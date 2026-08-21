@@ -181,6 +181,68 @@ class UdpParserBaseTest {
         }
     }
 
+    /**
+     * #546: a stopped parser must report nothing rather than its final counts. Absence is the
+     * signal for "not running" — the rule the reloader gauges settled on (#539), where a
+     * constant value read as healthy for something that had stopped running entirely.
+     */
+    @Test
+    void aStoppedParserDeregistersItsGauges() throws Exception {
+        final var registry = new MetricRegistry();
+        final var parser = new StubParser(registry);
+        parser.start();
+        parse(parser, ADD_TEMPLATE, REMOTE);
+        assertThat(gauge(registry, "sessionCount")).isEqualTo(1);
+
+        parser.stop();
+
+        assertThat(registry.getGauges()).doesNotContainKeys(
+                MetricRegistry.name("parsers", "stub", "sessionCount"),
+                MetricRegistry.name("parsers", "stub", "templateCount"));
+    }
+
+    /**
+     * #546, the defect the old register-if-absent guard caused: a parser restarted under the
+     * same name registered nothing, so both gauges stayed bound to the previous instance's
+     * session manager and reported its final counts forever. Here the second parser sees a
+     * different number of exporters than the first, so a gauge still reading the dead one is
+     * unambiguous.
+     */
+    @Test
+    void gaugesFollowAParserRestartedUnderTheSameName() throws Exception {
+        final var registry = new MetricRegistry();
+
+        final var first = new StubParser(registry);
+        first.start();
+        parse(first, ADD_TEMPLATE, REMOTE);
+        parse(first, ADD_TEMPLATE, SECOND_REMOTE);
+        assertThat(gauge(registry, "sessionCount")).isEqualTo(2);
+        first.stop();
+
+        final var second = new StubParser(registry);
+        second.start();
+        try {
+            parse(second, ADD_TEMPLATE, REMOTE);
+
+            assertThat(gauge(registry, "sessionCount"))
+                    .as("the gauge reads the live parser, not the one it replaced")
+                    .isEqualTo(1);
+        } finally {
+            second.stop();
+        }
+    }
+
+    /** stop() is idempotent, like the housekeeper and future handling it sits beside. */
+    @Test
+    void aSecondStopIsANoOp() throws Exception {
+        final var registry = new MetricRegistry();
+        final var parser = new StubParser(registry);
+        parser.start();
+        parser.stop();
+
+        assertThatCode(parser::stop).doesNotThrowAnyException();
+    }
+
     private static int gauge(final MetricRegistry registry, final String name) {
         final var gaugeMetric = registry.getGauges().get(MetricRegistry.name("parsers", "stub", name));
         assertThat(gaugeMetric).as("gauge parsers.stub.%s is registered", name).isNotNull();

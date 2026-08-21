@@ -55,6 +55,11 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
 
     private UdpSessionManager sessionManager;
 
+    /** Held so {@link #stop()} can deregister them: a stopped parser reports nothing. */
+    private final String sessionCountGauge;
+    private final String templateCountGauge;
+    private final MetricRegistry metricRegistry;
+
     private ScheduledFuture<?> housekeepingFuture;
     /** Owned, not borrowed — see {@link #start}. */
     private ScheduledExecutorService housekeeper;
@@ -75,24 +80,29 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
                          final MetricRegistry metricRegistry) {
         super(protocol, name, dispatcher, identity, metricRegistry);
 
+        this.metricRegistry = metricRegistry;
         this.packetsReceived = metricRegistry.meter(MetricRegistry.name("parsers",  name, "packetsReceived"));
         this.parserErrors = metricRegistry.counter(MetricRegistry.name("parsers",  name, "parserErrors"));
 
         // sessionCount reported sessionManager.count() — the TEMPLATE total, not the number of
         // exporters — so it has always overstated by however many templates each exporter announces.
         // domainCount() is the quantity the name promises: one per (session, observation domain).
-        String sessionCountGauge = MetricRegistry.name("parsers",  name, "sessionCount");
-        // Register only if it's not already there in the registry.
-        if (!metricRegistry.getGauges().containsKey(sessionCountGauge)) {
-            metricRegistry.register(sessionCountGauge, (Gauge<Integer>) () -> (this.sessionManager != null) ? this.sessionManager.domainCount() : null);
-        }
+        this.sessionCountGauge = MetricRegistry.name("parsers",  name, "sessionCount");
+        // remove-then-register, not register-if-absent: a parser restarted under the same name
+        // would otherwise register nothing and leave both gauges bound to the dead instance's
+        // sessionManager, reporting its final counts forever. Same rule and reason as
+        // ParserBase's dispatchQueueDepth, and as the reloader gauges (#539) — where relying on
+        // get-or-create semantics hands a restarted instance the previous one's lambda.
+        metricRegistry.remove(this.sessionCountGauge);
+        metricRegistry.register(this.sessionCountGauge,
+                (Gauge<Integer>) () -> (this.sessionManager != null) ? this.sessionManager.domainCount() : null);
 
         // The old value is still worth having — template cardinality is what drives the parse-path
         // cost — just under a name that says what it is.
-        String templateCountGauge = MetricRegistry.name("parsers",  name, "templateCount");
-        if (!metricRegistry.getGauges().containsKey(templateCountGauge)) {
-            metricRegistry.register(templateCountGauge, (Gauge<Integer>) () -> (this.sessionManager != null) ? this.sessionManager.count() : null);
-        }
+        this.templateCountGauge = MetricRegistry.name("parsers",  name, "templateCount");
+        metricRegistry.remove(this.templateCountGauge);
+        metricRegistry.register(this.templateCountGauge,
+                (Gauge<Integer>) () -> (this.sessionManager != null) ? this.sessionManager.count() : null);
     }
 
     protected abstract FlowPacket parse(Session session, ByteBuf buffer) throws Exception;
@@ -144,8 +154,11 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
     /**
      * Owns the scheduler that sweeps its sessions.
      *
-     * <p>Ownership follows the data: this class creates {@code sessionManager} and discards it in
-     * {@link #stop}, so it owns the schedule that reaps it. Same shape as
+     * <p>Ownership follows the data: this class creates {@code sessionManager}, so it owns the
+     * schedule that reaps it. {@link #stop} shuts that schedule down and deregisters the gauges
+     * reading the manager; the field itself is left alone, because the packet path dereferences
+     * it without a null check and it is not volatile — clearing it would trade a metrics fix for
+     * an ingest-path race. Same shape as
      * {@code InterfaceSnapshotPoller} and {@code GeoIpEnricher} — a named daemon single-thread
      * scheduler, shut down with its owner.
      *
@@ -202,6 +215,17 @@ public abstract class UdpParserBase extends ParserBase implements UdpParser {
             this.housekeeper.shutdownNow();
             this.housekeeper = null;
         }
+
+        // A stopped parser reports nothing rather than its final counts. Absence is the honest
+        // signal for "not running" — the rule the reloader gauges settled on (#539), where a
+        // constant value read as healthy for something that was not running at all. remove() on
+        // an absent name is a no-op, so a second stop() is well defined like the two above.
+        // A stopped parser reports nothing rather than its final counts. Absence is the honest
+        // signal for "not running" — the rule the reloader gauges settled on (#539), where a
+        // constant value read as healthy for something that was not running at all. remove() on
+        // an absent name is a no-op, so a second stop() is well defined like the two above.
+        this.metricRegistry.remove(this.sessionCountGauge);
+        this.metricRegistry.remove(this.templateCountGauge);
 
         super.stop();
     }
