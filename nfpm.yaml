@@ -12,8 +12,11 @@ platform: linux
 version: ${VERSION}
 section: net
 priority: optional
-maintainer: Ronny Trommer <ronny@no42.org>
-vendor: Riptide Labs
+# One identity for both packages: syft derives the SBOM originator from the deb
+# Maintainer and the rpm Vendor, so these must agree or a release SBOM lists the
+# project twice under different names (seen in 0.9.0).
+maintainer: Riptide Labs <maintainer@riptidelabs.eu>
+vendor: Riptide Labs <maintainer@riptidelabs.eu>
 homepage: https://github.com/Riptide-Labs/riptide
 license: GPL-3.0-or-later
 description: |
