@@ -35,7 +35,6 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -190,7 +189,19 @@ public class ClickhouseRepository implements FlowRepository {
         final List<RollupShapeCheck.Result> results;
         try {
             results = RollupShapeCheck.compare(this.config.getDatabase(), readRollupSelects(), readRollupColumns());
-        } catch (final RuntimeException e) {
+        } catch (final InterruptedException e) {
+            // Startup is being torn down. Restore the flag and leave the verdict at its default —
+            // every rollup usable — rather than judging on a half-read catalog.
+            Thread.currentThread().interrupt();
+            return;
+        } catch (final Exception e) {
+            // The readers below reach the server through CompletableFuture.get(), whose
+            // ExecutionException is CHECKED, and close their Records in a try-with-resources whose
+            // close() throws Exception. They declare all of it rather than hiding it behind
+            // @SneakyThrows: undeclared, a checked exception slips past any catch written here and
+            // fails startup — the exact outage the javadoc above promises this check cannot cause,
+            // and invisible to the reader and to SpotBugs alike. A collector that cannot read
+            // system.tables must still collect.
             log.warn("Could not verify rollup shapes in database '{}': {}. Ingestion is unaffected and"
                     + " queries continue to use the rollups.", this.config.getDatabase(), e.getMessage());
             return;
@@ -204,6 +215,10 @@ public class ClickhouseRepository implements FlowRepository {
                     log.warn("Rollup {} does not match this version's schema: {}. Ingestion is"
                             + " unaffected; long-range queries will fall back to raw flows and be"
                             + " slower until it is repaired.", result.rollup(), result.detail());
+                }
+                case UNREACHABLE -> {
+                    drifted.add(result.rollup());
+                    log.warn("Rollup {} cannot be reached: {}.", result.rollup(), result.detail());
                 }
                 case UNVERIFIABLE -> log.warn("Rollup {} could not be verified: {}. It is still used"
                         + " for queries — an unverified rollup is not a known-bad one.",
@@ -222,8 +237,7 @@ public class ClickhouseRepository implements FlowRepository {
      * query, so a role without a grant on the view gets zero rows and no error. Telling those two
      * apart is {@link RollupShapeCheck}'s job, and it needs the absence rather than an exception.</p>
      */
-    @SneakyThrows
-    private Map<String, String> readRollupSelects() {
+    private Map<String, String> readRollupSelects() throws Exception {
         final Map<String, String> selects = new LinkedHashMap<>();
         try (var records = this.client.queryRecords(
                 "SELECT name, as_select FROM system.tables WHERE database = "
@@ -233,16 +247,20 @@ public class ClickhouseRepository implements FlowRepository {
         return selects;
     }
 
-    /** Each rollup target's column names, for those the connecting user can see. */
-    @SneakyThrows
-    private Map<String, Set<String>> readRollupColumns() {
-        final Map<String, Set<String>> columns = new LinkedHashMap<>();
+    /**
+     * Each rollup target's columns and their types, for those the connecting user can see.
+     *
+     * <p>Types as well as names: a dimension whose width changed keeps its name, so a name-only
+     * comparison would pass it clean while the column silently truncates.</p>
+     */
+    private Map<String, Map<String, String>> readRollupColumns() throws Exception {
+        final Map<String, Map<String, String>> columns = new LinkedHashMap<>();
         try (var records = this.client.queryRecords(
-                "SELECT table, name FROM system.columns WHERE database = "
+                "SELECT table, name, type FROM system.columns WHERE database = "
                         + quote(this.config.getDatabase())).get()) {
             records.forEach(record -> columns
-                    .computeIfAbsent(record.getString("table"), table -> new HashSet<>())
-                    .add(record.getString("name")));
+                    .computeIfAbsent(record.getString("table"), table -> new LinkedHashMap<>())
+                    .put(record.getString("name"), record.getString("type")));
         }
         columns.keySet().retainAll(FlowsSchema.rollupTableNames());
         return columns;

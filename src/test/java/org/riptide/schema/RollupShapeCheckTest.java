@@ -8,11 +8,9 @@ package org.riptide.schema;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -87,9 +85,9 @@ class RollupShapeCheckTest {
         return selects;
     }
 
-    private static Map<String, Set<String>> liveColumns() {
-        final Map<String, Set<String>> columns = new LinkedHashMap<>();
-        FlowsSchema.rollupColumns().forEach((table, names) -> columns.put(table, new HashSet<>(names)));
+    private static Map<String, Map<String, String>> liveColumns() {
+        final Map<String, Map<String, String>> columns = new LinkedHashMap<>();
+        FlowsSchema.rollupColumns().forEach((table, types) -> columns.put(table, new LinkedHashMap<>(types)));
         return columns;
     }
 
@@ -139,7 +137,7 @@ class RollupShapeCheckTest {
 
     @Test
     void aMissingTargetColumnIsDriftAndIsNamed() {
-        final Map<String, Set<String>> columns = liveColumns();
+        final Map<String, Map<String, String>> columns = liveColumns();
         columns.get(FlowsSchema.ROLLUP_BY_GEO_ASN).remove("dstCountry");
 
         assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns))
@@ -151,8 +149,8 @@ class RollupShapeCheckTest {
     /** Missing and unexpected mean different things, so they are reported apart. */
     @Test
     void anUnexpectedTargetColumnIsReportedSeparatelyFromAMissingOne() {
-        final Map<String, Set<String>> columns = liveColumns();
-        columns.get(FlowsSchema.ROLLUP_BY_CONVERSATION).add("srcCity");
+        final Map<String, Map<String, String>> columns = liveColumns();
+        columns.get(FlowsSchema.ROLLUP_BY_CONVERSATION).put("srcCity", "LowCardinality(String)");
 
         assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns))
                 .filteredOn(RollupShapeCheck.Result::drifted)
@@ -194,7 +192,7 @@ class RollupShapeCheckTest {
     void columnDriftIsReportedEvenWhenTheViewCannotBeRead() {
         final Map<String, String> live = liveSelects();
         live.remove(FlowsSchema.ROLLUP_BY_GEO_ASN + "_mv");
-        final Map<String, Set<String>> columns = liveColumns();
+        final Map<String, Map<String, String>> columns = liveColumns();
         columns.get(FlowsSchema.ROLLUP_BY_GEO_ASN).remove("srcAs");
 
         assertThat(RollupShapeCheck.compare(DB, live, columns))
@@ -206,15 +204,52 @@ class RollupShapeCheckTest {
                 });
     }
 
+    /**
+     * An absent or ungranted target table is UNREACHABLE, not UNVERIFIABLE, and the difference is
+     * behavioural: a query routed there fails with UNKNOWN_TABLE or ACCESS_DENIED, so the query
+     * path must decline it. Leaving it routable would turn a graceful raw-flows fallback into a
+     * hard error on every long-range query.
+     */
     @Test
-    void anInvisibleTargetTableIsUnverifiable() {
-        final Map<String, Set<String>> columns = liveColumns();
+    void anInvisibleTargetTableIsUnreachableAndDeclined() {
+        final Map<String, Map<String, String>> columns = liveColumns();
         columns.remove(FlowsSchema.ROLLUP_BY_APPLICATION);
 
         assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns))
+                .filteredOn(r -> r.status() == RollupShapeCheck.Status.UNREACHABLE)
+                .singleElement()
+                .satisfies(r -> {
+                    assertThat(r.detail()).contains("target table");
+                    assertThat(r.declineForQueries()).isTrue();
+                });
+    }
+
+    /**
+     * A column whose type changed keeps its name, so a name-only comparison passes it clean while
+     * the column silently truncates or wraps. This is the half of #571's hazard the check can see.
+     */
+    @Test
+    void aColumnWhoseTypeChangedIsDrift() {
+        final Map<String, Map<String, String>> columns = liveColumns();
+        columns.get(FlowsSchema.ROLLUP_BY_GEO_ASN).put("srcAs", "UInt32");
+
+        assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns))
+                .filteredOn(RollupShapeCheck.Result::drifted)
+                .singleElement()
+                .satisfies(r -> assertThat(r.detail())
+                        .contains("wrong type").contains("srcAs").contains("UInt32").contains("UInt64"));
+    }
+
+    /** An unverifiable rollup stays in use; only drift and unreachability decline it. */
+    @Test
+    void onlyDriftAndUnreachabilityDeclineARollup() {
+        final Map<String, String> live = liveSelects();
+        live.remove(FlowsSchema.ROLLUP_BY_EXPORTER_IFACE + "_mv");
+
+        assertThat(RollupShapeCheck.compare(DB, live, liveColumns()))
                 .filteredOn(r -> r.status() == RollupShapeCheck.Status.UNVERIFIABLE)
                 .singleElement()
-                .satisfies(r -> assertThat(r.detail()).contains("target table"));
+                .satisfies(r -> assertThat(r.declineForQueries()).isFalse());
     }
 
     /**
@@ -229,10 +264,10 @@ class RollupShapeCheckTest {
     @Test
     void noRollupExpressionCarriesALiteralWithInternalWhitespace() {
         final Pattern literal = Pattern.compile("'([^']*)'");
-        final Set<String> offenders = FlowsSchema.rollupSelects(DB).values().stream()
+        final java.util.Set<String> offenders = FlowsSchema.rollupSelects(DB).values().stream()
                 .flatMap(select -> {
                     final Matcher m = literal.matcher(select);
-                    final Set<String> found = new HashSet<>();
+                    final java.util.Set<String> found = new java.util.HashSet<>();
                     while (m.find()) {
                         if (Pattern.compile("\\s").matcher(m.group(1)).find()) {
                             found.add(m.group(1));

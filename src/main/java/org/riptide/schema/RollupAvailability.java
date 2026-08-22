@@ -7,6 +7,7 @@ package org.riptide.schema;
 
 import java.util.Collection;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Which rollups the query path may use, decided once at startup by {@link RollupShapeCheck} (#470).
@@ -30,9 +31,27 @@ public final class RollupAvailability {
 
     private static volatile Set<String> drifted = Set.of();
 
-    /** Record the drifted rollups' target table names. Called once, at startup. */
+    /** Rollups already refused once, so the query path does not repeat itself on every query. */
+    private static final Set<String> REFUSED = ConcurrentHashMap.newKeySet();
+
+    /** Record the unusable rollups' target table names. Called once, at startup. */
     public static void recordDrifted(final Collection<String> rollupTables) {
         drifted = Set.copyOf(rollupTables);
+        // A new verdict earns a fresh round of notification: a rollup repaired and re-declared
+        // usable, then unusable again, must say so rather than inherit the old silence.
+        REFUSED.clear();
+    }
+
+    /**
+     * Whether this is the first time the query path has refused {@code rollup} under the current
+     * verdict — the caller logs only then.
+     *
+     * <p>Without this the router emits a warning per query, forever, for a condition already
+     * reported once at startup. On a dashboard- or MCP-driven deployment that is continuous log
+     * volume that buries everything else.</p>
+     */
+    public static boolean firstRefusalOf(final String rollup) {
+        return REFUSED.add(rollup);
     }
 
     /**

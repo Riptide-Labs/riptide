@@ -145,11 +145,18 @@ class ProvisioningDdlTest {
      * to tell a stale rollup from an unreadable one on every deployment.
      */
     @Test
-    void writerGetsSelectOnEveryRollupViewSoItsShapeCanBeVerified() {
+    void writerGetsShowButNotSelectOnEveryRollupView() {
         final List<String> sql = ProvisioningDdl.ensureShared("riptide", 1L);
         for (final String rollup : FlowsSchema.rollupTableNames()) {
-            assertThat(sql).contains(
-                    "GRANT SELECT ON " + FlowsSchema.qualifiedRollupView("riptide", rollup) + " TO flow_writer");
+            final String mv = FlowsSchema.qualifiedRollupView("riptide", rollup);
+            assertThat(sql).contains("GRANT SHOW TABLES ON " + mv + " TO flow_writer");
+            // SELECT would be a cross-tenant read path. flow_writer is shared by every per-tenant
+            // writer, and a row policy on the rollup target does NOT apply through the view's name:
+            // probed on 26.7, a writer holding SELECT on the _mv read every tenant's rows while
+            // being denied outright on the target the policy is attached to.
+            assertThat(sql)
+                    .as("SELECT on a rollup view bypasses the target's row policy")
+                    .doesNotContain("GRANT SELECT ON " + mv + " TO flow_writer");
         }
     }
 

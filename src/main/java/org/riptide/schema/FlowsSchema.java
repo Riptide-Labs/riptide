@@ -232,13 +232,16 @@ public final class FlowsSchema {
      * created after, because the DDL is {@code CREATE TABLE IF NOT EXISTS} and never rewrites a
      * table that already exists. A text comparison would call every older deployment stale.</p>
      */
-    public static Map<String, List<String>> rollupColumns() {
-        final Map<String, List<String>> columns = new LinkedHashMap<>();
+    public static Map<String, Map<String, String>> rollupColumns() {
+        final Map<String, Map<String, String>> columns = new LinkedHashMap<>();
         for (final Rollup rollup : ROLLUPS) {
-            columns.put(rollup.table(), Stream.concat(
-                            allDimensions(rollup).stream().map(Dimension::column),
-                            MEASURES.stream().map(Measure::column))
-                    .toList());
+            final Map<String, String> types = new LinkedHashMap<>();
+            allDimensions(rollup).forEach(dimension -> types.put(dimension.column(), dimension.type()));
+            // Every measure is a UInt64 the SummingMergeTree collapses on merge; the width is part
+            // of the contract, not an implementation detail — a narrower one would overflow on a
+            // busy exporter and wrap silently.
+            MEASURES.forEach(measure -> types.put(measure.column(), "UInt64"));
+            columns.put(rollup.table(), Collections.unmodifiableMap(types));
         }
         return Collections.unmodifiableMap(columns);
     }

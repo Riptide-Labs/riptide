@@ -28,6 +28,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Rollup shape drift against a real server, through a real scoped writer (#470).
@@ -142,7 +143,7 @@ public class RollupShapeDriftIT {
                 + " AS " + FlowsSchema.rollupSelects(DATABASE).get(rollup)
                         .replace("sumIf(f.packets, f.direction = 'EGRESS') AS packetsOut",
                                 "sum(f.packets) AS packetsOut")).get();
-        admin.execute("GRANT SELECT ON " + mv + " TO flow_writer").get();
+        admin.execute("GRANT SHOW TABLES ON " + mv + " TO flow_writer").get();
         try {
             RollupAvailability.recordDrifted(List.of());
 
@@ -159,7 +160,7 @@ public class RollupShapeDriftIT {
             admin.execute("DROP VIEW IF EXISTS " + mv).get();
             admin.execute(FlowsSchema.createRollupViews(DATABASE).stream()
                     .filter(ddl -> ddl.contains(rollup + "_mv")).findFirst().orElseThrow()).get();
-            admin.execute("GRANT SELECT ON " + mv + " TO flow_writer").get();
+            admin.execute("GRANT SHOW TABLES ON " + mv + " TO flow_writer").get();
             RollupAvailability.recordDrifted(List.of());
         }
     }
@@ -174,7 +175,7 @@ public class RollupShapeDriftIT {
     void aViewTheWriterCannotSeeIsReportedAsUnverifiableAndStillUsed() throws Exception {
         final String rollup = FlowsSchema.ROLLUP_BY_CONVERSATION;
         final String mv = FlowsSchema.qualifiedRollupView(DATABASE, rollup);
-        admin.execute("REVOKE SELECT ON " + mv + " FROM flow_writer").get();
+        admin.execute("REVOKE SHOW TABLES ON " + mv + " FROM flow_writer").get();
         try {
             RollupAvailability.recordDrifted(List.of());
 
@@ -189,8 +190,77 @@ public class RollupShapeDriftIT {
                     .as("a rollup that could not be checked is not thereby known to be wrong")
                     .isTrue();
         } finally {
-            admin.execute("GRANT SELECT ON " + mv + " TO flow_writer").get();
+            admin.execute("GRANT SHOW TABLES ON " + mv + " TO flow_writer").get();
             RollupAvailability.recordDrifted(List.of());
+        }
+    }
+
+    /**
+     * A rollup target that does not exist is declined, and startup still succeeds.
+     *
+     * <p>Two things at once. The verdict must be UNREACHABLE rather than UNVERIFIABLE, because a
+     * query routed at a missing table fails with {@code UNKNOWN_TABLE} — the one case where the
+     * check can turn a hard query error into a graceful raw-flows fallback. And the read itself
+     * must not take the collector down: this is the shape of the failure that
+     * {@code CompletableFuture.get()}'s checked exceptions would cause if the catch were narrowed
+     * back to {@code RuntimeException}.
+     */
+    @Test
+    void anAbsentTargetTableIsDeclinedAndStartupStillSucceeds() throws Exception {
+        final String rollup = FlowsSchema.ROLLUP_BY_EXPORTER_IFACE;
+        final String target = FlowsSchema.qualifiedRollup(DATABASE, rollup);
+        final String mv = FlowsSchema.qualifiedRollupView(DATABASE, rollup);
+        admin.execute("DROP VIEW IF EXISTS " + mv).get();
+        admin.execute("DROP TABLE IF EXISTS " + target).get();
+        try {
+            RollupAvailability.recordDrifted(List.of());
+
+            final List<String> logged = messages(startWriterAndCapture());
+
+            assertThat(logged).anyMatch(m -> m.contains(rollup) && m.contains("cannot be reached"));
+            assertThat(RollupAvailability.usable(target))
+                    .as("routing at a missing table would fail the query outright")
+                    .isFalse();
+            assertThat(QueryRouter.resolveInterfaceTable(DATABASE, 120))
+                    .isEqualTo(FlowsSchema.qualifiedFlows(DATABASE));
+        } finally {
+            admin.execute(FlowsSchema.createRollupTables(DATABASE).stream()
+                    .filter(ddl -> ddl.contains(rollup + " ")).findFirst().orElseThrow()).get();
+            admin.execute(FlowsSchema.createRollupViews(DATABASE).stream()
+                    .filter(ddl -> ddl.contains(rollup + "_mv")).findFirst().orElseThrow()).get();
+            admin.execute("GRANT INSERT ON " + target + " TO flow_writer").get();
+            admin.execute("GRANT SHOW TABLES ON " + mv + " TO flow_writer").get();
+            RollupAvailability.recordDrifted(List.of());
+        }
+    }
+
+    /**
+     * The writer must not be able to read rollup data through the view's name.
+     *
+     * <p>A row policy on a rollup target does not apply through its materialized view, and
+     * {@code flow_writer} is shared by every per-tenant writer — so a {@code SELECT} grant on the
+     * {@code _mv} would be a cross-tenant read path around the policy. This is what forced the
+     * grant to {@code SHOW TABLES}.</p>
+     */
+    @Test
+    void theWriterCanSeeTheViewButNotReadThroughIt() throws Exception {
+        final String mv = FlowsSchema.qualifiedRollupView(DATABASE, FlowsSchema.ROLLUP_BY_GEO_ASN);
+        final Client writer = new Client.Builder()
+                .addEndpoint(endpoint).setUsername("writer").setPassword("pw")
+                .setDefaultDatabase(DATABASE).build();
+        try (writer) {
+            long visible = 0;
+            try (var records = writer.queryRecords("SELECT name FROM system.tables WHERE database = '"
+                    + DATABASE + "' AND engine = 'MaterializedView'").get()) {
+                for (final var ignored : records) {
+                    visible++;
+                }
+            }
+            assertThat(visible).as("the check needs the views visible").isPositive();
+
+            assertThatThrownBy(() -> writer.queryRecords("SELECT count() FROM " + mv).get())
+                    .as("SELECT through the view would bypass the target's row policy")
+                    .hasMessageContaining("Not enough privileges");
         }
     }
 
@@ -214,7 +284,7 @@ public class RollupShapeDriftIT {
             admin.execute("ALTER TABLE " + target + " ADD COLUMN IF NOT EXISTS packetsOut UInt64").get();
             admin.execute(FlowsSchema.createRollupViews(DATABASE).stream()
                     .filter(ddl -> ddl.contains(rollup + "_mv")).findFirst().orElseThrow()).get();
-            admin.execute("GRANT SELECT ON " + mv + " TO flow_writer").get();
+            admin.execute("GRANT SHOW TABLES ON " + mv + " TO flow_writer").get();
             RollupAvailability.recordDrifted(List.of());
         }
     }

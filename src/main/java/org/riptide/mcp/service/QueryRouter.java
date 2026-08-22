@@ -28,15 +28,28 @@ public final class QueryRouter {
      * The rollup if it is usable, otherwise raw {@code flows}.
      *
      * <p>Logged at the point of fallback rather than only at startup detection: an operator looking
-     * at a query that suddenly got slower needs the reason where they are already looking.</p>
+     * at a query that suddenly got slower needs the reason where they are already looking. Logged
+     * <em>once per rollup</em>, because this sits on the query path — a dashboard-driven deployment
+     * would otherwise emit a WARN per query, indefinitely, for a condition already reported at
+     * startup.</p>
+     *
+     * <p><b>The fallback is not free, and the message says so.</b> Raw {@code flows} is retained for
+     * {@link FlowsSchema#DEFAULT_TTL_DAYS} days against the rollups'
+     * {@link FlowsSchema#DEFAULT_ROLLUP_TTL_DAYS} — the rollups exist partly so long-range queries
+     * outlive the raw table's expiry. A query reaching past raw retention therefore comes back
+     * <em>truncated</em>, not merely slower, and silently so unless the operator is told.</p>
      */
     private static String rollupOrFlows(final String database, final String rollup) {
         final String table = FlowsSchema.qualifiedRollup(database, rollup);
         if (RollupAvailability.usable(table)) {
             return table;
         }
-        log.warn("Rollup {} has drifted from the shape this version intends; answering from raw flows"
-                + " instead. The query is correct but slower. See the startup log for what differs.", rollup);
+        if (RollupAvailability.firstRefusalOf(rollup)) {
+            log.warn("Rollup {} is unusable (see the startup log for what differs); answering from raw"
+                    + " flows instead. Queries are slower, and any range older than {} days — the raw"
+                    + " retention, against the rollups' {} — comes back incomplete.",
+                    rollup, FlowsSchema.DEFAULT_TTL_DAYS, FlowsSchema.DEFAULT_ROLLUP_TTL_DAYS);
+        }
         return FlowsSchema.qualifiedFlows(database);
     }
 

@@ -40,6 +40,13 @@ public final class RollupShapeCheck {
         MATCHES,
         /** Live shape differs. The rollup answers queries from a shape this version did not write. */
         DRIFTED,
+        /**
+         * The target table itself could not be seen, so a query routed there would fail outright —
+         * with {@code UNKNOWN_TABLE} if it is absent, {@code ACCESS_DENIED} if it is merely
+         * ungranted. Distinct from {@link #UNVERIFIABLE}: this rollup is not unknown, it is
+         * unusable.
+         */
+        UNREACHABLE,
         /** Could not be determined — see {@link Result#detail()}. Not evidence of drift. */
         UNVERIFIABLE
     }
@@ -52,6 +59,19 @@ public final class RollupShapeCheck {
 
         public boolean drifted() {
             return this.status == Status.DRIFTED;
+        }
+
+        /**
+         * Whether the query path must avoid this rollup.
+         *
+         * <p>Drift and unreachability both qualify, for different reasons: a drifted rollup would
+         * answer from a shape this version did not write, and an unreachable one would not answer
+         * at all. {@link Status#UNVERIFIABLE} does not — a rollup that could not be checked is not
+         * thereby known to be wrong, and declining it would degrade every query on a deployment
+         * whose only fault is a missing grant.</p>
+         */
+        public boolean declineForQueries() {
+            return this.status == Status.DRIFTED || this.status == Status.UNREACHABLE;
         }
     }
 
@@ -70,10 +90,10 @@ public final class RollupShapeCheck {
      */
     public static List<Result> compare(final String database,
             final Map<String, String> liveSelects,
-            final Map<String, Set<String>> liveColumns) {
+            final Map<String, Map<String, String>> liveColumns) {
         final Map<String, String> intendedSelects = FlowsSchema.rollupSelects(database);
         final List<Result> results = new ArrayList<>();
-        for (final Map.Entry<String, List<String>> intended : FlowsSchema.rollupColumns().entrySet()) {
+        for (final var intended : FlowsSchema.rollupColumns().entrySet()) {
             results.add(compareOne(intended.getKey(), intended.getValue(),
                     intendedSelects.get(intended.getKey()), liveSelects, liveColumns));
         }
@@ -81,34 +101,49 @@ public final class RollupShapeCheck {
     }
 
     private static Result compareOne(final String rollup,
-            final List<String> intendedColumns,
+            final Map<String, String> intendedColumns,
             final String intendedSelect,
             final Map<String, String> liveSelects,
-            final Map<String, Set<String>> liveColumns) {
-        final Set<String> live = liveColumns.get(rollup);
+            final Map<String, Map<String, String>> liveColumns) {
+        final Map<String, String> live = liveColumns.get(rollup);
         if (live == null) {
-            return new Result(rollup, Status.UNVERIFIABLE,
+            // Not merely unknown: a query routed here would fail with UNKNOWN_TABLE or
+            // ACCESS_DENIED, so the query path must avoid it and answer from raw flows instead.
+            return new Result(rollup, Status.UNREACHABLE,
                     "target table is not visible to the connecting user — it is absent, or the user "
-                            + "holds no grant on it");
+                            + "holds no grant on it. Queries will use raw flows instead");
         }
 
         // Column drift is decided first and independently of whether the view can be read: it is
         // verified either way, and reporting "cannot verify" while holding proof of drift would
         // bury the finding.
-        final Set<String> missing = new TreeSet<>(intendedColumns);
-        missing.removeAll(live);
-        final Set<String> unexpected = new TreeSet<>(live);
-        intendedColumns.forEach(unexpected::remove);
-        if (!missing.isEmpty() || !unexpected.isEmpty()) {
+        final Set<String> missing = new TreeSet<>(intendedColumns.keySet());
+        missing.removeAll(live.keySet());
+        final Set<String> unexpected = new TreeSet<>(live.keySet());
+        unexpected.removeAll(intendedColumns.keySet());
+        // Types, not just names. A dimension whose width changed (srcAs UInt32 -> UInt64) or a
+        // measure narrowed below UInt64 keeps its name and would otherwise pass clean, while
+        // silently truncating or wrapping on a busy exporter.
+        final Set<String> retyped = new TreeSet<>();
+        intendedColumns.forEach((column, type) -> {
+            final String liveType = live.get(column);
+            if (liveType != null && !liveType.equals(type)) {
+                retyped.add(column + " is " + liveType + ", expected " + type);
+            }
+        });
+        if (!missing.isEmpty() || !unexpected.isEmpty() || !retyped.isEmpty()) {
             // Reported separately because they mean different things: missing is this version
             // expecting a column the table never got, unexpected is the table carrying one this
-            // version stopped writing.
+            // version stopped writing, retyped is the same column holding a different type.
             final StringBuilder detail = new StringBuilder("target table columns differ —");
             if (!missing.isEmpty()) {
                 detail.append(" missing ").append(missing);
             }
             if (!unexpected.isEmpty()) {
                 detail.append(" unexpected ").append(unexpected);
+            }
+            if (!retyped.isEmpty()) {
+                detail.append(" wrong type ").append(retyped);
             }
             return new Result(rollup, Status.DRIFTED, detail.toString());
         }
