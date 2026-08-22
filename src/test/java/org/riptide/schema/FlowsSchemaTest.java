@@ -8,6 +8,7 @@ package org.riptide.schema;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 import com.google.common.base.Splitter;
@@ -122,6 +123,67 @@ class FlowsSchemaTest {
         // The single-arg overload (the collector's manage path) keeps the historical 30 days.
         assertThat(FlowsSchema.createFlowsTable("riptide"))
                 .contains("TTL toDateTime(timestamp) + INTERVAL 30 DAY");
+    }
+
+    /**
+     * #470: the primary key is declared, never derived. This DDL assertion is the ONLY pin for
+     * that — the change has no runtime observable, because a derived primary key equals the
+     * sorting key, which is exactly why today's schema is safe. Asserting
+     * {@code primary_key = sorting_key} against a live ClickHouse passes with the clause, without
+     * it, and after someone deletes it.
+     *
+     * <p>Why it matters: {@code ALTER TABLE … MODIFY ORDER BY} appends to the sorting key alone.
+     * Derived, an upgraded install would keep an N-column primary key under an N+1-column sorting
+     * key while a fresh install derived N+1 for both — verified on ClickHouse 26.7 — and no
+     * column-name or type comparison can see it.</p>
+     */
+    @Test
+    void rollupTablesDeclareThePrimaryKeyRatherThanDerivingIt() {
+        // The frozen value per rollup. This literal IS the mechanism: appending a dimension makes
+        // rollupTable() grow both clauses, which is the divergence — an upgraded install cannot
+        // grow its primary key to match, because ALTER … MODIFY ORDER BY touches only the sorting
+        // key. Failing here forces that append to be a conscious decision: freeze the primary key
+        // (leaving this map untouched) rather than letting it follow the sorting key.
+        final Map<String, String> frozenPrimaryKeys = Map.of(
+                "flows_by_application_1m",
+                "tenant, organisation, timestamp, zone, application, protocol",
+                "flows_by_conversation_1m",
+                "tenant, organisation, timestamp, zone, srcAddr, dstAddr, application",
+                "flows_by_exporter_iface_1m",
+                "tenant, organisation, timestamp, zone, exporterAddr, exporterName, inputSnmp, outputSnmp",
+                "flows_by_geo_asn_1m",
+                "tenant, organisation, timestamp, zone, srcAs, dstAs, srcCountry, dstCountry");
+
+        for (final String ddl : FlowsSchema.createRollupTables("riptide")) {
+            assertThat(ddl).as("a derived primary key is the defect").contains("PRIMARY KEY (");
+            // PREFIX, not equality: ClickHouse's own rule is prefix, and equality would forbid the
+            // freeze this change exists to enable — when a dimension is appended, ORDER BY grows
+            // and the primary key must stay put.
+            assertThat(keyList(ddl, "ORDER BY ("))
+                    .as("primary key must be a prefix of the sorting key")
+                    .startsWith(keyList(ddl, "PRIMARY KEY ("));
+
+            final int from = ddl.indexOf("CREATE TABLE IF NOT EXISTS ") + "CREATE TABLE IF NOT EXISTS ".length();
+            final String table = ddl.substring(from, ddl.indexOf(" (", from)).replace("`riptide`.", "").trim();
+            assertThat(keyList(ddl, "PRIMARY KEY ("))
+                    .as("%s's primary key is frozen; grow ORDER BY alone when adding a dimension", table)
+                    .isEqualTo(frozenPrimaryKeys.get(table));
+        }
+    }
+
+    /** The same rule on the flows table, whose key is typed out twice in a template. */
+    @Test
+    void flowsTableDeclaresThePrimaryKeyRatherThanDerivingIt() {
+        final String ddl = FlowsSchema.createFlowsTable("riptide");
+        assertThat(ddl).contains("PRIMARY KEY (");
+        assertThat(keyList(ddl, "ORDER BY ("))
+                .as("primary key must be a prefix of the sorting key")
+                .startsWith(keyList(ddl, "PRIMARY KEY ("));
+        // and pinned to the literal, because a prefix assertion alone passes if BOTH lists shrink
+        // together — nothing else in the suite would notice the flows sort key losing a column
+        assertThat(keyList(ddl, "PRIMARY KEY (")).isEqualTo(
+                "tenant, organisation, toStartOfHour(timestamp), srcAs, dstAs, "
+                        + "srcAddr, dstAddr, srcPort, dstPort");
     }
 
     @Test
@@ -243,6 +305,26 @@ class FlowsSchemaTest {
                 .map(line -> COLUMN_SPLITTER.split(line.strip()).iterator().next())
                 .filter(name -> !name.isEmpty())
                 .toList();
+    }
+
+    /**
+     * The full parenthesised list after {@code marker}, honouring nesting. {@link #between} stops
+     * at the first {@code ")"}, which inside the flows key is the one closing
+     * {@code toStartOfHour(timestamp)} — so a comparison built on it silently compares prefixes
+     * and cannot see a dropped trailing column. A mutation caught exactly that.
+     */
+    private static String keyList(final String text, final String marker) {
+        final int open = text.indexOf(marker) + marker.length();
+        int depth = 1;
+        for (int i = open; i < text.length(); i++) {
+            final char c = text.charAt(i);
+            if (c == '(') {
+                depth++;
+            } else if (c == ')' && --depth == 0) {
+                return text.substring(open, i).replaceAll("\\s+", " ").strip();
+            }
+        }
+        throw new AssertionError("unbalanced parentheses after " + marker);
     }
 
     private static String between(final String text, final String open, final String close) {
