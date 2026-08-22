@@ -149,19 +149,20 @@ public final class FlowsSchema {
         // on the full key or they are distinct facts.
         //
         // PRIMARY KEY is declared even though it is identical to ORDER BY, and the duplication is
-        // deliberate — do not "simplify" it away. Left underived, ClickHouse infers the primary key
-        // from the sorting key; a later ALTER ... MODIFY ORDER BY appends to the SORTING key only.
-        // An upgraded install would then hold an N-column primary key under an N+1-column sorting
-        // key while a fresh install derived N+1 for both, and nothing in a column-name or type
-        // comparison can see the difference. Declaring it now, while the two agree everywhere,
-        // costs nothing and is byte-identical to what every deployment already has; declaring it
-        // after a dimension lands is impossible, because no single value reconciles the two. One
-        // named separately, and deliberately NOT shared: the two lists are equal today and must
-        // be free to diverge later. When a dimension is appended to a rollup, ORDER BY grows and
-        // the PRIMARY KEY MUST STAY AS IT IS — replace the line below with the literal list as of
-        // that moment. Growing both is what recreates the divergence this exists to prevent, since
-        // ALTER ... MODIFY ORDER BY cannot grow an existing table's primary key to match. The
-        // tests assert prefix, not equality, precisely so that freeze is allowed (#470).
+        // deliberate — do not "simplify" it away. Left undeclared, ClickHouse derives the primary
+        // key from the sorting key, and a later ALTER ... MODIFY ORDER BY appends to the SORTING
+        // key only. An upgraded install would then hold an N-column primary key under an
+        // N+1-column sorting key while a fresh install derived N+1 for both, and nothing in a
+        // column-name or type comparison can see the difference.
+        //
+        // The two lists are equal today and are named separately so they are free to diverge. When
+        // a dimension is appended to a rollup, ORDER BY grows and the PRIMARY KEY MUST STAY AS IT
+        // IS: replace the assignment below with the literal list as of that moment. Growing both
+        // recreates the very divergence this prevents, because ALTER ... MODIFY ORDER BY cannot
+        // grow an existing table's primary key to match (there is no MODIFY PRIMARY KEY at all).
+        // The tests assert prefix rather than equality precisely so that freeze is allowed, and
+        // they pin each rollup's primary key as a literal so the append cannot pass unnoticed
+        // (#470, #571).
         final String sortKeyColumns = columns.stream().map(Dimension::column).collect(Collectors.joining(", "));
         final String primaryKeyColumns = sortKeyColumns;
         ddl.append("\n) ENGINE = SummingMergeTree()\nPRIMARY KEY (")
@@ -176,21 +177,73 @@ public final class FlowsSchema {
 
     /** The materialized view feeding one rollup target from {@code flows}. */
     private static String rollupView(final String database, final Rollup rollup) {
+        return "CREATE MATERIALIZED VIEW IF NOT EXISTS "
+                + qualifiedRollupView(database, rollup.table())
+                + " TO " + qualifiedRollup(database, rollup.table())
+                + " AS\n" + rollupSelect(database, rollup);
+    }
+
+    /**
+     * The SELECT each rollup's materialized view is created with, keyed by target table name.
+     *
+     * <p>Exposed so drift detection compares against the very text {@link #createRollupViews} emits
+     * rather than re-deriving it. A second derivation would be free to drift from the first, and
+     * the failure mode is the worst kind: a comparator that reports every deployment as stale, or
+     * none.</p>
+     *
+     * <p><b>Comparing this against a live server needs normalisation.</b> ClickHouse re-serialises
+     * what it stores in {@code system.tables.as_select}: the SELECT comes back on one line and
+     * without the backticks written around the database name. Stripping backticks and collapsing
+     * runs of whitespace makes the two agree, verified against the real emitted DDL on server
+     * versions 25.3 and 26.7. Note that collapsing whitespace also collapses it inside string
+     * literals, so no rollup expression may contain a literal with internal whitespace — today the
+     * only literals are {@code ''}, {@code 'INGRESS'} and {@code 'EGRESS'}, and a test holds that.</p>
+     */
+    public static Map<String, String> rollupSelects(final String database) {
+        final Map<String, String> selects = new LinkedHashMap<>();
+        for (final Rollup rollup : ROLLUPS) {
+            selects.put(rollup.table(), rollupSelect(database, rollup));
+        }
+        return Collections.unmodifiableMap(selects);
+    }
+
+    private static String rollupSelect(final String database, final Rollup rollup) {
         final List<Dimension> columns = allDimensions(rollup);
-        final StringBuilder ddl = new StringBuilder("CREATE MATERIALIZED VIEW IF NOT EXISTS ")
-                .append(qualifiedRollupView(database, rollup.table()))
-                .append(" TO ").append(qualifiedRollup(database, rollup.table()))
-                .append(" AS\nSELECT\n");
-        ddl.append(columns.stream()
+        final StringBuilder select = new StringBuilder("SELECT\n");
+        select.append(columns.stream()
                 .map(dimension -> "    " + dimension.selectItem())
                 .collect(Collectors.joining(",\n")));
-        ddl.append(",\n").append(MEASURES.stream()
+        select.append(",\n").append(MEASURES.stream()
                 .map(measure -> "    " + measure.expression() + " AS " + measure.column())
                 .collect(Collectors.joining(",\n")));
-        ddl.append("\nFROM ").append(qualifiedFlows(database)).append(" AS ").append(SOURCE_ALIAS)
+        select.append("\nFROM ").append(qualifiedFlows(database)).append(" AS ").append(SOURCE_ALIAS)
                 .append("\nGROUP BY ")
                 .append(columns.stream().map(Dimension::column).collect(Collectors.joining(", ")));
-        return ddl.toString();
+        return select.toString();
+    }
+
+    /**
+     * The columns each rollup target table is intended to carry — every dimension in sort-key order,
+     * then every measure — keyed by target table name.
+     *
+     * <p>Compare this against {@code system.columns}, never against
+     * {@code system.tables.create_table_query}. Since the primary key became explicit (#571) the
+     * stored DDL text differs permanently between a table created before that change and one
+     * created after, because the DDL is {@code CREATE TABLE IF NOT EXISTS} and never rewrites a
+     * table that already exists. A text comparison would call every older deployment stale.</p>
+     */
+    public static Map<String, Map<String, String>> rollupColumns() {
+        final Map<String, Map<String, String>> columns = new LinkedHashMap<>();
+        for (final Rollup rollup : ROLLUPS) {
+            final Map<String, String> types = new LinkedHashMap<>();
+            allDimensions(rollup).forEach(dimension -> types.put(dimension.column(), dimension.type()));
+            // Every measure is a UInt64 the SummingMergeTree collapses on merge; the width is part
+            // of the contract, not an implementation detail — a narrower one would overflow on a
+            // busy exporter and wrap silently.
+            MEASURES.forEach(measure -> types.put(measure.column(), "UInt64"));
+            columns.put(rollup.table(), Collections.unmodifiableMap(types));
+        }
+        return Collections.unmodifiableMap(columns);
     }
 
     /** The shared preamble followed by the rollup's own dimensions — the full sort key, in order. */

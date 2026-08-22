@@ -130,6 +130,46 @@ GROUP BY application ORDER BY bytes DESC LIMIT 10;
 
 Each rollup `X` is fed by a materialized view named `X_mv`. Query the table, never the `_mv`.
 
+### Rollup shape checks at startup
+
+Riptide compares every rollup against the shape the running version intends, in both schema modes, and reports what it finds. It changes nothing: there is no automatic repair, no `ALTER`, no `DROP`.
+
+The check exists because `CREATE MATERIALIZED VIEW IF NOT EXISTS` does nothing against a view that already exists. A deployment that has started riptide once keeps its original rollup shape indefinitely, so a rollup gaining a dimension or a measure in a new release reaches a fresh install and not an upgraded one. Previously nothing failed and nothing logged.
+
+Two messages are possible, and they mean different things.
+
+**"does not match this version's schema"** — the rollup's columns, their types, or its view's SELECT differ from what this version emits. Ingestion is unaffected: raw `flows` still receives every flow, and a rollup is a query-path optimisation, not a collection path. Long-range queries stop using that rollup and are answered from raw `flows` instead. The other rollups keep serving.
+
+:::warning The fallback is bounded by raw retention
+Raw `flows` is kept for 30 days by default; the rollups are kept for 365. Part of why the rollups exist is that long-range queries outlive the raw table's expiry. So a query that falls back and reaches further back than the raw retention comes back **incomplete**, not merely slower — it returns the rows that still exist and says nothing about the rest. A 90-day query answered from a 30-day table looks like a complete answer covering a third of the range.
+
+Treat a drifted rollup as something to repair promptly rather than to live with, and until then keep queries against it inside the raw retention window.
+:::
+
+Repair is manual for now. Drop the rollup's view and its target table and let riptide recreate both on the next start in manage mode:
+
+```sql
+DROP VIEW IF EXISTS riptide.flows_by_application_1m_mv;
+DROP TABLE IF EXISTS riptide.flows_by_application_1m;
+```
+
+This discards that rollup's aggregated history. The raw `flows` table is untouched, so queries stay correct throughout, but they read raw rows for the affected range until the rollup accumulates again — and a materialized view does not backfill, so the pre-existing history does not come back. Weigh that against how much of the rollup's retention window you actually query. A future release makes this an in-place repair with no loss.
+
+**"could not be verified"** — riptide could not read the rollup's view definition, so it has no opinion either way. The rollup stays in use, because a rollup that has not been checked is not a rollup known to be wrong.
+
+**"cannot be reached"** — the rollup's target table itself is not visible, so it either does not exist or the connecting user has no grant on it. A query routed there would fail outright, so riptide declines it and answers from raw `flows`. The usual cause is a database onboarded without `--create-rollups`.
+
+The usual cause of the "could not be verified" message is grants. Riptide's collector connects as the writer, and ClickHouse hides objects a role holds no grant on rather than refusing the query, so a view the writer cannot see reads as zero rows. `riptide onboard` grants `SHOW TABLES` on each `X_mv` to `flow_writer`; a database provisioned before that grant existed, or by hand, needs it added:
+
+```sql
+GRANT SHOW TABLES ON riptide.flows_by_application_1m_mv TO flow_writer;
+-- and the same for flows_by_conversation_1m_mv, flows_by_exporter_iface_1m_mv, flows_by_geo_asn_1m_mv
+```
+
+`SHOW TABLES` and not `SELECT`, deliberately. `flow_writer` is shared by every per-tenant writer, and a row policy attached to a rollup target does **not** apply when the same rows are read through the view's name — granting `SELECT` there would give every tenant's writer a read path around the policy. `SHOW TABLES` makes the view visible in `system.tables` for the shape check and grants no data access.
+
+Re-running `riptide onboard` against an existing database does this for you and is safe: it adds grants and preserves data.
+
 ### Insert batching (`batch.*`)
 
 Historically the collector inserted flows as they were dispatched — dispatch is per **flow

@@ -5,12 +5,25 @@
 
 package org.riptide.mcp.service;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.riptide.schema.FlowsSchema;
+import org.riptide.schema.RollupAvailability;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 public class QueryRouterTest {
+
+    /**
+     * The verdict is process-wide state set once at startup, so a test that leaves a rollup marked
+     * drifted would change every later test's routing.
+     */
+    @AfterEach
+    public void clearDriftVerdict() {
+        RollupAvailability.recordDrifted(List.of());
+    }
 
     @Test
     public void routesShortLookbackToRawFlowsTable() {
@@ -45,6 +58,28 @@ public class QueryRouterTest {
         for (final String rollup : FlowsSchema.rollupTableNames()) {
             assertThat(QueryRouter.isRollup(FlowsSchema.qualifiedRollup("riptide", rollup))).isTrue();
         }
+    }
+
+    /**
+     * The routing consequence of drift detection (#470). Without it, a stale rollup keeps answering
+     * every long-range query and detection only writes the wrong answer down in a log.
+     */
+    @Test
+    public void declinesADriftedRollupAndStillRoutesTheOthers() {
+        RollupAvailability.recordDrifted(List.of(FlowsSchema.ROLLUP_BY_GEO_ASN));
+
+        assertThat(QueryRouter.resolveGeoAsnTable("riptide", 1440))
+                .as("a drifted rollup must be unreachable, not merely logged")
+                .isEqualTo("`riptide`.flows");
+        assertThat(QueryRouter.resolveTopTalkersTable("riptide", 60, "dstAs")).isEqualTo("`riptide`.flows");
+
+        assertThat(QueryRouter.resolveTopTalkersTable("riptide", 60, "application"))
+                .as("one stale rollup must not cost the other three")
+                .isEqualTo("`riptide`.flows_by_application_1m");
+        assertThat(QueryRouter.resolveTopTalkersTable("riptide", 60, "srcAddr"))
+                .isEqualTo("`riptide`.flows_by_conversation_1m");
+        assertThat(QueryRouter.resolveInterfaceTable("riptide", 120))
+                .isEqualTo("`riptide`.flows_by_exporter_iface_1m");
     }
 
     /**

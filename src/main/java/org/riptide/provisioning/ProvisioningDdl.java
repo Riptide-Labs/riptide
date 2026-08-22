@@ -100,6 +100,19 @@ public final class ProvisioningDdl {
             final String table = FlowsSchema.qualifiedRollup(database, rollup);
             statements.add("GRANT INSERT ON " + table + " TO flow_writer");
             statements.add("GRANT SELECT ON " + table + " TO flow_reader");
+            // The writer must SEE the view's definition, to verify at startup that the rollup still
+            // has the shape this version intends (#470). Without a grant ClickHouse filters the
+            // view out of system.tables silently — indistinguishable from a view that does not
+            // exist — so the check could neither confirm nor deny anything.
+            //
+            // SHOW TABLES, deliberately, and NOT SELECT. A row policy on a rollup target does not
+            // apply when the same rows are read through its materialized view's name: probed on
+            // 26.7, a writer holding SELECT on the _mv read every tenant's rows while the same user
+            // was denied outright on the target table the policy is attached to. SELECT here would
+            // hand every per-tenant writer a cross-tenant read path around the policy. SHOW TABLES
+            // gives the visibility the check needs and no data access at all.
+            statements.add("GRANT SHOW TABLES ON " + FlowsSchema.qualifiedRollupView(database, rollup)
+                    + " TO flow_writer");
         }
         return List.copyOf(statements);
     }

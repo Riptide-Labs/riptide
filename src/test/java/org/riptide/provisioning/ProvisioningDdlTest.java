@@ -138,6 +138,28 @@ class ProvisioningDdlTest {
         }
     }
 
+    /**
+     * The writer verifies rollup shapes at startup (#470), and ClickHouse filters
+     * {@code system.tables} by access <em>silently</em> — without a grant on the view it reads zero
+     * rows, which is indistinguishable from the view not existing. The check would then be unable
+     * to tell a stale rollup from an unreadable one on every deployment.
+     */
+    @Test
+    void writerGetsShowButNotSelectOnEveryRollupView() {
+        final List<String> sql = ProvisioningDdl.ensureShared("riptide", 1L);
+        for (final String rollup : FlowsSchema.rollupTableNames()) {
+            final String mv = FlowsSchema.qualifiedRollupView("riptide", rollup);
+            assertThat(sql).contains("GRANT SHOW TABLES ON " + mv + " TO flow_writer");
+            // SELECT would be a cross-tenant read path. flow_writer is shared by every per-tenant
+            // writer, and a row policy on the rollup target does NOT apply through the view's name:
+            // probed on 26.7, a writer holding SELECT on the _mv read every tenant's rows while
+            // being denied outright on the target the policy is attached to.
+            assertThat(sql)
+                    .as("SELECT on a rollup view bypasses the target's row policy")
+                    .doesNotContain("GRANT SELECT ON " + mv + " TO flow_writer");
+        }
+    }
+
     @Test
     void writerGetsSelectOnFlowsSoTheRollupViewsCanPush() {
         // A materialized view runs as the inserting user: without SELECT on the source table the
