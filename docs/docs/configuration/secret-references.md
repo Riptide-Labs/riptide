@@ -24,6 +24,34 @@ migration only. Log output redacts literals as `plain://***`.
 An **unresolvable reference degrades gracefully**: the flow is persisted without SNMP
 enrichment and a warning is logged — a configuration mistake never drops flows.
 
+## A key must be declared once
+
+`file://` resolves `#key` by reading the file as properties, which collapses a repeated key to the
+last one. Riptide now refuses that instead, naming the lines:
+
+```
+Key 'community' is declared 2 times for secret ref file:///etc/riptide/secrets.yaml#community
+(lines 3, 5) — riptide will not guess which is meant. Keep one, or put this secret in its own file.
+```
+
+This matters most in a nested file, which properties reads by stripping the indentation, so two
+secrets under two different parents both answer to the same bare key:
+
+```yaml
+snmp:
+  core:
+    community: core-secret     # <- #community resolved here...
+  edge:
+    community: edge-secret     # <- ...until this site was added
+```
+
+The reference is correct when written and stays correct for as long as the file declares the key
+once. What breaks it is an unrelated later edit — and riptide resolves secrets per SNMP walk, so
+the wrong value would go out on the next poll, with no restart in between to notice at.
+
+Give each secret its own file (`file:///run/secrets/core-community`) if you want per-site
+credentials, or use `sops://`, whose dot-separated keys address a nested document unambiguously.
+
 ## `file://` sandbox
 
 Optionally restrict which paths the file resolver may read (symlink-safe):
