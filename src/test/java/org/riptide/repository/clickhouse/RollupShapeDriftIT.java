@@ -249,12 +249,12 @@ public class RollupShapeDriftIT {
                 .addEndpoint(endpoint).setUsername("writer").setPassword("pw")
                 .setDefaultDatabase(DATABASE).build();
         try (writer) {
-            long visible = 0;
-            try (var records = writer.queryRecords("SELECT name FROM system.tables WHERE database = '"
-                    + DATABASE + "' AND engine = 'MaterializedView'").get()) {
-                for (final var ignored : records) {
-                    visible++;
-                }
+            // Counted server-side rather than by walking the rows: the walk needed a loop variable
+            // it never read, which is a CodeQL finding and a worse way to ask the question anyway.
+            final long visible;
+            try (var records = writer.queryRecords("SELECT count() AS visible FROM system.tables"
+                    + " WHERE database = '" + DATABASE + "' AND engine = 'MaterializedView'").get()) {
+                visible = records.iterator().next().getLong("visible");
             }
             assertThat(visible).as("the check needs the views visible").isPositive();
 
