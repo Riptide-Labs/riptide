@@ -147,8 +147,27 @@ public final class FlowsSchema {
                 .collect(Collectors.joining(",\n")));
         // Sorting by every dimension is what makes SummingMergeTree collapse correctly: rows agree
         // on the full key or they are distinct facts.
-        ddl.append("\n) ENGINE = SummingMergeTree()\nORDER BY (")
-                .append(columns.stream().map(Dimension::column).collect(Collectors.joining(", ")))
+        //
+        // PRIMARY KEY is declared even though it is identical to ORDER BY, and the duplication is
+        // deliberate — do not "simplify" it away. Left underived, ClickHouse infers the primary key
+        // from the sorting key; a later ALTER ... MODIFY ORDER BY appends to the SORTING key only.
+        // An upgraded install would then hold an N-column primary key under an N+1-column sorting
+        // key while a fresh install derived N+1 for both, and nothing in a column-name or type
+        // comparison can see the difference. Declaring it now, while the two agree everywhere,
+        // costs nothing and is byte-identical to what every deployment already has; declaring it
+        // after a dimension lands is impossible, because no single value reconciles the two. One
+        // named separately, and deliberately NOT shared: the two lists are equal today and must
+        // be free to diverge later. When a dimension is appended to a rollup, ORDER BY grows and
+        // the PRIMARY KEY MUST STAY AS IT IS — replace the line below with the literal list as of
+        // that moment. Growing both is what recreates the divergence this exists to prevent, since
+        // ALTER ... MODIFY ORDER BY cannot grow an existing table's primary key to match. The
+        // tests assert prefix, not equality, precisely so that freeze is allowed (#470).
+        final String sortKeyColumns = columns.stream().map(Dimension::column).collect(Collectors.joining(", "));
+        final String primaryKeyColumns = sortKeyColumns;
+        ddl.append("\n) ENGINE = SummingMergeTree()\nPRIMARY KEY (")
+                .append(primaryKeyColumns)
+                .append(")\nORDER BY (")
+                .append(sortKeyColumns)
                 .append(")\nPARTITION BY toYYYYMM(timestamp)\n")
                 .append("TTL timestamp + INTERVAL ").append(ttlDays).append(" DAY\n")
                 .append("SETTINGS index_granularity = 8192");
@@ -427,6 +446,17 @@ public final class FlowsSchema {
             -- this column existed, which is distinct from 'assumed' and is not backfillable.
             samplingProvenance LowCardinality(String)
         ) ENGINE = MergeTree()
+        -- PRIMARY KEY declared, not derived, for the reason spelled out at rollupTable(): a later
+        -- MODIFY ORDER BY appends to the sorting key alone, and a derived primary key would leave
+        -- upgraded and fresh installs disagreeing. The two lists are equal today; if this key ever
+        -- gains a column, add it to ORDER BY ONLY and leave PRIMARY KEY frozen here (#470).
+        PRIMARY KEY (
+            tenant, organisation,
+            toStartOfHour(timestamp),
+            srcAs, dstAs,
+            srcAddr, dstAddr,
+            srcPort, dstPort
+        )
         ORDER BY (
             tenant, organisation,
             toStartOfHour(timestamp),
