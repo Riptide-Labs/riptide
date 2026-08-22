@@ -100,6 +100,12 @@ public final class ProvisioningDdl {
             final String table = FlowsSchema.qualifiedRollup(database, rollup);
             statements.add("GRANT INSERT ON " + table + " TO flow_writer");
             statements.add("GRANT SELECT ON " + table + " TO flow_reader");
+            // The writer also reads the view's definition, to verify at startup that the rollup
+            // still has the shape this version intends (#470). Without this grant ClickHouse
+            // filters the view out of system.tables silently — indistinguishable from a view that
+            // does not exist — so the check could neither confirm nor deny anything.
+            statements.add("GRANT SELECT ON " + FlowsSchema.qualifiedRollupView(database, rollup)
+                    + " TO flow_writer");
         }
         return List.copyOf(statements);
     }

@@ -5,16 +5,39 @@
 
 package org.riptide.mcp.service;
 
+import lombok.extern.slf4j.Slf4j;
 import org.riptide.schema.FlowsSchema;
+import org.riptide.schema.RollupAvailability;
 
 /**
  * Query router that resolves ClickHouse raw tables or 1-minute rollup tables
  * based on query timeframe and aggregation dimensions using {@link FlowsSchema}.
+ *
+ * <p>A rollup whose shape drifted from what this version intends is declined here and the query
+ * falls back to raw {@code flows} (#470). Detection alone would only record the wrong answer in a
+ * log while continuing to serve it.</p>
  */
+@Slf4j
 public final class QueryRouter {
 
     private QueryRouter() {
         // Utility class
+    }
+
+    /**
+     * The rollup if it is usable, otherwise raw {@code flows}.
+     *
+     * <p>Logged at the point of fallback rather than only at startup detection: an operator looking
+     * at a query that suddenly got slower needs the reason where they are already looking.</p>
+     */
+    private static String rollupOrFlows(final String database, final String rollup) {
+        final String table = FlowsSchema.qualifiedRollup(database, rollup);
+        if (RollupAvailability.usable(table)) {
+            return table;
+        }
+        log.warn("Rollup {} has drifted from the shape this version intends; answering from raw flows"
+                + " instead. The query is correct but slower. See the startup log for what differs.", rollup);
+        return FlowsSchema.qualifiedFlows(database);
     }
 
     /**
@@ -28,14 +51,14 @@ public final class QueryRouter {
     public static String resolveTopTalkersTable(final String database, final int timeRangeMinutes, final String groupBy) {
         if (timeRangeMinutes >= ROLLUP_THRESHOLD_MINUTES) {
             if ("application".equalsIgnoreCase(groupBy) || "protocol".equalsIgnoreCase(groupBy)) {
-                return FlowsSchema.qualifiedRollup(database, FlowsSchema.ROLLUP_BY_APPLICATION);
+                return rollupOrFlows(database, FlowsSchema.ROLLUP_BY_APPLICATION);
             }
             if ("srcAddr".equalsIgnoreCase(groupBy) || "dstAddr".equalsIgnoreCase(groupBy)) {
-                return FlowsSchema.qualifiedRollup(database, FlowsSchema.ROLLUP_BY_CONVERSATION);
+                return rollupOrFlows(database, FlowsSchema.ROLLUP_BY_CONVERSATION);
             }
             if ("srcAs".equalsIgnoreCase(groupBy) || "dstAs".equalsIgnoreCase(groupBy)
                     || "srcCountry".equalsIgnoreCase(groupBy) || "dstCountry".equalsIgnoreCase(groupBy)) {
-                return FlowsSchema.qualifiedRollup(database, FlowsSchema.ROLLUP_BY_GEO_ASN);
+                return rollupOrFlows(database, FlowsSchema.ROLLUP_BY_GEO_ASN);
             }
         }
         return FlowsSchema.qualifiedFlows(database);
@@ -66,7 +89,7 @@ public final class QueryRouter {
      */
     public static String resolveInterfaceTable(final String database, final int timeRangeMinutes) {
         if (timeRangeMinutes >= ROLLUP_THRESHOLD_MINUTES) {
-            return FlowsSchema.qualifiedRollup(database, FlowsSchema.ROLLUP_BY_EXPORTER_IFACE);
+            return rollupOrFlows(database, FlowsSchema.ROLLUP_BY_EXPORTER_IFACE);
         }
         return FlowsSchema.qualifiedFlows(database);
     }
@@ -76,7 +99,7 @@ public final class QueryRouter {
      */
     public static String resolveGeoAsnTable(final String database, final int timeRangeMinutes) {
         if (timeRangeMinutes >= ROLLUP_THRESHOLD_MINUTES) {
-            return FlowsSchema.qualifiedRollup(database, FlowsSchema.ROLLUP_BY_GEO_ASN);
+            return rollupOrFlows(database, FlowsSchema.ROLLUP_BY_GEO_ASN);
         }
         return FlowsSchema.qualifiedFlows(database);
     }

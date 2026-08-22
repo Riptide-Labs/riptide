@@ -20,6 +20,8 @@ import com.clickhouse.client.api.metadata.TableSchema;
 import com.clickhouse.data.ClickHouseColumn;
 import org.riptide.repository.FlowRepository;
 import org.riptide.schema.FlowsSchema;
+import org.riptide.schema.RollupAvailability;
+import org.riptide.schema.RollupShapeCheck;
 import org.riptide.secrets.SecretResolvers;
 
 import java.io.IOException;
@@ -31,8 +33,12 @@ import java.net.InetAddress;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
@@ -158,7 +164,97 @@ public class ClickhouseRepository implements FlowRepository {
             }
         }
 
+        // Both modes: report a rollup whose shape is not what this version intends, and keep the
+        // query path off it. Runs last because in manage mode the CREATEs above are what a fresh
+        // install's shape comes from. Never fails startup — see verifyRollupShapes.
+        verifyRollupShapes();
+
         this.client.register(ClickhouseFlow.class, schema);
+    }
+
+    /**
+     * Compare every rollup's live shape against this version's and act on the result (#470).
+     *
+     * <p><b>Why this warns rather than fails, when a stale {@code flows} table throws.</b> A stale
+     * {@code flows} table fails every INSERT, so failing fast is the only honest option. A stale
+     * rollup does not touch ingestion; only long-range queries are affected, and they are answered
+     * correctly from raw {@code flows} in the meantime. Flows not collected are gone permanently, a
+     * rollup not aggregated is repairable for as long as the raw data lives. Failing the collector
+     * here would destroy the irreplaceable thing to protect the replaceable one.</p>
+     *
+     * <p>A failure to <em>read</em> the live state is likewise not fatal, and is logged rather than
+     * swallowed: a deployment whose role cannot reach {@code system.tables} at all is exactly the
+     * case this check must not turn into an outage.</p>
+     */
+    private void verifyRollupShapes() {
+        final List<RollupShapeCheck.Result> results;
+        try {
+            results = RollupShapeCheck.compare(this.config.getDatabase(), readRollupSelects(), readRollupColumns());
+        } catch (final RuntimeException e) {
+            log.warn("Could not verify rollup shapes in database '{}': {}. Ingestion is unaffected and"
+                    + " queries continue to use the rollups.", this.config.getDatabase(), e.getMessage());
+            return;
+        }
+
+        final List<String> drifted = new ArrayList<>();
+        for (final RollupShapeCheck.Result result : results) {
+            switch (result.status()) {
+                case DRIFTED -> {
+                    drifted.add(result.rollup());
+                    log.warn("Rollup {} does not match this version's schema: {}. Ingestion is"
+                            + " unaffected; long-range queries will fall back to raw flows and be"
+                            + " slower until it is repaired.", result.rollup(), result.detail());
+                }
+                case UNVERIFIABLE -> log.warn("Rollup {} could not be verified: {}. It is still used"
+                        + " for queries — an unverified rollup is not a known-bad one.",
+                        result.rollup(), result.detail());
+                case MATCHES -> log.debug("Rollup {} matches this version's schema.", result.rollup());
+            }
+        }
+        RollupAvailability.recordDrifted(drifted);
+    }
+
+    /**
+     * Each {@code <rollup>_mv}'s stored SELECT, for those the connecting user can see.
+     *
+     * <p>A rollup absent from the result is <em>not visible</em>, which ClickHouse does not
+     * distinguish from absent: it filters {@code system.tables} by access rather than refusing the
+     * query, so a role without a grant on the view gets zero rows and no error. Telling those two
+     * apart is {@link RollupShapeCheck}'s job, and it needs the absence rather than an exception.</p>
+     */
+    @SneakyThrows
+    private Map<String, String> readRollupSelects() {
+        final Map<String, String> selects = new LinkedHashMap<>();
+        try (var records = this.client.queryRecords(
+                "SELECT name, as_select FROM system.tables WHERE database = "
+                        + quote(this.config.getDatabase()) + " AND engine = 'MaterializedView'").get()) {
+            records.forEach(record -> selects.put(record.getString("name"), record.getString("as_select")));
+        }
+        return selects;
+    }
+
+    /** Each rollup target's column names, for those the connecting user can see. */
+    @SneakyThrows
+    private Map<String, Set<String>> readRollupColumns() {
+        final Map<String, Set<String>> columns = new LinkedHashMap<>();
+        try (var records = this.client.queryRecords(
+                "SELECT table, name FROM system.columns WHERE database = "
+                        + quote(this.config.getDatabase())).get()) {
+            records.forEach(record -> columns
+                    .computeIfAbsent(record.getString("table"), table -> new HashSet<>())
+                    .add(record.getString("name")));
+        }
+        columns.keySet().retainAll(FlowsSchema.rollupTableNames());
+        return columns;
+    }
+
+    /**
+     * The database name as a SQL string literal. {@link FlowsSchema} already rejects any name
+     * outside {@code [A-Za-z0-9_-]+} before it reaches a statement, so this is defence in depth
+     * rather than the only guard.
+     */
+    private static String quote(final String value) {
+        return "'" + value.replace("'", "''") + "'";
     }
 
     /**

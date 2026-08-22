@@ -138,6 +138,21 @@ class ProvisioningDdlTest {
         }
     }
 
+    /**
+     * The writer verifies rollup shapes at startup (#470), and ClickHouse filters
+     * {@code system.tables} by access <em>silently</em> — without a grant on the view it reads zero
+     * rows, which is indistinguishable from the view not existing. The check would then be unable
+     * to tell a stale rollup from an unreadable one on every deployment.
+     */
+    @Test
+    void writerGetsSelectOnEveryRollupViewSoItsShapeCanBeVerified() {
+        final List<String> sql = ProvisioningDdl.ensureShared("riptide", 1L);
+        for (final String rollup : FlowsSchema.rollupTableNames()) {
+            assertThat(sql).contains(
+                    "GRANT SELECT ON " + FlowsSchema.qualifiedRollupView("riptide", rollup) + " TO flow_writer");
+        }
+    }
+
     @Test
     void writerGetsSelectOnFlowsSoTheRollupViewsCanPush() {
         // A materialized view runs as the inserting user: without SELECT on the source table the
