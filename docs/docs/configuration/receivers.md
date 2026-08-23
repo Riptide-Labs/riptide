@@ -221,8 +221,11 @@ The 1-minute rollups carry `samplingInterval` as a dimension, so the correction 
 -- the same expression that works against raw flows
 SELECT sum(bytes * samplingInterval) AS corrected_bytes
 FROM riptide.flows_by_conversation_1m
-WHERE timestamp >= now() - INTERVAL 90 DAY;
+WHERE timestamp >= now() - INTERVAL 90 DAY
+  AND samplingInterval > 0;          -- excludes rows aggregated before the rate was carried
 ```
+
+The `samplingInterval > 0` clause matters over exactly this kind of window. A 90-day range necessarily spans the upgrade that added the rate, and rows aggregated before it read `0`, so without the predicate every one of them contributes `bytes × 0` and the total comes back quietly too small.
 
 That matters because raw `flows` is kept 30 days by default and the rollups 365. Before the rate was carried, sampling-corrected volume was simply unanswerable beyond the raw table's retention.
 

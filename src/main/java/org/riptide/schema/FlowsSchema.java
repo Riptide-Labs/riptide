@@ -132,6 +132,23 @@ public final class FlowsSchema {
     }
 
     /**
+     * As {@link #createRollupViews}, keyed by rollup so a caller can attribute a failure.
+     *
+     * <p>Worth attributing because the statement can fail for a reason that is not fatal: the SELECT
+     * names every dimension this version intends, and {@code CREATE … IF NOT EXISTS} validates it
+     * against the target even when the view already exists. A target that has not been repaired —
+     * refused, or deferred — therefore rejects the create, and the caller needs to know which
+     * rollup to report rather than losing ingestion over it.</p>
+     */
+    public static Map<String, String> createRollupViewsByRollup(final String database) {
+        final Map<String, String> views = new LinkedHashMap<>();
+        for (final Rollup rollup : ROLLUPS) {
+            views.put(rollup.table(), rollupView(database, rollup));
+        }
+        return Collections.unmodifiableMap(views);
+    }
+
+    /**
      * A rollup target table: every dimension in the sort key, every measure a {@code UInt64} the
      * {@code SummingMergeTree} engine collapses on merge.
      */

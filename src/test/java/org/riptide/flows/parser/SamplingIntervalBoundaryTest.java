@@ -31,7 +31,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class SamplingIntervalBoundaryTest {
 
-    /** Every builder that resolves a sampling rate. Adding a fifth without a guard fails here. */
+    /**
+     * Every builder that resolves a sampling rate.
+     *
+     * <p>Hand-written, and that is a real limitation: a fifth builder added without a guard is
+     * simply absent from this list and nothing here fails. What the list does guarantee is that
+     * each named builder <em>has</em> a guard and that the guard rejects zero — {@link #guardOf}
+     * fails loudly if one loses it. The property that a guard is actually <em>applied</em> is
+     * pinned separately, through the parser, in {@code SamplingIntervalResolutionTest}: asserting
+     * the guard in isolation left the suite green when sFlow stopped calling it.</p>
+     */
     private static final List<Class<?>> RATE_SOURCES = List.of(
             org.riptide.flows.parser.netflow5.Netflow5FlowBuilder.class,
             org.riptide.flows.parser.netflow9.Netflow9FlowBuilder.class,

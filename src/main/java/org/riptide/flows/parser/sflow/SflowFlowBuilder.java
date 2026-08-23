@@ -124,14 +124,23 @@ public final class SflowFlowBuilder {
                 return sample.extendedGateway() != null ? sample.extendedGateway().nextHop() : null;
             }
 
+            // Counters are scaled by the same rate the flow reports, and by the same guarded value.
+            // Scaling by the raw wire rate while reporting a guarded one would produce a row that
+            // reads as real unsampled traffic of zero volume — a rate of 0 gives bytes = 0 and
+            // packets = 0, with nothing marking it as junk.
             @Override
             public long getBytes() {
-                return sample.frameLength() != null ? sample.frameLength() * sample.samplingRate : 0;
+                return sample.frameLength() != null ? sample.frameLength() * scale() : 0;
             }
 
             @Override
             public long getPackets() {
-                return sample.samplingRate;
+                return scale();
+            }
+
+            /** The rate the counters are scaled by: the exporter's, or 1 when it stated nothing usable. */
+            private long scale() {
+                return usable(sample.samplingRate) ? sample.samplingRate : 1L;
             }
 
             @Override

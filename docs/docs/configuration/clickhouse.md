@@ -132,6 +132,13 @@ Each rollup `X` is fed by a materialized view named `X_mv`. Query the table, nev
 
 ### Rollups gain dimensions in place
 
+:::warning Provisioned deployments must re-run `onboard` after an upgrade that adds a dimension
+A collector in validate mode (`manage-schema: false`) issues no DDL, so it cannot repair its own rollups. Until `riptide onboard` is re-run, riptide reports all four rollups as not matching this version and **declines them at query time** — so every query spanning 60 minutes or more is answered from raw `flows` and silently truncated at the raw retention window, while the documentation says the rollups carry the new dimension.
+
+Manage-mode deployments repair themselves on the next start and need nothing.
+:::
+
+
 When a release adds a dimension to a rollup, riptide appends it to the existing table rather than leaving upgraded deployments on the old shape. Two statements per rollup, both metadata-only: one `ALTER` that adds the column and extends the sorting key, then `MODIFY QUERY` on the materialized view.
 
 **No aggregation is interrupted.** `MODIFY QUERY` swaps the view's SELECT in place. Dropping and recreating the view would leave a window in which nothing is aggregated, and a materialized view does not backfill, so that window would be a permanent hole in the rollup — measured at 0.44% of flows at a modest ingest rate. Riptide does not take that path.

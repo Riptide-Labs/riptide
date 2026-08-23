@@ -172,8 +172,22 @@ public class ClickhouseRepository implements FlowRepository {
                 this.client.execute(alters.get(rollup)).get();
             }
 
-            for (final String ddl : FlowsSchema.createRollupViews(this.config.getDatabase())) {
-                this.client.execute(ddl).get();
+            // Per rollup, and tolerant, because the SELECT now names a column an unrepaired target
+            // can lack. CREATE MATERIALIZED VIEW IF NOT EXISTS validates its SELECT even when it
+            // no-ops, so a rollup the planner REFUSED — or one whose repair was deferred by a
+            // failed catalog read — would otherwise throw here and take ingestion down for a
+            // rollup-only concern. That is the outage verifyRollupShapes exists to avoid, and
+            // before the rate was appended it could not happen: no rollup SELECT named a column an
+            // unrepaired target could be missing.
+            for (final Map.Entry<String, String> view : FlowsSchema.createRollupViewsByRollup(
+                    this.config.getDatabase()).entrySet()) {
+                try {
+                    this.client.execute(view.getValue()).get();
+                } catch (final Exception e) {
+                    log.warn("Rollup {}'s materialized view could not be created against its current"
+                            + " target: {}. Ingestion is unaffected; the rollup is reported and"
+                            + " routed around until it is repaired.", view.getKey(), e.getMessage());
+                }
             }
 
             // And the views last: MODIFY QUERY swaps an existing view's SELECT in place, which

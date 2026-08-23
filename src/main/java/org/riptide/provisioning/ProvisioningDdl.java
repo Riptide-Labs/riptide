@@ -61,8 +61,21 @@ public final class ProvisioningDdl {
         final List<String> statements = new ArrayList<>();
         statements.addAll(FlowsSchema.addAdditiveColumns(database));
         statements.addAll(FlowsSchema.createRollupTables(database));
-        statements.addAll(FlowsSchema.createRollupViews(database));
         return List.copyOf(statements);
+    }
+
+    /**
+     * The rollup materialized views, emitted <em>after</em> {@link #repairRollups}.
+     *
+     * <p>Split from {@link #bootstrapRollups} because ordering is correctness here, not tidiness.
+     * {@code CREATE MATERIALIZED VIEW IF NOT EXISTS} validates its SELECT against the target even
+     * when the view exists and the statement no-ops, and that SELECT names every dimension this
+     * version intends. Emitted before the repair, it fails against a target that has not been
+     * brought up to date — aborting the whole {@code onboard} run before the repair statements that
+     * would have fixed it, which is the one path a provisioned deployment has.</p>
+     */
+    public static List<String> bootstrapRollupViews(final String database) {
+        return FlowsSchema.createRollupViews(database);
     }
 
     /**

@@ -86,7 +86,15 @@ public final class TenantProvisioner {
         // over them (#470). Planned against the live sorting keys, using the same rule the
         // collector applies, so a change that would shrink a key is refused here too — the server
         // does not reject it once #571 froze the primary key.
+        //
+        // Targets are repaired BEFORE the views are created, and the split exists for that reason:
+        // a view's SELECT names every dimension this version intends, and CREATE ... IF NOT EXISTS
+        // validates it against the target even when it no-ops. Creating views first would abort the
+        // run against a stale target — before the repair that would have fixed it.
         statements.addAll(ProvisioningDdl.repairRollups(spec.database(), plannedRollupRepair(spec.database())));
+        if (bootstrap) {
+            statements.addAll(ProvisioningDdl.bootstrapRollupViews(spec.database()));
+        }
         statements.addAll(ProvisioningDdl.ensureShared(spec.database(), spec.quotaBytes()));
         statements.addAll(ProvisioningDdl.onboardTenant(
                 spec.database(), spec.tenant(), spec.organisation(), writerPassword, readerPassword));

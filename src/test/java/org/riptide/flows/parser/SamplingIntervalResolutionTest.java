@@ -339,4 +339,35 @@ class SamplingIntervalResolutionTest {
 
         assertResolved(flow, 1024.0, SamplingProvenance.Record);
     }
+
+    /**
+     * A rate of {@code 0} off the wire must not reach the flow (#470).
+     *
+     * <p>{@code samplingInterval = 0} is what marks a rollup row as aggregated before the rate was
+     * appended — the type default, and the only marker a sort-key column can have. A live flow
+     * carrying {@code 0} would make {@code WHERE samplingInterval > 0} silently drop real traffic
+     * and stop {@code = 0} meaning what the schema says.</p>
+     *
+     * <p>sFlow is the source that could: it reads {@code samplingRate} straight off the wire as a
+     * uint32, and nothing in the protocol forbids zero. Driven through the parser rather than by
+     * calling the guard directly, because an earlier test did the latter and stayed green when the
+     * guard stopped being applied.</p>
+     */
+    @Test
+    void sflowRefusesAZeroRateFromTheWire() throws Exception {
+        final var flow = sflowDatagram(0).buildFlows(Instant.EPOCH).findFirst().orElseThrow();
+
+        assertResolved(flow, 1.0, SamplingProvenance.Assumed);
+    }
+
+    /** Same for the other values an out-of-spec agent could send. */
+    @Test
+    void sflowRefusesAnyRateBelowOne() throws Exception {
+        for (final long rejected : new long[] {0L, 0xFFFFFFFFL + 1}) {
+            final var flow = sflowDatagram(rejected).buildFlows(Instant.EPOCH).findFirst().orElseThrow();
+            assertThat(flow.getSamplingInterval())
+                    .as("a wire rate of %d must not persist as a rate", rejected)
+                    .isNotEqualTo(0.0d);
+        }
+    }
 }

@@ -113,18 +113,31 @@ class ProvisioningDdlTest {
     }
 
     @Test
-    void bootstrapRollupsUpgradesAdditiveColumnsThenCreatesTargetsBeforeViews() {
-        // The rollups select the additive columns, and the views need their TO targets — so the
-        // ordering is load-bearing, not cosmetic.
+    void bootstrapRollupsUpgradesAdditiveColumnsThenCreatesTargets() {
+        // The rollups select the additive columns, so those come first.
         final List<String> sql = ProvisioningDdl.bootstrapRollups("riptide");
         final int additive = FlowsSchema.additiveColumnNames().size();
         final int rollups = FlowsSchema.rollupTableNames().size();
-        assertThat(sql).hasSize(additive + rollups * 2);
+        assertThat(sql).hasSize(additive + rollups);
         assertThat(sql.subList(0, additive))
                 .allSatisfy(s -> assertThat(s).contains("ADD COLUMN IF NOT EXISTS"));
-        assertThat(sql.subList(additive, additive + rollups))
+        assertThat(sql.subList(additive, sql.size()))
                 .allSatisfy(s -> assertThat(s).startsWith("CREATE TABLE IF NOT EXISTS"));
-        assertThat(sql.subList(additive + rollups, sql.size()))
+    }
+
+    /**
+     * Views are a separate step so they can be emitted after the repair. Creating them first aborts
+     * an onboard run against a stale target, because {@code CREATE … IF NOT EXISTS} validates its
+     * SELECT even when it no-ops — and that is the one path a provisioned deployment has to fix
+     * exactly that state.
+     */
+    @Test
+    void rollupViewsAreASeparateStepFromTheTargets() {
+        assertThat(ProvisioningDdl.bootstrapRollups("riptide"))
+                .as("no view may be created before the repair has run")
+                .noneMatch(s -> s.startsWith("CREATE MATERIALIZED VIEW"));
+        assertThat(ProvisioningDdl.bootstrapRollupViews("riptide"))
+                .hasSize(FlowsSchema.rollupTableNames().size())
                 .allSatisfy(s -> assertThat(s).startsWith("CREATE MATERIALIZED VIEW IF NOT EXISTS"));
     }
 
