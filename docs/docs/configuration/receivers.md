@@ -217,6 +217,10 @@ Counters stored here are always as the exporter reported them, so a query ported
 
 The 1-minute rollups carry `samplingInterval` as a dimension, so the correction is the same expression against either table:
 
+:::note Requires the rollups to carry the rate
+The column arrived with riptide 0.11.0. A deployment whose collector runs in validate mode (`manage-schema: false`, which is the multi-tenant default) gains it only when an admin re-runs `riptide onboard --create-schema` — until then the query below fails with `UNKNOWN_IDENTIFIER: samplingInterval`, and riptide answers long-range queries from raw `flows` instead of the rollups. See [ClickHouse: upgrading an existing deployment](./clickhouse.md#rollups).
+:::
+
 ```sql
 -- the same expression that works against raw flows
 SELECT sum(bytes * samplingInterval) AS corrected_bytes
@@ -243,6 +247,12 @@ The rate is a **dimension**, not a pre-scaled measure. A pre-scaled `bytesScaled
 A rollup gains a dimension in place, and rows already aggregated cannot be revisited — a materialized view does not backfill. Those rows read the column's type default, which is `0`.
 
 `0` is never a real rate: riptide admits only finite values `>= 1.0`, and records `1.0` when nothing states one. So the boundary is a predicate rather than a date you have to remember:
+
+:::caution One exception, in raw `flows` only
+Before 0.11.0 the sFlow parser wrote its wire rate through without that check, so an out-of-spec agent sending `0` produced raw rows carrying `samplingInterval = 0`. Those rows are real traffic, and they linger for the raw table's retention (30 days by default) after the upgrade.
+
+Applying `samplingInterval > 0` to raw `flows` therefore drops that exporter's traffic silently. Check with `SELECT count() FROM riptide.flows WHERE samplingInterval = 0` before relying on the predicate against the raw table; in the rollups `0` means only what it says here. Backfilling a rollup from raw with `INSERT INTO … SELECT` carries those rows across, where they become indistinguishable from pre-append ones.
+:::
 
 ```sql
 -- only rows aggregated since the rate was carried

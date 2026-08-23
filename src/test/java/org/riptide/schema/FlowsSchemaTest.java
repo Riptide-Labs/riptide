@@ -521,16 +521,32 @@ class FlowsSchemaTest {
     }
 
     /**
-     * The rate is appended last on every rollup, which is the only position
-     * {@code ALTER … MODIFY ORDER BY} permits: a sorting key may only grow, and only by columns the
-     * same statement adds. A dimension inserted mid-list works on a fresh install and is impossible
-     * on an upgraded one.
+     * The rate sits beyond the frozen primary key on every rollup, which is the only region
+     * {@code ALTER … MODIFY ORDER BY} can reach: a sorting key may only grow, and only by columns
+     * the same statement adds. A dimension inserted mid-list works on a fresh install and is
+     * impossible on an upgraded one.
+     *
+     * <p>Deliberately <em>not</em> "is the last column". The rule is append-only, and the next
+     * dimension to be appended will correctly go after this one — a test pinning the rate to the end
+     * forever would fail that legitimate change, with a message about sampling rates rather than
+     * about the rule it was really enforcing.</p>
      */
     @Test
-    void theSamplingRateIsTheLastDimensionOnEveryRollup() {
+    void theSamplingRateIsAppendedBeyondTheFrozenPrimaryKey() {
         assertThat(FlowsSchema.rollupSortKeys())
                 .hasSize(4)
-                .allSatisfy((rollup, key) -> assertThat(key).endsWith(", samplingInterval"));
+                .allSatisfy((rollup, key) -> assertThat(key).contains("samplingInterval"));
+
+        for (final String ddl : FlowsSchema.createRollupTables("riptide")) {
+            final String primary = keyList(ddl, "PRIMARY KEY (");
+            final String sorting = keyList(ddl, "ORDER BY (");
+            assertThat(sorting)
+                    .as("the sorting key still opens with the whole frozen primary key")
+                    .startsWith(primary + ", ");
+            assertThat(sorting.substring(primary.length()))
+                    .as("and the rate lives in the appended region, past the freeze")
+                    .contains("samplingInterval");
+        }
     }
 
     /**
@@ -545,18 +561,28 @@ class FlowsSchemaTest {
         for (final String ddl : FlowsSchema.createRollupTables("riptide")) {
             final String primary = keyList(ddl, "PRIMARY KEY (");
             final String sorting = keyList(ddl, "ORDER BY (");
-            assertThat(sorting).isEqualTo(primary + ", samplingInterval");
+            assertThat(sorting).isNotEqualTo(primary);
             assertThat(primary).doesNotContain("samplingInterval");
         }
     }
 
     /**
      * The rate is carried for correctness, not offered as something to slice by — the same
-     * distinction Akvorado draws with {@code ConsoleNotDimension}. The router's vocabulary is a
-     * closed set, so a request to group by the rate never resolves to a rollup.
+     * distinction Akvorado draws with {@code ConsoleNotDimension}.
+     *
+     * <p>Pinned against a dimension the router <em>does</em> know, because "falls back to raw flows"
+     * is also what the router does with any string it does not recognise: asserting the fallback
+     * alone would pass for {@code "banana"} and would therefore say nothing about a deliberate
+     * exclusion. The contrast is the assertion — a real rollup dimension routes to its rollup, and
+     * the rate does not, on the same call.</p>
      */
     @Test
     void theRateIsNotAGroupableRollupDimension() {
+        assertThat(QueryRouter.resolveTopTalkersTable("riptide", 1440, "application"))
+                .as("a genuine rollup dimension routes to its rollup, so the fallback below means"
+                        + " something")
+                .isNotEqualTo(FlowsSchema.qualifiedFlows("riptide"));
+
         assertThat(QueryRouter.resolveTopTalkersTable("riptide", 1440, "samplingInterval"))
                 .isEqualTo(FlowsSchema.qualifiedFlows("riptide"));
     }

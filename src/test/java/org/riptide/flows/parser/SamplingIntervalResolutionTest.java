@@ -307,8 +307,30 @@ class SamplingIntervalResolutionTest {
 
     // ---- sFlow ------------------------------------------------------------------------------
 
-    /** A v5 datagram carrying one compact flow sample at the given rate and no flow records. */
+    /** The frame length the harness reports, so a scaled byte count has something to scale. */
+    private static final long FRAME_LENGTH = 1500L;
+
+    /**
+     * A v5 datagram carrying one compact flow sample at the given rate, with one
+     * {@code sampled_ipv4} record so the sample has a frame length and the counters are real.
+     *
+     * <p>The rate goes on the wire as a uint32, so a value above {@code 0xFFFFFFFF} cannot be
+     * expressed here — {@code writeInt} would truncate it, silently, which is how a test that meant
+     * to cover a huge rate ended up sending zero twice.</p>
+     */
     private static Datagram sflowDatagram(final long samplingRate) throws Exception {
+        if (samplingRate < 0 || samplingRate > 0xFFFFFFFFL) {
+            throw new IllegalArgumentException("not expressible as a uint32: " + samplingRate);
+        }
+        final var record = Unpooled.buffer()
+                .writeInt((int) FRAME_LENGTH)
+                .writeInt(6)                        // protocol: TCP
+                .writeBytes(InetAddress.getByName("192.0.2.10").getAddress())
+                .writeBytes(InetAddress.getByName("192.0.2.20").getAddress())
+                .writeInt(1234)                     // source port
+                .writeInt(80)                       // destination port
+                .writeInt(0)                        // TCP flags
+                .writeInt(0);                       // ToS
         final var sample = Unpooled.buffer()
                 .writeInt(1)                        // sequence
                 .writeInt(0)                        // source_id
@@ -317,7 +339,10 @@ class SamplingIntervalResolutionTest {
                 .writeInt(0)                        // drops
                 .writeInt(0)                        // input interface
                 .writeInt(0)                        // output interface
-                .writeInt(0);                       // flow record count
+                .writeInt(1)                        // flow record count
+                .writeInt(3)                        // record type: sampled_ipv4
+                .writeInt(record.readableBytes())
+                .writeBytes(record);
         final var datagram = Unpooled.buffer()
                 .writeInt(Datagram.VERSION)
                 .writeInt(1)                        // agent address type: IPv4
@@ -360,14 +385,52 @@ class SamplingIntervalResolutionTest {
         assertResolved(flow, 1.0, SamplingProvenance.Assumed);
     }
 
-    /** Same for the other values an out-of-spec agent could send. */
+    /**
+     * The counters are scaled by the guarded rate too, not by the raw one.
+     *
+     * <p>Scaling by the wire value while reporting the guarded one gives a row that reads as real
+     * unsampled traffic of zero volume: {@code samplingInterval = 1}, {@code bytes = 0},
+     * {@code packets = 0}, and nothing marking it as junk. That is worse than dropping the sample,
+     * because it is indistinguishable from a genuine idle minute.</p>
+     *
+     * <p>This exists because the fix for it was made without a test and a mutation survived: the
+     * two tests above assert what the flow <em>reports</em>, and both stayed green with the counters
+     * still multiplying by {@code sample.samplingRate}.</p>
+     */
     @Test
-    void sflowRefusesAnyRateBelowOne() throws Exception {
-        for (final long rejected : new long[] {0L, 0xFFFFFFFFL + 1}) {
-            final var flow = sflowDatagram(rejected).buildFlows(Instant.EPOCH).findFirst().orElseThrow();
-            assertThat(flow.getSamplingInterval())
-                    .as("a wire rate of %d must not persist as a rate", rejected)
-                    .isNotEqualTo(0.0d);
-        }
+    void sflowScalesTheCountersByTheGuardedRateNotTheWireRate() throws Exception {
+        final var junk = sflowDatagram(0).buildFlows(Instant.EPOCH).findFirst().orElseThrow();
+
+        assertThat(junk.getPackets())
+                .as("a refused rate scales as 1, so the sample still counts as the one packet it is")
+                .isEqualTo(1L);
+        assertThat(junk.getBytes())
+                .as("and its bytes are the frame length, not the frame length times zero")
+                .isEqualTo(FRAME_LENGTH);
+
+        // The counters must still follow a usable rate, or "scale by the guarded value" could be
+        // satisfied by never scaling at all.
+        final var sampled = sflowDatagram(1024).buildFlows(Instant.EPOCH).findFirst().orElseThrow();
+
+        assertThat(sampled.getPackets()).isEqualTo(1024L);
+        assertThat(sampled.getBytes()).isEqualTo(FRAME_LENGTH * 1024L);
+    }
+
+    /**
+     * The largest rate the wire can carry is usable and must survive unscathed.
+     *
+     * <p>The guard is one-sided — {@code >= 1.0} — so this is the boundary on the side that must
+     * <em>pass</em>. It is here because the test that claimed to cover the rejected side iterated
+     * over {@code {0, 0xFFFFFFFF + 1}} while the harness writes the rate with
+     * {@code writeInt((int) rate)}: {@code (int) 4294967296L} is {@code 0}, so both iterations sent
+     * identical bytes and no large rate was ever put through the parser.</p>
+     */
+    @Test
+    void sflowAcceptsTheLargestRateTheWireCanCarry() throws Exception {
+        final long uint32Max = 0xFFFFFFFFL;
+
+        final var flow = sflowDatagram(uint32Max).buildFlows(Instant.EPOCH).findFirst().orElseThrow();
+
+        assertResolved(flow, (double) uint32Max, SamplingProvenance.Record);
     }
 }

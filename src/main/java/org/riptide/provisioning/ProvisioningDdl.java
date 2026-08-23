@@ -9,6 +9,7 @@ import org.riptide.schema.FlowsSchema;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * The ClickHouse SQL for role-based tenant provisioning. Pure string builders — no I/O — so the
@@ -51,11 +52,16 @@ public final class ProvisioningDdl {
     }
 
     /**
-     * The opt-in rollup bootstrap: the 1-minute target tables and the materialized views feeding
-     * them. The additive columns come first because the rollups select {@code srcCountry},
+     * The opt-in rollup bootstrap: the 1-minute <em>target tables</em> only. The views are
+     * {@link #bootstrapRollupViews}, emitted after {@link #repairRollups} — see there for why.
+     *
+     * <p>The additive columns come first because the rollups select {@code srcCountry},
      * {@code dstCountry} and {@code exporterName} — on a pre-0.5 table those columns do not exist
-     * yet, and a materialized view referencing a missing column fails to create. Targets precede
-     * views for the same reason a view cannot be created before its {@code TO} table.
+     * yet, and a materialized view referencing a missing column fails to create.</p>
+     *
+     * <p><b>A caller that emits this must also emit {@link #bootstrapRollupViews}</b>, under the
+     * same condition. Targets without views are four tables nothing writes to, which reports as a
+     * healthy-looking empty rollup rather than as an error.</p>
      */
     public static List<String> bootstrapRollups(final String database) {
         final List<String> statements = new ArrayList<>();
@@ -96,13 +102,21 @@ public final class ProvisioningDdl {
      *
      * <p>Targets before views: a view's SELECT names columns the target {@code ALTER} adds, and
      * {@code CREATE MATERIALIZED VIEW IF NOT EXISTS} validates that SELECT even when it no-ops.</p>
+     *
+     * @param viewsPresent the rollups whose {@code _mv} exists. {@code MODIFY QUERY} is emitted only
+     *                     for those: the plan is derived from target shapes, so a half-provisioned
+     *                     database can plan a repair for a rollup that has no view at all, and
+     *                     {@code MODIFY QUERY} against a missing view fails the whole run. Those
+     *                     rollups need no repair statement anyway — the {@code CREATE} that follows
+     *                     builds the view with this version's SELECT directly.
      */
-    public static List<String> repairRollups(final String database, final List<String> rollups) {
+    public static List<String> repairRollups(final String database, final List<String> rollups,
+            final Set<String> viewsPresent) {
         final List<String> statements = new ArrayList<>();
         final var alters = FlowsSchema.alterRollupTargets(database);
         final var modifies = FlowsSchema.modifyRollupViews(database);
         rollups.forEach(rollup -> statements.add(alters.get(rollup)));
-        rollups.forEach(rollup -> statements.add(modifies.get(rollup)));
+        rollups.stream().filter(viewsPresent::contains).forEach(rollup -> statements.add(modifies.get(rollup)));
         return List.copyOf(statements);
     }
 

@@ -106,10 +106,12 @@ reads a few thousand pre-aggregated rows instead of scanning every flow.
 
 | table | dimensions (beyond the shared preamble) |
 |---|---|
-| `flows_by_application_1m` | `application`, `protocol` |
-| `flows_by_conversation_1m` | `srcAddr`, `dstAddr`, `application` |
-| `flows_by_exporter_iface_1m` | `exporterAddr`, `exporterName`, `inputSnmp`, `outputSnmp` |
-| `flows_by_geo_asn_1m` | `srcAs`, `dstAs`, `srcCountry`, `dstCountry` |
+| `flows_by_application_1m` | `application`, `protocol`, `samplingInterval` |
+| `flows_by_conversation_1m` | `srcAddr`, `dstAddr`, `application`, `samplingInterval` |
+| `flows_by_exporter_iface_1m` | `exporterAddr`, `exporterName`, `inputSnmp`, `outputSnmp`, `samplingInterval` |
+| `flows_by_geo_asn_1m` | `srcAs`, `dstAs`, `srcCountry`, `dstCountry`, `samplingInterval` |
+
+`samplingInterval` is carried so sampling-corrected volume stays answerable beyond the raw table's retention, not as something to group by — see [Sampling-corrected volume](./receivers.md#sampling-corrected-volume-beyond-raw-retention). It was appended in 0.11.0; rows aggregated before that read `0`.
 
 Every rollup carries the same preamble — `tenant`, `organisation`, `timestamp`, `zone` — and the
 same measures: `bytes`, `packets`, `flowCount`, plus the directional split `bytesIn`/`bytesOut`

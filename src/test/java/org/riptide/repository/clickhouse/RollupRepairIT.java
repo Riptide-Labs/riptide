@@ -331,14 +331,14 @@ public class RollupRepairIT {
     void theOnboardRepairAppliesAndThenNoOps() throws Exception {
         createRollupMissingItsLastDimension();
 
-        for (final String ddl : ProvisioningDdl.repairRollups(DATABASE, List.of(ROLLUP))) {
+        for (final String ddl : ProvisioningDdl.repairRollups(DATABASE, List.of(ROLLUP), Set.of(ROLLUP))) {
             admin.execute(ddl).get();
         }
         assertThat(sortKeyOf(ROLLUP))
                 .as("onboard brings an existing rollup up to this version's shape")
                 .isEqualTo(FlowsSchema.rollupSortKeys().get(ROLLUP));
 
-        for (final String ddl : ProvisioningDdl.repairRollups(DATABASE, List.of(ROLLUP))) {
+        for (final String ddl : ProvisioningDdl.repairRollups(DATABASE, List.of(ROLLUP), Set.of(ROLLUP))) {
             admin.execute(ddl).get();
         }
         assertThat(sortKeyOf(ROLLUP))
@@ -401,23 +401,36 @@ public class RollupRepairIT {
      * thing against a rollup as against raw {@code flows}. Before this, sampling-corrected volume
      * was unanswerable beyond the raw table's retention, because the rollups — the only thing that
      * survives that long — did not carry the rate.
+     *
+     * <p>At mixed rates, deliberately. Every fixture flow carries {@code samplingInterval = 1.0}, so
+     * an earlier version of this test reduced both sides to {@code sum(bytes)} and passed whatever
+     * the view had written — a constant, the wrong column, or nothing resembling a rate at all. The
+     * unscaled total is asserted to differ, which is what makes the equality mean something.</p>
      */
     @Test
     void theScaledSumIsIdenticalAgainstRawAndRollup() throws Exception {
         repository().start();
         final var repo = startedWriter();
+        final double[] rates = {1.0d, 64.0d, 1000.0d};
         for (int i = 0; i < 20; i++) {
-            repo.persist(List.of(flow("scaled", "org", 3000 + i)));
+            final var flow = flow("scaled", "org", 3000 + i);
+            flow.setSamplingInterval(rates[i % rates.length]);
+            repo.persist(List.of(flow));
         }
         Thread.sleep(500);
 
+        final String rollupTable = FlowsSchema.qualifiedRollup(DATABASE, FlowsSchema.ROLLUP_BY_CONVERSATION);
         final long raw = scalar("SELECT toUInt64(sum(bytes * samplingInterval)) AS v FROM "
                 + FlowsSchema.qualifiedFlows(DATABASE) + " WHERE tenant = 'scaled'");
         final long rollup = scalar("SELECT toUInt64(sum(bytes * samplingInterval)) AS v FROM "
-                + FlowsSchema.qualifiedRollup(DATABASE, FlowsSchema.ROLLUP_BY_CONVERSATION)
-                + " WHERE tenant = 'scaled'");
+                + rollupTable + " WHERE tenant = 'scaled'");
+        final long unscaled = scalar("SELECT toUInt64(sum(bytes)) AS v FROM "
+                + rollupTable + " WHERE tenant = 'scaled'");
 
         assertThat(rollup).isEqualTo(raw).isPositive();
+        assertThat(rollup)
+                .as("the rates have to be doing something, or this test cannot fail")
+                .isNotEqualTo(unscaled);
     }
 
     /**

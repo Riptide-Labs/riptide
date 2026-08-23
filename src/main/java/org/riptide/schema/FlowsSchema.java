@@ -335,9 +335,14 @@ public final class FlowsSchema {
      *
      * <p>{@code MODIFY QUERY} swaps the SELECT in place and does not interrupt aggregation. Measured
      * at zero loss under continuous insert, against 0.44% for the {@code DROP}/{@code CREATE} path
-     * that a materialized view would otherwise need — see {@code design.md}. Must be emitted
-     * <em>after</em> {@link #alterRollupTargets}, or the new SELECT names a column the target does
-     * not have yet.</p>
+     * that a materialized view would otherwise need — see {@code design.md}.</p>
+     *
+     * <p><b>Must be emitted after {@link #alterRollupTargets}, and the server will not tell you if
+     * it is not.</b> Unlike {@code CREATE MATERIALIZED VIEW}, which rejects a SELECT naming a column
+     * its target lacks ({@code THERE_IS_NO_COLUMN}), {@code MODIFY QUERY} accepts it — verified on
+     * 26.7 — and then silently discards that column on every insert. Out of order, this does not
+     * fail: it produces a view that aggregates by a dimension the target throws away, which reads as
+     * a working rollup answering with the wrong grain.</p>
      */
     public static Map<String, String> modifyRollupViews(final String database) {
         final Map<String, String> modifies = new LinkedHashMap<>();
@@ -498,8 +503,15 @@ public final class FlowsSchema {
      * the boundary is the predicate {@code samplingInterval > 0}.</p>
      *
      * <p>Read straight through, with no {@code ifNull} folding: the source column is not nullable,
-     * and a fallback literal would have to avoid emitting the type default anyway, which is what
-     * {@link #appendableDimensions()} asserts.</p>
+     * and a fallback literal would have to avoid emitting the type default anyway.</p>
+     *
+     * <p><b>Nothing at build time enforces that for this column.</b> The
+     * {@code appendableDimensions()} guard only inspects expressions that end in a fallback literal,
+     * which {@code f.samplingInterval} does not — so it passes this column without checking it. The
+     * property rests on {@code usable()} in the four builders and on {@code ClickhouseFlow}'s
+     * {@code 1.0} default, and those are what {@code SamplingIntervalBoundaryTest} and
+     * {@code SamplingIntervalResolutionTest} pin. Read the guard as covering the columns it can, not
+     * as covering this one.</p>
      *
      * <p>Appended last, which is the only position {@code ALTER … MODIFY ORDER BY} permits.</p>
      */

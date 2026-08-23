@@ -6,7 +6,9 @@
 package org.riptide.flows.parser;
 
 import org.junit.jupiter.api.Test;
+import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.repository.clickhouse.ClickhouseFlow;
+import org.riptide.repository.clickhouse.ClickhouseRepository;
 
 import java.lang.reflect.Method;
 import java.util.List;
@@ -26,8 +28,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * builders while asserting the property "lives in two parsers" — there are four, and the one it
  * omitted was the one that violated the invariant: sFlow read its rate straight off the wire with
  * no guard at all. A test that covers a subset of the sources delivers exactly the false confidence
- * it was written to prevent, so the list below is derived from the guard's name and asserted to be
- * complete.</p>
+ * it was written to prevent, so the list below names all four.</p>
+ *
+ * <p>The list is hand-written, and nothing here notices a fifth builder added without a guard —
+ * see {@link #RATE_SOURCES}. An earlier version of this paragraph claimed the list was derived and
+ * complete, which it has never been.</p>
  */
 class SamplingIntervalBoundaryTest {
 
@@ -52,6 +57,31 @@ class SamplingIntervalBoundaryTest {
     void thePersistedDefaultIsOneNotZero() {
         assertThat(new ClickhouseFlow().getSamplingInterval())
                 .as("an unset rate must persist as 1.0; 0 is reserved to mean 'before the append'")
+                .isEqualTo(1.0d);
+    }
+
+    /**
+     * And the mapper preserves that default rather than writing a zero over it.
+     *
+     * <p>The field initializer above is not what reaches ClickHouse. {@code EnrichedFlow} carries a
+     * boxed {@code Double} and {@code ClickhouseFlow} a primitive {@code double}, so the whole
+     * boundary depends on MapStruct emitting a null check and leaving the {@code 1.0} alone — an
+     * unboxing assignment would write {@code 0.0} and make live traffic indistinguishable from rows
+     * predating the append. That is a code-generation detail of the annotation processor, not
+     * something the field initializer can guarantee, so it is asserted through the generated mapper
+     * on the same path {@code persist} uses.</p>
+     */
+    @Test
+    void theMapperLeavesTheDefaultAloneWhenAFlowStatesNoRate() throws Exception {
+        final var mapper = (ClickhouseRepository.FlowMapper) Class
+                .forName("org.riptide.repository.clickhouse.ClickhouseRepository$FlowMapperImpl")
+                .getDeclaredConstructor()
+                .newInstance();
+
+        final ClickhouseFlow mapped = mapper.flow(EnrichedFlow.builder().samplingInterval(null).build());
+
+        assertThat(mapped.getSamplingInterval())
+                .as("a flow that states no rate must still persist 1.0, not the unboxed 0.0")
                 .isEqualTo(1.0d);
     }
 

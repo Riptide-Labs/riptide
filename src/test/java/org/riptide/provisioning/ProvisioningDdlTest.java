@@ -9,6 +9,8 @@ import org.junit.jupiter.api.Test;
 import org.riptide.schema.FlowsSchema;
 
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -149,7 +151,7 @@ class ProvisioningDdlTest {
     @Test
     void repairRollupsAltersTheTargetBeforeItsView() {
         final List<String> rollups = FlowsSchema.rollupTableNames();
-        final List<String> sql = ProvisioningDdl.repairRollups("riptide", rollups);
+        final List<String> sql = ProvisioningDdl.repairRollups("riptide", rollups, Set.copyOf(rollups));
 
         assertThat(sql).hasSize(rollups.size() * 2);
         assertThat(sql.subList(0, rollups.size()))
@@ -162,7 +164,33 @@ class ProvisioningDdlTest {
     /** Nothing planned, nothing emitted — the guard decides, not this method. */
     @Test
     void repairRollupsEmitsNothingForAnEmptyPlan() {
-        assertThat(ProvisioningDdl.repairRollups("riptide", List.of())).isEmpty();
+        assertThat(ProvisioningDdl.repairRollups("riptide", List.of(), Set.of())).isEmpty();
+    }
+
+    /**
+     * A rollup whose view does not exist gets its target repaired and no {@code MODIFY QUERY}.
+     *
+     * <p>The plan comes from target shapes alone, so a half-provisioned database can plan a repair
+     * for a rollup that has no view at all. {@code MODIFY QUERY} against a missing view fails with
+     * {@code UNKNOWN_TABLE} and aborts the entire onboard run — including the {@code CREATE} that
+     * would have built the view correctly moments later, which is the only way out of that state.</p>
+     */
+    @Test
+    void repairRollupsSkipsTheViewRepairWhereTheViewDoesNotExist() {
+        final List<String> rollups = FlowsSchema.rollupTableNames();
+        final String orphan = rollups.getFirst();
+        final Set<String> present = rollups.stream().skip(1).collect(Collectors.toSet());
+
+        final List<String> sql = ProvisioningDdl.repairRollups("riptide", rollups, present);
+
+        assertThat(sql.stream().filter(s -> s.contains("MODIFY ORDER BY")))
+                .as("every planned target is still repaired")
+                .hasSize(rollups.size());
+        assertThat(sql)
+                .as("but the rollup with no view is not sent a MODIFY QUERY")
+                .noneMatch(s -> s.contains("MODIFY QUERY") && s.contains(orphan + "_mv"));
+        assertThat(sql.stream().filter(s -> s.contains("MODIFY QUERY")))
+                .hasSize(rollups.size() - 1);
     }
 
     @Test

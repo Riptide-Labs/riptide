@@ -13,11 +13,13 @@ import org.riptide.secrets.SecretResolvers;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
 
 /**
  * Provisions and de-provisions a tenant against ClickHouse using an admin connection. This is the
@@ -71,7 +73,8 @@ public final class TenantProvisioner {
         // rollups existed has a perfectly good flows table and would otherwise pass the check above
         // while silently lacking them. Short-circuited on bootstrap — a database we are creating
         // right now cannot have rollups, so there is no point asking ClickHouse eight times.
-        if (bootstrap || !rollupsExist(spec.database())) {
+        final boolean rollupsMissing = bootstrap || !rollupsExist(spec.database());
+        if (rollupsMissing) {
             if (!createSchema) {
                 throw new ProvisioningException(
                         "database '" + spec.database() + "' is missing the 1-minute rollup tables or"
@@ -91,8 +94,16 @@ public final class TenantProvisioner {
         // a view's SELECT names every dimension this version intends, and CREATE ... IF NOT EXISTS
         // validates it against the target even when it no-ops. Creating views first would abort the
         // run against a stale target — before the repair that would have fixed it.
-        statements.addAll(ProvisioningDdl.repairRollups(spec.database(), plannedRollupRepair(spec.database())));
-        if (bootstrap) {
+        statements.addAll(ProvisioningDdl.repairRollups(
+                spec.database(), plannedRollupRepair(spec.database()), existingRollupViews(spec.database())));
+        // Under the SAME condition as the targets above, not just on bootstrap. rollupsExist() is
+        // false when any target OR any view is missing — its whole reason for checking both halves
+        // is the interrupted bootstrap that leaves a target without its view. Gating the views on
+        // `bootstrap` alone would create four target tables nothing ever feeds, and re-running would
+        // repeat the same no-op forever, because the targets it just created do not make
+        // rollupsExist() true on their own. CREATE ... IF NOT EXISTS no-ops over the views that are
+        // already there, so emitting all four is correct whenever any one of them is absent.
+        if (rollupsMissing) {
             statements.addAll(ProvisioningDdl.bootstrapRollupViews(spec.database()));
         }
         statements.addAll(ProvisioningDdl.ensureShared(spec.database(), spec.quotaBytes()));
@@ -157,6 +168,22 @@ public final class TenantProvisioner {
      * checked because they fail independently: an interrupted bootstrap can leave the target table
      * created and the view not, which reports as a healthy-looking empty rollup.
      */
+    /**
+     * The rollups whose materialized view is present, so the repair can skip {@code MODIFY QUERY}
+     * for the rest.
+     *
+     * <p>A half-provisioned database can have a stale target and no view at all. The repair plan is
+     * derived from target shapes alone, so without this it would emit
+     * {@code ALTER TABLE <rollup>_mv MODIFY QUERY} against a view that does not exist, fail with
+     * {@code UNKNOWN_TABLE}, and abort the run — before the {@code CREATE} that would have made the
+     * view, with the correct SELECT, moments later.</p>
+     */
+    private Set<String> existingRollupViews(final String database) {
+        return FlowsSchema.rollupTableNames().stream()
+                .filter(rollup -> exists("EXISTS TABLE " + FlowsSchema.qualifiedRollupView(database, rollup)))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
     private boolean rollupsExist(final String database) {
         return FlowsSchema.rollupTableNames().stream()
                 .allMatch(rollup -> exists("EXISTS TABLE " + FlowsSchema.qualifiedRollup(database, rollup))
