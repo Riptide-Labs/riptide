@@ -20,7 +20,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
-import java.util.stream.Collectors;
 
 /**
  * Provisions and de-provisions a tenant against ClickHouse using an admin connection. This is the
@@ -102,21 +101,18 @@ public final class TenantProvisioner {
         // a view's SELECT names every dimension this version intends, and CREATE ... IF NOT EXISTS
         // validates it against the target even when it no-ops. Creating views first would abort the
         // run against a stale target — before the repair that would have fixed it.
-        final Set<String> viewsPresent = bootstrap ? Set.of() : existingRollupViews(spec.database());
-        // Every present view that was not refused, not just the ones whose target is being altered.
-        // A run that repaired a target and then failed before that rollup's MODIFY QUERY leaves the
-        // next run a target it finds already current: it plans no repair, CREATE ... IF NOT EXISTS
-        // no-ops over the surviving view, and the stale SELECT is never corrected. The collector
-        // detects that (it plans from the view's own as_select) and declines the rollup, while the
-        // remedy the docs give — re-run onboard — does nothing whatsoever. MODIFY QUERY is
-        // idempotent, so re-pointing a view that is already right costs one statement.
+        // Planned from the views' OWN stored SELECT, through the same shared function the collector
+        // uses — so the two paths cannot disagree, which until now they did. Re-pointing every
+        // present view unconditionally emitted four ALTERs against an already-correct database (the
+        // spec requires a re-run to issue none) and carried no downgrade guard, so a view from a
+        // newer version would have been silently narrowed.
         //
-        // Refused rollups are excluded: their target is not being repaired, and pointing a view at a
-        // SELECT naming a column the target lacks does not fail, it silently drops that column on
-        // every insert.
-        final Set<String> repointable = plan.isEmpty() ? Set.of() : viewsPresent.stream()
-                .filter(rollup -> !plan.get().refused().containsKey(rollup))
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+        // Still wider than the target plan: a run that repaired a target and then failed before its
+        // MODIFY QUERY leaves the next run a target it finds current, so a view list derived from
+        // target shapes would never fix it.
+        final Set<String> repointable = bootstrap || plan.isEmpty()
+                ? Set.of()
+                : viewRepair(spec.database(), refused);
         statements.addAll(ProvisioningDdl.repairRollups(
                 spec.database(), plan.map(FlowsSchema.RepairPlan::repair).orElseGet(List::of), repointable));
         // Under the SAME condition as the targets above, not just on bootstrap. rollupsExist() is
@@ -162,7 +158,16 @@ public final class TenantProvisioner {
         try (var tables = this.admin.queryRecords("SELECT name AS n, sorting_key AS k FROM system.tables"
                 + " WHERE database = '" + database + "'").get()) {
             tables.forEach(record -> sortKeys.put(record.getString("n"), record.getString("k")));
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Optional.empty();
         } catch (final Exception e) {
+            // Logged, unlike before. Silence here meant a run that repaired nothing, created no
+            // view and re-pointed none still printed the config stanza and exited 0 — while the
+            // docs name re-running onboard as the remedy for exactly that state.
+            log.warn("Could not read the rollup shapes in database '{}': {}. No rollup is repaired"
+                    + " or created on this run; fix the admin's access to system.tables and re-run.",
+                    database, e.getMessage());
             return Optional.empty();
         }
         try (var cols = this.admin.queryRecords("SELECT table AS t, name AS n FROM system.columns"
@@ -170,7 +175,13 @@ public final class TenantProvisioner {
             cols.forEach(record -> columns
                     .computeIfAbsent(record.getString("t"), table -> new java.util.LinkedHashSet<>())
                     .add(record.getString("n")));
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Optional.empty();
         } catch (final Exception e) {
+            log.warn("Could not read the rollup columns in database '{}': {}. No rollup is repaired"
+                    + " or created on this run; fix the admin's access to system.columns and re-run.",
+                    database, e.getMessage());
             return Optional.empty();
         }
         sortKeys.keySet().retainAll(FlowsSchema.rollupTableNames());
@@ -199,25 +210,31 @@ public final class TenantProvisioner {
     }
 
     /**
-     * The rollups whose materialized view is present, so the repair can skip {@code MODIFY QUERY}
-     * for the rest.
+     * The rollups whose view should be re-pointed, from {@link FlowsSchema#planViewRepair} — the
+     * same decision the collector makes, on the same input.
      *
-     * <p>A half-provisioned database can have a stale target and no view at all. The repair plan is
-     * derived from target shapes alone, so without this it would emit
-     * {@code ALTER TABLE <rollup>_mv MODIFY QUERY} against a view that does not exist, fail with
-     * {@code UNKNOWN_TABLE}, and abort the run — before the {@code CREATE} that would have made the
-     * view, with the correct SELECT, moments later.</p>
-     *
-     * <p>Not called on the bootstrap path: the database itself does not exist yet there, and
-     * {@link #flowsTableExists} guards its own {@code EXISTS TABLE} with an {@code EXISTS DATABASE}
-     * for exactly that reason. Nothing can be present in a database that has not been created, so
-     * the answer is the empty set without asking.</p>
+     * <p>A catalog it cannot read yields nothing to re-point rather than an error, for the same
+     * reason the target plan does: onboarding a tenant must not fail because a view could not be
+     * inspected.</p>
      */
-    private Set<String> existingRollupViews(final String database) {
-        return FlowsSchema.rollupTableNames().stream()
-                .filter(rollup -> exists("EXISTS TABLE " + FlowsSchema.qualifiedRollupView(database, rollup)))
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+    private Set<String> viewRepair(final String database, final Set<String> refused) {
+        final Map<String, String> live = new LinkedHashMap<>();
+        try (var views = this.admin.queryRecords("SELECT name AS n, as_select AS s FROM system.tables"
+                + " WHERE database = '" + database + "'").get()) {
+            views.forEach(record -> live.put(record.getString("n"), record.getString("s")));
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Set.of();
+        } catch (final Exception e) {
+            log.warn("Could not read the rollup views in database '{}': {}. No view is re-pointed.",
+                    database, e.getMessage());
+            return Set.of();
+        }
+        final FlowsSchema.RepairPlan plan = FlowsSchema.planViewRepair(database, live, refused);
+        plan.refused().forEach((rollup, why) -> log.warn("Rollup {} left as it is: {}.", rollup, why));
+        return new LinkedHashSet<>(plan.repair());
     }
+
 
     /**
      * Whether every rollup target <em>and</em> its materialized view is present. Both halves are

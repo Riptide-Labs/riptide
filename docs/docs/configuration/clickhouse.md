@@ -137,6 +137,10 @@ Each rollup `X` is fed by a materialized view named `X_mv`. Query the table, nev
 :::warning[Provisioned deployments must re-run `onboard` after an upgrade that adds a dimension]
 A collector in validate mode (`manage-schema: false`) issues no DDL, so it cannot repair its own rollups. Until `riptide onboard` is re-run, riptide reports all four rollups as not matching this version and **declines them at query time** — so every query spanning 60 minutes or more is answered from raw `flows` and silently truncated at the raw retention window, while the documentation says the rollups carry the new dimension.
 
+Then **restart the collector**. The decision about which rollups are usable is made once, at
+startup — a schema does not change under a running collector — so a collector that declined
+them keeps answering from raw `flows` until it is restarted, however complete the repair was.
+
 Manage-mode deployments repair themselves on the next start and need nothing.
 :::
 
@@ -163,7 +167,7 @@ The check exists because `CREATE MATERIALIZED VIEW IF NOT EXISTS` does nothing a
 
 Two messages are possible, and they mean different things.
 
-**"does not match this version's schema"** — the rollup's columns, their types, or its view's SELECT differ from what this version emits. Ingestion is unaffected: raw `flows` still receives every flow, and a rollup is a query-path optimisation, not a collection path. Long-range queries stop using that rollup and are answered from raw `flows` instead. The other rollups keep serving.
+**"does not match this version's schema"** — the rollup's columns, their types, its **sorting key**, or its view's SELECT differ from what this version emits. Ingestion is unaffected: raw `flows` still receives every flow, and a rollup is a query-path optimisation, not a collection path. Long-range queries stop using that rollup and are answered from raw `flows` instead. The other rollups keep serving.
 
 :::warning[The fallback is bounded by raw retention]
 Raw `flows` is kept for 30 days by default; the rollups are kept for 365. Part of why the rollups exist is that long-range queries outlive the raw table's expiry. So a query that falls back and reaches further back than the raw retention comes back **incomplete**, not merely slower — it returns the rows that still exist and says nothing about the rest. A 90-day query answered from a 30-day table looks like a complete answer covering a third of the range.
@@ -171,7 +175,13 @@ Raw `flows` is kept for 30 days by default; the rollups are kept for 365. Part o
 Treat a drifted rollup as something to repair promptly rather than to live with, and until then keep queries against it inside the raw retention window.
 :::
 
-Repair is manual for now. Drop the rollup's view and its target table and let riptide recreate both on the next start in manage mode:
+One drift has a cheaper remedy than the rest. If the message names the **sorting key** and says a column sits outside it, the rollup carries the right columns but in a shape ClickHouse cannot repair in place — an existing column cannot be added to a sorting key. That happens when the column was added by hand. Drop just that column and restart; riptide then adds it back in the same statement that extends the key:
+
+```sql
+ALTER TABLE riptide.flows_by_application_1m DROP COLUMN samplingInterval;
+```
+
+Otherwise repair is manual for now. Drop the rollup's view and its target table and let riptide recreate both on the next start in manage mode:
 
 ```sql
 DROP VIEW IF EXISTS riptide.flows_by_application_1m_mv;
@@ -180,7 +190,7 @@ DROP TABLE IF EXISTS riptide.flows_by_application_1m;
 
 This discards that rollup's aggregated history. The raw `flows` table is untouched, so queries stay correct throughout, but they read raw rows for the affected range until the rollup accumulates again — and a materialized view does not backfill, so the pre-existing history does not come back. Weigh that against how much of the rollup's retention window you actually query. A future release makes this an in-place repair with no loss.
 
-**"could not be verified"** — riptide could not read the rollup's view definition, so it has no opinion either way. The rollup stays in use, because a rollup that has not been checked is not a rollup known to be wrong.
+**"could not be verified"** — riptide could not read the rollup's view definition or its sorting key, so it has no opinion either way. The rollup stays in use, because a rollup that has not been checked is not a rollup known to be wrong.
 
 **"cannot be reached"** — the rollup's target table itself is not visible, so it either does not exist or the connecting user has no grant on it. A query routed there would fail outright, so riptide declines it and answers from raw `flows`. The usual cause is a database onboarded without `--create-rollups`.
 

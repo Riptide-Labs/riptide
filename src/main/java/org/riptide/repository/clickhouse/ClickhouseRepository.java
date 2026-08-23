@@ -33,7 +33,7 @@ import java.net.InetAddress;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -43,8 +43,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -214,21 +212,13 @@ public class ClickhouseRepository implements FlowRepository {
             // rollup-only concern. That is the outage verifyRollupShapes exists to avoid, and
             // before the rate was appended it could not happen: no rollup SELECT named a column an
             // unrepaired target could be missing.
-            for (final Map.Entry<String, String> view : FlowsSchema.createRollupViewsByRollup(
-                    this.config.getDatabase()).entrySet()) {
-                if (!planned || refused.contains(view.getKey())) {
-                    // `!planned` for the same reason as `refused`, one uncertainty further out: with
-                    // the catalog unread, a refused target is indistinguishable from a healthy one,
-                    // and this is the statement that turns that ignorance into durable wrong rows.
-                    // The third sibling of this rule, and the one that matters most. Against a
-                    // refused target the CREATE does not fail — a target carrying the rate outside
-                    // its sorting key HAS every column the SELECT names — so riptide would build the
-                    // very view the refusal exists to prevent, and the rows it writes are wrong and
-                    // outlive the process that declined the rollup. Declining a rollup while
-                    // creating its writer is not a decision, it is two halves of opposite ones.
-                    continue;
-                }
-                repair(unrepaired, view.getKey(), view.getValue(),
+            final ViewCreation views = planViewCreation(planned, refused,
+                    FlowsSchema.rollupTableNames());
+            unrepaired.addAll(views.decline());
+            final Map<String, String> creates =
+                    FlowsSchema.createRollupViewsByRollup(this.config.getDatabase());
+            for (final String rollup : views.create()) {
+                repair(unrepaired, rollup, creates.get(rollup),
                         "materialized view could not be created against its current target");
             }
 
@@ -241,7 +231,7 @@ public class ClickhouseRepository implements FlowRepository {
             // and anything before its MODIFY QUERY throws, the next start sees a target that is
             // already current, plans no repair for it, and never fixes the view.
             final Map<String, String> modifies = FlowsSchema.modifyRollupViews(this.config.getDatabase());
-            for (final String rollup : planned ? planViewRepair() : List.<String>of()) {
+            for (final String rollup : planned ? planViewRepair(refused) : List.<String>of()) {
                 if (unrepaired.contains(rollup) || refused.contains(rollup)) {
                     // Its target did not get the column, so re-pointing the view would not fail —
                     // MODIFY QUERY does not validate — it would produce a view aggregating by a
@@ -261,6 +251,38 @@ public class ClickhouseRepository implements FlowRepository {
         verifyRollupShapes(unrepaired, refused);
 
         this.client.register(ClickhouseFlow.class, schema);
+    }
+
+    /** Which rollups this start may build a view for, and which it must decline for not trying. */
+    record ViewCreation(List<String> create, Set<String> decline) { }
+
+    /**
+     * The view-creation policy, extracted so it can be tested: the two states it must get right are
+     * both unreachable from an integration test.
+     *
+     * <p>A REFUSED rollup gets no view because the CREATE would <em>succeed</em> — a target carrying
+     * the rate outside its sorting key has every column the SELECT names — and riptide would build
+     * the very view the refusal exists to prevent, writing rows that outlive the process that
+     * declined it. It needs no extra decline: being refused already declines it.</p>
+     *
+     * <p>An unread catalog ({@code !planned}) skips every view for the same reason one step further
+     * out — a refused target is then indistinguishable from a healthy one — and those skips
+     * <b>must</b> be declined. A target whose columns and sorting key are current with no view reads
+     * as UNVERIFIABLE, which is deliberately not declined, so skipping silently would leave four
+     * empty tables answering every long-range query. Declining is safe for a healthy deployment
+     * because a MATCHES verdict clears it on the same pass.</p>
+     *
+     * <p>Not reachable from an IT: a refused rollup needs hand-built DDL, and an unread catalog
+     * needs a transport failure — {@code system.tables} returns filtered rows rather than an error
+     * for an under-privileged user, verified on 26.7.</p>
+     */
+    static ViewCreation planViewCreation(final boolean planned, final Set<String> refused,
+            final Collection<String> rollups) {
+        if (!planned) {
+            return new ViewCreation(List.of(), Set.copyOf(rollups));
+        }
+        return new ViewCreation(
+                rollups.stream().filter(rollup -> !refused.contains(rollup)).toList(), Set.of());
     }
 
     /**
@@ -310,6 +332,9 @@ public class ClickhouseRepository implements FlowRepository {
         final FlowsSchema.RepairPlan plan;
         try {
             plan = FlowsSchema.planRollupRepair(readRollupSortKeys(), readRollupColumnNames());
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Optional.empty();
         } catch (final Exception e) {
             // Optional, because "unreadable" and "nothing to repair" are the same empty list and
             // must not be. Unread, `refused` stays empty too — while planViewRepair does its OWN,
@@ -353,66 +378,28 @@ public class ClickhouseRepository implements FlowRepository {
      * is refused: see the comment on that branch. The target keeps the column either way, so the
      * only thing a repair would achieve is writing type defaults over live rows.</p>
      */
-    private List<String> planViewRepair() {
+    private List<String> planViewRepair(final Set<String> refused) {
         final Map<String, String> live;
         try {
             live = readRollupSelects();
+        } catch (final InterruptedException e) {
+            // Same discipline as repair() and verifyRollupShapes(): a shutdown interrupt is not a
+            // rollup verdict, and swallowing the flag leaves the thread doing work nobody awaits.
+            Thread.currentThread().interrupt();
+            return List.of();
         } catch (final Exception e) {
+            log.warn("Could not read the rollup views in database '{}': {}. No view repair is planned"
+                    + " on this start.", this.config.getDatabase(), e.getMessage());
             return List.of();
         }
-        final List<String> stale = new ArrayList<>();
-        FlowsSchema.rollupSelects(this.config.getDatabase()).forEach((rollup, intended) -> {
-            final String current = live.get(rollup + "_mv");
-            if (current == null) {
-                return;
-            }
-            final Set<String> now = outputColumns(current);
-            final Set<String> wanted = outputColumns(intended);
-            if (now.equals(wanted)) {
-                return;
-            }
-            if (!wanted.containsAll(now)) {
-                // A DOWNGRADE, and the one direction that silently destroys data rather than
-                // withholding it. Rolling back to a version that knows fewer dimensions leaves the
-                // target's column in place (the old planner refuses the sorting-key shrink) while
-                // this MODIFY QUERY would re-point the view at a SELECT that no longer names it —
-                // and ClickHouse accepts that without complaint, dropping the column on every
-                // insert. Verified on 26.7: MODIFY QUERY does NOT validate against its target.
-                //
-                // Every row aggregated from then on takes the column's type default, and for
-                // samplingInterval that default is 0, the one value reserved to mean "written
-                // before the column existed". Real traffic would become indistinguishable from
-                // pre-append rows, permanently, and a later re-upgrade could not tell them apart.
-                // Declining the rollup is recoverable; writing the sentinel over live data is not.
-                log.warn("Rollup {}'s materialized view selects columns this version does not ({}),"
-                        + " which means a downgrade. Leaving it alone and routing around it: taking"
-                        + " the columns away would write this version's defaults over rows that"
-                        + " mean something else.", rollup, difference(now, wanted));
-                return;
-            }
-            stale.add(rollup);
-        });
-        return stale;
+        final FlowsSchema.RepairPlan plan =
+                FlowsSchema.planViewRepair(this.config.getDatabase(), live, refused);
+        plan.refused().forEach((rollup, why) ->
+                log.warn("Rollup {} left as it is: {}. It is kept out of the query path.", rollup, why));
+        return plan.repair();
     }
 
-    /** The names in {@code now} that {@code wanted} does not have, for the log line above. */
-    private static Set<String> difference(final Set<String> now, final Set<String> wanted) {
-        final Set<String> extra = new LinkedHashSet<>(now);
-        extra.removeAll(wanted);
-        return extra;
-    }
 
-    /** The names a SELECT emits, which is what a target table has to carry. */
-    private static Set<String> outputColumns(final String select) {
-        final Matcher matcher = SELECT_ALIAS.matcher(RollupShapeCheck.normalise(select));
-        final Set<String> names = new LinkedHashSet<>();
-        while (matcher.find()) {
-            names.add(matcher.group(1));
-        }
-        return names;
-    }
-
-    private static final Pattern SELECT_ALIAS = Pattern.compile("\\bAS\\s+([A-Za-z_][A-Za-z0-9_]*)");
 
     /** Each rollup target's live column names, for the repair planner. */
     private Map<String, Set<String>> readRollupColumnNames() throws Exception {
@@ -474,8 +461,9 @@ public class ClickhouseRepository implements FlowRepository {
             // and invisible to the reader and to SpotBugs alike. A collector that cannot read
             // system.tables must still collect.
             log.warn("Could not verify rollup shapes in database '{}': {}. Ingestion is unaffected;"
-                    + " queries use every rollup except the {} this start could not repair.",
-                    this.config.getDatabase(), e.getMessage(), unrepaired);
+                    + " queries use every rollup except {}, which this start could not repair or"
+                    + " refused.", this.config.getDatabase(), e.getMessage(),
+                    union(unrepaired, refused));
             RollupAvailability.recordDrifted(union(unrepaired, refused));
             return;
         }

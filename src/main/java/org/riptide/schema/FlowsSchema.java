@@ -10,6 +10,7 @@ import org.intellij.lang.annotations.Language;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -255,13 +256,91 @@ public final class FlowsSchema {
         final List<Dimension> columns = allDimensions(rollup);
         final StringBuilder ddl = new StringBuilder("ALTER TABLE ")
                 .append(qualifiedRollup(database, rollup.table()));
-        for (final Dimension dimension : columns) {
+        for (int i = 0; i < columns.size(); i++) {
+            final Dimension dimension = columns.get(i);
             ddl.append("\n    ADD COLUMN IF NOT EXISTS ")
-                    .append(dimension.column()).append(' ').append(dimension.type()).append(',');
+                    .append(dimension.column()).append(' ').append(dimension.type());
+            // POSITIONED, not appended. Without AFTER, ClickHouse puts a new column last — past the
+            // measures — so an upgraded target ends up with a different physical column order than a
+            // fresh one. Riptide itself does not care (a materialized view with TO matches by name),
+            // but INSERT ... SELECT without a column list is POSITIONAL, and that is exactly the
+            // backfill the ClickHouse guide tells operators to write. On an upgraded target it would
+            // land the rate in `bytes` and shift every measure by one, while samplingInterval takes
+            // its type default — the reserved sentinel — so `WHERE samplingInterval > 0` then hides
+            // the corruption it just caused. The flows table already guarantees this invariant
+            // (addAdditiveColumns); rollups must too. Verified on 26.7: AFTER is accepted in the
+            // same statement as MODIFY ORDER BY, and re-running it changes nothing.
+            if (i > 0) {
+                ddl.append(" AFTER ").append(columns.get(i - 1).column());
+            }
+            ddl.append(',');
         }
         ddl.append("\n    MODIFY ORDER BY (").append(sortKey(rollup)).append(')');
         return ddl.toString();
     }
+
+    /**
+     * Which rollup views this version should re-point, decided from the views' own live SELECT.
+     *
+     * <p>Shared by the collector and {@code onboard} for the same reason {@link #planRollupRepair}
+     * is: they are the only two callers, and they were not previously obliged to agree. They now do
+     * by construction — {@code onboard} used to re-point every present view unconditionally, which
+     * emitted four {@code ALTER}s against an already-correct database (the spec requires a re-run to
+     * issue none) and carried no downgrade guard at all.</p>
+     *
+     * <p><b>Column set, not text.</b> A view whose columns match but whose expression differs is a
+     * corrected aggregate, and repairing that is out of scope: it would readmit rows computed the
+     * old way with nothing distinguishing them.</p>
+     *
+     * <p><b>Growth only.</b> A view selecting columns this version does not know is a downgrade.
+     * Re-pointing it would not fail — {@code MODIFY QUERY} does not validate against its target —
+     * it would drop that column on every insert, and for a sort-key dimension the type default is a
+     * reserved sentinel. Declining is recoverable; writing over live rows is not.</p>
+     *
+     * @param liveSelects  {@code <rollup>_mv} to its stored {@code as_select}; a view absent from
+     *                     the map is not re-pointed, since there is nothing to re-point
+     * @param refused      rollups whose target is not being repaired, excluded because a view
+     *                     naming a column its target lacks silently drops it on every insert
+     * @return the rollups to re-point, and the downgrades refused with a reason to report
+     */
+    public static RepairPlan planViewRepair(final String database,
+            final Map<String, String> liveSelects, final Set<String> refused) {
+        final List<String> stale = new ArrayList<>();
+        final Map<String, String> declined = new LinkedHashMap<>();
+        rollupSelects(database).forEach((rollup, intended) -> {
+            final String current = liveSelects.get(rollup + "_mv");
+            if (current == null || refused.contains(rollup)) {
+                return;
+            }
+            final Set<String> now = selectOutputColumns(current);
+            final Set<String> wanted = selectOutputColumns(intended);
+            if (now.equals(wanted)) {
+                return;
+            }
+            if (!wanted.containsAll(now)) {
+                final Set<String> extra = new LinkedHashSet<>(now);
+                extra.removeAll(wanted);
+                declined.put(rollup, "its materialized view selects " + extra + ", which this version"
+                        + " does not know — that is a downgrade, and taking the columns away would"
+                        + " write this version's defaults over rows that mean something else");
+                return;
+            }
+            stale.add(rollup);
+        });
+        return new RepairPlan(List.copyOf(stale), Collections.unmodifiableMap(declined));
+    }
+
+    /** The aliases a SELECT emits, which is what its target table has to carry. */
+    private static Set<String> selectOutputColumns(final String select) {
+        final var matcher = SELECT_ALIAS.matcher(RollupShapeCheck.normalise(select));
+        final Set<String> names = new LinkedHashSet<>();
+        while (matcher.find()) {
+            names.add(matcher.group(1));
+        }
+        return names;
+    }
+
+    private static final Pattern SELECT_ALIAS = Pattern.compile("\\bAS\\s+([A-Za-z_][A-Za-z0-9_]*)");
 
     /**
      * Which rollups need repairing, and which must be refused, decided from their live shape (#470).
@@ -345,7 +424,13 @@ public final class FlowsSchema {
     }
 
     private static List<String> splitKey(final String key) {
-        return key.isBlank() ? List.of() : List.of(key.split(",\\s*"));
+        // Normalised the same way RollupShapeCheck compares keys, so the planner and the check
+        // cannot disagree about whether a live key equals this version's. They read the same
+        // catalog string; two different notions of equality would let one call a table current
+        // while the other calls it drifted — declining every rollup forever while no code path
+        // ever attempts the repair the log demands.
+        final String normalised = RollupShapeCheck.normaliseKey(key);
+        return normalised.isBlank() ? List.of() : List.of(normalised.split(",\\s*"));
     }
 
     private static boolean isPrefix(final List<String> shorter, final List<String> longer) {

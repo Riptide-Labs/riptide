@@ -628,4 +628,40 @@ class FlowsSchemaTest {
         assertThat(QueryRouter.resolveTopTalkersTable("riptide", 1440, "samplingInterval"))
                 .isEqualTo(FlowsSchema.qualifiedFlows("riptide"));
     }
+
+    /**
+     * The repair puts an appended dimension where a fresh table puts it, not merely somewhere.
+     *
+     * <p>{@code ADD COLUMN} without {@code AFTER} appends past the measures, so an upgraded target
+     * ends up with a different physical column order than a fresh one. Riptide does not care — a
+     * materialized view with {@code TO} matches by name — but {@code INSERT INTO … SELECT} without a
+     * column list is positional, and that is the backfill the ClickHouse guide tells operators to
+     * write. On an upgraded target it lands the rate in {@code bytes}, shifts every measure by one,
+     * and leaves {@code samplingInterval} at its type default: the reserved sentinel, so
+     * {@code WHERE samplingInterval > 0} then hides the corruption it just caused.
+     *
+     * <p>The {@code flows} table already guarantees this (see {@code addAdditiveColumns}); the
+     * rollups must too.
+     */
+    @Test
+    void theRepairPositionsAnAppendedDimensionWhereAFreshTablePutsIt() {
+        final Map<String, String> alters = FlowsSchema.alterRollupTargets("riptide");
+
+        for (final String ddl : FlowsSchema.createRollupTables("riptide")) {
+            final int from = ddl.indexOf("CREATE TABLE IF NOT EXISTS ") + "CREATE TABLE IF NOT EXISTS ".length();
+            final String rollup = ddl.substring(from, ddl.indexOf(" (", from)).replace("`riptide`.", "").trim();
+            final List<String> freshOrder = Arrays.stream(keyList(ddl, "ORDER BY (").split(",\\s*")).toList();
+
+            final String alter = alters.get(rollup);
+            for (int i = 1; i < freshOrder.size(); i++) {
+                assertThat(alter)
+                        .as("%s: %s must be added after %s, or an upgraded target's column order"
+                                + " diverges from a fresh one and a positional backfill corrupts it",
+                                rollup, freshOrder.get(i), freshOrder.get(i - 1))
+                        .contains("ADD COLUMN IF NOT EXISTS " + freshOrder.get(i))
+                        .containsPattern("ADD COLUMN IF NOT EXISTS " + freshOrder.get(i)
+                                + "[^,]* AFTER " + freshOrder.get(i - 1) + ",");
+            }
+        }
+    }
 }
