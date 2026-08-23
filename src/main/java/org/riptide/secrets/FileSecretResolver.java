@@ -123,7 +123,7 @@ public class FileSecretResolver implements SecretResolver {
         @java.io.Serial
         private static final long serialVersionUID = 1L;
 
-        private final Map<String, Integer> declarations = new HashMap<>();
+        private Map<String, Integer> declarations = new HashMap<>();
 
         @Override
         public synchronized Object put(final Object key, final Object value) {
@@ -131,17 +131,26 @@ public class FileSecretResolver implements SecretResolver {
             return super.put(key, value);
         }
 
-        // A short-lived parsing accumulator, never compared or stored. Hashtable's value-based
-        // equality would ignore the count this class adds, so identity is the honest contract —
-        // and SpotBugs requires the pair to be stated rather than inherited.
+        // Below is inherited-contract upkeep, not behaviour. Properties is a Hashtable, so a
+        // subclass that adds a field has to say what equality, hashing and cloning mean for it;
+        // all three are synchronized on the superclass and the analysers require the overrides to
+        // match. This accumulator is short-lived and never compared, stored or cloned, so identity
+        // equality is the honest answer and clone simply carries the counts across.
         @Override
-        public boolean equals(final Object other) {
+        public synchronized boolean equals(final Object other) {
             return this == other;
         }
 
         @Override
-        public int hashCode() {
+        public synchronized int hashCode() {
             return System.identityHashCode(this);
+        }
+
+        @Override
+        public synchronized Object clone() {
+            final DeclarationCounting copy = (DeclarationCounting) super.clone();
+            copy.declarations = new HashMap<>(this.declarations);
+            return copy;
         }
     }
 
