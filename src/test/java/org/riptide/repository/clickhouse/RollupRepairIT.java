@@ -189,6 +189,71 @@ public class RollupRepairIT {
                 .isTrue();
     }
 
+    /**
+     * A rollup the planner refused is kept out of the query path, and its view is left alone.
+     *
+     * <p>The state is the one the Code 36 refusal was added for: an operator has hand-added
+     * {@code samplingInterval} to the target after reading that riptide appends it, so the column
+     * exists but is not in the sorting key and no {@code ALTER} can put it there.</p>
+     *
+     * <p>Refusing the target is not enough on its own, and this is the trap. The view's
+     * {@code CREATE … IF NOT EXISTS} <em>succeeds</em> — the target does have the column it names —
+     * so nothing marks the rollup as unrepaired, and the view repair then re-points it at a SELECT
+     * that writes the rate into a non-key numeric column of a {@code SummingMergeTree}. ClickHouse
+     * sums every numeric column outside the sorting key, so the rate itself would accumulate across
+     * merges: {@code sum(bytes * samplingInterval)} inflated by an arbitrary factor, and
+     * {@code samplingInterval > 0} no longer meaning what it says. The shape check cannot catch it
+     * either — it compares columns and the view's SELECT, never the sorting key — so it reports
+     * MATCHES and the rollup keeps answering.</p>
+     *
+     * <p>Before this change the same state failed loudly with Code 36 on every start. A refusal that
+     * converts a loud failure into a quiet wrong number is worse than no refusal.</p>
+     */
+    @Test
+    void aRefusedRollupIsDeclinedAndItsViewIsNotRepointed() throws Exception {
+        createRollupWithTheRateOutsideItsSortingKey();
+        final String before = selectOf(ROLLUP + "_mv");
+        assertThat(before).doesNotContain("samplingInterval");
+
+        repository().start();
+
+        assertThat(selectOf(ROLLUP + "_mv"))
+                .as("re-pointing the view would start summing the sampling rate itself")
+                .isEqualTo(before);
+        assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, ROLLUP)))
+                .as("a rollup riptide has refused to repair must not keep answering queries")
+                .isFalse();
+    }
+
+    /** The hand-added-column state: the rate is a column of the target, but not part of its key. */
+    private static void createRollupWithTheRateOutsideItsSortingKey() throws Exception {
+        final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
+        final String view = FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP);
+        admin.execute("DROP VIEW IF EXISTS " + view).get();
+        admin.execute("DROP TABLE IF EXISTS " + target).get();
+        admin.execute("CREATE TABLE " + target + " ("
+                + "tenant String, organisation String, timestamp DateTime('UTC'), zone String,"
+                + " application LowCardinality(String), protocol UInt8,"
+                + " samplingInterval Float64,"
+                + " bytes UInt64, packets UInt64, flowCount UInt64,"
+                + " bytesIn UInt64, bytesOut UInt64, packetsIn UInt64, packetsOut UInt64)"
+                + " ENGINE = SummingMergeTree()"
+                + " PRIMARY KEY (tenant, organisation, timestamp, zone, application, protocol)"
+                + " ORDER BY (tenant, organisation, timestamp, zone, application, protocol)"
+                + " PARTITION BY toYYYYMM(timestamp)").get();
+        admin.execute("CREATE MATERIALIZED VIEW " + view + " TO " + target + " AS SELECT"
+                + " f.tenant AS tenant, f.organisation AS organisation,"
+                + " toStartOfMinute(f.timestamp) AS timestamp, f.zone AS zone,"
+                + " ifNull(f.application, '') AS application, f.protocol AS protocol,"
+                + " sum(f.bytes) AS bytes, sum(f.packets) AS packets, count() AS flowCount,"
+                + " sumIf(f.bytes, f.direction = 'INGRESS') AS bytesIn,"
+                + " sumIf(f.bytes, f.direction = 'EGRESS') AS bytesOut,"
+                + " sumIf(f.packets, f.direction = 'INGRESS') AS packetsIn,"
+                + " sumIf(f.packets, f.direction = 'EGRESS') AS packetsOut"
+                + " FROM " + FlowsSchema.qualifiedFlows(DATABASE) + " AS f"
+                + " GROUP BY tenant, organisation, timestamp, zone, application, protocol").get();
+    }
+
     /** A rollup as an older riptide would have left it: one dimension short, view to match. */
     private static void createRollupMissingItsLastDimension() throws Exception {
         final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);

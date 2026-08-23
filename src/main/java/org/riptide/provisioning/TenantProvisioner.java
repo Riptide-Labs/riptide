@@ -17,6 +17,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.stream.Collectors;
@@ -81,7 +82,11 @@ public final class TenantProvisioner {
                                 + " their materialized views — re-run with --create-schema to add"
                                 + " them. This creates tables and materialized views only; the flows"
                                 + " table and its data are untouched, and the rollups cover traffic"
-                                + " from creation onward (a materialized view does not backfill)", null);
+                                + " from creation onward (a materialized view does not backfill)."
+                                + " If a previous run reported a rollup as left alone, its view is"
+                                + " absent deliberately and --create-schema will not add it: fix"
+                                + " that rollup as the earlier message described, or this check"
+                                + " keeps reporting the rollups as missing", null);
             }
             statements.addAll(ProvisioningDdl.bootstrapRollups(spec.database()));
         }
@@ -94,7 +99,13 @@ public final class TenantProvisioner {
         // a view's SELECT names every dimension this version intends, and CREATE ... IF NOT EXISTS
         // validates it against the target even when it no-ops. Creating views first would abort the
         // run against a stale target — before the repair that would have fixed it.
-        final FlowsSchema.RepairPlan plan = plannedRollupRepair(spec.database());
+        // Optional, because "the catalog could not be read" and "there is nothing to repair" are
+        // the same empty plan and must not be. Unread, the repair list is empty while the view list
+        // — built from EXISTS probes, which do not go through system.tables — still names all four:
+        // that would re-point every view at a SELECT naming a column no target was altered to have.
+        // MODIFY QUERY does not validate, so the run would report success and drop the column on
+        // every insert.
+        final Optional<FlowsSchema.RepairPlan> plan = plannedRollupRepair(spec.database());
         final Set<String> viewsPresent = bootstrap ? Set.of() : existingRollupViews(spec.database());
         // Every present view that was not refused, not just the ones whose target is being altered.
         // A run that repaired a target and then failed before that rollup's MODIFY QUERY leaves the
@@ -107,10 +118,11 @@ public final class TenantProvisioner {
         // Refused rollups are excluded: their target is not being repaired, and pointing a view at a
         // SELECT naming a column the target lacks does not fail, it silently drops that column on
         // every insert.
-        final Set<String> repointable = viewsPresent.stream()
-                .filter(rollup -> !plan.refused().containsKey(rollup))
+        final Set<String> repointable = plan.isEmpty() ? Set.of() : viewsPresent.stream()
+                .filter(rollup -> !plan.get().refused().containsKey(rollup))
                 .collect(Collectors.toCollection(LinkedHashSet::new));
-        statements.addAll(ProvisioningDdl.repairRollups(spec.database(), plan.repair(), repointable));
+        statements.addAll(ProvisioningDdl.repairRollups(
+                spec.database(), plan.map(FlowsSchema.RepairPlan::repair).orElseGet(List::of), repointable));
         // Under the SAME condition as the targets above, not just on bootstrap. rollupsExist() is
         // false when any target OR any view is missing — its whole reason for checking both halves
         // is the interrupted bootstrap that leaves a target without its view. Gating the views on
@@ -120,7 +132,7 @@ public final class TenantProvisioner {
         // already there, so emitting all four is correct whenever any one of them is absent.
         if (rollupsMissing) {
             statements.addAll(ProvisioningDdl.bootstrapRollupViews(
-                    spec.database(), plan.refused().keySet()));
+                    spec.database(), plan.map(p -> p.refused().keySet()).orElseGet(Set::of)));
         }
         statements.addAll(ProvisioningDdl.ensureShared(spec.database(), spec.quotaBytes()));
         statements.addAll(ProvisioningDdl.onboardTenant(
@@ -142,14 +154,14 @@ public final class TenantProvisioner {
      * may re-point, and reading the catalog twice to answer that would invite the two answers to
      * disagree.</p>
      */
-    private FlowsSchema.RepairPlan plannedRollupRepair(final String database) {
+    private Optional<FlowsSchema.RepairPlan> plannedRollupRepair(final String database) {
         final Map<String, String> sortKeys = new LinkedHashMap<>();
         final Map<String, Set<String>> columns = new LinkedHashMap<>();
         try (var tables = this.admin.queryRecords("SELECT name AS n, sorting_key AS k FROM system.tables"
                 + " WHERE database = '" + database + "'").get()) {
             tables.forEach(record -> sortKeys.put(record.getString("n"), record.getString("k")));
         } catch (final Exception e) {
-            return new FlowsSchema.RepairPlan(List.of(), Map.of());
+            return Optional.empty();
         }
         try (var cols = this.admin.queryRecords("SELECT table AS t, name AS n FROM system.columns"
                 + " WHERE database = '" + database + "'").get()) {
@@ -157,14 +169,14 @@ public final class TenantProvisioner {
                     .computeIfAbsent(record.getString("t"), table -> new java.util.LinkedHashSet<>())
                     .add(record.getString("n")));
         } catch (final Exception e) {
-            return new FlowsSchema.RepairPlan(List.of(), Map.of());
+            return Optional.empty();
         }
         sortKeys.keySet().retainAll(FlowsSchema.rollupTableNames());
 
         final FlowsSchema.RepairPlan plan = FlowsSchema.planRollupRepair(sortKeys, columns);
         plan.refused().forEach((rollup, why) ->
                 log.warn("Rollup {} left as it is: {}.", rollup, why));
-        return plan;
+        return Optional.of(plan);
     }
 
 
