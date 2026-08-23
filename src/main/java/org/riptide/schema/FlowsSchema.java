@@ -165,7 +165,7 @@ public final class FlowsSchema {
         // they pin each rollup's primary key as a literal so the append cannot pass unnoticed
         // (#470, #571).
         final String sortKeyColumns = columns.stream().map(Dimension::column).collect(Collectors.joining(", "));
-        final String primaryKeyColumns = sortKeyColumns;
+        final String primaryKeyColumns = rollup.frozenPrimaryKey();
         ddl.append("\n) ENGINE = SummingMergeTree()\nPRIMARY KEY (")
                 .append(primaryKeyColumns)
                 .append(")\nORDER BY (")
@@ -473,6 +473,27 @@ public final class FlowsSchema {
      * table's column name so a time filter ports between raw and rollup unchanged — truncated to
      * the minute, which is what makes the rollup a rollup.
      */
+    /**
+     * The sampling rate a flow's counters are scaled by, carried so
+     * {@code SUM(bytes * samplingInterval)} means the same thing against a rollup as against the raw
+     * table — which it could not before, leaving sampling-corrected volume unanswerable beyond the
+     * raw table's retention (#467, #470).
+     *
+     * <p>A dimension rather than a pre-scaled measure. A measure reading {@code 0} for rows
+     * aggregated before the append would make a {@code SUM} spanning the upgrade quietly too small,
+     * with nothing marking where. A rate of {@code 0} is not a value any exporter, fallback or
+     * assumption can produce — {@code usable()} admits only finite values {@code >= 1.0} and the
+     * persisted default is {@code 1.0} — so the type default marks pre-append rows unambiguously and
+     * the boundary is the predicate {@code samplingInterval > 0}.</p>
+     *
+     * <p>Read straight through, with no {@code ifNull} folding: the source column is not nullable,
+     * and a fallback literal would have to avoid emitting the type default anyway, which is what
+     * {@link #appendableDimensions()} asserts.</p>
+     *
+     * <p>Appended last, which is the only position {@code ALTER … MODIFY ORDER BY} permits.</p>
+     */
+    private static final Dimension SAMPLING_INTERVAL = Dimension.of("samplingInterval", "Float64");
+
     private static final List<Dimension> PREAMBLE = List.of(
             Dimension.of("tenant", "String"),
             Dimension.of("organisation", "String"),
@@ -506,26 +527,52 @@ public final class FlowsSchema {
 
     /** The 1-minute rollups. Adding one here propagates to creation, grants, and row policies. */
     private static final List<Rollup> ROLLUPS = List.of(
-            new Rollup(ROLLUP_BY_APPLICATION, List.of(
-                    APPLICATION,
-                    Dimension.of("protocol", "UInt8"))),
-            new Rollup(ROLLUP_BY_CONVERSATION, List.of(
-                    Dimension.of("srcAddr", "IPv6"),
-                    Dimension.of("dstAddr", "IPv6"),
-                    APPLICATION)),
-            new Rollup(ROLLUP_BY_EXPORTER_IFACE, List.of(
-                    Dimension.of("exporterAddr", "String"),
-                    Dimension.of("exporterName", "LowCardinality(String)"),
-                    Dimension.of("inputSnmp", "UInt32"),
-                    Dimension.of("outputSnmp", "UInt32"))),
-            new Rollup(ROLLUP_BY_GEO_ASN, List.of(
-                    Dimension.of("srcAs", "UInt64"),
-                    Dimension.of("dstAs", "UInt64"),
-                    Dimension.of("srcCountry", "LowCardinality(String)"),
-                    Dimension.of("dstCountry", "LowCardinality(String)"))));
+            new Rollup(ROLLUP_BY_APPLICATION,
+                    "tenant, organisation, timestamp, zone, application, protocol",
+                    List.of(
+                            APPLICATION,
+                            Dimension.of("protocol", "UInt8"),
+                            SAMPLING_INTERVAL)),
+            new Rollup(ROLLUP_BY_CONVERSATION,
+                    "tenant, organisation, timestamp, zone, srcAddr, dstAddr, application",
+                    List.of(
+                            Dimension.of("srcAddr", "IPv6"),
+                            Dimension.of("dstAddr", "IPv6"),
+                            APPLICATION,
+                            SAMPLING_INTERVAL)),
+            new Rollup(ROLLUP_BY_EXPORTER_IFACE,
+                    "tenant, organisation, timestamp, zone, exporterAddr, exporterName, inputSnmp, outputSnmp",
+                    List.of(
+                            Dimension.of("exporterAddr", "String"),
+                            Dimension.of("exporterName", "LowCardinality(String)"),
+                            Dimension.of("inputSnmp", "UInt32"),
+                            Dimension.of("outputSnmp", "UInt32"),
+                            SAMPLING_INTERVAL)),
+            new Rollup(ROLLUP_BY_GEO_ASN,
+                    "tenant, organisation, timestamp, zone, srcAs, dstAs, srcCountry, dstCountry",
+                    List.of(
+                            Dimension.of("srcAs", "UInt64"),
+                            Dimension.of("dstAs", "UInt64"),
+                            Dimension.of("srcCountry", "LowCardinality(String)"),
+                            Dimension.of("dstCountry", "LowCardinality(String)"),
+                            SAMPLING_INTERVAL)));
 
-    /** One rollup: its target table name and the dimensions it adds to {@link #PREAMBLE}. */
-    private record Rollup(String table, List<Dimension> dimensions) {
+    /**
+     * One rollup: its target table name, the dimensions it adds to {@link #PREAMBLE}, and its
+     * <strong>frozen primary key</strong>.
+     *
+     * <p>The primary key is a literal, not derived from {@link #dimensions}, and that is the whole
+     * point. {@code ALTER … MODIFY ORDER BY} grows the sorting key and leaves the primary key
+     * alone — there is no {@code MODIFY PRIMARY KEY} at all — so an upgraded install keeps the
+     * primary key its table was created with. A fresh install has to declare the same value or the
+     * two silently disagree, in a way no column or type comparison can see (#571).</p>
+     *
+     * <p><strong>When a dimension is appended, this literal does not change.</strong> It is the
+     * list as of the moment the rollup was last created from scratch. Growing it alongside
+     * {@link #dimensions} is exactly the divergence the freeze exists to prevent, and
+     * {@code FlowsSchemaTest} pins each value so the append cannot pass unnoticed.</p>
+     */
+    private record Rollup(String table, String frozenPrimaryKey, List<Dimension> dimensions) {
     }
 
     /**

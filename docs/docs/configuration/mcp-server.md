@@ -17,6 +17,7 @@ This component allows AI agent frameworks (**Google Antigravity (AGY)**, **Claud
 - **Dual Transport Engine (`stdio` & `sse`)**: Non-blocking IPC loop over standard input/output streams for local CLI hosts (`antigravity-cli`, `claude`) and HTTP Server-Sent Events (`/mcp/sse`) on port 8081 for remote LLM agent clients.
 - **Integrated `SecretRef` Token Authentication**: Optional token authorization dynamically resolved from environment variables (`env://`), local files (`file:///`), HashiCorp Vault (`vault://`), or SOPS (`sops://`).
 - **1-Minute Rollup Query Router**: Queries spanning $\ge 60$ minutes are automatically routed to ClickHouse `SummingMergeTree` rollups (`flows_by_application_1m`, `flows_by_conversation_1m`, `flows_by_exporter_iface_1m`, `flows_by_geo_asn_1m`).
+  The rollups carry `samplingInterval`, so a sampling-corrected query is the same expression whichever table a request lands on. The tools themselves report counters as the exporter reported them and do not apply the correction — see [sampling-corrected volume](receivers#sampling-corrected-volume-beyond-raw-retention).
 - **7 Auto-Shipped Agent Skills**: Pre-packaged Markdown skill files embedded under `classpath*:mcp/skills/*.md` exposed automatically as MCP Prompts (`prompts/list`) and Resources (`resources/list`).
 
 ---

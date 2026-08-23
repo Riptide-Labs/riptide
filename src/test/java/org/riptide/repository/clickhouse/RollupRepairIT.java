@@ -395,4 +395,98 @@ public class RollupRepairIT {
                 .as("the view must not be stranded just because its target already looks current")
                 .contains("protocol");
     }
+
+    /**
+     * The point of carrying the rate at all: {@code SUM(bytes * samplingInterval)} means the same
+     * thing against a rollup as against raw {@code flows}. Before this, sampling-corrected volume
+     * was unanswerable beyond the raw table's retention, because the rollups — the only thing that
+     * survives that long — did not carry the rate.
+     */
+    @Test
+    void theScaledSumIsIdenticalAgainstRawAndRollup() throws Exception {
+        repository().start();
+        final var repo = startedWriter();
+        for (int i = 0; i < 20; i++) {
+            repo.persist(List.of(flow("scaled", "org", 3000 + i)));
+        }
+        Thread.sleep(500);
+
+        final long raw = scalar("SELECT toUInt64(sum(bytes * samplingInterval)) AS v FROM "
+                + FlowsSchema.qualifiedFlows(DATABASE) + " WHERE tenant = 'scaled'");
+        final long rollup = scalar("SELECT toUInt64(sum(bytes * samplingInterval)) AS v FROM "
+                + FlowsSchema.qualifiedRollup(DATABASE, FlowsSchema.ROLLUP_BY_CONVERSATION)
+                + " WHERE tenant = 'scaled'");
+
+        assertThat(rollup).isEqualTo(raw).isPositive();
+    }
+
+    /**
+     * The boundary, end to end. Rows aggregated before the rate was appended read {@code 0} — the
+     * type default, and the only marker a sort-key column can have — so
+     * {@code WHERE samplingInterval > 0} selects exactly the rows aggregated after.
+     */
+    @Test
+    void theRateBoundaryIsAPredicateNotARememberedDate() throws Exception {
+        createRollupMissingItsLastDimension();
+        final var repo = startedWriter();
+        repo.persist(List.of(flow("beforeAppend", "org", 4001)));
+        Thread.sleep(400);
+
+        repository().start();                                   // appends samplingInterval
+
+        repo.persist(List.of(flow("afterAppend", "org", 4002)));
+        Thread.sleep(400);
+
+        final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
+        assertThat(scalar("SELECT count() AS v FROM " + target
+                + " WHERE tenant = 'beforeAppend' AND samplingInterval = 0"))
+                .as("rows aggregated before the append carry the reserved value")
+                .isPositive();
+        assertThat(scalar("SELECT count() AS v FROM " + target
+                + " WHERE tenant = 'beforeAppend' AND samplingInterval > 0"))
+                .as("and are excluded by the boundary predicate")
+                .isZero();
+        assertThat(scalar("SELECT count() AS v FROM " + target
+                + " WHERE tenant = 'afterAppend' AND samplingInterval > 0"))
+                .as("rows aggregated after carry a real rate, which is never 0")
+                .isPositive();
+    }
+
+    /**
+     * The case that motivates measuring sort-key growth at all: two exporters sampling at different
+     * rates, feeding one geo/ASN group.
+     *
+     * <p>They must produce two rollup rows, not one — collapsing them would average away the rates
+     * and make the correction meaningless. The growth this costs was measured before the change at
+     * a median of 1.0214 across the four rollups, which is what the decision rule was evaluated
+     * against.</p>
+     */
+    @Test
+    void twoExportersAtDifferentRatesSplitOneGroupAndStillSumCorrectly() throws Exception {
+        repository().start();
+        final var repo = startedWriter();
+
+        repo.persist(List.of(
+                sampledAt(1.0d, "203.0.113.7"),
+                sampledAt(100.0d, "203.0.113.8")));
+        Thread.sleep(600);
+
+        final String target = FlowsSchema.qualifiedRollup(DATABASE, FlowsSchema.ROLLUP_BY_GEO_ASN);
+        assertThat(scalar("SELECT count() AS v FROM " + target + " WHERE tenant = 'rates'"))
+                .as("one geo/ASN group, two rates, two rows — collapsing them would lose the rates")
+                .isEqualTo(2);
+        assertThat(scalar("SELECT toUInt64(sum(bytes * samplingInterval)) AS v FROM "
+                + target + " WHERE tenant = 'rates'"))
+                .as("1234*1 + 1234*100")
+                .isEqualTo(1234L + 1234L * 100L);
+    }
+
+    /** Same geo/ASN dimensions, different exporter and rate. */
+    private static org.riptide.pipeline.EnrichedFlow sampledAt(final double rate, final String exporter)
+            throws Exception {
+        final var base = flow("rates", "org", 5000);
+        base.setSamplingInterval(rate);
+        base.setExporterAddr(exporter);
+        return base;
+    }
 }

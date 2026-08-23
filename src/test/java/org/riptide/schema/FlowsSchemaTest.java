@@ -6,6 +6,7 @@
 package org.riptide.schema;
 
 import org.junit.jupiter.api.Test;
+import org.riptide.mcp.service.QueryRouter;
 
 import java.util.List;
 import java.util.Map;
@@ -517,5 +518,46 @@ class FlowsSchemaTest {
                 .isEqualTo("'1970-01-01 00:00:00'");
         assertThat(byExpression.get("f.protocol")).isEqualTo("0");
         assertThat(byExpression.get("f.tenant")).isEqualTo("''");
+    }
+
+    /**
+     * The rate is appended last on every rollup, which is the only position
+     * {@code ALTER … MODIFY ORDER BY} permits: a sorting key may only grow, and only by columns the
+     * same statement adds. A dimension inserted mid-list works on a fresh install and is impossible
+     * on an upgraded one.
+     */
+    @Test
+    void theSamplingRateIsTheLastDimensionOnEveryRollup() {
+        assertThat(FlowsSchema.rollupSortKeys())
+                .hasSize(4)
+                .allSatisfy((rollup, key) -> assertThat(key).endsWith(", samplingInterval"));
+    }
+
+    /**
+     * The freeze, stated as an invariant rather than left to the literals above.
+     *
+     * <p>Appending the rate grew every sorting key and left every primary key alone — which is what
+     * keeps a fresh install agreeing with an upgraded one, since {@code MODIFY ORDER BY} cannot
+     * touch a primary key and no {@code MODIFY PRIMARY KEY} exists.</p>
+     */
+    @Test
+    void appendingTheRateGrewTheSortKeysAndFrozeThePrimaryKeys() {
+        for (final String ddl : FlowsSchema.createRollupTables("riptide")) {
+            final String primary = keyList(ddl, "PRIMARY KEY (");
+            final String sorting = keyList(ddl, "ORDER BY (");
+            assertThat(sorting).isEqualTo(primary + ", samplingInterval");
+            assertThat(primary).doesNotContain("samplingInterval");
+        }
+    }
+
+    /**
+     * The rate is carried for correctness, not offered as something to slice by — the same
+     * distinction Akvorado draws with {@code ConsoleNotDimension}. The router's vocabulary is a
+     * closed set, so a request to group by the rate never resolves to a rollup.
+     */
+    @Test
+    void theRateIsNotAGroupableRollupDimension() {
+        assertThat(QueryRouter.resolveTopTalkersTable("riptide", 1440, "samplingInterval"))
+                .isEqualTo(FlowsSchema.qualifiedFlows("riptide"));
     }
 }

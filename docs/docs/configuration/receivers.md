@@ -206,12 +206,42 @@ Stored counters are what the exporter reported, and the rate sits alongside them
 
 Four things to know before writing that query.
 sFlow already scales at ingest (`bytes = frame_length × sampling_rate`) and still reports its rate, so multiplying sFlow rows again double-counts them: filter them out, or restrict the query to NetFlow and IPFIX.
-The 1-minute rollups carry neither the rate nor a scaled measure, so `SUM(bytes * samplingInterval)` only means anything against the raw `flows` table.
+The 1-minute rollups carry the rate too, so `SUM(bytes * samplingInterval)` is the same query against either table — see below.
 A rate of `1` is not always a statement that the exporter does not sample — check `samplingProvenance` before treating one as trustworthy, and see [Where a rate came from](#where-a-rate-came-from).
 And if you are coming from **nfdump or pmacct**, check whether counters were being scaled for you.
 Both can multiply NetFlow v5 `bytes` and `packets` by the sampling rate at ingest (in pmacct via `nfacctd_renormalize`, in nfdump depending on how sampling was detected or forced with `-s`), where riptide never does.
 Counters stored here are always as the exporter reported them, so a query ported from either may need the multiplication added rather than removed.
 :::
+
+### Sampling-corrected volume beyond raw retention
+
+The 1-minute rollups carry `samplingInterval` as a dimension, so the correction is the same expression against either table:
+
+```sql
+-- identical against raw flows and against a rollup
+SELECT sum(bytes * samplingInterval) AS corrected_bytes
+FROM riptide.flows_by_conversation_1m
+WHERE timestamp >= now() - INTERVAL 90 DAY;
+```
+
+That matters because raw `flows` is kept 30 days by default and the rollups 365. Before the rate was carried, sampling-corrected volume was simply unanswerable beyond the raw table's retention.
+
+The rate is a **dimension**, not a pre-scaled measure. A pre-scaled `bytesScaled` column would read `0` for every row aggregated before it existed, so a `SUM` spanning the upgrade would come back quietly too small with nothing marking where. Carrying the rate has no such failure, because `0` is not a rate anything can produce.
+
+:::warning Rows aggregated before the rate was carried read `samplingInterval = 0`
+A rollup gains a dimension in place, and rows already aggregated cannot be revisited — a materialized view does not backfill. Those rows read the column's type default, which is `0`.
+
+`0` is never a real rate: riptide admits only finite values `>= 1.0`, and records `1.0` when nothing states one. So the boundary is a predicate rather than a date you have to remember:
+
+```sql
+-- only rows aggregated since the rate was carried
+WHERE samplingInterval > 0
+```
+
+Riptide does **not** apply that filter for you. An implicit one would silently drop the older rows, which is the same class of quiet wrongness as a pre-scaled measure. Add it when you want the corrected total, leave it off when you want everything.
+:::
+
+The rate is carried for correctness, not offered as something to group by — asking riptide's tools to group by `samplingInterval` answers from raw `flows`, not from a rollup.
 
 ## Exporter identity
 
