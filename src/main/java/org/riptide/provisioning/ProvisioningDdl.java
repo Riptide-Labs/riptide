@@ -9,6 +9,7 @@ import org.riptide.schema.FlowsSchema;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -79,9 +80,20 @@ public final class ProvisioningDdl {
      * version intends. Emitted before the repair, it fails against a target that has not been
      * brought up to date — aborting the whole {@code onboard} run before the repair statements that
      * would have fixed it, which is the one path a provisioned deployment has.</p>
+     *
+     * @param skip rollups whose target this run is NOT repairing — a refused one still lacks the
+     *             column, and its SELECT names it, so the CREATE fails with
+     *             {@code THERE_IS_NO_COLUMN} and aborts the whole run. That leaves the tenant
+     *             unprovisioned over a rollup that was deliberately left alone: no roles, no users,
+     *             no password rotation. A rollup with no view is a rollup that stays empty and is
+     *             declined, which is the outcome refusing it already implied.
      */
-    public static List<String> bootstrapRollupViews(final String database) {
-        return FlowsSchema.createRollupViews(database);
+    public static List<String> bootstrapRollupViews(final String database, final Set<String> skip) {
+        final var views = FlowsSchema.createRollupViewsByRollup(database);
+        return views.entrySet().stream()
+                .filter(view -> !skip.contains(view.getKey()))
+                .map(Map.Entry::getValue)
+                .toList();
     }
 
     /**
@@ -100,23 +112,28 @@ public final class ProvisioningDdl {
      * grain in place with no error and no re-aggregation, which is exactly what the collector's
      * path refuses.</p>
      *
-     * <p>Targets before views: a view's SELECT names columns the target {@code ALTER} adds, and
-     * {@code CREATE MATERIALIZED VIEW IF NOT EXISTS} validates that SELECT even when it no-ops.</p>
+     * <p>Targets before views, because a view's SELECT names the columns the target {@code ALTER}
+     * adds. Note this is <em>not</em> enforced by the server on this path: {@code MODIFY QUERY} does
+     * not validate against its target, and silently drops an unmatched column on every insert
+     * instead of failing — see {@link FlowsSchema#modifyRollupViews}. Order is correctness here, and
+     * getting it wrong produces no error at all.</p>
      *
-     * @param viewsPresent the rollups whose {@code _mv} exists. {@code MODIFY QUERY} is emitted only
-     *                     for those: the plan is derived from target shapes, so a half-provisioned
-     *                     database can plan a repair for a rollup that has no view at all, and
-     *                     {@code MODIFY QUERY} against a missing view fails the whole run. Those
-     *                     rollups need no repair statement anyway — the {@code CREATE} that follows
-     *                     builds the view with this version's SELECT directly.
+     * @param rollups        the targets to {@code ALTER}, from the caller's repair plan
+     * @param viewsToRepoint the rollups whose view should be re-pointed at this version's SELECT.
+     *                       Independent of {@code rollups}: a run that altered a target and then
+     *                       failed before its {@code MODIFY QUERY} leaves a target the next run
+     *                       finds current, so a view-repair list derived from target shapes would
+     *                       never fix it. Excludes any rollup whose view does not exist (the
+     *                       statement would fail with {@code UNKNOWN_TABLE} and abort the run) and
+     *                       any the planner refused (its target is not being repaired).
      */
     public static List<String> repairRollups(final String database, final List<String> rollups,
-            final Set<String> viewsPresent) {
+            final Set<String> viewsToRepoint) {
         final List<String> statements = new ArrayList<>();
         final var alters = FlowsSchema.alterRollupTargets(database);
         final var modifies = FlowsSchema.modifyRollupViews(database);
         rollups.forEach(rollup -> statements.add(alters.get(rollup)));
-        rollups.stream().filter(viewsPresent::contains).forEach(rollup -> statements.add(modifies.get(rollup)));
+        viewsToRepoint.forEach(rollup -> statements.add(modifies.get(rollup)));
         return List.copyOf(statements);
     }
 

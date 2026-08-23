@@ -19,6 +19,11 @@ import java.time.Instant;
  * the statistical estimate {@code frame_length × sampling_rate} /
  * {@code packets = sampling_rate}. Missing decode results leave packet-level fields at
  * their floor values — the flow is still emitted.
+ *
+ * <p>The rate in those two products is the <em>guarded</em> one. A wire rate that is not finite or
+ * is below {@code 1} scales by {@code 1} and reports provenance {@code Assumed}, because a rate of
+ * {@code 0} would otherwise persist and collide with the value the rollups reserve for rows
+ * aggregated before the rate was carried (#470).</p>
  */
 public final class SflowFlowBuilder {
 

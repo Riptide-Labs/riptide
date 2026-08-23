@@ -94,8 +94,23 @@ public final class TenantProvisioner {
         // a view's SELECT names every dimension this version intends, and CREATE ... IF NOT EXISTS
         // validates it against the target even when it no-ops. Creating views first would abort the
         // run against a stale target — before the repair that would have fixed it.
-        statements.addAll(ProvisioningDdl.repairRollups(
-                spec.database(), plannedRollupRepair(spec.database()), existingRollupViews(spec.database())));
+        final FlowsSchema.RepairPlan plan = plannedRollupRepair(spec.database());
+        final Set<String> viewsPresent = bootstrap ? Set.of() : existingRollupViews(spec.database());
+        // Every present view that was not refused, not just the ones whose target is being altered.
+        // A run that repaired a target and then failed before that rollup's MODIFY QUERY leaves the
+        // next run a target it finds already current: it plans no repair, CREATE ... IF NOT EXISTS
+        // no-ops over the surviving view, and the stale SELECT is never corrected. The collector
+        // detects that (it plans from the view's own as_select) and declines the rollup, while the
+        // remedy the docs give — re-run onboard — does nothing whatsoever. MODIFY QUERY is
+        // idempotent, so re-pointing a view that is already right costs one statement.
+        //
+        // Refused rollups are excluded: their target is not being repaired, and pointing a view at a
+        // SELECT naming a column the target lacks does not fail, it silently drops that column on
+        // every insert.
+        final Set<String> repointable = viewsPresent.stream()
+                .filter(rollup -> !plan.refused().containsKey(rollup))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        statements.addAll(ProvisioningDdl.repairRollups(spec.database(), plan.repair(), repointable));
         // Under the SAME condition as the targets above, not just on bootstrap. rollupsExist() is
         // false when any target OR any view is missing — its whole reason for checking both halves
         // is the interrupted bootstrap that leaves a target without its view. Gating the views on
@@ -104,7 +119,8 @@ public final class TenantProvisioner {
         // rollupsExist() true on their own. CREATE ... IF NOT EXISTS no-ops over the views that are
         // already there, so emitting all four is correct whenever any one of them is absent.
         if (rollupsMissing) {
-            statements.addAll(ProvisioningDdl.bootstrapRollupViews(spec.database()));
+            statements.addAll(ProvisioningDdl.bootstrapRollupViews(
+                    spec.database(), plan.refused().keySet()));
         }
         statements.addAll(ProvisioningDdl.ensureShared(spec.database(), spec.quotaBytes()));
         statements.addAll(ProvisioningDdl.onboardTenant(
@@ -121,15 +137,19 @@ public final class TenantProvisioner {
      * two paths cannot disagree about what is safe. A catalog it cannot read yields an empty plan
      * rather than an error: onboarding a tenant must not fail because a rollup could not be
      * inspected.</p>
+     *
+     * <p>Returns the whole plan, refusals included — the caller needs them to decide which views it
+     * may re-point, and reading the catalog twice to answer that would invite the two answers to
+     * disagree.</p>
      */
-    private List<String> plannedRollupRepair(final String database) {
+    private FlowsSchema.RepairPlan plannedRollupRepair(final String database) {
         final Map<String, String> sortKeys = new LinkedHashMap<>();
         final Map<String, Set<String>> columns = new LinkedHashMap<>();
         try (var tables = this.admin.queryRecords("SELECT name AS n, sorting_key AS k FROM system.tables"
                 + " WHERE database = '" + database + "'").get()) {
             tables.forEach(record -> sortKeys.put(record.getString("n"), record.getString("k")));
         } catch (final Exception e) {
-            return List.of();
+            return new FlowsSchema.RepairPlan(List.of(), Map.of());
         }
         try (var cols = this.admin.queryRecords("SELECT table AS t, name AS n FROM system.columns"
                 + " WHERE database = '" + database + "'").get()) {
@@ -137,15 +157,16 @@ public final class TenantProvisioner {
                     .computeIfAbsent(record.getString("t"), table -> new java.util.LinkedHashSet<>())
                     .add(record.getString("n")));
         } catch (final Exception e) {
-            return List.of();
+            return new FlowsSchema.RepairPlan(List.of(), Map.of());
         }
         sortKeys.keySet().retainAll(FlowsSchema.rollupTableNames());
 
         final FlowsSchema.RepairPlan plan = FlowsSchema.planRollupRepair(sortKeys, columns);
         plan.refused().forEach((rollup, why) ->
                 log.warn("Rollup {} left as it is: {}.", rollup, why));
-        return plan.repair();
+        return plan;
     }
+
 
     /**
      * The config stanza plus whether this run created the schema — the caller needs the latter to
@@ -164,11 +185,6 @@ public final class TenantProvisioner {
     }
 
     /**
-     * Whether every rollup target <em>and</em> its materialized view is present. Both halves are
-     * checked because they fail independently: an interrupted bootstrap can leave the target table
-     * created and the view not, which reports as a healthy-looking empty rollup.
-     */
-    /**
      * The rollups whose materialized view is present, so the repair can skip {@code MODIFY QUERY}
      * for the rest.
      *
@@ -177,6 +193,11 @@ public final class TenantProvisioner {
      * {@code ALTER TABLE <rollup>_mv MODIFY QUERY} against a view that does not exist, fail with
      * {@code UNKNOWN_TABLE}, and abort the run — before the {@code CREATE} that would have made the
      * view, with the correct SELECT, moments later.</p>
+     *
+     * <p>Not called on the bootstrap path: the database itself does not exist yet there, and
+     * {@link #flowsTableExists} guards its own {@code EXISTS TABLE} with an {@code EXISTS DATABASE}
+     * for exactly that reason. Nothing can be present in a database that has not been created, so
+     * the answer is the empty set without asking.</p>
      */
     private Set<String> existingRollupViews(final String database) {
         return FlowsSchema.rollupTableNames().stream()
@@ -184,6 +205,11 @@ public final class TenantProvisioner {
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
+    /**
+     * Whether every rollup target <em>and</em> its materialized view is present. Both halves are
+     * checked because they fail independently: an interrupted bootstrap can leave the target table
+     * created and the view not, which reports as a healthy-looking empty rollup.
+     */
     private boolean rollupsExist(final String database) {
         return FlowsSchema.rollupTableNames().stream()
                 .allMatch(rollup -> exists("EXISTS TABLE " + FlowsSchema.qualifiedRollup(database, rollup))

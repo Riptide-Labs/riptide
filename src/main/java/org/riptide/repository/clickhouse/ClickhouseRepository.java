@@ -165,8 +165,15 @@ public class ClickhouseRepository implements FlowRepository {
             // select from flows, so creating them against a stale or mis-provisioned table would
             // fail with an error about the view rather than about the real problem. Targets before
             // views — a view cannot be created before the table its TO clause names.
-            for (final String ddl : FlowsSchema.createRollupTables(this.config.getDatabase())) {
-                this.client.execute(ddl).get();
+            //
+            // Guarded like the three steps below it. This one is a CREATE ... IF NOT EXISTS that
+            // no-ops on every start after the first, which is exactly why leaving it bare was easy
+            // to overlook — but a missing CREATE TABLE grant, a disk or quota failure, or a
+            // replicated-DDL timeout all reach it, and unguarded any of them stops the collector
+            // over a rollup that raw flows can answer for.
+            for (final Map.Entry<String, String> table : FlowsSchema.createRollupTablesByRollup(
+                    this.config.getDatabase()).entrySet()) {
+                repair(unrepaired, table.getKey(), table.getValue(), "target table could not be created");
             }
 
             // Targets are repaired BEFORE the views are created, not after. CREATE MATERIALIZED
@@ -212,6 +219,14 @@ public class ClickhouseRepository implements FlowRepository {
             // already current, plans no repair for it, and never fixes the view.
             final Map<String, String> modifies = FlowsSchema.modifyRollupViews(this.config.getDatabase());
             for (final String rollup : planViewRepair()) {
+                if (unrepaired.contains(rollup)) {
+                    // Its target did not get the column, so re-pointing the view would not fail —
+                    // MODIFY QUERY does not validate — it would produce a view aggregating by a
+                    // dimension the target discards on every insert. Wasted work at best, and the
+                    // "working rollup answering with the wrong grain" modifyRollupViews warns about
+                    // at worst.
+                    continue;
+                }
                 repair(unrepaired, rollup, modifies.get(rollup), "materialized view could not be repaired");
             }
         }
@@ -238,15 +253,18 @@ public class ClickhouseRepository implements FlowRepository {
      *                   not classify as drifted
      */
     private void repair(final Set<String> unrepaired, final String rollup, final String ddl,
-            final String what) {
+            final String what) throws InterruptedException {
         try {
             this.client.execute(ddl).get();
         } catch (final InterruptedException e) {
-            // Startup is being torn down; the flag is the only correct response. Same discipline as
-            // persist() and verifyRollupShapes() — a swallowed interrupt during shutdown leaves the
-            // thread running work nobody is waiting for.
+            // Startup is being torn down. Restore the flag and RETHROW, like persist() does —
+            // swallowing it here would leave every later execute() failing instantly on the
+            // already-interrupted thread, silently (this branch does not log), so start() would
+            // return "successfully" having declined all four rollups on a collector that is being
+            // shut down anyway. An interrupt is not a rollup problem and must not be recorded as
+            // one.
             Thread.currentThread().interrupt();
-            unrepaired.add(rollup);
+            throw e;
         } catch (final Exception e) {
             log.warn("Rollup {}: {}: {}. Ingestion is unaffected; long-range queries fall back to raw"
                     + " flows until it is repaired.", rollup, what, e.getMessage());
@@ -396,8 +414,8 @@ public class ClickhouseRepository implements FlowRepository {
         try {
             results = RollupShapeCheck.compare(this.config.getDatabase(), readRollupSelects(), readRollupColumns());
         } catch (final InterruptedException e) {
-            // Startup is being torn down. Restore the flag and leave the verdict at its default —
-            // every rollup usable — rather than judging on a half-read catalog.
+            // Startup is being torn down. Restore the flag and record only what the repair already
+            // knew it could not fix, rather than judging anything on a half-read catalog.
             Thread.currentThread().interrupt();
             RollupAvailability.recordDrifted(unrepaired);
             return;
@@ -409,8 +427,9 @@ public class ClickhouseRepository implements FlowRepository {
             // fails startup — the exact outage the javadoc above promises this check cannot cause,
             // and invisible to the reader and to SpotBugs alike. A collector that cannot read
             // system.tables must still collect.
-            log.warn("Could not verify rollup shapes in database '{}': {}. Ingestion is unaffected and"
-                    + " queries continue to use the rollups.", this.config.getDatabase(), e.getMessage());
+            log.warn("Could not verify rollup shapes in database '{}': {}. Ingestion is unaffected;"
+                    + " queries use every rollup except the {} this start could not repair.",
+                    this.config.getDatabase(), e.getMessage(), unrepaired);
             RollupAvailability.recordDrifted(unrepaired);
             return;
         }
@@ -434,7 +453,17 @@ public class ClickhouseRepository implements FlowRepository {
                 case UNVERIFIABLE -> log.warn("Rollup {} could not be verified: {}. It is still used"
                         + " for queries — an unverified rollup is not a known-bad one.",
                         result.rollup(), result.detail());
-                case MATCHES -> log.debug("Rollup {} matches this version's schema.", result.rollup());
+                case MATCHES -> {
+                    // Clears a failed repair. Every DDL above is a CREATE ... IF NOT EXISTS or an
+                    // idempotent ALTER, so most of them no-op on a healthy deployment — and a
+                    // connection reset on a statement that would have changed nothing must not cost
+                    // a correct rollup its place in the query path until the next restart. MATCHES
+                    // compares the target's columns AND the view's stored SELECT against this
+                    // version, so it is a stronger statement than any inference from which
+                    // statement failed.
+                    drifted.remove(result.rollup());
+                    log.debug("Rollup {} matches this version's schema.", result.rollup());
+                }
             }
         }
         RollupAvailability.recordDrifted(drifted);

@@ -123,6 +123,18 @@ public final class FlowsSchema {
     }
 
     /**
+     * As {@link #createRollupTables}, keyed by rollup so a caller can attribute a failure to one
+     * rollup and carry on with the rest instead of failing the whole start.
+     */
+    public static Map<String, String> createRollupTablesByRollup(final String database) {
+        final Map<String, String> tables = new LinkedHashMap<>();
+        for (final Rollup rollup : ROLLUPS) {
+            tables.put(rollup.table(), rollupTable(database, rollup, DEFAULT_ROLLUP_TTL_DAYS));
+        }
+        return Collections.unmodifiableMap(tables);
+    }
+
+    /**
      * {@code CREATE MATERIALIZED VIEW IF NOT EXISTS … TO <target>} for every rollup. Must be emitted
      * <em>after</em> {@link #createRollupTables} — a view whose {@code TO} target does not yet exist
      * fails to create.
@@ -197,10 +209,14 @@ public final class FlowsSchema {
      * The in-place repair for every rollup target: one {@code ALTER} per rollup that adds any
      * missing dimension and sets the sorting key to this version's (#470).
      *
-     * <p>Emitted unconditionally on every start, like {@link #addAdditiveColumns}, because it is
-     * idempotent: {@code ADD COLUMN IF NOT EXISTS} no-ops on a column that exists, and
-     * {@code MODIFY ORDER BY} to the key a table already has is accepted and changes nothing. There
-     * is therefore nothing to detect and nothing to classify before running it.</p>
+     * <p><b>Emitted only for the rollups {@link #planRollupRepair} selects</b>, never unconditionally
+     * — both callers gate it, and classifying first is the point. The statement is idempotent where
+     * it applies ({@code ADD COLUMN IF NOT EXISTS} no-ops, and {@code MODIFY ORDER BY} to the key a
+     * table already has changes nothing), but idempotent is not the same as safe: on a table whose
+     * key this version would <em>shrink</em> the server accepts it and silently changes the grain
+     * (#571 froze the primary key, so the prefix rule no longer catches it), and on a table already
+     * carrying the column outside its sorting key it fails with Code 36 on every start forever. The
+     * planner exists for both.</p>
      *
      * <p><b>One statement per rollup, not one per column.</b> ClickHouse rejects a sorting key that
      * gains a column the same {@code ALTER} did not add — <em>"Existing column X is used in the
@@ -279,6 +295,26 @@ public final class FlowsSchema {
                 refused.put(table, "sorting key (" + live + ") cannot become (" + String.join(", ", wantedKey)
                         + ") in place: that is not an append, so the grain would change and existing"
                         + " rows would not be re-aggregated");
+                continue;
+            }
+
+            // A column that already exists but sits OUTSIDE the sorting key cannot be added to it.
+            // ClickHouse rejects the pair as Code 36 ("Existing column X is used in the expression
+            // that was added to the sorting key") because MODIFY ORDER BY may only name columns the
+            // same ALTER adds — verified on 26.7. Riptide never produces this state, but an operator
+            // who hand-adds the column after reading that riptide appends it does, and planning the
+            // repair anyway would fail identically on every start and every onboard run forever with
+            // nothing saying why. Refusing names the remedy instead.
+            final Set<String> liveColumns = liveDimensionNames.getOrDefault(table, Set.of());
+            final List<String> outsideKey = wantedKey.stream()
+                    .filter(column -> !liveKey.contains(column))
+                    .filter(liveColumns::contains)
+                    .toList();
+            if (!outsideKey.isEmpty()) {
+                refused.put(table, outsideKey + " already exist as columns but are not in the sorting"
+                        + " key (" + live + "), and ClickHouse cannot add an existing column to a"
+                        + " sorting key — drop " + outsideKey + " from " + table + " and restart, or"
+                        + " drop and re-create the rollup to have it rebuilt");
                 continue;
             }
             repair.add(table);

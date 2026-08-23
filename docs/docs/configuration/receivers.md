@@ -217,8 +217,8 @@ Counters stored here are always as the exporter reported them, so a query ported
 
 The 1-minute rollups carry `samplingInterval` as a dimension, so the correction is the same expression against either table:
 
-:::note Requires the rollups to carry the rate
-The column arrived with riptide 0.11.0. A deployment whose collector runs in validate mode (`manage-schema: false`, which is the multi-tenant default) gains it only when an admin re-runs `riptide onboard --create-schema` — until then the query below fails with `UNKNOWN_IDENTIFIER: samplingInterval`, and riptide answers long-range queries from raw `flows` instead of the rollups. See [ClickHouse: upgrading an existing deployment](./clickhouse.md#rollups).
+:::note[Requires the rollups to carry the rate]
+A deployment whose collector runs in validate mode (`manage-schema: false`, which is the multi-tenant default) gains it only when an admin re-runs `riptide onboard` — until then the query below fails with `UNKNOWN_IDENTIFIER: samplingInterval`, and riptide answers long-range queries from raw `flows` instead of the rollups. See [ClickHouse: upgrading an existing deployment](./clickhouse.md#rollups).
 :::
 
 ```sql
@@ -233,7 +233,7 @@ The `samplingInterval > 0` clause matters over exactly this kind of window. A 90
 
 That matters because raw `flows` is kept 30 days by default and the rollups 365. Before the rate was carried, sampling-corrected volume was simply unanswerable beyond the raw table's retention.
 
-:::danger Only correct if you receive no sFlow
+:::danger[Only correct if you receive no sFlow]
 sFlow already scales its counters at ingest (`bytes = frame_length × sampling_rate`) and still reports its rate, so multiplying an sFlow row by its interval double-counts it. Against raw `flows` you exclude those rows with `WHERE flowProtocol != 'SFLOW'`.
 
 **You cannot write that filter against a rollup.** No rollup carries `flowProtocol` — it is not in the shared preamble and no rollup adds it — so on a deployment receiving both sFlow and NetFlow/IPFIX, the rollup form of this query inflates every sFlow byte by its sampling rate and there is no way to exclude them.
@@ -243,16 +243,10 @@ If you receive sFlow alongside other protocols, do the correction against raw `f
 
 The rate is a **dimension**, not a pre-scaled measure. A pre-scaled `bytesScaled` column would read `0` for every row aggregated before it existed, so a `SUM` spanning the upgrade would come back quietly too small with nothing marking where. Carrying the rate has no such failure, because `0` is not a rate anything can produce.
 
-:::warning Rows aggregated before the rate was carried read `samplingInterval = 0`
+:::warning[Rows aggregated before the rate was carried read `samplingInterval = 0`]
 A rollup gains a dimension in place, and rows already aggregated cannot be revisited — a materialized view does not backfill. Those rows read the column's type default, which is `0`.
 
 `0` is never a real rate: riptide admits only finite values `>= 1.0`, and records `1.0` when nothing states one. So the boundary is a predicate rather than a date you have to remember:
-
-:::caution One exception, in raw `flows` only
-Before 0.11.0 the sFlow parser wrote its wire rate through without that check, so an out-of-spec agent sending `0` produced raw rows carrying `samplingInterval = 0`. Those rows are real traffic, and they linger for the raw table's retention (30 days by default) after the upgrade.
-
-Applying `samplingInterval > 0` to raw `flows` therefore drops that exporter's traffic silently. Check with `SELECT count() FROM riptide.flows WHERE samplingInterval = 0` before relying on the predicate against the raw table; in the rollups `0` means only what it says here. Backfilling a rollup from raw with `INSERT INTO … SELECT` carries those rows across, where they become indistinguishable from pre-append ones.
-:::
 
 ```sql
 -- only rows aggregated since the rate was carried
@@ -260,6 +254,14 @@ WHERE samplingInterval > 0
 ```
 
 Riptide does **not** apply that filter for you. An implicit one would silently drop the older rows, which is the same class of quiet wrongness as a pre-scaled measure. Add it when you want the corrected total, leave it off when you want everything.
+:::
+
+:::caution[In raw `flows`, `0` has one other source]
+Until the release that carried the rate into the rollups, the sFlow parser passed its wire rate through unchecked, so an out-of-spec agent sending `0` produced raw rows carrying `samplingInterval = 0`. Those rows persist for the raw table's retention (30 days by default) after the upgrade.
+
+They carry no volume — the same unchecked rate scaled their counters, so they were stored as `bytes = 0, packets = 0`. `sum(bytes * samplingInterval)` is therefore unaffected either way, but a `count()` or `sum(flowCount)` over raw `flows` with `WHERE samplingInterval > 0` drops them, and they are real flow records. Check with `SELECT count() FROM riptide.flows WHERE samplingInterval = 0`.
+
+In the rollups, `0` means only what the warning above says. Backfilling a rollup from raw with `INSERT INTO … SELECT` carries those rows across, where the two meanings become indistinguishable.
 :::
 
 The rate is carried for correctness, not offered as something to group by — asking riptide's tools to group by `samplingInterval` answers from raw `flows`, not from a rollup.

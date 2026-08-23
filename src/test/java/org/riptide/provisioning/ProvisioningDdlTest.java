@@ -138,9 +138,29 @@ class ProvisioningDdlTest {
         assertThat(ProvisioningDdl.bootstrapRollups("riptide"))
                 .as("no view may be created before the repair has run")
                 .noneMatch(s -> s.startsWith("CREATE MATERIALIZED VIEW"));
-        assertThat(ProvisioningDdl.bootstrapRollupViews("riptide"))
+        assertThat(ProvisioningDdl.bootstrapRollupViews("riptide", Set.of()))
                 .hasSize(FlowsSchema.rollupTableNames().size())
                 .allSatisfy(s -> assertThat(s).startsWith("CREATE MATERIALIZED VIEW IF NOT EXISTS"));
+    }
+
+    /**
+     * A refused rollup gets no view.
+     *
+     * <p>Its target is not being repaired, so it still lacks the dimension the view's SELECT names,
+     * and {@code CREATE MATERIALIZED VIEW IF NOT EXISTS} validates that SELECT even when it no-ops:
+     * the statement fails with {@code THERE_IS_NO_COLUMN} and takes the whole onboard run with it.
+     * Losing the roles, users and password rotation because one rollup was deliberately left alone
+     * is a far worse trade than leaving that rollup empty — which is what refusing it already
+     * meant.</p>
+     */
+    @Test
+    void aRefusedRollupGetsNoView() {
+        final String refused = FlowsSchema.rollupTableNames().getFirst();
+
+        final List<String> sql = ProvisioningDdl.bootstrapRollupViews("riptide", Set.of(refused));
+
+        assertThat(sql).hasSize(FlowsSchema.rollupTableNames().size() - 1);
+        assertThat(sql).noneMatch(s -> s.contains(refused + "_mv"));
     }
 
     /**

@@ -111,7 +111,7 @@ reads a few thousand pre-aggregated rows instead of scanning every flow.
 | `flows_by_exporter_iface_1m` | `exporterAddr`, `exporterName`, `inputSnmp`, `outputSnmp`, `samplingInterval` |
 | `flows_by_geo_asn_1m` | `srcAs`, `dstAs`, `srcCountry`, `dstCountry`, `samplingInterval` |
 
-`samplingInterval` is carried so sampling-corrected volume stays answerable beyond the raw table's retention, not as something to group by — see [Sampling-corrected volume](./receivers.md#sampling-corrected-volume-beyond-raw-retention). It was appended in 0.11.0; rows aggregated before that read `0`.
+`samplingInterval` is carried so sampling-corrected volume stays answerable beyond the raw table's retention, not as something to group by — see [Sampling-corrected volume](./receivers.md#sampling-corrected-volume-beyond-raw-retention). Rows aggregated before it was appended read `0`.
 
 Every rollup carries the same preamble — `tenant`, `organisation`, `timestamp`, `zone` — and the
 same measures: `bytes`, `packets`, `flowCount`, plus the directional split `bytesIn`/`bytesOut`
@@ -134,7 +134,7 @@ Each rollup `X` is fed by a materialized view named `X_mv`. Query the table, nev
 
 ### Rollups gain dimensions in place
 
-:::warning Provisioned deployments must re-run `onboard` after an upgrade that adds a dimension
+:::warning[Provisioned deployments must re-run `onboard` after an upgrade that adds a dimension]
 A collector in validate mode (`manage-schema: false`) issues no DDL, so it cannot repair its own rollups. Until `riptide onboard` is re-run, riptide reports all four rollups as not matching this version and **declines them at query time** — so every query spanning 60 minutes or more is answered from raw `flows` and silently truncated at the raw retention window, while the documentation says the rollups carry the new dimension.
 
 Manage-mode deployments repair themselves on the next start and need nothing.
@@ -165,7 +165,7 @@ Two messages are possible, and they mean different things.
 
 **"does not match this version's schema"** — the rollup's columns, their types, or its view's SELECT differ from what this version emits. Ingestion is unaffected: raw `flows` still receives every flow, and a rollup is a query-path optimisation, not a collection path. Long-range queries stop using that rollup and are answered from raw `flows` instead. The other rollups keep serving.
 
-:::warning The fallback is bounded by raw retention
+:::warning[The fallback is bounded by raw retention]
 Raw `flows` is kept for 30 days by default; the rollups are kept for 365. Part of why the rollups exist is that long-range queries outlive the raw table's expiry. So a query that falls back and reaches further back than the raw retention comes back **incomplete**, not merely slower — it returns the rows that still exist and says nothing about the rest. A 90-day query answered from a 30-day table looks like a complete answer covering a third of the range.
 
 Treat a drifted rollup as something to repair promptly rather than to live with, and until then keep queries against it inside the raw retention window.

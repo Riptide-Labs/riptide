@@ -49,6 +49,10 @@ public class RollupRepairIT {
     private static final GenericContainer<?> CLICKHOUSE = new GenericContainer<>(ContainerImages.clickhouse())
             .withEnv("CLICKHOUSE_USER", "riptide")
             .withEnv("CLICKHOUSE_PASSWORD", "riptide")
+            // So one test can create a deliberately under-privileged user and watch a DDL statement
+            // actually fail. Without a real ACCESS_DENIED there is no way to reach the "repair could
+            // not complete" path, which is why it went untested for three rounds.
+            .withEnv("CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT", "1")
             .withExposedPorts(8123)
             .waitingFor(Wait.forHttp("/ping").forPort(8123).forStatusCode(200));
 
@@ -104,6 +108,85 @@ public class RollupRepairIT {
                 new ClickhouseRepository$FlowMapperImpl(), config(false), RESOLVERS);
         writer.start();
         return writer;
+    }
+
+    /**
+     * A rollup whose DDL fails is kept out of the query path, and does not stop the collector.
+     *
+     * <p>Both halves need a statement that genuinely fails, which needs a user that genuinely lacks
+     * a privilege — the reason this sat untested through three review rounds. The user here may
+     * create tables but not views, so the four targets are created at this version's shape and none
+     * of their views can be.</p>
+     *
+     * <p>That combination is precisely the one the shape check does <em>not</em> catch: columns
+     * match, the view is invisible, and the verdict is {@code UNVERIFIABLE}, which is deliberately
+     * not declined ("an unverified rollup is not a known-bad one"). So the only thing standing
+     * between an empty rollup and every long-range query is the repair recording what it could not
+     * do. Deleting that seed leaves every other rollup test green.</p>
+     */
+    @Test
+    void aRollupWhoseDdlFailedIsDeclinedAndStartupSurvivesIt() throws Exception {
+        admin.execute("DROP USER IF EXISTS noviews").get();
+        admin.execute("CREATE USER noviews IDENTIFIED WITH plaintext_password BY 'noviews'").get();
+        // Everything manage mode needs, then the creation privilege revoked on the four _mv names
+        // alone. Revoked rather than withheld because a materialized view with a TO clause is
+        // authorised as a TABLE, not as a VIEW — granting CREATE TABLE for the targets grants it for
+        // their views too, which is how the first attempt at this test passed while proving nothing.
+        admin.execute("GRANT SELECT, INSERT, CREATE DATABASE, CREATE TABLE, DROP TABLE, CREATE VIEW,"
+                + " DROP VIEW, ALTER, SHOW ON " + DATABASE + ".* TO noviews").get();
+        for (final String rollup : FlowsSchema.rollupTableNames()) {
+            admin.execute("REVOKE CREATE TABLE, CREATE VIEW ON " + DATABASE + "." + rollup
+                    + "_mv FROM noviews").get();
+        }
+
+        final var config = config(true);
+        config.setUsername(SecretRef.of("noviews"));
+        config.setPassword(SecretRef.of("noviews"));
+        final var collector = new ClickhouseRepository(
+                new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
+
+        collector.start();
+
+        assertThat(selectOf(ROLLUP + "_mv"))
+                .as("the view really could not be created — otherwise this test proves nothing")
+                .isNull();
+        assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, ROLLUP)))
+                .as("a rollup nothing is writing to must not answer queries, even though its target's"
+                        + " columns match and the shape check therefore calls it UNVERIFIABLE")
+                .isFalse();
+    }
+
+    /**
+     * A rollup the check independently verifies as correct stays usable, even if a statement failed.
+     *
+     * <p>The counterweight to the test above. Every rollup DDL is a {@code CREATE … IF NOT EXISTS}
+     * or an idempotent {@code ALTER}, so on a healthy deployment most of them no-op — and a
+     * connection reset, a lock timeout or a missing grant on a statement that would have changed
+     * nothing must not cost a correct rollup its place in the query path until the next restart.
+     * {@code MATCHES} compares the target's columns and the view's stored SELECT against this
+     * version, which is a stronger statement than any inference from which statement failed.</p>
+     */
+    @Test
+    void aRollupThatVerifiesCleanIsNotDeclinedByAFailedNoOp() throws Exception {
+        repository().start();                                   // everything correct, as admin
+        admin.execute("DROP USER IF EXISTS noalter").get();
+        admin.execute("CREATE USER noalter IDENTIFIED WITH plaintext_password BY 'noalter'").get();
+        admin.execute("GRANT SELECT, INSERT, CREATE DATABASE, CREATE TABLE, DROP TABLE, CREATE VIEW,"
+                + " DROP VIEW, ALTER, SHOW ON " + DATABASE + ".* TO noalter").get();
+        // The CREATE for this one view will be denied — and it is a statement that would have
+        // no-oped, because the view is already there and already right.
+        admin.execute("REVOKE CREATE TABLE, CREATE VIEW ON " + DATABASE + "." + ROLLUP
+                + "_mv FROM noalter").get();
+
+        final var config = config(true);
+        config.setUsername(SecretRef.of("noalter"));
+        config.setPassword(SecretRef.of("noalter"));
+        new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS).start();
+
+        assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, ROLLUP)))
+                .as("a rollup whose shape verifies clean must keep answering queries — a failed"
+                        + " no-op is not evidence of anything")
+                .isTrue();
     }
 
     /** A rollup as an older riptide would have left it: one dimension short, view to match. */
@@ -306,6 +389,43 @@ public class RollupRepairIT {
                 .isEqualTo(before);
         assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, ROLLUP)))
                 .as("and the query path declines it instead")
+                .isFalse();
+    }
+
+    /**
+     * A view selecting a dimension this version does not know is a downgrade, and must be left
+     * alone rather than re-pointed at the narrower SELECT.
+     *
+     * <p>This is the one direction that destroys data instead of withholding it. ClickHouse accepts
+     * a {@code MODIFY QUERY} that drops an output column — it does not validate against the target —
+     * so the repair would succeed silently and every row aggregated afterwards would take the
+     * column's type default. For {@code samplingInterval} that default is {@code 0}, the value
+     * reserved for rows predating the append, so live traffic would become permanently
+     * indistinguishable from pre-append rows.</p>
+     *
+     * <p>Simulated by adding a column this version has never heard of, since the real trigger is a
+     * future version's dimension seen by this one.</p>
+     */
+    @Test
+    void aViewFromANewerVersionIsLeftAloneRatherThanNarrowed() throws Exception {
+        repository().start();
+        final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
+        final String view = FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP);
+        admin.execute("ALTER TABLE " + target + " ADD COLUMN IF NOT EXISTS fromTheFuture UInt8").get();
+        final String wider = FlowsSchema.rollupSelects(DATABASE).get(ROLLUP)
+                .replace("SELECT", "SELECT toUInt8(0) AS fromTheFuture,");
+        admin.execute("ALTER TABLE " + view + " MODIFY QUERY " + wider).get();
+        final String before = selectOf(ROLLUP + "_mv");
+        assertThat(before).contains("fromTheFuture");
+
+        repository().start();
+
+        assertThat(selectOf(ROLLUP + "_mv"))
+                .as("taking a dimension away would write this version's defaults over rows that mean"
+                        + " something else")
+                .isEqualTo(before);
+        assertThat(RollupAvailability.usable(target))
+                .as("and the rollup is declined rather than quietly narrowed")
                 .isFalse();
     }
 
