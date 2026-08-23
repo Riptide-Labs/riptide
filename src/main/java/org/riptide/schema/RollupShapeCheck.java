@@ -87,15 +87,21 @@ public final class RollupShapeCheck {
      *                       absent from this map was <em>not visible</em>, which is not the same as
      *                       missing — see {@link #normalise}.
      * @param liveColumns    rollup target table to its column names, from {@code system.columns}
+     * @param liveSortKeys   rollup target table to its {@code system.tables.sorting_key}. A rollup
+     *                       absent from this map has an unread key, which is reported rather than
+     *                       assumed correct — see {@link #compareOne}.
      */
     public static List<Result> compare(final String database,
             final Map<String, String> liveSelects,
-            final Map<String, Map<String, String>> liveColumns) {
+            final Map<String, Map<String, String>> liveColumns,
+            final Map<String, String> liveSortKeys) {
         final Map<String, String> intendedSelects = FlowsSchema.rollupSelects(database);
+        final Map<String, String> intendedSortKeys = FlowsSchema.rollupSortKeys();
         final List<Result> results = new ArrayList<>();
         for (final var intended : FlowsSchema.rollupColumns().entrySet()) {
             results.add(compareOne(intended.getKey(), intended.getValue(),
-                    intendedSelects.get(intended.getKey()), liveSelects, liveColumns));
+                    intendedSelects.get(intended.getKey()), liveSelects, liveColumns,
+                    intendedSortKeys.get(intended.getKey()), liveSortKeys));
         }
         return List.copyOf(results);
     }
@@ -104,7 +110,9 @@ public final class RollupShapeCheck {
             final Map<String, String> intendedColumns,
             final String intendedSelect,
             final Map<String, String> liveSelects,
-            final Map<String, Map<String, String>> liveColumns) {
+            final Map<String, Map<String, String>> liveColumns,
+            final String intendedSortKey,
+            final Map<String, String> liveSortKeys) {
         final Map<String, String> live = liveColumns.get(rollup);
         if (live == null) {
             // Not merely unknown: a query routed here would fail with UNKNOWN_TABLE or
@@ -148,6 +156,31 @@ public final class RollupShapeCheck {
             return new Result(rollup, Status.DRIFTED, detail.toString());
         }
 
+        // The sorting key, and NOT because it is tidy to check everything. A target can carry every
+        // intended column, at the right type, with a view selecting exactly this version's SELECT,
+        // and still have the rate OUTSIDE its sorting key — a state ClickHouse cannot repair
+        // (Code 36) and an operator can reach by hand. There the rate is a plain numeric column of a
+        // SummingMergeTree, so the engine SUMS IT across merges: sum(bytes * samplingInterval)
+        // inflated by an arbitrary factor, and samplingInterval > 0 no longer meaning what the
+        // schema says. Columns and SELECT both compare clean, so without this the verdict is
+        // MATCHES and the rollup answers every long-range query with a wrong number.
+        //
+        // Checked from the live catalog rather than remembered by whichever code path did the
+        // refusing: a validate-mode collector issues no DDL and computes no repair plan at all, and
+        // that is precisely the deployment shape that cannot fix itself.
+        final String liveSortKey = liveSortKeys.get(rollup);
+        if (liveSortKey == null) {
+            return new Result(rollup, Status.UNVERIFIABLE,
+                    "sorting key of " + rollup + " could not be read — the query path keeps using it,"
+                            + " but a key this version cannot see is a key it cannot vouch for");
+        }
+        if (!normaliseKey(intendedSortKey).equals(normaliseKey(liveSortKey))) {
+            return new Result(rollup, Status.DRIFTED,
+                    "target table sorting key is (" + liveSortKey + "), this version writes ("
+                            + intendedSortKey + "). A dimension outside the sorting key is summed by"
+                            + " SummingMergeTree rather than grouped by");
+        }
+
         final String mv = rollup + "_mv";
         final String liveSelect = liveSelects.get(mv);
         if (liveSelect == null) {
@@ -166,6 +199,11 @@ public final class RollupShapeCheck {
                     "materialized view " + mv + " selects a different shape than this version emits");
         }
         return new Result(rollup, Status.MATCHES, "");
+    }
+
+    /** A sorting key differing only in spacing or backticks is the same key. */
+    static String normaliseKey(final String key) {
+        return WHITESPACE_RUN.matcher(key.replace("`", "")).replaceAll(" ").trim();
     }
 
     /**

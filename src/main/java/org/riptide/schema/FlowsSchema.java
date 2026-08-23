@@ -112,6 +112,11 @@ public final class FlowsSchema {
         return ROLLUPS.stream().map(Rollup::table).toList();
     }
 
+    /** {@link #rollupTableNames()} as a set, for callers testing membership. */
+    public static Set<String> rollupTableNamesSet() {
+        return Set.copyOf(rollupTableNames());
+    }
+
     /** As {@link #createRollupTables(String, int)} with the default rollup retention. */
     public static List<String> createRollupTables(final String database) {
         return createRollupTables(database, DEFAULT_ROLLUP_TTL_DAYS);
@@ -138,6 +143,11 @@ public final class FlowsSchema {
      * {@code CREATE MATERIALIZED VIEW IF NOT EXISTS … TO <target>} for every rollup. Must be emitted
      * <em>after</em> {@link #createRollupTables} — a view whose {@code TO} target does not yet exist
      * fails to create.
+     *
+     * <p><b>Not for production callers.</b> Both real paths use {@link #createRollupViewsByRollup},
+     * which lets them skip a rollup whose target was refused; emitting all four unconditionally is
+     * how riptide once built the very view a refusal existed to prevent. This overload remains for
+     * tests that want the whole list.</p>
      */
     public static List<String> createRollupViews(final String database) {
         return ROLLUPS.stream().map(rollup -> rollupView(database, rollup)).toList();

@@ -74,7 +74,14 @@ public final class TenantProvisioner {
         // rollups existed has a perfectly good flows table and would otherwise pass the check above
         // while silently lacking them. Short-circuited on bootstrap — a database we are creating
         // right now cannot have rollups, so there is no point asking ClickHouse eight times.
-        final boolean rollupsMissing = bootstrap || !rollupsExist(spec.database());
+        // The plan is computed before the gate below, not after, because a REFUSED rollup must not
+        // count as missing. Its view is deliberately never created, so rollupsExist() would stay
+        // false forever and every later run — a password rotation, a re-issued config stanza —
+        // would fail demanding --create-schema for a state that flag cannot fix. Refusing a rollup
+        // must cost that rollup, not the tenant.
+        final Optional<FlowsSchema.RepairPlan> plan = plannedRollupRepair(spec.database());
+        final Set<String> refused = plan.map(p -> p.refused().keySet()).orElseGet(Set::of);
+        final boolean rollupsMissing = bootstrap || !rollupsExist(spec.database(), refused);
         if (rollupsMissing) {
             if (!createSchema) {
                 throw new ProvisioningException(
@@ -82,11 +89,7 @@ public final class TenantProvisioner {
                                 + " their materialized views — re-run with --create-schema to add"
                                 + " them. This creates tables and materialized views only; the flows"
                                 + " table and its data are untouched, and the rollups cover traffic"
-                                + " from creation onward (a materialized view does not backfill)."
-                                + " If a previous run reported a rollup as left alone, its view is"
-                                + " absent deliberately and --create-schema will not add it: fix"
-                                + " that rollup as the earlier message described, or this check"
-                                + " keeps reporting the rollups as missing", null);
+                                + " from creation onward (a materialized view does not backfill)", null);
             }
             statements.addAll(ProvisioningDdl.bootstrapRollups(spec.database()));
         }
@@ -99,13 +102,6 @@ public final class TenantProvisioner {
         // a view's SELECT names every dimension this version intends, and CREATE ... IF NOT EXISTS
         // validates it against the target even when it no-ops. Creating views first would abort the
         // run against a stale target — before the repair that would have fixed it.
-        // Optional, because "the catalog could not be read" and "there is nothing to repair" are
-        // the same empty plan and must not be. Unread, the repair list is empty while the view list
-        // — built from EXISTS probes, which do not go through system.tables — still names all four:
-        // that would re-point every view at a SELECT naming a column no target was altered to have.
-        // MODIFY QUERY does not validate, so the run would report success and drop the column on
-        // every insert.
-        final Optional<FlowsSchema.RepairPlan> plan = plannedRollupRepair(spec.database());
         final Set<String> viewsPresent = bootstrap ? Set.of() : existingRollupViews(spec.database());
         // Every present view that was not refused, not just the ones whose target is being altered.
         // A run that repaired a target and then failed before that rollup's MODIFY QUERY leaves the
@@ -131,8 +127,14 @@ public final class TenantProvisioner {
         // rollupsExist() true on their own. CREATE ... IF NOT EXISTS no-ops over the views that are
         // already there, so emitting all four is correct whenever any one of them is absent.
         if (rollupsMissing) {
+            // Skip-all when the plan could not be computed, the same way `repointable` above
+            // degrades. An unread catalog means no target was altered, so every CREATE would be
+            // validated against a possibly stale target — and CREATE ... IF NOT EXISTS DOES validate
+            // even when it no-ops, so one stale target aborts the run before ensureShared and
+            // onboardTenant. Degrading to "skip nothing" here would leave the tenant unprovisioned
+            // for the same reason a refused rollup once did.
             statements.addAll(ProvisioningDdl.bootstrapRollupViews(
-                    spec.database(), plan.map(p -> p.refused().keySet()).orElseGet(Set::of)));
+                    spec.database(), plan.isPresent() ? refused : FlowsSchema.rollupTableNamesSet()));
         }
         statements.addAll(ProvisioningDdl.ensureShared(spec.database(), spec.quotaBytes()));
         statements.addAll(ProvisioningDdl.onboardTenant(
@@ -221,9 +223,14 @@ public final class TenantProvisioner {
      * Whether every rollup target <em>and</em> its materialized view is present. Both halves are
      * checked because they fail independently: an interrupted bootstrap can leave the target table
      * created and the view not, which reports as a healthy-looking empty rollup.
+     *
+     * <p>Refused rollups are excluded from the question entirely. Their view is withheld on purpose,
+     * so counting them would make this permanently false and turn every later run into a demand for
+     * {@code --create-schema} that cannot help.</p>
      */
-    private boolean rollupsExist(final String database) {
+    private boolean rollupsExist(final String database, final Set<String> refused) {
         return FlowsSchema.rollupTableNames().stream()
+                .filter(rollup -> !refused.contains(rollup))
                 .allMatch(rollup -> exists("EXISTS TABLE " + FlowsSchema.qualifiedRollup(database, rollup))
                         && exists("EXISTS TABLE " + FlowsSchema.qualifiedRollupView(database, rollup)));
     }

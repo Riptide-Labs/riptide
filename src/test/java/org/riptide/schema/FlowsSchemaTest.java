@@ -8,6 +8,7 @@ package org.riptide.schema;
 import org.junit.jupiter.api.Test;
 import org.riptide.mcp.service.QueryRouter;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -531,6 +532,47 @@ class FlowsSchemaTest {
      * forever would fail that legitimate change, with a message about sampling rates rather than
      * about the rule it was really enforcing.</p>
      */
+    @Test
+    void everyRollupSortsByTheFrozenKeyThenExactlyTheDeclaredAppendOrder() {
+        // The append log. Freezing the primary key moved the constraint off the region a NEW
+        // dimension actually lands in: everything past the frozen prefix became unpinned, so a
+        // dimension inserted between dstCountry and samplingInterval passed the build while being
+        // impossible to reach on an upgraded deployment (planRollupRepair refuses it, ClickHouse
+        // cannot MODIFY ORDER BY into the middle of a key). evolve-rollup-shape requires the BUILD
+        // to catch that, not the field.
+        //
+        // Appending a dimension means adding it to the END of a list here. Inserting it anywhere
+        // else fails, which is the whole point.
+        final Map<String, List<String>> appendedAfterTheFreeze = Map.of(
+                "flows_by_application_1m", List.of("samplingInterval"),
+                "flows_by_conversation_1m", List.of("samplingInterval"),
+                "flows_by_exporter_iface_1m", List.of("samplingInterval"),
+                "flows_by_geo_asn_1m", List.of("samplingInterval"));
+
+        FlowsSchema.rollupSortKeys().forEach((rollup, key) -> {
+            final String frozen = frozenPrimaryKeyOf(rollup);
+            assertThat(key).as("%s must still sort by its frozen key first", rollup).startsWith(frozen);
+            final List<String> appended = Arrays.stream(key.substring(frozen.length()).split(","))
+                    .map(String::trim)
+                    .filter(column -> !column.isEmpty())
+                    .toList();
+            assertThat(appended)
+                    .as("%s: a dimension appended after the freeze must go last and be declared"
+                            + " here; anything else is unreachable on an upgraded deployment", rollup)
+                    .isEqualTo(appendedAfterTheFreeze.get(rollup));
+        });
+    }
+
+    /** The frozen literals, shared with the primary-key pin above. */
+    private static String frozenPrimaryKeyOf(final String rollup) {
+        for (final String ddl : FlowsSchema.createRollupTables("riptide")) {
+            if (ddl.contains("`riptide`." + rollup + " (")) {
+                return keyList(ddl, "PRIMARY KEY (");
+            }
+        }
+        throw new IllegalArgumentException("no DDL for " + rollup);
+    }
+
     @Test
     void theSamplingRateIsAppendedBeyondTheFrozenPrimaryKey() {
         assertThat(FlowsSchema.rollupSortKeys())

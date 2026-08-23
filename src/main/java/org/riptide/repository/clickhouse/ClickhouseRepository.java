@@ -40,6 +40,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.regex.Matcher;
@@ -197,10 +198,14 @@ public class ClickhouseRepository implements FlowRepository {
             // ingestion outage over a rollup-only concern that verifyRollupShapes exists to rule
             // out, and it does not stop being one because the failing statement is a repair.
             final Map<String, String> alters = FlowsSchema.alterRollupTargets(this.config.getDatabase());
-            for (final String rollup : planTargetRepair(refused)) {
+            final Optional<List<String>> targets = planTargetRepair(refused);
+            for (final String rollup : targets.orElseGet(List::of)) {
                 repair(unrepaired, rollup, alters.get(rollup),
                         "target could not be brought up to date");
             }
+            // A start that could not read the catalog repairs nothing at all — not the targets it
+            // does not know about, and not the views whose targets it does not know about either.
+            final boolean planned = targets.isPresent();
 
             // Per rollup, and tolerant, because the SELECT now names a column an unrepaired target
             // can lack. CREATE MATERIALIZED VIEW IF NOT EXISTS validates its SELECT even when it
@@ -211,6 +216,18 @@ public class ClickhouseRepository implements FlowRepository {
             // unrepaired target could be missing.
             for (final Map.Entry<String, String> view : FlowsSchema.createRollupViewsByRollup(
                     this.config.getDatabase()).entrySet()) {
+                if (!planned || refused.contains(view.getKey())) {
+                    // `!planned` for the same reason as `refused`, one uncertainty further out: with
+                    // the catalog unread, a refused target is indistinguishable from a healthy one,
+                    // and this is the statement that turns that ignorance into durable wrong rows.
+                    // The third sibling of this rule, and the one that matters most. Against a
+                    // refused target the CREATE does not fail — a target carrying the rate outside
+                    // its sorting key HAS every column the SELECT names — so riptide would build the
+                    // very view the refusal exists to prevent, and the rows it writes are wrong and
+                    // outlive the process that declined the rollup. Declining a rollup while
+                    // creating its writer is not a decision, it is two halves of opposite ones.
+                    continue;
+                }
                 repair(unrepaired, view.getKey(), view.getValue(),
                         "materialized view could not be created against its current target");
             }
@@ -224,7 +241,7 @@ public class ClickhouseRepository implements FlowRepository {
             // and anything before its MODIFY QUERY throws, the next start sees a target that is
             // already current, plans no repair for it, and never fixes the view.
             final Map<String, String> modifies = FlowsSchema.modifyRollupViews(this.config.getDatabase());
-            for (final String rollup : planViewRepair()) {
+            for (final String rollup : planned ? planViewRepair() : List.<String>of()) {
                 if (unrepaired.contains(rollup) || refused.contains(rollup)) {
                     // Its target did not get the column, so re-pointing the view would not fail —
                     // MODIFY QUERY does not validate — it would produce a view aggregating by a
@@ -289,15 +306,21 @@ public class ClickhouseRepository implements FlowRepository {
      * turn a rollup-only concern into an ingestion outage, which is the same rule
      * {@link #verifyRollupShapes} states at length.</p>
      */
-    private List<String> planTargetRepair(final Set<String> refused) {
+    private Optional<List<String>> planTargetRepair(final Set<String> refused) {
         final FlowsSchema.RepairPlan plan;
         try {
             plan = FlowsSchema.planRollupRepair(readRollupSortKeys(), readRollupColumnNames());
         } catch (final Exception e) {
+            // Optional, because "unreadable" and "nothing to repair" are the same empty list and
+            // must not be. Unread, `refused` stays empty too — while planViewRepair does its OWN,
+            // independent read that can succeed where this one failed. An empty list would let the
+            // view repair re-point a view whose target this start never even inspected, and
+            // MODIFY QUERY does not validate, so it would succeed and drop the column on every
+            // insert. Nothing is repaired on a start that cannot see what it is repairing.
             log.warn("Could not read the rollup shapes in database '{}': {}. Ingestion is unaffected;"
-                    + " any pending repair is deferred to the next start.",
+                    + " no rollup is repaired on this start and any pending repair is deferred.",
                     this.config.getDatabase(), e.getMessage());
-            return List.of();
+            return Optional.empty();
         }
         // Refusing the ALTER is only half of it. The view's CREATE ... IF NOT EXISTS can still
         // SUCCEED against a refused target — a target carrying the column outside its sorting key
@@ -310,7 +333,7 @@ public class ClickhouseRepository implements FlowRepository {
             log.warn("Rollup {} left as it is: {}. It is kept out of the query path.", rollup, why);
         });
         plan.repair().forEach(rollup -> log.info("Rollup {}: appending this version's dimensions in place.", rollup));
-        return plan.repair();
+        return Optional.of(plan.repair());
     }
 
     /**
@@ -410,6 +433,13 @@ public class ClickhouseRepository implements FlowRepository {
         return keys;
     }
 
+    /** The rollups neither half of the repair could vouch for. */
+    private static Set<String> union(final Set<String> a, final Set<String> b) {
+        final Set<String> both = new LinkedHashSet<>(a);
+        both.addAll(b);
+        return both;
+    }
+
     /**
      * Compare every rollup's live shape against this version's and act on the result (#470).
      *
@@ -424,16 +454,11 @@ public class ClickhouseRepository implements FlowRepository {
      * swallowed: a deployment whose role cannot reach {@code system.tables} at all is exactly the
      * case this check must not turn into an outage.</p>
      */
-    private static Set<String> union(final Set<String> a, final Set<String> b) {
-        final Set<String> both = new LinkedHashSet<>(a);
-        both.addAll(b);
-        return both;
-    }
-
     private void verifyRollupShapes(final Set<String> unrepaired, final Set<String> refused) {
         final List<RollupShapeCheck.Result> results;
         try {
-            results = RollupShapeCheck.compare(this.config.getDatabase(), readRollupSelects(), readRollupColumns());
+            results = RollupShapeCheck.compare(this.config.getDatabase(), readRollupSelects(),
+                    readRollupColumns(), readRollupSortKeys());
         } catch (final InterruptedException e) {
             // Startup is being torn down. Restore the flag and record only what the repair already
             // knew it could not fix, rather than judging anything on a half-read catalog.
@@ -489,6 +514,13 @@ public class ClickhouseRepository implements FlowRepository {
         }
         // After the MATCHES pass, never before it: a refusal is structural and a clean-looking
         // shape must not clear it.
+        //
+        // Redundant today, and kept deliberately. Every refusal riptide currently issues is about
+        // the sorting key, which the shape check now compares itself — so removing this line breaks
+        // no test, and a mutation of it survives. It stays because the refusal reasons and the check
+        // are independent things that need not remain congruent: a future refusal that is not
+        // key-shaped would otherwise be silently unenforced, which is how this whole class of defect
+        // arose in the first place.
         drifted.addAll(refused);
         RollupAvailability.recordDrifted(drifted);
     }

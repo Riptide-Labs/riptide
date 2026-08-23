@@ -206,7 +206,7 @@ Stored counters are what the exporter reported, and the rate sits alongside them
 
 Four things to know before writing that query.
 sFlow already scales at ingest (`bytes = frame_length × sampling_rate`) and still reports its rate, so multiplying sFlow rows again double-counts them: filter them out, or restrict the query to NetFlow and IPFIX.
-The 1-minute rollups carry the rate too, so `SUM(bytes * samplingInterval)` is the same query against either table — see below.
+The 1-minute rollups carry the rate too, so `SUM(bytes * samplingInterval)` is the same query against either table — **unless you receive sFlow**, in which case the rollup form is unavailable rather than merely different, because no rollup carries `flowProtocol` to filter on. See below.
 A rate of `1` is not always a statement that the exporter does not sample — check `samplingProvenance` before treating one as trustworthy, and see [Where a rate came from](#where-a-rate-came-from).
 And if you are coming from **nfdump or pmacct**, check whether counters were being scaled for you.
 Both can multiply NetFlow v5 `bytes` and `packets` by the sampling rate at ingest (in pmacct via `nfacctd_renormalize`, in nfdump depending on how sampling was detected or forced with `-s`), where riptide never does.

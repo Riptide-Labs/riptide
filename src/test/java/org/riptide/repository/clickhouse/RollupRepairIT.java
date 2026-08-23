@@ -14,6 +14,7 @@ import org.riptide.e2e.ContainerImages;
 import org.riptide.provisioning.ProvisioningDdl;
 import org.riptide.schema.FlowsSchema;
 import org.riptide.schema.RollupAvailability;
+import org.riptide.schema.RollupShapeCheck;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
 import org.testcontainers.containers.GenericContainer;
@@ -183,6 +184,10 @@ public class RollupRepairIT {
         config.setPassword(SecretRef.of("noalter"));
         new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS).start();
 
+        assertThat(deniedCreateOf(ROLLUP + "_mv"))
+                .as("the CREATE must really have been denied, or this test passes vacuously: with"
+                        + " nothing recorded as unrepaired there is no clear for MATCHES to perform")
+                .isTrue();
         assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, ROLLUP)))
                 .as("a rollup whose shape verifies clean must keep answering queries — a failed"
                         + " no-op is not evidence of anything")
@@ -213,7 +218,10 @@ public class RollupRepairIT {
     void aRefusedRollupIsDeclinedAndItsViewIsNotRepointed() throws Exception {
         createRollupWithTheRateOutsideItsSortingKey();
         final String before = selectOf(ROLLUP + "_mv");
-        assertThat(before).doesNotContain("samplingInterval");
+        assertThat(RollupShapeCheck.normalise(before))
+                .as("the fixture must present the state the shape check would otherwise call MATCHES:"
+                        + " every column present, this version's SELECT, and only the key wrong")
+                .isEqualTo(RollupShapeCheck.normalise(FlowsSchema.rollupSelects(DATABASE).get(ROLLUP)));
 
         repository().start();
 
@@ -222,6 +230,32 @@ public class RollupRepairIT {
                 .isEqualTo(before);
         assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, ROLLUP)))
                 .as("a rollup riptide has refused to repair must not keep answering queries")
+                .isFalse();
+    }
+
+    /**
+     * riptide must not BUILD the view it has just refused to repair.
+     *
+     * <p>The sibling of the test above, with the view absent — and the case that actually bites,
+     * because {@code CREATE MATERIALIZED VIEW IF NOT EXISTS} <em>succeeds</em> here: a target
+     * carrying the rate outside its sorting key has every column the SELECT names. So riptide would
+     * create a view writing the rate into a non-key numeric column of a {@code SummingMergeTree},
+     * which the engine then sums across merges. Declining the rollup does not undo that: the rows
+     * are wrong, durable, and outlive the process that declined them.</p>
+     */
+    @Test
+    void aRefusedRollupGetsNoViewBuiltForIt() throws Exception {
+        createRollupWithTheRateOutsideItsSortingKey();
+        admin.execute("DROP VIEW " + FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP)).get();
+
+        repository().start();
+
+        assertThat(selectOf(ROLLUP + "_mv"))
+                .as("building the writer for a rollup just refused is two halves of opposite"
+                        + " decisions; the rows it would write are wrong and durable")
+                .isNull();
+        assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, ROLLUP)))
+                .as("and it stays out of the query path")
                 .isFalse();
     }
 
@@ -241,20 +275,16 @@ public class RollupRepairIT {
                 + " PRIMARY KEY (tenant, organisation, timestamp, zone, application, protocol)"
                 + " ORDER BY (tenant, organisation, timestamp, zone, application, protocol)"
                 + " PARTITION BY toYYYYMM(timestamp)").get();
-        admin.execute("CREATE MATERIALIZED VIEW " + view + " TO " + target + " AS SELECT"
-                + " f.tenant AS tenant, f.organisation AS organisation,"
-                + " toStartOfMinute(f.timestamp) AS timestamp, f.zone AS zone,"
-                + " ifNull(f.application, '') AS application, f.protocol AS protocol,"
-                + " sum(f.bytes) AS bytes, sum(f.packets) AS packets, count() AS flowCount,"
-                + " sumIf(f.bytes, f.direction = 'INGRESS') AS bytesIn,"
-                + " sumIf(f.bytes, f.direction = 'EGRESS') AS bytesOut,"
-                + " sumIf(f.packets, f.direction = 'INGRESS') AS packetsIn,"
-                + " sumIf(f.packets, f.direction = 'EGRESS') AS packetsOut"
-                + " FROM " + FlowsSchema.qualifiedFlows(DATABASE) + " AS f"
-                + " GROUP BY tenant, organisation, timestamp, zone, application, protocol").get();
+        // THIS VERSION'S SELECT, deliberately. An earlier draft gave the view a stale SELECT, which
+        // the shape check independently reports as DRIFTED — so the test passed without the refusal
+        // path ever being the reason, and deleting the decline left the whole suite green. With the
+        // current SELECT and every column present, columns and view both compare clean and the
+        // sorting key is the only thing wrong: exactly the state the refusal exists for.
+        admin.execute("CREATE MATERIALIZED VIEW " + view + " TO " + target + " AS "
+                + FlowsSchema.rollupSelects(DATABASE).get(ROLLUP)).get();
     }
 
-    /** A rollup as an older riptide would have left it: one dimension short, view to match. */
+    /** A rollup as an older riptide would have left it: two dimensions short, view to match. */
     private static void createRollupMissingItsLastDimension() throws Exception {
         final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
         final String view = FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP);
@@ -492,6 +522,18 @@ public class RollupRepairIT {
         assertThat(RollupAvailability.usable(target))
                 .as("and the rollup is declined rather than quietly narrowed")
                 .isFalse();
+    }
+
+    /** Whether the under-privileged user is genuinely refused the view CREATE it just attempted. */
+    private static boolean deniedCreateOf(final String view) throws Exception {
+        try (var records = admin.queryRecords("SELECT count() AS c FROM system.grants"
+                + " WHERE user_name = 'noalter' AND access_type IN ('CREATE TABLE', 'CREATE VIEW')"
+                + " AND table = '" + view + "' AND is_partial_revoke = 1").get()) {
+            for (final var record : records) {
+                return record.getLong("c") > 0;
+            }
+        }
+        return false;
     }
 
     private static String selectOf(final String view) throws Exception {
