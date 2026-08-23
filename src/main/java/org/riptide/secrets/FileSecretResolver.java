@@ -12,12 +12,17 @@ import java.io.IOException;
 import java.io.StringReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 
 /**
  * Resolves {@code file:///path} (whole file, trimmed) or {@code file:///path#key}
  * (a key inside a properties file).
+ *
+ * <p>A key the file declares more than once is refused rather than collapsed to the last
+ * declaration — see {@link DeclarationCounting}.</p>
  *
  * <p>When {@code riptide.secrets.allowed-paths} is set, only files below one of the listed
  * directories are readable — the same sandboxing idea as Kafka's {@code allowed.paths}.</p>
@@ -71,16 +76,82 @@ public class FileSecretResolver implements SecretResolver {
             return content.trim();
         }
 
-        final Properties properties = new Properties();
+        final DeclarationCounting properties = new DeclarationCounting();
         try {
             properties.load(new StringReader(content));
         } catch (IOException e) {
             throw new IllegalArgumentException("Cannot parse properties for secret ref " + ref, e);
         }
+
+        final int declared = properties.declarations.getOrDefault(ref.getKey(), 0);
+        if (declared > 1) {
+            throw new IllegalArgumentException("Key '" + ref.getKey() + "' is declared " + declared
+                    + " times for secret ref " + ref + " — riptide will not guess which is meant."
+                    + " Keep one, or put this secret in its own file.");
+        }
+
         final String value = properties.getProperty(ref.getKey());
         if (value == null) {
             throw new IllegalArgumentException("Key '" + ref.getKey() + "' not found for secret ref " + ref);
         }
         return value;
     }
+
+    /**
+     * Counts how many times the file declares each key, so a repeated key can be refused rather
+     * than collapsed to the last one (#577).
+     *
+     * <p>{@link Properties#load} calls {@link #put} once per declaration and keeps the last, saying
+     * nothing. Counting the calls is therefore an exact answer to "would this key be collapsed",
+     * because it is the real parser doing the lexing.</p>
+     *
+     * <p><b>Asking the parser rather than imitating it is the whole point.</b> An earlier version
+     * counted declarations with a regex over the raw text and disagreed with {@code Properties} in
+     * three ways: it missed the whitespace separator that {@code Properties} accepts alongside
+     * {@code =} and {@code :}, so a {@code community public} file kept the defect; it counted a
+     * folded line continuation as a second declaration, refusing a file that resolves
+     * unambiguously; and it could not see a key whose separator is escaped ({@code snmp\.community}).
+     * Every one of those is a gap between an approximation and the thing it approximates.</p>
+     *
+     * <p>This also means the check needs no format of its own. A nested YAML file is still counted
+     * correctly — {@code Properties} reads it by stripping the indentation, which is exactly why
+     * two secrets under different parents collide on the same bare key — and a file no YAML parser
+     * would accept, such as one indented with tabs, is counted just the same.</p>
+     */
+    private static final class DeclarationCounting extends Properties {
+
+        @java.io.Serial
+        private static final long serialVersionUID = 1L;
+
+        private Map<String, Integer> declarations = new HashMap<>();
+
+        @Override
+        public synchronized Object put(final Object key, final Object value) {
+            this.declarations.merge((String) key, 1, Integer::sum);
+            return super.put(key, value);
+        }
+
+        // Below is inherited-contract upkeep, not behaviour. Properties is a Hashtable, so a
+        // subclass that adds a field has to say what equality, hashing and cloning mean for it;
+        // all three are synchronized on the superclass and the analysers require the overrides to
+        // match. This accumulator is short-lived and never compared, stored or cloned, so identity
+        // equality is the honest answer and clone simply carries the counts across.
+        @Override
+        public synchronized boolean equals(final Object other) {
+            return this == other;
+        }
+
+        @Override
+        public synchronized int hashCode() {
+            return System.identityHashCode(this);
+        }
+
+        @Override
+        public synchronized Object clone() {
+            final DeclarationCounting copy = (DeclarationCounting) super.clone();
+            copy.declarations = new HashMap<>(this.declarations);
+            return copy;
+        }
+    }
+
 }
