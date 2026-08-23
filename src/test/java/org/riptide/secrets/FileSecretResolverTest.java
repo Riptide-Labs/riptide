@@ -68,9 +68,9 @@ class FileSecretResolverTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
-    /** A refusal that does not say where sends the operator hunting. Line numbers are the remedy. */
+    /** A refusal has to say enough to act on: which key, how many times, and what to do. */
     @Test
-    void aRefusalNamesTheLines(@TempDir Path dir) throws IOException {
+    void aRefusalSaysWhatCollidedAndWhatToDo(@TempDir Path dir) throws IOException {
         final Path file = write(dir, "s.yaml", """
                 snmp:
                   core:
@@ -80,14 +80,60 @@ class FileSecretResolverTest {
                 """);
 
         assertThatThrownBy(() -> resolve(file, "community"))
+                .hasMessageContaining("'community'")
                 .hasMessageContaining("declared 2 times")
-                .hasMessageContaining("lines 3, 5");
+                .hasMessageContaining("its own file");
     }
 
     /**
-     * The check counts declarations in the raw text rather than parsing, and this is the case that
-     * forces it. A tab is a YAML syntax error, so anything that had to parse first would fall back
-     * to the collapsing reader and hand out the wrong secret — the defect, restored by its own fix.
+     * {@code Properties} accepts whitespace as a key/value separator alongside {@code =} and
+     * {@code :}. An earlier version counted declarations with a regex that only knew the latter
+     * two, so this file kept the defect entirely — the guard saw no declarations at all.
+     */
+    @Test
+    void whitespaceSeparatedDeclarationsAreCounted(@TempDir Path dir) throws IOException {
+        final Path file = write(dir, "ws.properties", "community public\ncommunity other\n");
+
+        assertThatThrownBy(() -> resolve(file, "community"))
+                .hasMessageContaining("declared 2 times");
+    }
+
+    /**
+     * A line continuation is folded into the previous value, so the continued line is not a
+     * declaration however much it looks like one. Refusing here would break a file that resolves
+     * unambiguously — and on the ClickHouse path that is a failed startup.
+     */
+    @Test
+    void aFoldedLineContinuationIsNotADeclaration(@TempDir Path dir) throws IOException {
+        final Path file = write(dir, "cont.properties", "note=see \\\ncommunity: not-a-decl\ncommunity=real\n");
+
+        assertThat(resolve(file, "community")).isEqualTo("real");
+    }
+
+    /** An escaped separator is part of the key, and the count has to follow the key it produces. */
+    @Test
+    void anEscapedSeparatorInAKeyIsCounted(@TempDir Path dir) throws IOException {
+        final Path file = write(dir, "esc.properties", "snmp\\.community=a\nsnmp\\.community=b\n");
+
+        assertThatThrownBy(() -> resolve(file, "snmp.community"))
+                .hasMessageContaining("declared 2 times");
+    }
+
+    /** {@code Properties} treats a bare CR as a line terminator; the count must agree. */
+    @Test
+    void carriageReturnOnlyLineEndingsAreCounted(@TempDir Path dir) throws IOException {
+        final Path file = write(dir, "cr.properties", "community=a\rcommunity=b\r");
+
+        assertThatThrownBy(() -> resolve(file, "community"))
+                .hasMessageContaining("declared 2 times");
+    }
+
+    /**
+     * The check needs no format of its own, and this is the case that forces it. A tab is a YAML
+     * syntax error, so a check that parsed the file as YAML first would fall back to the collapsing
+     * reader and hand out the wrong secret — the defect, restored by its own fix. Counting what
+     * {@code Properties} itself declares never fails, because it is the reader that would collapse
+     * them.
      */
     @Test
     void aFileNoParserCanReadStillCannotResolveAmbiguously(@TempDir Path dir) throws IOException {

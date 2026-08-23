@@ -27,11 +27,11 @@ enrichment and a warning is logged — a configuration mistake never drops flows
 ## A key must be declared once
 
 `file://` resolves `#key` by reading the file as properties, which collapses a repeated key to the
-last one. Riptide now refuses that instead, naming the lines:
+last one and says nothing. Riptide now refuses that instead:
 
 ```
 Key 'community' is declared 2 times for secret ref file:///etc/riptide/secrets.yaml#community
-(lines 3, 5) — riptide will not guess which is meant. Keep one, or put this secret in its own file.
+— riptide will not guess which is meant. Keep one, or put this secret in its own file.
 ```
 
 This matters most in a nested file, which properties reads by stripping the indentation, so two
