@@ -128,6 +128,30 @@ class ProvisioningDdlTest {
                 .allSatisfy(s -> assertThat(s).startsWith("CREATE MATERIALIZED VIEW IF NOT EXISTS"));
     }
 
+    /**
+     * A provisioned deployment that already has rollups is the case {@code CREATE … IF NOT EXISTS}
+     * cannot reach, and its collector runs in validate mode and issues no DDL — so re-running
+     * onboard is the only path it has (#470).
+     */
+    @Test
+    void repairRollupsAltersTheTargetBeforeItsView() {
+        final List<String> rollups = FlowsSchema.rollupTableNames();
+        final List<String> sql = ProvisioningDdl.repairRollups("riptide", rollups);
+
+        assertThat(sql).hasSize(rollups.size() * 2);
+        assertThat(sql.subList(0, rollups.size()))
+                .as("every target is repaired before any view names the columns it adds")
+                .allSatisfy(s -> assertThat(s).startsWith("ALTER TABLE").contains("MODIFY ORDER BY"));
+        assertThat(sql.subList(rollups.size(), sql.size()))
+                .allSatisfy(s -> assertThat(s).startsWith("ALTER TABLE").contains("MODIFY QUERY"));
+    }
+
+    /** Nothing planned, nothing emitted — the guard decides, not this method. */
+    @Test
+    void repairRollupsEmitsNothingForAnEmptyPlan() {
+        assertThat(ProvisioningDdl.repairRollups("riptide", List.of())).isEmpty();
+    }
+
     @Test
     void ensureSharedGrantsEveryRollupToBothRoles() {
         final List<String> sql = ProvisioningDdl.ensureShared("riptide", 1L);

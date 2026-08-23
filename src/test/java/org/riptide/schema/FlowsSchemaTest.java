@@ -9,6 +9,9 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.regex.Pattern;
 
 import com.google.common.base.Splitter;
@@ -330,5 +333,189 @@ class FlowsSchemaTest {
     private static String between(final String text, final String open, final String close) {
         final int from = text.indexOf(open) + open.length();
         return text.substring(from, text.indexOf(close, from));
+    }
+
+    /**
+     * The reserved-default rule, enforced rather than remembered (#470 §2).
+     *
+     * <p>An appended dimension's only boundary is its type default: the value a row aggregated
+     * before the append reads, and which a column joining the sorting key cannot be given an
+     * explicit {@code DEFAULT} for. That boundary exists only while the dimension's expression
+     * cannot itself emit that value.</p>
+     *
+     * <p>{@code ifNull(f.application, '')} is the standing exception. It emits {@code ''}
+     * deliberately — a nullable sort key would break the {@code SummingMergeTree} collapse — and is
+     * harmless only because it predates every append. This test names it, so a second one cannot be
+     * added quietly: the day someone writes {@code ifNull(f.srcCity, '')}, the build says no and
+     * points at {@code 'unknown'} instead.</p>
+     */
+    @Test
+    void noDimensionAddedLaterMayEmitTheValueThatMarksItsOwnAbsence() {
+        final Set<String> allowed = Set.of("ifNull(f.application, '')");
+        // The literal a fallback yields, whatever the spacing: ifNull(x,''), coalesce(x , '') and
+        // ifNull(x, '') all reduce to the same thing. An earlier version compared the raw substring
+        // ", '')" and would have waved through every spelling but one.
+        final Pattern fallback = Pattern.compile(",\\s*('[^']*'|[0-9.]+)\\s*\\)\\s*$");
+
+        FlowsSchema.appendableDimensions().forEach((expression, absent) -> {
+            if (allowed.contains(expression)) {
+                return;
+            }
+            final Matcher matcher = fallback.matcher(expression);
+            if (matcher.find()) {
+                assertThat(matcher.group(1))
+                        .as("%s falls back to %s, which is the value that marks a pre-append row —"
+                                + " use a sentinel the dimension cannot otherwise hold", expression, absent)
+                        .isNotEqualTo(absent);
+            }
+        });
+    }
+
+    /** The append and the reorder must be one statement, or ClickHouse rejects it with Code 36. */
+    @Test
+    void theRepairAddsColumnsAndReordersInOneStatement() {
+        assertThat(FlowsSchema.alterRollupTargets("riptide"))
+                .hasSize(4)
+                .allSatisfy((rollup, ddl) -> {
+                    assertThat(ddl).startsWith("ALTER TABLE `riptide`." + rollup);
+                    assertThat(ddl).contains("ADD COLUMN IF NOT EXISTS").contains("MODIFY ORDER BY (");
+                    assertThat(ddl.split("ALTER TABLE")).as("one statement, not several").hasSize(2);
+                });
+    }
+
+    /**
+     * A column joining the sorting key may not carry a DEFAULT — ClickHouse: "Newly added column X
+     * has a default expression, so adding expressions that use it to the sorting key is forbidden."
+     * The implicit type default is what marks pre-append rows, so this is load-bearing twice over.
+     */
+    @Test
+    void theRepairNeverGivesANewSortKeyColumnADefault() {
+        assertThat(FlowsSchema.alterRollupTargets("riptide"))
+                .allSatisfy((rollup, ddl) -> assertThat(ddl).doesNotContain("DEFAULT"));
+    }
+
+    /** The repaired sorting key must equal the one a fresh CREATE would use, or the two diverge. */
+    @Test
+    void theRepairedSortKeyMatchesWhatAFreshInstallCreates() {
+        final Map<String, String> intended = FlowsSchema.rollupSortKeys();
+        for (final String ddl : FlowsSchema.createRollupTables("riptide")) {
+            final int from = ddl.indexOf("CREATE TABLE IF NOT EXISTS ") + "CREATE TABLE IF NOT EXISTS ".length();
+            final String table = ddl.substring(from, ddl.indexOf(" (", from)).replace("`riptide`.", "").trim();
+            assertThat(keyList(ddl, "ORDER BY (")).isEqualTo(intended.get(table));
+        }
+    }
+
+    /**
+     * A repaired view and a freshly created one must select identically, or every repair would be
+     * reported as drift on the very next start.
+     */
+    @Test
+    void theRepairedViewSelectsExactlyWhatAFreshOneDoes() {
+        final Map<String, String> modifies = FlowsSchema.modifyRollupViews("riptide");
+        FlowsSchema.rollupSelects("riptide").forEach((rollup, select) ->
+                assertThat(modifies.get(rollup))
+                        .isEqualTo("ALTER TABLE `riptide`." + rollup + "_mv MODIFY QUERY\n" + select));
+    }
+
+    /**
+     * The mechanism, pinned here because the integration test cannot pin it: swapping
+     * {@code MODIFY QUERY} for {@code DROP} + {@code CREATE} leaves the mid-stream loss test green,
+     * since the two statements run back-to-back and nothing lands in the gap at test cadence. The
+     * whole change rests on the view never being absent, so the absence of a DROP is asserted
+     * directly.
+     */
+    @Test
+    void noRepairStatementEverDropsAnything() {
+        assertThat(FlowsSchema.modifyRollupViews("riptide"))
+                .allSatisfy((rollup, ddl) -> assertThat(ddl)
+                        .as("a dropped view does not backfill; the gap is a permanent hole")
+                        .doesNotContainIgnoringCase("DROP")
+                        .contains("MODIFY QUERY"));
+        assertThat(FlowsSchema.alterRollupTargets("riptide"))
+                .allSatisfy((rollup, ddl) -> assertThat(ddl).doesNotContainIgnoringCase("DROP"));
+    }
+
+
+    /**
+     * The repair planner, exercised where it matters: as column lists, not strings.
+     *
+     * <p>{@code "tenant, srcAsn"} starts with {@code "tenant, srcAs"} as text, so a raw prefix test
+     * reads a renamed trailing dimension as an append. The ALTER then fails on the server during
+     * startup, taking the collector down instead of the warn-and-leave-alone path.</p>
+     */
+    @Test
+    void aRenamedDimensionIsRefusedRatherThanReadAsAnAppend() {
+        final String rollup = FlowsSchema.ROLLUP_BY_GEO_ASN;
+        final String live = "tenant, organisation, timestamp, zone, srcAsn";
+
+        final var plan = FlowsSchema.planRollupRepair(
+                Map.of(rollup, live), Map.of(rollup, Set.of(live.split(", "))));
+
+        assertThat(plan.repair()).isEmpty();
+        assertThat(plan.refused()).containsKey(rollup);
+        assertThat(plan.refused().get(rollup)).contains("not an append");
+    }
+
+    /** A genuine append is planned. */
+    @Test
+    void aShorterLiveKeyThatIsAPrefixIsAnAppend() {
+        final String rollup = FlowsSchema.ROLLUP_BY_APPLICATION;
+        final String live = "tenant, organisation, timestamp, zone, application";
+
+        final var plan = FlowsSchema.planRollupRepair(
+                Map.of(rollup, live), Map.of(rollup, Set.of(live.split(", "))));
+
+        assertThat(plan.repair()).containsExactly(rollup);
+        assertThat(plan.refused()).isEmpty();
+    }
+
+    /** A shrink is refused here, because the server stopped rejecting it once #571 froze the key. */
+    @Test
+    void aSortKeyThatWouldShrinkIsRefused() {
+        final String rollup = FlowsSchema.ROLLUP_BY_APPLICATION;
+        final String live = FlowsSchema.rollupSortKeys().get(rollup) + ", srcCity";
+
+        final var plan = FlowsSchema.planRollupRepair(
+                Map.of(rollup, live), Map.of(rollup, Set.of(live.split(", "))));
+
+        assertThat(plan.repair()).isEmpty();
+        assertThat(plan.refused()).containsKey(rollup);
+    }
+
+    /**
+     * A rollup already at this version's shape plans nothing — including when a measure is missing,
+     * which this path cannot add. Planning it would log an identical-keys repair on every boot
+     * forever and never converge.
+     */
+    @Test
+    void aCurrentRollupPlansNothingEvenWithAMeasureMissing() {
+        final String rollup = FlowsSchema.ROLLUP_BY_APPLICATION;
+        final String live = FlowsSchema.rollupSortKeys().get(rollup);
+
+        assertThat(FlowsSchema.planRollupRepair(
+                Map.of(rollup, live), Map.of(rollup, Set.of(live.split(", ")))).repair())
+                .as("measures are out of scope; a missing one must not plan an endless repair")
+                .isEmpty();
+    }
+
+    /** A rollup the connecting user cannot see is left alone, not guessed at. */
+    @Test
+    void anInvisibleRollupIsNotPlanned() {
+        assertThat(FlowsSchema.planRollupRepair(Map.of(), Map.of()).repair()).isEmpty();
+        assertThat(FlowsSchema.planRollupRepair(Map.of(), Map.of()).refused()).isEmpty();
+    }
+
+    /** The reserved value has to be the column's real type default, or the guard above is blind. */
+    @Test
+    void theReservedValueIsTheActualTypeDefault() {
+        final Map<String, String> byExpression = FlowsSchema.appendableDimensions();
+        assertThat(byExpression.get("f.srcAddr"))
+                .as("IPv6 defaults to '::', not 0 — srcAddr and dstAddr are IPv6 dimensions today")
+                .isEqualTo("'::'");
+        assertThat(byExpression.get("toStartOfMinute(f.timestamp)"))
+                .as("DateTime defaults to the epoch, not 0")
+                .isEqualTo("'1970-01-01 00:00:00'");
+        assertThat(byExpression.get("f.protocol")).isEqualTo("0");
+        assertThat(byExpression.get("f.tenant")).isEqualTo("''");
     }
 }

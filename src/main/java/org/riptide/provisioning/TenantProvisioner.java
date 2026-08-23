@@ -6,13 +6,17 @@
 package org.riptide.provisioning;
 
 import com.clickhouse.client.api.Client;
+import lombok.extern.slf4j.Slf4j;
 import org.riptide.schema.FlowsSchema;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 
 /**
@@ -25,6 +29,7 @@ import java.util.concurrent.ExecutionException;
  * <p>The caller owns the admin {@link Client} (built from admin credentials supplied explicitly at
  * invocation — never the collector's scoped credential) and its lifecycle.
  */
+@Slf4j
 public final class TenantProvisioner {
 
     private final Client admin;
@@ -77,12 +82,50 @@ public final class TenantProvisioner {
             }
             statements.addAll(ProvisioningDdl.bootstrapRollups(spec.database()));
         }
+        // Rollups that already exist are repaired in place, since CREATE ... IF NOT EXISTS no-ops
+        // over them (#470). Planned against the live sorting keys, using the same rule the
+        // collector applies, so a change that would shrink a key is refused here too — the server
+        // does not reject it once #571 froze the primary key.
+        statements.addAll(ProvisioningDdl.repairRollups(spec.database(), plannedRollupRepair(spec.database())));
         statements.addAll(ProvisioningDdl.ensureShared(spec.database(), spec.quotaBytes()));
         statements.addAll(ProvisioningDdl.onboardTenant(
                 spec.database(), spec.tenant(), spec.organisation(), writerPassword, readerPassword));
         execute(statements);
 
         return new OnboardResult(configStanza(spec), bootstrap);
+    }
+
+    /**
+     * The rollups {@code onboard} may repair in place, and a report of any it must not.
+     *
+     * <p>Uses {@link FlowsSchema#planRollupRepair}, the same decision the collector makes, so the
+     * two paths cannot disagree about what is safe. A catalog it cannot read yields an empty plan
+     * rather than an error: onboarding a tenant must not fail because a rollup could not be
+     * inspected.</p>
+     */
+    private List<String> plannedRollupRepair(final String database) {
+        final Map<String, String> sortKeys = new LinkedHashMap<>();
+        final Map<String, Set<String>> columns = new LinkedHashMap<>();
+        try (var tables = this.admin.queryRecords("SELECT name AS n, sorting_key AS k FROM system.tables"
+                + " WHERE database = '" + database + "'").get()) {
+            tables.forEach(record -> sortKeys.put(record.getString("n"), record.getString("k")));
+        } catch (final Exception e) {
+            return List.of();
+        }
+        try (var cols = this.admin.queryRecords("SELECT table AS t, name AS n FROM system.columns"
+                + " WHERE database = '" + database + "'").get()) {
+            cols.forEach(record -> columns
+                    .computeIfAbsent(record.getString("t"), table -> new java.util.LinkedHashSet<>())
+                    .add(record.getString("n")));
+        } catch (final Exception e) {
+            return List.of();
+        }
+        sortKeys.keySet().retainAll(FlowsSchema.rollupTableNames());
+
+        final FlowsSchema.RepairPlan plan = FlowsSchema.planRollupRepair(sortKeys, columns);
+        plan.refused().forEach((rollup, why) ->
+                log.warn("Rollup {} left as it is: {}.", rollup, why));
+        return plan.repair();
     }
 
     /**

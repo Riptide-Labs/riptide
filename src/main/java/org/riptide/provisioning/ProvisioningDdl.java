@@ -65,6 +65,34 @@ public final class ProvisioningDdl {
         return List.copyOf(statements);
     }
 
+    /**
+     * In-place repair for rollups that already exist (#470), for the rollups a caller has decided
+     * are safe to repair.
+     *
+     * <p>{@code CREATE … IF NOT EXISTS} no-ops over an existing rollup, so without this a
+     * provisioned deployment stays on its original shape forever — its collector runs in validate
+     * mode and never issues DDL, making {@code onboard} the only path it has.</p>
+     *
+     * <p>The caller supplies the verdict from {@link FlowsSchema#planRollupRepair} rather than this
+     * emitting for every rollup unconditionally. <b>A sorting-key shrink is not rejected by the
+     * server</b> on the deployments that matter: #571 froze the primary key, so on an upgraded
+     * table the prefix rule no longer covers the removed column and {@code MODIFY ORDER BY} to a
+     * shorter key succeeds — verified on 26.7. An unguarded emission here would change a rollup's
+     * grain in place with no error and no re-aggregation, which is exactly what the collector's
+     * path refuses.</p>
+     *
+     * <p>Targets before views: a view's SELECT names columns the target {@code ALTER} adds, and
+     * {@code CREATE MATERIALIZED VIEW IF NOT EXISTS} validates that SELECT even when it no-ops.</p>
+     */
+    public static List<String> repairRollups(final String database, final List<String> rollups) {
+        final List<String> statements = new ArrayList<>();
+        final var alters = FlowsSchema.alterRollupTargets(database);
+        final var modifies = FlowsSchema.modifyRollupViews(database);
+        rollups.forEach(rollup -> statements.add(alters.get(rollup)));
+        rollups.forEach(rollup -> statements.add(modifies.get(rollup)));
+        return List.copyOf(statements);
+    }
+
     /** One-time shared objects: the two roles, the reader hardening, the CHECK barrier, the quota. */
     public static List<String> ensureShared(final String database, final long quotaBytes) {
         final String flows = FlowsSchema.qualifiedFlows(database);

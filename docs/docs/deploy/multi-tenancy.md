@@ -136,6 +136,10 @@ Because a materialized view does not backfill, rollups added this way cover traf
 onward. See [Rollups](../configuration/clickhouse.md#rollups) for the table layout and how to
 backfill if you need the history.
 
+Re-running `onboard` also brings existing rollups up to the running version's shape, appending any dimension a release has added. It is idempotent and safe to re-run: the statements no-op once a rollup is current, and no aggregation is interrupted. This is the only path a provisioned deployment has, since its collector runs in validate mode and issues no DDL.
+
+`onboard` reads each rollup's live sorting key first and applies the same rule the collector does, so a change that would *shrink* a key is refused rather than applied. That guard is not optional: ClickHouse itself accepts such a shrink on an upgraded table, because the primary key was frozen at the narrower shape, so nothing below riptide would stop a rollup's grain changing in place.
+
 ### What it provisions
 
 The recipe is **role-based**: the schema, the grants, the reader hardening, the CHECK barrier, and
