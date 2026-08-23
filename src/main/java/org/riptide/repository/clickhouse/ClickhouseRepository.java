@@ -36,11 +36,14 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -164,9 +167,8 @@ public class ClickhouseRepository implements FlowRepository {
             // exists and the statement would no-op — so on the first start after a rollup gains a
             // dimension, creating the view would fail with "SELECT query outputs column with name
             // 'x', which is not found in the target table" before any repair had a chance to run.
-            final List<String> repairing = planRollupRepair();
             final Map<String, String> alters = FlowsSchema.alterRollupTargets(this.config.getDatabase());
-            for (final String rollup : repairing) {
+            for (final String rollup : planTargetRepair()) {
                 this.client.execute(alters.get(rollup)).get();
             }
 
@@ -177,8 +179,13 @@ public class ClickhouseRepository implements FlowRepository {
             // And the views last: MODIFY QUERY swaps an existing view's SELECT in place, which
             // CREATE ... IF NOT EXISTS cannot do. Repairing before verifying means a rollup brought
             // up to date on this start verifies clean rather than warning once per upgrade.
+            //
+            // Planned SEPARATELY from the targets, against the views' own live SELECT. Deriving it
+            // from the target's shape would strand a view permanently: if a target ALTER succeeds
+            // and anything before its MODIFY QUERY throws, the next start sees a target that is
+            // already current, plans no repair for it, and never fixes the view.
             final Map<String, String> modifies = FlowsSchema.modifyRollupViews(this.config.getDatabase());
-            for (final String rollup : repairing) {
+            for (final String rollup : planViewRepair()) {
                 this.client.execute(modifies.get(rollup)).get();
             }
         }
@@ -193,53 +200,78 @@ public class ClickhouseRepository implements FlowRepository {
     }
 
     /**
-     * Decide which rollups need repairing, and say so once (#470).
+     * Which rollup targets need their dimensions or sorting key brought up to date (#470).
      *
-     * <p>Both repair statements are idempotent — {@code ADD COLUMN IF NOT EXISTS} no-ops on a column
-     * that exists, and {@code MODIFY ORDER BY} to the key a table already has is accepted and
-     * changes nothing — so correctness does not depend on this planning step. The live shape is read
-     * for two things that do need it: refusing a repair that would shrink a sorting key, and staying
-     * silent when there is nothing to do, which is every start after the first. An unconditional
-     * repair that logged unconditionally would be noise on every boot forever.</p>
+     * <p>The decision itself lives in {@link FlowsSchema#planRollupRepair}, shared with
+     * {@code onboard} so the two paths cannot disagree about what is safe to do in place.</p>
+     *
+     * <p>Reading the live shape must never fail startup. The statements are idempotent, so a
+     * catalog read that fails costs a deferred repair and nothing else — whereas propagating would
+     * turn a rollup-only concern into an ingestion outage, which is the same rule
+     * {@link #verifyRollupShapes} states at length.</p>
      */
-    private List<String> planRollupRepair() throws Exception {
-        final Map<String, String> liveSortKeys = readRollupSortKeys();
-        final Map<String, Map<String, String>> liveColumns = readRollupColumns();
-        final List<String> repairing = new ArrayList<>();
-
-        for (final Map.Entry<String, String> entry : FlowsSchema.rollupSortKeys().entrySet()) {
-            final String rollup = entry.getKey();
-            final String wanted = entry.getValue();
-            final String live = liveSortKeys.get(rollup);
-            if (live == null) {
-                // Not visible to this connection. verifyRollupShapes reports it as unreachable
-                // rather than this silently skipping it.
-                continue;
-            }
-            if (wanted.equals(live) && intendedColumnsPresent(rollup, liveColumns)) {
-                continue;
-            }
-            if (!wanted.startsWith(live)) {
-                // A sorting key may only grow, and only by columns the same ALTER adds. Before #571
-                // the primary key was derived, so ClickHouse's prefix rule rejected a shrink
-                // outright; freezing the primary key made a shrink legal, which means a reverted
-                // dimension would quietly change this rollup's grain. Refuse instead.
-                log.warn("Rollup {} would have its sorting key changed from ({}) to ({}), which is not"
-                        + " an append. Riptide will not do that in place: the grain would change and"
-                        + " existing rows would not be re-aggregated. Left as it is.",
-                        rollup, live, wanted);
-                continue;
-            }
-            log.info("Rollup {} sorting key ({}) -> ({}); repairing in place.", rollup, live, wanted);
-            repairing.add(rollup);
+    private List<String> planTargetRepair() {
+        final FlowsSchema.RepairPlan plan;
+        try {
+            plan = FlowsSchema.planRollupRepair(readRollupSortKeys(), readRollupColumnNames());
+        } catch (final Exception e) {
+            log.warn("Could not read the rollup shapes in database '{}': {}. Ingestion is unaffected;"
+                    + " any pending repair is deferred to the next start.",
+                    this.config.getDatabase(), e.getMessage());
+            return List.of();
         }
-        return repairing;
+        plan.refused().forEach((rollup, why) -> log.warn("Rollup {} left as it is: {}.", rollup, why));
+        plan.repair().forEach(rollup -> log.info("Rollup {}: appending this version's dimensions in place.", rollup));
+        return plan.repair();
     }
 
-    private static boolean intendedColumnsPresent(final String rollup,
-            final Map<String, Map<String, String>> liveColumns) {
-        final Map<String, String> live = liveColumns.getOrDefault(rollup, Map.of());
-        return live.keySet().containsAll(FlowsSchema.rollupColumns().get(rollup).keySet());
+    /**
+     * Which rollup views select a different <em>column set</em> than this version emits.
+     *
+     * <p>Planned from the view's own {@code as_select} rather than from its target's shape, so a
+     * view left behind by a half-applied repair — target altered, {@code MODIFY QUERY} not reached —
+     * is picked up on the next start instead of being stranded forever.</p>
+     *
+     * <p><b>Column set, not text.</b> A view whose columns match but whose expression differs is a
+     * corrected aggregate, and repairing that is deliberately out of scope: it would readmit rows
+     * computed the old way with nothing distinguishing them, which is worse than the declined
+     * rollup {@link #verifyRollupShapes} already gives. The two cases look identical as strings and
+     * are entirely different in what they mean.</p>
+     */
+    private List<String> planViewRepair() {
+        final Map<String, String> live;
+        try {
+            live = readRollupSelects();
+        } catch (final Exception e) {
+            return List.of();
+        }
+        final List<String> stale = new ArrayList<>();
+        FlowsSchema.rollupSelects(this.config.getDatabase()).forEach((rollup, intended) -> {
+            final String current = live.get(rollup + "_mv");
+            if (current != null && !outputColumns(current).equals(outputColumns(intended))) {
+                stale.add(rollup);
+            }
+        });
+        return stale;
+    }
+
+    /** The names a SELECT emits, which is what a target table has to carry. */
+    private static Set<String> outputColumns(final String select) {
+        final Matcher matcher = SELECT_ALIAS.matcher(RollupShapeCheck.normalise(select));
+        final Set<String> names = new LinkedHashSet<>();
+        while (matcher.find()) {
+            names.add(matcher.group(1));
+        }
+        return names;
+    }
+
+    private static final Pattern SELECT_ALIAS = Pattern.compile("\\bAS\\s+([A-Za-z_][A-Za-z0-9_]*)");
+
+    /** Each rollup target's live column names, for the repair planner. */
+    private Map<String, Set<String>> readRollupColumnNames() throws Exception {
+        final Map<String, Set<String>> names = new LinkedHashMap<>();
+        readRollupColumns().forEach((table, columns) -> names.put(table, columns.keySet()));
+        return names;
     }
 
     /** Each rollup target's live sorting key, for those the connecting user can see. */

@@ -182,7 +182,7 @@ public final class RollupShapeCheck {
      * today — the only literals in the rollup SELECTs are {@code ''}, {@code 'INGRESS'} and
      * {@code 'EGRESS'} — and a test holds that property so it cannot open silently.</p>
      */
-    static String normalise(final String select) {
+    public static String normalise(final String select) {
         return WHITESPACE_RUN.matcher(select.replace("`", "")).replaceAll(" ").trim();
     }
 }

@@ -114,45 +114,42 @@ class ProvisioningDdlTest {
 
     @Test
     void bootstrapRollupsUpgradesAdditiveColumnsThenCreatesTargetsBeforeViews() {
-        // The ordering is load-bearing, not cosmetic, at three points: the rollups select the
-        // additive columns, a view needs its TO target, and a repaired view's SELECT names columns
-        // the target ALTER adds. Getting any of them backwards fails against a real server.
+        // The rollups select the additive columns, and the views need their TO targets — so the
+        // ordering is load-bearing, not cosmetic.
         final List<String> sql = ProvisioningDdl.bootstrapRollups("riptide");
         final int additive = FlowsSchema.additiveColumnNames().size();
         final int rollups = FlowsSchema.rollupTableNames().size();
-        assertThat(sql).hasSize(additive + rollups * 4);
-
-        final int targets = additive + rollups;
-        final int alters = targets + rollups;
-        final int views = alters + rollups;
+        assertThat(sql).hasSize(additive + rollups * 2);
         assertThat(sql.subList(0, additive))
                 .allSatisfy(s -> assertThat(s).contains("ADD COLUMN IF NOT EXISTS"));
-        assertThat(sql.subList(additive, targets))
+        assertThat(sql.subList(additive, additive + rollups))
                 .allSatisfy(s -> assertThat(s).startsWith("CREATE TABLE IF NOT EXISTS"));
-        assertThat(sql.subList(targets, alters))
-                .as("targets are repaired before any view references the columns")
-                .allSatisfy(s -> assertThat(s).startsWith("ALTER TABLE").contains("MODIFY ORDER BY"));
-        assertThat(sql.subList(alters, views))
+        assertThat(sql.subList(additive + rollups, sql.size()))
                 .allSatisfy(s -> assertThat(s).startsWith("CREATE MATERIALIZED VIEW IF NOT EXISTS"));
-        assertThat(sql.subList(views, sql.size()))
-                .allSatisfy(s -> assertThat(s).startsWith("ALTER TABLE").contains("MODIFY QUERY"));
     }
 
     /**
      * A provisioned deployment that already has rollups is the case {@code CREATE … IF NOT EXISTS}
-     * cannot reach, so re-running onboard must carry the repair (#470).
+     * cannot reach, and its collector runs in validate mode and issues no DDL — so re-running
+     * onboard is the only path it has (#470).
      */
     @Test
-    void bootstrapRollupsRepairsRollupsThatAlreadyExist() {
-        final List<String> sql = ProvisioningDdl.bootstrapRollups("riptide");
-        for (final String rollup : FlowsSchema.rollupTableNames()) {
-            final String target = FlowsSchema.qualifiedRollup("riptide", rollup);
-            assertThat(sql).anySatisfy(s -> assertThat(s)
-                    .startsWith("ALTER TABLE " + target).contains("MODIFY ORDER BY"));
-            assertThat(sql).anySatisfy(s -> assertThat(s)
-                    .startsWith("ALTER TABLE " + FlowsSchema.qualifiedRollupView("riptide", rollup))
-                    .contains("MODIFY QUERY"));
-        }
+    void repairRollupsAltersTheTargetBeforeItsView() {
+        final List<String> rollups = FlowsSchema.rollupTableNames();
+        final List<String> sql = ProvisioningDdl.repairRollups("riptide", rollups);
+
+        assertThat(sql).hasSize(rollups.size() * 2);
+        assertThat(sql.subList(0, rollups.size()))
+                .as("every target is repaired before any view names the columns it adds")
+                .allSatisfy(s -> assertThat(s).startsWith("ALTER TABLE").contains("MODIFY ORDER BY"));
+        assertThat(sql.subList(rollups.size(), sql.size()))
+                .allSatisfy(s -> assertThat(s).startsWith("ALTER TABLE").contains("MODIFY QUERY"));
+    }
+
+    /** Nothing planned, nothing emitted — the guard decides, not this method. */
+    @Test
+    void repairRollupsEmitsNothingForAnEmptyPlan() {
+        assertThat(ProvisioningDdl.repairRollups("riptide", List.of())).isEmpty();
     }
 
     @Test

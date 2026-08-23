@@ -61,18 +61,35 @@ public final class ProvisioningDdl {
         final List<String> statements = new ArrayList<>();
         statements.addAll(FlowsSchema.addAdditiveColumns(database));
         statements.addAll(FlowsSchema.createRollupTables(database));
-        // In-place repair for rollups that already exist, since CREATE ... IF NOT EXISTS no-ops
-        // over them and would otherwise leave a provisioned deployment on its original shape
-        // forever (#470). Idempotent, so it is emitted unconditionally like the additive columns
-        // above. Targets before views: the view's SELECT names columns the ALTER adds.
-        //
-        // Unlike the collector's path this cannot refuse a sorting-key shrink, because these
-        // statements are generated without reading the live schema. A shrink is rejected by
-        // ClickHouse's own prefix rule whenever the primary key still covers the removed column,
-        // and the collector reports it on the next start either way.
-        statements.addAll(FlowsSchema.alterRollupTargets(database).values());
         statements.addAll(FlowsSchema.createRollupViews(database));
-        statements.addAll(FlowsSchema.modifyRollupViews(database).values());
+        return List.copyOf(statements);
+    }
+
+    /**
+     * In-place repair for rollups that already exist (#470), for the rollups a caller has decided
+     * are safe to repair.
+     *
+     * <p>{@code CREATE … IF NOT EXISTS} no-ops over an existing rollup, so without this a
+     * provisioned deployment stays on its original shape forever — its collector runs in validate
+     * mode and never issues DDL, making {@code onboard} the only path it has.</p>
+     *
+     * <p>The caller supplies the verdict from {@link FlowsSchema#planRollupRepair} rather than this
+     * emitting for every rollup unconditionally. <b>A sorting-key shrink is not rejected by the
+     * server</b> on the deployments that matter: #571 froze the primary key, so on an upgraded
+     * table the prefix rule no longer covers the removed column and {@code MODIFY ORDER BY} to a
+     * shorter key succeeds — verified on 26.7. An unguarded emission here would change a rollup's
+     * grain in place with no error and no re-aggregation, which is exactly what the collector's
+     * path refuses.</p>
+     *
+     * <p>Targets before views: a view's SELECT names columns the target {@code ALTER} adds, and
+     * {@code CREATE MATERIALIZED VIEW IF NOT EXISTS} validates that SELECT even when it no-ops.</p>
+     */
+    public static List<String> repairRollups(final String database, final List<String> rollups) {
+        final List<String> statements = new ArrayList<>();
+        final var alters = FlowsSchema.alterRollupTargets(database);
+        final var modifies = FlowsSchema.modifyRollupViews(database);
+        rollups.forEach(rollup -> statements.add(alters.get(rollup)));
+        rollups.forEach(rollup -> statements.add(modifies.get(rollup)));
         return List.copyOf(statements);
     }
 

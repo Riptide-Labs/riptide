@@ -10,6 +10,8 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.regex.Pattern;
 
 import com.google.common.base.Splitter;
@@ -350,17 +352,23 @@ class FlowsSchemaTest {
     @Test
     void noDimensionAddedLaterMayEmitTheValueThatMarksItsOwnAbsence() {
         final Set<String> allowed = Set.of("ifNull(f.application, '')");
+        // The literal a fallback yields, whatever the spacing: ifNull(x,''), coalesce(x , '') and
+        // ifNull(x, '') all reduce to the same thing. An earlier version compared the raw substring
+        // ", '')" and would have waved through every spelling but one.
+        final Pattern fallback = Pattern.compile(",\\s*('[^']*'|[0-9.]+)\\s*\\)\\s*$");
 
-        assertThat(FlowsSchema.appendableDimensions())
-                .allSatisfy((expression, absent) -> {
-                    if (allowed.contains(expression)) {
-                        return;
-                    }
-                    assertThat(expression)
-                            .as("%s can emit %s, which is the value that marks a pre-append row",
-                                    expression, absent)
-                            .doesNotContain(", " + absent + ")");
-                });
+        FlowsSchema.appendableDimensions().forEach((expression, absent) -> {
+            if (allowed.contains(expression)) {
+                return;
+            }
+            final Matcher matcher = fallback.matcher(expression);
+            if (matcher.find()) {
+                assertThat(matcher.group(1))
+                        .as("%s falls back to %s, which is the value that marks a pre-append row —"
+                                + " use a sentinel the dimension cannot otherwise hold", expression, absent)
+                        .isNotEqualTo(absent);
+            }
+        });
     }
 
     /** The append and the reorder must be one statement, or ClickHouse rejects it with Code 36. */
@@ -427,20 +435,87 @@ class FlowsSchemaTest {
                 .allSatisfy((rollup, ddl) -> assertThat(ddl).doesNotContainIgnoringCase("DROP"));
     }
 
+
     /**
-     * #571's frozen primary keys already catch a dimension inserted mid-list, because the primary
-     * key is the full dimension list. What was missing is the reason, so the failure explains
-     * itself rather than reading as a stale fixture.
+     * The repair planner, exercised where it matters: as column lists, not strings.
+     *
+     * <p>{@code "tenant, srcAsn"} starts with {@code "tenant, srcAs"} as text, so a raw prefix test
+     * reads a renamed trailing dimension as an append. The ALTER then fails on the server during
+     * startup, taking the collector down instead of the warn-and-leave-alone path.</p>
      */
     @Test
-    void aMidListDimensionIsCaughtByTheFrozenPrimaryKeys() {
-        final Map<String, String> intended = FlowsSchema.rollupSortKeys();
-        for (final String ddl : FlowsSchema.createRollupTables("riptide")) {
-            assertThat(intended.values())
-                    .as("a dimension inserted mid-list works on a fresh install and is impossible on"
-                            + " an upgraded one — ALTER can only append — so the build is the only"
-                            + " place it can be caught")
-                    .anySatisfy(key -> assertThat(keyList(ddl, "ORDER BY (")).isEqualTo(key));
-        }
+    void aRenamedDimensionIsRefusedRatherThanReadAsAnAppend() {
+        final String rollup = FlowsSchema.ROLLUP_BY_GEO_ASN;
+        final String live = "tenant, organisation, timestamp, zone, srcAsn";
+
+        final var plan = FlowsSchema.planRollupRepair(
+                Map.of(rollup, live), Map.of(rollup, Set.of(live.split(", "))));
+
+        assertThat(plan.repair()).isEmpty();
+        assertThat(plan.refused()).containsKey(rollup);
+        assertThat(plan.refused().get(rollup)).contains("not an append");
+    }
+
+    /** A genuine append is planned. */
+    @Test
+    void aShorterLiveKeyThatIsAPrefixIsAnAppend() {
+        final String rollup = FlowsSchema.ROLLUP_BY_APPLICATION;
+        final String live = "tenant, organisation, timestamp, zone, application";
+
+        final var plan = FlowsSchema.planRollupRepair(
+                Map.of(rollup, live), Map.of(rollup, Set.of(live.split(", "))));
+
+        assertThat(plan.repair()).containsExactly(rollup);
+        assertThat(plan.refused()).isEmpty();
+    }
+
+    /** A shrink is refused here, because the server stopped rejecting it once #571 froze the key. */
+    @Test
+    void aSortKeyThatWouldShrinkIsRefused() {
+        final String rollup = FlowsSchema.ROLLUP_BY_APPLICATION;
+        final String live = FlowsSchema.rollupSortKeys().get(rollup) + ", srcCity";
+
+        final var plan = FlowsSchema.planRollupRepair(
+                Map.of(rollup, live), Map.of(rollup, Set.of(live.split(", "))));
+
+        assertThat(plan.repair()).isEmpty();
+        assertThat(plan.refused()).containsKey(rollup);
+    }
+
+    /**
+     * A rollup already at this version's shape plans nothing — including when a measure is missing,
+     * which this path cannot add. Planning it would log an identical-keys repair on every boot
+     * forever and never converge.
+     */
+    @Test
+    void aCurrentRollupPlansNothingEvenWithAMeasureMissing() {
+        final String rollup = FlowsSchema.ROLLUP_BY_APPLICATION;
+        final String live = FlowsSchema.rollupSortKeys().get(rollup);
+
+        assertThat(FlowsSchema.planRollupRepair(
+                Map.of(rollup, live), Map.of(rollup, Set.of(live.split(", ")))).repair())
+                .as("measures are out of scope; a missing one must not plan an endless repair")
+                .isEmpty();
+    }
+
+    /** A rollup the connecting user cannot see is left alone, not guessed at. */
+    @Test
+    void anInvisibleRollupIsNotPlanned() {
+        assertThat(FlowsSchema.planRollupRepair(Map.of(), Map.of()).repair()).isEmpty();
+        assertThat(FlowsSchema.planRollupRepair(Map.of(), Map.of()).refused()).isEmpty();
+    }
+
+    /** The reserved value has to be the column's real type default, or the guard above is blind. */
+    @Test
+    void theReservedValueIsTheActualTypeDefault() {
+        final Map<String, String> byExpression = FlowsSchema.appendableDimensions();
+        assertThat(byExpression.get("f.srcAddr"))
+                .as("IPv6 defaults to '::', not 0 — srcAddr and dstAddr are IPv6 dimensions today")
+                .isEqualTo("'::'");
+        assertThat(byExpression.get("toStartOfMinute(f.timestamp)"))
+                .as("DateTime defaults to the epoch, not 0")
+                .isEqualTo("'1970-01-01 00:00:00'");
+        assertThat(byExpression.get("f.protocol")).isEqualTo("0");
+        assertThat(byExpression.get("f.tenant")).isEqualTo("''");
     }
 }

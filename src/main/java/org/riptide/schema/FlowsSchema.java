@@ -7,6 +7,7 @@ package org.riptide.schema;
 
 import org.intellij.lang.annotations.Language;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -217,6 +218,75 @@ public final class FlowsSchema {
         }
         ddl.append("\n    MODIFY ORDER BY (").append(sortKey(rollup)).append(')');
         return ddl.toString();
+    }
+
+    /**
+     * Which rollups need repairing, and which must be refused, decided from their live shape (#470).
+     *
+     * <p>Shared by the collector and by {@code onboard} so the two cannot disagree about what is
+     * safe. Pure — the caller supplies the live state and decides what to do with the verdict —
+     * which is what lets the interesting cases be unit-tested without a server.</p>
+     *
+     * @param liveSortKeys        rollup target to its {@code system.tables.sorting_key}; a rollup
+     *                            absent from the map is not visible and is left alone
+     * @param liveDimensionNames  rollup target to the column names it currently has
+     */
+    public static RepairPlan planRollupRepair(final Map<String, String> liveSortKeys,
+            final Map<String, Set<String>> liveDimensionNames) {
+        final List<String> repair = new ArrayList<>();
+        final Map<String, String> refused = new LinkedHashMap<>();
+
+        for (final Rollup rollup : ROLLUPS) {
+            final String table = rollup.table();
+            final String live = liveSortKeys.get(table);
+            if (live == null) {
+                continue;
+            }
+            final List<String> liveKey = splitKey(live);
+            final List<String> wantedKey = allDimensions(rollup).stream().map(Dimension::column).toList();
+
+            if (liveKey.equals(wantedKey)
+                    && liveDimensionNames.getOrDefault(table, Set.of()).containsAll(wantedKey)) {
+                continue;
+            }
+            if (!isPrefix(liveKey, wantedKey)) {
+                // Compared as column lists, never as strings: "tenant, srcAsn" starts with
+                // "tenant, srcAs" as text, so a renamed trailing dimension would be waved through
+                // as an append and the ALTER would then fail on the server at startup.
+                //
+                // A sorting key may only grow, and only by columns the same ALTER adds. Before #571
+                // the primary key was derived, so ClickHouse's prefix rule rejected a shrink
+                // outright; freezing the primary key made a shrink legal on exactly the upgraded
+                // tables this guard exists for, so it has to be refused here rather than left to
+                // the server.
+                refused.put(table, "sorting key (" + live + ") cannot become (" + String.join(", ", wantedKey)
+                        + ") in place: that is not an append, so the grain would change and existing"
+                        + " rows would not be re-aggregated");
+                continue;
+            }
+            repair.add(table);
+        }
+        return new RepairPlan(List.copyOf(repair), Collections.unmodifiableMap(refused));
+    }
+
+    /**
+     * The rollups to repair, and the ones refused with the reason to report.
+     *
+     * <p>Only dimensions are considered. A rollup missing a <em>measure</em> is not repairable by
+     * this path — {@code ALTER … ADD COLUMN} could add it, but a measure reading {@code 0} for
+     * historical rows makes a {@code SUM} spanning the upgrade quietly too small, which is why
+     * measures are out of scope. Including them here would plan a repair that never converges and
+     * log an identical-keys line on every boot forever.</p>
+     */
+    public record RepairPlan(List<String> repair, Map<String, String> refused) {
+    }
+
+    private static List<String> splitKey(final String key) {
+        return key.isBlank() ? List.of() : List.of(key.split(",\\s*"));
+    }
+
+    private static boolean isPrefix(final List<String> shorter, final List<String> longer) {
+        return shorter.size() <= longer.size() && longer.subList(0, shorter.size()).equals(shorter);
     }
 
     /**
@@ -485,7 +555,21 @@ public final class FlowsSchema {
          * which is asserted at build time rather than left to a reviewer noticing.</p>
          */
         String absent() {
-            return type.contains("String") ? "''" : "0";
+            // Verified against 26.7 rather than assumed: a String-ish column defaults to '', an
+            // IPv6 to '::', a DateTime to the epoch, and a numeric to 0. Collapsing the last three
+            // into "0" would publish a reserved value that is not the boundary, and the guard fed
+            // by this method would then wave through an expression that genuinely destroys it —
+            // srcAddr and dstAddr are IPv6 dimensions today.
+            if (type.contains("String")) {
+                return "''";
+            }
+            if (type.contains("IPv6") || type.contains("IPv4")) {
+                return "'::'";
+            }
+            if (type.contains("DateTime") || type.contains("Date")) {
+                return "'1970-01-01 00:00:00'";
+            }
+            return "0";
         }
     }
 

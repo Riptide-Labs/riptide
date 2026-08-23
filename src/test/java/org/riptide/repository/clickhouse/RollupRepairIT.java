@@ -11,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.riptide.config.ClickhouseConfig;
 import org.riptide.e2e.ContainerImages;
+import org.riptide.provisioning.ProvisioningDdl;
 import org.riptide.schema.FlowsSchema;
 import org.riptide.schema.RollupAvailability;
 import org.riptide.secrets.SecretRef;
@@ -21,6 +22,8 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -68,7 +71,6 @@ public class RollupRepairIT {
      */
     @BeforeEach
     void clean() throws Exception {
-        admin.execute("DROP VIEW IF EXISTS " + FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP)).get();
         for (final String rollup : FlowsSchema.rollupTableNames()) {
             admin.execute("DROP VIEW IF EXISTS " + FlowsSchema.qualifiedRollupView(DATABASE, rollup)).get();
             admin.execute("DROP TABLE IF EXISTS " + FlowsSchema.qualifiedRollup(DATABASE, rollup)).get();
@@ -133,7 +135,7 @@ public class RollupRepairIT {
     }
 
     private static long scalar(final String sql) throws Exception {
-        try (var records = admin.queryRecords(sql + "").get()) {
+        try (var records = admin.queryRecords(sql).get()) {
             for (final var record : records) {
                 return record.getLong("v");
             }
@@ -315,5 +317,82 @@ public class RollupRepairIT {
             }
         }
         return null;
+    }
+
+    /**
+     * The {@code onboard} repair, executed rather than string-asserted (#470).
+     *
+     * <p>A provisioned deployment's collector runs in validate mode and issues no DDL, so
+     * {@code riptide onboard} is the only path it has to a current rollup shape. Its statements are
+     * generated without reading the live schema, which makes running them against a real server the
+     * only way to know they apply — and that they no-op when the rollup is already current.</p>
+     */
+    @Test
+    void theOnboardRepairAppliesAndThenNoOps() throws Exception {
+        createRollupMissingItsLastDimension();
+
+        for (final String ddl : ProvisioningDdl.repairRollups(DATABASE, List.of(ROLLUP))) {
+            admin.execute(ddl).get();
+        }
+        assertThat(sortKeyOf(ROLLUP))
+                .as("onboard brings an existing rollup up to this version's shape")
+                .isEqualTo(FlowsSchema.rollupSortKeys().get(ROLLUP));
+
+        for (final String ddl : ProvisioningDdl.repairRollups(DATABASE, List.of(ROLLUP))) {
+            admin.execute(ddl).get();
+        }
+        assertThat(sortKeyOf(ROLLUP))
+                .as("and re-running onboard changes nothing")
+                .isEqualTo(FlowsSchema.rollupSortKeys().get(ROLLUP));
+    }
+
+    /**
+     * The guard that stops onboard shrinking a key. ClickHouse does <b>not</b> reject this once
+     * #571 froze the primary key — verified — so an unguarded emission would change a rollup's
+     * grain in place with no error.
+     */
+    @Test
+    void theServerDoesNotRejectAShrinkSoThePlannerMust() throws Exception {
+        repository().start();
+        final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
+        admin.execute("ALTER TABLE " + target + " ADD COLUMN IF NOT EXISTS srcCity LowCardinality(String),"
+                + " MODIFY ORDER BY (" + FlowsSchema.rollupSortKeys().get(ROLLUP) + ", srcCity)").get();
+
+        // the server accepts the shrink, which is why the planner has to refuse it
+        admin.execute("ALTER TABLE " + target + " MODIFY ORDER BY ("
+                + FlowsSchema.rollupSortKeys().get(ROLLUP) + ")").get();
+        assertThat(sortKeyOf(ROLLUP))
+                .as("ClickHouse allowed the shrink; nothing but riptide stands between it and the data")
+                .isEqualTo(FlowsSchema.rollupSortKeys().get(ROLLUP));
+
+        assertThat(FlowsSchema.planRollupRepair(
+                        Map.of(ROLLUP, FlowsSchema.rollupSortKeys().get(ROLLUP) + ", srcCity"),
+                        Map.of(ROLLUP, Set.of("srcCity")))
+                .refused())
+                .containsKey(ROLLUP);
+    }
+
+    /**
+     * A view stranded by a half-applied repair is picked up on the next start.
+     *
+     * <p>If a target {@code ALTER} lands and anything before its {@code MODIFY QUERY} throws — a
+     * later rollup's ALTER, a dropped connection — the target is already current when the process
+     * restarts. Planning view repair from the target's shape would therefore skip it, and the view
+     * would keep the old SELECT forever: the appended dimension would read its type default for
+     * every future row, with drift reported but never healed.</p>
+     */
+    @Test
+    void aViewLeftBehindByAHalfAppliedRepairIsHealedOnTheNextStart() throws Exception {
+        createRollupMissingItsLastDimension();
+        // exactly the half-applied state: target altered, view untouched
+        admin.execute(FlowsSchema.alterRollupTargets(DATABASE).get(ROLLUP)).get();
+        assertThat(sortKeyOf(ROLLUP)).isEqualTo(FlowsSchema.rollupSortKeys().get(ROLLUP));
+        assertThat(selectOf(ROLLUP + "_mv")).doesNotContain("protocol");
+
+        repository().start();
+
+        assertThat(selectOf(ROLLUP + "_mv"))
+                .as("the view must not be stranded just because its target already looks current")
+                .contains("protocol");
     }
 }
