@@ -218,13 +218,21 @@ Counters stored here are always as the exporter reported them, so a query ported
 The 1-minute rollups carry `samplingInterval` as a dimension, so the correction is the same expression against either table:
 
 ```sql
--- identical against raw flows and against a rollup
+-- the same expression that works against raw flows
 SELECT sum(bytes * samplingInterval) AS corrected_bytes
 FROM riptide.flows_by_conversation_1m
 WHERE timestamp >= now() - INTERVAL 90 DAY;
 ```
 
 That matters because raw `flows` is kept 30 days by default and the rollups 365. Before the rate was carried, sampling-corrected volume was simply unanswerable beyond the raw table's retention.
+
+:::danger Only correct if you receive no sFlow
+sFlow already scales its counters at ingest (`bytes = frame_length × sampling_rate`) and still reports its rate, so multiplying an sFlow row by its interval double-counts it. Against raw `flows` you exclude those rows with `WHERE flowProtocol != 'SFLOW'`.
+
+**You cannot write that filter against a rollup.** No rollup carries `flowProtocol` — it is not in the shared preamble and no rollup adds it — so on a deployment receiving both sFlow and NetFlow/IPFIX, the rollup form of this query inflates every sFlow byte by its sampling rate and there is no way to exclude them.
+
+If you receive sFlow alongside other protocols, do the correction against raw `flows` within its retention, and treat the rollup form as unavailable. Tracked in [#583](https://github.com/Riptide-Labs/riptide/issues/583).
+:::
 
 The rate is a **dimension**, not a pre-scaled measure. A pre-scaled `bytesScaled` column would read `0` for every row aggregated before it existed, so a `SUM` spanning the upgrade would come back quietly too small with nothing marking where. Carrying the rate has no such failure, because `0` is not a rate anything can produce.
 

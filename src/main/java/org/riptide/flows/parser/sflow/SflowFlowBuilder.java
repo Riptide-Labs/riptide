@@ -186,7 +186,7 @@ public final class SflowFlowBuilder {
 
             @Override
             public double getSamplingInterval() {
-                return sample.samplingRate;
+                return usable(sample.samplingRate) ? sample.samplingRate : 1.0d;
             }
 
             /*
@@ -200,8 +200,27 @@ public final class SflowFlowBuilder {
              */
             @Override
             public SamplingProvenance getSamplingProvenance() {
-                return SamplingProvenance.Record;
+                return usable(sample.samplingRate) ? SamplingProvenance.Record : SamplingProvenance.Assumed;
             }
         };
+    }
+
+    /**
+     * Whether a rate off the wire is one an exporter could have meant.
+     *
+     * <p>The same rule the NetFlow and IPFIX builders apply, and it belongs here too even though
+     * sFlow carries the rate by construction: {@code samplingRate} is a uint32 read straight from
+     * the sample, and nothing on the wire stops an agent sending {@code 0}.</p>
+     *
+     * <p><b>Zero is reserved, and not only here.</b> A rollup that has gained the rate as a
+     * dimension gives rows aggregated before the append the column's type default — {@code 0} — and
+     * that value is the only thing marking them, since a column joining the sorting key cannot
+     * carry an explicit {@code DEFAULT}. A live flow persisting {@code 0} would make
+     * {@code WHERE samplingInterval > 0} silently drop real traffic and stop {@code = 0} meaning
+     * what the schema says it means (#470). An unusable rate therefore reads as {@code 1.0} and
+     * says so, dropping to the bottom rung rather than inventing a rate.</p>
+     */
+    private static boolean usable(final double interval) {
+        return Double.isFinite(interval) && interval >= 1.0d;
     }
 }

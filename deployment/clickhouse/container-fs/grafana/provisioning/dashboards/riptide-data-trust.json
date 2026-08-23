@@ -186,7 +186,7 @@
           }
         }
       ],
-      "description": "How many different sampling algorithm and interval combinations are in use across the selected scope. More than one means byte figures from different exporters are not directly comparable \u2014 every top-N ranking in the other dashboards silently assumes they are."
+      "description": "How many different sampling algorithm and interval combinations are in use across the selected scope. More than one means byte figures from different exporters are not directly comparable — every top-N ranking in the other dashboards silently assumes they are."
     },
     {
       "id": 2,
@@ -440,7 +440,7 @@
           }
         }
       ],
-      "description": "The sampling algorithm and interval each exporter reported, with where the interval came from and how much traffic it contributed. An interval of 1 means different things depending on the rate source: 'record', 'options' or 'header' is the exporter stating it does not sample, while 'assumed' is riptide having nothing to go on. 'derived' is riptide's own arithmetic on an IPFIX selector algorithm, and is the value to distrust first. Two exporters with different intervals contribute bytes on different scales \u2014 this table is where you find that out before it distorts a comparison. One exporter on several rows with different rate sources is a rate that is not resolving consistently.\n\nRaw `flows` only. The 1-minute rollups carry `samplingInterval` but not `samplingProvenance`, so this panel cannot be widened past the raw table's retention \u2014 see riptide issue #581. A long-range version would answer a different question from the short-range one, which is worse than not having it."
+      "description": "The sampling algorithm and interval each exporter reported, with where the interval came from and how much traffic it contributed. An interval of 1 means different things depending on the rate source: 'record', 'options' or 'header' is the exporter stating it does not sample, while 'assumed' is riptide having nothing to go on. 'derived' is riptide's own arithmetic on an IPFIX selector algorithm, and is the value to distrust first. Two exporters with different intervals contribute bytes on different scales — this table is where you find that out before it distorts a comparison. One exporter on several rows with different rate sources is a rate that is not resolving consistently.\n\nRaw `flows` only. The 1-minute rollups carry `samplingInterval` but not `samplingProvenance`, so this panel cannot be widened past the raw table's retention — see riptide issue #581."
     },
     {
       "id": 6,
@@ -520,7 +520,7 @@
     {
       "id": 7,
       "type": "table",
-      "title": "Scope matrix \u2014 tenant, organisation, zone",
+      "title": "Scope matrix — tenant, organisation, zone",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -670,7 +670,7 @@
           }
         }
       ],
-      "description": "Each exporter with the protocol version, engine identifiers and system name it presented. A device appearing twice with different engine IDs has been renumbered or replaced \u2014 which breaks any history keyed on that identity."
+      "description": "Each exporter with the protocol version, engine identifiers and system name it presented. A device appearing twice with different engine IDs has been renumbered or replaced — which breaks any history keyed on that identity."
     },
     {
       "id": 9,
@@ -737,7 +737,7 @@
           }
         }
       ],
-      "description": "Exporters whose sampling rate resolved from more than one rung over this window. Any value above zero is worth investigating: firmware that populates the sampling field on some export paths and not others interleaves 'header' and 'assumed' for one exporter, and a NetFlow v9 sampler options table that expires between refreshes does the same with 'options'. Both silently mix traffic recorded on different scales from one device. Rows written before the provenance column existed carry an empty source and count as a distinct rung, so expect a non-zero value across the upgrade.\n\nRaw `flows` only. The 1-minute rollups carry `samplingInterval` but not `samplingProvenance`, so this panel cannot be widened past the raw table's retention \u2014 see riptide issue #581. A long-range version would answer a different question from the short-range one, which is worse than not having it."
+      "description": "Exporters whose sampling rate resolved from more than one rung over this window. Any value above zero is worth investigating: firmware that populates the sampling field on some export paths and not others interleaves 'header' and 'assumed' for one exporter, and a NetFlow v9 sampler options table that expires between refreshes does the same with 'options'. Both silently mix traffic recorded on different scales from one device. Rows written before the provenance column existed carry an empty source and count as a distinct rung, so expect a non-zero value across the upgrade.\n\nRaw `flows` only. The 1-minute rollups carry `samplingInterval` but not `samplingProvenance`, so this panel cannot be widened past the raw table's retention — see riptide issue #581."
     }
   ],
   "annotations": {
@@ -755,5 +755,5 @@
       "keepTime": true
     }
   ],
-  "description": "Can the other dashboards be believed? Sampling configuration, clock corrections, scope labelling and exporter identity \u2014 the metadata that silently invalidates a byte comparison when it changes. Read this one first when a number looks wrong somewhere else. Collection Health answers whether data is arriving; this answers whether it means what you think."
+  "description": "Can the other dashboards be believed? Sampling configuration, clock corrections, scope labelling and exporter identity — the metadata that silently invalidates a byte comparison when it changes. Read this one first when a number looks wrong somewhere else. Collection Health answers whether data is arriving; this answers whether it means what you think."
 }

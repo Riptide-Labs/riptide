@@ -468,12 +468,6 @@ public final class FlowsSchema {
             new Dimension("application", "LowCardinality(String)", "ifNull(f.application, '')");
 
     /**
-     * Dimensions every rollup carries, ahead of its own. The tenant/organisation prefix mirrors the
-     * raw table's sort key so the same row policies apply, and {@code timestamp} keeps the raw
-     * table's column name so a time filter ports between raw and rollup unchanged — truncated to
-     * the minute, which is what makes the rollup a rollup.
-     */
-    /**
      * The sampling rate a flow's counters are scaled by, carried so
      * {@code SUM(bytes * samplingInterval)} means the same thing against a rollup as against the raw
      * table — which it could not before, leaving sampling-corrected volume unanswerable beyond the
@@ -494,6 +488,12 @@ public final class FlowsSchema {
      */
     private static final Dimension SAMPLING_INTERVAL = Dimension.of("samplingInterval", "Float64");
 
+    /**
+     * Dimensions every rollup carries, ahead of its own. The tenant/organisation prefix mirrors the
+     * raw table's sort key so the same row policies apply, and {@code timestamp} keeps the raw
+     * table's column name so a time filter ports between raw and rollup unchanged — truncated to
+     * the minute, which is what makes the rollup a rollup.
+     */
     private static final List<Dimension> PREAMBLE = List.of(
             Dimension.of("tenant", "String"),
             Dimension.of("organisation", "String"),
