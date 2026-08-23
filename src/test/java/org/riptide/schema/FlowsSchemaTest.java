@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 import com.google.common.base.Splitter;
@@ -330,5 +331,116 @@ class FlowsSchemaTest {
     private static String between(final String text, final String open, final String close) {
         final int from = text.indexOf(open) + open.length();
         return text.substring(from, text.indexOf(close, from));
+    }
+
+    /**
+     * The reserved-default rule, enforced rather than remembered (#470 §2).
+     *
+     * <p>An appended dimension's only boundary is its type default: the value a row aggregated
+     * before the append reads, and which a column joining the sorting key cannot be given an
+     * explicit {@code DEFAULT} for. That boundary exists only while the dimension's expression
+     * cannot itself emit that value.</p>
+     *
+     * <p>{@code ifNull(f.application, '')} is the standing exception. It emits {@code ''}
+     * deliberately — a nullable sort key would break the {@code SummingMergeTree} collapse — and is
+     * harmless only because it predates every append. This test names it, so a second one cannot be
+     * added quietly: the day someone writes {@code ifNull(f.srcCity, '')}, the build says no and
+     * points at {@code 'unknown'} instead.</p>
+     */
+    @Test
+    void noDimensionAddedLaterMayEmitTheValueThatMarksItsOwnAbsence() {
+        final Set<String> allowed = Set.of("ifNull(f.application, '')");
+
+        assertThat(FlowsSchema.appendableDimensions())
+                .allSatisfy((expression, absent) -> {
+                    if (allowed.contains(expression)) {
+                        return;
+                    }
+                    assertThat(expression)
+                            .as("%s can emit %s, which is the value that marks a pre-append row",
+                                    expression, absent)
+                            .doesNotContain(", " + absent + ")");
+                });
+    }
+
+    /** The append and the reorder must be one statement, or ClickHouse rejects it with Code 36. */
+    @Test
+    void theRepairAddsColumnsAndReordersInOneStatement() {
+        assertThat(FlowsSchema.alterRollupTargets("riptide"))
+                .hasSize(4)
+                .allSatisfy((rollup, ddl) -> {
+                    assertThat(ddl).startsWith("ALTER TABLE `riptide`." + rollup);
+                    assertThat(ddl).contains("ADD COLUMN IF NOT EXISTS").contains("MODIFY ORDER BY (");
+                    assertThat(ddl.split("ALTER TABLE")).as("one statement, not several").hasSize(2);
+                });
+    }
+
+    /**
+     * A column joining the sorting key may not carry a DEFAULT — ClickHouse: "Newly added column X
+     * has a default expression, so adding expressions that use it to the sorting key is forbidden."
+     * The implicit type default is what marks pre-append rows, so this is load-bearing twice over.
+     */
+    @Test
+    void theRepairNeverGivesANewSortKeyColumnADefault() {
+        assertThat(FlowsSchema.alterRollupTargets("riptide"))
+                .allSatisfy((rollup, ddl) -> assertThat(ddl).doesNotContain("DEFAULT"));
+    }
+
+    /** The repaired sorting key must equal the one a fresh CREATE would use, or the two diverge. */
+    @Test
+    void theRepairedSortKeyMatchesWhatAFreshInstallCreates() {
+        final Map<String, String> intended = FlowsSchema.rollupSortKeys();
+        for (final String ddl : FlowsSchema.createRollupTables("riptide")) {
+            final int from = ddl.indexOf("CREATE TABLE IF NOT EXISTS ") + "CREATE TABLE IF NOT EXISTS ".length();
+            final String table = ddl.substring(from, ddl.indexOf(" (", from)).replace("`riptide`.", "").trim();
+            assertThat(keyList(ddl, "ORDER BY (")).isEqualTo(intended.get(table));
+        }
+    }
+
+    /**
+     * A repaired view and a freshly created one must select identically, or every repair would be
+     * reported as drift on the very next start.
+     */
+    @Test
+    void theRepairedViewSelectsExactlyWhatAFreshOneDoes() {
+        final Map<String, String> modifies = FlowsSchema.modifyRollupViews("riptide");
+        FlowsSchema.rollupSelects("riptide").forEach((rollup, select) ->
+                assertThat(modifies.get(rollup))
+                        .isEqualTo("ALTER TABLE `riptide`." + rollup + "_mv MODIFY QUERY\n" + select));
+    }
+
+    /**
+     * The mechanism, pinned here because the integration test cannot pin it: swapping
+     * {@code MODIFY QUERY} for {@code DROP} + {@code CREATE} leaves the mid-stream loss test green,
+     * since the two statements run back-to-back and nothing lands in the gap at test cadence. The
+     * whole change rests on the view never being absent, so the absence of a DROP is asserted
+     * directly.
+     */
+    @Test
+    void noRepairStatementEverDropsAnything() {
+        assertThat(FlowsSchema.modifyRollupViews("riptide"))
+                .allSatisfy((rollup, ddl) -> assertThat(ddl)
+                        .as("a dropped view does not backfill; the gap is a permanent hole")
+                        .doesNotContainIgnoringCase("DROP")
+                        .contains("MODIFY QUERY"));
+        assertThat(FlowsSchema.alterRollupTargets("riptide"))
+                .allSatisfy((rollup, ddl) -> assertThat(ddl).doesNotContainIgnoringCase("DROP"));
+    }
+
+    /**
+     * #571's frozen primary keys already catch a dimension inserted mid-list, because the primary
+     * key is the full dimension list. What was missing is the reason, so the failure explains
+     * itself rather than reading as a stale fixture.
+     */
+    @Test
+    void aMidListDimensionIsCaughtByTheFrozenPrimaryKeys() {
+        final Map<String, String> intended = FlowsSchema.rollupSortKeys();
+        for (final String ddl : FlowsSchema.createRollupTables("riptide")) {
+            assertThat(intended.values())
+                    .as("a dimension inserted mid-list works on a fresh install and is impossible on"
+                            + " an upgraded one — ALTER can only append — so the build is the only"
+                            + " place it can be caught")
+                    .anySatisfy(key -> assertThat(keyList(ddl, "ORDER BY (")).isEqualTo(key));
+        }
     }
 }

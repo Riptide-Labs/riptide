@@ -61,7 +61,18 @@ public final class ProvisioningDdl {
         final List<String> statements = new ArrayList<>();
         statements.addAll(FlowsSchema.addAdditiveColumns(database));
         statements.addAll(FlowsSchema.createRollupTables(database));
+        // In-place repair for rollups that already exist, since CREATE ... IF NOT EXISTS no-ops
+        // over them and would otherwise leave a provisioned deployment on its original shape
+        // forever (#470). Idempotent, so it is emitted unconditionally like the additive columns
+        // above. Targets before views: the view's SELECT names columns the ALTER adds.
+        //
+        // Unlike the collector's path this cannot refuse a sorting-key shrink, because these
+        // statements are generated without reading the live schema. A shrink is rejected by
+        // ClickHouse's own prefix rule whenever the primary key still covers the removed column,
+        // and the collector reports it on the next start either way.
+        statements.addAll(FlowsSchema.alterRollupTargets(database).values());
         statements.addAll(FlowsSchema.createRollupViews(database));
+        statements.addAll(FlowsSchema.modifyRollupViews(database).values());
         return List.copyOf(statements);
     }
 

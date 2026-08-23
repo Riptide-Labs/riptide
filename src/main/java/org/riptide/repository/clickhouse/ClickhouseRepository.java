@@ -158,17 +158,100 @@ public class ClickhouseRepository implements FlowRepository {
             for (final String ddl : FlowsSchema.createRollupTables(this.config.getDatabase())) {
                 this.client.execute(ddl).get();
             }
+
+            // Targets are repaired BEFORE the views are created, not after. CREATE MATERIALIZED
+            // VIEW IF NOT EXISTS validates its SELECT against the target even when the view already
+            // exists and the statement would no-op — so on the first start after a rollup gains a
+            // dimension, creating the view would fail with "SELECT query outputs column with name
+            // 'x', which is not found in the target table" before any repair had a chance to run.
+            final List<String> repairing = planRollupRepair();
+            final Map<String, String> alters = FlowsSchema.alterRollupTargets(this.config.getDatabase());
+            for (final String rollup : repairing) {
+                this.client.execute(alters.get(rollup)).get();
+            }
+
             for (final String ddl : FlowsSchema.createRollupViews(this.config.getDatabase())) {
                 this.client.execute(ddl).get();
+            }
+
+            // And the views last: MODIFY QUERY swaps an existing view's SELECT in place, which
+            // CREATE ... IF NOT EXISTS cannot do. Repairing before verifying means a rollup brought
+            // up to date on this start verifies clean rather than warning once per upgrade.
+            final Map<String, String> modifies = FlowsSchema.modifyRollupViews(this.config.getDatabase());
+            for (final String rollup : repairing) {
+                this.client.execute(modifies.get(rollup)).get();
             }
         }
 
         // Both modes: report a rollup whose shape is not what this version intends, and keep the
-        // query path off it. Runs last because in manage mode the CREATEs above are what a fresh
-        // install's shape comes from. Never fails startup — see verifyRollupShapes.
+        // query path off it. Runs last because in manage mode the CREATEs and the repair above are
+        // what a fresh or upgraded install's shape comes from. Never fails startup — see
+        // verifyRollupShapes.
         verifyRollupShapes();
 
         this.client.register(ClickhouseFlow.class, schema);
+    }
+
+    /**
+     * Decide which rollups need repairing, and say so once (#470).
+     *
+     * <p>Both repair statements are idempotent — {@code ADD COLUMN IF NOT EXISTS} no-ops on a column
+     * that exists, and {@code MODIFY ORDER BY} to the key a table already has is accepted and
+     * changes nothing — so correctness does not depend on this planning step. The live shape is read
+     * for two things that do need it: refusing a repair that would shrink a sorting key, and staying
+     * silent when there is nothing to do, which is every start after the first. An unconditional
+     * repair that logged unconditionally would be noise on every boot forever.</p>
+     */
+    private List<String> planRollupRepair() throws Exception {
+        final Map<String, String> liveSortKeys = readRollupSortKeys();
+        final Map<String, Map<String, String>> liveColumns = readRollupColumns();
+        final List<String> repairing = new ArrayList<>();
+
+        for (final Map.Entry<String, String> entry : FlowsSchema.rollupSortKeys().entrySet()) {
+            final String rollup = entry.getKey();
+            final String wanted = entry.getValue();
+            final String live = liveSortKeys.get(rollup);
+            if (live == null) {
+                // Not visible to this connection. verifyRollupShapes reports it as unreachable
+                // rather than this silently skipping it.
+                continue;
+            }
+            if (wanted.equals(live) && intendedColumnsPresent(rollup, liveColumns)) {
+                continue;
+            }
+            if (!wanted.startsWith(live)) {
+                // A sorting key may only grow, and only by columns the same ALTER adds. Before #571
+                // the primary key was derived, so ClickHouse's prefix rule rejected a shrink
+                // outright; freezing the primary key made a shrink legal, which means a reverted
+                // dimension would quietly change this rollup's grain. Refuse instead.
+                log.warn("Rollup {} would have its sorting key changed from ({}) to ({}), which is not"
+                        + " an append. Riptide will not do that in place: the grain would change and"
+                        + " existing rows would not be re-aggregated. Left as it is.",
+                        rollup, live, wanted);
+                continue;
+            }
+            log.info("Rollup {} sorting key ({}) -> ({}); repairing in place.", rollup, live, wanted);
+            repairing.add(rollup);
+        }
+        return repairing;
+    }
+
+    private static boolean intendedColumnsPresent(final String rollup,
+            final Map<String, Map<String, String>> liveColumns) {
+        final Map<String, String> live = liveColumns.getOrDefault(rollup, Map.of());
+        return live.keySet().containsAll(FlowsSchema.rollupColumns().get(rollup).keySet());
+    }
+
+    /** Each rollup target's live sorting key, for those the connecting user can see. */
+    private Map<String, String> readRollupSortKeys() throws Exception {
+        final Map<String, String> keys = new LinkedHashMap<>();
+        try (var records = this.client.queryRecords(
+                "SELECT name, sorting_key FROM system.tables WHERE database = "
+                        + quote(this.config.getDatabase())).get()) {
+            records.forEach(record -> keys.put(record.getString("name"), record.getString("sorting_key")));
+        }
+        keys.keySet().retainAll(FlowsSchema.rollupTableNames());
+        return keys;
     }
 
     /**

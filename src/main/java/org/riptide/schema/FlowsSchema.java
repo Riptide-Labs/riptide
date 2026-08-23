@@ -175,6 +175,92 @@ public final class FlowsSchema {
         return ddl.toString();
     }
 
+    /**
+     * The in-place repair for every rollup target: one {@code ALTER} per rollup that adds any
+     * missing dimension and sets the sorting key to this version's (#470).
+     *
+     * <p>Emitted unconditionally on every start, like {@link #addAdditiveColumns}, because it is
+     * idempotent: {@code ADD COLUMN IF NOT EXISTS} no-ops on a column that exists, and
+     * {@code MODIFY ORDER BY} to the key a table already has is accepted and changes nothing. There
+     * is therefore nothing to detect and nothing to classify before running it.</p>
+     *
+     * <p><b>One statement per rollup, not one per column.</b> ClickHouse rejects a sorting key that
+     * gains a column the same {@code ALTER} did not add — <em>"Existing column X is used in the
+     * expression that was added to the sorting key. You can add expressions that use only the newly
+     * added columns."</em> Adding the column in a previous statement therefore closes the only
+     * in-place route, and the two must travel together.</p>
+     *
+     * <p><b>No {@code DEFAULT} clause, deliberately.</b> ClickHouse also rejects <em>"Newly added
+     * column X has a default expression, so adding expressions that use it to the sorting key is
+     * forbidden."</em> The implicit type default still applies, so rows aggregated before the append
+     * read {@code ''} or {@code 0} — which is the boundary an appended dimension depends on to mark
+     * its own history, not an accident. See {@link Dimension#absent()}.</p>
+     *
+     * <p>The primary key is untouched and stays frozen at whatever the table was created with, which
+     * is what keeps a fresh install and an upgraded one agreeing (#571).</p>
+     */
+    public static Map<String, String> alterRollupTargets(final String database) {
+        final Map<String, String> alters = new LinkedHashMap<>();
+        for (final Rollup rollup : ROLLUPS) {
+            alters.put(rollup.table(), alterRollupTarget(database, rollup));
+        }
+        return Collections.unmodifiableMap(alters);
+    }
+
+    private static String alterRollupTarget(final String database, final Rollup rollup) {
+        final List<Dimension> columns = allDimensions(rollup);
+        final StringBuilder ddl = new StringBuilder("ALTER TABLE ")
+                .append(qualifiedRollup(database, rollup.table()));
+        for (final Dimension dimension : columns) {
+            ddl.append("\n    ADD COLUMN IF NOT EXISTS ")
+                    .append(dimension.column()).append(' ').append(dimension.type()).append(',');
+        }
+        ddl.append("\n    MODIFY ORDER BY (").append(sortKey(rollup)).append(')');
+        return ddl.toString();
+    }
+
+    /**
+     * The sorting key this version intends for each rollup, keyed by target table name.
+     *
+     * <p>Exposed so a caller holding the live {@code system.tables.sorting_key} can refuse to apply
+     * a repair that would <em>shrink</em> it. #571 froze the primary key, which made a shrink legal
+     * where ClickHouse's prefix rule used to reject it, so a reverted dimension would otherwise
+     * change a rollup's grain silently.</p>
+     */
+    public static Map<String, String> rollupSortKeys() {
+        final Map<String, String> keys = new LinkedHashMap<>();
+        for (final Rollup rollup : ROLLUPS) {
+            keys.put(rollup.table(), sortKey(rollup));
+        }
+        return Collections.unmodifiableMap(keys);
+    }
+
+    private static String sortKey(final Rollup rollup) {
+        return allDimensions(rollup).stream().map(Dimension::column).collect(Collectors.joining(", "));
+    }
+
+    /**
+     * {@code ALTER TABLE <view> MODIFY QUERY} for every rollup's materialized view.
+     *
+     * <p>Reuses the very SELECT {@link #createRollupViews} emits, so a repaired view and a freshly
+     * created one cannot differ — which is also what {@code detect-rollup-shape-drift} compares
+     * against, so a repair verifies clean on the same start rather than warning once per upgrade.</p>
+     *
+     * <p>{@code MODIFY QUERY} swaps the SELECT in place and does not interrupt aggregation. Measured
+     * at zero loss under continuous insert, against 0.44% for the {@code DROP}/{@code CREATE} path
+     * that a materialized view would otherwise need — see {@code design.md}. Must be emitted
+     * <em>after</em> {@link #alterRollupTargets}, or the new SELECT names a column the target does
+     * not have yet.</p>
+     */
+    public static Map<String, String> modifyRollupViews(final String database) {
+        final Map<String, String> modifies = new LinkedHashMap<>();
+        for (final Rollup rollup : ROLLUPS) {
+            modifies.put(rollup.table(), "ALTER TABLE " + qualifiedRollupView(database, rollup.table())
+                    + " MODIFY QUERY\n" + rollupSelect(database, rollup));
+        }
+        return Collections.unmodifiableMap(modifies);
+    }
+
     /** The materialized view feeding one rollup target from {@code flows}. */
     private static String rollupView(final String database, final Rollup rollup) {
         return "CREATE MATERIALIZED VIEW IF NOT EXISTS "
@@ -387,6 +473,43 @@ public final class FlowsSchema {
         String selectItem() {
             return expression + " AS " + column;
         }
+
+        /**
+         * The value this column holds for a row aggregated before the dimension existed — the
+         * implicit type default, because a column joining the sorting key may not carry an explicit
+         * {@code DEFAULT} (ClickHouse Code 36).
+         *
+         * <p>That value is the only boundary an appended dimension gets: it is what distinguishes
+         * "this row predates the append" from a real reading. It only works while the dimension's
+         * SELECT expression can never produce it — see {@link FlowsSchema#appendableDimensions()},
+         * which is asserted at build time rather than left to a reviewer noticing.</p>
+         */
+        String absent() {
+            return type.contains("String") ? "''" : "0";
+        }
+    }
+
+    /**
+     * Every dimension paired with the value that means "aggregated before this dimension existed".
+     *
+     * <p>Exists so the reserved-default rule is checkable rather than remembered. A dimension may be
+     * appended to a live rollup only if its expression can never emit {@link Dimension#absent()};
+     * otherwise the type default is a legitimate reading and the append has no boundary at all.</p>
+     *
+     * <p>{@code APPLICATION} is the standing counter-example: {@code ifNull(f.application, '')}
+     * emits {@code ''} deliberately, because a nullable sort key would break the
+     * {@code SummingMergeTree} collapse. That is harmless only because it predates every append. A
+     * dimension added later has to be written {@code ifNull(f.srcCity, 'unknown')} instead, and the
+     * test over this map is what says so.</p>
+     */
+    public static Map<String, String> appendableDimensions() {
+        final Map<String, String> byExpression = new LinkedHashMap<>();
+        for (final Rollup rollup : ROLLUPS) {
+            for (final Dimension dimension : allDimensions(rollup)) {
+                byExpression.put(dimension.expression(), dimension.absent());
+            }
+        }
+        return Collections.unmodifiableMap(byExpression);
     }
 
     /** An aggregate carried by every rollup: its target column and the aggregating expression. */

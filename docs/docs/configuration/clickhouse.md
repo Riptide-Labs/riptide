@@ -130,6 +130,22 @@ GROUP BY application ORDER BY bytes DESC LIMIT 10;
 
 Each rollup `X` is fed by a materialized view named `X_mv`. Query the table, never the `_mv`.
 
+### Rollups gain dimensions in place
+
+When a release adds a dimension to a rollup, riptide appends it to the existing table rather than leaving upgraded deployments on the old shape. Two statements per rollup, both metadata-only: one `ALTER` that adds the column and extends the sorting key, then `MODIFY QUERY` on the materialized view.
+
+**No aggregation is interrupted.** `MODIFY QUERY` swaps the view's SELECT in place. Dropping and recreating the view would leave a window in which nothing is aggregated, and a materialized view does not backfill, so that window would be a permanent hole in the rollup — measured at 0.44% of flows at a modest ingest rate. Riptide does not take that path.
+
+**Rows aggregated before the append read the column's type default** — `0` for a number, empty for a string — because a column joining the sorting key cannot be given a `DEFAULT`. That is the boundary: it marks exactly which rows predate the change, and a query spanning an upgrade can exclude them with a predicate rather than needing to remember a date.
+
+Repair runs in manage mode at startup, and in `riptide onboard` for provisioned deployments. It is idempotent, so it runs on every start and does nothing after the first. Riptide logs a line naming the rollup and the key change when it actually repairs something, and stays silent otherwise.
+
+**What riptide will not do in place:**
+
+- **Shrink a sorting key.** A dimension removed from a release is not removed from your table. The grain would change and existing rows would not be re-aggregated, so riptide reports it and leaves the rollup alone.
+- **Repair a corrected aggregate.** If a release changes how a measure is computed, the rollup is [declined at query time](#rollup-shape-checks-at-startup) rather than repaired. Repairing would readmit rows computed the old way with nothing to distinguish them, which is worse than answering from raw `flows`.
+- **Add a measure.** A measure reading `0` for historical rows makes a `SUM` spanning the upgrade quietly too small, with nothing in the data marking where. Dimensions have a boundary; measures do not.
+
 ### Rollup shape checks at startup
 
 Riptide compares every rollup against the shape the running version intends, in both schema modes, and reports what it finds. It changes nothing: there is no automatic repair, no `ALTER`, no `DROP`.
