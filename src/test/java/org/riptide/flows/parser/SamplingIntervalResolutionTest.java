@@ -6,7 +6,6 @@
 package org.riptide.flows.parser;
 
 import com.codahale.metrics.MetricRegistry;
-import com.google.common.primitives.UnsignedLong;
 import io.netty.buffer.Unpooled;
 import org.junit.jupiter.api.Test;
 import org.riptide.flows.parser.data.Flow;
@@ -220,24 +219,37 @@ class SamplingIntervalResolutionTest {
     }
 
     /**
-     * Selector algorithms 0, 8 and 9 have no expressible interval. Before this change that reached
-     * the Float64 column as NaN, which would poison any aggregate multiplying by it.
+     * No selector algorithm on a record derives a rate, for any of the ten values.
+     *
+     * <p>This replaces a pair of tests asserting that only 0, 8 and 9 fell through. Those passed
+     * both before and after the rung was removed — once nothing derives from a record, every value
+     * falls through and the assertion stops distinguishing anything — so they are restated here as
+     * the property that actually holds, across the whole registry rather than three of it.</p>
+     *
+     * <p>RFC 5476 §6.5.2 puts a Selector's parameters in an options record scoped by
+     * {@code selectorId}, so a record naming an algorithm has stated a reference and nothing more.
+     * Deriving from it defaulted every absent parameter into a fabricated {@code 1.0} that then
+     * outranked the exporter's own advertisement (#584).</p>
      */
     @Test
-    void ipfixInexpressibleSelectorAlgorithmsFallThroughToConfiguration() {
-        for (final int algorithm : new int[]{0, 8, 9}) {
+    void ipfixNoSelectorAlgorithmOnARecordDerivesARate() {
+        for (int algorithm = 0; algorithm <= 9; algorithm++) {
             final var raw = new IpfixRawFlow();
             raw.selectorAlgorithm = algorithm;
 
-            assertThat(ipfixInterval(raw, 2000L))
+            assertThat(ipfixFlow(raw, 2000L))
                     .describedAs("selectorAlgorithm %d", algorithm)
-                    .isEqualTo(2000.0);
+                    .satisfies(flow -> {
+                        assertThat(flow.getSamplingInterval()).isEqualTo(2000.0);
+                        assertThat(flow.getSamplingProvenance()).isEqualTo(SamplingProvenance.Fallback);
+                    });
         }
     }
 
+    /** And with nothing configured either, the honest answer is `assumed`, never NaN. */
     @Test
-    void ipfixInexpressibleSelectorAlgorithmsNeverYieldNaN() {
-        for (final int algorithm : new int[]{0, 8, 9}) {
+    void ipfixASelectorAlgorithmAloneNeverYieldsNaN() {
+        for (int algorithm = 0; algorithm <= 9; algorithm++) {
             final var raw = new IpfixRawFlow();
             raw.selectorAlgorithm = algorithm;
 
@@ -250,12 +262,36 @@ class SamplingIntervalResolutionTest {
         }
     }
 
+    /**
+     * The record's selector parameters are ignored even when it carries a full set of them.
+     *
+     * <p>The specific shape that used to resolve: an exporter advertising a real rate out of band,
+     * whose records also carry selector parameters. The old ladder computed 1000 from the record and
+     * returned it above the advertised 100. Both numbers are now irrelevant — the parameters are not
+     * read from records at all — and the advertised rate is what the flow reports.</p>
+     */
+    @Test
+    void ipfixSelectorParametersOnARecordDoNotOutrankTheAdvertisedRate() {
+        final var raw = new IpfixRawFlow();
+        raw.selectorAlgorithm = 4;
+
+        final var builder = new IpFixFlowBuilder(IPFIX);
+        final Flow flow = builder.buildFlow(Instant.EPOCH, raw, new AdvertisedRate(100.0, null));
+
+        assertResolved(flow, 100.0, SamplingProvenance.Options);
+    }
+
     @Test
     void ipfixPrefersTheRateOnTheRecord() {
         final var raw = new IpfixRawFlow();
         raw.samplingInterval = 512.0;
 
-        assertResolved(ipfixFlow(raw, 2000L), 512.0, SamplingProvenance.Record);
+        final var flow = ipfixFlow(raw, 2000L);
+
+        assertResolved(flow, 512.0, SamplingProvenance.Record);
+        // the interval and its provenance are one memoized resolution; reading either a second
+        // time must not walk the ladder again and reach a different rung
+        assertResolved(flow, 512.0, SamplingProvenance.Record);
     }
 
     @Test
@@ -275,35 +311,38 @@ class SamplingIntervalResolutionTest {
      */
     @Test
     void ipfixNamesAComputedRateAsDerived() {
-        final var raw = new IpfixRawFlow();
-        raw.selectorAlgorithm = 3;
-        raw.samplingSize = 1.0;
-        raw.samplingPopulation = 1000.0;
+        final var builder = new IpFixFlowBuilder(IPFIX);
+        builder.setFlowSamplingIntervalFallback(2000L);
 
-        assertResolved(ipfixFlow(raw, 2000L), 1000.0, SamplingProvenance.Derived);
+        // what the table holds after reading a Selector Report: a rate riptide worked out, and the
+        // algorithm it worked it out from. An interval alone would have been stated, not computed.
+        final Flow flow = builder.buildFlow(Instant.EPOCH, new IpfixRawFlow(),
+                new AdvertisedRate(1000.0, null, 3));
+
+        assertResolved(flow, 1000.0, SamplingProvenance.Derived);
     }
 
-    /**
-     * The laziness the builder's own comment demands, pinned. A record carrying its own rate must
-     * not evaluate the selector-algorithm rung: that rung divides by exporter-supplied ranges, and
-     * a degenerate one would cost the whole packet's batch. The degenerate range here would be
-     * reached only if the rung ran — reading provenance as well as the interval must not run it
-     * either, which is the property the memoized single traversal buys.
-     */
+    /** And a rate the same table holds as stated is `options`, at the same rung. */
     @Test
-    void ipfixDoesNotDeriveWhenTheRecordCarriesItsOwnRate() {
-        final var raw = new IpfixRawFlow();
-        raw.samplingInterval = 512.0;
-        raw.selectorAlgorithm = 5;
-        raw.hashSelectedRangeMin = UnsignedLong.ZERO;
-        raw.hashSelectedRangeMax = UnsignedLong.ZERO;
+    void ipfixNamesAStatedRateAsOptions() {
+        final var builder = new IpFixFlowBuilder(IPFIX);
+        builder.setFlowSamplingIntervalFallback(2000L);
 
-        final var flow = ipfixFlow(raw, null);
+        final Flow flow = builder.buildFlow(Instant.EPOCH, new IpfixRawFlow(),
+                new AdvertisedRate(1000.0, null));
 
-        assertResolved(flow, 512.0, SamplingProvenance.Record);
-        // reading either accessor again must not walk the ladder a second time
-        assertResolved(flow, 512.0, SamplingProvenance.Record);
+        assertResolved(flow, 1000.0, SamplingProvenance.Options);
     }
+
+    /*
+     * `ipfixDoesNotDeriveWhenTheRecordCarriesItsOwnRate` stood here. It set selectorAlgorithm 5 with
+     * a degenerate hash range, on the reasoning that an eager ladder would divide by it and cost the
+     * whole packet's batch. It could not fail: the record's own rate returns before the selector
+     * rung is reached, and the degenerate-range guard yielded null rather than throwing, so the
+     * assertion held whether evaluation was lazy or not. With per-record derivation gone there is no
+     * longer even a rung to be lazy about — only the table lookup, which the fields it used cannot
+     * reach. Its surviving assertions are covered by `ipfixPrefersTheRateOnTheRecord` below.
+     */
 
     // ---- sFlow ------------------------------------------------------------------------------
 
