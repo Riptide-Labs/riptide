@@ -16,6 +16,8 @@ import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.FlowPacket;
 import org.riptide.flows.parser.ipfix.proto.Header;
 import org.riptide.flows.parser.ipfix.proto.Packet;
+import org.riptide.flows.parser.session.ExporterSamplingTable;
+import org.riptide.pipeline.ExporterIdentity;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.UdpSessionManager;
 import org.riptide.pipeline.Identity;
@@ -52,11 +54,16 @@ public class IpfixUdpParser extends UdpParserBase implements DispatchableUdpPars
                                final ByteBuf buffer) throws Exception {
         final Header header = new Header(slice(buffer, Header.SIZE));
         final Packet packet = new Packet(session, header, slice(buffer, header.payloadLength()));
+        // Same identity the option tap builds when it consumes a sampler options record, so a
+        // lookup finds what that record deposited (UdpSessionManager keys on remote address plus
+        // observation domain).
+        final ExporterIdentity exporter =
+                new ExporterIdentity.NetflowIpfix(session.getRemoteAddress(), header.observationDomainId);
 
         return new FlowPacket() {
             @Override
             public Stream<Flow> buildFlows(Instant receivedAt) {
-                return flowBuilder.buildFlows(receivedAt, packet);
+                return flowBuilder.buildFlows(receivedAt, packet, exporter);
             }
 
             @Override
@@ -146,6 +153,12 @@ public class IpfixUdpParser extends UdpParserBase implements DispatchableUdpPars
 
     public IpfixUdpParser withFlowInactiveTimeoutFallback(final Duration flowInactiveTimeoutFallback) {
         this.flowBuilder.setFlowInactiveTimeoutFallback(flowInactiveTimeoutFallback);
+        return this;
+    }
+
+    /** Rates learned from sampler options records; see {@link ExporterSamplingTable}. */
+    public IpfixUdpParser withSamplingTable(final ExporterSamplingTable samplingTable) {
+        this.flowBuilder.setSamplingTable(samplingTable);
         return this;
     }
 
