@@ -18,11 +18,15 @@ import org.riptide.flows.parser.data.Optionals;
 import org.riptide.flows.parser.data.ResolvedRate;
 import org.riptide.flows.parser.data.Timeout;
 import org.riptide.flows.parser.ipfix.proto.Packet;
+import org.riptide.flows.parser.session.ExporterSamplingTable;
+import org.riptide.flows.parser.session.ExporterSamplingTable.AdvertisedRate;
+import org.riptide.pipeline.ExporterIdentity;
 
 import java.net.InetAddress;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 @Slf4j
@@ -42,18 +46,49 @@ public class IpFixFlowBuilder {
     @Setter
     private Long flowSamplingIntervalFallback;
 
+    /** Rates exporters advertise in sampler options records; null until a parser supplies one. */
+    @Setter
+    private ExporterSamplingTable samplingTable;
+
     public IpFixFlowBuilder(final ValueConversionService conversionService) {
         this.conversionService = Objects.requireNonNull(conversionService);
     }
 
     public Stream<Flow> buildFlows(final Instant receivedAt,
                                    final Packet packet) {
+        return buildFlows(receivedAt, packet, null);
+    }
+
+    /**
+     * The exporter identity is threaded in rather than held on the builder, for the same reason it
+     * is in {@code Netflow9FlowBuilder}: one UDP parser fronts every exporter sending to its port,
+     * so a builder-scoped rate would be handed to whichever exporter happened to send next.
+     */
+    public Stream<Flow> buildFlows(final Instant receivedAt,
+                                   final Packet packet,
+                                   final ExporterIdentity identity) {
+        // Resolved lazily and at most once per packet: a record carrying its own rate never asks,
+        // so an exporter that always states it does not register as a permanent lookup miss.
+        final Supplier<Optional<AdvertisedRate>> advertised = Suppliers.memoize(
+                () -> this.samplingTable != null ? this.samplingTable.lookup(identity) : Optional.empty());
         return createRawFlows(packet)
-                .map(rawFlow -> buildFlow(receivedAt, rawFlow));
+                .map(rawFlow -> buildFlow(receivedAt, rawFlow, advertised));
     }
 
     public Flow buildFlow(final Instant receivedAt,
                           final IpfixRawFlow rawFlow) {
+        return buildFlow(receivedAt, rawFlow, Optional::empty);
+    }
+
+    public Flow buildFlow(final Instant receivedAt,
+                          final IpfixRawFlow rawFlow,
+                          final AdvertisedRate advertisedRate) {
+        return buildFlow(receivedAt, rawFlow, () -> Optional.ofNullable(advertisedRate));
+    }
+
+    private Flow buildFlow(final Instant receivedAt,
+                           final IpfixRawFlow rawFlow,
+                           final Supplier<Optional<AdvertisedRate>> advertised) {
         return new Flow() {
             @Override
             public Instant getReceivedAt() {
@@ -224,7 +259,8 @@ public class IpFixFlowBuilder {
 
             @Override
             public SamplingAlgorithm getSamplingAlgorithm() {
-                return Optionals.first(rawFlow.samplingAlgorithm, rawFlow.samplerMode)
+                return Optionals.first(rawFlow.samplingAlgorithm, rawFlow.samplerMode,
+                                advertised.get().map(AdvertisedRate::mode).orElse(null))
                         .map(deprecatedSamplingAlgorithm -> {
                             if (deprecatedSamplingAlgorithm == 1) {
                                 return SamplingAlgorithm.SystematicCountBasedSampling;
@@ -266,6 +302,17 @@ public class IpFixFlowBuilder {
                         .orElse(null);
                 if (onRecord != null) {
                     return ResolvedRate.of(onRecord, SamplingProvenance.Record);
+                }
+                // Above `derived` deliberately: a rate the exporter STATES outranks one riptide
+                // computes from its selector parameters, which is why the ladder calls derived the
+                // rung carrying the least authority. Below `record` for the reason v9 has it there
+                // — a rate on the flow record is more specific than one advertised for the exporter.
+                final Double stated = advertised.get()
+                        .map(AdvertisedRate::interval)
+                        .map(IpFixFlowBuilder::usable)
+                        .orElse(null);
+                if (stated != null) {
+                    return ResolvedRate.of(stated, SamplingProvenance.Options);
                 }
                 final Double derived = usable(fromSelectorAlgorithm());
                 if (derived != null) {

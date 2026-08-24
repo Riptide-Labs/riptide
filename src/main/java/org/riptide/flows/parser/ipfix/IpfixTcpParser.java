@@ -17,7 +17,9 @@ import org.riptide.flows.parser.FlowPacket;
 import org.riptide.flows.parser.ipfix.proto.Header;
 import org.riptide.flows.parser.ipfix.proto.Packet;
 import org.riptide.flows.parser.session.OptionListener;
+import org.riptide.flows.parser.session.ExporterSamplingTable;
 import org.riptide.flows.parser.session.TcpSession;
+import org.riptide.pipeline.ExporterIdentity;
 import org.riptide.flows.parser.state.ParserState;
 import org.riptide.pipeline.Identity;
 import org.riptide.pipeline.Source;
@@ -86,7 +88,9 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
                 final var flow = new FlowPacket() {
                     @Override
                     public Stream<Flow> buildFlows(Instant receivedAt) {
-                        return flowBuilder.buildFlows(receivedAt, packet);
+                        return flowBuilder.buildFlows(receivedAt, packet,
+                                new ExporterIdentity.NetflowIpfix(
+                                        remoteAddress.getAddress(), header.observationDomainId));
                     }
 
                     @Override
@@ -133,6 +137,12 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
 
     public IpfixTcpParser withFlowInactiveTimeoutFallback(final Duration flowInactiveTimeoutFallback) {
         this.flowBuilder.setFlowInactiveTimeoutFallback(flowInactiveTimeoutFallback);
+        return this;
+    }
+
+    /** Rates learned from sampler options records; see {@link ExporterSamplingTable}. */
+    public IpfixTcpParser withSamplingTable(final ExporterSamplingTable samplingTable) {
+        this.flowBuilder.setSamplingTable(samplingTable);
         return this;
     }
 

@@ -137,7 +137,8 @@ public class Daemon implements ApplicationRunner {
                                 final var parser = new IpfixUdpParser(e.getKey(), dispatcher, identity, metricRegistry, ipfixValueConversionService)
                                         .withFlowActiveTimeoutFallback(config.getFlowActiveTimeoutFallback())
                                         .withFlowInactiveTimeoutFallback(config.getFlowInactiveTimeoutFallback())
-                                        .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback());
+                                        .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback())
+                                        .withSamplingTable(exporterSamplingTable);
 
                                 parser.setOptionListener(optionListener);
                         parser.setSessionAdmission(sessionAdmission);
@@ -150,7 +151,8 @@ public class Daemon implements ApplicationRunner {
                                 final var parser = new IpfixTcpParser(e.getKey(), dispatcher, identity, metricRegistry, ipfixValueConversionService)
                                         .withFlowActiveTimeoutFallback(config.getFlowActiveTimeoutFallback())
                                         .withFlowInactiveTimeoutFallback(config.getFlowInactiveTimeoutFallback())
-                                        .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback());
+                                        .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback())
+                                        .withSamplingTable(exporterSamplingTable);
 
                                 // No admission oracle here: IPFIX over TCP keeps per-connection
                                 // state in TcpSession, and a connection is already a bounded,
@@ -203,7 +205,8 @@ public class Daemon implements ApplicationRunner {
                             final var ipfix = new IpfixUdpParser(e.getKey() + ":ipfix", dispatcher, identity, metricRegistry, ipfixValueConversionService)
                                     .withFlowActiveTimeoutFallback(config.getFlowActiveTimeoutFallback())
                                     .withFlowInactiveTimeoutFallback(config.getFlowInactiveTimeoutFallback())
-                                    .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback());
+                                    .withFlowSamplingIntervalFallback(config.getFlowSamplingIntervalFallback())
+                                    .withSamplingTable(exporterSamplingTable);
                             ipfix.setOptionListener(optionListener);
                             ipfix.setSessionAdmission(sessionAdmission);
                             parsers.add(ipfix);
