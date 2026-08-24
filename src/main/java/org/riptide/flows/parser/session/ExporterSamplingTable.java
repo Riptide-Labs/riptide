@@ -7,13 +7,16 @@ package org.riptide.flows.parser.session;
 
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
+import com.google.common.base.Ticker;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.RemovalCause;
 import com.google.common.primitives.UnsignedLong;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.ie.values.visitor.DoubleVisitor;
 import org.riptide.flows.parser.ie.values.visitor.UnsignedLongVisitor;
 import org.riptide.pipeline.ExporterIdentity;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -108,18 +111,43 @@ public class ExporterSamplingTable implements OptionListener {
     }
 
     /**
-     * Twice the slowest default refresh among the platforms this targets. IOS-XE defaults
-     * {@code option sampler-table timeout} to 600 s, but IOS-XR — the ASR9k this was built against
-     * — defaults {@code options sampler-table timeout} to 1800 s. A TTL shorter than the refresh
-     * expires mid-cycle, and the exporter's flows then flap between its real rate and "unsampled"
-     * with nothing in the data to tell the two apart.
+     * Longer than any exporter's options refresh interval, which is the only property this window
+     * needs (#593).
+     *
+     * <p>It used to be 60 minutes — twice IOS-XR's {@code options sampler-table timeout} default of
+     * 1800 s — and any exporter refreshing more slowly flapped: the entry expired before the next
+     * advertisement, the rate reverted to {@code assumed} / 1, and returned on the next refresh,
+     * once per cycle indefinitely. Since #585 made {@code samplingInterval} a rollup dimension each
+     * flap also splits a rollup group in a table retained for a year, and since #590 the value
+     * governs IPFIX exporters whose refresh interval is operator-configured with no default riptide
+     * can reason about.</p>
+     *
+     * <p><b>Why a single generous constant rather than something measured.</b> The costs here are
+     * asymmetric. A rate change is <em>pushed</em> — the exporter re-advertises and the new value
+     * overwrites — so this window never protects against a stale <em>wrong</em> rate. It governs
+     * only what happens when an exporter goes quiet. Erring long serves a rate that was true
+     * recently, rarely. Erring short presents a known-wrong value as an answer, every cycle,
+     * forever.</p>
+     *
+     * <p>An earlier attempt derived the window from each exporter's observed refresh cadence, at
+     * four times the measured interval. It was wrong three times over, each fix exposing the next
+     * hole: a bootstrap shorter than the cadence made the cadence unlearnable; measuring from the
+     * latest gap let a mid-cycle repeat collapse the window; and treating "no cadence yet" as a
+     * cadence of zero let a repeat in the very first burst do the same. That last shape is ordinary
+     * — an exporter whose sampler table holds two entries sends two records per burst, which is
+     * exactly why this class does not key by {@code FLOW_SAMPLER_ID}. Every failure reinstated the
+     * flap the estimator existed to remove. What the estimator bought over a flat window was
+     * dropping a <em>dead</em> exporter after four cycles instead of after a day; that is not worth
+     * paying for with the bug itself.</p>
      */
-    private static final Duration RETENTION = Duration.ofMinutes(60);
+    private static final Duration RETENTION = Duration.ofHours(24);
 
     /**
      * One entry per exporter and observation domain. Bounded because entries arrive from whatever
      * sends option records, including spoofed sources, and lazy expiry alone would let a burst grow
-     * the map for a whole TTL window.
+     * the map for a whole retention window — now a day rather than an hour, so the bound is reached
+     * sooner. Reaching it evicts a real exporter's entry as readily as a stray one, which is why
+     * that is counted on {@code …evicted} rather than {@code …expired}.
      */
     private static final long MAX_EXPORTERS = 8_192;
 
@@ -134,26 +162,68 @@ public class ExporterSamplingTable implements OptionListener {
 
     private final Meter recordsConsumed;
     private final Meter recordsSkipped;
+    private final Meter recordsExpired;
+    private final Meter recordsEvicted;
     private final Meter selectorsConsumed;
     private final Meter selectorsSkipped;
+    private final Meter selectorsExpired;
+    private final Meter selectorsEvicted;
     private final Meter lookupsResolved;
     private final Meter lookupsUnresolved;
 
+    /**
+     * {@code @Autowired} because the test constructor below makes two. Spring auto-selects a sole
+     * constructor and otherwise falls back to looking for a no-arg one, so adding the second without
+     * this marker breaks every context that wires this bean.
+     */
+    @Autowired
     public ExporterSamplingTable(final MetricRegistry metrics) {
-        this.table = CacheBuilder.newBuilder()
-                .expireAfterWrite(RETENTION)
-                .maximumSize(MAX_EXPORTERS)
-                .build();
-        this.selectors = CacheBuilder.newBuilder()
-                .expireAfterWrite(RETENTION)
-                .maximumSize(MAX_EXPORTERS)
-                .build();
+        this(metrics, Ticker.systemTicker());
+    }
+
+    /** Visible for testing: a fake ticker exercises expiry without wall-clock waits. */
+    ExporterSamplingTable(final MetricRegistry metrics, final Ticker ticker) {
         this.selectorsConsumed = metrics.meter(MetricRegistry.name("parser", "selectorReport", "consumed"));
         this.selectorsSkipped = metrics.meter(MetricRegistry.name("parser", "selectorReport", "skipped"));
+        this.selectorsExpired = metrics.meter(MetricRegistry.name("parser", "selectorReport", "expired"));
+        this.selectorsEvicted = metrics.meter(MetricRegistry.name("parser", "selectorReport", "evicted"));
         this.recordsConsumed = metrics.meter(MetricRegistry.name("parser", "optionSampling", "consumed"));
         this.recordsSkipped = metrics.meter(MetricRegistry.name("parser", "optionSampling", "skipped"));
+        this.recordsExpired = metrics.meter(MetricRegistry.name("parser", "optionSampling", "expired"));
+        this.recordsEvicted = metrics.meter(MetricRegistry.name("parser", "optionSampling", "evicted"));
         this.lookupsResolved = metrics.meter(MetricRegistry.name("parser", "optionSampling", "resolved"));
         this.lookupsUnresolved = metrics.meter(MetricRegistry.name("parser", "optionSampling", "unresolved"));
+        this.table = build(ticker, this.recordsExpired, this.recordsEvicted);
+        this.selectors = build(ticker, this.selectorsExpired, this.selectorsEvicted);
+    }
+
+    /**
+     * One bounded map that reports why it dropped an entry.
+     *
+     * <p>Expiry and size eviction are counted apart because they want different responses: expiry
+     * means an exporter went quiet, size means the table is full and is displacing entries that may
+     * still be live. An explicit {@code invalidate} — a withdrawal — carries {@code EXPLICIT} and is
+     * counted as neither.</p>
+     */
+    private static <K, V> Cache<K, V> build(final Ticker ticker, final Meter expired, final Meter evicted) {
+        return CacheBuilder.newBuilder()
+                .ticker(ticker)
+                .expireAfterWrite(RETENTION)
+                .maximumSize(MAX_EXPORTERS)
+                .<K, V>removalListener(notification -> {
+                    if (notification.getCause() == RemovalCause.EXPIRED) {
+                        expired.mark();
+                    } else if (notification.getCause() == RemovalCause.SIZE) {
+                        evicted.mark();
+                    }
+                })
+                .build();
+    }
+
+    /** Visible for testing: runs pending maintenance so an expiry that is due has happened. */
+    void cleanUp() {
+        this.table.cleanUp();
+        this.selectors.cleanUp();
     }
 
     /**
