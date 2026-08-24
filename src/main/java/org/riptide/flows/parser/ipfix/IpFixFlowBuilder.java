@@ -25,6 +25,8 @@ import org.riptide.pipeline.ExporterIdentity;
 import java.net.InetAddress;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -67,32 +69,33 @@ public class IpFixFlowBuilder {
     public Stream<Flow> buildFlows(final Instant receivedAt,
                                    final Packet packet,
                                    final ExporterIdentity identity) {
-        // Resolved lazily and at most once per packet: a record carrying its own rate never asks,
-        // so an exporter that always states it does not register as a permanent lookup miss.
-        final Supplier<Optional<AdvertisedRate>> exporterWide = Suppliers.memoize(
-                () -> this.samplingTable != null ? this.samplingTable.lookup(identity) : Optional.empty());
+        // Resolved lazily, and at most once per packet per distinct selector: a record carrying its
+        // own rate never asks, so an exporter that always states it does not register as a
+        // permanent lookup miss.
+        final Map<Long, Supplier<Optional<AdvertisedRate>>> bySelector = new HashMap<>();
         return createRawFlows(packet)
-                .map(rawFlow -> buildFlow(receivedAt, rawFlow, advertisedFor(identity, rawFlow, exporterWide)));
+                .map(rawFlow -> buildFlow(receivedAt, rawFlow, advertisedFor(identity, rawFlow, bySelector)));
     }
 
     /**
-     * The exporter-wide lookup, memoized once for the packet, unless this record names a Selector —
-     * in which case it gets its own, because two records in one packet may name different ones.
+     * The lookup for this record's Selector, shared with every other record in the packet naming the
+     * same one, and with those naming none.
      *
-     * <p>Split rather than always keying by {@code selectorId}, so that an exporter sending no
-     * {@code selectorId} — which is every exporter observed so far — keeps the one-lookup-per-packet
-     * behaviour rather than paying one per record.</p>
+     * <p>Memoized per selector rather than per record so that the cost stays one lookup per packet
+     * in the ordinary case. Records in a packet share a template and so almost always name the same
+     * Selector or no Selector at all; a per-record supplier would multiply both the cache reads and
+     * the resolved/unresolved meter marks by the record count, which would make the miss rate mean
+     * one thing for selector-aware exporters and another for everything else.</p>
+     *
+     * <p>{@code null} keys the exporter-wide lookup, which is what a record naming no Selector
+     * gets.</p>
      */
     private Supplier<Optional<AdvertisedRate>> advertisedFor(final ExporterIdentity identity,
                                                              final IpfixRawFlow rawFlow,
-                                                             final Supplier<Optional<AdvertisedRate>> exporterWide) {
-        if (rawFlow.selectorId == null) {
-            return exporterWide;
-        }
-        final long selectorId = rawFlow.selectorId.longValue();
-        return Suppliers.memoize(() -> this.samplingTable != null
-                ? this.samplingTable.lookup(identity, selectorId)
-                : Optional.empty());
+                                                             final Map<Long, Supplier<Optional<AdvertisedRate>>> bySelector) {
+        final Long selectorId = rawFlow.selectorId != null ? rawFlow.selectorId.longValue() : null;
+        return bySelector.computeIfAbsent(selectorId, id -> Suppliers.memoize(
+                () -> this.samplingTable != null ? this.samplingTable.lookup(identity, id) : Optional.empty()));
     }
 
     public Flow buildFlow(final Instant receivedAt,

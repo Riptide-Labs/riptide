@@ -96,6 +96,18 @@ public final class SelectorReport {
      * Hash-based filtering (6, 7, 8): the share of the hash function's output range that the
      * selected range covers.
      *
+     * <p><b>The bounds are inclusive, so a range spans {@code max - min + 1} values.</b> RFC 5477
+     * describes them only as "the value for the beginning" and "the value for the end", but RFC 5475
+     * §7 settles it: "if the selection interval specification is [1:3], [6:9] all packets are
+     * selected for which the hash result is 1,2,3,6,7,8, or 9" — seven values from two intervals
+     * whose endpoint differences sum to five.</p>
+     *
+     * <p>Computing {@code max - min} is wrong twice over. It understates every ratio, and it makes a
+     * single selected bucket — {@code min == max}, which is exactly how 1-in-N filtering over an
+     * N-value output range is expressed — collapse to zero and be discarded as degenerate. An
+     * exporter selecting bucket 0 of 1024 would have had its report dropped and its flows
+     * under-counted a thousandfold. The predecessor to this class had the same error.</p>
+     *
      * <p>RFC 5477 allows more than one selected range to be reported. Only the first pair is read
      * here, so an exporter selecting several disjoint ranges is under-counted rather than
      * mis-counted. No exporter sending any of these has been observed, so a multi-range
@@ -106,9 +118,11 @@ public final class SelectorReport {
         if (outputMin == null || outputMax == null || selectedMin == null || selectedMax == null) {
             return null;
         }
-        final double selected = selectedMax - selectedMin;
-        final double output = outputMax - outputMin;
-        if (selected <= 0.0 || output <= 0.0) {
+        final double selected = selectedMax - selectedMin + 1.0;
+        final double output = outputMax - outputMin + 1.0;
+        // an inverted range is malformed rather than degenerate, and selecting more than the whole
+        // output range is not expressible either; both mean the report cannot be read
+        if (selected <= 0.0 || output <= 0.0 || selected > output) {
             return null;
         }
         return output / selected;

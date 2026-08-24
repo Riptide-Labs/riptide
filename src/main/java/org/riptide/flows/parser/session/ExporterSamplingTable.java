@@ -156,12 +156,26 @@ public class ExporterSamplingTable implements OptionListener {
         this.lookupsUnresolved = metrics.meter(MetricRegistry.name("parser", "optionSampling", "unresolved"));
     }
 
+    /**
+     * Routed on the scope, because that is what tells the two record shapes apart. RFC 5476 §6.5.2
+     * requires a Selector Report to be scoped by {@code selectorId}; a sampler options record is
+     * scoped by the system or the observation domain.
+     *
+     * <p>Not routed on which fields are present. An earlier draft tried the sampler-options reader
+     * first and fell through to the Selector Report only when no interval field was found, which
+     * files a {@code selectorId}-scoped record that happens to state IE 34 under the exporter
+     * instead of under its Selector. Two Selectors announcing rates that way would then overwrite
+     * one another, last write winning, and every flow from both would be scaled by whichever
+     * arrived most recently — the arrival-order dependence the two maps exist to prevent.</p>
+     */
     @Override
     public void accept(final ExporterIdentity identity, final Collection<Value<?>> scopes, final List<Value<?>> values) {
-        if (acceptSamplerOptions(identity, values)) {
+        final UnsignedLong selectorId = exact(scopes, "selectorId");
+        if (selectorId != null) {
+            acceptSelectorReport(identity, selectorId, values);
             return;
         }
-        acceptSelectorReport(identity, scopes, values);
+        acceptSamplerOptions(identity, values);
     }
 
     /**
@@ -193,31 +207,37 @@ public class ExporterSamplingTable implements OptionListener {
      * An RFC 5476 §6.5.2 Selector Report: {@code selectorId} as the scope, {@code selectorAlgorithm}
      * and that algorithm's parameters as fields. This is where the protocol puts selector
      * parameters, and riptide used to look for them on flow records instead (#584).
-     *
-     * <p>{@code selectorId} is read from the scopes and then from the fields. The RFC puts it in
-     * the scope, and that is the only position verified here, but no exporter sending one of these
-     * has been available to test against and the fallback costs a single pass.</p>
      */
     private void acceptSelectorReport(final ExporterIdentity identity,
-                                      final Collection<Value<?>> scopes,
+                                      final UnsignedLong selectorId,
                                       final List<Value<?>> values) {
-        final Double selectorId = Optional.ofNullable(numeric(scopes, "selectorId"))
-                .orElseGet(() -> numeric(values, "selectorId"));
+        final SelectorKey key = new SelectorKey(identity, selectorId.longValue());
         final Double algorithm = numeric(values, "selectorAlgorithm");
-        if (selectorId == null || algorithm == null) {
-            return; // not a Selector Report
-        }
-        final Double rate = SelectorReport.rate(algorithm.intValue(), name -> numeric(values, name));
-        if (rate == null || !isUsableRate(rate)) {
-            // The report named an algorithm that expresses no ratio, or named one and omitted its
-            // parameters. Either way nothing was learned, and recording a 1.0 here would claim the
-            // Selector does not sample — see SelectorReport for why that claim is not available.
-            this.selectorsSkipped.mark();
+        final Double computed = algorithm != null
+                ? SelectorReport.rate(algorithm.intValue(), name -> numeric(values, name))
+                : null;
+        if (computed != null && isUsableRate(computed)) {
+            this.selectors.put(key, new AdvertisedRate(computed, null, algorithm.intValue()));
+            this.selectorsConsumed.mark();
             return;
         }
-        this.selectors.put(new SelectorKey(identity, selectorId.longValue()),
-                new AdvertisedRate(rate, null, algorithm.intValue()));
-        this.selectorsConsumed.mark();
+        // A Selector-scoped record may still state its rate outright rather than as parameters.
+        // Kept under the Selector's key, but without the algorithm, so it reports as `options`:
+        // nothing was computed, and provenance says which.
+        final Double stated = unsigned(values, INTERVAL_FIELDS);
+        if (stated != null && isUsableRate(stated)) {
+            final Double mode = unsigned(values, MODE_FIELDS);
+            this.selectors.put(key, new AdvertisedRate(stated, mode != null ? mode.intValue() : null));
+            this.selectorsConsumed.mark();
+            return;
+        }
+        // The report named an algorithm expressing no ratio, omitted its parameters, or withdrew
+        // its rate. Recording a 1.0 would claim the Selector does not sample — see SelectorReport
+        // for why that claim is not available — and keeping the previous one would serve a rate the
+        // exporter has just stopped advertising for up to the whole retention window. The stated
+        // path invalidates for that reason and so does this one.
+        this.selectors.invalidate(key);
+        this.selectorsSkipped.mark();
     }
 
     /**
@@ -275,11 +295,34 @@ public class ExporterSamplingTable implements OptionListener {
     }
 
     /**
+     * One unsigned field by its IANA name, at full width.
+     *
+     * <p>Used for {@code selectorId}, which is an unsigned64 and is a <em>key</em>. Reading it
+     * through {@link #numeric} would round it above 2^53 and saturate above 2^63, while
+     * {@code IpFixFlowBuilder} reads the same element off a flow record as an exact
+     * {@link UnsignedLong}. The two {@link SelectorKey}s would then disagree for a wide selector id
+     * and the report would be silently unreachable, with nothing to show for it but a rising
+     * unresolved-lookup meter.</p>
+     */
+    private static UnsignedLong exact(final Collection<Value<?>> values, final String name) {
+        for (final Value<?> value : values) {
+            if (name.equals(value.getName())) {
+                final UnsignedLong exact = value.accept(new UnsignedLongVisitor());
+                if (exact != null) {
+                    return exact;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
      * One numeric field by its IANA name, whatever width or signedness the exporter encoded it in.
      *
      * <p>{@link DoubleVisitor} rather than {@link UnsignedLongVisitor} because the selector
      * parameters are not all unsigned: {@code samplingProbability} (IE 311) is a float64, and an
-     * unsigned visitor returns null for it.</p>
+     * unsigned visitor returns null for it. Safe for the parameters, which are quantities feeding
+     * a division; not safe for {@code selectorId}, which is a key — see {@link #exact}.</p>
      */
     private static Double numeric(final Collection<Value<?>> values, final String name) {
         for (final Value<?> value : values) {

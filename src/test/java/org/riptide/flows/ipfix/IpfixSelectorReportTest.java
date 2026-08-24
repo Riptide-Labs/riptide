@@ -266,6 +266,117 @@ public class IpfixSelectorReportTest {
         assertThat(flowsNaming(null)).allSatisfy(f -> assertThat(f.getSamplingInterval()).isEqualTo(512.0));
     }
 
+    /**
+     * A Selector-scoped record that states its rate outright belongs to that Selector, not to the
+     * exporter.
+     *
+     * <p>Routing on which fields are present rather than on the scope files this exporter-wide, and
+     * two Selectors announcing rates that way overwrite one another with the last to arrive.</p>
+     *
+     * <p>The provenance is {@code record} rather than {@code options}, which surprised this test
+     * into being written wrong first. riptide's per-record option merge already applies a
+     * scoped options record to data records matching that scope, so an IE 34 scoped by
+     * {@code selectorId} 7 is merged onto every flow naming selector 7 and reaches the ladder's top
+     * rung before the table is consulted at all. That is ordinary IPFIX scoping and predates this
+     * change. It means the merge, not the table, is what carries this particular shape — but the
+     * table must still key it per Selector, because the merge only covers flows that carry
+     * {@code selectorId} and the table is what answers for everything else.</p>
+     */
+    @Test
+    public void twoSelectorsStatingRatesOutrightDoNotOverwriteEachOther() throws Exception {
+        feedSelectorScopedInterval(7L, 100);
+        feedSelectorScopedInterval(8L, 1000);
+
+        assertThat(flowsNaming(7L)).allSatisfy(flow -> {
+            assertThat(flow.getSamplingInterval()).isEqualTo(100.0);
+            assertThat(flow.getSamplingProvenance()).isEqualTo(Flow.SamplingProvenance.Record);
+        });
+        assertThat(flowsNaming(8L)).allSatisfy(f -> assertThat(f.getSamplingInterval()).isEqualTo(1000.0));
+    }
+
+    /**
+     * And the table keyed it per Selector too, which is what answers when the merge cannot.
+     *
+     * <p>Asserted through the table directly because the merge would mask it through the builder:
+     * this is the state a flow would resolve against if it named the Selector without the exporter
+     * having scoped an interval onto it.</p>
+     */
+    @Test
+    public void theTableKeepsSelectorScopedRatesApartFromEachOther() throws Exception {
+        feedSelectorScopedInterval(7L, 100);
+        feedSelectorScopedInterval(8L, 1000);
+
+        assertThat(this.table.lookup(this.identity, 7L))
+                .hasValueSatisfying(rate -> {
+                    assertThat(rate.interval()).isEqualTo(100.0);
+                    assertThat(rate.computed())
+                            .as("stated outright, so nothing was derived and provenance must say so")
+                            .isFalse();
+                });
+        assertThat(this.table.lookup(this.identity, 8L))
+                .hasValueSatisfying(rate -> assertThat(rate.interval()).isEqualTo(1000.0));
+        assertThat(this.table.lookup(this.identity))
+                .as("a Selector's rate is not the exporter's")
+                .isEmpty();
+    }
+
+    /**
+     * A Selector that stops expressing a rate withdraws the one it taught.
+     *
+     * <p>The stated path invalidates on an unusable re-advertisement, on the reasoning that an
+     * exporter re-announcing is describing its current configuration. The same applies here: a
+     * Selector reconfigured from sampling to filtering re-sends a report riptide can read nothing
+     * from, and serving the old rate until the retention window expires would multiply every flow
+     * from it by a rate that no longer exists.</p>
+     */
+    @Test
+    public void aSelectorReconfiguredToFilteringWithdrawsItsRate() throws Exception {
+        feedSelectorReport(7L, 1, 99);
+        assertThat(flowsNaming(7L)).allSatisfy(f -> assertThat(f.getSamplingInterval()).isEqualTo(100.0));
+
+        feedSelectorReport(7L, 5, 1, 99);   // now property match filtering: expresses no ratio
+
+        assertThat(flowsNaming(7L)).allSatisfy(flow -> {
+            assertThat(flow.getSamplingInterval())
+                    .as("the withdrawn rate must not survive its own withdrawal")
+                    .isEqualTo(1.0);
+            assertThat(flow.getSamplingProvenance()).isEqualTo(Flow.SamplingProvenance.Assumed);
+        });
+    }
+
+    /**
+     * A selector id past 2^53 keys the same on both sides.
+     *
+     * <p>IE 302 is an unsigned64. Read as a double on the write side and as an exact
+     * {@code UnsignedLong} on the read side, the two keys diverge above 2^53 and can never match
+     * above 2^63 — the report becomes unreachable with nothing to show for it but a rising
+     * unresolved-lookup meter.</p>
+     */
+    @Test
+    public void aWideSelectorIdKeysTheSameOnBothSides() throws Exception {
+        final long wide = (1L << 60) + 12_345L;
+
+        feedSelectorReport(wide, 1, 99);
+
+        assertThat(flowsNaming(wide)).allSatisfy(flow -> {
+            assertThat(flow.getSamplingInterval()).isEqualTo(EXPECTED_RATE);
+            assertThat(flow.getSamplingProvenance()).isEqualTo(Flow.SamplingProvenance.Derived);
+        });
+    }
+
+    /** A Selector-scoped record whose rate is stated as IE 34 rather than as parameters. */
+    private void feedSelectorScopedInterval(final long selectorId, final int interval) throws Exception {
+        final ByteBuf b = message();
+        b.writeShort(3).writeShort(4 + 6 + 2 * 4);
+        b.writeShort(403).writeShort(2).writeShort(1);
+        b.writeShort(302).writeShort(8);  // scope: selectorId
+        b.writeShort(34).writeShort(4);   // samplingInterval
+        b.writeShort(403).writeShort(4 + 8 + 4);
+        b.writeLong(selectorId);
+        b.writeInt(interval);
+        patchAndSend(this.session, b);
+    }
+
     /** A plain IE 34 sampler options record, the shape the SRX sends. */
     private void feedSamplerOptions(final int interval) throws Exception {
         final ByteBuf b = message();
