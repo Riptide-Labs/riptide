@@ -148,7 +148,7 @@ Every flow therefore carries `samplingProvenance` — the rung of the ladder tha
 | `record` | the flow record itself (NetFlow v9 / IPFIX fields 34, 49, 50), or an sFlow sample |
 | `options` | the exporter's sampler options table (NetFlow v9 or IPFIX) |
 | `header` | the NetFlow v5 packet header |
-| `derived` | riptide's own arithmetic on an IPFIX selector algorithm and its ranges |
+| `derived` | riptide's own arithmetic on the parameters of an IPFIX Selector Report |
 | `fallback` | the receiver's `flow-sampling-interval-fallback` |
 | `assumed` | nothing stated a rate; `1` was recorded in the absence of one |
 | `''` (empty) | the row was written before this column existed |
@@ -165,7 +165,7 @@ Rows written before this column existed read `''`.
 They are not backfilled, and cannot be: reconstructing them would need each exporter's rate at each past moment, which is precisely the information whose absence this column records.
 
 An exporter alternating between two provenances is worth investigating.
-Firmware that populates the sampling field on some export paths and not others produces an interleaved mix of `header` and `assumed` for one exporter; a v9 sampler options table that expires between refreshes produces the same pattern with `options` and `assumed`:
+Firmware that populates the sampling field on some export paths and not others produces an interleaved mix of `header` and `assumed` for one exporter; a sampler options table that expires between refreshes produces the same pattern with `options` and `assumed`:
 
 ```sql
 SELECT exporterAddr, samplingProvenance, samplingInterval, count() AS flows
@@ -176,6 +176,33 @@ ORDER BY exporterAddr, flows DESC
 ```
 
 More than one provenance for one exporter means its rate is not resolving consistently.
+
+A learned rate is held for 24 hours after the exporter last advertised it.
+That is longer than any exporter's options refresh interval, so a rate cannot expire between refreshes however slowly the exporter re-advertises.
+
+The window is deliberately far longer than it needs to be. A rate change is pushed — the exporter re-advertises and the new value overwrites — so this window never guards against a stale *wrong* rate; it only decides how long a rate outlives an exporter that has gone quiet. Holding one too long serves a value that was true recently. Dropping one too early records a known-wrong `1` as though it were an answer, every refresh cycle, indefinitely.
+
+The cost is that a decommissioned exporter's rate lingers for a day before it is dropped.
+
+Drops are counted:
+
+```
+parser_optionSampling_expired    rates dropped after the exporter stopped advertising
+parser_selectorReport_expired    the same, for IPFIX Selector Reports
+parser_optionSampling_evicted    entries displaced by table pressure rather than by silence
+parser_selectorReport_evicted
+```
+
+A climbing `_expired` means an exporter is losing its learned rate. What its flows fall back to depends on which counter moved:
+
+- `parser_optionSampling_expired` — the exporter has nothing left to resolve against, so its flows fall to the configured fallback, or to `assumed` where none is set.
+- `parser_selectorReport_expired` — only that Selector's entry is gone. Flows naming it fall back to the exporter-wide rate, so provenance moves from `derived` to `options` and the interval may not change at all.
+
+The `_evicted` counters mean something different: the table is full and displacing entries, including live ones. That is pressure, not silence, and it wants a different response.
+
+An explicit withdrawal — an exporter re-advertising an interval of `0`, meaning it has turned sampling off — drops the entry at once and is counted as neither.
+
+The query above finds these conditions after the fact; the counters find them as they happen.
 
 :::warning[NetFlow v5 rates changed]
 Earlier releases ignored the v5 header interval. What they recorded instead depended on the receiver:
