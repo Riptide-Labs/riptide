@@ -13,6 +13,7 @@ import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
+import org.riptide.flows.parser.data.Flow.SamplingAlgorithm;
 import org.riptide.flows.parser.data.Flow.SamplingProvenance;
 import org.riptide.flows.parser.data.Optionals;
 import org.riptide.flows.parser.data.ResolvedRate;
@@ -259,32 +260,33 @@ public class IpFixFlowBuilder {
 
             @Override
             public SamplingAlgorithm getSamplingAlgorithm() {
-                return Optionals.first(rawFlow.samplingAlgorithm, rawFlow.samplerMode,
-                                advertised.get().map(AdvertisedRate::mode).orElse(null))
-                        .map(deprecatedSamplingAlgorithm -> {
-                            if (deprecatedSamplingAlgorithm == 1) {
-                                return SamplingAlgorithm.SystematicCountBasedSampling;
-                            }
-                            if (deprecatedSamplingAlgorithm == 2) {
-                                return SamplingAlgorithm.RandomNOutOfNSampling;
-                            }
-                            return switch (rawFlow.selectorAlgorithm) {
-                                case 0 -> SamplingAlgorithm.Unassigned;
-                                case 1 -> SamplingAlgorithm.SystematicCountBasedSampling;
-                                case 2 -> SamplingAlgorithm.SystematicTimeBasedSampling;
-                                case 3 -> SamplingAlgorithm.RandomNOutOfNSampling;
-                                case 4 -> SamplingAlgorithm.UniformProbabilisticSampling;
-                                case 5 -> SamplingAlgorithm.PropertyMatchFiltering;
-                                case 6, 7, 8 -> SamplingAlgorithm.HashBasedFiltering;
-                                case 9 -> SamplingAlgorithm.FlowStateDependentIntermediateFlowSelectionProcess;
-                                case null, default -> null;
-                            };
-                        }).orElse(SamplingAlgorithm.Unassigned);
+                // Three sources, most specific first, and each tried only if the previous had
+                // nothing. The deprecated pair and the selector algorithm both come off THIS
+                // record; the advertised mode describes the exporter as a whole, so it goes last
+                // for the same reason the advertised rate does.
+                //
+                // The selector switch used to sit inside the deprecated branch's map(), so it was
+                // reachable only when a record carried a deprecated field that was neither 1 nor 2.
+                // A record stating just selectorAlgorithm resolved to Unassigned. Lifting it out is
+                // what lets such a record answer for itself instead of deferring to the exporter.
+                // Inside .or(), so `advertised.get()` fires only when the record answered nothing.
+                // A first draft passed it as a third argument to Optionals.first, where Java
+                // evaluates every argument before the call: the lookup then ran for every flow even
+                // when the record had already answered, marking a permanent miss for any exporter
+                // that states its own algorithm and never sends a sampler table. Not pinned by a
+                // test — the honest way to reach it is a packet whose records carry their own
+                // algorithm, and no captured fixture here has one.
+                return fromDeprecatedFields(rawFlow)
+                        .or(() -> fromSelectorAlgorithmName(rawFlow))
+                        .or(() -> advertised.get().map(AdvertisedRate::mode)
+                                .flatMap(IpFixFlowBuilder::fromDeprecatedValue))
+                        .orElse(SamplingAlgorithm.Unassigned);
             }
 
             /*
-             * What the record carries, then what the selector algorithm implies, then what the
-             * operator configured, then an assumed 1.0. Algorithms 0, 8 and 9 have no expressible
+             * What the record carries, then what its selector algorithm implies, then what the
+             * exporter advertised in its sampler options table, then what the operator configured,
+             * then an assumed 1.0. Algorithms 0, 8 and 9 have no expressible
              * interval and yield NaN, which is honest but would land in a Float64 column and
              * poison any aggregate multiplying by it — so it falls through as unknown instead.
              *
@@ -303,20 +305,32 @@ public class IpFixFlowBuilder {
                 if (onRecord != null) {
                     return ResolvedRate.of(onRecord, SamplingProvenance.Record);
                 }
-                // Above `derived` deliberately: a rate the exporter STATES outranks one riptide
-                // computes from its selector parameters, which is why the ladder calls derived the
-                // rung carrying the least authority. Below `record` for the reason v9 has it there
-                // — a rate on the flow record is more specific than one advertised for the exporter.
+                final Double derived = usable(fromSelectorAlgorithm());
+                if (derived != null) {
+                    return ResolvedRate.of(derived, SamplingProvenance.Derived);
+                }
+                // BELOW `derived`, not above it. The first draft had these the other way round on
+                // the reasoning that a rate the exporter states outranks one riptide computes.
+                // That is wrong here, because `derived` is computed from fields on THIS RECORD
+                // (samplingSize, samplingPopulation, samplingProbability, the selector interval and
+                // spacing) while the advertised rate describes the exporter as a whole. Everything
+                // the record says outranks an exporter-wide advertisement; that is the same rule
+                // that puts `record` at the top, applied consistently.
+                //
+                // The failure it avoids is not hypothetical. ExporterSamplingTable deliberately
+                // keeps an advertised `1`, because an explicit 1 means "not sampling" and is an
+                // answer. An exporter that advertises 1 for an idle sampler while its records carry
+                // selectorAlgorithm 4 with a probability of 0.001 would otherwise resolve to 1.0
+                // and undercount by a thousandfold, silently.
+                //
+                // v9 offers no precedent: it has no derived rung, so this ordering question is new
+                // to IPFIX.
                 final Double stated = advertised.get()
                         .map(AdvertisedRate::interval)
                         .map(IpFixFlowBuilder::usable)
                         .orElse(null);
                 if (stated != null) {
                     return ResolvedRate.of(stated, SamplingProvenance.Options);
-                }
-                final Double derived = usable(fromSelectorAlgorithm());
-                if (derived != null) {
-                    return ResolvedRate.of(derived, SamplingProvenance.Derived);
                 }
                 final Double configured = usable(asDouble(flowSamplingIntervalFallback));
                 if (configured != null) {
@@ -444,5 +458,35 @@ public class IpFixFlowBuilder {
             dummyFlow.observationDomainId = packet.header.observationDomainId;
             return dummyFlow;
         });
+    }
+
+    /** The deprecated IE 35 / IE 49 pair, which only ever expresses two algorithms. */
+    private static Optional<SamplingAlgorithm> fromDeprecatedFields(final IpfixRawFlow rawFlow) {
+        return Optionals.first(rawFlow.samplingAlgorithm, rawFlow.samplerMode)
+                .flatMap(IpFixFlowBuilder::fromDeprecatedValue);
+    }
+
+    private static Optional<SamplingAlgorithm> fromDeprecatedValue(final Integer value) {
+        return switch (value) {
+            case 1 -> Optional.of(SamplingAlgorithm.SystematicCountBasedSampling);
+            case 2 -> Optional.of(SamplingAlgorithm.RandomNOutOfNSampling);
+            case null, default -> Optional.empty();
+        };
+    }
+
+    /** RFC 5477's selector algorithm, which names the process rather than the rate. */
+    private static Optional<SamplingAlgorithm> fromSelectorAlgorithmName(final IpfixRawFlow rawFlow) {
+        final SamplingAlgorithm named = switch (rawFlow.selectorAlgorithm) {
+            case 0 -> SamplingAlgorithm.Unassigned;
+            case 1 -> SamplingAlgorithm.SystematicCountBasedSampling;
+            case 2 -> SamplingAlgorithm.SystematicTimeBasedSampling;
+            case 3 -> SamplingAlgorithm.RandomNOutOfNSampling;
+            case 4 -> SamplingAlgorithm.UniformProbabilisticSampling;
+            case 5 -> SamplingAlgorithm.PropertyMatchFiltering;
+            case 6, 7, 8 -> SamplingAlgorithm.HashBasedFiltering;
+            case 9 -> SamplingAlgorithm.FlowStateDependentIntermediateFlowSelectionProcess;
+            case null, default -> null;
+        };
+        return Optional.ofNullable(named);
     }
 }

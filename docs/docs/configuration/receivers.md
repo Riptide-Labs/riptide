@@ -84,11 +84,14 @@ Until the first table arrives, flows from that exporter are recorded as unsample
 
 **IPFIX** gets the same correlation, from the sampler options records its exporters advertise. Juniper inline-jflow states `samplingInterval` and `samplingAlgorithm` scoped to the observation domain, and riptide reads both.
 
+:::note[One exporter, one rate]
+A rate learned this way is remembered per exporter address and observation domain, so an exporter running two samplers at different rates keeps only the most recently advertised of them. Riptide does not key the rate by sampler id, because many exporters omit that id from their flow records and there would be nothing to match it against. If you run more than one sampler on one observation domain, the rates need to agree.
+
+For the same reason, a receiver accepting **both** NetFlow v9 and IPFIX from one address treats a v9 source id and an IPFIX observation domain id as the same key. The two are independent numbering spaces and both often start at 0, so a device exporting both protocols from one address should use distinct ids, or separate receivers.
+:::
+
 **NetFlow v5 has no options-table mechanism**, so there is nothing for riptide to correlate.
 
-:::note[One exporter, one rate]
-A rate learned this way is remembered per exporter and observation domain, so an exporter running two samplers at different rates keeps only the most recently advertised of them. Riptide does not key the rate by sampler id, because many exporters omit that id from their flow records and there would be nothing to match it against. If you run more than one sampler on one observation domain, the rates need to agree.
-:::
 A v5 exporter states its rate in the packet header instead, in a single 16-bit field holding a 2-bit sampling mode and a 14-bit interval.
 riptide reads both, so a sampling v5 exporter is recorded correctly without configuration.
 

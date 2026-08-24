@@ -210,4 +210,60 @@ public class JuniperSamplerOptionsBlackboxTest {
         });
         assertThat(advertised).isNotNull();
     }
+
+    /**
+     * A rate the record's own selector parameters imply outranks the exporter-wide advertisement.
+     *
+     * <p>The first draft had these the other way round, reasoning that a stated rate beats a
+     * computed one. That inverts the rule that puts {@code record} at the top: {@code derived} is
+     * computed from fields on <em>this record</em>, while the advertised rate describes the whole
+     * exporter.</p>
+     *
+     * <p>The failure it avoids is a silent thousandfold undercount. {@code ExporterSamplingTable}
+     * deliberately keeps an advertised {@code 1}, because an explicit 1 means "not sampling" and is
+     * an answer, so an exporter advertising 1 for an idle sampler while its records carry a real
+     * probability would otherwise resolve to 1.0.</p>
+     */
+    @Test
+    public void selectorParametersOnTheRecordOutrankTheAdvertisedRate() throws Exception {
+        feedTheCapturedOptionsRecord();
+
+        final var identity =
+                new ExporterIdentity.NetflowIpfix(InetAddress.getLoopbackAddress(), OBSERVATION_DOMAIN);
+        final var raw = new IpfixRawFlow();
+        raw.selectorAlgorithm = 4;                 // uniform probabilistic
+        raw.samplingProbability = 0.001;           // 1 in 1000, stated by this record
+
+        final Flow flow = builder().buildFlow(Instant.EPOCH, raw, this.table.lookup(identity).orElse(null));
+
+        assertThat(flow.getSamplingInterval())
+                .as("the record's own parameters say 1000; the exporter-wide advert says 100")
+                .isEqualTo(1000.0);
+        assertThat(flow.getSamplingProvenance()).isEqualTo(Flow.SamplingProvenance.Derived);
+    }
+
+    /**
+     * The advertised mode is consulted only after the record's own {@code selectorAlgorithm}.
+     *
+     * <p>The SRX advertises mode 2, which maps to random n-out-of-N. A record stating
+     * {@code selectorAlgorithm = 4} is describing uniform probabilistic selection, and an
+     * exporter-wide mode must not overrule it.</p>
+     */
+    @Test
+    public void theRecordsSelectorAlgorithmOutranksTheAdvertisedMode() throws Exception {
+        feedTheCapturedOptionsRecord();
+
+        final var identity =
+                new ExporterIdentity.NetflowIpfix(InetAddress.getLoopbackAddress(), OBSERVATION_DOMAIN);
+        final var raw = new IpfixRawFlow();
+        raw.selectorAlgorithm = 4;
+        raw.samplingProbability = 0.001;
+
+        final Flow flow = builder().buildFlow(Instant.EPOCH, raw, this.table.lookup(identity).orElse(null));
+
+        assertThat(flow.getSamplingAlgorithm())
+                .as("the record says uniform probabilistic; the advert says random n-out-of-N")
+                .isEqualTo(Flow.SamplingAlgorithm.UniformProbabilisticSampling);
+    }
+
 }
