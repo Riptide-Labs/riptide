@@ -22,10 +22,21 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class SelectorReportTest {
 
-    /** A report stating the named parameters and nothing else. */
+    /**
+     * A report stating the named parameters and nothing else.
+     *
+     * <p>The pairing is checked rather than assumed. Reading {@code i + 1} under a bare
+     * {@code i < length} bound walks off the end of an odd-length argument list, which would turn a
+     * mistyped call into an {@code ArrayIndexOutOfBoundsException} rather than a readable failure —
+     * and would silently drop the trailing name if the bound were simply tightened.</p>
+     */
     private static Double rate(final int algorithm, final Object... namesAndValues) {
+        if (namesAndValues.length % 2 != 0) {
+            throw new IllegalArgumentException(
+                    "each parameter name needs a value; got " + namesAndValues.length + " arguments");
+        }
         final Map<String, Double> fields = new HashMap<>();
-        for (int i = 0; i < namesAndValues.length; i += 2) {
+        for (int i = 0; i + 1 < namesAndValues.length; i += 2) {
             fields.put((String) namesAndValues[i], ((Number) namesAndValues[i + 1]).doubleValue());
         }
         return SelectorReport.rate(algorithm, fields::get);
