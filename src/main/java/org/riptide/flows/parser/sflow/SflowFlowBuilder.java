@@ -19,6 +19,11 @@ import java.time.Instant;
  * the statistical estimate {@code frame_length × sampling_rate} /
  * {@code packets = sampling_rate}. Missing decode results leave packet-level fields at
  * their floor values — the flow is still emitted.
+ *
+ * <p>The rate in those two products is the <em>guarded</em> one. A wire rate that is not finite or
+ * is below {@code 1} scales by {@code 1} and reports provenance {@code Assumed}, because a rate of
+ * {@code 0} would otherwise persist and collide with the value the rollups reserve for rows
+ * aggregated before the rate was carried (#470).</p>
  */
 public final class SflowFlowBuilder {
 
@@ -124,14 +129,23 @@ public final class SflowFlowBuilder {
                 return sample.extendedGateway() != null ? sample.extendedGateway().nextHop() : null;
             }
 
+            // Counters are scaled by the same rate the flow reports, and by the same guarded value.
+            // Scaling by the raw wire rate while reporting a guarded one would produce a row that
+            // reads as real unsampled traffic of zero volume — a rate of 0 gives bytes = 0 and
+            // packets = 0, with nothing marking it as junk.
             @Override
             public long getBytes() {
-                return sample.frameLength() != null ? sample.frameLength() * sample.samplingRate : 0;
+                return sample.frameLength() != null ? sample.frameLength() * scale() : 0;
             }
 
             @Override
             public long getPackets() {
-                return sample.samplingRate;
+                return scale();
+            }
+
+            /** The rate the counters are scaled by: the exporter's, or 1 when it stated nothing usable. */
+            private long scale() {
+                return usable(sample.samplingRate) ? sample.samplingRate : 1L;
             }
 
             @Override
@@ -186,7 +200,7 @@ public final class SflowFlowBuilder {
 
             @Override
             public double getSamplingInterval() {
-                return sample.samplingRate;
+                return usable(sample.samplingRate) ? sample.samplingRate : 1.0d;
             }
 
             /*
@@ -200,8 +214,27 @@ public final class SflowFlowBuilder {
              */
             @Override
             public SamplingProvenance getSamplingProvenance() {
-                return SamplingProvenance.Record;
+                return usable(sample.samplingRate) ? SamplingProvenance.Record : SamplingProvenance.Assumed;
             }
         };
+    }
+
+    /**
+     * Whether a rate off the wire is one an exporter could have meant.
+     *
+     * <p>The same rule the NetFlow and IPFIX builders apply, and it belongs here too even though
+     * sFlow carries the rate by construction: {@code samplingRate} is a uint32 read straight from
+     * the sample, and nothing on the wire stops an agent sending {@code 0}.</p>
+     *
+     * <p><b>Zero is reserved, and not only here.</b> A rollup that has gained the rate as a
+     * dimension gives rows aggregated before the append the column's type default — {@code 0} — and
+     * that value is the only thing marking them, since a column joining the sorting key cannot
+     * carry an explicit {@code DEFAULT}. A live flow persisting {@code 0} would make
+     * {@code WHERE samplingInterval > 0} silently drop real traffic and stop {@code = 0} meaning
+     * what the schema says it means (#470). An unusable rate therefore reads as {@code 1.0} and
+     * says so, dropping to the bottom rung rather than inventing a rate.</p>
+     */
+    private static boolean usable(final double interval) {
+        return Double.isFinite(interval) && interval >= 1.0d;
     }
 }

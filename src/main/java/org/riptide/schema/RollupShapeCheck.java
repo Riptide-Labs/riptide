@@ -87,15 +87,21 @@ public final class RollupShapeCheck {
      *                       absent from this map was <em>not visible</em>, which is not the same as
      *                       missing — see {@link #normalise}.
      * @param liveColumns    rollup target table to its column names, from {@code system.columns}
+     * @param liveSortKeys   rollup target table to its {@code system.tables.sorting_key}. A rollup
+     *                       absent from this map has an unread key, which is reported rather than
+     *                       assumed correct — see {@link #compareOne}.
      */
     public static List<Result> compare(final String database,
             final Map<String, String> liveSelects,
-            final Map<String, Map<String, String>> liveColumns) {
+            final Map<String, Map<String, String>> liveColumns,
+            final Map<String, String> liveSortKeys) {
         final Map<String, String> intendedSelects = FlowsSchema.rollupSelects(database);
+        final Map<String, String> intendedSortKeys = FlowsSchema.rollupSortKeys();
         final List<Result> results = new ArrayList<>();
         for (final var intended : FlowsSchema.rollupColumns().entrySet()) {
             results.add(compareOne(intended.getKey(), intended.getValue(),
-                    intendedSelects.get(intended.getKey()), liveSelects, liveColumns));
+                    intendedSelects.get(intended.getKey()), liveSelects, liveColumns,
+                    intendedSortKeys.get(intended.getKey()), liveSortKeys));
         }
         return List.copyOf(results);
     }
@@ -104,7 +110,9 @@ public final class RollupShapeCheck {
             final Map<String, String> intendedColumns,
             final String intendedSelect,
             final Map<String, String> liveSelects,
-            final Map<String, Map<String, String>> liveColumns) {
+            final Map<String, Map<String, String>> liveColumns,
+            final String intendedSortKey,
+            final Map<String, String> liveSortKeys) {
         final Map<String, String> live = liveColumns.get(rollup);
         if (live == null) {
             // Not merely unknown: a query routed here would fail with UNKNOWN_TABLE or
@@ -148,17 +156,65 @@ public final class RollupShapeCheck {
             return new Result(rollup, Status.DRIFTED, detail.toString());
         }
 
+        // The sorting key, and NOT because it is tidy to check everything. A target can carry every
+        // intended column, at the right type, with a view selecting exactly this version's SELECT,
+        // and still have the rate OUTSIDE its sorting key — a state ClickHouse cannot repair
+        // (Code 36) and an operator can reach by hand. There the rate is a plain numeric column of a
+        // SummingMergeTree, so the engine SUMS IT across merges: sum(bytes * samplingInterval)
+        // inflated by an arbitrary factor, and samplingInterval > 0 no longer meaning what the
+        // schema says. Columns and SELECT both compare clean, so without this the verdict is
+        // MATCHES and the rollup answers every long-range query with a wrong number.
+        //
+        // Checked from the live catalog rather than remembered by whichever code path did the
+        // refusing: a validate-mode collector issues no DDL and computes no repair plan at all, and
+        // that is precisely the deployment shape that cannot fix itself.
+        final String liveSortKey = liveSortKeys.get(rollup);
+        if (liveSortKey != null && !normaliseKey(intendedSortKey).equals(normaliseKey(liveSortKey))) {
+            final List<String> liveKey = List.of(normaliseKey(liveSortKey).split(",\\s*"));
+            final List<String> wantedKey = List.of(normaliseKey(intendedSortKey).split(",\\s*"));
+            final Set<String> outside = new TreeSet<>(wantedKey);
+            outside.removeAll(liveKey);
+            final String why = outside.isEmpty()
+                    ? "its columns are in a different order"
+                    : outside + " " + (outside.size() == 1 ? "is" : "are")
+                            + " a column of the table but not part of its sorting key, so"
+                            + " SummingMergeTree sums the value instead of grouping by it";
+            return new Result(rollup, Status.DRIFTED,
+                    "target table sorting key is (" + liveSortKey + "), this version writes ("
+                            + intendedSortKey + ") — " + why);
+        }
+
         final String mv = rollup + "_mv";
         final String liveSelect = liveSelects.get(mv);
         if (liveSelect == null) {
-            // ClickHouse filters system.tables by access rather than refusing the query, so an
-            // ungranted view and an absent one are the same zero rows. The target table being
-            // visible is what separates them: riptide's own provisioning grants the writer INSERT
-            // on the target and (since #470) SELECT on the view, so a visible target beside an
-            // invisible view is a grants gap on a deployment provisioned before that.
+            // NOT declined, and the reasoning is narrower than it looks. ClickHouse filters
+            // system.tables by access rather than refusing the query, so an ungranted view and an
+            // absent one are the same zero rows.
+            //
+            // It is tempting to argue that a VISIBLE target settles it — the same filtered table
+            // yielded the target's row, so the user can see rows for this database, so the view is
+            // probably absent. That argument is wrong here, and RollupShapeDriftIT holds the
+            // counter-example: riptide grants per object, so a writer with INSERT on the target and
+            // no SHOW TABLES on the _mv is an ordinary deployment provisioned before #572 added
+            // that grant. Declining on this evidence would degrade every one of them — healthy
+            // rollups, correct data — to a raw-flows fallback truncated at raw retention.
+            //
+            // The two states ARE separable, just not from system.tables: a trivial query against
+            // the view answers UNKNOWN_TABLE when it is absent and ACCESS_DENIED when it is merely
+            // ungranted. Doing that costs a round trip per rollup per start and is worth it only if
+            // the empty-rollup case shows up in practice; until then this stays conservative and
+            // says both possibilities in the message.
             return new Result(rollup, Status.UNVERIFIABLE,
-                    "materialized view " + mv + " is not visible to the connecting user — re-run "
-                            + "'riptide onboard', or GRANT SELECT ON " + mv + " to its role");
+                    "materialized view " + mv + " is not visible to the connecting user — it is"
+                            + " absent, or the user holds no grant on it. Re-run 'riptide onboard'"
+                            + " to recreate it, or GRANT SHOW TABLES ON " + mv + " to its role");
+        }
+        if (liveSortKey == null) {
+            // Reached only when everything readable matched. Reported last so a real drift is never
+            // buried behind "cannot verify" — the same rule the column check states above.
+            return new Result(rollup, Status.UNVERIFIABLE,
+                    "sorting key of " + rollup + " could not be read — the query path keeps using"
+                            + " it, but a key this version cannot see is a key it cannot vouch for");
         }
 
         if (!normalise(intendedSelect).equals(normalise(liveSelect))) {
@@ -166,6 +222,11 @@ public final class RollupShapeCheck {
                     "materialized view " + mv + " selects a different shape than this version emits");
         }
         return new Result(rollup, Status.MATCHES, "");
+    }
+
+    /** A sorting key differing only in spacing or backticks is the same key. */
+    static String normaliseKey(final String key) {
+        return WHITESPACE_RUN.matcher(key.replace("`", "")).replaceAll(" ").trim();
     }
 
     /**

@@ -9,6 +9,8 @@ import org.junit.jupiter.api.Test;
 import org.riptide.schema.FlowsSchema;
 
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -113,19 +115,52 @@ class ProvisioningDdlTest {
     }
 
     @Test
-    void bootstrapRollupsUpgradesAdditiveColumnsThenCreatesTargetsBeforeViews() {
-        // The rollups select the additive columns, and the views need their TO targets — so the
-        // ordering is load-bearing, not cosmetic.
+    void bootstrapRollupsUpgradesAdditiveColumnsThenCreatesTargets() {
+        // The rollups select the additive columns, so those come first.
         final List<String> sql = ProvisioningDdl.bootstrapRollups("riptide");
         final int additive = FlowsSchema.additiveColumnNames().size();
         final int rollups = FlowsSchema.rollupTableNames().size();
-        assertThat(sql).hasSize(additive + rollups * 2);
+        assertThat(sql).hasSize(additive + rollups);
         assertThat(sql.subList(0, additive))
                 .allSatisfy(s -> assertThat(s).contains("ADD COLUMN IF NOT EXISTS"));
-        assertThat(sql.subList(additive, additive + rollups))
+        assertThat(sql.subList(additive, sql.size()))
                 .allSatisfy(s -> assertThat(s).startsWith("CREATE TABLE IF NOT EXISTS"));
-        assertThat(sql.subList(additive + rollups, sql.size()))
+    }
+
+    /**
+     * Views are a separate step so they can be emitted after the repair. Creating them first aborts
+     * an onboard run against a stale target, because {@code CREATE … IF NOT EXISTS} validates its
+     * SELECT even when it no-ops — and that is the one path a provisioned deployment has to fix
+     * exactly that state.
+     */
+    @Test
+    void rollupViewsAreASeparateStepFromTheTargets() {
+        assertThat(ProvisioningDdl.bootstrapRollups("riptide"))
+                .as("no view may be created before the repair has run")
+                .noneMatch(s -> s.startsWith("CREATE MATERIALIZED VIEW"));
+        assertThat(ProvisioningDdl.bootstrapRollupViews("riptide", Set.of()))
+                .hasSize(FlowsSchema.rollupTableNames().size())
                 .allSatisfy(s -> assertThat(s).startsWith("CREATE MATERIALIZED VIEW IF NOT EXISTS"));
+    }
+
+    /**
+     * A refused rollup gets no view.
+     *
+     * <p>Its target is not being repaired, so it still lacks the dimension the view's SELECT names,
+     * and {@code CREATE MATERIALIZED VIEW IF NOT EXISTS} validates that SELECT even when it no-ops:
+     * the statement fails with {@code THERE_IS_NO_COLUMN} and takes the whole onboard run with it.
+     * Losing the roles, users and password rotation because one rollup was deliberately left alone
+     * is a far worse trade than leaving that rollup empty — which is what refusing it already
+     * meant.</p>
+     */
+    @Test
+    void aRefusedRollupGetsNoView() {
+        final String refused = FlowsSchema.rollupTableNames().getFirst();
+
+        final List<String> sql = ProvisioningDdl.bootstrapRollupViews("riptide", Set.of(refused));
+
+        assertThat(sql).hasSize(FlowsSchema.rollupTableNames().size() - 1);
+        assertThat(sql).noneMatch(s -> s.contains(refused + "_mv"));
     }
 
     /**
@@ -136,7 +171,7 @@ class ProvisioningDdlTest {
     @Test
     void repairRollupsAltersTheTargetBeforeItsView() {
         final List<String> rollups = FlowsSchema.rollupTableNames();
-        final List<String> sql = ProvisioningDdl.repairRollups("riptide", rollups);
+        final List<String> sql = ProvisioningDdl.repairRollups("riptide", rollups, Set.copyOf(rollups));
 
         assertThat(sql).hasSize(rollups.size() * 2);
         assertThat(sql.subList(0, rollups.size()))
@@ -149,7 +184,33 @@ class ProvisioningDdlTest {
     /** Nothing planned, nothing emitted — the guard decides, not this method. */
     @Test
     void repairRollupsEmitsNothingForAnEmptyPlan() {
-        assertThat(ProvisioningDdl.repairRollups("riptide", List.of())).isEmpty();
+        assertThat(ProvisioningDdl.repairRollups("riptide", List.of(), Set.of())).isEmpty();
+    }
+
+    /**
+     * A rollup whose view does not exist gets its target repaired and no {@code MODIFY QUERY}.
+     *
+     * <p>The plan comes from target shapes alone, so a half-provisioned database can plan a repair
+     * for a rollup that has no view at all. {@code MODIFY QUERY} against a missing view fails with
+     * {@code UNKNOWN_TABLE} and aborts the entire onboard run — including the {@code CREATE} that
+     * would have built the view correctly moments later, which is the only way out of that state.</p>
+     */
+    @Test
+    void repairRollupsSkipsTheViewRepairWhereTheViewDoesNotExist() {
+        final List<String> rollups = FlowsSchema.rollupTableNames();
+        final String orphan = rollups.getFirst();
+        final Set<String> present = rollups.stream().skip(1).collect(Collectors.toSet());
+
+        final List<String> sql = ProvisioningDdl.repairRollups("riptide", rollups, present);
+
+        assertThat(sql.stream().filter(s -> s.contains("MODIFY ORDER BY")))
+                .as("every planned target is still repaired")
+                .hasSize(rollups.size());
+        assertThat(sql)
+                .as("but the rollup with no view is not sent a MODIFY QUERY")
+                .noneMatch(s -> s.contains("MODIFY QUERY") && s.contains(orphan + "_mv"));
+        assertThat(sql.stream().filter(s -> s.contains("MODIFY QUERY")))
+                .hasSize(rollups.size() - 1);
     }
 
     @Test

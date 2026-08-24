@@ -184,7 +184,7 @@ public class RollupShapeDriftIT {
             assertThat(logged)
                     .as("an unreadable view must name the grant, not accuse the rollup")
                     .anyMatch(m -> m.contains(rollup) && m.contains("could not be verified")
-                            && m.contains("GRANT SELECT"));
+                            && m.contains("GRANT SHOW TABLES"));
             assertThat(logged).noneMatch(m -> m.contains(rollup) && m.contains("does not match"));
             assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, rollup)))
                     .as("a rollup that could not be checked is not thereby known to be wrong")

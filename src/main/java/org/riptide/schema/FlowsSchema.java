@@ -10,6 +10,7 @@ import org.intellij.lang.annotations.Language;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -112,6 +113,7 @@ public final class FlowsSchema {
         return ROLLUPS.stream().map(Rollup::table).toList();
     }
 
+
     /** As {@link #createRollupTables(String, int)} with the default rollup retention. */
     public static List<String> createRollupTables(final String database) {
         return createRollupTables(database, DEFAULT_ROLLUP_TTL_DAYS);
@@ -123,12 +125,46 @@ public final class FlowsSchema {
     }
 
     /**
+     * As {@link #createRollupTables}, keyed by rollup so a caller can attribute a failure to one
+     * rollup and carry on with the rest instead of failing the whole start.
+     */
+    public static Map<String, String> createRollupTablesByRollup(final String database) {
+        final Map<String, String> tables = new LinkedHashMap<>();
+        for (final Rollup rollup : ROLLUPS) {
+            tables.put(rollup.table(), rollupTable(database, rollup, DEFAULT_ROLLUP_TTL_DAYS));
+        }
+        return Collections.unmodifiableMap(tables);
+    }
+
+    /**
      * {@code CREATE MATERIALIZED VIEW IF NOT EXISTS … TO <target>} for every rollup. Must be emitted
      * <em>after</em> {@link #createRollupTables} — a view whose {@code TO} target does not yet exist
      * fails to create.
+     *
+     * <p><b>Not for production callers.</b> Both real paths use {@link #createRollupViewsByRollup},
+     * which lets them skip a rollup whose target was refused; emitting all four unconditionally is
+     * how riptide once built the very view a refusal existed to prevent. This overload remains for
+     * tests that want the whole list.</p>
      */
     public static List<String> createRollupViews(final String database) {
         return ROLLUPS.stream().map(rollup -> rollupView(database, rollup)).toList();
+    }
+
+    /**
+     * As {@link #createRollupViews}, keyed by rollup so a caller can attribute a failure.
+     *
+     * <p>Worth attributing because the statement can fail for a reason that is not fatal: the SELECT
+     * names every dimension this version intends, and {@code CREATE … IF NOT EXISTS} validates it
+     * against the target even when the view already exists. A target that has not been repaired —
+     * refused, or deferred — therefore rejects the create, and the caller needs to know which
+     * rollup to report rather than losing ingestion over it.</p>
+     */
+    public static Map<String, String> createRollupViewsByRollup(final String database) {
+        final Map<String, String> views = new LinkedHashMap<>();
+        for (final Rollup rollup : ROLLUPS) {
+            views.put(rollup.table(), rollupView(database, rollup));
+        }
+        return Collections.unmodifiableMap(views);
     }
 
     /**
@@ -165,7 +201,7 @@ public final class FlowsSchema {
         // they pin each rollup's primary key as a literal so the append cannot pass unnoticed
         // (#470, #571).
         final String sortKeyColumns = columns.stream().map(Dimension::column).collect(Collectors.joining(", "));
-        final String primaryKeyColumns = sortKeyColumns;
+        final String primaryKeyColumns = rollup.frozenPrimaryKey();
         ddl.append("\n) ENGINE = SummingMergeTree()\nPRIMARY KEY (")
                 .append(primaryKeyColumns)
                 .append(")\nORDER BY (")
@@ -180,10 +216,14 @@ public final class FlowsSchema {
      * The in-place repair for every rollup target: one {@code ALTER} per rollup that adds any
      * missing dimension and sets the sorting key to this version's (#470).
      *
-     * <p>Emitted unconditionally on every start, like {@link #addAdditiveColumns}, because it is
-     * idempotent: {@code ADD COLUMN IF NOT EXISTS} no-ops on a column that exists, and
-     * {@code MODIFY ORDER BY} to the key a table already has is accepted and changes nothing. There
-     * is therefore nothing to detect and nothing to classify before running it.</p>
+     * <p><b>Emitted only for the rollups {@link #planRollupRepair} selects</b>, never unconditionally
+     * — both callers gate it, and classifying first is the point. The statement is idempotent where
+     * it applies ({@code ADD COLUMN IF NOT EXISTS} no-ops, and {@code MODIFY ORDER BY} to the key a
+     * table already has changes nothing), but idempotent is not the same as safe: on a table whose
+     * key this version would <em>shrink</em> the server accepts it and silently changes the grain
+     * (#571 froze the primary key, so the prefix rule no longer catches it), and on a table already
+     * carrying the column outside its sorting key it fails with Code 36 on every start forever. The
+     * planner exists for both.</p>
      *
      * <p><b>One statement per rollup, not one per column.</b> ClickHouse rejects a sorting key that
      * gains a column the same {@code ALTER} did not add — <em>"Existing column X is used in the
@@ -212,13 +252,100 @@ public final class FlowsSchema {
         final List<Dimension> columns = allDimensions(rollup);
         final StringBuilder ddl = new StringBuilder("ALTER TABLE ")
                 .append(qualifiedRollup(database, rollup.table()));
-        for (final Dimension dimension : columns) {
+        for (int i = 0; i < columns.size(); i++) {
+            final Dimension dimension = columns.get(i);
             ddl.append("\n    ADD COLUMN IF NOT EXISTS ")
-                    .append(dimension.column()).append(' ').append(dimension.type()).append(',');
+                    .append(dimension.column()).append(' ').append(dimension.type());
+            // POSITIONED, not appended. Without AFTER, ClickHouse puts a new column last — past the
+            // measures — so an upgraded target ends up with a different physical column order than a
+            // fresh one. Riptide itself does not care (a materialized view with TO matches by name),
+            // but INSERT ... SELECT without a column list is POSITIONAL, and that is exactly the
+            // backfill the ClickHouse guide tells operators to write. On an upgraded target it would
+            // land the rate in `bytes` and shift every measure by one, while samplingInterval takes
+            // its type default — the reserved sentinel — so `WHERE samplingInterval > 0` then hides
+            // the corruption it just caused. The flows table already guarantees this invariant
+            // (addAdditiveColumns); rollups must too. Verified on 26.7: AFTER is accepted in the
+            // same statement as MODIFY ORDER BY, and re-running it changes nothing.
+            if (i > 0) {
+                ddl.append(" AFTER ").append(columns.get(i - 1).column());
+            }
+            ddl.append(',');
         }
         ddl.append("\n    MODIFY ORDER BY (").append(sortKey(rollup)).append(')');
         return ddl.toString();
     }
+
+    /**
+     * Which rollup views this version should re-point, decided from the views' own live SELECT.
+     *
+     * <p>Shared by the collector and {@code onboard} for the same reason {@link #planRollupRepair}
+     * is: they are the only two callers, and they were not previously obliged to agree. They now do
+     * by construction — {@code onboard} used to re-point every present view unconditionally, which
+     * emitted four {@code ALTER}s against an already-correct database (the spec requires a re-run to
+     * issue none) and carried no downgrade guard at all.</p>
+     *
+     * <p><b>Column set, not text.</b> A view whose columns match but whose expression differs is a
+     * corrected aggregate, and repairing that is out of scope: it would readmit rows computed the
+     * old way with nothing distinguishing them.</p>
+     *
+     * <p><b>Growth only.</b> A view selecting columns this version does not know is a downgrade.
+     * Re-pointing it would not fail — {@code MODIFY QUERY} does not validate against its target —
+     * it would drop that column on every insert, and for a sort-key dimension the type default is a
+     * reserved sentinel. Declining is recoverable; writing over live rows is not.</p>
+     *
+     * @param liveSelects  {@code <rollup>_mv} to its stored {@code as_select}; a view absent from
+     *                     the map is not re-pointed, since there is nothing to re-point
+     * @param refused      rollups whose target is not being repaired, excluded because a view
+     *                     naming a column its target lacks silently drops it on every insert
+     * @return the rollups to re-point, and the downgrades refused with a reason to report
+     */
+    public static RepairPlan planViewRepair(final String database,
+            final Map<String, String> liveSelects, final Set<String> refused) {
+        final List<String> stale = new ArrayList<>();
+        final Map<String, String> declined = new LinkedHashMap<>();
+        rollupSelects(database).forEach((rollup, intended) -> {
+            final String current = liveSelects.get(rollup + "_mv");
+            if (current == null || refused.contains(rollup)) {
+                return;
+            }
+            final Set<String> now = selectOutputColumns(current);
+            final Set<String> wanted = selectOutputColumns(intended);
+            if (now.equals(wanted)) {
+                return;
+            }
+            if (!wanted.containsAll(now)) {
+                final Set<String> extra = new LinkedHashSet<>(now);
+                extra.removeAll(wanted);
+                declined.put(rollup, "its materialized view selects " + extra + ", which this version"
+                        + " does not know — that is a downgrade, and taking the columns away would"
+                        + " write this version's defaults over rows that mean something else");
+                return;
+            }
+            stale.add(rollup);
+        });
+        return new RepairPlan(List.copyOf(stale), Collections.unmodifiableMap(declined));
+    }
+
+    /**
+     * The aliases a SELECT emits, which is what its target table has to carry.
+     *
+     * <p>Bounded to the projection: {@code AS} also introduces the source alias in
+     * {@code FROM … AS f}, and would introduce a cast or subquery alias in any future expression.
+     * Those are not output columns, and the downgrade branch computes a set difference over this —
+     * so one stray name there would read as a column a newer version knows.</p>
+     */
+    private static Set<String> selectOutputColumns(final String select) {
+        final String normalised = RollupShapeCheck.normalise(select);
+        final int from = normalised.lastIndexOf(" FROM ");
+        final var matcher = SELECT_ALIAS.matcher(from < 0 ? normalised : normalised.substring(0, from));
+        final Set<String> names = new LinkedHashSet<>();
+        while (matcher.find()) {
+            names.add(matcher.group(1));
+        }
+        return names;
+    }
+
+    private static final Pattern SELECT_ALIAS = Pattern.compile("\\bAS\\s+([A-Za-z_][A-Za-z0-9_]*)");
 
     /**
      * Which rollups need repairing, and which must be refused, decided from their live shape (#470).
@@ -264,6 +391,26 @@ public final class FlowsSchema {
                         + " rows would not be re-aggregated");
                 continue;
             }
+
+            // A column that already exists but sits OUTSIDE the sorting key cannot be added to it.
+            // ClickHouse rejects the pair as Code 36 ("Existing column X is used in the expression
+            // that was added to the sorting key") because MODIFY ORDER BY may only name columns the
+            // same ALTER adds — verified on 26.7. Riptide never produces this state, but an operator
+            // who hand-adds the column after reading that riptide appends it does, and planning the
+            // repair anyway would fail identically on every start and every onboard run forever with
+            // nothing saying why. Refusing names the remedy instead.
+            final Set<String> liveColumns = liveDimensionNames.getOrDefault(table, Set.of());
+            final List<String> outsideKey = wantedKey.stream()
+                    .filter(column -> !liveKey.contains(column))
+                    .filter(liveColumns::contains)
+                    .toList();
+            if (!outsideKey.isEmpty()) {
+                refused.put(table, outsideKey + " already exist as columns but are not in the sorting"
+                        + " key (" + live + "), and ClickHouse cannot add an existing column to a"
+                        + " sorting key — drop " + outsideKey + " from " + table + " and restart, or"
+                        + " drop and re-create the rollup to have it rebuilt");
+                continue;
+            }
             repair.add(table);
         }
         return new RepairPlan(List.copyOf(repair), Collections.unmodifiableMap(refused));
@@ -282,7 +429,13 @@ public final class FlowsSchema {
     }
 
     private static List<String> splitKey(final String key) {
-        return key.isBlank() ? List.of() : List.of(key.split(",\\s*"));
+        // Normalised the same way RollupShapeCheck compares keys, so the planner and the check
+        // cannot disagree about whether a live key equals this version's. They read the same
+        // catalog string; two different notions of equality would let one call a table current
+        // while the other calls it drifted — declining every rollup forever while no code path
+        // ever attempts the repair the log demands.
+        final String normalised = RollupShapeCheck.normaliseKey(key);
+        return normalised.isBlank() ? List.of() : List.of(normalised.split(",\\s*"));
     }
 
     private static boolean isPrefix(final List<String> shorter, final List<String> longer) {
@@ -318,9 +471,14 @@ public final class FlowsSchema {
      *
      * <p>{@code MODIFY QUERY} swaps the SELECT in place and does not interrupt aggregation. Measured
      * at zero loss under continuous insert, against 0.44% for the {@code DROP}/{@code CREATE} path
-     * that a materialized view would otherwise need — see {@code design.md}. Must be emitted
-     * <em>after</em> {@link #alterRollupTargets}, or the new SELECT names a column the target does
-     * not have yet.</p>
+     * that a materialized view would otherwise need — see {@code design.md}.</p>
+     *
+     * <p><b>Must be emitted after {@link #alterRollupTargets}, and the server will not tell you if
+     * it is not.</b> Unlike {@code CREATE MATERIALIZED VIEW}, which rejects a SELECT naming a column
+     * its target lacks ({@code THERE_IS_NO_COLUMN}), {@code MODIFY QUERY} accepts it — verified on
+     * 26.7 — and then silently discards that column on every insert. Out of order, this does not
+     * fail: it produces a view that aggregates by a dimension the target throws away, which reads as
+     * a working rollup answering with the wrong grain.</p>
      */
     public static Map<String, String> modifyRollupViews(final String database) {
         final Map<String, String> modifies = new LinkedHashMap<>();
@@ -468,6 +626,34 @@ public final class FlowsSchema {
             new Dimension("application", "LowCardinality(String)", "ifNull(f.application, '')");
 
     /**
+     * The sampling rate a flow's counters are scaled by, carried so
+     * {@code SUM(bytes * samplingInterval)} means the same thing against a rollup as against the raw
+     * table — which it could not before, leaving sampling-corrected volume unanswerable beyond the
+     * raw table's retention (#467, #470).
+     *
+     * <p>A dimension rather than a pre-scaled measure. A measure reading {@code 0} for rows
+     * aggregated before the append would make a {@code SUM} spanning the upgrade quietly too small,
+     * with nothing marking where. A rate of {@code 0} is not a value any exporter, fallback or
+     * assumption can produce — {@code usable()} admits only finite values {@code >= 1.0} and the
+     * persisted default is {@code 1.0} — so the type default marks pre-append rows unambiguously and
+     * the boundary is the predicate {@code samplingInterval > 0}.</p>
+     *
+     * <p>Read straight through, with no {@code ifNull} folding: the source column is not nullable,
+     * and a fallback literal would have to avoid emitting the type default anyway.</p>
+     *
+     * <p><b>Nothing at build time enforces that for this column.</b> The
+     * {@code appendableDimensions()} guard only inspects expressions that end in a fallback literal,
+     * which {@code f.samplingInterval} does not — so it passes this column without checking it. The
+     * property rests on {@code usable()} in the four builders and on {@code ClickhouseFlow}'s
+     * {@code 1.0} default, and those are what {@code SamplingIntervalBoundaryTest} and
+     * {@code SamplingIntervalResolutionTest} pin. Read the guard as covering the columns it can, not
+     * as covering this one.</p>
+     *
+     * <p>Appended last, which is the only position {@code ALTER … MODIFY ORDER BY} permits.</p>
+     */
+    private static final Dimension SAMPLING_INTERVAL = Dimension.of("samplingInterval", "Float64");
+
+    /**
      * Dimensions every rollup carries, ahead of its own. The tenant/organisation prefix mirrors the
      * raw table's sort key so the same row policies apply, and {@code timestamp} keeps the raw
      * table's column name so a time filter ports between raw and rollup unchanged — truncated to
@@ -506,26 +692,52 @@ public final class FlowsSchema {
 
     /** The 1-minute rollups. Adding one here propagates to creation, grants, and row policies. */
     private static final List<Rollup> ROLLUPS = List.of(
-            new Rollup(ROLLUP_BY_APPLICATION, List.of(
-                    APPLICATION,
-                    Dimension.of("protocol", "UInt8"))),
-            new Rollup(ROLLUP_BY_CONVERSATION, List.of(
-                    Dimension.of("srcAddr", "IPv6"),
-                    Dimension.of("dstAddr", "IPv6"),
-                    APPLICATION)),
-            new Rollup(ROLLUP_BY_EXPORTER_IFACE, List.of(
-                    Dimension.of("exporterAddr", "String"),
-                    Dimension.of("exporterName", "LowCardinality(String)"),
-                    Dimension.of("inputSnmp", "UInt32"),
-                    Dimension.of("outputSnmp", "UInt32"))),
-            new Rollup(ROLLUP_BY_GEO_ASN, List.of(
-                    Dimension.of("srcAs", "UInt64"),
-                    Dimension.of("dstAs", "UInt64"),
-                    Dimension.of("srcCountry", "LowCardinality(String)"),
-                    Dimension.of("dstCountry", "LowCardinality(String)"))));
+            new Rollup(ROLLUP_BY_APPLICATION,
+                    "tenant, organisation, timestamp, zone, application, protocol",
+                    List.of(
+                            APPLICATION,
+                            Dimension.of("protocol", "UInt8"),
+                            SAMPLING_INTERVAL)),
+            new Rollup(ROLLUP_BY_CONVERSATION,
+                    "tenant, organisation, timestamp, zone, srcAddr, dstAddr, application",
+                    List.of(
+                            Dimension.of("srcAddr", "IPv6"),
+                            Dimension.of("dstAddr", "IPv6"),
+                            APPLICATION,
+                            SAMPLING_INTERVAL)),
+            new Rollup(ROLLUP_BY_EXPORTER_IFACE,
+                    "tenant, organisation, timestamp, zone, exporterAddr, exporterName, inputSnmp, outputSnmp",
+                    List.of(
+                            Dimension.of("exporterAddr", "String"),
+                            Dimension.of("exporterName", "LowCardinality(String)"),
+                            Dimension.of("inputSnmp", "UInt32"),
+                            Dimension.of("outputSnmp", "UInt32"),
+                            SAMPLING_INTERVAL)),
+            new Rollup(ROLLUP_BY_GEO_ASN,
+                    "tenant, organisation, timestamp, zone, srcAs, dstAs, srcCountry, dstCountry",
+                    List.of(
+                            Dimension.of("srcAs", "UInt64"),
+                            Dimension.of("dstAs", "UInt64"),
+                            Dimension.of("srcCountry", "LowCardinality(String)"),
+                            Dimension.of("dstCountry", "LowCardinality(String)"),
+                            SAMPLING_INTERVAL)));
 
-    /** One rollup: its target table name and the dimensions it adds to {@link #PREAMBLE}. */
-    private record Rollup(String table, List<Dimension> dimensions) {
+    /**
+     * One rollup: its target table name, the dimensions it adds to {@link #PREAMBLE}, and its
+     * <strong>frozen primary key</strong>.
+     *
+     * <p>The primary key is a literal, not derived from {@link #dimensions}, and that is the whole
+     * point. {@code ALTER … MODIFY ORDER BY} grows the sorting key and leaves the primary key
+     * alone — there is no {@code MODIFY PRIMARY KEY} at all — so an upgraded install keeps the
+     * primary key its table was created with. A fresh install has to declare the same value or the
+     * two silently disagree, in a way no column or type comparison can see (#571).</p>
+     *
+     * <p><strong>When a dimension is appended, this literal does not change.</strong> It is the
+     * list as of the moment the rollup was last created from scratch. Growing it alongside
+     * {@link #dimensions} is exactly the divergence the freeze exists to prevent, and
+     * {@code FlowsSchemaTest} pins each value so the append cannot pass unnoticed.</p>
+     */
+    private record Rollup(String table, String frozenPrimaryKey, List<Dimension> dimensions) {
     }
 
     /**

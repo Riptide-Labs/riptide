@@ -6,7 +6,9 @@
 package org.riptide.schema;
 
 import org.junit.jupiter.api.Test;
+import org.riptide.mcp.service.QueryRouter;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -517,5 +519,149 @@ class FlowsSchemaTest {
                 .isEqualTo("'1970-01-01 00:00:00'");
         assertThat(byExpression.get("f.protocol")).isEqualTo("0");
         assertThat(byExpression.get("f.tenant")).isEqualTo("''");
+    }
+
+    /**
+     * The rate sits beyond the frozen primary key on every rollup, which is the only region
+     * {@code ALTER … MODIFY ORDER BY} can reach: a sorting key may only grow, and only by columns
+     * the same statement adds. A dimension inserted mid-list works on a fresh install and is
+     * impossible on an upgraded one.
+     *
+     * <p>Deliberately <em>not</em> "is the last column". The rule is append-only, and the next
+     * dimension to be appended will correctly go after this one — a test pinning the rate to the end
+     * forever would fail that legitimate change, with a message about sampling rates rather than
+     * about the rule it was really enforcing.</p>
+     */
+    @Test
+    void everyRollupSortsByTheFrozenKeyThenExactlyTheDeclaredAppendOrder() {
+        // The append log. Freezing the primary key moved the constraint off the region a NEW
+        // dimension actually lands in: everything past the frozen prefix became unpinned, so a
+        // dimension inserted between dstCountry and samplingInterval passed the build while being
+        // impossible to reach on an upgraded deployment (planRollupRepair refuses it, ClickHouse
+        // cannot MODIFY ORDER BY into the middle of a key). evolve-rollup-shape requires the BUILD
+        // to catch that, not the field.
+        //
+        // Appending a dimension means adding it to the END of a list here. Inserting it anywhere
+        // else fails, which is the whole point.
+        final Map<String, List<String>> appendedAfterTheFreeze = Map.of(
+                "flows_by_application_1m", List.of("samplingInterval"),
+                "flows_by_conversation_1m", List.of("samplingInterval"),
+                "flows_by_exporter_iface_1m", List.of("samplingInterval"),
+                "flows_by_geo_asn_1m", List.of("samplingInterval"));
+
+        FlowsSchema.rollupSortKeys().forEach((rollup, key) -> {
+            final String frozen = frozenPrimaryKeyOf(rollup);
+            assertThat(key).as("%s must still sort by its frozen key first", rollup).startsWith(frozen);
+            final List<String> appended = Arrays.stream(key.substring(frozen.length()).split(","))
+                    .map(String::trim)
+                    .filter(column -> !column.isEmpty())
+                    .toList();
+            assertThat(appended)
+                    .as("%s: a dimension appended after the freeze must go last and be declared"
+                            + " here; anything else is unreachable on an upgraded deployment", rollup)
+                    .isEqualTo(appendedAfterTheFreeze.get(rollup));
+        });
+    }
+
+    /** The frozen literals, shared with the primary-key pin above. */
+    private static String frozenPrimaryKeyOf(final String rollup) {
+        for (final String ddl : FlowsSchema.createRollupTables("riptide")) {
+            if (ddl.contains("`riptide`." + rollup + " (")) {
+                return keyList(ddl, "PRIMARY KEY (");
+            }
+        }
+        throw new IllegalArgumentException("no DDL for " + rollup);
+    }
+
+    @Test
+    void theSamplingRateIsAppendedBeyondTheFrozenPrimaryKey() {
+        assertThat(FlowsSchema.rollupSortKeys())
+                .hasSize(4)
+                .allSatisfy((rollup, key) -> assertThat(key).contains("samplingInterval"));
+
+        for (final String ddl : FlowsSchema.createRollupTables("riptide")) {
+            final String primary = keyList(ddl, "PRIMARY KEY (");
+            final String sorting = keyList(ddl, "ORDER BY (");
+            assertThat(sorting)
+                    .as("the sorting key still opens with the whole frozen primary key")
+                    .startsWith(primary + ", ");
+            assertThat(sorting.substring(primary.length()))
+                    .as("and the rate lives in the appended region, past the freeze")
+                    .contains("samplingInterval");
+        }
+    }
+
+    /**
+     * The freeze, stated as an invariant rather than left to the literals above.
+     *
+     * <p>Appending the rate grew every sorting key and left every primary key alone — which is what
+     * keeps a fresh install agreeing with an upgraded one, since {@code MODIFY ORDER BY} cannot
+     * touch a primary key and no {@code MODIFY PRIMARY KEY} exists.</p>
+     */
+    @Test
+    void appendingTheRateGrewTheSortKeysAndFrozeThePrimaryKeys() {
+        for (final String ddl : FlowsSchema.createRollupTables("riptide")) {
+            final String primary = keyList(ddl, "PRIMARY KEY (");
+            final String sorting = keyList(ddl, "ORDER BY (");
+            assertThat(sorting).isNotEqualTo(primary);
+            assertThat(primary).doesNotContain("samplingInterval");
+        }
+    }
+
+    /**
+     * The rate is carried for correctness, not offered as something to slice by — the same
+     * distinction Akvorado draws with {@code ConsoleNotDimension}.
+     *
+     * <p>Pinned against a dimension the router <em>does</em> know, because "falls back to raw flows"
+     * is also what the router does with any string it does not recognise: asserting the fallback
+     * alone would pass for {@code "banana"} and would therefore say nothing about a deliberate
+     * exclusion. The contrast is the assertion — a real rollup dimension routes to its rollup, and
+     * the rate does not, on the same call.</p>
+     */
+    @Test
+    void theRateIsNotAGroupableRollupDimension() {
+        assertThat(QueryRouter.resolveTopTalkersTable("riptide", 1440, "application"))
+                .as("a genuine rollup dimension routes to its rollup, so the fallback below means"
+                        + " something")
+                .isNotEqualTo(FlowsSchema.qualifiedFlows("riptide"));
+
+        assertThat(QueryRouter.resolveTopTalkersTable("riptide", 1440, "samplingInterval"))
+                .isEqualTo(FlowsSchema.qualifiedFlows("riptide"));
+    }
+
+    /**
+     * The repair puts an appended dimension where a fresh table puts it, not merely somewhere.
+     *
+     * <p>{@code ADD COLUMN} without {@code AFTER} appends past the measures, so an upgraded target
+     * ends up with a different physical column order than a fresh one. Riptide does not care — a
+     * materialized view with {@code TO} matches by name — but {@code INSERT INTO … SELECT} without a
+     * column list is positional, and that is the backfill the ClickHouse guide tells operators to
+     * write. On an upgraded target it lands the rate in {@code bytes}, shifts every measure by one,
+     * and leaves {@code samplingInterval} at its type default: the reserved sentinel, so
+     * {@code WHERE samplingInterval > 0} then hides the corruption it just caused.
+     *
+     * <p>The {@code flows} table already guarantees this (see {@code addAdditiveColumns}); the
+     * rollups must too.
+     */
+    @Test
+    void theRepairPositionsAnAppendedDimensionWhereAFreshTablePutsIt() {
+        final Map<String, String> alters = FlowsSchema.alterRollupTargets("riptide");
+
+        for (final String ddl : FlowsSchema.createRollupTables("riptide")) {
+            final int from = ddl.indexOf("CREATE TABLE IF NOT EXISTS ") + "CREATE TABLE IF NOT EXISTS ".length();
+            final String rollup = ddl.substring(from, ddl.indexOf(" (", from)).replace("`riptide`.", "").trim();
+            final List<String> freshOrder = Arrays.stream(keyList(ddl, "ORDER BY (").split(",\\s*")).toList();
+
+            final String alter = alters.get(rollup);
+            for (int i = 1; i < freshOrder.size(); i++) {
+                assertThat(alter)
+                        .as("%s: %s must be added after %s, or an upgraded target's column order"
+                                + " diverges from a fresh one and a positional backfill corrupts it",
+                                rollup, freshOrder.get(i), freshOrder.get(i - 1))
+                        .contains("ADD COLUMN IF NOT EXISTS " + freshOrder.get(i))
+                        .containsPattern("ADD COLUMN IF NOT EXISTS " + freshOrder.get(i)
+                                + "[^,]* AFTER " + freshOrder.get(i - 1) + ",");
+            }
+        }
     }
 }

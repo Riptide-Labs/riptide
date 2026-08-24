@@ -136,7 +136,13 @@ Because a materialized view does not backfill, rollups added this way cover traf
 onward. See [Rollups](../configuration/clickhouse.md#rollups) for the table layout and how to
 backfill if you need the history.
 
-Re-running `onboard` also brings existing rollups up to the running version's shape, appending any dimension a release has added. It is idempotent and safe to re-run: the statements no-op once a rollup is current, and no aggregation is interrupted. This is the only path a provisioned deployment has, since its collector runs in validate mode and issues no DDL.
+**After an upgrade that adds a rollup dimension, re-running `onboard` is required, not optional.** A validate-mode collector issues no DDL, so until it is run riptide declines all four rollups and answers every long-range query from raw `flows` — correct, but truncated at the raw retention window.
+
+Re-running `onboard` brings existing rollups up to the running version's shape, appending any dimension a release has added. It is idempotent and safe to re-run: the statements no-op once a rollup is current, and no aggregation is interrupted. This is the only path a provisioned deployment has, since its collector runs in validate mode and issues no DDL.
+
+**Then restart the collector.** Which rollups are usable is decided once, at startup — a schema does not change under a running collector — so one that declined them at boot keeps answering from raw `flows` until it restarts, no matter how complete the repair was. Without the restart the operator sees a successful `onboard` and no change in behaviour.
+
+If `onboard` reports a rollup as *left as it is*, that rollup is deliberately not repaired and gets no materialized view. The rest of the run proceeds normally — roles, users and password rotation are unaffected — and the named rollup stays out of the query path until the state its message describes is fixed.
 
 `onboard` reads each rollup's live sorting key first and applies the same rule the collector does, so a change that would *shrink* a key is refused rather than applied. That guard is not optional: ClickHouse itself accepts such a shrink on an upgraded table, because the primary key was frozen at the narrower shape, so nothing below riptide would stop a rollup's grain changing in place.
 

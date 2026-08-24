@@ -440,7 +440,7 @@
           }
         }
       ],
-      "description": "The sampling algorithm and interval each exporter reported, with where the interval came from and how much traffic it contributed. An interval of 1 means different things depending on the rate source: 'record', 'options' or 'header' is the exporter stating it does not sample, while 'assumed' is riptide having nothing to go on. 'derived' is riptide's own arithmetic on an IPFIX selector algorithm, and is the value to distrust first. Two exporters with different intervals contribute bytes on different scales — this table is where you find that out before it distorts a comparison. One exporter on several rows with different rate sources is a rate that is not resolving consistently."
+      "description": "The sampling algorithm and interval each exporter reported, with where the interval came from and how much traffic it contributed. An interval of 1 means different things depending on the rate source: 'record', 'options' or 'header' is the exporter stating it does not sample, while 'assumed' is riptide having nothing to go on. 'derived' is riptide's own arithmetic on an IPFIX selector algorithm, and is the value to distrust first. Two exporters with different intervals contribute bytes on different scales — this table is where you find that out before it distorts a comparison. One exporter on several rows with different rate sources is a rate that is not resolving consistently.\n\nRaw `flows` only. The 1-minute rollups carry `samplingInterval` but not `samplingProvenance`, so this panel cannot be widened past the raw table's retention — see riptide issue #581."
     },
     {
       "id": 6,
@@ -737,7 +737,7 @@
           }
         }
       ],
-      "description": "Exporters whose sampling rate resolved from more than one rung over this window. Any value above zero is worth investigating: firmware that populates the sampling field on some export paths and not others interleaves 'header' and 'assumed' for one exporter, and a NetFlow v9 sampler options table that expires between refreshes does the same with 'options'. Both silently mix traffic recorded on different scales from one device. Rows written before the provenance column existed carry an empty source and count as a distinct rung, so expect a non-zero value across the upgrade."
+      "description": "Exporters whose sampling rate resolved from more than one rung over this window. Any value above zero is worth investigating: firmware that populates the sampling field on some export paths and not others interleaves 'header' and 'assumed' for one exporter, and a NetFlow v9 sampler options table that expires between refreshes does the same with 'options'. Both silently mix traffic recorded on different scales from one device. Rows written before the provenance column existed carry an empty source and count as a distinct rung, so expect a non-zero value across the upgrade.\n\nRaw `flows` only. The 1-minute rollups carry `samplingInterval` but not `samplingProvenance`, so this panel cannot be widened past the raw table's retention — see riptide issue #581."
     }
   ],
   "annotations": {

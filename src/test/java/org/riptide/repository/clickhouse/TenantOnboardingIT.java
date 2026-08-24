@@ -233,6 +233,141 @@ public class TenantOnboardingIT {
         }
     }
 
+    /**
+     * A rollup riptide has refused to repair must cost that rollup, not the tenant — and must not
+     * get a view built for it.
+     *
+     * <p>Three rounds of fixes to this path went in without a test: no test anywhere constructed a
+     * refused rollup and then ran {@code onboard}, so reverting both of them left every provisioning
+     * suite green. The state is the one the Code 36 refusal exists for: an operator has hand-added
+     * {@code samplingInterval}, so the column is present but outside the sorting key and no
+     * {@code ALTER} can move it there.</p>
+     */
+    @Test
+    void onboardLeavesARefusedRollupAloneWithoutFailingTheTenant() throws Exception {
+        final String rollup = FlowsSchema.ROLLUP_BY_APPLICATION;
+        try (var admin = new Client.Builder()
+                .addEndpoint(endpoint()).setUsername("default").setPassword("").build()) {
+            admin.execute(FlowsSchema.createDatabase("refuse")).get();
+            admin.execute(FlowsSchema.createFlowsTable("refuse")).get();
+            Assertions.assertThat(ProvisioningCommand.run(refuseOnboardArgs(true), discard(), discard())).isZero();
+
+            // Hand-add the column and put the key back where an older version left it: present as a
+            // column, absent from the sorting key.
+            final String target = FlowsSchema.qualifiedRollup("refuse", rollup);
+            admin.execute("DROP VIEW " + FlowsSchema.qualifiedRollupView("refuse", rollup)).get();
+            admin.execute("DROP TABLE " + target).get();
+            admin.execute("CREATE TABLE " + target + " ("
+                    + "tenant String, organisation String, timestamp DateTime('UTC'), zone String,"
+                    + " application LowCardinality(String), protocol UInt8, samplingInterval Float64,"
+                    + " bytes UInt64, packets UInt64, flowCount UInt64,"
+                    + " bytesIn UInt64, bytesOut UInt64, packetsIn UInt64, packetsOut UInt64)"
+                    + " ENGINE = SummingMergeTree()"
+                    + " PRIMARY KEY (tenant, organisation, timestamp, zone, application, protocol)"
+                    + " ORDER BY (tenant, organisation, timestamp, zone, application, protocol)"
+                    + " PARTITION BY toYYYYMM(timestamp)").get();
+
+            // A routine re-run — the password rotation the docs describe — must still succeed.
+            Assertions.assertThat(ProvisioningCommand.run(refuseOnboardArgs(false), discard(), discard()))
+                    .as("a refused rollup must not make every later onboard demand --create-schema")
+                    .isZero();
+
+            // Now force the create-views branch to actually run, by making another rollup genuinely
+            // missing. Without this the whole branch is skipped and the assertion below would hold
+            // for a reason that has nothing to do with the refusal — which is how the first version
+            // of this test passed while proving nothing.
+            final String healthy = FlowsSchema.rollupTableNames().get(1);
+            admin.execute("DROP VIEW " + FlowsSchema.qualifiedRollupView("refuse", healthy)).get();
+            Assertions.assertThat(ProvisioningCommand.run(refuseOnboardArgs(true), discard(), discard()))
+                    .isZero();
+            Assertions.assertThat(exists(admin, FlowsSchema.qualifiedRollupView("refuse", healthy)))
+                    .as("the missing view of a healthy rollup is restored")
+                    .isTrue();
+
+            Assertions.assertThat(exists(admin, FlowsSchema.qualifiedRollupView("refuse", rollup)))
+                    .as("building the writer for a rollup just refused would write the rate into a"
+                            + " non-key column of a SummingMergeTree, which sums it across merges")
+                    .isFalse();
+            for (final String other : FlowsSchema.rollupTableNames()) {
+                if (!other.equals(rollup)) {
+                    Assertions.assertThat(exists(admin, FlowsSchema.qualifiedRollupView("refuse", other)))
+                            .as("%s was not refused and must be untouched", other)
+                            .isTrue();
+                }
+            }
+        }
+    }
+
+    /**
+     * Re-running {@code onboard} against a current database issues no rollup {@code ALTER}.
+     *
+     * <p>Required by {@code onboard-schema-bootstrap}: a password rotation must not rewrite schema.
+     * Until the view repair was planned from the views' own SELECT it re-pointed every present view
+     * unconditionally, so a no-op run emitted four {@code MODIFY QUERY} statements.</p>
+     */
+    @Test
+    void reRunningOnboardAgainstACurrentDatabaseIssuesNoRollupAlter() throws Exception {
+        try (var admin = new Client.Builder()
+                .addEndpoint(endpoint()).setUsername("default").setPassword("").build()) {
+            admin.execute(FlowsSchema.createDatabase("noop")).get();
+            admin.execute(FlowsSchema.createFlowsTable("noop")).get();
+            Assertions.assertThat(ProvisioningCommand.run(noopOnboardArgs(true), discard(), discard())).isZero();
+
+            final long before = alterCountOn(admin, "noop");
+            Assertions.assertThat(ProvisioningCommand.run(noopOnboardArgs(false), discard(), discard())).isZero();
+
+            Assertions.assertThat(alterCountOn(admin, "noop") - before)
+                    .as("a re-run against an already-correct database must issue no rollup ALTER;"
+                            + " saw: %s", alterTextOn(admin, "noop"))
+                    .isZero();
+        }
+    }
+
+    /** Rollup ALTERs recorded in the query log for one database. */
+    private static long alterCountOn(final Client admin, final String database) throws Exception {
+        admin.execute("SYSTEM FLUSH LOGS").get();
+        try (var records = admin.queryRecords("SELECT count() AS c FROM system.query_log"
+                + " WHERE type = 'QueryFinish' AND query ILIKE '%ALTER TABLE%" + database + ".flows_by%'"
+                + " AND query NOT ILIKE '%system.query_log%'").get()) {
+            for (final var record : records) {
+                return record.getLong("c");
+            }
+        }
+        return 0;
+    }
+
+    /** The rollup ALTER statements themselves, so a failure says which one fired. */
+    private static String alterTextOn(final Client admin, final String database) throws Exception {
+        final var seen = new ArrayList<String>();
+        try (var records = admin.queryRecords("SELECT query AS q FROM system.query_log"
+                + " WHERE type = 'QueryFinish' AND query ILIKE '%ALTER TABLE%" + database
+                + ".flows_by%' AND query NOT ILIKE '%system.query_log%'"
+                + " ORDER BY event_time DESC LIMIT 5").get()) {
+            records.forEach(record -> seen.add(record.getString("q").replaceAll("\\s+", " ")));
+        }
+        return String.join(" | ", seen);
+    }
+
+    private static String[] refuseOnboardArgs(final boolean createSchema) {
+        return onboardArgsFor("refuse", "ref", createSchema);
+    }
+
+    private static String[] noopOnboardArgs(final boolean createSchema) {
+        return onboardArgsFor("noop", "noo", createSchema);
+    }
+
+    private static String[] onboardArgsFor(final String database, final String tenant,
+            final boolean createSchema) {
+        final var args = new ArrayList<>(List.of(
+                "onboard", "--admin-url", endpoint(), "--database", database,
+                "--tenant", tenant, "--org", tenant + "-eu",
+                "--writer-secret", "w" + tenant, "--reader-secret", "r" + tenant));
+        if (createSchema) {
+            args.add("--create-schema");
+        }
+        return args.toArray(String[]::new);
+    }
+
     private static int onboard(final String tenant, final String org, final String writerPw, final String readerPw) {
         return ProvisioningCommand.run(onboardArgs(tenant, org, writerPw, readerPw), discard(), discard());
     }

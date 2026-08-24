@@ -106,10 +106,12 @@ reads a few thousand pre-aggregated rows instead of scanning every flow.
 
 | table | dimensions (beyond the shared preamble) |
 |---|---|
-| `flows_by_application_1m` | `application`, `protocol` |
-| `flows_by_conversation_1m` | `srcAddr`, `dstAddr`, `application` |
-| `flows_by_exporter_iface_1m` | `exporterAddr`, `exporterName`, `inputSnmp`, `outputSnmp` |
-| `flows_by_geo_asn_1m` | `srcAs`, `dstAs`, `srcCountry`, `dstCountry` |
+| `flows_by_application_1m` | `application`, `protocol`, `samplingInterval` |
+| `flows_by_conversation_1m` | `srcAddr`, `dstAddr`, `application`, `samplingInterval` |
+| `flows_by_exporter_iface_1m` | `exporterAddr`, `exporterName`, `inputSnmp`, `outputSnmp`, `samplingInterval` |
+| `flows_by_geo_asn_1m` | `srcAs`, `dstAs`, `srcCountry`, `dstCountry`, `samplingInterval` |
+
+`samplingInterval` is carried so sampling-corrected volume stays answerable beyond the raw table's retention, not as something to group by — see [Sampling-corrected volume](./receivers.md#sampling-corrected-volume-beyond-raw-retention). Rows aggregated before it was appended read `0`.
 
 Every rollup carries the same preamble — `tenant`, `organisation`, `timestamp`, `zone` — and the
 same measures: `bytes`, `packets`, `flowCount`, plus the directional split `bytesIn`/`bytesOut`
@@ -131,6 +133,36 @@ GROUP BY application ORDER BY bytes DESC LIMIT 10;
 Each rollup `X` is fed by a materialized view named `X_mv`. Query the table, never the `_mv`.
 
 ### Rollups gain dimensions in place
+
+:::warning[Provisioned deployments must re-run `onboard` after an upgrade that adds a dimension]
+A collector in validate mode (`manage-schema: false`) issues no DDL, so it cannot repair its own rollups. Until `riptide onboard` is re-run, riptide reports all four rollups as not matching this version and **declines them at query time** — so every query spanning 60 minutes or more is answered from raw `flows` and silently truncated at the raw retention window, while the documentation says the rollups carry the new dimension.
+
+Then **restart the collector**. The decision about which rollups are usable is made once, at
+startup — a schema does not change under a running collector — so a collector that declined
+them keeps answering from raw `flows` until it is restarted, however complete the repair was.
+
+Manage-mode deployments repair themselves on the next start and need nothing.
+:::
+
+:::danger[Drop the rollup views before rolling back to an earlier version]
+Rolling forward is repaired automatically. Rolling **back** is not, and it corrupts the rollups silently.
+
+An older riptide does not know `samplingInterval`. In manage mode it refuses to shrink the sorting key — correctly — so the target keeps the column, but it then re-points each materialized view at its own narrower `SELECT`, which no longer names the rate. ClickHouse accepts that without complaint: `ALTER TABLE … MODIFY QUERY` does not validate against its target. Every row aggregated from then on takes `samplingInterval = 0` — the value reserved for rows written before the column existed — in a sorting-key column, for the rollup's full 365-day retention.
+
+The rows are real traffic and are indistinguishable from pre-append rows afterwards, so rolling forward again does not repair them: `WHERE samplingInterval > 0` hides them, and without it they contribute `bytes × 0`.
+
+Before downgrading a manage-mode collector, drop the views so the older version recreates them at its own shape:
+
+```sql
+DROP VIEW IF EXISTS riptide.flows_by_application_1m_mv;
+DROP VIEW IF EXISTS riptide.flows_by_conversation_1m_mv;
+DROP VIEW IF EXISTS riptide.flows_by_exporter_iface_1m_mv;
+DROP VIEW IF EXISTS riptide.flows_by_geo_asn_1m_mv;
+```
+
+The rollup targets and their history are untouched; the older version recreates each view on its next start. Provisioned deployments are unaffected — the older `onboard` re-points only the views in its repair plan, which is empty here.
+:::
+
 
 When a release adds a dimension to a rollup, riptide appends it to the existing table rather than leaving upgraded deployments on the old shape. Two statements per rollup, both metadata-only: one `ALTER` that adds the column and extends the sorting key, then `MODIFY QUERY` on the materialized view.
 
@@ -154,15 +186,21 @@ The check exists because `CREATE MATERIALIZED VIEW IF NOT EXISTS` does nothing a
 
 Two messages are possible, and they mean different things.
 
-**"does not match this version's schema"** — the rollup's columns, their types, or its view's SELECT differ from what this version emits. Ingestion is unaffected: raw `flows` still receives every flow, and a rollup is a query-path optimisation, not a collection path. Long-range queries stop using that rollup and are answered from raw `flows` instead. The other rollups keep serving.
+**"does not match this version's schema"** — the rollup's columns, their types, its **sorting key**, or its view's SELECT differ from what this version emits. Ingestion is unaffected: raw `flows` still receives every flow, and a rollup is a query-path optimisation, not a collection path. Long-range queries stop using that rollup and are answered from raw `flows` instead. The other rollups keep serving.
 
-:::warning The fallback is bounded by raw retention
+:::warning[The fallback is bounded by raw retention]
 Raw `flows` is kept for 30 days by default; the rollups are kept for 365. Part of why the rollups exist is that long-range queries outlive the raw table's expiry. So a query that falls back and reaches further back than the raw retention comes back **incomplete**, not merely slower — it returns the rows that still exist and says nothing about the rest. A 90-day query answered from a 30-day table looks like a complete answer covering a third of the range.
 
 Treat a drifted rollup as something to repair promptly rather than to live with, and until then keep queries against it inside the raw retention window.
 :::
 
-Repair is manual for now. Drop the rollup's view and its target table and let riptide recreate both on the next start in manage mode:
+One drift has a cheaper remedy than the rest. If the message names the **sorting key** and says a column sits outside it, the rollup carries the right columns but in a shape ClickHouse cannot repair in place — an existing column cannot be added to a sorting key. That happens when the column was added by hand. Drop just that column and restart; riptide then adds it back in the same statement that extends the key:
+
+```sql
+ALTER TABLE riptide.flows_by_application_1m DROP COLUMN samplingInterval;
+```
+
+Otherwise repair is manual for now. Drop the rollup's view and its target table and let riptide recreate both on the next start in manage mode:
 
 ```sql
 DROP VIEW IF EXISTS riptide.flows_by_application_1m_mv;
@@ -171,7 +209,7 @@ DROP TABLE IF EXISTS riptide.flows_by_application_1m;
 
 This discards that rollup's aggregated history. The raw `flows` table is untouched, so queries stay correct throughout, but they read raw rows for the affected range until the rollup accumulates again — and a materialized view does not backfill, so the pre-existing history does not come back. Weigh that against how much of the rollup's retention window you actually query. A future release makes this an in-place repair with no loss.
 
-**"could not be verified"** — riptide could not read the rollup's view definition, so it has no opinion either way. The rollup stays in use, because a rollup that has not been checked is not a rollup known to be wrong.
+**"could not be verified"** — riptide could not read the rollup's view definition or its sorting key, so it has no opinion either way. The rollup stays in use, because a rollup that has not been checked is not a rollup known to be wrong.
 
 **"cannot be reached"** — the rollup's target table itself is not visible, so it either does not exist or the connecting user has no grant on it. A query routed there would fail outright, so riptide declines it and answers from raw `flows`. The usual cause is a database onboarded without `--create-rollups`.
 

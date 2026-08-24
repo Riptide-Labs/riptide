@@ -14,6 +14,7 @@ import org.riptide.e2e.ContainerImages;
 import org.riptide.provisioning.ProvisioningDdl;
 import org.riptide.schema.FlowsSchema;
 import org.riptide.schema.RollupAvailability;
+import org.riptide.schema.RollupShapeCheck;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
 import org.testcontainers.containers.GenericContainer;
@@ -49,6 +50,10 @@ public class RollupRepairIT {
     private static final GenericContainer<?> CLICKHOUSE = new GenericContainer<>(ContainerImages.clickhouse())
             .withEnv("CLICKHOUSE_USER", "riptide")
             .withEnv("CLICKHOUSE_PASSWORD", "riptide")
+            // So one test can create a deliberately under-privileged user and watch a DDL statement
+            // actually fail. Without a real ACCESS_DENIED there is no way to reach the "repair could
+            // not complete" path, which is why it went untested for three rounds.
+            .withEnv("CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT", "1")
             .withExposedPorts(8123)
             .waitingFor(Wait.forHttp("/ping").forPort(8123).forStatusCode(200));
 
@@ -106,7 +111,180 @@ public class RollupRepairIT {
         return writer;
     }
 
-    /** A rollup as an older riptide would have left it: one dimension short, view to match. */
+    /**
+     * A rollup whose DDL fails is kept out of the query path, and does not stop the collector.
+     *
+     * <p>Both halves need a statement that genuinely fails, which needs a user that genuinely lacks
+     * a privilege — the reason this sat untested through three review rounds. The user here may
+     * create tables but not views, so the four targets are created at this version's shape and none
+     * of their views can be.</p>
+     *
+     * <p>That combination is precisely the one the shape check does <em>not</em> catch: columns
+     * match, the view is invisible, and the verdict is {@code UNVERIFIABLE}, which is deliberately
+     * not declined ("an unverified rollup is not a known-bad one"). So the only thing standing
+     * between an empty rollup and every long-range query is the repair recording what it could not
+     * do. Deleting that seed leaves every other rollup test green.</p>
+     */
+    @Test
+    void aRollupWhoseDdlFailedIsDeclinedAndStartupSurvivesIt() throws Exception {
+        admin.execute("DROP USER IF EXISTS noviews").get();
+        admin.execute("CREATE USER noviews IDENTIFIED WITH plaintext_password BY 'noviews'").get();
+        // Everything manage mode needs, then the creation privilege revoked on the four _mv names
+        // alone. Revoked rather than withheld because a materialized view with a TO clause is
+        // authorised as a TABLE, not as a VIEW — granting CREATE TABLE for the targets grants it for
+        // their views too, which is how the first attempt at this test passed while proving nothing.
+        admin.execute("GRANT SELECT, INSERT, CREATE DATABASE, CREATE TABLE, DROP TABLE, CREATE VIEW,"
+                + " DROP VIEW, ALTER, SHOW ON " + DATABASE + ".* TO noviews").get();
+        for (final String rollup : FlowsSchema.rollupTableNames()) {
+            admin.execute("REVOKE CREATE TABLE, CREATE VIEW ON " + DATABASE + "." + rollup
+                    + "_mv FROM noviews").get();
+        }
+
+        final var config = config(true);
+        config.setUsername(SecretRef.of("noviews"));
+        config.setPassword(SecretRef.of("noviews"));
+        final var collector = new ClickhouseRepository(
+                new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
+
+        collector.start();
+
+        assertThat(selectOf(ROLLUP + "_mv"))
+                .as("the view really could not be created — otherwise this test proves nothing")
+                .isNull();
+        assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, ROLLUP)))
+                .as("a rollup nothing is writing to must not answer queries, even though its target's"
+                        + " columns match and the shape check therefore calls it UNVERIFIABLE")
+                .isFalse();
+    }
+
+    /**
+     * A rollup the check independently verifies as correct stays usable, even if a statement failed.
+     *
+     * <p>The counterweight to the test above. Every rollup DDL is a {@code CREATE … IF NOT EXISTS}
+     * or an idempotent {@code ALTER}, so on a healthy deployment most of them no-op — and a
+     * connection reset, a lock timeout or a missing grant on a statement that would have changed
+     * nothing must not cost a correct rollup its place in the query path until the next restart.
+     * {@code MATCHES} compares the target's columns and the view's stored SELECT against this
+     * version, which is a stronger statement than any inference from which statement failed.</p>
+     */
+    @Test
+    void aRollupThatVerifiesCleanIsNotDeclinedByAFailedNoOp() throws Exception {
+        repository().start();                                   // everything correct, as admin
+        admin.execute("DROP USER IF EXISTS noalter").get();
+        admin.execute("CREATE USER noalter IDENTIFIED WITH plaintext_password BY 'noalter'").get();
+        admin.execute("GRANT SELECT, INSERT, CREATE DATABASE, CREATE TABLE, DROP TABLE, CREATE VIEW,"
+                + " DROP VIEW, ALTER, SHOW ON " + DATABASE + ".* TO noalter").get();
+        // The CREATE for this one view will be denied — and it is a statement that would have
+        // no-oped, because the view is already there and already right.
+        admin.execute("REVOKE CREATE TABLE, CREATE VIEW ON " + DATABASE + "." + ROLLUP
+                + "_mv FROM noalter").get();
+
+        final var config = config(true);
+        config.setUsername(SecretRef.of("noalter"));
+        config.setPassword(SecretRef.of("noalter"));
+        new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS).start();
+
+        assertThat(deniedCreateOf(ROLLUP + "_mv"))
+                .as("the CREATE must really have been denied, or this test passes vacuously: with"
+                        + " nothing recorded as unrepaired there is no clear for MATCHES to perform")
+                .isTrue();
+        assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, ROLLUP)))
+                .as("a rollup whose shape verifies clean must keep answering queries — a failed"
+                        + " no-op is not evidence of anything")
+                .isTrue();
+    }
+
+    /**
+     * A rollup the planner refused is kept out of the query path, and its view is left alone.
+     *
+     * <p>The state is the one the Code 36 refusal was added for: an operator has hand-added
+     * {@code samplingInterval} to the target after reading that riptide appends it, so the column
+     * exists but is not in the sorting key and no {@code ALTER} can put it there.</p>
+     *
+     * <p>Refusing the target is not enough on its own, and this is the trap. The view's
+     * {@code CREATE … IF NOT EXISTS} <em>succeeds</em> — the target does have the column it names —
+     * so nothing marks the rollup as unrepaired, and the view repair then re-points it at a SELECT
+     * that writes the rate into a non-key numeric column of a {@code SummingMergeTree}. ClickHouse
+     * sums every numeric column outside the sorting key, so the rate itself would accumulate across
+     * merges: {@code sum(bytes * samplingInterval)} inflated by an arbitrary factor, and
+     * {@code samplingInterval > 0} no longer meaning what it says. The shape check cannot catch it
+     * either — it compares columns and the view's SELECT, never the sorting key — so it reports
+     * MATCHES and the rollup keeps answering.</p>
+     *
+     * <p>Before this change the same state failed loudly with Code 36 on every start. A refusal that
+     * converts a loud failure into a quiet wrong number is worse than no refusal.</p>
+     */
+    @Test
+    void aRefusedRollupIsDeclinedAndItsViewIsNotRepointed() throws Exception {
+        createRollupWithTheRateOutsideItsSortingKey();
+        final String before = selectOf(ROLLUP + "_mv");
+        assertThat(RollupShapeCheck.normalise(before))
+                .as("the fixture must present the state the shape check would otherwise call MATCHES:"
+                        + " every column present, this version's SELECT, and only the key wrong")
+                .isEqualTo(RollupShapeCheck.normalise(FlowsSchema.rollupSelects(DATABASE).get(ROLLUP)));
+
+        repository().start();
+
+        assertThat(selectOf(ROLLUP + "_mv"))
+                .as("re-pointing the view would start summing the sampling rate itself")
+                .isEqualTo(before);
+        assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, ROLLUP)))
+                .as("a rollup riptide has refused to repair must not keep answering queries")
+                .isFalse();
+    }
+
+    /**
+     * riptide must not BUILD the view it has just refused to repair.
+     *
+     * <p>The sibling of the test above, with the view absent — and the case that actually bites,
+     * because {@code CREATE MATERIALIZED VIEW IF NOT EXISTS} <em>succeeds</em> here: a target
+     * carrying the rate outside its sorting key has every column the SELECT names. So riptide would
+     * create a view writing the rate into a non-key numeric column of a {@code SummingMergeTree},
+     * which the engine then sums across merges. Declining the rollup does not undo that: the rows
+     * are wrong, durable, and outlive the process that declined them.</p>
+     */
+    @Test
+    void aRefusedRollupGetsNoViewBuiltForIt() throws Exception {
+        createRollupWithTheRateOutsideItsSortingKey();
+        admin.execute("DROP VIEW " + FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP)).get();
+
+        repository().start();
+
+        assertThat(selectOf(ROLLUP + "_mv"))
+                .as("building the writer for a rollup just refused is two halves of opposite"
+                        + " decisions; the rows it would write are wrong and durable")
+                .isNull();
+        assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, ROLLUP)))
+                .as("and it stays out of the query path")
+                .isFalse();
+    }
+
+    /** The hand-added-column state: the rate is a column of the target, but not part of its key. */
+    private static void createRollupWithTheRateOutsideItsSortingKey() throws Exception {
+        final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
+        final String view = FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP);
+        admin.execute("DROP VIEW IF EXISTS " + view).get();
+        admin.execute("DROP TABLE IF EXISTS " + target).get();
+        admin.execute("CREATE TABLE " + target + " ("
+                + "tenant String, organisation String, timestamp DateTime('UTC'), zone String,"
+                + " application LowCardinality(String), protocol UInt8,"
+                + " samplingInterval Float64,"
+                + " bytes UInt64, packets UInt64, flowCount UInt64,"
+                + " bytesIn UInt64, bytesOut UInt64, packetsIn UInt64, packetsOut UInt64)"
+                + " ENGINE = SummingMergeTree()"
+                + " PRIMARY KEY (tenant, organisation, timestamp, zone, application, protocol)"
+                + " ORDER BY (tenant, organisation, timestamp, zone, application, protocol)"
+                + " PARTITION BY toYYYYMM(timestamp)").get();
+        // THIS VERSION'S SELECT, deliberately. An earlier draft gave the view a stale SELECT, which
+        // the shape check independently reports as DRIFTED — so the test passed without the refusal
+        // path ever being the reason, and deleting the decline left the whole suite green. With the
+        // current SELECT and every column present, columns and view both compare clean and the
+        // sorting key is the only thing wrong: exactly the state the refusal exists for.
+        admin.execute("CREATE MATERIALIZED VIEW " + view + " TO " + target + " AS "
+                + FlowsSchema.rollupSelects(DATABASE).get(ROLLUP)).get();
+    }
+
+    /** A rollup as an older riptide would have left it: two dimensions short, view to match. */
     private static void createRollupMissingItsLastDimension() throws Exception {
         final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
         final String view = FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP);
@@ -309,6 +487,55 @@ public class RollupRepairIT {
                 .isFalse();
     }
 
+    /**
+     * A view selecting a dimension this version does not know is a downgrade, and must be left
+     * alone rather than re-pointed at the narrower SELECT.
+     *
+     * <p>This is the one direction that destroys data instead of withholding it. ClickHouse accepts
+     * a {@code MODIFY QUERY} that drops an output column — it does not validate against the target —
+     * so the repair would succeed silently and every row aggregated afterwards would take the
+     * column's type default. For {@code samplingInterval} that default is {@code 0}, the value
+     * reserved for rows predating the append, so live traffic would become permanently
+     * indistinguishable from pre-append rows.</p>
+     *
+     * <p>Simulated by adding a column this version has never heard of, since the real trigger is a
+     * future version's dimension seen by this one.</p>
+     */
+    @Test
+    void aViewFromANewerVersionIsLeftAloneRatherThanNarrowed() throws Exception {
+        repository().start();
+        final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
+        final String view = FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP);
+        admin.execute("ALTER TABLE " + target + " ADD COLUMN IF NOT EXISTS fromTheFuture UInt8").get();
+        final String wider = FlowsSchema.rollupSelects(DATABASE).get(ROLLUP)
+                .replace("SELECT", "SELECT toUInt8(0) AS fromTheFuture,");
+        admin.execute("ALTER TABLE " + view + " MODIFY QUERY " + wider).get();
+        final String before = selectOf(ROLLUP + "_mv");
+        assertThat(before).contains("fromTheFuture");
+
+        repository().start();
+
+        assertThat(selectOf(ROLLUP + "_mv"))
+                .as("taking a dimension away would write this version's defaults over rows that mean"
+                        + " something else")
+                .isEqualTo(before);
+        assertThat(RollupAvailability.usable(target))
+                .as("and the rollup is declined rather than quietly narrowed")
+                .isFalse();
+    }
+
+    /** Whether the under-privileged user is genuinely refused the view CREATE it just attempted. */
+    private static boolean deniedCreateOf(final String view) throws Exception {
+        try (var records = admin.queryRecords("SELECT count() AS c FROM system.grants"
+                + " WHERE user_name = 'noalter' AND access_type IN ('CREATE TABLE', 'CREATE VIEW')"
+                + " AND table = '" + view + "' AND is_partial_revoke = 1").get()) {
+            for (final var record : records) {
+                return record.getLong("c") > 0;
+            }
+        }
+        return false;
+    }
+
     private static String selectOf(final String view) throws Exception {
         try (var records = admin.queryRecords("SELECT as_select AS s FROM system.tables"
                 + " WHERE database = '" + DATABASE + "' AND name = '" + view + "'").get()) {
@@ -331,14 +558,14 @@ public class RollupRepairIT {
     void theOnboardRepairAppliesAndThenNoOps() throws Exception {
         createRollupMissingItsLastDimension();
 
-        for (final String ddl : ProvisioningDdl.repairRollups(DATABASE, List.of(ROLLUP))) {
+        for (final String ddl : ProvisioningDdl.repairRollups(DATABASE, List.of(ROLLUP), Set.of(ROLLUP))) {
             admin.execute(ddl).get();
         }
         assertThat(sortKeyOf(ROLLUP))
                 .as("onboard brings an existing rollup up to this version's shape")
                 .isEqualTo(FlowsSchema.rollupSortKeys().get(ROLLUP));
 
-        for (final String ddl : ProvisioningDdl.repairRollups(DATABASE, List.of(ROLLUP))) {
+        for (final String ddl : ProvisioningDdl.repairRollups(DATABASE, List.of(ROLLUP), Set.of(ROLLUP))) {
             admin.execute(ddl).get();
         }
         assertThat(sortKeyOf(ROLLUP))
@@ -394,5 +621,112 @@ public class RollupRepairIT {
         assertThat(selectOf(ROLLUP + "_mv"))
                 .as("the view must not be stranded just because its target already looks current")
                 .contains("protocol");
+    }
+
+    /**
+     * The point of carrying the rate at all: {@code SUM(bytes * samplingInterval)} means the same
+     * thing against a rollup as against raw {@code flows}. Before this, sampling-corrected volume
+     * was unanswerable beyond the raw table's retention, because the rollups — the only thing that
+     * survives that long — did not carry the rate.
+     *
+     * <p>At mixed rates, deliberately. Every fixture flow carries {@code samplingInterval = 1.0}, so
+     * an earlier version of this test reduced both sides to {@code sum(bytes)} and passed whatever
+     * the view had written — a constant, the wrong column, or nothing resembling a rate at all. The
+     * unscaled total is asserted to differ, which is what makes the equality mean something.</p>
+     */
+    @Test
+    void theScaledSumIsIdenticalAgainstRawAndRollup() throws Exception {
+        repository().start();
+        final var repo = startedWriter();
+        final double[] rates = {1.0d, 64.0d, 1000.0d};
+        for (int i = 0; i < 20; i++) {
+            final var flow = flow("scaled", "org", 3000 + i);
+            flow.setSamplingInterval(rates[i % rates.length]);
+            repo.persist(List.of(flow));
+        }
+        Thread.sleep(500);
+
+        final String rollupTable = FlowsSchema.qualifiedRollup(DATABASE, FlowsSchema.ROLLUP_BY_CONVERSATION);
+        final long raw = scalar("SELECT toUInt64(sum(bytes * samplingInterval)) AS v FROM "
+                + FlowsSchema.qualifiedFlows(DATABASE) + " WHERE tenant = 'scaled'");
+        final long rollup = scalar("SELECT toUInt64(sum(bytes * samplingInterval)) AS v FROM "
+                + rollupTable + " WHERE tenant = 'scaled'");
+        final long unscaled = scalar("SELECT toUInt64(sum(bytes)) AS v FROM "
+                + rollupTable + " WHERE tenant = 'scaled'");
+
+        assertThat(rollup).isEqualTo(raw).isPositive();
+        assertThat(rollup)
+                .as("the rates have to be doing something, or this test cannot fail")
+                .isNotEqualTo(unscaled);
+    }
+
+    /**
+     * The boundary, end to end. Rows aggregated before the rate was appended read {@code 0} — the
+     * type default, and the only marker a sort-key column can have — so
+     * {@code WHERE samplingInterval > 0} selects exactly the rows aggregated after.
+     */
+    @Test
+    void theRateBoundaryIsAPredicateNotARememberedDate() throws Exception {
+        createRollupMissingItsLastDimension();
+        final var repo = startedWriter();
+        repo.persist(List.of(flow("beforeAppend", "org", 4001)));
+        Thread.sleep(400);
+
+        repository().start();                                   // appends samplingInterval
+
+        repo.persist(List.of(flow("afterAppend", "org", 4002)));
+        Thread.sleep(400);
+
+        final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
+        assertThat(scalar("SELECT count() AS v FROM " + target
+                + " WHERE tenant = 'beforeAppend' AND samplingInterval = 0"))
+                .as("rows aggregated before the append carry the reserved value")
+                .isPositive();
+        assertThat(scalar("SELECT count() AS v FROM " + target
+                + " WHERE tenant = 'beforeAppend' AND samplingInterval > 0"))
+                .as("and are excluded by the boundary predicate")
+                .isZero();
+        assertThat(scalar("SELECT count() AS v FROM " + target
+                + " WHERE tenant = 'afterAppend' AND samplingInterval > 0"))
+                .as("rows aggregated after carry a real rate, which is never 0")
+                .isPositive();
+    }
+
+    /**
+     * The case that motivates measuring sort-key growth at all: two exporters sampling at different
+     * rates, feeding one geo/ASN group.
+     *
+     * <p>They must produce two rollup rows, not one — collapsing them would average away the rates
+     * and make the correction meaningless. The growth this costs was measured before the change at
+     * a median of 1.0214 across the four rollups, which is what the decision rule was evaluated
+     * against.</p>
+     */
+    @Test
+    void twoExportersAtDifferentRatesSplitOneGroupAndStillSumCorrectly() throws Exception {
+        repository().start();
+        final var repo = startedWriter();
+
+        repo.persist(List.of(
+                sampledAt(1.0d, "203.0.113.7"),
+                sampledAt(100.0d, "203.0.113.8")));
+        Thread.sleep(600);
+
+        final String target = FlowsSchema.qualifiedRollup(DATABASE, FlowsSchema.ROLLUP_BY_GEO_ASN);
+        assertThat(scalar("SELECT count() AS v FROM " + target + " WHERE tenant = 'rates'"))
+                .as("one geo/ASN group, two rates, two rows — collapsing them would lose the rates")
+                .isEqualTo(2);
+        assertThat(scalar("SELECT toUInt64(sum(bytes * samplingInterval)) AS v FROM "
+                + target + " WHERE tenant = 'rates'"))
+                .as("1234*1 + 1234*100")
+                .isEqualTo(1234L + 1234L * 100L);
+    }
+
+    /** Same geo/ASN dimensions, different exporter and rate. */
+    private static org.riptide.pipeline.EnrichedFlow sampledAt(final double rate, final String exporter)
+            throws Exception {
+        final var base = flow("rates", "org", 5000);
+        base.setSamplingInterval(rate);
+        base.setExporterAddr(exporter);
+        return base;
     }
 }

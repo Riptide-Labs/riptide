@@ -44,13 +44,14 @@ class RollupShapeCheckTest {
             "SELECT f.tenant AS tenant, f.organisation AS organisation, "
                     + "toStartOfMinute(f.timestamp) AS timestamp, f.zone AS zone, "
                     + "ifNull(f.application, '') AS application, f.protocol AS protocol, "
+                    + "f.samplingInterval AS samplingInterval, "
                     + "sum(f.bytes) AS bytes, sum(f.packets) AS packets, count() AS flowCount, "
                     + "sumIf(f.bytes, f.direction = 'INGRESS') AS bytesIn, "
                     + "sumIf(f.bytes, f.direction = 'EGRESS') AS bytesOut, "
                     + "sumIf(f.packets, f.direction = 'INGRESS') AS packetsIn, "
                     + "sumIf(f.packets, f.direction = 'EGRESS') AS packetsOut "
                     + "FROM riptide.flows AS f "
-                    + "GROUP BY tenant, organisation, timestamp, zone, application, protocol";
+                    + "GROUP BY tenant, organisation, timestamp, zone, application, protocol, samplingInterval";
 
     /**
      * A real server response matches the SELECT riptide emits for that rollup.
@@ -72,7 +73,7 @@ class RollupShapeCheckTest {
 
         final Map<String, String> live = liveSelects();
         live.put(FlowsSchema.ROLLUP_BY_APPLICATION + "_mv", AS_SELECT_FROM_CLICKHOUSE_26_7);
-        assertThat(RollupShapeCheck.compare(DB, live, liveColumns()))
+        assertThat(RollupShapeCheck.compare(DB, live, liveColumns(), liveSortKeys()))
                 .allSatisfy(r -> assertThat(r.status()).isEqualTo(RollupShapeCheck.Status.MATCHES));
     }
 
@@ -85,6 +86,11 @@ class RollupShapeCheckTest {
         return selects;
     }
 
+    /** Every rollup's sorting key as this version writes it — the healthy case. */
+    private static Map<String, String> liveSortKeys() {
+        return new LinkedHashMap<>(FlowsSchema.rollupSortKeys());
+    }
+
     private static Map<String, Map<String, String>> liveColumns() {
         final Map<String, Map<String, String>> columns = new LinkedHashMap<>();
         FlowsSchema.rollupColumns().forEach((table, types) -> columns.put(table, new LinkedHashMap<>(types)));
@@ -94,7 +100,7 @@ class RollupShapeCheckTest {
     @Test
     void aCurrentDeploymentIsSilent() {
         final List<RollupShapeCheck.Result> results =
-                RollupShapeCheck.compare(DB, liveSelects(), liveColumns());
+                RollupShapeCheck.compare(DB, liveSelects(), liveColumns(), liveSortKeys());
 
         assertThat(results).hasSize(4)
                 .allSatisfy(r -> assertThat(r.status()).isEqualTo(RollupShapeCheck.Status.MATCHES));
@@ -111,7 +117,7 @@ class RollupShapeCheckTest {
         live.put(mv, live.get(mv).replace("sumIf(f.packets, f.direction = 'EGRESS') AS packetsOut",
                 "sum(f.packets) AS packetsOut"));
 
-        final List<RollupShapeCheck.Result> results = RollupShapeCheck.compare(DB, live, liveColumns());
+        final List<RollupShapeCheck.Result> results = RollupShapeCheck.compare(DB, live, liveColumns(), liveSortKeys());
 
         assertThat(results)
                 .filteredOn(RollupShapeCheck.Result::drifted)
@@ -131,7 +137,7 @@ class RollupShapeCheckTest {
         FlowsSchema.rollupSelects(DB).forEach((table, select) -> live.put(table + "_mv",
                 "\n  " + select.replace("`", "").replaceAll("\\s+", "\n\t") + "  \n"));
 
-        assertThat(RollupShapeCheck.compare(DB, live, liveColumns()))
+        assertThat(RollupShapeCheck.compare(DB, live, liveColumns(), liveSortKeys()))
                 .allSatisfy(r -> assertThat(r.status()).isEqualTo(RollupShapeCheck.Status.MATCHES));
     }
 
@@ -140,7 +146,7 @@ class RollupShapeCheckTest {
         final Map<String, Map<String, String>> columns = liveColumns();
         columns.get(FlowsSchema.ROLLUP_BY_GEO_ASN).remove("dstCountry");
 
-        assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns))
+        assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns, liveSortKeys()))
                 .filteredOn(RollupShapeCheck.Result::drifted)
                 .singleElement()
                 .satisfies(r -> assertThat(r.detail()).contains("missing").contains("dstCountry"));
@@ -152,7 +158,7 @@ class RollupShapeCheckTest {
         final Map<String, Map<String, String>> columns = liveColumns();
         columns.get(FlowsSchema.ROLLUP_BY_CONVERSATION).put("srcCity", "LowCardinality(String)");
 
-        assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns))
+        assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns, liveSortKeys()))
                 .filteredOn(RollupShapeCheck.Result::drifted)
                 .singleElement()
                 .satisfies(r -> {
@@ -166,20 +172,25 @@ class RollupShapeCheckTest {
      * ungranted view is zero rows — exactly what an absent view looks like. Calling that "stale"
      * would warn on every deployment provisioned before the grant existed, and an operator who
      * learns to ignore the warning is worse off than one who never had it.
+     *
+     * <p>A visible target does <em>not</em> settle it, which a review round argued it should:
+     * riptide grants per object, so a writer holding INSERT on the target and no {@code SHOW TABLES}
+     * on the {@code _mv} is an ordinary pre-#572 deployment. {@code RollupShapeDriftIT} builds
+     * exactly that against a real server.</p>
      */
     @Test
     void aViewTheUserCannotSeeIsUnverifiableRatherThanStale() {
         final Map<String, String> live = liveSelects();
         live.remove(FlowsSchema.ROLLUP_BY_EXPORTER_IFACE + "_mv");
 
-        final List<RollupShapeCheck.Result> results = RollupShapeCheck.compare(DB, live, liveColumns());
+        final List<RollupShapeCheck.Result> results = RollupShapeCheck.compare(DB, live, liveColumns(), liveSortKeys());
 
         assertThat(results)
                 .filteredOn(r -> r.status() == RollupShapeCheck.Status.UNVERIFIABLE)
                 .singleElement()
                 .satisfies(r -> {
                     assertThat(r.rollup()).isEqualTo(FlowsSchema.ROLLUP_BY_EXPORTER_IFACE);
-                    assertThat(r.detail()).contains("riptide onboard").contains("GRANT SELECT");
+                    assertThat(r.detail()).contains("riptide onboard").contains("GRANT SHOW TABLES");
                 });
         assertThat(results).noneMatch(RollupShapeCheck.Result::drifted);
     }
@@ -195,7 +206,7 @@ class RollupShapeCheckTest {
         final Map<String, Map<String, String>> columns = liveColumns();
         columns.get(FlowsSchema.ROLLUP_BY_GEO_ASN).remove("srcAs");
 
-        assertThat(RollupShapeCheck.compare(DB, live, columns))
+        assertThat(RollupShapeCheck.compare(DB, live, columns, liveSortKeys()))
                 .filteredOn(r -> r.rollup().equals(FlowsSchema.ROLLUP_BY_GEO_ASN))
                 .singleElement()
                 .satisfies(r -> {
@@ -215,7 +226,7 @@ class RollupShapeCheckTest {
         final Map<String, Map<String, String>> columns = liveColumns();
         columns.remove(FlowsSchema.ROLLUP_BY_APPLICATION);
 
-        assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns))
+        assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns, liveSortKeys()))
                 .filteredOn(r -> r.status() == RollupShapeCheck.Status.UNREACHABLE)
                 .singleElement()
                 .satisfies(r -> {
@@ -233,23 +244,33 @@ class RollupShapeCheckTest {
         final Map<String, Map<String, String>> columns = liveColumns();
         columns.get(FlowsSchema.ROLLUP_BY_GEO_ASN).put("srcAs", "UInt32");
 
-        assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns))
+        assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns, liveSortKeys()))
                 .filteredOn(RollupShapeCheck.Result::drifted)
                 .singleElement()
                 .satisfies(r -> assertThat(r.detail())
                         .contains("wrong type").contains("srcAs").contains("UInt32").contains("UInt64"));
     }
 
-    /** An unverifiable rollup stays in use; only drift and unreachability decline it. */
+    /**
+     * An unverifiable rollup stays in use; only drift and unreachability decline it.
+     *
+     * <p>What remains genuinely unverifiable, now that an invisible view beside a visible target is
+     * treated as missing: a sorting key that could not be read at all. Everything else about the
+     * rollup checked out, so there is proof of nothing — and declining on no evidence is what would
+     * degrade a deployment whose only fault is a grant.</p>
+     */
     @Test
     void onlyDriftAndUnreachabilityDeclineARollup() {
-        final Map<String, String> live = liveSelects();
-        live.remove(FlowsSchema.ROLLUP_BY_EXPORTER_IFACE + "_mv");
+        final Map<String, String> keys = liveSortKeys();
+        keys.remove(FlowsSchema.ROLLUP_BY_EXPORTER_IFACE);
 
-        assertThat(RollupShapeCheck.compare(DB, live, liveColumns()))
+        assertThat(RollupShapeCheck.compare(DB, liveSelects(), liveColumns(), keys))
                 .filteredOn(r -> r.status() == RollupShapeCheck.Status.UNVERIFIABLE)
                 .singleElement()
-                .satisfies(r -> assertThat(r.declineForQueries()).isFalse());
+                .satisfies(r -> {
+                    assertThat(r.rollup()).isEqualTo(FlowsSchema.ROLLUP_BY_EXPORTER_IFACE);
+                    assertThat(r.declineForQueries()).isFalse();
+                });
     }
 
     /**
@@ -281,5 +302,50 @@ class RollupShapeCheckTest {
                 .as("a literal with internal whitespace would survive in as_select but be collapsed "
                         + "by normalise(), so drift confined to it would compare equal")
                 .isEmpty();
+    }
+
+    /**
+     * A target whose columns and view both compare clean is still drifted if its sorting key is not
+     * this version's.
+     *
+     * <p>The state is reachable: an operator hand-adds the column, so it exists but sits outside the
+     * key, and no ALTER can move it there (ClickHouse rejects that with Code 36). The rate is then a
+     * plain numeric column of a {@code SummingMergeTree}, which means the engine <em>sums</em> it
+     * across merges — {@code sum(bytes * samplingInterval)} inflated by an arbitrary factor.</p>
+     *
+     * <p>Checked here rather than remembered by the code that refused the repair, because a
+     * validate-mode collector issues no DDL and computes no plan at all, and that is the deployment
+     * shape that cannot fix itself.</p>
+     */
+    @Test
+    void aRateOutsideTheSortingKeyIsDriftedEvenWhenEverythingElseMatches() {
+        final Map<String, String> keys = liveSortKeys();
+        final String rollup = FlowsSchema.rollupTableNames().getFirst();
+        keys.put(rollup, keys.get(rollup).replace(", samplingInterval", ""));
+
+        final List<RollupShapeCheck.Result> results =
+                RollupShapeCheck.compare(DB, liveSelects(), liveColumns(), keys);
+
+        assertThat(results).filteredOn(r -> r.rollup().equals(rollup))
+                .singleElement()
+                .satisfies(r -> {
+                    assertThat(r.drifted()).isTrue();
+                    assertThat(r.declineForQueries()).isTrue();
+                    assertThat(r.detail()).contains("sorting key").contains("SummingMergeTree");
+                });
+        assertThat(results).filteredOn(r -> !r.rollup().equals(rollup))
+                .allSatisfy(r -> assertThat(r.declineForQueries())
+                        .as("only the rollup with the wrong key is declined")
+                        .isFalse());
+    }
+
+    /** Spacing and backticks are the server's formatting, not a different key. */
+    @Test
+    void aKeyDifferingOnlyInFormattingIsTheSameKey() {
+        final Map<String, String> keys = liveSortKeys();
+        keys.replaceAll((rollup, key) -> "`" + key.replace(", ", "`,  `") + "`");
+
+        assertThat(RollupShapeCheck.compare(DB, liveSelects(), liveColumns(), keys))
+                .allSatisfy(r -> assertThat(r.declineForQueries()).isFalse());
     }
 }
