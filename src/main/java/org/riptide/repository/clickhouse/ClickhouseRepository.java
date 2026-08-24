@@ -5,7 +5,6 @@
 
 package org.riptide.repository.clickhouse;
 
-
 import com.clickhouse.client.api.Client;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
@@ -33,8 +32,8 @@ import java.net.InetAddress;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.Collection;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -398,8 +397,6 @@ public class ClickhouseRepository implements FlowRepository {
                 log.warn("Rollup {} left as it is: {}. It is kept out of the query path.", rollup, why));
         return plan.repair();
     }
-
-
 
     /** Each rollup target's live column names, for the repair planner. */
     private Map<String, Set<String>> readRollupColumnNames() throws Exception {

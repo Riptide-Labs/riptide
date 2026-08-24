@@ -144,6 +144,25 @@ them keeps answering from raw `flows` until it is restarted, however complete th
 Manage-mode deployments repair themselves on the next start and need nothing.
 :::
 
+:::danger[Drop the rollup views before rolling back to an earlier version]
+Rolling forward is repaired automatically. Rolling **back** is not, and it corrupts the rollups silently.
+
+An older riptide does not know `samplingInterval`. In manage mode it refuses to shrink the sorting key — correctly — so the target keeps the column, but it then re-points each materialized view at its own narrower `SELECT`, which no longer names the rate. ClickHouse accepts that without complaint: `ALTER TABLE … MODIFY QUERY` does not validate against its target. Every row aggregated from then on takes `samplingInterval = 0` — the value reserved for rows written before the column existed — in a sorting-key column, for the rollup's full 365-day retention.
+
+The rows are real traffic and are indistinguishable from pre-append rows afterwards, so rolling forward again does not repair them: `WHERE samplingInterval > 0` hides them, and without it they contribute `bytes × 0`.
+
+Before downgrading a manage-mode collector, drop the views so the older version recreates them at its own shape:
+
+```sql
+DROP VIEW IF EXISTS riptide.flows_by_application_1m_mv;
+DROP VIEW IF EXISTS riptide.flows_by_conversation_1m_mv;
+DROP VIEW IF EXISTS riptide.flows_by_exporter_iface_1m_mv;
+DROP VIEW IF EXISTS riptide.flows_by_geo_asn_1m_mv;
+```
+
+The rollup targets and their history are untouched; the older version recreates each view on its next start. Provisioned deployments are unaffected — the older `onboard` re-points only the views in its repair plan, which is empty here.
+:::
+
 
 When a release adds a dimension to a rollup, riptide appends it to the existing table rather than leaving upgraded deployments on the old shape. Two statements per rollup, both metadata-only: one `ALTER` that adds the column and extends the sorting key, then `MODIFY QUERY` on the materialized view.
 

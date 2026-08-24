@@ -113,10 +113,6 @@ public final class FlowsSchema {
         return ROLLUPS.stream().map(Rollup::table).toList();
     }
 
-    /** {@link #rollupTableNames()} as a set, for callers testing membership. */
-    public static Set<String> rollupTableNamesSet() {
-        return Set.copyOf(rollupTableNames());
-    }
 
     /** As {@link #createRollupTables(String, int)} with the default rollup retention. */
     public static List<String> createRollupTables(final String database) {
@@ -330,9 +326,18 @@ public final class FlowsSchema {
         return new RepairPlan(List.copyOf(stale), Collections.unmodifiableMap(declined));
     }
 
-    /** The aliases a SELECT emits, which is what its target table has to carry. */
+    /**
+     * The aliases a SELECT emits, which is what its target table has to carry.
+     *
+     * <p>Bounded to the projection: {@code AS} also introduces the source alias in
+     * {@code FROM … AS f}, and would introduce a cast or subquery alias in any future expression.
+     * Those are not output columns, and the downgrade branch computes a set difference over this —
+     * so one stray name there would read as a column a newer version knows.</p>
+     */
     private static Set<String> selectOutputColumns(final String select) {
-        final var matcher = SELECT_ALIAS.matcher(RollupShapeCheck.normalise(select));
+        final String normalised = RollupShapeCheck.normalise(select);
+        final int from = normalised.lastIndexOf(" FROM ");
+        final var matcher = SELECT_ALIAS.matcher(from < 0 ? normalised : normalised.substring(0, from));
         final Set<String> names = new LinkedHashSet<>();
         while (matcher.find()) {
             names.add(matcher.group(1));

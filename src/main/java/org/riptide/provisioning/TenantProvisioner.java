@@ -130,7 +130,7 @@ public final class TenantProvisioner {
             // onboardTenant. Degrading to "skip nothing" here would leave the tenant unprovisioned
             // for the same reason a refused rollup once did.
             statements.addAll(ProvisioningDdl.bootstrapRollupViews(
-                    spec.database(), plan.isPresent() ? refused : FlowsSchema.rollupTableNamesSet()));
+                    spec.database(), plan.isPresent() ? refused : Set.copyOf(FlowsSchema.rollupTableNames())));
         }
         statements.addAll(ProvisioningDdl.ensureShared(spec.database(), spec.quotaBytes()));
         statements.addAll(ProvisioningDdl.onboardTenant(
@@ -192,7 +192,6 @@ public final class TenantProvisioner {
         return Optional.of(plan);
     }
 
-
     /**
      * The config stanza plus whether this run created the schema — the caller needs the latter to
      * warn when an explicitly requested {@code --ttl-days} was not applied (table pre-existed).
@@ -234,7 +233,6 @@ public final class TenantProvisioner {
         plan.refused().forEach((rollup, why) -> log.warn("Rollup {} left as it is: {}.", rollup, why));
         return new LinkedHashSet<>(plan.repair());
     }
-
 
     /**
      * Whether every rollup target <em>and</em> its materialized view is present. Both halves are

@@ -172,6 +172,11 @@ class RollupShapeCheckTest {
      * ungranted view is zero rows — exactly what an absent view looks like. Calling that "stale"
      * would warn on every deployment provisioned before the grant existed, and an operator who
      * learns to ignore the warning is worse off than one who never had it.
+     *
+     * <p>A visible target does <em>not</em> settle it, which a review round argued it should:
+     * riptide grants per object, so a writer holding INSERT on the target and no {@code SHOW TABLES}
+     * on the {@code _mv} is an ordinary pre-#572 deployment. {@code RollupShapeDriftIT} builds
+     * exactly that against a real server.</p>
      */
     @Test
     void aViewTheUserCannotSeeIsUnverifiableRatherThanStale() {
@@ -185,7 +190,7 @@ class RollupShapeCheckTest {
                 .singleElement()
                 .satisfies(r -> {
                     assertThat(r.rollup()).isEqualTo(FlowsSchema.ROLLUP_BY_EXPORTER_IFACE);
-                    assertThat(r.detail()).contains("riptide onboard").contains("GRANT SELECT");
+                    assertThat(r.detail()).contains("riptide onboard").contains("GRANT SHOW TABLES");
                 });
         assertThat(results).noneMatch(RollupShapeCheck.Result::drifted);
     }
@@ -246,16 +251,26 @@ class RollupShapeCheckTest {
                         .contains("wrong type").contains("srcAs").contains("UInt32").contains("UInt64"));
     }
 
-    /** An unverifiable rollup stays in use; only drift and unreachability decline it. */
+    /**
+     * An unverifiable rollup stays in use; only drift and unreachability decline it.
+     *
+     * <p>What remains genuinely unverifiable, now that an invisible view beside a visible target is
+     * treated as missing: a sorting key that could not be read at all. Everything else about the
+     * rollup checked out, so there is proof of nothing — and declining on no evidence is what would
+     * degrade a deployment whose only fault is a grant.</p>
+     */
     @Test
     void onlyDriftAndUnreachabilityDeclineARollup() {
-        final Map<String, String> live = liveSelects();
-        live.remove(FlowsSchema.ROLLUP_BY_EXPORTER_IFACE + "_mv");
+        final Map<String, String> keys = liveSortKeys();
+        keys.remove(FlowsSchema.ROLLUP_BY_EXPORTER_IFACE);
 
-        assertThat(RollupShapeCheck.compare(DB, live, liveColumns(), liveSortKeys()))
+        assertThat(RollupShapeCheck.compare(DB, liveSelects(), liveColumns(), keys))
                 .filteredOn(r -> r.status() == RollupShapeCheck.Status.UNVERIFIABLE)
                 .singleElement()
-                .satisfies(r -> assertThat(r.declineForQueries()).isFalse());
+                .satisfies(r -> {
+                    assertThat(r.rollup()).isEqualTo(FlowsSchema.ROLLUP_BY_EXPORTER_IFACE);
+                    assertThat(r.declineForQueries()).isFalse();
+                });
     }
 
     /**

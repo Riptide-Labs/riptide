@@ -169,29 +169,52 @@ public final class RollupShapeCheck {
         // refusing: a validate-mode collector issues no DDL and computes no repair plan at all, and
         // that is precisely the deployment shape that cannot fix itself.
         final String liveSortKey = liveSortKeys.get(rollup);
-        if (liveSortKey == null) {
-            return new Result(rollup, Status.UNVERIFIABLE,
-                    "sorting key of " + rollup + " could not be read — the query path keeps using it,"
-                            + " but a key this version cannot see is a key it cannot vouch for");
-        }
-        if (!normaliseKey(intendedSortKey).equals(normaliseKey(liveSortKey))) {
+        if (liveSortKey != null && !normaliseKey(intendedSortKey).equals(normaliseKey(liveSortKey))) {
+            final List<String> liveKey = List.of(normaliseKey(liveSortKey).split(",\\s*"));
+            final List<String> wantedKey = List.of(normaliseKey(intendedSortKey).split(",\\s*"));
+            final Set<String> outside = new TreeSet<>(wantedKey);
+            outside.removeAll(liveKey);
+            final String why = outside.isEmpty()
+                    ? "its columns are in a different order"
+                    : outside + " " + (outside.size() == 1 ? "is" : "are")
+                            + " a column of the table but not part of its sorting key, so"
+                            + " SummingMergeTree sums the value instead of grouping by it";
             return new Result(rollup, Status.DRIFTED,
                     "target table sorting key is (" + liveSortKey + "), this version writes ("
-                            + intendedSortKey + "). A dimension outside the sorting key is summed by"
-                            + " SummingMergeTree rather than grouped by");
+                            + intendedSortKey + ") — " + why);
         }
 
         final String mv = rollup + "_mv";
         final String liveSelect = liveSelects.get(mv);
         if (liveSelect == null) {
-            // ClickHouse filters system.tables by access rather than refusing the query, so an
-            // ungranted view and an absent one are the same zero rows. The target table being
-            // visible is what separates them: riptide's own provisioning grants the writer INSERT
-            // on the target and (since #470) SELECT on the view, so a visible target beside an
-            // invisible view is a grants gap on a deployment provisioned before that.
+            // NOT declined, and the reasoning is narrower than it looks. ClickHouse filters
+            // system.tables by access rather than refusing the query, so an ungranted view and an
+            // absent one are the same zero rows.
+            //
+            // It is tempting to argue that a VISIBLE target settles it — the same filtered table
+            // yielded the target's row, so the user can see rows for this database, so the view is
+            // probably absent. That argument is wrong here, and RollupShapeDriftIT holds the
+            // counter-example: riptide grants per object, so a writer with INSERT on the target and
+            // no SHOW TABLES on the _mv is an ordinary deployment provisioned before #572 added
+            // that grant. Declining on this evidence would degrade every one of them — healthy
+            // rollups, correct data — to a raw-flows fallback truncated at raw retention.
+            //
+            // The two states ARE separable, just not from system.tables: a trivial query against
+            // the view answers UNKNOWN_TABLE when it is absent and ACCESS_DENIED when it is merely
+            // ungranted. Doing that costs a round trip per rollup per start and is worth it only if
+            // the empty-rollup case shows up in practice; until then this stays conservative and
+            // says both possibilities in the message.
             return new Result(rollup, Status.UNVERIFIABLE,
-                    "materialized view " + mv + " is not visible to the connecting user — re-run "
-                            + "'riptide onboard', or GRANT SELECT ON " + mv + " to its role");
+                    "materialized view " + mv + " is not visible to the connecting user — it is"
+                            + " absent, or the user holds no grant on it. Re-run 'riptide onboard'"
+                            + " to recreate it, or GRANT SHOW TABLES ON " + mv + " to its role");
+        }
+        if (liveSortKey == null) {
+            // Reached only when everything readable matched. Reported last so a real drift is never
+            // buried behind "cannot verify" — the same rule the column check states above.
+            return new Result(rollup, Status.UNVERIFIABLE,
+                    "sorting key of " + rollup + " could not be read — the query path keeps using"
+                            + " it, but a key this version cannot see is a key it cannot vouch for");
         }
 
         if (!normalise(intendedSelect).equals(normalise(liveSelect))) {
