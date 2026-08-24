@@ -69,19 +69,14 @@ public class IpfixRawFlow {
     public Integer samplingAlgorithm;
     public Integer samplerMode;
     public Integer selectorAlgorithm;
+    /**
+     * IE 302, the Selector that produced this record. This is the join key to the Selector Report
+     * the exporter sent in an options record; RFC 5476 §6.5.2 puts the Selector's parameters there
+     * and leaves only this reference on the record itself.
+     */
+    public UnsignedLong selectorId;
     public Double samplingInterval;
     public Double samplerRandomInterval;
-    public Double samplingFlowInterval;
-    public Double flowSamplingTimeInterval;
-    public Double samplingFlowSpacing;
-    public Double flowSamplingTimeSpacing;
-    public Double samplingSize;
-    public Double samplingPopulation;
-    public Double samplingProbability;
-    public UnsignedLong hashSelectedRangeMin;
-    public UnsignedLong hashSelectedRangeMax;
-    public UnsignedLong hashOutputRangeMin;
-    public UnsignedLong hashOutputRangeMax;
     public InetAddress sourceIPv6Address;
     public InetAddress sourceIPv4Address;
     public Long bgpSourceAsNumber;

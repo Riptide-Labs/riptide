@@ -7,7 +7,6 @@ package org.riptide.flows.parser.ipfix;
 
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
-import com.google.common.primitives.UnsignedLong;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
@@ -26,6 +25,8 @@ import org.riptide.pipeline.ExporterIdentity;
 import java.net.InetAddress;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -68,12 +69,33 @@ public class IpFixFlowBuilder {
     public Stream<Flow> buildFlows(final Instant receivedAt,
                                    final Packet packet,
                                    final ExporterIdentity identity) {
-        // Resolved lazily and at most once per packet: a record carrying its own rate never asks,
-        // so an exporter that always states it does not register as a permanent lookup miss.
-        final Supplier<Optional<AdvertisedRate>> advertised = Suppliers.memoize(
-                () -> this.samplingTable != null ? this.samplingTable.lookup(identity) : Optional.empty());
+        // Resolved lazily, and at most once per packet per distinct selector: a record carrying its
+        // own rate never asks, so an exporter that always states it does not register as a
+        // permanent lookup miss.
+        final Map<Long, Supplier<Optional<AdvertisedRate>>> bySelector = new HashMap<>();
         return createRawFlows(packet)
-                .map(rawFlow -> buildFlow(receivedAt, rawFlow, advertised));
+                .map(rawFlow -> buildFlow(receivedAt, rawFlow, advertisedFor(identity, rawFlow, bySelector)));
+    }
+
+    /**
+     * The lookup for this record's Selector, shared with every other record in the packet naming the
+     * same one, and with those naming none.
+     *
+     * <p>Memoized per selector rather than per record so that the cost stays one lookup per packet
+     * in the ordinary case. Records in a packet share a template and so almost always name the same
+     * Selector or no Selector at all; a per-record supplier would multiply both the cache reads and
+     * the resolved/unresolved meter marks by the record count, which would make the miss rate mean
+     * one thing for selector-aware exporters and another for everything else.</p>
+     *
+     * <p>{@code null} keys the exporter-wide lookup, which is what a record naming no Selector
+     * gets.</p>
+     */
+    private Supplier<Optional<AdvertisedRate>> advertisedFor(final ExporterIdentity identity,
+                                                             final IpfixRawFlow rawFlow,
+                                                             final Map<Long, Supplier<Optional<AdvertisedRate>>> bySelector) {
+        final Long selectorId = rawFlow.selectorId != null ? rawFlow.selectorId.longValue() : null;
+        return bySelector.computeIfAbsent(selectorId, id -> Suppliers.memoize(
+                () -> this.samplingTable != null ? this.samplingTable.lookup(identity, id) : Optional.empty()));
     }
 
     public Flow buildFlow(final Instant receivedAt,
@@ -277,27 +299,35 @@ public class IpFixFlowBuilder {
                 // test — the honest way to reach it is a packet whose records carry their own
                 // algorithm, and no captured fixture here has one.
                 return fromDeprecatedFields(rawFlow)
-                        .or(() -> fromSelectorAlgorithmName(rawFlow))
+                        .or(() -> fromSelectorAlgorithmName(rawFlow.selectorAlgorithm))
+                        .or(() -> advertised.get().map(AdvertisedRate::selectorAlgorithm)
+                                .flatMap(IpFixFlowBuilder::fromSelectorAlgorithmName))
                         .or(() -> advertised.get().map(AdvertisedRate::mode)
                                 .flatMap(IpFixFlowBuilder::fromDeprecatedValue))
                         .orElse(SamplingAlgorithm.Unassigned);
             }
 
             /*
-             * What the record carries, then what its selector algorithm implies, then what the
-             * exporter advertised in its sampler options table, then what the operator configured,
-             * then an assumed 1.0. Algorithms 0, 8 and 9 have no expressible
-             * interval and yield NaN, which is honest but would land in a Float64 column and
-             * poison any aggregate multiplying by it — so it falls through as unknown instead.
+             * What the record carries, then what the exporter's options records say — either an
+             * interval it stated outright or one computed from the Selector Report for the Selector
+             * this record names — then what the operator configured, then an assumed 1.0.
+             *
+             * <p>There is no rung between `record` and the options tables. Selector parameters used
+             * to be read off the flow record and divided into a rate here, which RFC 5476 §6.5.2
+             * does not describe: it requires a Selector's configuration to travel in an Options
+             * Template Record scoped by selectorId, leaving only that reference on the record. The
+             * rung defaulted every absent parameter to the value making its formula evaluate to
+             * 1.0, and sat above the options table, so an exporter naming a bare algorithm reported
+             * itself unsampled and suppressed the rate it had advertised (#584).
              *
              * <p>Walked once and memoized: the interval and the rung that produced it are two
              * views of one resolution, and a second traversal would both drift from the first and
              * defeat the laziness below.
              */
             private final Supplier<ResolvedRate> rate = Suppliers.memoize(() -> {
-                // Evaluated in order and lazily: the selector-algorithm derivation divides by
-                // exporter-supplied ranges, so it must not run for a record that already carries
-                // its rate — a degenerate range would then cost the whole packet's batch.
+                // Evaluated in order and lazily: a record carrying its own rate must not trigger
+                // the table lookup, so an exporter that always states one does not register as a
+                // permanent lookup miss.
                 final Double onRecord = Optionals.first(
                                 usable(rawFlow.samplingInterval),
                                 usable(rawFlow.samplerRandomInterval))
@@ -305,32 +335,16 @@ public class IpFixFlowBuilder {
                 if (onRecord != null) {
                     return ResolvedRate.of(onRecord, SamplingProvenance.Record);
                 }
-                final Double derived = usable(fromSelectorAlgorithm());
-                if (derived != null) {
-                    return ResolvedRate.of(derived, SamplingProvenance.Derived);
-                }
-                // BELOW `derived`, not above it. The first draft had these the other way round on
-                // the reasoning that a rate the exporter states outranks one riptide computes.
-                // That is wrong here, because `derived` is computed from fields on THIS RECORD
-                // (samplingSize, samplingPopulation, samplingProbability, the selector interval and
-                // spacing) while the advertised rate describes the exporter as a whole. Everything
-                // the record says outranks an exporter-wide advertisement; that is the same rule
-                // that puts `record` at the top, applied consistently.
-                //
-                // The failure it avoids is not hypothetical. ExporterSamplingTable deliberately
-                // keeps an advertised `1`, because an explicit 1 means "not sampling" and is an
-                // answer. An exporter that advertises 1 for an idle sampler while its records carry
-                // selectorAlgorithm 4 with a probability of 0.001 would otherwise resolve to 1.0
-                // and undercount by a thousandfold, silently.
-                //
-                // v9 offers no precedent: it has no derived rung, so this ordering question is new
-                // to IPFIX.
-                final Double stated = advertised.get()
-                        .map(AdvertisedRate::interval)
-                        .map(IpFixFlowBuilder::usable)
-                        .orElse(null);
+                // `options` and `derived` are the same rung, and differ only in whether riptide did
+                // the arithmetic. Both describe the exporter rather than this flow, so neither
+                // outranks the other; the table resolves which applies, preferring the Selector
+                // this record names over the exporter-wide advertisement on specificity alone.
+                final AdvertisedRate fromOptions = advertised.get().orElse(null);
+                final Double stated = fromOptions != null ? usable(fromOptions.interval()) : null;
                 if (stated != null) {
-                    return ResolvedRate.of(stated, SamplingProvenance.Options);
+                    return ResolvedRate.of(stated, fromOptions.computed()
+                            ? SamplingProvenance.Derived
+                            : SamplingProvenance.Options);
                 }
                 final Double configured = usable(asDouble(flowSamplingIntervalFallback));
                 if (configured != null) {
@@ -347,48 +361,6 @@ public class IpFixFlowBuilder {
             @Override
             public SamplingProvenance getSamplingProvenance() {
                 return this.rate.get().from();
-            }
-
-            /* RFC 5477 selector algorithms, as an interval where one is expressible. */
-            private Double fromSelectorAlgorithm() {
-                return switch (rawFlow.selectorAlgorithm) {
-                    case 0, 8, 9 -> {
-                        yield Double.NaN;
-                    }
-                    case 1, 2 -> {
-                        final var interval = Optionals.first(rawFlow.samplingFlowInterval, rawFlow.flowSamplingTimeInterval).orElse(1.0);
-                        final var spacing = Optionals.first(rawFlow.samplingFlowSpacing, rawFlow.flowSamplingTimeSpacing).orElse(0.0);
-                        yield interval + spacing / interval;
-                    }
-                    case 3 -> {
-                        final var size = Optionals.of(rawFlow.samplingSize).orElse(1.0);
-                        final var population = Optionals.of(rawFlow.samplingPopulation).orElse(1.0);
-                        yield population / size;
-                    }
-                    case 4 -> {
-                        final var probability = Optionals.of(rawFlow.samplingProbability).orElse(1.0);
-                        yield 1.0 / probability;
-                    }
-                    case 5, 6, 7 -> {
-                        final var selectedRangeMin = Optionals.of(rawFlow.hashSelectedRangeMin).orElse(UnsignedLong.ZERO);
-                        final var selectedRangeMax = Optionals.of(rawFlow.hashSelectedRangeMax).orElse(UnsignedLong.MAX_VALUE);
-                        final var outputRangeMin = Optionals.of(rawFlow.hashOutputRangeMin).orElse(UnsignedLong.ZERO);
-                        final var outputRangeMax = Optionals.of(rawFlow.hashOutputRangeMax).orElse(UnsignedLong.MAX_VALUE);
-                        final var selectedRange = selectedRangeMax.minus(selectedRangeMin);
-                        // An exporter is free to send a degenerate range; dividing by it
-                        // would throw and cost the whole packet, so treat it as unknown.
-                        if (selectedRange.equals(UnsignedLong.ZERO)) {
-                            yield null;
-                        }
-                        yield outputRangeMax.minus(outputRangeMin).dividedBy(selectedRange).doubleValue();
-                    }
-                    case null, default -> {
-                        // No algorithm, or one this does not model: nothing was
-                        // derived, so fall through rather than assert "not sampled" —
-                        // that would outrank a configured fallback with a guess.
-                        yield null;
-                    }
-                };
             }
 
             @Override
@@ -474,9 +446,14 @@ public class IpFixFlowBuilder {
         };
     }
 
-    /** RFC 5477's selector algorithm, which names the process rather than the rate. */
-    private static Optional<SamplingAlgorithm> fromSelectorAlgorithmName(final IpfixRawFlow rawFlow) {
-        final SamplingAlgorithm named = switch (rawFlow.selectorAlgorithm) {
+    /**
+     * RFC 5477's selector algorithm, which names the process rather than the rate.
+     *
+     * <p>Takes the value rather than the record because two things carry one: the record itself,
+     * and the Selector Report the exporter sent for the Selector the record names.</p>
+     */
+    private static Optional<SamplingAlgorithm> fromSelectorAlgorithmName(final Integer selectorAlgorithm) {
+        final SamplingAlgorithm named = switch (selectorAlgorithm) {
             case 0 -> SamplingAlgorithm.Unassigned;
             case 1 -> SamplingAlgorithm.SystematicCountBasedSampling;
             case 2 -> SamplingAlgorithm.SystematicTimeBasedSampling;
