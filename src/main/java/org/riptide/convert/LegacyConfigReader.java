@@ -73,9 +73,10 @@ public final class LegacyConfigReader {
      * {@link SnmpPollConfig} later would start being <em>refused</em> by this converter, blocking
      * upgrades over a key the running version accepts.</p>
      *
-     * <p>{@link #POLL_KEYS} is a subset — the two retired keys are still declared fields, as dead
-     * fallbacks — so the union of "mapped" and "bound" is just this set. That is why the guard below
-     * takes it alone, and why the extraction that follows still reads the two by name.</p>
+     * <p>{@link #POLL_KEYS} happens to be a subset today, because the two retired keys survive as
+     * dead fallbacks that {@code InterfaceSnapshotPoller} still reads. The guard unions the two sets
+     * anyway rather than relying on that: if those fields go, this set alone would start refusing
+     * the very key the converter exists to migrate.</p>
      */
     private static Set<String> boundPollKeys() {
         return Arrays.stream(SnmpPollConfig.class.getDeclaredFields())
@@ -94,12 +95,43 @@ public final class LegacyConfigReader {
                     + "the converter against it — only the riptide.nodes tree and "
                     + "riptide.snmp.poll are read, so the rest of the file need not come with it.";
 
-    /** One offending key, so the operator can see which shape is meant rather than guessing. */
-    private static String flatExample(final Map<String, Object> root) {
-        return root.keySet().stream()
+    /**
+     * One offending key, preferring a riptide one.
+     *
+     * <p>Document order alone picks whatever came first, so a file opening with
+     * {@code spring.application.name} illustrated the re-indent with a key that has nothing to do
+     * with the tree being asked for.</p>
+     */
+    private static String flatExample(final Map<String, Object> keys) {
+        return keys.keySet().stream()
                 .filter(key -> key.contains("."))
+                .sorted(java.util.Comparator.comparing(key -> !normalize(key).startsWith("riptide")))
                 .findFirst()
                 .orElse("");
+    }
+
+    /**
+     * Refuses a level whose keys carry dots, rather than walking past it.
+     *
+     * <p>A YAML file may be flattened part-way — {@code riptide:} as a mapping whose child is
+     * {@code snmp.poll.refresh-interval-ms}. Spring binds that identically to the nested form, so it
+     * is a shape real configurations have. This reader looked for a child named exactly {@code snmp},
+     * found none, and carried on: the fleet cadence was dropped in silence and the emitted profiles
+     * took 0.9's defaults. That is the precise failure the class contract forbids.</p>
+     *
+     * <p>Checked only at structural levels — {@code riptide} and {@code riptide.snmp} — never over
+     * node names, which are operator-chosen and may legitimately contain dots (a node named after an
+     * address, say).</p>
+     */
+    private static void refuseFlattenedLevel(final Map<String, Object> level, final String where,
+                                             final String sourceName) {
+        if (level.keySet().stream().noneMatch(key -> key.contains("."))) {
+            return;
+        }
+        throw new IllegalStateException(
+                ("Legacy file %s carries '%s' flat, as dotted property names ('%s') rather than a "
+                        + "nested mapping. %s")
+                        .formatted(sourceName, where, flatExample(level), NESTED_YAML_HINT));
     }
 
     /** Matches {@code InventoryLoader}: bounds the parser on a file that may be generated. */
@@ -131,6 +163,8 @@ public final class LegacyConfigReader {
                     "Legacy file %s has no 'riptide' section: is this a riptide configuration?"
                             .formatted(sourceName));
         }
+        refuseFlattenedLevel(riptide, "riptide", sourceName);
+
         final Map<String, LegacyNode> nodes = new LinkedHashMap<>();
         final Map<String, Object> rawNodes = nodeSection(riptide);
         if (rawNodes != null) {
@@ -154,6 +188,9 @@ public final class LegacyConfigReader {
         // relaxed lookup like every other section, and tolerant of an empty 'snmp:' key,
         // which is a null value rather than a wrong type and bound fine in 0.8
         final Map<String, Object> snmp = child(riptide, "snmp");
+        if (snmp != null) {
+            refuseFlattenedLevel(snmp, "riptide.snmp", sourceName);
+        }
         final Map<String, Object> poll = snmp == null ? null : child(snmp, "poll");
         Long refresh = null;
         Long expiry = null;
@@ -165,7 +202,14 @@ public final class LegacyConfigReader {
             // The old comment here reasoned that "an unmappable sibling is a dropped setting" —
             // true only if the converter rewrote the operator's file, and it does not. It emits a
             // fragment they merge, so a key it passes over never moves and cannot be dropped.
-            requireKnown(canonicalPoll.keySet(), boundPollKeys(), "'riptide.snmp.poll'");
+            // union, not boundPollKeys() alone. The two mapped keys are declared fields today, so
+            // the union is currently redundant — but the guard must not depend on that. If those
+            // dead fallbacks are ever removed from the model, this would start refusing
+            // refresh-interval-ms, the one key the converter exists to migrate, while the extraction
+            // two lines down still reads it by name. Structural beats asserted.
+            final Set<String> accepted = new java.util.HashSet<>(boundPollKeys());
+            accepted.addAll(POLL_KEYS);
+            requireKnown(canonicalPoll.keySet(), accepted, "'riptide.snmp.poll'");
             refresh = wholeNumber(canonicalPoll.get("refreshintervalms"),
                     "riptide.snmp.poll.refresh-interval-ms");
             expiry = wholeNumber(canonicalPoll.get("snapshotexpiryms"),

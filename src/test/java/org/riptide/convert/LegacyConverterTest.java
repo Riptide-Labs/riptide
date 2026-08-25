@@ -737,6 +737,74 @@ class LegacyConverterTest {
                 .hasMessageContaining("nested YAML");
     }
 
+    /**
+     * A part-flattened level is refused, not walked past.
+     *
+     * <p>Found in review of the fix for #614. A file can be nested at the root and flat below it —
+     * {@code riptide:} whose child is {@code snmp.poll.refresh-interval-ms} — which Spring binds
+     * identically to the nested form. The reader looked for a child named exactly {@code snmp},
+     * found none, and carried on: the fleet cadence was dropped in <em>silence</em> and the emitted
+     * profiles took 0.9's defaults. Worse than the fully-flat case, which at least errored.</p>
+     */
+    @Test
+    void aPartFlattenedLevelIsRefusedRatherThanSilentlySkipped() {
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  snmp.poll.refresh-interval-ms: 120000
+                  nodes:
+                    core: {subnet-address: 10.0.0.1}
+                """))
+                .as("the cadence must not vanish into a default")
+                .hasMessageContaining("flat")
+                .hasMessageContaining("nested YAML");
+
+        // one level down: 'snmp:' nested, its child flattened
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  snmp:
+                    poll.refresh-interval-ms: 120000
+                  nodes:
+                    core: {subnet-address: 10.0.0.1}
+                """))
+                .hasMessageContaining("riptide.snmp")
+                .hasMessageContaining("nested YAML");
+
+        // and the nodes tree, which previously told the operator to go look in another file
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  nodes.core-router.subnet-address: 10.0.0.1
+                """))
+                .hasMessageContaining("nested YAML")
+                .hasMessageNotContaining("convert that one");
+    }
+
+    /**
+     * A node name may legitimately contain dots, so the flatten check must not reach node names.
+     *
+     * <p>The guard runs at structural levels only. Naming a node after an address is the obvious
+     * way to trip a blanket "any dotted key" rule.</p>
+     */
+    @Test
+    void aNodeNamedAfterAnAddressIsNotMistakenForAFlattenedLevel() {
+        assertThatCode(() -> convert("""
+                riptide:
+                  nodes:
+                    "10.0.0.1":
+                      subnet-address: 10.0.0.1
+                """)).doesNotThrowAnyException();
+    }
+
+    /** The illustrating key should be a riptide one, not whatever sorted first in the document. */
+    @Test
+    void theFlatExampleNamesARiptideKey() {
+        assertThatThrownBy(() -> convert("""
+                spring.application.name: riptide
+                riptide.nodes.core.subnet-address: 10.0.0.1
+                """))
+                .hasMessageContaining("riptide.nodes.core.subnet-address")
+                .hasMessageNotContaining("('spring.application.name')");
+    }
+
     /** Boots the emitted pair through the real 0.9 loader: this is the AD-13 proof. */
     private static InventorySnapshot boot(final LegacyConverter.Converted converted) {
         return InventoryLoader.parse(profilesFrom(converted.mainConfig()),
