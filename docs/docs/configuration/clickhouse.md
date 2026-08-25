@@ -146,23 +146,12 @@ them keeps answering from raw `flows` until it is restarted, however complete th
 Manage-mode deployments repair themselves on the next start and need nothing.
 :::
 
-:::danger[Drop the rollup views before rolling back to an earlier version]
-Rolling forward is repaired automatically. Rolling **back** is not, and it corrupts the rollups silently.
+:::note[Rolling back to an earlier version needs no preparation]
+Rolling forward is repaired automatically. Rolling **back** leaves the rollups alone, and you should leave them alone too.
 
-An older riptide does not know `flowProtocol`, and one older still does not know `samplingInterval` either — the rate shipped first, the protocol after it. In manage mode it refuses to shrink the sorting key — correctly — so the target keeps the columns, but it then re-points each materialized view at its own narrower `SELECT`, which no longer names them. ClickHouse accepts that without complaint: `ALTER TABLE … MODIFY QUERY` does not validate against its target. Every row aggregated from then on takes the reserved value in a sorting-key column — `samplingInterval = 0`, `flowProtocol = ''` — for the rollup's full 365-day retention.
+An older riptide refuses to shrink a sorting key, so the target keeps every column. It also refuses to narrow the materialized view: `planViewRepair` treats a view selecting columns it does not know as a downgrade and declines it, and `v0.11.0` pins that with `aViewFromANewerVersionIsLeftAloneRatherThanNarrowed`. Versions before `v0.10.0` had no `MODIFY QUERY` at all, so they cannot re-point a view either. The wide view stays in place, `CREATE … IF NOT EXISTS` no-ops over it, and aggregation continues correctly into columns the running version does not read.
 
-The rows are real traffic and are indistinguishable from pre-append rows afterwards, so rolling forward again does not repair them: the boundary predicates hide them, and without those predicates they contribute `bytes × 0`, or get scaled as though they were not sFlow.
-
-Before downgrading a manage-mode collector, drop the views so the older version recreates them at its own shape:
-
-```sql
-DROP VIEW IF EXISTS riptide.flows_by_application_1m_mv;
-DROP VIEW IF EXISTS riptide.flows_by_conversation_1m_mv;
-DROP VIEW IF EXISTS riptide.flows_by_exporter_iface_1m_mv;
-DROP VIEW IF EXISTS riptide.flows_by_geo_asn_1m_mv;
-```
-
-The rollup targets and their history are untouched; the older version recreates each view on its next start. Provisioned deployments are unaffected — the older `onboard` re-points only the views in its repair plan, which is empty here.
+**Do not drop the views to "help" a downgrade.** An earlier revision of this page advised exactly that, and it inverts the risk: with the views gone, a version that declines to build one for a rollup it considers drifted stops feeding that rollup entirely, and a version old enough to create its own narrow view would point it at the still-wide target — writing the reserved value into a sorting-key column for the rollup's full 365-day retention. That is the corruption, and leaving the views in place is what prevents it.
 :::
 
 

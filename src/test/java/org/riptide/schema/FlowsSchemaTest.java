@@ -554,6 +554,40 @@ class FlowsSchemaTest {
                         + " zero-if-present is not the rule either")
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("reserves 'N'");
+
+        // ClickHouse renders a quote in a member name as \' in SHOW CREATE TABLE, which is the form
+        // a maintainer copies. Reading only '' would end the name at the backslash and hand back a
+        // sentinel the enum does not declare.
+        assertThat(FlowsSchema.reservedValueFor("Enum8('' = 0, 'it\\'s' = 1)"))
+                .as("an escaped quote later in the declaration does not disturb the sentinel")
+                .isEqualTo("''");
+        assertThatThrownBy(() -> FlowsSchema.reservedValueFor("Enum8('it\\'s' = 1, 'b' = 2)"))
+                .as("the smallest member's name is reported whole, not truncated at the escape")
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("reserves 'it\\'s'");
+        assertThatThrownBy(() -> FlowsSchema.reservedValueFor("Enum8('\\'' = 5)"))
+                .as("a member whose name IS a quote must not be mistaken for the empty sentinel")
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    /**
+     * A wrapper type decides the reserved value on its own, whatever it wraps.
+     *
+     * <p>Verified on 26.7: an appended {@code Nullable(Enum8('' = 0, 'X' = 1))} column reads
+     * {@code NULL} for pre-existing rows, not {@code ''}, and an {@code Array(…)} reads {@code []}.
+     * Matching the inner type through the wrapper would publish a reserved value the column can never
+     * hold, so the guard would compare every expression against something none of them could emit and
+     * pass all of them — the worst outcome, and the one this whole mechanism exists to prevent.</p>
+     */
+    @Test
+    void aWrapperTypeDecidesTheReservedValueRatherThanWhatItWraps() {
+        assertThat(FlowsSchema.reservedValueFor("Nullable(Enum8('' = 0, 'X' = 1))")).isEqualTo("NULL");
+        assertThat(FlowsSchema.reservedValueFor("Nullable(String)")).isEqualTo("NULL");
+        assertThat(FlowsSchema.reservedValueFor("Array(Enum8('' = 0, 'X' = 1))")).isEqualTo("[]");
+
+        assertThat(FlowsSchema.reservedValueFor("LowCardinality(String)"))
+                .as("LowCardinality is not a wrapper in this sense — it stores '' like a String")
+                .isEqualTo("''");
     }
 
     /**
@@ -714,6 +748,11 @@ class FlowsSchemaTest {
                 .isNotEqualTo(FlowsSchema.qualifiedFlows("riptide"));
 
         assertThat(QueryRouter.resolveTopTalkersTable("riptide", 1440, "samplingInterval"))
+                .isEqualTo(FlowsSchema.qualifiedFlows("riptide"));
+
+        // The protocol is carried for the same reason and is equally not a group-by. receivers.md
+        // states this for both columns; before this assertion only the rate half was pinned.
+        assertThat(QueryRouter.resolveTopTalkersTable("riptide", 1440, "flowProtocol"))
                 .isEqualTo(FlowsSchema.qualifiedFlows("riptide"));
     }
 

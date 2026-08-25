@@ -673,12 +673,22 @@ public final class FlowsSchema {
      * would then admit every pre-append row, and the sFlow traffic inside them would be inflated by
      * exactly the defect this column exists to fix, silently and with nothing in the data marking it.
      * {@code LowCardinality(String)} reserves {@code ''} instead, which {@code toString()} of a
-     * four-member enum can never produce. It is also how {@code exporterName}, {@code srcCountry} and
-     * {@code dstCountry} are already typed here, and one distinct value compresses to nothing on the
-     * single-protocol deployments that are the majority.</p>
+     * four-member enum can never produce — an invariant {@code FlowsSchemaTest} pins against the
+     * shipped {@code flows} DDL rather than leaving to this sentence. It is also how
+     * {@code exporterName}, {@code srcCountry} and {@code dstCountry} are already typed here.</p>
      *
-     * <p>Row growth is exactly 1.0 on such a deployment: one distinct value cannot split a group. The
-     * cost falls only on mixed-protocol deployments, which are the ones this makes correct.</p>
+     * <p><b>The boundary predicate this column needs is rollup-only.</b> The scaling expression ports
+     * to raw {@code flows} unchanged; {@code flowProtocol != ''} does not, and fails there with
+     * {@code UNKNOWN_ELEMENT_OF_ENUM} because the source column is an {@code Enum8} with no such
+     * member. Raw {@code flows} has no pre-append band to exclude — the column has existed since the
+     * table was created. Do not describe the whole query as portable.</p>
+     *
+     * <p>Row growth is exactly 1.0 where one protocol is received: a single distinct value cannot
+     * split a group. Modelled at a 1.001 median and 1.0014 combined across the four rollups on a
+     * synthetic mixed-protocol fleet (40 exporters, 3 of them sFlow, 4M records, ClickHouse 26.7),
+     * against the 1.0214 median measured for {@link #SAMPLING_INTERVAL}. That is a model, not a fleet
+     * capture, and the coarsest rollup ({@code flows_by_application_1m}) modelled at 1.5 on a base of
+     * ~11.5k rows. Treat the mixed-deployment figure as unmeasured.</p>
      *
      * <p>Appended after the rate, which is the only position {@code ALTER … MODIFY ORDER BY} permits.</p>
      */
@@ -803,12 +813,29 @@ public final class FlowsSchema {
          * which is asserted at build time rather than left to a reviewer noticing.</p>
          */
         String absent() {
-            return reservedValueFor(type);
+            try {
+                return reservedValueFor(type);
+            } catch (final IllegalArgumentException cause) {
+                // reservedValueFor is a function of the type alone, so its message can only name the
+                // type. The rule it enforces is about a *dimension*, and a maintainer reading a build
+                // failure needs the column to know where to look.
+                throw new IllegalArgumentException("rollup dimension " + column + ": " + cause.getMessage(), cause);
+            }
         }
     }
 
-    /** One {@code 'name' = number} pair of an enum declaration. */
-    private static final Pattern ENUM_MEMBER = Pattern.compile("('(?:[^']|'')*')\\s*=\\s*(-?\\d+)");
+    /**
+     * One {@code 'name' = number} pair of an enum declaration.
+     *
+     * <p>Both escape forms are accepted inside a member name. ClickHouse takes {@code ''} on input
+     * but renders {@code \'} in {@code SHOW CREATE TABLE} — verified on 26.7, where
+     * {@code Enum8('it''s' = 1)} comes back as {@code Enum8('it\'s' = 1)}. Since the rendered form is
+     * what a maintainer copies when adding a dimension, understanding only {@code ''} would end a
+     * name early: {@code Enum8('\'' = 5)} would parse as the empty name and be waved through as a
+     * sentinel it is not.</p>
+     */
+    private static final Pattern ENUM_MEMBER =
+            Pattern.compile("('(?:[^'\\\\]|''|\\\\.)*')\\s*=\\s*(-?\\d+)");
 
     /**
      * The value a column of this type holds for a row aggregated before it existed, quoted as SQL.
@@ -834,6 +861,16 @@ public final class FlowsSchema {
      * @throws IllegalArgumentException if the type is an enum whose reserved value is a real one
      */
     static String reservedValueFor(final String type) {
+        // Wrappers first, and by prefix rather than by substring. A wrapper decides the reserved
+        // value on its own — verified on 26.7, an appended Nullable(Enum8(…)) or Nullable(String)
+        // reads NULL and an Array(…) reads [] — so falling through to the inner type would publish a
+        // value the column can never hold, which is the exact failure this method exists to prevent.
+        if (type.startsWith("Nullable(")) {
+            return "NULL";
+        }
+        if (type.startsWith("Array(")) {
+            return "[]";
+        }
         if (type.contains("Enum")) {
             // The smallest member, not the first declared and not the zero member: on 26.7,
             // Enum8('B' = 2, 'A' = 1) reads back 'A' and Enum8('N' = -1, '' = 0, 'P' = 1) reads back

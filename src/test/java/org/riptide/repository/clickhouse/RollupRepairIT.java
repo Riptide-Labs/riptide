@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
 
 /**
@@ -217,7 +218,7 @@ public class RollupRepairIT {
      */
     @Test
     void aRefusedRollupIsDeclinedAndItsViewIsNotRepointed() throws Exception {
-        createRollupWithTheRateOutsideItsSortingKey();
+        createRollupWithTheAppendedDimensionsOutsideItsSortingKey();
         final String before = selectOf(ROLLUP + "_mv");
         assertThat(RollupShapeCheck.normalise(before))
                 .as("the fixture must present the state the shape check would otherwise call MATCHES:"
@@ -246,7 +247,7 @@ public class RollupRepairIT {
      */
     @Test
     void aRefusedRollupGetsNoViewBuiltForIt() throws Exception {
-        createRollupWithTheRateOutsideItsSortingKey();
+        createRollupWithTheAppendedDimensionsOutsideItsSortingKey();
         admin.execute("DROP VIEW " + FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP)).get();
 
         repository().start();
@@ -261,15 +262,15 @@ public class RollupRepairIT {
     }
 
     /**
-     * The hand-added-column state: the appended dimensions are columns of the target, but not part
-     * of its key.
+     * The hand-added-column state: both appended dimensions are columns of the target, but neither
+     * is part of its key, so the refusal it drives reports them together.
      *
      * <p>Every dimension this version declares has to be present as a column, or the shape check
      * reports the target as missing one and the test passes for that reason instead of the refusal.
      * A dimension appended to {@code FlowsSchema} therefore has to be added here too — leaving it out
      * fails loudly (the view cannot be created at all), which is the good failure mode.</p>
      */
-    private static void createRollupWithTheRateOutsideItsSortingKey() throws Exception {
+    private static void createRollupWithTheAppendedDimensionsOutsideItsSortingKey() throws Exception {
         final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
         final String view = FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP);
         admin.execute("DROP VIEW IF EXISTS " + view).get();
@@ -293,7 +294,7 @@ public class RollupRepairIT {
                 + FlowsSchema.rollupSelects(DATABASE).get(ROLLUP)).get();
     }
 
-    /** A rollup as an older riptide would have left it: two dimensions short, view to match. */
+    /** A rollup as a pre-v0.11 riptide would have left it: three dimensions short, view to match. */
     private static void createRollupMissingItsLastDimension() throws Exception {
         final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
         final String view = FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP);
@@ -766,7 +767,11 @@ public class RollupRepairIT {
         final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
         final String corrected = "toUInt64(sum(bytes * if(flowProtocol = 'SFLOW', 1, samplingInterval)))";
 
-        assertThat(scalar("SELECT count() AS v FROM " + target + " WHERE tenant = 'mixed'"))
+        // FINAL, not a bare count. SummingMergeTree collapses on merge, and merges are asynchronous:
+        // with flowProtocol removed from the sort key these two rows still return count() = 2 until
+        // a merge happens, so the un-FINAL assertion passes for the mutant whenever the writer split
+        // them across insert blocks. Verified on 26.7 — two blocks read back 2 rows summing 4196.
+        assertThat(scalar("SELECT count() AS v FROM " + target + " FINAL WHERE tenant = 'mixed'"))
                 .as("one group, one rate, two protocols — collapsing them makes the correction"
                         + " unrecoverable, since the row would not say which half was pre-scaled")
                 .isEqualTo(2);
@@ -775,9 +780,14 @@ public class RollupRepairIT {
                 .as("4096 sFlow bytes counted once, plus 100 IPFIX bytes at 512")
                 .isEqualTo(4096L + 100L * 512L);
 
+        // The SCALING EXPRESSION ports to raw flows; the rollup's boundary predicates do not, and
+        // `flowProtocol != ''` fails there outright with UNKNOWN_ELEMENT_OF_ENUM because the source
+        // column is an Enum8 with no such member. Asserting only the expression here is correct, but
+        // the earlier wording claimed the whole query was identical — see the paired test below,
+        // which pins the half that does not port.
         assertThat(scalar("SELECT " + corrected + " AS v FROM "
                 + FlowsSchema.qualifiedFlows(DATABASE) + " WHERE tenant = 'mixed'"))
-                .as("and the identical expression against raw flows agrees")
+                .as("the scaling expression against raw flows agrees, with no boundary predicates")
                 .isEqualTo(4096L + 100L * 512L);
 
         assertThat(scalar("SELECT toUInt64(sum(bytes * samplingInterval)) AS v FROM "
@@ -786,9 +796,42 @@ public class RollupRepairIT {
                 .isEqualTo(4096L * 512L + 100L * 512L);
 
         assertThat(scalar("SELECT toUInt64(sum(bytes * samplingInterval)) AS v FROM " + target
-                + " WHERE tenant = 'mixed' AND flowProtocol != 'SFLOW'"))
+                + " WHERE tenant = 'mixed' AND flowProtocol NOT IN ('', 'SFLOW')"))
                 .as("and excluding sFlow answers a different question, short by every sFlow byte")
                 .isEqualTo(100L * 512L);
+
+        assertThat(scalar("SELECT toUInt64(sum(bytes)) AS v FROM " + target
+                + " WHERE tenant = 'mixed' AND flowProtocol = 'SFLOW'"))
+                .as("volume is attributable to a protocol, which no rollup could answer before")
+                .isEqualTo(4096L);
+    }
+
+    /**
+     * The rollup's boundary predicate is not portable to raw {@code flows}, and saying it is would be
+     * worse than saying nothing.
+     *
+     * <p>{@code flowProtocol} is a {@code LowCardinality(String)} on a rollup, where {@code ''} marks
+     * a row aggregated before the append. On raw {@code flows} it is an {@code Enum8} whose every
+     * member is a real protocol, so comparing against {@code ''} is not merely pointless — the server
+     * refuses the query. The docs recommend two different {@code WHERE} clauses for the two tables,
+     * and this is what stops that from silently becoming untrue.</p>
+     */
+    @Test
+    void theRollupBoundaryPredicateIsRejectedByTheRawTable() throws Exception {
+        repository().start();
+        final var repo = startedWriter();
+        repo.persist(List.of(protocolAt(Flow.FlowProtocol.IPFIX, 100L, 512.0d)));
+        Thread.sleep(600);
+
+        assertThatThrownBy(() -> scalar("SELECT count() AS v FROM " + FlowsSchema.qualifiedFlows(DATABASE)
+                + " WHERE tenant = 'mixed' AND flowProtocol != ''"))
+                .as("the rollup's boundary predicate must not be copied onto raw flows")
+                .hasMessageContaining("UNKNOWN_ELEMENT_OF_ENUM");
+
+        assertThat(scalar("SELECT count() AS v FROM " + FlowsSchema.qualifiedFlows(DATABASE)
+                + " WHERE tenant = 'mixed'"))
+                .as("while the same query without it is fine, so the failure is the predicate")
+                .isEqualTo(1);
     }
 
     /**
@@ -814,11 +857,11 @@ public class RollupRepairIT {
         assertThat(scalar("SELECT count() AS v FROM " + target
                 + " WHERE tenant = 'beforeProtocol' AND flowProtocol = ''"))
                 .as("rows aggregated before the append carry the reserved value")
-                .isPositive();
+                .isEqualTo(1);
         assertThat(scalar("SELECT count() AS v FROM " + target
                 + " WHERE tenant = 'afterProtocol' AND flowProtocol = 'IPFIX'"))
                 .as("rows aggregated after carry the flow's protocol, which is never ''")
-                .isPositive();
+                .isEqualTo(1);
     }
 
     /**

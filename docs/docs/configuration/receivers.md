@@ -258,20 +258,40 @@ Counters stored here are always as the exporter reported them, so a query ported
 
 ### Sampling-corrected volume beyond raw retention
 
-The 1-minute rollups carry `samplingInterval` and `flowProtocol` as dimensions, so the correction is the same expression against either table:
+The 1-minute rollups carry `samplingInterval` and `flowProtocol` as dimensions, so the **scaling expression** is the same against either table. The `WHERE` clause is not, and that difference is not cosmetic — see the warning below.
 
 :::note[Requires the rollups to carry the rate and the protocol]
 A deployment whose collector runs in validate mode (`manage-schema: false`, which is the multi-tenant default) gains them only when an admin re-runs `riptide onboard` — until then the query below fails with `UNKNOWN_IDENTIFIER`, and riptide answers long-range queries from raw `flows` instead of the rollups. See [ClickHouse: upgrading an existing deployment](./clickhouse.md#rollups).
 :::
 
+Against a **rollup**:
+
 ```sql
--- the same expression that works against raw flows
 SELECT sum(bytes * if(flowProtocol = 'SFLOW', 1, samplingInterval)) AS corrected_bytes
 FROM riptide.flows_by_conversation_1m
 WHERE timestamp >= now() - INTERVAL 90 DAY
   AND samplingInterval > 0     -- excludes rows aggregated before the rate was carried
   AND flowProtocol != '';      -- excludes rows aggregated before the protocol was carried
 ```
+
+Against raw **`flows`**, the same scaling expression with **no boundary predicates at all**:
+
+```sql
+SELECT sum(bytes * if(flowProtocol = 'SFLOW', 1, samplingInterval)) AS corrected_bytes
+FROM riptide.flows
+WHERE timestamp >= now() - INTERVAL 7 DAY;
+```
+
+:::danger[Do not copy the rollup's `WHERE` clause onto raw `flows`]
+`flowProtocol != ''` **fails outright** against raw `flows`. There the column is an `Enum8` whose every member is a real protocol, so `''` is not a value it can be compared against:
+
+```
+Code: 691. DB::Exception: Unknown element '' for enum:
+while converting '' to Enum8('NetflowV5' = 1, 'NetflowV9' = 2, 'IPFIX' = 3, 'SFLOW' = 4)
+```
+
+The boundary predicates exist because a rollup dimension is *appended* to rows that already exist, and those rows read a reserved value. Raw `flows` has no such band: `flowProtocol` has been there since the table was created, and a raw row that predates `samplingInterval` reads the column default of `1.0`, not `0`. Both predicates are therefore not just unnecessary on raw `flows` — one of them is an error.
+:::
 
 Each row is scaled by its own protocol's factor: sFlow counters arrive pre-scaled, so their factor is `1`, and everything else is scaled by its rate.
 
@@ -287,21 +307,45 @@ Without `flowProtocol != ''`, rows aggregated after the rate was carried but bef
 There are two predicates because there were two upgrades: the rate shipped in v0.11.0 and the protocol after it. Rows aggregated in between know their rate and not their protocol. Check how much of your data is in that band with:
 
 ```sql
-SELECT countIf(samplingInterval = 0) AS before_rate,
-       countIf(samplingInterval > 0 AND flowProtocol = '') AS rate_only,
-       countIf(flowProtocol != '') AS both
-FROM riptide.flows_by_conversation_1m;
+SELECT countIf(samplingInterval = 0)                            AS before_rate,
+       countIf(samplingInterval > 0 AND flowProtocol =  '')     AS rate_only,
+       countIf(samplingInterval > 0 AND flowProtocol != '')     AS both,
+       count()                                                  AS total
+FROM riptide.flows_by_conversation_1m
+WHERE timestamp >= now() - INTERVAL 90 DAY;
 ```
+
+`both` uses the same pair of predicates as the corrected query, so it is exactly the row count that query reads. The three counters sum to `total` on a rollup fed only by riptide. If they do not, you have rows carrying `samplingInterval = 0` **and** a known protocol — which a materialized view cannot produce, but the `INSERT INTO … SELECT` backfill described further down can. Bound the window: a rollup holds 365 days.
+:::
+
+:::caution[Single protocol? Keep the one-predicate form]
+If your deployment receives no sFlow, nothing in the rate-only band was ever wrong — every row there is correctable by `sum(bytes * samplingInterval) WHERE samplingInterval > 0`, which is what this page recommended before the protocol was carried. Adding `flowProtocol != ''` would discard that band for up to 365 days to guard against traffic you do not receive.
+
+Confirm with `SELECT count() FROM riptide.flows WHERE flowProtocol = 'SFLOW'` inside the raw retention window, and keep the one-predicate form if it is zero and your exporters have not changed.
 :::
 
 :::tip[Two different questions]
 `sum(bytes * if(flowProtocol = 'SFLOW', 1, samplingInterval))` is total corrected volume: every byte in the fully-marked band, each scaled by its own protocol's factor. "Fully-marked" is doing real work there — the two boundary predicates exclude everything aggregated before each column was carried, so on a deployment that upgraded today a 90-day window is mostly excluded. Size the bands with the `countIf` query above before reading the total as a fleet figure.
 
-`sum(bytes * samplingInterval) … WHERE flowProtocol != 'SFLOW'` is something narrower — corrected volume of the NetFlow/IPFIX subset. It is short by every sFlow byte you receive, because it drops those rows rather than scaling them by `1`. That is a legitimate query when you want the subset. It is not "the corrected total", and earlier versions of this page presented it as though it were.
+`sum(bytes * samplingInterval) … WHERE samplingInterval > 0 AND flowProtocol NOT IN ('', 'SFLOW')` is something narrower — corrected volume of the NetFlow/IPFIX subset. It is short by every sFlow byte you receive, because it drops those rows rather than scaling them by `1`. That is a legitimate query when you want the subset. It is not "the corrected total", and earlier versions of this page presented it as though it were.
+
+Note the `''` in that exclusion list. Writing the subset query as bare `WHERE flowProtocol != 'SFLOW'` looks right and is not: middle-band rows carry `''`, which is not `'SFLOW'`, so they pass the filter and get multiplied by their rate — reintroducing the exact inflation this column exists to remove, in the query meant to avoid it.
 :::
 
 :::caution[`!= 'SFLOW'` encodes riptide's behaviour, not a law of the protocol]
-sFlow is currently the only protocol whose counters riptide pre-scales. If that ever changes, a saved query or dashboard testing for `'SFLOW'` by name keeps running and silently returns the wrong number. There is nothing riptide can do to warn you, so check this expression against these docs when you upgrade.
+sFlow is currently the only protocol whose counters riptide pre-scales. If that ever changes, a saved query or dashboard testing for `'SFLOW'` by name keeps running and silently returns the wrong number. Riptide cannot warn you inside your own SQL, so check this expression against these docs when you upgrade.
+:::
+
+:::caution[The corrected total is a `Float64` and drifts past 2^53]
+`samplingInterval` is a `Float64`, so `bytes * …` is evaluated in floating point and the sum loses precision above 2^53 (~9×10^15). At `bytes = 12345678901234567` and a rate of `1000`, ClickHouse 26.7 returns `12345678901234567168` where the exact product ends `...000` — a drift of 168.
+
+Irrelevant at any realistic volume: 2^53 bytes is about 9 petabytes in a single group-minute. If you do query ranges that large and need exactness, cast both factors first:
+
+```sql
+sum(toUInt128(bytes) * toUInt128(if(flowProtocol = 'SFLOW', 1, samplingInterval)))
+```
+
+That is not the recommended form because it costs more and a fractional rate would truncate; use it only when you have a reason.
 :::
 
 The rate is a **dimension**, not a pre-scaled measure. A pre-scaled `bytesScaled` column would read `0` for every row aggregated before it existed, so a `SUM` spanning the upgrade would come back quietly too small with nothing marking where. Carrying the rate has no such failure, because `0` is not a rate anything can produce.
