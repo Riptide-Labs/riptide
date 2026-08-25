@@ -422,4 +422,162 @@ public class IpfixSelectorReportTest {
                 .as("an unrecognised record is not a withdrawal")
                 .isEqualTo(EXPECTED_RATE));
     }
+
+    /**
+     * A filtering advertisement must not retract a sampling rate another record taught.
+     *
+     * <p>The exporter-wide entry has several writers, so withdrawal there is not available the way it
+     * is for a Selector's own key. A device may sample and filter at once — "I filter on a property"
+     * is an additional process, not a retraction of "I sample 1:1000".</p>
+     */
+    @Test
+    public void aFilteringAdvertisementDoesNotRetractAStatedRate() throws Exception {
+        feedSamplerOptions(1000);
+        feedUnscopedAlgorithm(5);          // property match filtering: expresses no ratio
+
+        assertThat(flowsNaming(null)).allSatisfy(flow -> {
+            assertThat(flow.getSamplingInterval())
+                    .as("the stated rate must survive an advertisement that teaches nothing")
+                    .isEqualTo(1000.0);
+            assertThat(flow.getSamplingProvenance()).isEqualTo(Flow.SamplingProvenance.Options);
+        });
+    }
+
+    /** An algorithm with none of its parameters teaches nothing and displaces nothing. */
+    @Test
+    public void anIncompletelyStatedAdvertisementTeachesNothing() throws Exception {
+        feedSamplerOptions(1000);
+        feedUnscopedAlgorithm(1);          // systematic count-based, but no 305/306
+
+        assertThat(flowsNaming(null))
+                .allSatisfy(f -> assertThat(f.getSamplingInterval()).isEqualTo(1000.0));
+    }
+
+    /** A stated interval wins over parameters when one record carries both. */
+    @Test
+    public void aStatedIntervalOutranksParametersOnTheSameRecord() throws Exception {
+        final ByteBuf b = message();
+        // BOTH must be complete, or precedence is never reached. An earlier version of this test
+        // omitted IE 306, so the advertisement branch bailed on incomplete parameters and the test
+        // passed no matter which handler ran first — found by mutation, not by reading.
+        b.writeShort(3).writeShort(4 + 6 + 5 * 4);
+        b.writeShort(405).writeShort(5).writeShort(1);
+        b.writeShort(143).writeShort(4);   // scope: meteringProcessId
+        b.writeShort(34).writeShort(4);    // samplingInterval, stated: 512
+        b.writeShort(304).writeShort(2);   // selectorAlgorithm 1
+        b.writeShort(305).writeShort(4);   // samplingPacketInterval 1
+        b.writeShort(306).writeShort(4);   // samplingPacketSpace  99  -> would compute 100
+        b.writeShort(405).writeShort(4 + 4 + 4 + 2 + 4 + 4);
+        b.writeInt(1);
+        b.writeInt(512);
+        b.writeShort(1);
+        b.writeInt(1);
+        b.writeInt(99);
+        patchAndSend(this.session, b);
+
+        assertThat(flowsNaming(null)).allSatisfy(flow -> {
+            assertThat(flow.getSamplingInterval()).isEqualTo(512.0);
+            assertThat(flow.getSamplingProvenance()).isEqualTo(Flow.SamplingProvenance.Options);
+        });
+    }
+
+    /** An options record scoped by something other than selectorId, stating an algorithm. */
+    private void feedUnscopedAlgorithm(final int algorithm) throws Exception {
+        final ByteBuf b = message();
+        b.writeShort(3).writeShort(4 + 6 + 2 * 4);
+        b.writeShort(406).writeShort(2).writeShort(1);
+        b.writeShort(143).writeShort(4);   // scope: meteringProcessId
+        b.writeShort(304).writeShort(2);   // selectorAlgorithm only, no parameters
+        b.writeShort(406).writeShort(4 + 4 + 2);
+        b.writeInt(1);
+        b.writeShort(algorithm);
+        patchAndSend(this.session, b);
+    }
+
+    /**
+     * An interval field that states no rate must not veto one stated elsewhere on the same record.
+     *
+     * <p>`0` means the field carries no rate, and `1` means "not sampling" — which contradicts a
+     * record simultaneously stating an algorithm and parameters computing to 100. In that
+     * contradiction the algorithm wins: a deprecated single field is the one an exporter is likely to
+     * have defaulted, and preferring it would continue the very bias #598 exists to remove.</p>
+     */
+    @Test
+    public void anIntervalStatingNoRateDoesNotVetoTheParametersBesideIt() throws Exception {
+        feedStatedAndParameters(0);
+
+        assertThat(flowsNaming(null)).allSatisfy(flow -> {
+            assertThat(flow.getSamplingInterval())
+                    .as("IE 34 = 0 states nothing; the parameters state 1:100")
+                    .isEqualTo(100.0);
+            assertThat(flow.getSamplingProvenance()).isEqualTo(Flow.SamplingProvenance.Derived);
+        });
+    }
+
+    @Test
+    public void anExplicitOneDoesNotVetoParametersStatingARealRatio() throws Exception {
+        feedStatedAndParameters(1);
+
+        assertThat(flowsNaming(null))
+                .allSatisfy(f -> assertThat(f.getSamplingInterval()).isEqualTo(100.0));
+    }
+
+    /**
+     * A filtering algorithm must not overwrite the exporter-wide sampling rate.
+     *
+     * <p>Filtering and sampling compose multiplicatively, and this key cannot hold both. Measured
+     * before the guard: a 1:2 hash filter arriving after a stated 1:1000 replaced it, leaving every
+     * flow scaled 500x too low and labelled `derived`. Per Selector this is expressible because each
+     * Selector owns its entry; exporter-wide it is not. See #596.</p>
+     */
+    @Test
+    public void aHashFilterDoesNotOverwriteTheExporterWideSamplingRate() throws Exception {
+        feedSamplerOptions(1000);
+        feedHashFilter();          // selects 1 of 2 hash buckets: a real ratio, wrong key
+
+        assertThat(flowsNaming(null)).allSatisfy(flow -> {
+            assertThat(flow.getSamplingInterval())
+                    .as("the sampler's rate must survive a filter advertisement")
+                    .isEqualTo(1000.0);
+            assertThat(flow.getSamplingProvenance()).isEqualTo(Flow.SamplingProvenance.Options);
+        });
+    }
+
+    /** IE 34 alongside a complete selector-algorithm statement, under a non-Selector scope. */
+    private void feedStatedAndParameters(final int stated) throws Exception {
+        final ByteBuf b = message();
+        b.writeShort(3).writeShort(4 + 6 + 5 * 4);
+        b.writeShort(410 + stated).writeShort(5).writeShort(1);
+        b.writeShort(143).writeShort(4);
+        b.writeShort(34).writeShort(4);
+        b.writeShort(304).writeShort(2);
+        b.writeShort(305).writeShort(4);
+        b.writeShort(306).writeShort(4);
+        b.writeShort(410 + stated).writeShort(4 + 4 + 4 + 2 + 4 + 4);
+        b.writeInt(1);
+        b.writeInt(stated);
+        b.writeShort(1);
+        b.writeInt(1);
+        b.writeInt(99);
+        patchAndSend(this.session, b);
+    }
+
+    /** Hash-based filtering selecting one bucket of two, under a non-Selector scope. */
+    private void feedHashFilter() throws Exception {
+        final ByteBuf b = message();
+        b.writeShort(3).writeShort(4 + 6 + 6 * 4);
+        b.writeShort(415).writeShort(6).writeShort(1);
+        b.writeShort(143).writeShort(4);
+        b.writeShort(304).writeShort(2);
+        b.writeShort(329).writeShort(8);
+        b.writeShort(330).writeShort(8);
+        b.writeShort(331).writeShort(8);
+        b.writeShort(332).writeShort(8);
+        b.writeShort(415).writeShort(4 + 4 + 2 + 32);
+        b.writeInt(1);
+        b.writeShort(8);
+        b.writeLong(0); b.writeLong(1);   // output range 0..1
+        b.writeLong(0); b.writeLong(0);   // selected 0..0  -> ratio 2
+        patchAndSend(this.session, b);
+    }
 }
