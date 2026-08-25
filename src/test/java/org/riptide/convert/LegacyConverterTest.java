@@ -7,6 +7,7 @@ package org.riptide.convert;
 
 import org.junit.jupiter.api.Test;
 import org.riptide.inventory.InventoryLoader;
+import org.riptide.snmp.SnmpPollConfig;
 import org.riptide.inventory.InventorySnapshot;
 import org.riptide.inventory.SnmpProfilesConfig;
 import org.riptide.pipeline.ExporterIdentity;
@@ -25,6 +26,7 @@ import java.time.Duration;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -579,7 +581,11 @@ class LegacyConverterTest {
                 .hasMessageContaining("quote it");
     }
 
-    /** An unmappable key in a subtree the converter actively reads is a dropped setting. */
+    /**
+     * A key nothing binds is still an error: it is a typo, and reporting it beats leaving the
+     * operator to find the setting had no effect. Contrast with the fleet-level keys below, which
+     * 0.9 does bind and which are therefore none of the converter's business (#614).
+     */
     @Test
     void anUnknownKeyUnderThePollSubtreeIsAnError() {
         assertThatThrownBy(() -> convert("""
@@ -637,6 +643,98 @@ class LegacyConverterTest {
                       subnet-address: 10.0.0.1
                       snmp: {snmp-version: v3, security-name: mon}
                 """).mainConfig()).contains("PT5M");
+    }
+
+
+    /**
+     * The fleet-level poll keys 0.9 still binds do not block conversion (#614).
+     *
+     * <p>They were refused, on the reasoning that a key the converter cannot map inside a subtree it
+     * reads must be a dropped setting. It is not: the converter emits a fragment the operator merges
+     * into their own configuration, so a key it passes over never moves. Refusing withheld the
+     * fragment entirely, and the shipped upgrade guide recommends {@code max-exporters} on the same
+     * page that says to run this tool.</p>
+     */
+    @Test
+    void fleetLevelPollKeysConvertAndAppearInNeitherOutput() {
+        final var converted = convert("""
+                riptide:
+                  snmp:
+                    poll:
+                      refresh-interval-ms: 300000
+                      pool-width: 8
+                      max-exporters: 1024
+                      deregister-after: 5
+                      dead-endpoint-base-ms: 30000
+                      dead-endpoint-ceiling-ms: 900000
+                  nodes:
+                    r:
+                      subnet-address: 10.0.0.1
+                      snmp: {snmp-version: v3, security-name: mon}
+                """);
+
+        // the mapped key still maps, so passing the siblings over did not disturb the extraction
+        assertThat(converted.mainConfig()).contains("PT5M");
+        for (final String passedOver : java.util.List.of(
+                "pool-width", "poolWidth", "max-exporters", "maxExporters",
+                "deregister-after", "dead-endpoint", "1024", "900000")) {
+            assertThat(converted.mainConfig() + converted.inventory())
+                    .as("%s stays in the operator's own file; the converter never moves it", passedOver)
+                    .doesNotContain(passedOver);
+        }
+    }
+
+    /**
+     * The accepted set is derived from {@code SnmpPollConfig}, not restated in the converter.
+     *
+     * <p>Pinned because the failure mode of a hand-written list is silent and in the worst
+     * direction: a fleet-level key added to the model later would start being <em>refused</em>,
+     * blocking upgrades over a key the running version accepts. Asserting equality against the
+     * model's own field names is what makes that impossible rather than merely unlikely.</p>
+     */
+    @Test
+    void theAcceptedPollKeysAreExactlyWhatTheRunningVersionBinds() {
+        final var bound = java.util.Arrays.stream(SnmpPollConfig.class.getDeclaredFields())
+                .filter(field -> !java.lang.reflect.Modifier.isStatic(field.getModifiers()))
+                .map(field -> field.getName().toLowerCase(java.util.Locale.ROOT))
+                .collect(java.util.stream.Collectors.toSet());
+
+        assertThat(bound)
+                .as("the model still declares the two the converter maps, as dead fallbacks")
+                .contains("refreshintervalms", "snapshotexpiryms");
+
+        for (final String key : bound) {
+            assertThatCode(() -> convert("""
+                    riptide:
+                      snmp:
+                        poll:
+                          %s: 1000
+                      nodes:
+                        r: {subnet-address: 10.0.0.1}
+                    """.formatted(key)))
+                    .as("%s is bound by SnmpPollConfig, so the converter must not refuse it", key)
+                    .doesNotThrowAnyException();
+        }
+    }
+
+    /**
+     * A flat file is diagnosed by its shape, not reported as a foreign or broken document (#614).
+     *
+     * <p>The dotted-YAML case is the worse of the two: it parses cleanly into one key per line, so
+     * the section walk found no {@code riptide} child and asked "is this a riptide configuration?"
+     * of a file whose every line begins with {@code riptide.}.</p>
+     */
+    @Test
+    void aFlatFileIsDiagnosedByItsShape() {
+        assertThatThrownBy(() -> convert("riptide.nodes.core-router.subnet-address: 10.0.0.1\n"))
+                .hasMessageContaining("flat")
+                .hasMessageContaining("riptide.nodes.core-router.subnet-address")
+                .hasMessageContaining("nested YAML")
+                .hasMessageNotContaining("is this a riptide configuration?");
+
+        // the .properties spelling fails earlier, in the parse, and gets the same fact
+        assertThatThrownBy(() -> convert("riptide.nodes.core-router.subnet-address=10.0.0.1\n"))
+                .hasMessageContaining("nested YAML");
     }
 
     /** Boots the emitted pair through the real 0.9 loader: this is the AD-13 proof. */

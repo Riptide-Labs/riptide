@@ -10,6 +10,7 @@ import org.riptide.utils.PropertyNames;
 import org.springframework.core.env.AbstractEnvironment;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
+import org.springframework.core.env.SystemEnvironmentPropertySource;
 import org.springframework.stereotype.Component;
 
 import java.util.Locale;
@@ -53,9 +54,19 @@ public class LegacyNodesFlagDayCheck {
 
     /** Reusable against any source stack — the config hot reload runs it on candidates. */
     public static void failOnLegacyNodes(final Iterable<PropertySource<?>> sources) {
-        findLegacyNodesKey(sources).ifPresent(name -> {
-            throw new IllegalStateException(message(name));
-        });
+        // Walked per source rather than over the flattened names, because the remedy depends on
+        // where the key lives: the converter reads a file, so telling a container configured
+        // entirely through the environment to run it against <your-config.yaml> is unactionable
+        // (#614). Same stack order and same short-circuit as the flattened walk.
+        for (final PropertySource<?> source : sources) {
+            final Optional<String> found = PropertyNames.in(source)
+                    .filter(LegacyNodesFlagDayCheck::isLegacyNodesKey)
+                    .findFirst();
+            if (found.isPresent()) {
+                throw new IllegalStateException(
+                        message(found.get(), source instanceof SystemEnvironmentPropertySource));
+            }
+        }
     }
 
     /** Non-throwing probe for the reloader's gated-document scan (#537); one probe per class, over the shared walk. */
@@ -68,8 +79,13 @@ public class LegacyNodesFlagDayCheck {
         // The regex alone decides; a normalize-and-startsWith conjunct used to sit
         // here and was fully implied by it, two matching theories where one does
         return PropertyNames.in(sources)
-                .filter(name -> LEGACY_KEY.matcher(name).lookingAt() && !isServiceLink(name))
+                .filter(LegacyNodesFlagDayCheck::isLegacyNodesKey)
                 .findFirst();
+    }
+
+    /** The one predicate, so the two walks above cannot drift apart. */
+    private static boolean isLegacyNodesKey(final String name) {
+        return LEGACY_KEY.matcher(name).lookingAt() && !isServiceLink(name);
     }
 
     /**
@@ -153,7 +169,45 @@ public class LegacyNodesFlagDayCheck {
                 || name.equals("RIPTIDE_NODES_NAME");
     }
 
-    private static String message(final String key) {
+    /**
+     * The remedy for a tree that lives in the process environment, where the file-based one is
+     * unactionable.
+     *
+     * <p>It also states something the operator cannot find out any other way: Spring never bound a
+     * multi-word node name from an environment variable. Measured against this project's Spring
+     * version rather than assumed —
+     * {@code RIPTIDE_NODES_CORE_ROUTER_SUBNET_ADDRESS} binds to no node at all, while
+     * {@code RIPTIDE_NODES_EDGE_SUBNET_ADDRESS} binds to {@code edge}. So for a hyphenated name the
+     * node was never active in 0.8, and telling the operator to convert it would preserve nothing
+     * while implying they had lost something.</p>
+     *
+     * <p>Both cases are stated rather than inferred from the key. Deciding which one applies means
+     * splitting a node name from a field suffix inside an environment variable, and shape-based
+     * inference on exactly these names is what produced #612.</p>
+     */
+    private static String environmentMessage(final String key) {
+        return ("Legacy node configuration found ('%s'), in the process environment rather than in a "
+                + "configuration file. riptide.nodes was removed in 0.9.%n%n"
+                + "If the node name has more than one word ('core-router' reaching Spring as "
+                + "RIPTIDE_NODES_CORE_ROUTER_...), it was never bound: Spring resolves that to no "
+                + "node at all, so it was NOT active in 0.8 either. There is nothing to convert. "
+                + "Remove the variable.%n%n"
+                + "Single-word names (RIPTIDE_NODES_EDGE_SUBNET_ADDRESS) did bind. 'riptide convert' "
+                + "reads a file, so write those out as nested YAML first:%n"
+                + "    riptide:%n"
+                + "      nodes:%n"
+                + "        edge:%n"
+                + "          subnet-address: 10.0.0.0/24%n"
+                + "then run:%n"
+                + "    riptide convert <that-file.yaml> --out-config config.yaml "
+                + "--out-inventory inventory.yaml%n%n"
+                + "The 0.9 release notes carry the full upgrade guide.").formatted(key);
+    }
+
+    private static String message(final String key, final boolean fromEnvironment) {
+        if (fromEnvironment) {
+            return environmentMessage(key);
+        }
         return ("Legacy node configuration found ('%s'). riptide.nodes was removed in 0.9: exporter "
                 + "names, interface pins and SNMP credentials now come from the credential sets and "
                 + "polling profiles in the main config plus the inventory file "
