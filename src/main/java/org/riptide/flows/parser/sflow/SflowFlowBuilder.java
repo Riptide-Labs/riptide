@@ -133,9 +133,42 @@ public final class SflowFlowBuilder {
             // Scaling by the raw wire rate while reporting a guarded one would produce a row that
             // reads as real unsampled traffic of zero volume — a rate of 0 gives bytes = 0 and
             // packets = 0, with nothing marking it as junk.
+            /**
+             * The stated frame length, scaled by the stated rate — or nothing, if the frame length is
+             * not one a frame could have.
+             *
+             * <p>Both values are {@code uint32} off the wire in a {@code long}, so their raw product
+             * reaches 1.8e19 and wraps a signed 64-bit integer. The {@code bytes} column is
+             * {@code UInt64}, so the wrapped negative reads back as that same 1.8e19 (#588). sFlow has
+             * no transport authentication, so this is attacker-controlled on any bound interface.</p>
+             *
+             * <p><b>Refused, not clamped.</b> Clamping an absurd frame length to the bound and scaling
+             * it anyway still yields 5.6e14 — five orders smaller than the wrap and just as capable of
+             * swamping any aggregate containing it, while silently presenting a fabricated number as a
+             * measurement. Refusing matches what this class already does with a rate it does not
+             * believe: substitute a neutral value rather than invent one. A frame length past the bound
+             * is not a measurement, so the sample contributes no bytes, exactly as one carrying no
+             * frame length at all does.</p>
+             *
+             * <p>The <em>rate</em> is deliberately not bounded here. A rate the wire can carry is a rate
+             * riptide records, which is what {@code sflowAcceptsTheLargestRateTheWireCanCarry} pins and
+             * what #467 asks for. That leaves a hostile rate applied to a legitimate frame still able to
+             * distort an aggregate — a real gap, and a wider one than this overflow.</p>
+             */
             @Override
             public long getBytes() {
-                return sample.frameLength() != null ? sample.frameLength() * scale() : 0;
+                final Long stated = sample.frameLength();
+                if (stated == null || stated > MAX_FRAME_LENGTH) {
+                    return 0;
+                }
+                final long scale = scale();
+                // unreachable while the bound above holds, and the reason widening it cannot silently
+                // reintroduce the wrap. Refuses rather than saturating, for the same reason as above:
+                // Long.MAX_VALUE is no more a measurement than the wrapped value it would replace.
+                if (stated != 0 && scale > Long.MAX_VALUE / stated) {
+                    return 0;
+                }
+                return stated * scale;
             }
 
             @Override
@@ -218,6 +251,20 @@ public final class SflowFlowBuilder {
             }
         };
     }
+
+    /**
+     * The largest frame length riptide will believe.
+     *
+     * <p>sFlow v5 defines {@code frame_length} as the length of the MAC packet received on the
+     * network, so it includes the layer-2 header: a maximum-size IP datagram over Ethernet reports
+     * around 65549, not 65535. This bound is deliberately well clear of that rather than exact,
+     * because the cost of being slightly too tight is refusing a real sample, and no medium riptide
+     * will meet carries a frame anywhere near it.</p>
+     *
+     * <p>It also keeps the product far short of wrapping: {@code 131072 * 4294967295} is 5.6e14,
+     * some 16,000 times below {@code Long.MAX_VALUE}.</p>
+     */
+    private static final long MAX_FRAME_LENGTH = 131_072L;
 
     /**
      * Whether a rate off the wire is one an exporter could have meant.
