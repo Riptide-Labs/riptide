@@ -45,13 +45,15 @@ class RollupShapeCheckTest {
                     + "toStartOfMinute(f.timestamp) AS timestamp, f.zone AS zone, "
                     + "ifNull(f.application, '') AS application, f.protocol AS protocol, "
                     + "f.samplingInterval AS samplingInterval, "
+                    + "toString(f.flowProtocol) AS flowProtocol, "
                     + "sum(f.bytes) AS bytes, sum(f.packets) AS packets, count() AS flowCount, "
                     + "sumIf(f.bytes, f.direction = 'INGRESS') AS bytesIn, "
                     + "sumIf(f.bytes, f.direction = 'EGRESS') AS bytesOut, "
                     + "sumIf(f.packets, f.direction = 'INGRESS') AS packetsIn, "
                     + "sumIf(f.packets, f.direction = 'EGRESS') AS packetsOut "
                     + "FROM riptide.flows AS f "
-                    + "GROUP BY tenant, organisation, timestamp, zone, application, protocol, samplingInterval";
+                    + "GROUP BY tenant, organisation, timestamp, zone, application, protocol,"
+                    + " samplingInterval, flowProtocol";
 
     /**
      * A real server response matches the SELECT riptide emits for that rollup.

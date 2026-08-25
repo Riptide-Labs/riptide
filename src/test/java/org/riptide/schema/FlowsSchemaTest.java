@@ -519,6 +519,128 @@ class FlowsSchemaTest {
                 .isEqualTo("'1970-01-01 00:00:00'");
         assertThat(byExpression.get("f.protocol")).isEqualTo("0");
         assertThat(byExpression.get("f.tenant")).isEqualTo("''");
+        assertThat(byExpression.get("toString(f.flowProtocol)"))
+                .as("the protocol is carried as a string precisely so it reserves '' rather than a"
+                        + " real protocol name")
+                .isEqualTo("''");
+    }
+
+    /**
+     * An enum reserves its <strong>smallest-numbered</strong> member, and nothing weaker will do.
+     *
+     * <p>Driven through {@link FlowsSchema#reservedValueFor} with literal type strings rather than
+     * over the live dimensions, because no dimension is an enum today: a test walking {@code ROLLUPS}
+     * would assert over an empty set and pass no matter what the rule became. The riptide enum cannot
+     * distinguish the candidate rules either — {@code NetflowV5 = 1} is the first declared, the
+     * smallest, and the only one adjacent to zero all at once — so the cases below are built to
+     * separate them, and each was checked against a real 26.7 server before being pinned here.</p>
+     */
+    @Test
+    void anEnumReservesItsSmallestMemberNotItsFirstAndNotItsZero() {
+        assertThat(FlowsSchema.reservedValueFor("Enum8('' = 0, 'X' = 5)"))
+                .as("the sentinel is the smallest, so this enum has a boundary")
+                .isEqualTo("''");
+
+        // "reserves 'A'", not "'A'". The message echoes the whole type, so every member name appears
+        // in it whatever the rule picked: asserting the bare name passes for any of them. A mutation
+        // taking the first-declared member instead of the smallest survived that weaker assertion.
+        assertThatThrownBy(() -> FlowsSchema.reservedValueFor("Enum8('B' = 2, 'A' = 1)"))
+                .as("'B' is declared first but 'A' is smaller, so first-declared is not the rule")
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("reserves 'A'");
+
+        assertThatThrownBy(() -> FlowsSchema.reservedValueFor("Enum8('N' = -1, '' = 0, 'P' = 1)"))
+                .as("a zero member exists and is still not what the server stores, so"
+                        + " zero-if-present is not the rule either")
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("reserves 'N'");
+
+        // ClickHouse renders a quote in a member name as \' in SHOW CREATE TABLE, which is the form
+        // a maintainer copies. Reading only '' would end the name at the backslash and hand back a
+        // sentinel the enum does not declare.
+        assertThat(FlowsSchema.reservedValueFor("Enum8('' = 0, 'it\\'s' = 1)"))
+                .as("an escaped quote later in the declaration does not disturb the sentinel")
+                .isEqualTo("''");
+        assertThatThrownBy(() -> FlowsSchema.reservedValueFor("Enum8('it\\'s' = 1, 'b' = 2)"))
+                .as("the smallest member's name is reported whole, not truncated at the escape")
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("reserves 'it\\'s'");
+        assertThatThrownBy(() -> FlowsSchema.reservedValueFor("Enum8('\\'' = 5)"))
+                .as("a member whose name IS a quote must not be mistaken for the empty sentinel")
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    /**
+     * A wrapper type decides the reserved value on its own, whatever it wraps.
+     *
+     * <p>Verified on 26.7: an appended {@code Nullable(Enum8('' = 0, 'X' = 1))} column reads
+     * {@code NULL} for pre-existing rows, not {@code ''}, and an {@code Array(…)} reads {@code []}.
+     * Matching the inner type through the wrapper would publish a reserved value the column can never
+     * hold, so the guard would compare every expression against something none of them could emit and
+     * pass all of them — the worst outcome, and the one this whole mechanism exists to prevent.</p>
+     */
+    @Test
+    void aWrapperTypeDecidesTheReservedValueRatherThanWhatItWraps() {
+        assertThat(FlowsSchema.reservedValueFor("Nullable(Enum8('' = 0, 'X' = 1))")).isEqualTo("NULL");
+        assertThat(FlowsSchema.reservedValueFor("Nullable(String)")).isEqualTo("NULL");
+        assertThat(FlowsSchema.reservedValueFor("Array(Enum8('' = 0, 'X' = 1))")).isEqualTo("[]");
+
+        assertThat(FlowsSchema.reservedValueFor("LowCardinality(String)"))
+                .as("LowCardinality is not a wrapper in this sense — it stores '' like a String")
+                .isEqualTo("''");
+    }
+
+    /**
+     * The raw table's own {@code flowProtocol} enum is refused as a rollup dimension type.
+     *
+     * <p>This is the mutation the change exists to prevent. Typed as {@code Enum8('NetflowV5' = 1,
+     * …)}, every row aggregated before the append reads back as {@code NetflowV5}: a valid protocol,
+     * indistinguishable from a real one, which {@code != 'SFLOW'} then admits — re-inflating exactly
+     * the sFlow traffic the column was added to correct. Nothing in the data would mark it.</p>
+     */
+    @Test
+    void theRawProtocolEnumCannotBeUsedAsARollupDimensionType() {
+        final String rawType = FlowsSchema.createFlowsTable("riptide", 30)
+                .replaceAll("(?s).*flowProtocol (Enum8\\([^)]*\\)).*", "$1")
+                .replaceAll("\\s+", " ");
+
+        assertThat(rawType).as("read off the shipped flows table, not restated here").startsWith("Enum8(");
+
+        assertThatThrownBy(() -> FlowsSchema.reservedValueFor(rawType))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("reserves 'NetflowV5'")
+                .hasMessageContaining("no boundary");
+    }
+
+    /**
+     * The source enum must never declare {@code ''}, or the rollup dimension emits its own reserved
+     * value for live rows.
+     *
+     * <p>{@code flowProtocol} is carried as {@code toString(f.flowProtocol)} into a
+     * {@code LowCardinality(String)} whose reserved value is {@code ''}. That boundary holds only
+     * because no member of the source enum stringifies to {@code ''} — an assumption the dimension's
+     * javadoc states as fact and which nothing enforced. It is a live hazard rather than a
+     * theoretical one: the refusal message for an enum-typed dimension suggests adding an {@code ''}
+     * member, and applied to the source column instead of a rollup column that is precisely the
+     * change that breaks this.</p>
+     *
+     * <p>The failure would be silent and unrecoverable. Real rows would land on {@code ''}, becoming
+     * indistinguishable from rows aggregated before the append, so
+     * {@code WHERE flowProtocol != ''} would drop live traffic for the rollup's 365-day retention
+     * with nothing marking it. The regex guard in {@code appendableDimensions()} cannot see this:
+     * {@code toString(f.flowProtocol)} has no fallback literal, so it is passed without inspection.</p>
+     */
+    @Test
+    void theSourceProtocolEnumDeclaresNoEmptyMemberForTheRollupToCollideWith() {
+        final String rawType = FlowsSchema.createFlowsTable("riptide", 30)
+                .replaceAll("(?s).*flowProtocol (Enum8\\([^)]*\\)).*", "$1")
+                .replaceAll("\\s+", " ");
+
+        assertThat(rawType)
+                .as("every member of the source enum must stringify to something the rollup's"
+                        + " reserved '' cannot be confused with")
+                .startsWith("Enum8(")
+                .doesNotContain("''");
     }
 
     /**
@@ -544,10 +666,10 @@ class FlowsSchemaTest {
         // Appending a dimension means adding it to the END of a list here. Inserting it anywhere
         // else fails, which is the whole point.
         final Map<String, List<String>> appendedAfterTheFreeze = Map.of(
-                "flows_by_application_1m", List.of("samplingInterval"),
-                "flows_by_conversation_1m", List.of("samplingInterval"),
-                "flows_by_exporter_iface_1m", List.of("samplingInterval"),
-                "flows_by_geo_asn_1m", List.of("samplingInterval"));
+                "flows_by_application_1m", List.of("samplingInterval", "flowProtocol"),
+                "flows_by_conversation_1m", List.of("samplingInterval", "flowProtocol"),
+                "flows_by_exporter_iface_1m", List.of("samplingInterval", "flowProtocol"),
+                "flows_by_geo_asn_1m", List.of("samplingInterval", "flowProtocol"));
 
         FlowsSchema.rollupSortKeys().forEach((rollup, key) -> {
             final String frozen = frozenPrimaryKeyOf(rollup);
@@ -626,6 +748,11 @@ class FlowsSchemaTest {
                 .isNotEqualTo(FlowsSchema.qualifiedFlows("riptide"));
 
         assertThat(QueryRouter.resolveTopTalkersTable("riptide", 1440, "samplingInterval"))
+                .isEqualTo(FlowsSchema.qualifiedFlows("riptide"));
+
+        // The protocol is carried for the same reason and is equally not a group-by. receivers.md
+        // states this for both columns; before this assertion only the rate half was pinned.
+        assertThat(QueryRouter.resolveTopTalkersTable("riptide", 1440, "flowProtocol"))
                 .isEqualTo(FlowsSchema.qualifiedFlows("riptide"));
     }
 

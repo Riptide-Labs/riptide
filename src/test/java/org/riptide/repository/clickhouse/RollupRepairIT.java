@@ -11,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.riptide.config.ClickhouseConfig;
 import org.riptide.e2e.ContainerImages;
+import org.riptide.flows.parser.data.Flow;
 import org.riptide.provisioning.ProvisioningDdl;
 import org.riptide.schema.FlowsSchema;
 import org.riptide.schema.RollupAvailability;
@@ -29,6 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
 
 /**
@@ -216,7 +218,7 @@ public class RollupRepairIT {
      */
     @Test
     void aRefusedRollupIsDeclinedAndItsViewIsNotRepointed() throws Exception {
-        createRollupWithTheRateOutsideItsSortingKey();
+        createRollupWithTheAppendedDimensionsOutsideItsSortingKey();
         final String before = selectOf(ROLLUP + "_mv");
         assertThat(RollupShapeCheck.normalise(before))
                 .as("the fixture must present the state the shape check would otherwise call MATCHES:"
@@ -245,7 +247,7 @@ public class RollupRepairIT {
      */
     @Test
     void aRefusedRollupGetsNoViewBuiltForIt() throws Exception {
-        createRollupWithTheRateOutsideItsSortingKey();
+        createRollupWithTheAppendedDimensionsOutsideItsSortingKey();
         admin.execute("DROP VIEW " + FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP)).get();
 
         repository().start();
@@ -259,8 +261,16 @@ public class RollupRepairIT {
                 .isFalse();
     }
 
-    /** The hand-added-column state: the rate is a column of the target, but not part of its key. */
-    private static void createRollupWithTheRateOutsideItsSortingKey() throws Exception {
+    /**
+     * The hand-added-column state: both appended dimensions are columns of the target, but neither
+     * is part of its key, so the refusal it drives reports them together.
+     *
+     * <p>Every dimension this version declares has to be present as a column, or the shape check
+     * reports the target as missing one and the test passes for that reason instead of the refusal.
+     * A dimension appended to {@code FlowsSchema} therefore has to be added here too — leaving it out
+     * fails loudly (the view cannot be created at all), which is the good failure mode.</p>
+     */
+    private static void createRollupWithTheAppendedDimensionsOutsideItsSortingKey() throws Exception {
         final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
         final String view = FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP);
         admin.execute("DROP VIEW IF EXISTS " + view).get();
@@ -268,7 +278,7 @@ public class RollupRepairIT {
         admin.execute("CREATE TABLE " + target + " ("
                 + "tenant String, organisation String, timestamp DateTime('UTC'), zone String,"
                 + " application LowCardinality(String), protocol UInt8,"
-                + " samplingInterval Float64,"
+                + " samplingInterval Float64, flowProtocol LowCardinality(String),"
                 + " bytes UInt64, packets UInt64, flowCount UInt64,"
                 + " bytesIn UInt64, bytesOut UInt64, packetsIn UInt64, packetsOut UInt64)"
                 + " ENGINE = SummingMergeTree()"
@@ -284,7 +294,7 @@ public class RollupRepairIT {
                 + FlowsSchema.rollupSelects(DATABASE).get(ROLLUP)).get();
     }
 
-    /** A rollup as an older riptide would have left it: two dimensions short, view to match. */
+    /** A rollup as a pre-v0.11 riptide would have left it: three dimensions short, view to match. */
     private static void createRollupMissingItsLastDimension() throws Exception {
         final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
         final String view = FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP);
@@ -728,5 +738,209 @@ public class RollupRepairIT {
         base.setSamplingInterval(rate);
         base.setExporterAddr(exporter);
         return base;
+    }
+
+    /**
+     * Sampling-corrected volume on a mixed-protocol deployment, which is the whole of #583.
+     *
+     * <p>Both flows carry the same rate, so the only thing that can keep them apart in the rollup is
+     * {@code flowProtocol}. That is deliberate: with the protocol absent from the sort key they
+     * collapse into one row holding 4196 bytes, and no expression over that row can recover the
+     * corrected total, because the row no longer records which half was pre-scaled.</p>
+     *
+     * <p>The three candidate answers are all asserted, not just the right one. 55296 is correct;
+     * 4245504 is what multiplying every row by its rate gives, the defect the issue reports; 51200 is
+     * what {@code WHERE flowProtocol != 'SFLOW'} gives, which is not "corrected volume" but corrected
+     * volume of the NetFlow/IPFIX subset, short by every sFlow byte received. A test asserting only
+     * "not inflated" would pass the third.</p>
+     */
+    @Test
+    void correctedVolumeCountsSflowOnceAndScalesEverythingElse() throws Exception {
+        repository().start();
+        final var repo = startedWriter();
+
+        repo.persist(List.of(
+                protocolAt(Flow.FlowProtocol.SFLOW, 4096L, 512.0d),   // pre-scaled at ingest
+                protocolAt(Flow.FlowProtocol.IPFIX, 100L, 512.0d)));  // still to be scaled
+        Thread.sleep(600);
+
+        final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
+        final String corrected = "toUInt64(sum(bytes * if(flowProtocol = 'SFLOW', 1, samplingInterval)))";
+
+        // FINAL, not a bare count. SummingMergeTree collapses on merge, and merges are asynchronous:
+        // with flowProtocol removed from the sort key these two rows still return count() = 2 until
+        // a merge happens, so the un-FINAL assertion passes for the mutant whenever the writer split
+        // them across insert blocks. Verified on 26.7 — two blocks read back 2 rows summing 4196.
+        assertThat(scalar("SELECT count() AS v FROM " + target + " FINAL WHERE tenant = 'mixed'"))
+                .as("one group, one rate, two protocols — collapsing them makes the correction"
+                        + " unrecoverable, since the row would not say which half was pre-scaled")
+                .isEqualTo(2);
+
+        assertThat(scalar("SELECT " + corrected + " AS v FROM " + target + " WHERE tenant = 'mixed'"))
+                .as("4096 sFlow bytes counted once, plus 100 IPFIX bytes at 512")
+                .isEqualTo(4096L + 100L * 512L);
+
+        // The SCALING EXPRESSION ports to raw flows; the rollup's boundary predicates do not, and
+        // `flowProtocol != ''` fails there outright with UNKNOWN_ELEMENT_OF_ENUM because the source
+        // column is an Enum8 with no such member. Asserting only the expression here is correct, but
+        // the earlier wording claimed the whole query was identical — see the paired test below,
+        // which pins the half that does not port.
+        assertThat(scalar("SELECT " + corrected + " AS v FROM "
+                + FlowsSchema.qualifiedFlows(DATABASE) + " WHERE tenant = 'mixed'"))
+                .as("the scaling expression against raw flows agrees, with no boundary predicates")
+                .isEqualTo(4096L + 100L * 512L);
+
+        assertThat(scalar("SELECT toUInt64(sum(bytes * samplingInterval)) AS v FROM "
+                + target + " WHERE tenant = 'mixed'"))
+                .as("scaling every row by its rate inflates the sFlow half, which is #583")
+                .isEqualTo(4096L * 512L + 100L * 512L);
+
+        assertThat(scalar("SELECT toUInt64(sum(bytes * samplingInterval)) AS v FROM " + target
+                + " WHERE tenant = 'mixed' AND flowProtocol NOT IN ('', 'SFLOW')"))
+                .as("and excluding sFlow answers a different question, short by every sFlow byte")
+                .isEqualTo(100L * 512L);
+
+        assertThat(scalar("SELECT toUInt64(sum(bytes)) AS v FROM " + target
+                + " WHERE tenant = 'mixed' AND flowProtocol = 'SFLOW'"))
+                .as("volume is attributable to a protocol, which no rollup could answer before")
+                .isEqualTo(4096L);
+    }
+
+    /**
+     * The rollup's boundary predicate is not portable to raw {@code flows}, and saying it is would be
+     * worse than saying nothing.
+     *
+     * <p>{@code flowProtocol} is a {@code LowCardinality(String)} on a rollup, where {@code ''} marks
+     * a row aggregated before the append. On raw {@code flows} it is an {@code Enum8} whose every
+     * member is a real protocol, so comparing against {@code ''} is not merely pointless — the server
+     * refuses the query. The docs recommend two different {@code WHERE} clauses for the two tables,
+     * and this is what stops that from silently becoming untrue.</p>
+     */
+    @Test
+    void theRollupBoundaryPredicateIsRejectedByTheRawTable() throws Exception {
+        repository().start();
+        final var repo = startedWriter();
+        repo.persist(List.of(protocolAt(Flow.FlowProtocol.IPFIX, 100L, 512.0d)));
+        Thread.sleep(600);
+
+        assertThatThrownBy(() -> scalar("SELECT count() AS v FROM " + FlowsSchema.qualifiedFlows(DATABASE)
+                + " WHERE tenant = 'mixed' AND flowProtocol != ''"))
+                .as("the rollup's boundary predicate must not be copied onto raw flows")
+                .hasMessageContaining("UNKNOWN_ELEMENT_OF_ENUM");
+
+        assertThat(scalar("SELECT count() AS v FROM " + FlowsSchema.qualifiedFlows(DATABASE)
+                + " WHERE tenant = 'mixed'"))
+                .as("while the same query without it is fine, so the failure is the predicate")
+                .isEqualTo(1);
+    }
+
+    /**
+     * The protocol is appended in place, and rows aggregated before it reserve {@code ''}.
+     *
+     * <p>Started from a rollup that already carries the rate, not from one carrying neither: that is
+     * the shape a v0.11.0 deployment actually has, and it is the only state in which this append is
+     * the one under test.</p>
+     */
+    @Test
+    void theProtocolIsAppendedInPlaceAndMarksRowsThatPredateIt() throws Exception {
+        createRollupCarryingTheRateButNotTheProtocol();
+        final var repo = startedWriter();
+        repo.persist(List.of(flow("beforeProtocol", "org", 4101)));
+        Thread.sleep(400);
+
+        repository().start();                                   // appends flowProtocol
+
+        repo.persist(List.of(flow("afterProtocol", "org", 4102)));
+        Thread.sleep(400);
+
+        final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
+        assertThat(scalar("SELECT count() AS v FROM " + target
+                + " WHERE tenant = 'beforeProtocol' AND flowProtocol = ''"))
+                .as("rows aggregated before the append carry the reserved value")
+                .isEqualTo(1);
+        assertThat(scalar("SELECT count() AS v FROM " + target
+                + " WHERE tenant = 'afterProtocol' AND flowProtocol = 'IPFIX'"))
+                .as("rows aggregated after carry the flow's protocol, which is never ''")
+                .isEqualTo(1);
+    }
+
+    /**
+     * The two boundaries compose, and the rate's alone is not enough.
+     *
+     * <p>The rate shipped in v0.11.0 and the protocol appends after it, so a band of rows exists with
+     * a known rate and an unknown protocol. Those rows satisfy {@code '' != 'SFLOW'}, so a corrected
+     * query filtering only on the rate readmits them and re-inflates any sFlow they hold. This pins
+     * that the middle band is real and that only both predicates together exclude it.</p>
+     */
+    @Test
+    void theRatePredicateAloneDoesNotExcludeRowsPredatingTheProtocol() throws Exception {
+        createRollupCarryingTheRateButNotTheProtocol();
+        final var repo = startedWriter();
+        repo.persist(List.of(flow("middleBand", "org", 4201)));
+        Thread.sleep(400);
+
+        repository().start();                                   // appends flowProtocol
+
+        repo.persist(List.of(flow("middleBand", "org", 4202)));
+        Thread.sleep(400);
+
+        final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
+        assertThat(scalar("SELECT count() AS v FROM " + target
+                + " WHERE tenant = 'middleBand' AND samplingInterval > 0"))
+                .as("the rate predicate admits the middle band, because its rate is genuinely known")
+                .isEqualTo(2);
+        assertThat(scalar("SELECT count() AS v FROM " + target
+                + " WHERE tenant = 'middleBand' AND samplingInterval > 0 AND flowProtocol != ''"))
+                .as("only both predicates together select rows whose rate and protocol are both known")
+                .isEqualTo(1);
+        assertThat(scalar("SELECT count() AS v FROM " + target
+                + " WHERE tenant = 'middleBand' AND flowProtocol != 'SFLOW'"))
+                .as("and '' is not 'SFLOW', which is why the middle band cannot be left to that test")
+                .isEqualTo(2);
+    }
+
+    /** One flow of a given protocol, byte count and rate, all else identical so only these split it. */
+    private static org.riptide.pipeline.EnrichedFlow protocolAt(
+            final Flow.FlowProtocol protocol, final long bytes, final double rate) throws Exception {
+        final var base = flow("mixed", "org", 6000);
+        base.setFlowProtocol(protocol);
+        base.setBytes(bytes);
+        base.setSamplingInterval(rate);
+        return base;
+    }
+
+    /**
+     * The shape a v0.11.0 deployment has: every dimension through {@code samplingInterval}, and no
+     * {@code flowProtocol}. {@link #createRollupMissingItsLastDimension()} predates both appends and
+     * would leave two repairs under test at once.
+     */
+    private static void createRollupCarryingTheRateButNotTheProtocol() throws Exception {
+        final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
+        final String view = FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP);
+        admin.execute("DROP VIEW IF EXISTS " + view).get();
+        admin.execute("DROP TABLE IF EXISTS " + target).get();
+        admin.execute("CREATE TABLE " + target + " ("
+                + "tenant String, organisation String, timestamp DateTime('UTC'), zone String,"
+                + " application LowCardinality(String), protocol UInt8, samplingInterval Float64,"
+                + " bytes UInt64, packets UInt64, flowCount UInt64,"
+                + " bytesIn UInt64, bytesOut UInt64, packetsIn UInt64, packetsOut UInt64)"
+                + " ENGINE = SummingMergeTree()"
+                + " PRIMARY KEY (tenant, organisation, timestamp, zone, application, protocol)"
+                + " ORDER BY (tenant, organisation, timestamp, zone, application, protocol,"
+                + " samplingInterval)"
+                + " PARTITION BY toYYYYMM(timestamp)").get();
+        admin.execute("CREATE MATERIALIZED VIEW " + view + " TO " + target + " AS SELECT"
+                + " f.tenant AS tenant, f.organisation AS organisation,"
+                + " toStartOfMinute(f.timestamp) AS timestamp, f.zone AS zone,"
+                + " ifNull(f.application, '') AS application, f.protocol AS protocol,"
+                + " f.samplingInterval AS samplingInterval,"
+                + " sum(f.bytes) AS bytes, sum(f.packets) AS packets, count() AS flowCount,"
+                + " sumIf(f.bytes, f.direction = 'INGRESS') AS bytesIn,"
+                + " sumIf(f.bytes, f.direction = 'EGRESS') AS bytesOut,"
+                + " sumIf(f.packets, f.direction = 'INGRESS') AS packetsIn,"
+                + " sumIf(f.packets, f.direction = 'EGRESS') AS packetsOut"
+                + " FROM " + FlowsSchema.qualifiedFlows(DATABASE) + " AS f"
+                + " GROUP BY tenant, organisation, timestamp, zone, application, protocol,"
+                + " samplingInterval").get();
     }
 }

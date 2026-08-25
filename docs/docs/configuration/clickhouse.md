@@ -106,12 +106,14 @@ reads a few thousand pre-aggregated rows instead of scanning every flow.
 
 | table | dimensions (beyond the shared preamble) |
 |---|---|
-| `flows_by_application_1m` | `application`, `protocol`, `samplingInterval` |
-| `flows_by_conversation_1m` | `srcAddr`, `dstAddr`, `application`, `samplingInterval` |
-| `flows_by_exporter_iface_1m` | `exporterAddr`, `exporterName`, `inputSnmp`, `outputSnmp`, `samplingInterval` |
-| `flows_by_geo_asn_1m` | `srcAs`, `dstAs`, `srcCountry`, `dstCountry`, `samplingInterval` |
+| `flows_by_application_1m` | `application`, `protocol`, `samplingInterval`, `flowProtocol` |
+| `flows_by_conversation_1m` | `srcAddr`, `dstAddr`, `application`, `samplingInterval`, `flowProtocol` |
+| `flows_by_exporter_iface_1m` | `exporterAddr`, `exporterName`, `inputSnmp`, `outputSnmp`, `samplingInterval`, `flowProtocol` |
+| `flows_by_geo_asn_1m` | `srcAs`, `dstAs`, `srcCountry`, `dstCountry`, `samplingInterval`, `flowProtocol` |
 
-`samplingInterval` is carried so sampling-corrected volume stays answerable beyond the raw table's retention, not as something to group by — see [Sampling-corrected volume](./receivers.md#sampling-corrected-volume-beyond-raw-retention). Rows aggregated before it was appended read `0`.
+`samplingInterval` and `flowProtocol` are carried together so sampling-corrected volume stays answerable beyond the raw table's retention — see [Sampling-corrected volume](./receivers.md#sampling-corrected-volume-beyond-raw-retention). Neither is offered as something to group by. Rows aggregated before each was appended read `0` and `''` respectively, and because the two were appended in different releases those boundaries do not coincide.
+
+`flowProtocol` is a `LowCardinality(String)` here, not the `Enum8` the raw `flows` table uses. An appended enum column reads back as its smallest-numbered member for every row that predates it, which for that enum is `NetflowV5` — a real protocol, indistinguishable from a genuine reading. A string reserves `''`, which no protocol name can collide with.
 
 Every rollup carries the same preamble — `tenant`, `organisation`, `timestamp`, `zone` — and the
 same measures: `bytes`, `packets`, `flowCount`, plus the directional split `bytesIn`/`bytesOut`
@@ -144,23 +146,12 @@ them keeps answering from raw `flows` until it is restarted, however complete th
 Manage-mode deployments repair themselves on the next start and need nothing.
 :::
 
-:::danger[Drop the rollup views before rolling back to an earlier version]
-Rolling forward is repaired automatically. Rolling **back** is not, and it corrupts the rollups silently.
+:::note[Rolling back to an earlier version needs no preparation]
+Rolling forward is repaired automatically. Rolling **back** leaves the rollups alone, and you should leave them alone too.
 
-An older riptide does not know `samplingInterval`. In manage mode it refuses to shrink the sorting key — correctly — so the target keeps the column, but it then re-points each materialized view at its own narrower `SELECT`, which no longer names the rate. ClickHouse accepts that without complaint: `ALTER TABLE … MODIFY QUERY` does not validate against its target. Every row aggregated from then on takes `samplingInterval = 0` — the value reserved for rows written before the column existed — in a sorting-key column, for the rollup's full 365-day retention.
+An older riptide refuses to shrink a sorting key, so the target keeps every column. It also refuses to narrow the materialized view: `planViewRepair` treats a view selecting columns it does not know as a downgrade and declines it, and `v0.11.0` pins that with `aViewFromANewerVersionIsLeftAloneRatherThanNarrowed`. Versions before `v0.10.0` had no `MODIFY QUERY` at all, so they cannot re-point a view either. The wide view stays in place, `CREATE … IF NOT EXISTS` no-ops over it, and aggregation continues correctly into columns the running version does not read.
 
-The rows are real traffic and are indistinguishable from pre-append rows afterwards, so rolling forward again does not repair them: `WHERE samplingInterval > 0` hides them, and without it they contribute `bytes × 0`.
-
-Before downgrading a manage-mode collector, drop the views so the older version recreates them at its own shape:
-
-```sql
-DROP VIEW IF EXISTS riptide.flows_by_application_1m_mv;
-DROP VIEW IF EXISTS riptide.flows_by_conversation_1m_mv;
-DROP VIEW IF EXISTS riptide.flows_by_exporter_iface_1m_mv;
-DROP VIEW IF EXISTS riptide.flows_by_geo_asn_1m_mv;
-```
-
-The rollup targets and their history are untouched; the older version recreates each view on its next start. Provisioned deployments are unaffected — the older `onboard` re-points only the views in its repair plan, which is empty here.
+**Do not drop the views to "help" a downgrade.** An earlier revision of this page advised exactly that, and it inverts the risk: with the views gone, a version that declines to build one for a rollup it considers drifted stops feeding that rollup entirely, and a version old enough to create its own narrow view would point it at the still-wide target — writing the reserved value into a sorting-key column for the rollup's full 365-day retention. That is the corruption, and leaving the views in place is what prevents it.
 :::
 
 

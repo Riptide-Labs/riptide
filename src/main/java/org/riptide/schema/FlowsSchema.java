@@ -14,6 +14,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -654,6 +655,47 @@ public final class FlowsSchema {
     private static final Dimension SAMPLING_INTERVAL = Dimension.of("samplingInterval", "Float64");
 
     /**
+     * The protocol a flow arrived over, carried so sampling-corrected volume is answerable on a
+     * deployment that receives sFlow (#583).
+     *
+     * <p>sFlow scales its counters at ingest and still reports its rate, so multiplying an sFlow row
+     * by {@link #SAMPLING_INTERVAL} double-counts it while multiplying a NetFlow or IPFIX row is what
+     * corrects it. Nothing but the protocol separates the two cases, so a rollup without this column
+     * cannot express the correction at all — it can only produce a total that is wrong one way or the
+     * other. The corrected expression is
+     * {@code sum(bytes * if(flowProtocol = 'SFLOW', 1, samplingInterval))}, and it works only because
+     * both factors are sort-key dimensions: each group then carries its own protocol and its own
+     * rate, and the multiply applies each group's factor to its own total.</p>
+     *
+     * <p><b>Deliberately not the raw table's {@code Enum8}.</b> Verified against ClickHouse 26.7: a
+     * row aggregated before an appended {@code Enum8('NetflowV5' = 1, …, 'SFLOW' = 4)} reads back as
+     * {@code NetflowV5} — a valid protocol, indistinguishable from a real one. {@code != 'SFLOW'}
+     * would then admit every pre-append row, and the sFlow traffic inside them would be inflated by
+     * exactly the defect this column exists to fix, silently and with nothing in the data marking it.
+     * {@code LowCardinality(String)} reserves {@code ''} instead, which {@code toString()} of a
+     * four-member enum can never produce — an invariant {@code FlowsSchemaTest} pins against the
+     * shipped {@code flows} DDL rather than leaving to this sentence. It is also how
+     * {@code exporterName}, {@code srcCountry} and {@code dstCountry} are already typed here.</p>
+     *
+     * <p><b>The boundary predicate this column needs is rollup-only.</b> The scaling expression ports
+     * to raw {@code flows} unchanged; {@code flowProtocol != ''} does not, and fails there with
+     * {@code UNKNOWN_ELEMENT_OF_ENUM} because the source column is an {@code Enum8} with no such
+     * member. Raw {@code flows} has no pre-append band to exclude — the column has existed since the
+     * table was created. Do not describe the whole query as portable.</p>
+     *
+     * <p>Row growth is exactly 1.0 where one protocol is received: a single distinct value cannot
+     * split a group. Modelled at a 1.001 median and 1.0014 combined across the four rollups on a
+     * synthetic mixed-protocol fleet (40 exporters, 3 of them sFlow, 4M records, ClickHouse 26.7),
+     * against the 1.0214 median measured for {@link #SAMPLING_INTERVAL}. That is a model, not a fleet
+     * capture, and the coarsest rollup ({@code flows_by_application_1m}) modelled at 1.5 on a base of
+     * ~11.5k rows. Treat the mixed-deployment figure as unmeasured.</p>
+     *
+     * <p>Appended after the rate, which is the only position {@code ALTER … MODIFY ORDER BY} permits.</p>
+     */
+    private static final Dimension FLOW_PROTOCOL =
+            new Dimension("flowProtocol", "LowCardinality(String)", "toString(f.flowProtocol)");
+
+    /**
      * Dimensions every rollup carries, ahead of its own. The tenant/organisation prefix mirrors the
      * raw table's sort key so the same row policies apply, and {@code timestamp} keeps the raw
      * table's column name so a time filter ports between raw and rollup unchanged — truncated to
@@ -697,14 +739,16 @@ public final class FlowsSchema {
                     List.of(
                             APPLICATION,
                             Dimension.of("protocol", "UInt8"),
-                            SAMPLING_INTERVAL)),
+                            SAMPLING_INTERVAL,
+                            FLOW_PROTOCOL)),
             new Rollup(ROLLUP_BY_CONVERSATION,
                     "tenant, organisation, timestamp, zone, srcAddr, dstAddr, application",
                     List.of(
                             Dimension.of("srcAddr", "IPv6"),
                             Dimension.of("dstAddr", "IPv6"),
                             APPLICATION,
-                            SAMPLING_INTERVAL)),
+                            SAMPLING_INTERVAL,
+                            FLOW_PROTOCOL)),
             new Rollup(ROLLUP_BY_EXPORTER_IFACE,
                     "tenant, organisation, timestamp, zone, exporterAddr, exporterName, inputSnmp, outputSnmp",
                     List.of(
@@ -712,7 +756,8 @@ public final class FlowsSchema {
                             Dimension.of("exporterName", "LowCardinality(String)"),
                             Dimension.of("inputSnmp", "UInt32"),
                             Dimension.of("outputSnmp", "UInt32"),
-                            SAMPLING_INTERVAL)),
+                            SAMPLING_INTERVAL,
+                            FLOW_PROTOCOL)),
             new Rollup(ROLLUP_BY_GEO_ASN,
                     "tenant, organisation, timestamp, zone, srcAs, dstAs, srcCountry, dstCountry",
                     List.of(
@@ -720,7 +765,8 @@ public final class FlowsSchema {
                             Dimension.of("dstAs", "UInt64"),
                             Dimension.of("srcCountry", "LowCardinality(String)"),
                             Dimension.of("dstCountry", "LowCardinality(String)"),
-                            SAMPLING_INTERVAL)));
+                            SAMPLING_INTERVAL,
+                            FLOW_PROTOCOL)));
 
     /**
      * One rollup: its target table name, the dimensions it adds to {@link #PREAMBLE}, and its
@@ -767,22 +813,105 @@ public final class FlowsSchema {
          * which is asserted at build time rather than left to a reviewer noticing.</p>
          */
         String absent() {
-            // Verified against 26.7 rather than assumed: a String-ish column defaults to '', an
-            // IPv6 to '::', a DateTime to the epoch, and a numeric to 0. Collapsing the last three
-            // into "0" would publish a reserved value that is not the boundary, and the guard fed
-            // by this method would then wave through an expression that genuinely destroys it —
-            // srcAddr and dstAddr are IPv6 dimensions today.
-            if (type.contains("String")) {
-                return "''";
+            try {
+                return reservedValueFor(type);
+            } catch (final IllegalArgumentException cause) {
+                // reservedValueFor is a function of the type alone, so its message can only name the
+                // type. The rule it enforces is about a *dimension*, and a maintainer reading a build
+                // failure needs the column to know where to look.
+                throw new IllegalArgumentException("rollup dimension " + column + ": " + cause.getMessage(), cause);
             }
-            if (type.contains("IPv6") || type.contains("IPv4")) {
-                return "'::'";
-            }
-            if (type.contains("DateTime") || type.contains("Date")) {
-                return "'1970-01-01 00:00:00'";
-            }
-            return "0";
         }
+    }
+
+    /**
+     * One {@code 'name' = number} pair of an enum declaration.
+     *
+     * <p>Both escape forms are accepted inside a member name. ClickHouse takes {@code ''} on input
+     * but renders {@code \'} in {@code SHOW CREATE TABLE} — verified on 26.7, where
+     * {@code Enum8('it''s' = 1)} comes back as {@code Enum8('it\'s' = 1)}. Since the rendered form is
+     * what a maintainer copies when adding a dimension, understanding only {@code ''} would end a
+     * name early: {@code Enum8('\'' = 5)} would parse as the empty name and be waved through as a
+     * sentinel it is not.</p>
+     */
+    private static final Pattern ENUM_MEMBER =
+            Pattern.compile("('(?:[^'\\\\]|''|\\\\.)*')\\s*=\\s*(-?\\d+)");
+
+    /**
+     * The value a column of this type holds for a row aggregated before it existed, quoted as SQL.
+     *
+     * <p>Verified against 26.7 rather than assumed: a String-ish column defaults to {@code ''}, an
+     * IPv6 to {@code '::'}, a DateTime to the epoch, and a numeric to {@code 0}. Collapsing the last
+     * three into {@code 0} would publish a reserved value that is not the boundary, and the guard fed
+     * by this method would then wave through an expression that genuinely destroys it — {@code
+     * srcAddr} and {@code dstAddr} are IPv6 dimensions today.</p>
+     *
+     * <p>An enum is the case that cannot be answered from the type family alone, and it is the one
+     * that fails silently. ClickHouse stores the <strong>smallest-numbered member</strong>, which for
+     * the raw table's {@code flowProtocol} is {@code 'NetflowV5'} — a real protocol, indistinguishable
+     * from a genuine reading. Reporting {@code 0} for it, as the numeric branch below would, is worse
+     * still: {@code 0} is not a value that column can hold at all, so the guard would compare every
+     * expression against a value none of them could ever emit and pass all of them.</p>
+     *
+     * <p>Every member an enum declares is by construction a legitimate value, so an enum has a usable
+     * boundary only if it declares a dedicated sentinel as its smallest member. This refuses any that
+     * does not, which fails the build through every caller of {@link #appendableDimensions()} rather
+     * than needing a guard of its own.</p>
+     *
+     * @throws IllegalArgumentException if the type is an enum whose reserved value is a real one
+     */
+    static String reservedValueFor(final String type) {
+        // Wrappers first, and by prefix rather than by substring. A wrapper decides the reserved
+        // value on its own — verified on 26.7, an appended Nullable(Enum8(…)) or Nullable(String)
+        // reads NULL and an Array(…) reads [] — so falling through to the inner type would publish a
+        // value the column can never hold, which is the exact failure this method exists to prevent.
+        if (type.startsWith("Nullable(")) {
+            return "NULL";
+        }
+        if (type.startsWith("Array(")) {
+            return "[]";
+        }
+        if (type.contains("Enum")) {
+            // The smallest member, not the first declared and not the zero member: on 26.7,
+            // Enum8('B' = 2, 'A' = 1) reads back 'A' and Enum8('N' = -1, '' = 0, 'P' = 1) reads back
+            // 'N'. Either of the other two rules fits flowProtocol, where NetflowV5 = 1 is first and
+            // smallest at once, so neither would have been caught by reading this schema alone.
+            final Matcher member = ENUM_MEMBER.matcher(type);
+            String smallestName = null;
+            long smallest = Long.MAX_VALUE;
+            while (member.find()) {
+                final long value = Long.parseLong(member.group(2));
+                if (value < smallest) {
+                    smallest = value;
+                    smallestName = member.group(1);
+                }
+            }
+            if (smallestName == null) {
+                throw new IllegalArgumentException("enum type declares no members: " + type);
+            }
+            if (!"''".equals(smallestName)) {
+                throw new IllegalArgumentException(
+                        "enum dimension type " + type + " reserves " + smallestName + " for rows"
+                                + " aggregated before it existed, which is a value the column can"
+                                + " legitimately hold, so the append would have no boundary — carry"
+                                + " the column as LowCardinality(String), or give this ROLLUP column"
+                                + " (never the source column on flows) an '' member below "
+                                + smallest + ". Adding '' to the source enum instead would make the"
+                                + " dimension's own expression emit the reserved value for live"
+                                + " rows, which destroys the boundary rather than creating one");
+            }
+            return smallestName;
+        }
+        if (type.contains("String")) {
+            return "''";
+        }
+        if (type.contains("IPv6") || type.contains("IPv4")) {
+            return "'::'";
+        }
+        if (type.contains("DateTime") || type.contains("Date")) {
+            return "'1970-01-01 00:00:00'";
+        }
+        return "0";
     }
 
     /**
