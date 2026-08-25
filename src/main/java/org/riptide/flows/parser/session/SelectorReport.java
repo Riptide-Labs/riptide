@@ -68,6 +68,20 @@ public final class SelectorReport {
         };
     }
 
+    /**
+     * Whether this algorithm <em>samples</em> — selects a representative subset — rather than
+     * <em>filters</em>, which discards by a property of the traffic.
+     *
+     * <p>The distinction matters only where several selection processes share one key. A sampling
+     * ratio and a filtering ratio compose multiplicatively, so an exporter that does both has a true
+     * multiplier of neither one alone. Per Selector that is expressible, because each Selector owns
+     * its own entry. Exporter-wide it is not, and storing a filter's ratio there would silently
+     * replace a sampler's.</p>
+     */
+    public static boolean samples(final int algorithm) {
+        return algorithm >= 1 && algorithm <= 4;
+    }
+
     /** Systematic count-based (1) and time-based (2) selection: {@code (interval + spacing) / interval}. */
     private static Double systematic(final Double interval, final Double spacing) {
         if (interval == null || spacing == null || interval <= 0.0) {

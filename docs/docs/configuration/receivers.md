@@ -84,6 +84,13 @@ Until the first table arrives, flows from that exporter are recorded as unsample
 
 **IPFIX** gets the same correlation, from the sampler options records its exporters advertise. Juniper inline-jflow states `samplingInterval` and `samplingAlgorithm` scoped to the observation domain, and riptide reads both.
 
+An advertisement is recognised by the elements it carries, not by the scope it arrives under.
+Exporters disagree about that scope — Juniper uses the observation domain, pmacct the exporting process, softflowd the metering process, and RFC 5476 reserves `selectorId` for a Selector Report — and all are read.
+An exporter that states the RFC 5477 selector parameters (`selectorAlgorithm` with its interval and spacing) rather than an interval outright has its rate computed from them, recorded with provenance `derived`.
+
+Only a record scoped by `selectorId` is kept per Selector; everything else applies to the exporter as a whole.
+A device running several metering processes at different rates therefore keeps only the most recently advertised, the same caveat as the note below.
+
 :::note[One exporter, one rate]
 A rate learned this way is remembered per exporter address and observation domain, so an exporter running two samplers at different rates keeps only the most recently advertised of them. Riptide does not key the rate by sampler id, because many exporters omit that id from their flow records and there would be nothing to match it against. If you run more than one sampler on one observation domain, the rates need to agree.
 
