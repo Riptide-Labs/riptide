@@ -7,17 +7,21 @@ package org.riptide.inventory;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.riptide.node.LegacyNodesFlagDayCheck;
 import org.riptide.pipeline.ExporterIdentity;
 import org.riptide.secrets.SecretRefConverter;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.env.StandardEnvironment;
+import org.springframework.core.env.SystemEnvironmentPropertySource;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -26,13 +30,98 @@ class InventoryWiringTest {
     @TempDir
     Path tempDir;
 
+    // The flag-day check reads the environment's property sources, so importing it into
+    // WiringConfiguration would otherwise let the real JVM environment decide these tests.
+    // Anyone with RIPTIDE_NODES_* exported — which is exactly a developer testing the 0.8
+    // migration this check exists for — would see unrelated failures across the class. Pinned
+    // empty here; the cases that need the env form replace it themselves.
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
+            .withInitializer(context -> context.getEnvironment().getPropertySources().replace(
+                    StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME,
+                    new SystemEnvironmentPropertySource(
+                            StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME, Map.of())))
             .withUserConfiguration(WiringConfiguration.class);
 
     @Configuration
     @EnableConfigurationProperties({SnmpProfilesConfig.class, InventoryConfig.class})
-    @Import({Inventory.class, InventoryMisplacementCheck.class, PollKeyMigrationCheck.class, SecretRefConverter.class})
+    @Import({Inventory.class, InventoryMisplacementCheck.class, PollKeyMigrationCheck.class,
+            LegacyNodesFlagDayCheck.class, SecretRefConverter.class})
     static class WiringConfiguration {
+    }
+
+    /**
+     * The flag day fires from a real context, not just from its own static entry point.
+     *
+     * <p>Every case in {@code LegacyNodesFlagDayCheckTest} calls the static overload directly, so
+     * the whole suite stayed green with the {@code @PostConstruct} body gutted: 1460 tests, zero
+     * failures, and a 0.8 container booting clean with its device configuration doing nothing. The
+     * two sibling checks were already imported here and asserted through {@code hasFailed()}; this
+     * one was not, which is the only reason the gap existed.</p>
+     */
+    @Test
+    void aLegacyNodesTreeFailsStartupThroughTheRealContext() {
+        this.runner
+                .withPropertyValues("riptide.nodes.core-router.subnet-address=10.0.0.1")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure()).rootCause()
+                            .hasMessageContaining("riptide.nodes")
+                            .hasMessageContaining("riptide convert");
+                });
+    }
+
+    /**
+     * The environment form fails startup too — the case the check exists for.
+     *
+     * <p>A container configured entirely through the environment is the deployment most likely to
+     * still carry a legacy tree, so this is driven through a real
+     * {@link SystemEnvironmentPropertySource} rather than through inlined properties: that source
+     * is what supplies the {@code RIPTIDE_NODES_*} spelling the normaliser has to fold.</p>
+     */
+    @Test
+    void theEnvironmentFormFailsStartupThroughTheRealContext() {
+        this.runner
+                .withInitializer(context -> context.getEnvironment().getPropertySources().replace(
+                        StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME,
+                        new SystemEnvironmentPropertySource(
+                                StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME,
+                                Map.of("RIPTIDE_NODES_CORE_ROUTER_SUBNET_ADDRESS", "10.0.0.1"))))
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure()).rootCause()
+                            .hasMessageContaining("riptide convert");
+                });
+    }
+
+    /**
+     * A Service named {@code riptide-nodes-*} must not take the context down.
+     *
+     * <p>Kubernetes injects {@code {SVCNAME}_PORT} for every Service, so this is the shape that
+     * crash-looped every pod in a namespace. Asserted here rather than only against the static
+     * entry point, because a context that fails to start is the actual consequence.</p>
+     */
+    @Test
+    void aServiceLinkDoesNotTakeTheContextDown() {
+        this.runner
+                .withInitializer(context -> context.getEnvironment().getPropertySources().replace(
+                        StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME,
+                        new SystemEnvironmentPropertySource(
+                                StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME,
+                                Map.of("RIPTIDE_NODES_HEADLESS_PORT", "tcp://10.0.0.1:6343",
+                                        "RIPTIDE_NODES_HEADLESS_SERVICE_HOST", "10.0.0.1"))))
+                .run(context -> assertThat(context).hasNotFailed());
+    }
+
+    /** The 0.9 surfaces are not caught by the prefix — a sloppy match on "nodes" would be. */
+    @Test
+    void theCurrentInventorySurfacesAreNotMistakenForTheLegacyTree() {
+        this.runner
+                .withPropertyValues(
+                        "riptide.snmp.credentials.corp-v3.version=v3",
+                        "riptide.snmp.credentials.corp-v3.security-name=riptide",
+                        "riptide.snmp.credentials.corp-v3.auth-protocol=sha1",
+                        "riptide.snmp.credentials.corp-v3.auth-passphrase=0123456789abcdef")
+                .run(context -> assertThat(context).hasNotFailed());
     }
 
     @Test
