@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.0</version>
+        <version>4.1.1</version>
         <relativePath/>
     </parent>
 
@@ -21,7 +21,7 @@
         <caffeine.version>3.2.4</caffeine.version>
         <common-csv.version>1.14.1</common-csv.version>
         <dnsjava.version>3.6.5</dnsjava.version>
-        <guava.version>33.6.0-jre</guava.version>
+        <guava.version>33.7.1-jre</guava.version>
         <ipaddress.version>5.6.2</ipaddress.version>
         <!-- Overrides Spring Boot's managed jackson-2-bom.version (2.21.4), which governs every
              Jackson 2 module. 2.22.1 patches GHSA-5jmj-h7xm-6q6v (Scorecard/osv-scanner finding).
@@ -59,11 +59,11 @@
         <resilience4j.version>2.4.0</resilience4j.version>
         <snmp4j.version>3.13.1</snmp4j.version>
         <error-prone.version>2.50.0</error-prone.version>
-        <spotbugs-maven-plugin.version>4.10.3.0</spotbugs-maven-plugin.version>
+        <spotbugs-maven-plugin.version>4.10.4.0</spotbugs-maven-plugin.version>
         <snmp4j-agent.version>3.10.1</snmp4j-agent.version>
         <spring-vault.version>4.1.0</spring-vault.version>
         <dropwizard-metrics.version>4.2.39</dropwizard-metrics.version>
-        <clickhouse.version>0.9.8</clickhouse.version>
+        <clickhouse.version>0.10.0</clickhouse.version>
         <jmh.version>1.37</jmh.version>
         <jacoco-maven-plugin.version>0.8.15</jacoco-maven-plugin.version>
         <testcontainers.version>2.0.5</testcontainers.version>
