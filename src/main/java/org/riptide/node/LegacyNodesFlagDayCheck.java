@@ -14,6 +14,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Optional;
 import java.util.Objects;
+import java.util.regex.Pattern;
 
 /**
  * Fails startup on any surviving {@code riptide.nodes} configuration.
@@ -71,6 +72,24 @@ public class LegacyNodesFlagDayCheck {
     }
 
     /**
+     * The fields a legacy node could actually carry, as environment-variable tails.
+     *
+     * <p>This is the disambiguator, and it is what the two previous attempts lacked. A name like
+     * {@code RIPTIDE_NODES_EDGE_SERVICE_PORT_SUBNET_ADDRESS} is a service link for a Service named
+     * {@code riptide-nodes-edge} with a port named {@code subnet-address}, <em>or</em> a node named
+     * {@code edge-service-port} carrying a subnet address. Shape alone cannot tell them apart, so
+     * both earlier versions guessed — and guessing toward "platform shape" is the silent direction,
+     * which loses the operator's whole configuration with no signal.</p>
+     *
+     * <p>The legacy schema is bounded, so it can be matched positively instead of guessed at: a key
+     * ending in a real node field is configuration, whatever platform shape it also resembles. That
+     * keeps named-port service links exempt, which is why the exemption list below is unchanged
+     * apart from the {@code _PORT} form it was missing.</p>
+     */
+    private static final Pattern LEGACY_FIELD_TAIL = Pattern.compile(
+            ".*_(SUBNET_ADDRESS|OBSERVATION_DOMAIN|SNMP(_[A-Z0-9_]+)?|INTERFACES(_[A-Z0-9_]+)?)$");
+
+    /**
      * Container service links: environment variables the platform injects, which the operator
      * never wrote. A Kubernetes Service named {@code riptide-nodes} (or {@code riptide-nodes-
      * anything}) produces {@code ..._SERVICE_HOST} and friends; failing startup on those takes
@@ -81,18 +100,33 @@ public class LegacyNodesFlagDayCheck {
      * alternatives, which failed in both directions: a legacy node named {@code port-mirror}
      * produced {@code RIPTIDE_NODES_PORT_MIRROR_SUBNET_ADDRESS}, matched the {@code PORT}
      * alternative, and was waved through silently — while a Service named
-     * {@code riptide-nodes-headless} was not exempted and crash-looped. The suffixes below are
-     * exactly the shapes the platforms generate, and no legacy node key can end in them,
-     * because node properties always continue with a field name. Docker legacy-link
+     * {@code riptide-nodes-headless} was not exempted and crash-looped.
+     *
+     * <p><b>That second attempt was wrong in the same two directions</b>, which is why the
+     * disambiguation now runs off {@link #LEGACY_FIELD_TAIL} rather off suffix shapes alone. It
+     * claimed "no legacy node key can end in them, because node properties always continue with a
+     * field name" — but {@code (_\w+)?} spans {@code _}, so the continuing field name was exactly
+     * what the exemption absorbed; and it exempted only the bare {@code RIPTIDE_NODES_PORT} while
+     * Kubernetes injects {@code {SVCNAME}_PORT} for every Service. Do not reduce this to suffix
+     * matching again: the two readings of {@code RIPTIDE_NODES_EDGE_SERVICE_PORT_SUBNET_ADDRESS}
+     * are genuinely indistinguishable by shape. Docker legacy-link
      * {@code _ENV_*} variables are deliberately not exempted: they are indistinguishable from
      * a node named {@code env-…}, and failing loudly on museum-grade Docker links beats
      * missing real configuration.</p>
      */
     private static boolean isServiceLink(final String name) {
+        if (LEGACY_FIELD_TAIL.matcher(name).matches()) {
+            // a real node field beats every platform shape: loud beats silent, which is the same
+            // call already made for Docker legacy-link _ENV_* variables
+            return false;
+        }
         return name.endsWith("_SERVICE_HOST")
                 || name.matches(".*_SERVICE_PORT(_\\w+)?")
                 || name.matches(".*_PORT_\\d+_(TCP|UDP)(_\\w+)?")
-                || name.equals("RIPTIDE_NODES_PORT")
+                // Kubernetes injects {SVCNAME}_PORT for EVERY Service, not just the unsuffixed
+                // name, so a Service called riptide-nodes-headless yields RIPTIDE_NODES_HEADLESS_PORT
+                // and the equality test above it crash-looped every pod in the namespace
+                || name.matches("RIPTIDE_NODES(_[A-Z0-9]+)*_PORT")
                 || name.equals("RIPTIDE_NODES_NAME");
     }
 

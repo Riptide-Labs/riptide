@@ -156,7 +156,13 @@ class LegacyNodesFlagDayCheckTest {
                 // a Service named riptide-nodes-headless: the platform generates these too,
                 // and the first exemption crash-looped on them
                 "RIPTIDE_NODES_HEADLESS_SERVICE_HOST",
-                "RIPTIDE_NODES_METRICS_SERVICE_PORT")) {
+                "RIPTIDE_NODES_METRICS_SERVICE_PORT",
+                // {SVCNAME}_PORT is injected for EVERY Service, not just the unsuffixed name.
+                // The previous exemption tested equality against RIPTIDE_NODES_PORT alone, so
+                // any suffixed Service crash-looped every pod in the namespace
+                "RIPTIDE_NODES_HEADLESS_PORT",
+                "RIPTIDE_NODES_METRICS_PORT",
+                "RIPTIDE_NODES_PORT_8080_UDP_ADDR")) {
             assertThatCode(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
                     sources("env", Map.of(link, "10.0.0.1"))))
                     .as("must not reject the service link %s", link)
@@ -169,7 +175,16 @@ class LegacyNodesFlagDayCheckTest {
                 "RIPTIDE_NODES_CORE_SUBNET_ADDRESS",
                 "RIPTIDE_NODES_PORT_MIRROR_SUBNET_ADDRESS",
                 "RIPTIDE_NODES_NAME_SERVER_SUBNET_ADDRESS",
-                "RIPTIDE_NODES_ENV_A_SUBNET_ADDRESS")) {
+                "RIPTIDE_NODES_ENV_A_SUBNET_ADDRESS",
+                // node names that end in a platform suffix, with a real field after them. The
+                // previous exemption's (_\w+)? tail spanned '_', so it absorbed the field name
+                // and waved these through silently — the same defect as port-mirror above, in
+                // the alternative that was added to fix port-mirror
+                "RIPTIDE_NODES_EDGE_SERVICE_PORT_SUBNET_ADDRESS",
+                "RIPTIDE_NODES_MGMT_SERVICE_PORT_SNMP_COMMUNITY",
+                "RIPTIDE_NODES_SVC_SERVICE_PORT_INTERFACES_1_NAME",
+                "RIPTIDE_NODES_PORT_1_TCP_SUBNET_ADDRESS",
+                "RIPTIDE_NODES_A_SERVICE_HOST_OBSERVATION_DOMAIN")) {
             assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
                     sources("env", Map.of(legacy, "10.0.0.1"))))
                     .as("must catch the legacy node behind %s", legacy)
