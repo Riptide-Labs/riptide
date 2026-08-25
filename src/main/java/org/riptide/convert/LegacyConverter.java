@@ -77,6 +77,10 @@ public final class LegacyConverter {
         // after a zone-strip or netmask rewrite must name what the operator can grep
         // for — the summary line explaining the rewrite is discarded by the throw
         final Map<String, String> rangeSpellings = new LinkedHashMap<>();
+        // every polled range, and the domain-pinned subset of it. Nesting cannot be decided inside
+        // the loop: it is a question about the whole set, and the covering range may sort later
+        final Map<String, IPAddress> polledRanges = new LinkedHashMap<>();
+        final Map<String, LegacyNode> pinnedPolled = new LinkedHashMap<>();
 
         // sorted, not map order: the same input has to convert to byte-identical output, and
         // a diff between two runs of the same file would be unreviewable
@@ -125,6 +129,10 @@ public final class LegacyConverter {
                                             respelled(node.name(), raw.subnetAddress(), node.subnetAddress())));
                 }
                 rangeSpellings.put(canonical, raw.subnetAddress());
+                polledRanges.put(node.name(), address);
+                if (node.observationDomain() != null) {
+                    pinnedPolled.put(node.name(), node);
+                }
                 ranges++;
                 final boolean carveOut = node.snmp().cleartext() && address.isMultiple();
                 // registered even for a carve-out. The set is unreferenced and harmless, and
@@ -142,6 +150,8 @@ public final class LegacyConverter {
             }
             exporters.append(exporterEntry(node));
         }
+
+        reportPinnedNodesInsideAnotherRange(pinnedPolled, polledRanges, summary);
 
         summary.addFirst(("Converted %d node(s): %d credential set(s), %d polling profile(s), "
                 + "%d agent range(s), %d enrichment entry/entries.")
@@ -269,6 +279,53 @@ public final class LegacyConverter {
                     ("Node '%s' has subnet-address '%s', which 0.9 does not accept: it %s "
                             + "Fix it in the legacy file and convert again.")
                             .formatted(node.name(), node.subnetAddress(), e.getMessage()));
+        }
+    }
+
+    /**
+     * Reports every domain-pinned polled node that sits inside another polled range (#615).
+     *
+     * <p>The conversion is correct and is not refused: 0.9 resolves the pair by longest prefix, the
+     * same rule the exporter tree uses. But it resolves it <em>differently from 0.8</em>, and the
+     * operator is owed that at the one moment they are looking at both configurations.</p>
+     *
+     * <p>What 0.8 actually did is worth stating precisely, because it reads as a lost capability and
+     * is not one. The poller held one registration per address — {@code Map<InetSocketAddress,
+     * Registration>}, unchanged since 0.8 — and its {@code register()} returned the existing
+     * registration on collision, discarding the newly resolved endpoint. So a device covered by both
+     * a pinned node and a wider one was polled with whichever credentials the first flow after boot
+     * happened to select, re-decided on every restart. 0.9 replaced a race with a rule.</p>
+     *
+     * <p>Only the nested case is reported. A pinned node no other polled range covers never had a
+     * second candidate, so nothing about it changed, and reporting those would bury this line under
+     * noise on the common configuration.</p>
+     *
+     * <p>Containment is {@code IPAddress.contains}, which is the primitive {@code PinnedPrefixMatcher}
+     * itself uses. The matcher is deliberately <em>not</em> consulted here: it answers "which range
+     * wins for this address", and for an address inside the pinned node that is the pinned node —
+     * the question this needs is "which other range also covers it", which the matcher cannot ask.</p>
+     */
+    private static void reportPinnedNodesInsideAnotherRange(final Map<String, LegacyNode> pinnedPolled,
+                                                            final Map<String, IPAddress> polledRanges,
+                                                            final List<String> summary) {
+        for (final Map.Entry<String, LegacyNode> pinned : pinnedPolled.entrySet()) {
+            final IPAddress inner = polledRanges.get(pinned.getKey());
+            for (final Map.Entry<String, IPAddress> outer : polledRanges.entrySet()) {
+                if (outer.getKey().equals(pinned.getKey()) || !outer.getValue().contains(inner)) {
+                    continue;
+                }
+                summary.add(("Node '%s' (%s) pins observation-domain %d and sits inside polled range "
+                        + "'%s' (%s). In 0.8 a flow from these addresses on another domain fell "
+                        + "through to '%s', so which credentials polled the device depended on which "
+                        + "flow arrived first after start-up. In 0.9 the most specific range wins: "
+                        + "they are always polled with '%s' credentials. Naming is unchanged — the "
+                        + "pin still decides exporterName and interface pins.")
+                        .formatted(pinned.getKey(), pinned.getValue().subnetAddress(),
+                                pinned.getValue().observationDomain(),
+                                outer.getKey(), outer.getValue().toCanonicalString(),
+                                outer.getKey(), pinned.getKey()));
+                break;
+            }
         }
     }
 
