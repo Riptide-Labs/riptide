@@ -519,6 +519,63 @@ class FlowsSchemaTest {
                 .isEqualTo("'1970-01-01 00:00:00'");
         assertThat(byExpression.get("f.protocol")).isEqualTo("0");
         assertThat(byExpression.get("f.tenant")).isEqualTo("''");
+        assertThat(byExpression.get("toString(f.flowProtocol)"))
+                .as("the protocol is carried as a string precisely so it reserves '' rather than a"
+                        + " real protocol name")
+                .isEqualTo("''");
+    }
+
+    /**
+     * An enum reserves its <strong>smallest-numbered</strong> member, and nothing weaker will do.
+     *
+     * <p>Driven through {@link FlowsSchema#reservedValueFor} with literal type strings rather than
+     * over the live dimensions, because no dimension is an enum today: a test walking {@code ROLLUPS}
+     * would assert over an empty set and pass no matter what the rule became. The riptide enum cannot
+     * distinguish the candidate rules either — {@code NetflowV5 = 1} is the first declared, the
+     * smallest, and the only one adjacent to zero all at once — so the cases below are built to
+     * separate them, and each was checked against a real 26.7 server before being pinned here.</p>
+     */
+    @Test
+    void anEnumReservesItsSmallestMemberNotItsFirstAndNotItsZero() {
+        assertThat(FlowsSchema.reservedValueFor("Enum8('' = 0, 'X' = 5)"))
+                .as("the sentinel is the smallest, so this enum has a boundary")
+                .isEqualTo("''");
+
+        // "reserves 'A'", not "'A'". The message echoes the whole type, so every member name appears
+        // in it whatever the rule picked: asserting the bare name passes for any of them. A mutation
+        // taking the first-declared member instead of the smallest survived that weaker assertion.
+        assertThatThrownBy(() -> FlowsSchema.reservedValueFor("Enum8('B' = 2, 'A' = 1)"))
+                .as("'B' is declared first but 'A' is smaller, so first-declared is not the rule")
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("reserves 'A'");
+
+        assertThatThrownBy(() -> FlowsSchema.reservedValueFor("Enum8('N' = -1, '' = 0, 'P' = 1)"))
+                .as("a zero member exists and is still not what the server stores, so"
+                        + " zero-if-present is not the rule either")
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("reserves 'N'");
+    }
+
+    /**
+     * The raw table's own {@code flowProtocol} enum is refused as a rollup dimension type.
+     *
+     * <p>This is the mutation the change exists to prevent. Typed as {@code Enum8('NetflowV5' = 1,
+     * …)}, every row aggregated before the append reads back as {@code NetflowV5}: a valid protocol,
+     * indistinguishable from a real one, which {@code != 'SFLOW'} then admits — re-inflating exactly
+     * the sFlow traffic the column was added to correct. Nothing in the data would mark it.</p>
+     */
+    @Test
+    void theRawProtocolEnumCannotBeUsedAsARollupDimensionType() {
+        final String rawType = FlowsSchema.createFlowsTable("riptide", 30)
+                .replaceAll("(?s).*flowProtocol (Enum8\\([^)]*\\)).*", "$1")
+                .replaceAll("\\s+", " ");
+
+        assertThat(rawType).as("read off the shipped flows table, not restated here").startsWith("Enum8(");
+
+        assertThatThrownBy(() -> FlowsSchema.reservedValueFor(rawType))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("reserves 'NetflowV5'")
+                .hasMessageContaining("no boundary");
     }
 
     /**
@@ -544,10 +601,10 @@ class FlowsSchemaTest {
         // Appending a dimension means adding it to the END of a list here. Inserting it anywhere
         // else fails, which is the whole point.
         final Map<String, List<String>> appendedAfterTheFreeze = Map.of(
-                "flows_by_application_1m", List.of("samplingInterval"),
-                "flows_by_conversation_1m", List.of("samplingInterval"),
-                "flows_by_exporter_iface_1m", List.of("samplingInterval"),
-                "flows_by_geo_asn_1m", List.of("samplingInterval"));
+                "flows_by_application_1m", List.of("samplingInterval", "flowProtocol"),
+                "flows_by_conversation_1m", List.of("samplingInterval", "flowProtocol"),
+                "flows_by_exporter_iface_1m", List.of("samplingInterval", "flowProtocol"),
+                "flows_by_geo_asn_1m", List.of("samplingInterval", "flowProtocol"));
 
         FlowsSchema.rollupSortKeys().forEach((rollup, key) -> {
             final String frozen = frozenPrimaryKeyOf(rollup);

@@ -248,8 +248,8 @@ riptide records the sampling rate; it does not scale NetFlow or IPFIX `bytes` an
 Stored counters are what the exporter reported, and the rate sits alongside them for a query to apply.
 
 Four things to know before writing that query.
-sFlow already scales at ingest (`bytes = frame_length × sampling_rate`) and still reports its rate, so multiplying sFlow rows again double-counts them: filter them out, or restrict the query to NetFlow and IPFIX.
-The 1-minute rollups carry the rate too, so `SUM(bytes * samplingInterval)` is the same query against either table — **unless you receive sFlow**, in which case the rollup form is unavailable rather than merely different, because no rollup carries `flowProtocol` to filter on. See below.
+sFlow already scales at ingest (`bytes = frame_length × sampling_rate`) and still reports its rate, so multiplying sFlow rows again double-counts them: scale each row by its own protocol's factor rather than by its rate alone.
+The 1-minute rollups carry the rate and the protocol, so the corrected expression is the same query against either table. See below.
 A rate of `1` is not always a statement that the exporter does not sample — check `samplingProvenance` before treating one as trustworthy, and see [Where a rate came from](#where-a-rate-came-from).
 And if you are coming from **nfdump or pmacct**, check whether counters were being scaled for you.
 Both can multiply NetFlow v5 `bytes` and `packets` by the sampling rate at ingest (in pmacct via `nfacctd_renormalize`, in nfdump depending on how sampling was detected or forced with `-s`), where riptide never does.
@@ -258,30 +258,50 @@ Counters stored here are always as the exporter reported them, so a query ported
 
 ### Sampling-corrected volume beyond raw retention
 
-The 1-minute rollups carry `samplingInterval` as a dimension, so the correction is the same expression against either table:
+The 1-minute rollups carry `samplingInterval` and `flowProtocol` as dimensions, so the correction is the same expression against either table:
 
-:::note[Requires the rollups to carry the rate]
-A deployment whose collector runs in validate mode (`manage-schema: false`, which is the multi-tenant default) gains it only when an admin re-runs `riptide onboard` — until then the query below fails with `UNKNOWN_IDENTIFIER: samplingInterval`, and riptide answers long-range queries from raw `flows` instead of the rollups. See [ClickHouse: upgrading an existing deployment](./clickhouse.md#rollups).
+:::note[Requires the rollups to carry the rate and the protocol]
+A deployment whose collector runs in validate mode (`manage-schema: false`, which is the multi-tenant default) gains them only when an admin re-runs `riptide onboard` — until then the query below fails with `UNKNOWN_IDENTIFIER`, and riptide answers long-range queries from raw `flows` instead of the rollups. See [ClickHouse: upgrading an existing deployment](./clickhouse.md#rollups).
 :::
 
 ```sql
 -- the same expression that works against raw flows
-SELECT sum(bytes * samplingInterval) AS corrected_bytes
+SELECT sum(bytes * if(flowProtocol = 'SFLOW', 1, samplingInterval)) AS corrected_bytes
 FROM riptide.flows_by_conversation_1m
 WHERE timestamp >= now() - INTERVAL 90 DAY
-  AND samplingInterval > 0;          -- excludes rows aggregated before the rate was carried
+  AND samplingInterval > 0     -- excludes rows aggregated before the rate was carried
+  AND flowProtocol != '';      -- excludes rows aggregated before the protocol was carried
 ```
 
-The `samplingInterval > 0` clause matters over exactly this kind of window. A 90-day range necessarily spans the upgrade that added the rate, and rows aggregated before it read `0`, so without the predicate every one of them contributes `bytes × 0` and the total comes back quietly too small.
+Each row is scaled by its own protocol's factor: sFlow counters arrive pre-scaled, so their factor is `1`, and everything else is scaled by its rate.
 
 That matters because raw `flows` is kept 30 days by default and the rollups 365. Before the rate was carried, sampling-corrected volume was simply unanswerable beyond the raw table's retention.
 
-:::danger[Only correct if you receive no sFlow]
-sFlow already scales its counters at ingest (`bytes = frame_length × sampling_rate`) and still reports its rate, so multiplying an sFlow row by its interval double-counts it. Against raw `flows` you exclude those rows with `WHERE flowProtocol != 'SFLOW'`.
+:::warning[Two boundary predicates, not one]
+The two clauses are not redundant, and dropping either one is a different kind of wrong.
 
-**You cannot write that filter against a rollup.** No rollup carries `flowProtocol` — it is not in the shared preamble and no rollup adds it — so on a deployment receiving both sFlow and NetFlow/IPFIX, the rollup form of this query inflates every sFlow byte by its sampling rate and there is no way to exclude them.
+Without `samplingInterval > 0`, rows aggregated before the rate was carried contribute `bytes × 0` and the total comes back quietly too small. A 90-day range necessarily spans that upgrade.
 
-If you receive sFlow alongside other protocols, do the correction against raw `flows` within its retention, and treat the rollup form as unavailable. Tracked in [#583](https://github.com/Riptide-Labs/riptide/issues/583).
+Without `flowProtocol != ''`, rows aggregated after the rate was carried but before the protocol was read `''` — and `''` is not `'SFLOW'`, so the `if()` scales them by their rate. Any sFlow inside that band is inflated, which is exactly the defect the protocol column was added to fix.
+
+There are two predicates because there were two upgrades: the rate shipped in v0.11.0 and the protocol after it. Rows aggregated in between know their rate and not their protocol. Check how much of your data is in that band with:
+
+```sql
+SELECT countIf(samplingInterval = 0) AS before_rate,
+       countIf(samplingInterval > 0 AND flowProtocol = '') AS rate_only,
+       countIf(flowProtocol != '') AS both
+FROM riptide.flows_by_conversation_1m;
+```
+:::
+
+:::tip[Two different questions]
+`sum(bytes * if(flowProtocol = 'SFLOW', 1, samplingInterval))` is total corrected volume: every byte received, each scaled correctly.
+
+`sum(bytes * samplingInterval) … WHERE flowProtocol != 'SFLOW'` is something narrower — corrected volume of the NetFlow/IPFIX subset. It is short by every sFlow byte you receive, because it drops those rows rather than scaling them by `1`. That is a legitimate query when you want the subset. It is not "the corrected total", and earlier versions of this page presented it as though it were.
+:::
+
+:::caution[`!= 'SFLOW'` encodes riptide's behaviour, not a law of the protocol]
+sFlow is currently the only protocol whose counters riptide pre-scales. If that ever changes, a saved query or dashboard testing for `'SFLOW'` by name keeps running and silently returns the wrong number. There is nothing riptide can do to warn you, so check this expression against these docs when you upgrade.
 :::
 
 The rate is a **dimension**, not a pre-scaled measure. A pre-scaled `bytesScaled` column would read `0` for every row aggregated before it existed, so a `SUM` spanning the upgrade would come back quietly too small with nothing marking where. Carrying the rate has no such failure, because `0` is not a rate anything can produce.
@@ -307,7 +327,7 @@ They carry no volume — the same unchecked rate scaled their counters, so they 
 In the rollups, `0` means only what the warning above says. Backfilling a rollup from raw with `INSERT INTO … SELECT` carries those rows across, where the two meanings become indistinguishable.
 :::
 
-The rate is carried for correctness, not offered as something to group by — asking riptide's tools to group by `samplingInterval` answers from raw `flows`, not from a rollup.
+The rate and the protocol are carried for correctness, not offered as something to group by — asking riptide's tools to group by `samplingInterval` or `flowProtocol` answers from raw `flows`, not from a rollup. Writing the SQL yourself against a rollup works and is not discouraged; it is riptide's own query routing that does not yet pick a rollup for those.
 
 ## Exporter identity
 

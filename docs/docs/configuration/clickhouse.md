@@ -106,12 +106,14 @@ reads a few thousand pre-aggregated rows instead of scanning every flow.
 
 | table | dimensions (beyond the shared preamble) |
 |---|---|
-| `flows_by_application_1m` | `application`, `protocol`, `samplingInterval` |
-| `flows_by_conversation_1m` | `srcAddr`, `dstAddr`, `application`, `samplingInterval` |
-| `flows_by_exporter_iface_1m` | `exporterAddr`, `exporterName`, `inputSnmp`, `outputSnmp`, `samplingInterval` |
-| `flows_by_geo_asn_1m` | `srcAs`, `dstAs`, `srcCountry`, `dstCountry`, `samplingInterval` |
+| `flows_by_application_1m` | `application`, `protocol`, `samplingInterval`, `flowProtocol` |
+| `flows_by_conversation_1m` | `srcAddr`, `dstAddr`, `application`, `samplingInterval`, `flowProtocol` |
+| `flows_by_exporter_iface_1m` | `exporterAddr`, `exporterName`, `inputSnmp`, `outputSnmp`, `samplingInterval`, `flowProtocol` |
+| `flows_by_geo_asn_1m` | `srcAs`, `dstAs`, `srcCountry`, `dstCountry`, `samplingInterval`, `flowProtocol` |
 
-`samplingInterval` is carried so sampling-corrected volume stays answerable beyond the raw table's retention, not as something to group by — see [Sampling-corrected volume](./receivers.md#sampling-corrected-volume-beyond-raw-retention). Rows aggregated before it was appended read `0`.
+`samplingInterval` and `flowProtocol` are carried together so sampling-corrected volume stays answerable beyond the raw table's retention — see [Sampling-corrected volume](./receivers.md#sampling-corrected-volume-beyond-raw-retention). Neither is offered as something to group by. Rows aggregated before each was appended read `0` and `''` respectively, and because the two were appended in different releases those boundaries do not coincide.
+
+`flowProtocol` is a `LowCardinality(String)` here, not the `Enum8` the raw `flows` table uses. An appended enum column reads back as its smallest-numbered member for every row that predates it, which for that enum is `NetflowV5` — a real protocol, indistinguishable from a genuine reading. A string reserves `''`, which no protocol name can collide with.
 
 Every rollup carries the same preamble — `tenant`, `organisation`, `timestamp`, `zone` — and the
 same measures: `bytes`, `packets`, `flowCount`, plus the directional split `bytesIn`/`bytesOut`
@@ -147,9 +149,9 @@ Manage-mode deployments repair themselves on the next start and need nothing.
 :::danger[Drop the rollup views before rolling back to an earlier version]
 Rolling forward is repaired automatically. Rolling **back** is not, and it corrupts the rollups silently.
 
-An older riptide does not know `samplingInterval`. In manage mode it refuses to shrink the sorting key — correctly — so the target keeps the column, but it then re-points each materialized view at its own narrower `SELECT`, which no longer names the rate. ClickHouse accepts that without complaint: `ALTER TABLE … MODIFY QUERY` does not validate against its target. Every row aggregated from then on takes `samplingInterval = 0` — the value reserved for rows written before the column existed — in a sorting-key column, for the rollup's full 365-day retention.
+An older riptide does not know `samplingInterval`, and one older still does not know `flowProtocol`. In manage mode it refuses to shrink the sorting key — correctly — so the target keeps the columns, but it then re-points each materialized view at its own narrower `SELECT`, which no longer names them. ClickHouse accepts that without complaint: `ALTER TABLE … MODIFY QUERY` does not validate against its target. Every row aggregated from then on takes the reserved value in a sorting-key column — `samplingInterval = 0`, `flowProtocol = ''` — for the rollup's full 365-day retention.
 
-The rows are real traffic and are indistinguishable from pre-append rows afterwards, so rolling forward again does not repair them: `WHERE samplingInterval > 0` hides them, and without it they contribute `bytes × 0`.
+The rows are real traffic and are indistinguishable from pre-append rows afterwards, so rolling forward again does not repair them: the boundary predicates hide them, and without those predicates they contribute `bytes × 0`, or get scaled as though they were not sFlow.
 
 Before downgrading a manage-mode collector, drop the views so the older version recreates them at its own shape:
 
