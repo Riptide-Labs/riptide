@@ -358,11 +358,18 @@ class SamplingIntervalResolutionTest {
      * to cover a huge rate ended up sending zero twice.</p>
      */
     private static Datagram sflowDatagram(final long samplingRate) throws Exception {
+        return sflowDatagram(samplingRate, FRAME_LENGTH);
+    }
+
+    private static Datagram sflowDatagram(final long samplingRate, final long frameLength) throws Exception {
         if (samplingRate < 0 || samplingRate > 0xFFFFFFFFL) {
             throw new IllegalArgumentException("not expressible as a uint32: " + samplingRate);
         }
+        if (frameLength < 0 || frameLength > 0xFFFFFFFFL) {
+            throw new IllegalArgumentException("not expressible as a uint32: " + frameLength);
+        }
         final var record = Unpooled.buffer()
-                .writeInt((int) FRAME_LENGTH)
+                .writeInt((int) frameLength)
                 .writeInt(6)                        // protocol: TCP
                 .writeBytes(InetAddress.getByName("192.0.2.10").getAddress())
                 .writeBytes(InetAddress.getByName("192.0.2.20").getAddress())
@@ -469,6 +476,89 @@ class SamplingIntervalResolutionTest {
         final long uint32Max = 0xFFFFFFFFL;
 
         final var flow = sflowDatagram(uint32Max).buildFlows(Instant.EPOCH).findFirst().orElseThrow();
+
+        assertResolved(flow, (double) uint32Max, SamplingProvenance.Record);
+    }
+
+    /**
+     * The two largest values the wire can carry, together, must not wrap.
+     *
+     * <p>{@code 4294967295 * 4294967295} is 1.8e19 and overflows a signed long to
+     * {@code -8589934591}. The {@code bytes} column is {@code UInt64}, so that negative reads back as
+     * the same 1.8e19 — indistinguishable from a measurement, and on its own larger than everything
+     * else in any aggregate containing it. sFlow has no transport authentication, so one datagram from
+     * anywhere the receiver is bound is enough (#588).</p>
+     *
+     * <p>Asserted as an exact value rather than a range. A range from zero to the bound is satisfied by
+     * almost any wrong-but-positive result — a mistaken clamp to 1 would pass it — which would leave
+     * this pinning the absence of a wrap rather than the behaviour.</p>
+     */
+    @Test
+    void sflowBytesCannotWrapAtTheUint32Boundary() throws Exception {
+        final long uint32Max = 0xFFFFFFFFL;
+
+        final var flow = sflowDatagram(uint32Max, uint32Max).buildFlows(Instant.EPOCH)
+                .findFirst().orElseThrow();
+
+        assertThat(flow.getBytes())
+                .as("a frame length past the bound is not a measurement, so it contributes nothing")
+                .isZero();
+    }
+
+    /**
+     * And the bound refuses rather than clamping.
+     *
+     * <p>Clamping to the bound and scaling anyway yields 5.6e14, which is five orders below the wrap
+     * and just as able to swamp an aggregate. This pins the difference: the refused sample contributes
+     * nothing, and a sample just inside the bound contributes its real product.</p>
+     */
+    @Test
+    void sflowRefusesAnImpossibleFrameLengthRatherThanClampingIt() throws Exception {
+        final long justInside = 131_072L;
+        final long justOutside = justInside + 1;
+
+        final var inside = sflowDatagram(1024L, justInside).buildFlows(Instant.EPOCH)
+                .findFirst().orElseThrow();
+        final var outside = sflowDatagram(1024L, justOutside).buildFlows(Instant.EPOCH)
+                .findFirst().orElseThrow();
+
+        assertThat(inside.getBytes()).isEqualTo(justInside * 1024L);
+        assertThat(outside.getBytes())
+                .as("refused, not clamped to %d * 1024", justInside)
+                .isZero();
+    }
+
+    /**
+     * The bound does not refuse a frame any real medium can carry.
+     *
+     * <p>Including the largest: {@code frame_length} is the MAC packet length, so a maximum-size IP
+     * datagram over Ethernet reports about 65549 rather than 65535. A bound set at 65535 would have
+     * discarded it.</p>
+     */
+    @Test
+    void sflowBytesAreUnchangedForARealFrame() throws Exception {
+        for (final long frame : new long[]{64L, 1500L, 9216L, 65_535L, 65_549L}) {
+            final var flow = sflowDatagram(1024L, frame).buildFlows(Instant.EPOCH)
+                    .findFirst().orElseThrow();
+
+            assertThat(flow.getBytes())
+                    .describedAs("frame length %d", frame)
+                    .isEqualTo(frame * 1024L);
+        }
+    }
+
+    /**
+     * The rate itself is still reported faithfully at the boundary.
+     *
+     * <p>Bounding the rate would have been the other way to stop the wrap, and it is the wrong one:
+     * what an exporter reports is what riptide records (#467), and the wire can carry this.</p>
+     */
+    @Test
+    void sflowStillReportsTheLargestRateAlongsideTheLargestFrame() throws Exception {
+        final long uint32Max = 0xFFFFFFFFL;
+
+        final var flow = sflowDatagram(uint32Max, uint32Max).buildFlows(Instant.EPOCH)
+                .findFirst().orElseThrow();
 
         assertResolved(flow, (double) uint32Max, SamplingProvenance.Record);
     }
