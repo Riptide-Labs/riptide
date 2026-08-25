@@ -178,7 +178,9 @@ ORDER BY exporterAddr, flows DESC
 More than one provenance for one exporter means its rate is not resolving consistently.
 
 A learned rate is held for 24 hours after the exporter last advertised it.
-That is longer than any exporter's options refresh interval, so a rate cannot expire between refreshes however slowly the exporter re-advertises.
+That is longer than any refresh interval in normal use, so a rate does not expire between refreshes — the slowest platform default is IOS-XR's 1800 s, and IOS-XE's is 600 s.
+
+An IPFIX `option-refresh-rate` is set by the operator rather than defaulted, so a refresh interval beyond a day would still flap. `parser_optionSampling_expired` below is what shows it.
 
 The window is deliberately far longer than it needs to be. A rate change is pushed — the exporter re-advertises and the new value overwrites — so this window never guards against a stale *wrong* rate; it only decides how long a rate outlives an exporter that has gone quiet. Holding one too long serves a value that was true recently. Dropping one too early records a known-wrong `1` as though it were an answer, every refresh cycle, indefinitely.
 

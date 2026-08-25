@@ -315,9 +315,10 @@ public class IpfixSelectorReportTest {
                 });
         assertThat(this.table.lookup(this.identity, 8L))
                 .hasValueSatisfying(rate -> assertThat(rate.interval()).isEqualTo(1000.0));
-        assertThat(this.table.lookup(this.identity))
-                .as("a Selector's rate is not the exporter's")
-                .isEmpty();
+        assertThat(this.table.lookup(this.identity).map(ExporterSamplingTable.AdvertisedRate::interval))
+                .as("a stated rate is also mirrored exporter-wide, for flows that name no Selector; "
+                        + "last write wins there, which is what this record shape did before #594")
+                .contains(1000.0);
     }
 
     /**
@@ -388,5 +389,37 @@ public class IpfixSelectorReportTest {
         b.writeInt(OBSERVATION_DOMAIN);
         b.writeInt(interval);
         patchAndSend(this.session, b);
+    }
+
+    /** An exporter whose only advertisement is Selector-scoped, and whose flows name no Selector. */
+    @Test
+    public void aSelectorScopedIntervalStillReachesFlowsThatNameNoSelector() throws Exception {
+        feedSelectorScopedInterval(7L, 1000);
+
+        assertThat(flowsNaming(null)).allSatisfy(flow -> {
+            assertThat(flow.getSamplingInterval()).isEqualTo(1000.0);
+            assertThat(flow.getSamplingProvenance()).isEqualTo(Flow.SamplingProvenance.Options);
+        });
+    }
+
+    /** A Selector-scoped record that is neither a report nor a rate must not withdraw the rate. */
+    @Test
+    public void anUnrelatedSelectorScopedRecordDoesNotWithdrawTheRate() throws Exception {
+        feedSelectorReport(7L, 1, 99);
+
+        // scoped by selectorId, carrying neither selectorAlgorithm nor an interval
+        final ByteBuf b = message();
+        b.writeShort(3).writeShort(4 + 6 + 2 * 4);
+        b.writeShort(404).writeShort(2).writeShort(1);
+        b.writeShort(302).writeShort(8);   // scope: selectorId
+        b.writeShort(318).writeShort(8);   // selectorIdTotalPktsObserved
+        b.writeShort(404).writeShort(4 + 8 + 8);
+        b.writeLong(7L);
+        b.writeLong(123_456L);
+        patchAndSend(this.session, b);
+
+        assertThat(flowsNaming(7L)).allSatisfy(flow -> assertThat(flow.getSamplingInterval())
+                .as("an unrecognised record is not a withdrawal")
+                .isEqualTo(EXPECTED_RATE));
     }
 }

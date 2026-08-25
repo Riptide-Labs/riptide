@@ -248,15 +248,11 @@ public class ExporterSamplingTable implements OptionListener {
         acceptSamplerOptions(identity, values);
     }
 
-    /**
-     * An IE 34/35 (or the v9 48/49/50) sampler options record, which states its interval outright.
-     *
-     * @return whether the record was recognised as one, so a caller knows not to try other shapes
-     */
-    private boolean acceptSamplerOptions(final ExporterIdentity identity, final List<Value<?>> values) {
+    /** An IE 34/35 (or the v9 48/49/50) sampler options record, which states its interval outright. */
+    private void acceptSamplerOptions(final ExporterIdentity identity, final List<Value<?>> values) {
         final Double interval = unsigned(values, INTERVAL_FIELDS);
         if (interval == null) {
-            return false; // not a sampler option record (interface/VRF/app tables, …)
+            return; // not a sampler option record (interface/VRF/app tables, …)
         }
         if (!isUsableRate(interval)) {
             // An explicit 1 is kept: it means "not sampling", which is an answer, and dropping it
@@ -265,12 +261,11 @@ public class ExporterSamplingTable implements OptionListener {
             // as a withdrawal and drop what was learned rather than serving it until the TTL runs.
             this.table.invalidate(identity);
             this.recordsSkipped.mark();
-            return true;
+            return;
         }
         final Double mode = unsigned(values, MODE_FIELDS);
         this.table.put(identity, new AdvertisedRate(interval, mode != null ? mode.intValue() : null));
         this.recordsConsumed.mark();
-        return true;
     }
 
     /**
@@ -291,23 +286,42 @@ public class ExporterSamplingTable implements OptionListener {
             this.selectorsConsumed.mark();
             return;
         }
-        // A Selector-scoped record may still state its rate outright rather than as parameters.
-        // Kept under the Selector's key, but without the algorithm, so it reports as `options`:
-        // nothing was computed, and provenance says which.
         final Double stated = unsigned(values, INTERVAL_FIELDS);
         if (stated != null && isUsableRate(stated)) {
-            final Double mode = unsigned(values, MODE_FIELDS);
-            this.selectors.put(key, new AdvertisedRate(stated, mode != null ? mode.intValue() : null));
+            // A Selector-scoped record may state its rate outright rather than as parameters. Kept
+            // under the Selector's key, but without the algorithm, so it reports as `options`:
+            // nothing was computed, and provenance says which.
+            final AdvertisedRate rate = new AdvertisedRate(stated, unsignedOrNull(values, MODE_FIELDS));
+            this.selectors.put(key, rate);
+            // …and mirrored exporter-wide, because a stated interval is the same number whichever
+            // Selector announced it. Before #594 this record was filed under the exporter alone and
+            // served every flow; keying it only by Selector silently stranded any exporter that
+            // scopes its sampler options by selectorId without echoing IE 302 onto its data records.
+            // Only a stated rate is mirrored — a rate computed from one Selector's parameters says
+            // nothing about the others, which is the guess `lookup` declines to make.
+            this.table.put(identity, rate);
             this.selectorsConsumed.mark();
             return;
         }
-        // The report named an algorithm expressing no ratio, omitted its parameters, or withdrew
-        // its rate. Recording a 1.0 would claim the Selector does not sample — see SelectorReport
-        // for why that claim is not available — and keeping the previous one would serve a rate the
-        // exporter has just stopped advertising for up to the whole retention window. The stated
-        // path invalidates for that reason and so does this one.
+        if (algorithm == null) {
+            // Scoped by selectorId but neither a Selector Report nor a rate: some other per-Selector
+            // options record. Ignored, exactly as `acceptSamplerOptions` ignores an options record
+            // that is not about sampling. Absence is not a withdrawal — only a Selector Report that
+            // has stopped expressing a ratio is that, and it says so by naming its algorithm.
+            return;
+        }
+        // The report named an algorithm expressing no ratio, or omitted its parameters. Recording a
+        // 1.0 would claim the Selector does not sample — see SelectorReport for why that claim is
+        // not available — and keeping the previous rate would serve one the exporter has just
+        // stopped advertising for the whole retention window.
         this.selectors.invalidate(key);
         this.selectorsSkipped.mark();
+    }
+
+    /** {@link #unsigned} as a boxed {@code Integer}, since that is what {@link AdvertisedRate} holds. */
+    private static Integer unsignedOrNull(final Collection<Value<?>> values, final List<String> names) {
+        final Double value = unsigned(values, names);
+        return value != null ? value.intValue() : null;
     }
 
     /**
