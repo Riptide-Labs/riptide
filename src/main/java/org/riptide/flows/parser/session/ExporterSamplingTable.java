@@ -37,8 +37,8 @@ import java.util.Optional;
  * real ASR9k writes its agent IP into that scope field. The keys never agree, so the merge cannot
  * deliver the record and the tap is the only path that reaches it.
  *
- * <p>Two record shapes feed this, kept in separate maps because an exporter may send both and a
- * single map would make the answer depend on arrival order:</p>
+ * <p>Three record shapes feed this. The first two are kept in separate maps, because an exporter may
+ * send both and a single map would make the answer depend on arrival order:</p>
  *
  * <ul>
  *   <li><b>Sampler options</b> (IE 34/35, or v9's 48/49/50) state an interval outright. Keyed by
@@ -49,6 +49,9 @@ import java.util.Optional;
  *   <li><b>Selector Reports</b> (RFC 5476 §6.5.2) state an algorithm and its parameters, from which
  *       the rate is computed. Keyed additionally by {@code selectorId}, because that is what the
  *       RFC scopes them by and one exporter may run several Selectors at once.</li>
+ *   <li><b>Sampling advertisements</b> state the same PSAMP parameters under some other scope —
+ *       softflowd uses {@code meteringProcessId} — and share the exporter-wide map with sampler
+ *       options, since the granularities those scopes name are ones no flow record references.</li>
  * </ul>
  */
 @Component
@@ -231,12 +234,15 @@ public class ExporterSamplingTable implements OptionListener {
      * requires a Selector Report to be scoped by {@code selectorId}; a sampler options record is
      * scoped by the system or the observation domain.
      *
-     * <p>Not routed on which fields are present. An earlier draft tried the sampler-options reader
-     * first and fell through to the Selector Report only when no interval field was found, which
-     * files a {@code selectorId}-scoped record that happens to state IE 34 under the exporter
-     * instead of under its Selector. Two Selectors announcing rates that way would then overwrite
-     * one another, last write winning, and every flow from both would be scaled by whichever
-     * arrived most recently — the arrival-order dependence the two maps exist to prevent.</p>
+     * <p>The scope check comes <em>first</em>, and that is what matters. An earlier draft routed on
+     * fields alone, which files a {@code selectorId}-scoped record that happens to state IE 34 under
+     * the exporter instead of under its Selector; two Selectors announcing rates that way overwrite
+     * one another, last write winning, and every flow from both is scaled by whichever arrived most
+     * recently — the arrival-order dependence the two maps exist to prevent.</p>
+     *
+     * <p>Below that check, fields do decide. A record arriving under any other scope may be a stated
+     * interval, a selector algorithm with its parameters, or neither, and only its contents say
+     * which (#598).</p>
      */
     @Override
     public void accept(final ExporterIdentity identity, final Collection<Value<?>> scopes, final List<Value<?>> values) {
@@ -245,14 +251,27 @@ public class ExporterSamplingTable implements OptionListener {
             acceptSelectorReport(identity, selectorId, values);
             return;
         }
-        acceptSamplerOptions(identity, values);
+        if (acceptSamplerOptions(identity, values)) {
+            return;
+        }
+        acceptSamplingAdvertisement(identity, values);
     }
 
-    /** An IE 34/35 (or the v9 48/49/50) sampler options record, which states its interval outright. */
-    private void acceptSamplerOptions(final ExporterIdentity identity, final List<Value<?>> values) {
+    /**
+     * An IE 34/35 (or the v9 48/49/50) sampler options record, which states its interval outright.
+     *
+     * @return whether this record settled the question, so the caller knows whether to try another
+     *     shape. A record may carry both a stated interval and a selector algorithm, and the stated
+     *     one wins <em>when it states a rate</em>. An interval of 0 states nothing, and an interval
+     *     of 1 states "not sampling" — which contradicts a record simultaneously stating an
+     *     algorithm and parameters that compute to something else. In that contradiction the
+     *     algorithm is the more specific statement and is preferred, because a deprecated single
+     *     field is the one an exporter is likely to have defaulted.
+     */
+    private boolean acceptSamplerOptions(final ExporterIdentity identity, final List<Value<?>> values) {
         final Double interval = unsigned(values, INTERVAL_FIELDS);
         if (interval == null) {
-            return; // not a sampler option record (interface/VRF/app tables, …)
+            return false; // not a sampler option record (interface/VRF/app tables, …)
         }
         if (!isUsableRate(interval)) {
             // An explicit 1 is kept: it means "not sampling", which is an answer, and dropping it
@@ -261,10 +280,54 @@ public class ExporterSamplingTable implements OptionListener {
             // as a withdrawal and drop what was learned rather than serving it until the TTL runs.
             this.table.invalidate(identity);
             this.recordsSkipped.mark();
-            return;
+            return false; // states no rate, so it cannot veto one stated elsewhere on this record
         }
         final Double mode = unsigned(values, MODE_FIELDS);
         this.table.put(identity, new AdvertisedRate(interval, mode != null ? mode.intValue() : null));
+        this.recordsConsumed.mark();
+        return interval > 1.0;
+    }
+
+    /**
+     * A sampling advertisement that is not a Selector Report: it states {@code selectorAlgorithm} and
+     * that algorithm's parameters, but arrives under some other scope.
+     *
+     * <p>RFC 5476 §6.5.2 reserves {@code selectorId} for a Selector Report, and riptide keys those per
+     * Selector. Exporters advertise sampling under other scopes too — softflowd scopes by
+     * {@code meteringProcessId}, and sampling genuinely is a property of a metering process. Reading
+     * only the {@code selectorId} form left riptide more permissive about the deprecated IE 34/50
+     * family than about the current one, so an exporter stating 1:100 in IE 304/305/306 was recorded
+     * as unsampled (#598).</p>
+     *
+     * <p>Retained for the exporter as a whole. The scopes exporters use here — metering process,
+     * exporting process, observation domain, system — name granularities no flow record references, so
+     * a finer key could never be matched at lookup time.</p>
+     *
+     * <p><b>This never withdraws.</b> {@code acceptSelectorReport} may invalidate because it is the
+     * sole writer of its key; the exporter-wide entry has several writers, and a device may sample and
+     * filter at once. An advertisement naming an algorithm that expresses no ratio describes an
+     * additional process — it does not retract a rate another record taught.</p>
+     */
+    private void acceptSamplingAdvertisement(final ExporterIdentity identity, final List<Value<?>> values) {
+        final Double algorithm = numeric(values, "selectorAlgorithm");
+        if (algorithm == null) {
+            return; // not about sampling at all
+        }
+        if (!SelectorReport.samples(algorithm.intValue())) {
+            // A filtering algorithm expresses a ratio, but not one that can share this key. Filtering
+            // and sampling compose multiplicatively, and the exporter-wide entry cannot hold both, so
+            // writing the filter's ratio here would silently replace a sampler's — measured at 500x
+            // for a 1:2 filter arriving after a stated 1:1000. Per Selector this is expressible,
+            // because each Selector owns its entry; exporter-wide it is not. See #596.
+            this.recordsSkipped.mark();
+            return;
+        }
+        final Double computed = SelectorReport.rate(algorithm.intValue(), name -> numeric(values, name));
+        if (computed == null || !isUsableRate(computed)) {
+            this.recordsSkipped.mark();
+            return;
+        }
+        this.table.put(identity, new AdvertisedRate(computed, null, algorithm.intValue()));
         this.recordsConsumed.mark();
     }
 
