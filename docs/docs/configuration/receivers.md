@@ -295,7 +295,7 @@ FROM riptide.flows_by_conversation_1m;
 :::
 
 :::tip[Two different questions]
-`sum(bytes * if(flowProtocol = 'SFLOW', 1, samplingInterval))` is total corrected volume: every byte received, each scaled correctly.
+`sum(bytes * if(flowProtocol = 'SFLOW', 1, samplingInterval))` is total corrected volume: every byte in the fully-marked band, each scaled by its own protocol's factor. "Fully-marked" is doing real work there — the two boundary predicates exclude everything aggregated before each column was carried, so on a deployment that upgraded today a 90-day window is mostly excluded. Size the bands with the `countIf` query above before reading the total as a fleet figure.
 
 `sum(bytes * samplingInterval) … WHERE flowProtocol != 'SFLOW'` is something narrower — corrected volume of the NetFlow/IPFIX subset. It is short by every sFlow byte you receive, because it drops those rows rather than scaling them by `1`. That is a legitimate query when you want the subset. It is not "the corrected total", and earlier versions of this page presented it as though it were.
 :::

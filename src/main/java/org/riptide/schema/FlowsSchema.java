@@ -856,9 +856,12 @@ public final class FlowsSchema {
                 throw new IllegalArgumentException(
                         "enum dimension type " + type + " reserves " + smallestName + " for rows"
                                 + " aggregated before it existed, which is a value the column can"
-                                + " legitimately hold, so the append would have no boundary — declare"
-                                + " '' = " + (smallest - 1) + " as its smallest member, or carry the"
-                                + " column as LowCardinality(String)");
+                                + " legitimately hold, so the append would have no boundary — carry"
+                                + " the column as LowCardinality(String), or give this ROLLUP column"
+                                + " (never the source column on flows) an '' member below "
+                                + smallest + ". Adding '' to the source enum instead would make the"
+                                + " dimension's own expression emit the reserved value for live"
+                                + " rows, which destroys the boundary rather than creating one");
             }
             return smallestName;
         }

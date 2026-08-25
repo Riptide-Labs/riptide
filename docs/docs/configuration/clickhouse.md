@@ -149,7 +149,7 @@ Manage-mode deployments repair themselves on the next start and need nothing.
 :::danger[Drop the rollup views before rolling back to an earlier version]
 Rolling forward is repaired automatically. Rolling **back** is not, and it corrupts the rollups silently.
 
-An older riptide does not know `samplingInterval`, and one older still does not know `flowProtocol`. In manage mode it refuses to shrink the sorting key — correctly — so the target keeps the columns, but it then re-points each materialized view at its own narrower `SELECT`, which no longer names them. ClickHouse accepts that without complaint: `ALTER TABLE … MODIFY QUERY` does not validate against its target. Every row aggregated from then on takes the reserved value in a sorting-key column — `samplingInterval = 0`, `flowProtocol = ''` — for the rollup's full 365-day retention.
+An older riptide does not know `flowProtocol`, and one older still does not know `samplingInterval` either — the rate shipped first, the protocol after it. In manage mode it refuses to shrink the sorting key — correctly — so the target keeps the columns, but it then re-points each materialized view at its own narrower `SELECT`, which no longer names them. ClickHouse accepts that without complaint: `ALTER TABLE … MODIFY QUERY` does not validate against its target. Every row aggregated from then on takes the reserved value in a sorting-key column — `samplingInterval = 0`, `flowProtocol = ''` — for the rollup's full 365-day retention.
 
 The rows are real traffic and are indistinguishable from pre-append rows afterwards, so rolling forward again does not repair them: the boundary predicates hide them, and without those predicates they contribute `bytes × 0`, or get scaled as though they were not sFlow.
 

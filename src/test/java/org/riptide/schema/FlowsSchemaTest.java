@@ -579,6 +579,37 @@ class FlowsSchemaTest {
     }
 
     /**
+     * The source enum must never declare {@code ''}, or the rollup dimension emits its own reserved
+     * value for live rows.
+     *
+     * <p>{@code flowProtocol} is carried as {@code toString(f.flowProtocol)} into a
+     * {@code LowCardinality(String)} whose reserved value is {@code ''}. That boundary holds only
+     * because no member of the source enum stringifies to {@code ''} — an assumption the dimension's
+     * javadoc states as fact and which nothing enforced. It is a live hazard rather than a
+     * theoretical one: the refusal message for an enum-typed dimension suggests adding an {@code ''}
+     * member, and applied to the source column instead of a rollup column that is precisely the
+     * change that breaks this.</p>
+     *
+     * <p>The failure would be silent and unrecoverable. Real rows would land on {@code ''}, becoming
+     * indistinguishable from rows aggregated before the append, so
+     * {@code WHERE flowProtocol != ''} would drop live traffic for the rollup's 365-day retention
+     * with nothing marking it. The regex guard in {@code appendableDimensions()} cannot see this:
+     * {@code toString(f.flowProtocol)} has no fallback literal, so it is passed without inspection.</p>
+     */
+    @Test
+    void theSourceProtocolEnumDeclaresNoEmptyMemberForTheRollupToCollideWith() {
+        final String rawType = FlowsSchema.createFlowsTable("riptide", 30)
+                .replaceAll("(?s).*flowProtocol (Enum8\\([^)]*\\)).*", "$1")
+                .replaceAll("\\s+", " ");
+
+        assertThat(rawType)
+                .as("every member of the source enum must stringify to something the rollup's"
+                        + " reserved '' cannot be confused with")
+                .startsWith("Enum8(")
+                .doesNotContain("''");
+    }
+
+    /**
      * The rate sits beyond the frozen primary key on every rollup, which is the only region
      * {@code ALTER … MODIFY ORDER BY} can reach: a sorting key may only grow, and only by columns
      * the same statement adds. A dimension inserted mid-list works on a fresh install and is
