@@ -162,7 +162,19 @@ class LegacyNodesFlagDayCheckTest {
                 // any suffixed Service crash-looped every pod in the namespace
                 "RIPTIDE_NODES_HEADLESS_PORT",
                 "RIPTIDE_NODES_METRICS_PORT",
-                "RIPTIDE_NODES_PORT_8080_UDP_ADDR")) {
+                "RIPTIDE_NODES_PORT_8080_UDP_ADDR",
+                // Services whose NAME ends in a node-field word. The first fix wrote its field
+                // alternatives as SNMP(_[A-Z0-9_]+)? and INTERFACES(_[A-Z0-9_]+)?, reproducing
+                // inside the fix the very defect it fixed: [A-Z0-9_]+ spans '_' exactly as \\w
+                // does, so these read as node fields and crash-looped. They were exempt BEFORE
+                // that fix, so it was a regression, and no case here could see it
+                "RIPTIDE_NODES_SNMP_SERVICE_HOST",
+                "RIPTIDE_NODES_SNMP_SERVICE_PORT",
+                "RIPTIDE_NODES_SNMP_PORT",
+                "RIPTIDE_NODES_SNMP_PORT_161_UDP_ADDR",
+                "RIPTIDE_NODES_INTERFACES_SERVICE_HOST",
+                // a named Service port that collides with a node field word, but is not one
+                "RIPTIDE_NODES_SERVICE_PORT_SNMP")) {
             assertThatCode(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
                     sources("env", Map.of(link, "10.0.0.1"))))
                     .as("must not reject the service link %s", link)
@@ -184,7 +196,15 @@ class LegacyNodesFlagDayCheckTest {
                 "RIPTIDE_NODES_MGMT_SERVICE_PORT_SNMP_COMMUNITY",
                 "RIPTIDE_NODES_SVC_SERVICE_PORT_INTERFACES_1_NAME",
                 "RIPTIDE_NODES_PORT_1_TCP_SUBNET_ADDRESS",
-                "RIPTIDE_NODES_A_SERVICE_HOST_OBSERVATION_DOMAIN")) {
+                "RIPTIDE_NODES_A_SERVICE_HOST_OBSERVATION_DOMAIN",
+                // the relaxed-binding spellings 0.8 accepted. Matching raw text caught only the
+                // kebab-case one; normalising the name folds all three onto the same comparison
+                "RIPTIDE_NODES_EDGE_SERVICE_PORT_SUBNETADDRESS",
+                "RIPTIDE_NODES_CORE_SNMPVERSION",
+                "RIPTIDE_NODES_CORE_OBSERVATIONDOMAIN",
+                // a node genuinely named 'snmp' carries a name segment; the bare
+                // RIPTIDE_NODES_SNMP_PORT above does not, and no legacy key has that shape
+                "RIPTIDE_NODES_SNMP_SNMP_PORT")) {
             assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
                     sources("env", Map.of(legacy, "10.0.0.1"))))
                     .as("must catch the legacy node behind %s", legacy)

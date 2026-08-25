@@ -30,7 +30,16 @@ class InventoryWiringTest {
     @TempDir
     Path tempDir;
 
+    // The flag-day check reads the environment's property sources, so importing it into
+    // WiringConfiguration would otherwise let the real JVM environment decide these tests.
+    // Anyone with RIPTIDE_NODES_* exported — which is exactly a developer testing the 0.8
+    // migration this check exists for — would see unrelated failures across the class. Pinned
+    // empty here; the cases that need the env form replace it themselves.
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
+            .withInitializer(context -> context.getEnvironment().getPropertySources().replace(
+                    StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME,
+                    new SystemEnvironmentPropertySource(
+                            StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME, Map.of())))
             .withUserConfiguration(WiringConfiguration.class);
 
     @Configuration
@@ -72,7 +81,8 @@ class InventoryWiringTest {
     @Test
     void theEnvironmentFormFailsStartupThroughTheRealContext() {
         this.runner
-                .withInitializer(context -> context.getEnvironment().getPropertySources().addFirst(
+                .withInitializer(context -> context.getEnvironment().getPropertySources().replace(
+                        StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME,
                         new SystemEnvironmentPropertySource(
                                 StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME,
                                 Map.of("RIPTIDE_NODES_CORE_ROUTER_SUBNET_ADDRESS", "10.0.0.1"))))
@@ -93,7 +103,8 @@ class InventoryWiringTest {
     @Test
     void aServiceLinkDoesNotTakeTheContextDown() {
         this.runner
-                .withInitializer(context -> context.getEnvironment().getPropertySources().addFirst(
+                .withInitializer(context -> context.getEnvironment().getPropertySources().replace(
+                        StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME,
                         new SystemEnvironmentPropertySource(
                                 StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME,
                                 Map.of("RIPTIDE_NODES_HEADLESS_PORT", "tcp://10.0.0.1:6343",

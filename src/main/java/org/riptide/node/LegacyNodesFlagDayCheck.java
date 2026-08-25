@@ -12,6 +12,7 @@ import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
 import org.springframework.stereotype.Component;
 
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Objects;
 import java.util.regex.Pattern;
@@ -82,12 +83,34 @@ public class LegacyNodesFlagDayCheck {
      * which loses the operator's whole configuration with no signal.</p>
      *
      * <p>The legacy schema is bounded, so it can be matched positively instead of guessed at: a key
-     * ending in a real node field is configuration, whatever platform shape it also resembles. That
-     * keeps named-port service links exempt, which is why the exemption list below is unchanged
-     * apart from the {@code _PORT} form it was missing.</p>
+     * ending in a real node field is configuration, whatever platform shape it also resembles.</p>
+     *
+     * <p><b>Every alternative is a literal. No wildcard may span a separator here.</b> The first
+     * draft of this pattern wrote the two nested groups as {@code SNMP(_[A-Z0-9_]+)?} — reproducing,
+     * inside the fix, the exact defect it was fixing, because {@code [A-Z0-9_]+} spans {@code _} just
+     * as {@code \w} does. That made {@code RIPTIDE_NODES_SNMP_SERVICE_HOST} a "node field", so a
+     * Service named {@code riptide-nodes-snmp} crash-looped every pod — a shape that had been exempt
+     * before the fix. Enumerate the leaves instead; the sets below are
+     * {@code LegacyConfigReader}'s own {@code NODE_KEYS}, {@code SNMP_KEYS} and {@code PIN_KEYS}.</p>
+     *
+     * <p>Matched against the normalised name, which is what makes the relaxed-binding spellings fall
+     * out for free: {@code subnetAddress}, {@code subnet_address} and {@code subnet-address} were all
+     * legal in 0.8 and all normalise alike, where a raw-text pattern caught only one of them.</p>
+     *
+     * <p>The {@code .+} after {@code riptidenodes} is the node name, and it is required. Without it
+     * {@code RIPTIDE_NODES_SNMP_PORT} reads as a node field, when no legacy key of that shape exists
+     * — a node's SNMP port is {@code riptide.nodes.<name>.snmp.port}, which always carries a name.</p>
      */
     private static final Pattern LEGACY_FIELD_TAIL = Pattern.compile(
-            ".*_(SUBNET_ADDRESS|OBSERVATION_DOMAIN|SNMP(_[A-Z0-9_]+)?|INTERFACES(_[A-Z0-9_]+)?)$");
+            "riptidenodes.+(subnetaddress|observationdomain"
+                    + "|snmp(snmpversion|community|securityname|authprotocol|authpassphrase"
+                    + "|privprotocol|privpassphrase|timeout|retries|port)"
+                    + "|interfaces[0-9]+(name|alias|highspeed))$");
+
+    /** Separator- and case-insensitive, matching how {@code LegacyConfigReader} compares its keys. */
+    private static String normalised(final String name) {
+        return name.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
+    }
 
     /**
      * Container service links: environment variables the platform injects, which the operator
@@ -115,7 +138,7 @@ public class LegacyNodesFlagDayCheck {
      * missing real configuration.</p>
      */
     private static boolean isServiceLink(final String name) {
-        if (LEGACY_FIELD_TAIL.matcher(name).matches()) {
+        if (LEGACY_FIELD_TAIL.matcher(normalised(name)).matches()) {
             // a real node field beats every platform shape: loud beats silent, which is the same
             // call already made for Docker legacy-link _ENV_* variables
             return false;
