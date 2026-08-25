@@ -235,6 +235,81 @@ class LegacyNodesFlagDayCheckTest {
                 .hasMessageContaining("the-one-that-is-wrong");
     }
 
+    /**
+     * The remedy depends on where the tree lives. The converter reads a file, so an environment-only
+     * deployment cannot act on an instruction naming {@code <your-config.yaml>} (#614).
+     */
+    @Test
+    void anEnvironmentSourcedTreeGetsEnvironmentSpecificInstructions() {
+        final MutablePropertySources env = new MutablePropertySources();
+        env.addFirst(new SystemEnvironmentPropertySource("systemEnvironment",
+                Map.of("RIPTIDE_NODES_CORE_ROUTER_SUBNET_ADDRESS", "10.0.0.1")));
+
+        assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(env))
+                .hasMessageContaining("process environment")
+                .hasMessageContaining("was never bound")
+                .hasMessageContaining("Remove the variable")
+                // it must NOT hand this deployment a file-based invocation as the primary remedy
+                .hasMessageNotContaining("riptide convert <your-config.yaml>");
+    }
+
+    /** A file-sourced tree is unchanged: same message as before the branch existed. */
+    @Test
+    void aFileSourcedTreeKeepsTheConverterInstruction() {
+        assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(
+                sources("file", Map.of("riptide.nodes.core-router.subnet-address", "10.0.0.1"))))
+                .hasMessageContaining("riptide convert <your-config.yaml>")
+                .hasMessageNotContaining("process environment");
+    }
+
+    /**
+     * The claim the environment message makes, pinned against Spring rather than restated.
+     *
+     * <p>That message tells operators a multi-word node name was never active in 0.8. That is a
+     * statement about how Spring binds a {@code Map<String, NodeDefinition>} from environment
+     * variables, and it is load-bearing: if it is wrong, riptide is telling people to delete live
+     * configuration. Measured here against the shipped Spring, so a version bump that changes the
+     * behaviour fails this test rather than quietly making the message false.</p>
+     *
+     * <p>The 0.8 {@code NodeDefinition} is gone, so a stand-in with the same shape is bound: the
+     * behaviour under test is Spring's map-key splitting, not that class.</p>
+     */
+    @Test
+    void springNeverBoundAMultiWordNodeNameFromTheEnvironment() {
+        assertThat(bindNodes("RIPTIDE_NODES_CORE_ROUTER_SUBNET_ADDRESS"))
+                .as("a hyphenated name reaches no node at all, so it was not active in 0.8")
+                .isEmpty();
+
+        assertThat(bindNodes("RIPTIDE_NODES_EDGE_SUBNET_ADDRESS"))
+                .as("a single-segment name does bind, which is why the message keeps a path for it")
+                .containsOnlyKeys("edge");
+    }
+
+    /** Binds one environment variable as 0.8 bound its nodes map, and returns the node keys. */
+    private static Map<String, StandInNode> bindNodes(final String variable) {
+        final var environment = new org.springframework.core.env.StandardEnvironment();
+        environment.getPropertySources().replace("systemEnvironment",
+                new SystemEnvironmentPropertySource("systemEnvironment", Map.of(variable, "10.0.0.1")));
+        return org.springframework.boot.context.properties.bind.Binder.get(environment)
+                .bind("riptide.nodes",
+                        org.springframework.boot.context.properties.bind.Bindable
+                                .mapOf(String.class, StandInNode.class))
+                .orElse(Map.of());
+    }
+
+    /** Same shape as the deleted 0.8 NodeDefinition, for the binding probe above. */
+    public static class StandInNode {
+        private String subnetAddress;
+
+        public String getSubnetAddress() {
+            return this.subnetAddress;
+        }
+
+        public void setSubnetAddress(final String subnetAddress) {
+            this.subnetAddress = subnetAddress;
+        }
+    }
+
     @Test
     void aCamelCaseSpellingIsCaught() {
         assertThat(sources("file", Map.of("riptideNodes.core.subnetAddress", "10.0.0.1"))).isNotNull();

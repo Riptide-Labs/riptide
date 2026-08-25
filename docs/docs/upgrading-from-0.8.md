@@ -39,8 +39,15 @@ The failure is deliberate: nothing reads that tree any more, and a collector tha
 
 2. **Merge the config fragment** (credential sets, polling profiles) into your `application.yaml`, and set `riptide.inventory.file` to the emitted inventory.
 3. **Remove the old keys**: the whole `riptide.nodes` tree, and `riptide.snmp.poll.refresh-interval-ms` / `.snapshot-expiry-ms` if you had them (cadence lives on [polling profiles](configuration/agent-configuration.md#polling-profiles) now). All of them fail startup if left behind.
+   **Leave the other `riptide.snmp.poll.*` keys exactly where they are.** `pool-width`, `max-exporters`, `deregister-after` and the dead-endpoint backoff are not retired: they bind in 0.9 as they did in 0.8, the converter does not read or emit them, and they stay in your `application.yaml` untouched. Only the two cadence keys above moved.
 4. Start 0.9.
    The converter's output always passes 0.9 validation; if it cannot represent something, it refuses with an error naming the node rather than emitting a file that will not boot.
+
+:::note[The converter reads nested YAML]
+It wants the shape Spring writes as a tree — `riptide:` containing `nodes:`, containing the node name — not flat dotted property names, and not a `.properties` file. If your 0.8 configuration is flat, re-indent the `riptide.nodes` tree into a small YAML file and convert that; the rest of your configuration does not need to come with it, since only `riptide.nodes` and `riptide.snmp.poll` are read.
+
+**Configured entirely through environment variables?** Two things are worth knowing before you start. Spring never bound a multi-word node name from an environment variable: `RIPTIDE_NODES_CORE_ROUTER_SUBNET_ADDRESS` resolves to no node at all, so a hyphenated node configured that way was **not active in 0.8 either** — there is nothing to convert, and the variable should simply go. Single-word names (`RIPTIDE_NODES_EDGE_SUBNET_ADDRESS`) did bind; write those out as nested YAML and convert that file. Startup tells you which case you are in.
+:::
 
 ## What the converter does with your nodes
 
