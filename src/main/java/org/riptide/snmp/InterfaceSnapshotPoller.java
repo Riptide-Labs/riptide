@@ -453,6 +453,21 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         }
     }
 
+    /**
+     * Re-resolves a registration from its address alone.
+     *
+     * <p>The hardcoded {@code 0} is exact only because agent ranges carry no observation-domain pin,
+     * so every one of them lands in {@code PinnedPrefixMatcher}'s wildcard pool and the domain
+     * argument is dead. There is no real domain available here: a registration is keyed by address,
+     * and this runs on inventory refresh rather than on a flow.</p>
+     *
+     * <p>If a pin were ever accepted on an agent range, every registration whose range is pinned to a
+     * non-zero domain would resolve empty here, be marked stop-when-idle and be deregistered on the
+     * next tick — while {@code SnmpEnricher}, matching with the flow's real domain, kept handing the
+     * endpoint back. An infinite register/deregister loop with no error. {@code InventoryLoaderTest
+     * .anAgentRangeRejectsAnObservationDomainPin} is the tripwire that stops that reaching here
+     * (#543); {@code AgentEntry}'s javadoc carries why polling cannot be domain-scoped at all.</p>
+     */
     private static Optional<SnmpEndpoint> resolve(final InventorySnapshot snapshot, final InetSocketAddress address) {
         final ExporterIdentity identity = new ExporterIdentity.NetflowIpfix(address.getAddress(), 0L);
         return snapshot.agentView().match(identity)
