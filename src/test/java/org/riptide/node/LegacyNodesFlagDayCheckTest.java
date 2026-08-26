@@ -32,6 +32,35 @@ class LegacyNodesFlagDayCheckTest {
         return sources;
     }
 
+    /**
+     * The remediation depends on where the key lives, and a mixed stack is the only shape that
+     * proves it.
+     *
+     * <p>The converter reads a file, so telling a container configured entirely through the
+     * environment to run it against {@code <your-config.yaml>} is unactionable (#614). A walk that
+     * flattened the sources and reported a bare key name would still produce the right message for a
+     * file-only stack and for an environment-only stack, and the wrong one only when both are
+     * present — so those two cases cannot detect the regression and this one can.</p>
+     */
+    @Test
+    void theRemediationFollowsTheSourceTheKeyWasFoundIn() {
+        final MutablePropertySources fileOnly = sources(
+                "file", Map.of("riptide.nodes.edge.subnet-address", "10.0.0.1"));
+        assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(fileOnly))
+                .as("a file-backed key gets the converter instruction")
+                .hasMessageContaining("riptide convert <your-config.yaml>")
+                .hasMessageNotContaining("in the process environment");
+
+        final MutablePropertySources environmentOnly = new MutablePropertySources();
+        environmentOnly.addFirst(new SystemEnvironmentPropertySource("systemEnvironment",
+                Map.of("RIPTIDE_NODES_EDGE_SUBNET_ADDRESS", "10.0.0.1")));
+        assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(environmentOnly))
+                .as("an environment key gets the environment instruction, which the converter"
+                        + " instruction alone would not serve")
+                .hasMessageContaining("in the process environment")
+                .hasMessageContaining("write those out as nested YAML first");
+    }
+
     @Test
     void theNameKeyedMapFailsStartup() {
         assertThatThrownBy(() -> LegacyNodesFlagDayCheck.failOnLegacyNodes(

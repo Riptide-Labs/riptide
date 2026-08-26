@@ -38,7 +38,17 @@ The failure is deliberate: nothing reads that tree any more, and a collector tha
    (The image's entrypoint is `java`, so the arguments restate `-jar /app/riptide.jar`; without them Docker would try to run a class named `convert`.)
 
 2. **Merge the config fragment** (credential sets, polling profiles) into your `application.yaml`, and set `riptide.inventory.file` to the emitted inventory.
-3. **Remove the old keys**: the whole `riptide.nodes` tree, and `riptide.snmp.poll.refresh-interval-ms` / `.snapshot-expiry-ms` if you had them (cadence lives on [polling profiles](configuration/agent-configuration.md#polling-profiles) now). All of them fail startup if left behind.
+3. **Remove the keys 0.9 does not read.** There are more than the two obvious ones, and they do not all behave the same way: three refuse to start, and three are ignored silently, which is the worse outcome because the setting simply stops taking effect.
+
+   | key | 0.9 |
+   | --- | --- |
+   | the whole `riptide.nodes` tree | **fails startup** |
+   | `riptide.snmp.poll.refresh-interval-ms` / `.snapshot-expiry-ms` | **fails startup** — cadence lives on [polling profiles](configuration/agent-configuration.md#polling-profiles) now |
+   | `riptide.snmp.agents` / `riptide.exporters` in `application.yaml` | **fails startup** — these are current keys, but they belong only in the file named by `riptide.inventory.file` |
+   | `riptide.snmp.config.definitions` | **ignored** — declare credential sets instead |
+   | `riptide.snmp.cache.retention-ms` / `.negative-retention-ms` / `.dead-endpoint-retention-ms` | **ignored** — no longer modelled |
+
+   The three that fail startup are reported **together, in one failure naming every offending key**, so this costs one edit rather than one restart per key. The three that are ignored are logged at startup and are easy to miss; check for them explicitly rather than relying on a clean boot to mean a clean configuration.
    **Leave the other `riptide.snmp.poll.*` keys exactly where they are.** `pool-width`, `max-exporters`, `deregister-after` and the dead-endpoint backoff are not retired: they bind in 0.9 as they did in 0.8, the converter does not read or emit them, and they stay in your `application.yaml` untouched. Only the two cadence keys above moved.
 4. Start 0.9.
    The converter's output always passes 0.9 validation; if it cannot represent something, it refuses with an error naming the node rather than emitting a file that will not boot.

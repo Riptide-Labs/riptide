@@ -5,15 +5,11 @@
 
 package org.riptide.inventory;
 
-import jakarta.annotation.PostConstruct;
 import org.riptide.utils.PropertyNames;
-import org.springframework.core.env.AbstractEnvironment;
-import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
-import org.springframework.stereotype.Component;
 
 import java.util.Optional;
-import java.util.Objects;
+import java.util.stream.Stream;
 import java.util.regex.Pattern;
 
 /**
@@ -23,25 +19,16 @@ import java.util.regex.Pattern;
  * them without a diagnostic — a silently empty inventory. This check fails startup
  * loudly instead (the {@code NodesConfigMigrationCheck} precedent).
  */
-@Component
-public class InventoryMisplacementCheck {
+public final class InventoryMisplacementCheck {
+
+    private InventoryMisplacementCheck() {
+    }
+
 
     private static final Pattern MISPLACED_TREE = Pattern.compile(
             "^(riptide\\.(snmp\\.agents|exporters)[.\\[]|RIPTIDE_(SNMP_AGENTS|EXPORTERS)_)");
 
-    private final Environment environment;
 
-    public InventoryMisplacementCheck(final Environment environment) {
-        this.environment = Objects.requireNonNull(environment);
-    }
-
-    @PostConstruct
-    void failOnMisplacedInventoryTrees() {
-        if (!(this.environment instanceof AbstractEnvironment abstractEnvironment)) {
-            return;
-        }
-        failOnMisplacedInventoryTrees(abstractEnvironment.getPropertySources());
-    }
 
     /** Reusable against any source stack, matching the migration-check idiom. */
     public static void failOnMisplacedInventoryTrees(final Iterable<PropertySource<?>> sources) {
@@ -55,8 +42,22 @@ public class InventoryMisplacementCheck {
 
     /** Non-throwing probe for the reloader's gated-document scan (#537); one probe per class, over the shared walk. */
     public static Optional<String> findMisplacedInventoryKey(final Iterable<PropertySource<?>> sources) {
-        return PropertyNames.in(sources)
-                .filter(name -> MISPLACED_TREE.matcher(name).find())
-                .findFirst();
+        return matches(sources).map(PropertyNames.Located::name).findFirst();
+    }
+
+    /** Category label for the collected startup report. */
+    public static final String LABEL = "inventory trees in the main configuration";
+
+    /** Every match, not only the first, so startup can report them together. */
+    public static Stream<PropertyNames.Located> matches(final Iterable<PropertySource<?>> sources) {
+        return PropertyNames.located(sources)
+                .filter(found -> MISPLACED_TREE.matcher(found.name()).find());
+    }
+
+    /** This category's remediation, unchanged. */
+    public static String remediation() {
+        return "riptide.snmp.agents and riptide.exporters live only in the dedicated inventory "
+                + "file named by riptide.inventory.file — they bind to nothing here and would be "
+                + "silently ignored.";
     }
 }

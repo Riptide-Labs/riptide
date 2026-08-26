@@ -5,16 +5,12 @@
 
 package org.riptide.inventory;
 
-import jakarta.annotation.PostConstruct;
 import org.riptide.utils.PropertyNames;
-import org.springframework.core.env.AbstractEnvironment;
-import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
-import org.springframework.stereotype.Component;
 
 import java.util.Optional;
+import java.util.stream.Stream;
 import java.util.Locale;
-import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -30,8 +26,11 @@ import java.util.Set;
  * tuned at all — the old keys are forbidden here and profiles are not consumed yet.
  * All of 0.9 ships as one release; this window exists only on development builds.</p>
  */
-@Component
-public class PollKeyMigrationCheck {
+public final class PollKeyMigrationCheck {
+
+    private PollKeyMigrationCheck() {
+    }
+
 
     // relaxed binding accepts kebab, camelCase, underscore, and any letter case in files,
     // and TWO env-var mappings (canonical dashes-removed and legacy underscore-per-word);
@@ -43,19 +42,7 @@ public class PollKeyMigrationCheck {
             "riptidesnmppollrefreshintervalms",
             "riptidesnmppollsnapshotexpiryms");
 
-    private final Environment environment;
 
-    public PollKeyMigrationCheck(final Environment environment) {
-        this.environment = Objects.requireNonNull(environment);
-    }
-
-    @PostConstruct
-    void failOnRetiredPollKeys() {
-        if (!(this.environment instanceof AbstractEnvironment abstractEnvironment)) {
-            return;
-        }
-        failOnRetiredPollKeys(abstractEnvironment.getPropertySources());
-    }
 
     /** Reusable against any source stack, matching the migration-check idiom. */
     public static void failOnRetiredPollKeys(final Iterable<PropertySource<?>> sources) {
@@ -74,9 +61,29 @@ public class PollKeyMigrationCheck {
      * class growing a second matching rule of its own.
      */
     public static Optional<String> findRetiredPollKey(final Iterable<PropertySource<?>> sources) {
-        return PropertyNames.in(sources)
-                .filter(name -> RETIRED_KEYS.contains(normalize(name)))
-                .findFirst();
+        return matches(sources).map(PropertyNames.Located::name).findFirst();
+    }
+
+    /** Category label for the collected startup report. */
+    public static final String LABEL = "retired per-agent poll keys";
+
+    /**
+     * Every match, not only the first, so startup can report them together.
+     *
+     * <p>{@link #findRetiredPollKey} is derived from this rather than walking separately: one walk,
+     * two consumers, so the throwing path and the reloader's landmine probe cannot drift apart.</p>
+     */
+    public static Stream<PropertyNames.Located> matches(final Iterable<PropertySource<?>> sources) {
+        return PropertyNames.located(sources)
+                .filter(found -> RETIRED_KEYS.contains(normalize(found.name())));
+    }
+
+    /** This category's remediation, unchanged; the collected report adds structure, not prose. */
+    public static String remediation() {
+        return "refresh and expiry moved into named polling profiles: configure "
+                + "riptide.snmp.polling.<name>.refresh-interval / .snapshot-expiry and reference "
+                + "the profile from agent ranges. Fleet-level riptide.snmp.poll.* keys are "
+                + "unaffected.";
     }
 
     private static String normalize(final String name) {

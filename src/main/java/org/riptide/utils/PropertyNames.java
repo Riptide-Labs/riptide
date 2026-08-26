@@ -72,4 +72,23 @@ public final class PropertyNames {
         return StreamSupport.stream(sources.spliterator(), false)
                 .flatMap(PropertyNames::in);
     }
+
+    /** A property name together with the source it was found in. */
+    public record Located(String name, PropertySource<?> source) {
+    }
+
+    /**
+     * The same walk as {@link #in(Iterable)}, keeping the source each name came from.
+     *
+     * <p>For callers whose response depends on <em>where</em> a key lives rather than only on the
+     * key. The legacy-nodes remediation is the standing example: the converter reads a file, so a
+     * deployment configured entirely through the environment needs different instructions, and
+     * flattening the walk discards the only thing that distinguishes them (#614).</p>
+     *
+     * <p>Lazy in the same way, so a short-circuiting terminal still stops at the first hit.</p>
+     */
+    public static Stream<Located> located(final Iterable<PropertySource<?>> sources) {
+        return StreamSupport.stream(sources.spliterator(), false)
+                .flatMap(source -> in(source).map(name -> new Located(name, source)));
+    }
 }
