@@ -65,3 +65,16 @@ Two cases deserve attention:
 - Each range walks on its profile's own cadence rather than one fleet-wide interval.
 - A device inside a credentialed range is polled from its first flow with no per-device configuration (zero-touch onboarding); the registration cap (`riptide.snmp.poll.max-exporters`) and pool width bound the blast radius.
 - The inventory file hot-reloads on content change; a rejected edit keeps the last good inventory serving and raises `inventory.reload.stale`.
+- **An observation-domain pin still scopes naming; it no longer scopes which credentials poll a device.** Enrichment entries keep their pin, and so does option-data enrichment — both are unchanged. Agent ranges carry no pin, so credentials come from the most specific range covering the address, by the same longest-prefix rule the exporter tree uses. See below.
+
+:::note[If you pinned a polled node to an observation domain]
+This one is a fix, and it is worth understanding rather than working around.
+
+In 0.8 the poller held **one registration per address** (`Map<InetSocketAddress, Registration>`, unchanged since), and its `register()` returned the existing registration on collision — discarding the newly resolved endpoint. So where a domain-pinned node sat inside a wider polled node, a device covered by both was polled with whichever credentials **the first flow after start-up happened to select**, and that was re-decided on every restart.
+
+0.9 resolves the same configuration by longest prefix: the most specific range wins, always, whatever domain arrives. A race became a rule.
+
+`riptide convert` names every node this applies to, so you can check the outcome against what you expected. Naming is unaffected — the pin still decides `exporterName` and interface pins, and a flow on a non-matching domain still falls through to the covering entry exactly as it did in 0.8.
+
+Agent ranges deliberately carry no observation domain. One address has one SNMP agent with one configured community, whatever domains the device exports, so a domain cannot select a credential set; honouring one would mean polling a single device several times over and walking the same interface table for each.
+:::

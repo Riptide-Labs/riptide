@@ -805,6 +805,198 @@ class LegacyConverterTest {
                 .hasMessageNotContaining("('spring.application.name')");
     }
 
+    /**
+     * A nested polled pair resolves by longest prefix, deterministically, whatever domain arrives.
+     *
+     * <p>This is the property #615 is really about. In 0.8 the poller held one registration per
+     * address and {@code register()} kept the first endpoint it resolved, so a device covered by both
+     * a domain-pinned node and a wider one was polled with whichever credentials the first flow after
+     * boot selected — re-decided on every restart. 0.9 replaced that race with a rule.</p>
+     *
+     * <p>Only the 0.9 half is asserted: {@code v0.8.1}'s {@code register()} is deleted code no test
+     * in this repo can reach, so the historical claim stays in prose where a reader can check it
+     * against the tag.</p>
+     */
+    @Test
+    void aNestedPolledRangeDecidesCredentialsWhateverDomainArrives() throws Exception {
+        final InventorySnapshot snapshot = boot(convert(NESTED_PIN));
+
+        for (final long domain : new long[] {42L, 0L, 99L, 7L}) {
+            final var agent = snapshot.agentView()
+                    .match(new ExporterIdentity.NetflowIpfix(InetAddress.getByName("10.20.30.5"), domain))
+                    .orElseThrow();
+            assertThat(agent.range())
+                    .as("domain %d must not change which range polls 10.20.30.5", domain)
+                    .isEqualTo("10.20.30.0/24");
+            // the security name, not the version: both ranges in NESTED_PIN are v3, so asserting
+            // the version passes whichever one won and pins nothing
+            assertThat(agent.credentials().securityName()).isEqualTo("mon");
+        }
+    }
+
+    /**
+     * The two halves diverge, and that divergence is the whole finding — so both are pinned in one
+     * test rather than in two that could be read apart.
+     *
+     * <p>Naming still honours the pin. Polling follows longest prefix. An operator whose mental model
+     * is "domain 42 means v3" is right about the name and no longer right about the credentials.</p>
+     */
+    @Test
+    void thePinStillDecidesTheNameWhileTheRangeDecidesPolling() throws Exception {
+        final InventorySnapshot snapshot = boot(convert(NESTED_PIN));
+
+        assertThat(nameFor(snapshot, "10.20.30.5", 42L))
+                .as("the pin decides the name on its own domain")
+                .isEqualTo("core-router");
+        assertThat(nameFor(snapshot, "10.20.30.5", 99L))
+                .as("and a different domain falls through to the covering entry, as in 0.8")
+                .isEqualTo("access-switches");
+
+        assertThat(snapshot.agentView()
+                .match(new ExporterIdentity.NetflowIpfix(InetAddress.getByName("10.20.30.5"), 99L))
+                .orElseThrow().range())
+                .as("while polling ignores the domain entirely")
+                .isEqualTo("10.20.30.0/24");
+    }
+
+    /** The conversion is correct, so it is reported and still emitted — never refused. */
+    @Test
+    void aPinnedNodeInsideAnotherPolledRangeIsReportedNotRefused() {
+        final var converted = convert(NESTED_PIN);
+
+        assertThat(converted.summary())
+                .anySatisfy(line -> assertThat(line)
+                        .contains("core-router")
+                        .contains("access-switches")
+                        .contains("42"));
+        assertThat(converted.inventory())
+                .as("a correct output exists, so the conversion must still happen")
+                .contains("10.20.30.0/24");
+    }
+
+    /** A pinned node nothing covers never had a second candidate, so nothing changed for it. */
+    @Test
+    void anUnnestedPinnedNodeIsNotReported() {
+        final var converted = convert("""
+                riptide:
+                  nodes:
+                    core-router:
+                      subnet-address: 10.20.30.0/24
+                      observation-domain: 42
+                      snmp: {snmp-version: v3, security-name: mon}
+                """);
+
+        assertThat(converted.summary())
+                .as("reporting the common case would bury the line that matters")
+                .noneSatisfy(line -> assertThat(line).contains("sits inside polled range"));
+    }
+
+    /**
+     * A carve-out that wins the match is reported as polling nothing, not as polling with its own
+     * credentials.
+     *
+     * <p>An FR-9 range is emitted {@code enabled: false} with no credentials, and it still wins the
+     * longest-prefix match, so it shadows the wider range rather than deferring to it. The first
+     * version of this report said "always polled with 'core-router' credentials" while the carve-out
+     * line two lines above said polling stops — two contradictory claims about the same node, on
+     * v2c-on-a-subnet, which is the commonest legacy shape there is.</p>
+     */
+    @Test
+    void aCarvedOutWinnerIsReportedAsPollingNothing() {
+        final var converted = convert("""
+                riptide:
+                  nodes:
+                    core-router:
+                      subnet-address: 10.20.30.0/24
+                      observation-domain: 42
+                      snmp: {snmp-version: v2c, community: public}
+                    access-switches:
+                      subnet-address: 10.20.0.0/16
+                      snmp: {snmp-version: v3, security-name: fleet}
+                """);
+
+        assertThat(converted.summary())
+                .anySatisfy(line -> assertThat(line)
+                        .contains("overlaps polled range")
+                        .contains("polled by nothing"))
+                .noneSatisfy(line -> assertThat(line)
+                        .contains("overlaps polled range")
+                        .contains("polled with 'core-router' credentials"));
+    }
+
+    /**
+     * The fall-through named is the most specific overlapping range, not the first one found.
+     *
+     * <p>Ranges are collected in sorted node-name order, which has nothing to do with specificity.
+     * Breaking on the first match named {@code aaa-wide} (a /8) where 0.8 would actually have fallen
+     * through to {@code zzz-mid} (a /16), pointing the operator at the wrong credentials.</p>
+     */
+    @Test
+    void theMostSpecificOverlappingRangeIsNamedNotTheFirstFound() {
+        final var converted = convert("""
+                riptide:
+                  nodes:
+                    aaa-wide:
+                      subnet-address: 10.0.0.0/8
+                      snmp: {snmp-version: v3, security-name: wide}
+                    zzz-mid:
+                      subnet-address: 10.20.0.0/16
+                      snmp: {snmp-version: v3, security-name: mid}
+                    core-router:
+                      subnet-address: 10.20.30.0/24
+                      observation-domain: 42
+                      snmp: {snmp-version: v3, security-name: core}
+                """);
+
+        assertThat(converted.summary())
+                .anySatisfy(line -> assertThat(line)
+                        .contains("overlaps polled range 'zzz-mid'")
+                        .doesNotContain("aaa-wide"));
+    }
+
+    /**
+     * A pinned range that <em>contains</em> an unpinned one raced identically, and was unreported.
+     *
+     * <p>{@code PinnedPrefixMatcher} consults the pinned pool first, so a pinned wider range beats an
+     * unpinned narrower one for its own domain while the narrower one serves every other domain —
+     * the same two endpoints for one address. Testing only "pinned inside another" missed exactly the
+     * population this report exists to warn.</p>
+     */
+    @Test
+    void aPinnedRangeContainingAnUnpinnedOneIsAlsoReported() {
+        final var converted = convert("""
+                riptide:
+                  nodes:
+                    core-router:
+                      subnet-address: 10.20.0.0/16
+                      observation-domain: 42
+                      snmp: {snmp-version: v3, security-name: mon}
+                    access-switches:
+                      subnet-address: 10.20.30.0/24
+                      snmp: {snmp-version: v3, security-name: fleet}
+                """);
+
+        assertThat(converted.summary())
+                .anySatisfy(line -> assertThat(line)
+                        .contains("core-router")
+                        .contains("overlaps polled range 'access-switches'")
+                        // the narrower range wins for the addresses both cover
+                        .contains("polled with 'access-switches' credentials"));
+    }
+
+    /** A domain-pinned /24 inside a polled /16, both with SNMP: the shape 0.8 raced on. */
+    private static final String NESTED_PIN = """
+            riptide:
+              nodes:
+                core-router:
+                  subnet-address: 10.20.30.0/24
+                  observation-domain: 42
+                  snmp: {snmp-version: v3, security-name: mon}
+                access-switches:
+                  subnet-address: 10.20.0.0/16
+                  snmp: {snmp-version: v3, security-name: fleet}
+            """;
+
     /** Boots the emitted pair through the real 0.9 loader: this is the AD-13 proof. */
     private static InventorySnapshot boot(final LegacyConverter.Converted converted) {
         return InventoryLoader.parse(profilesFrom(converted.mainConfig()),
