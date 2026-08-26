@@ -611,7 +611,7 @@ class FlowsSchemaTest {
      * distinguish the candidate rules either — {@code NetflowV5 = 1} is the first declared, the
      * smallest, and the only one adjacent to zero all at once — so the cases below are built to
      * separate them. Both were checked against a real 26.7 server before being pinned here, and
-     * {@code ReservedValueIT} re-asks the server for the same two on every run: this pins the rule,
+     * {@code ReservedValueIT} re-asks the server for the same two under {@code make e2e}: this pins the rule,
      * that pins the rule still matching ClickHouse.</p>
      */
     @Test
@@ -652,7 +652,7 @@ class FlowsSchemaTest {
     /**
      * A wrapper type decides the reserved value on its own, whatever it wraps.
      *
-     * <p>Verified on 26.7, and re-asked of a server on every run by {@code ReservedValueIT}: an
+     * <p>Verified on 26.7, and re-asked of a server by {@code ReservedValueIT} under {@code make e2e}: an
      * appended {@code Nullable(Enum8('' = 0, 'X' = 1))} column reads {@code NULL} for pre-existing
      * rows, not {@code ''}, and an {@code Array(…)} reads {@code []}.
      * Matching the inner type through the wrapper would publish a reserved value the column can never

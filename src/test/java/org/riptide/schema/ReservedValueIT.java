@@ -97,9 +97,11 @@ public class ReservedValueIT {
 
         for (final String type : types) {
             final String reserved = FlowsSchema.reservedValueFor(type);
-            assertThat(preAppendRowMatches(appendColumnOfType(type), type, reserved))
-                    .as("a row aggregated before an appended %s column reads %s on this server —"
-                            + " the boundary every appended dimension of that type rests on", type, reserved)
+            final String table = appendColumnOfType(type);
+            assertThat(preAppendRowMatches(table, type, reserved))
+                    .as("a row aggregated before an appended %s column should read %s on this"
+                            + " server, the boundary every appended dimension of that type rests"
+                            + " on, but reads %s", type, reserved, preAppendRowValueOrUnrenderable(table))
                     .isTrue();
         }
     }
@@ -118,9 +120,11 @@ public class ReservedValueIT {
         for (final String type : List.of("Nullable(String)", "Nullable(UInt8)",
                 "Nullable(Enum8('' = 0, 'X' = 5))", "Array(String)", "Array(UInt64)")) {
             final String reserved = FlowsSchema.reservedValueFor(type);
-            assertThat(preAppendRowMatches(appendColumnOfType(type), type, reserved))
-                    .as("an appended %s reads %s, decided by the wrapper and not by what it wraps",
-                            type, reserved)
+            final String table = appendColumnOfType(type);
+            assertThat(preAppendRowMatches(table, type, reserved))
+                    .as("an appended %s should read %s, decided by the wrapper and not by what it"
+                            + " wraps, but reads %s", type, reserved,
+                            preAppendRowValueOrUnrenderable(table))
                     .isTrue();
         }
     }
@@ -202,6 +206,28 @@ public class ReservedValueIT {
                     + " pre-append row holds: " + notComparable.getMessage(), notComparable);
         }
         return false;
+    }
+
+    /**
+     * The pre-append row's value rendered for a failure message, never throwing.
+     *
+     * <p>The comparison above reduces the server's answer to a boolean, so a failure would otherwise
+     * print only the literal this project <em>expects</em>, phrased as though it were what the server
+     * said. That is exactly backwards for the case this test exists to catch: a ClickHouse release
+     * that changes a default produces a red test naming the old value and never the new one, so
+     * diagnosing it means reproducing the probe by hand.</p>
+     *
+     * <p>Rendering is best-effort on purpose. It runs on the passing path too (AssertJ evaluates a
+     * description eagerly), and a type this client cannot render must not turn a green probe red or
+     * borrow the "not comparable" message, which would name the wrong cause.</p>
+     */
+    private static String preAppendRowValueOrUnrenderable(final String table) {
+        try {
+            final String value = preAppendRowValue(table);
+            return value == null ? "NULL" : "'" + value + "'";
+        } catch (final Exception unrenderable) {
+            return "a value this client could not render (" + unrenderable.getMessage() + ")";
+        }
     }
 
     /** The pre-append row's value rendered as text, for the enum cases the mapping refuses. */
