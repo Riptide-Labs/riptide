@@ -126,6 +126,28 @@ class ObsoleteKeysTest {
                 .hasMessageContaining("in the process environment");
     }
 
+    /**
+     * The same mixed stack with the environment source first.
+     *
+     * <p>Not redundant with the case above, and a mutation proved it: replacing "any match from a
+     * file" with "the first match's kind" left that test green, because it happens to put the file
+     * source first. Only the reversed order distinguishes a per-group answer from a whole-group one.
+     * Both orderings are realistic — a container reads its environment ahead of a mounted file.</p>
+     */
+    @Test
+    void aMixedStackIsNotDecidedByWhichSourceComesFirst() {
+        final MutablePropertySources environmentFirst = new MutablePropertySources();
+        environmentFirst.addFirst(new SystemEnvironmentPropertySource("systemEnvironment",
+                Map.of("RIPTIDE_NODES_CORE_SUBNET_ADDRESS", "10.0.1.1")));
+        environmentFirst.addLast(new MapPropertySource("file",
+                Map.of("riptide.nodes.edge.subnet-address", "10.0.0.1")));
+
+        assertThatThrownBy(() -> ObsoleteKeys.failOnObsoleteKeys(environmentFirst))
+                .as("the file remediation must survive an environment source being found first")
+                .hasMessageContaining("riptide convert <your-config.yaml>")
+                .hasMessageContaining("in the process environment");
+    }
+
     /** A file-only stack must not be handed the environment paragraph it cannot act on. */
     @Test
     void aFileOnlyStackGetsOnlyTheFileRemediation() {
