@@ -65,6 +65,6 @@ public class TopTalkersTool implements McpTool {
                 rawGroupBy, table, timeRange, rawGroupBy
         );
 
-        return mcpService.executeQuery(sql);
+        return mcpService.executeRangeQuery(sql, table, timeRange);
     }
 }

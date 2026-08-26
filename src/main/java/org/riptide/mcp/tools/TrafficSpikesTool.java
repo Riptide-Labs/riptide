@@ -53,6 +53,6 @@ public class TrafficSpikesTool implements McpTool {
                 QueryRouter.flowCountExpression(table), table, timeRange
         );
 
-        return mcpService.executeQuery(sql);
+        return mcpService.executeRangeQuery(sql, table, timeRange);
     }
 }

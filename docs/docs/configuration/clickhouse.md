@@ -137,7 +137,7 @@ Each rollup `X` is fed by a materialized view named `X_mv`. Query the table, nev
 ### Rollups gain dimensions in place
 
 :::warning[Provisioned deployments must re-run `onboard` after an upgrade that adds a dimension]
-A collector in validate mode (`manage-schema: false`) issues no DDL, so it cannot repair its own rollups. Until `riptide onboard` is re-run, riptide reports all four rollups as not matching this version and **declines them at query time** — so every query spanning 60 minutes or more is answered from raw `flows` and silently truncated at the raw retention window, while the documentation says the rollups carry the new dimension.
+A collector in validate mode (`manage-schema: false`) issues no DDL, so it cannot repair its own rollups. Until `riptide onboard` is re-run, riptide reports all four rollups as not matching this version and **declines them at query time** — so every query spanning 60 minutes or more is answered from raw `flows` instead. A query reaching past what raw `flows` retains comes back short — but not silently: the answer says so (see below).
 
 Then **restart the collector**. The decision about which rollups are usable is made once, at
 startup — a schema does not change under a running collector — so a collector that declined
@@ -180,7 +180,24 @@ Two messages are possible, and they mean different things.
 **"does not match this version's schema"** — the rollup's columns, their types, its **sorting key**, or its view's SELECT differ from what this version emits. Ingestion is unaffected: raw `flows` still receives every flow, and a rollup is a query-path optimisation, not a collection path. Long-range queries stop using that rollup and are answered from raw `flows` instead. The other rollups keep serving.
 
 :::warning[The fallback is bounded by raw retention]
-Raw `flows` is kept for 30 days by default; the rollups are kept for 365. Part of why the rollups exist is that long-range queries outlive the raw table's expiry. So a query that falls back and reaches further back than the raw retention comes back **incomplete**, not merely slower — it returns the rows that still exist and says nothing about the rest. A 90-day query answered from a 30-day table looks like a complete answer covering a third of the range.
+Raw `flows` is kept for 30 days by default; the rollups are kept for 365. Part of why the rollups exist is that long-range queries outlive the raw table's expiry. So a query that falls back and reaches further back than the raw retention comes back **incomplete**, not merely slower — it returns the rows that still exist and, until riptide learned to say so, said nothing about the rest.
+
+:::note[A short answer now says it is short]
+When the table that answered cannot reach back to the start of the range you asked for, the result carries one extra entry naming the table, the earliest data it holds, and how much of your range that covers:
+
+```
+coverage_warning: answered from riptide.flows, which holds data from
+                  2026-07-27 09:14:02 — 43200 of the 129600 minutes
+                  requested. The rest is not missing from your network,
+                  it is outside what this table retains.
+```
+
+**A fully covered answer is unchanged**, so the entry means something when it appears rather than being a banner to skip.
+
+The coverage figure is read from the data, not from a retention setting. That matters in both directions: a deployment provisioned with `onboard --ttl-days 7` is told about 7 days rather than riptide's 30-day default, and a rollup that only began aggregating last Tuesday is honest about holding less than its 365-day TTL permits.
+
+It reports a shortfall it can observe at the start of the range. It is not a completeness guarantee — a table with a gap in the middle of its range still answers with that gap, and nothing here detects it.
+:::
 
 Treat a drifted rollup as something to repair promptly rather than to live with, and until then keep queries against it inside the raw retention window.
 :::

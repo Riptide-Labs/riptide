@@ -54,6 +54,6 @@ public class GeoAsnTool implements McpTool {
                 table, timeRange
         );
 
-        return mcpService.executeQuery(sql);
+        return mcpService.executeRangeQuery(sql, table, timeRange);
     }
 }

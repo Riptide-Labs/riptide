@@ -56,6 +56,6 @@ public class InterfaceUtilizationTool implements McpTool {
                 table, timeRange, limit
         );
 
-        return mcpService.executeQuery(sql);
+        return mcpService.executeRangeQuery(sql, table, timeRange);
     }
 }
