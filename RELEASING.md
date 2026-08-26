@@ -10,6 +10,11 @@ anything else patch.
 
 ## Cutting a release
 
+**Write the release notes first.** They are `docs/docs/release-notes/vX.Y.Z.md`, committed like any
+other file, and they become both the GitHub release body and a page on the docs site. The release
+job refuses a stable tag without them, so writing them after tagging is not an option —
+[What a release note must say](#what-a-release-note-must-say) has the shape and the constraints.
+
 `main` is protected, so the version bump goes through a pull request like any
 other change. Example for 1.0.0:
 
@@ -17,6 +22,7 @@ other change. Example for 1.0.0:
 git checkout main && git pull
 git checkout -B release
 git push -u origin release
+$EDITOR docs/docs/release-notes/v1.0.0.md   # before the next line, not after
 make release RELEASE_VERSION=1.0.0
 ```
 
@@ -71,9 +77,11 @@ reaches a build.
 That file is also published on the docs site, so it is the notes — not a draft of them. There is no
 step after the tag; `gh release edit` is only needed to correct something already published.
 
+### What a release note must say
+
 A release note earns its place by answering three things, which is what makes
-[v0.10.0](https://riptide.space/release-notes/v0.10.0) and
-[v0.11.0](https://riptide.space/release-notes/v0.11.0) useful and is the part no template supplies:
+[v0.10.0](https://riptide.space/docs/release-notes/v0.10.0) and
+[v0.11.0](https://riptide.space/docs/release-notes/v0.11.0) useful and is the part no template supplies:
 
 - **Who is affected.** Riptide's two deployment shapes need different things, and most releases
   affect only one. Say which, in a heading the reader can match themselves against.
@@ -81,19 +89,35 @@ A release note earns its place by answering three things, which is what makes
   reason it out.
 - **What to run.** The exact invocation, not a description of it.
 
-The file has two renderers, so keep it to what both accept: GitHub renders the release body as
-GFM, and Docusaurus renders the same file as MDX. HTML comments (`<!-- … -->`) are invisible on
-GitHub and a **build failure** in MDX; raw `<` and `{` are likewise safe in one and not the other.
-Plain markdown renders identically in both.
+The file has two renderers and they disagree, so keep it to what both accept.
+
+The loud one: HTML comments (`<!-- … -->`) are invisible on GitHub and a **build failure** in MDX,
+as are raw `<` and `{`. You find these by running `make docs`.
+
+The quiet one: **GFM renders every newline as a line break; MDX joins them.** A paragraph
+hard-wrapped at 100 columns — as this file is — displays as a narrow ragged column in the release
+body and reads normally on the docs site, with nothing failing. Write one line per paragraph and one
+line per bullet.
+
+The file also needs Docusaurus frontmatter to be a docs page:
+
+```
+---
+sidebar_position: 1
+title: Riptide X.Y.Z — what changed, in one line
+sidebar_label: vX.Y.Z
+---
+```
+
+`sidebar_position` runs newest-first, so a new release takes `1` and every existing note moves down
+one. `title` is the page heading, so do **not** repeat it as an `# H1` in the body — Docusaurus
+renders it for you, and GitHub already shows the tag above the release body. The job strips the
+frontmatter before publishing, so none of it reaches GitHub.
 
 Prereleases (`vX.Y.Z-rc1`) need no file. The job synthesises a placeholder body, because a release
 candidate is built to be thrown away and the audience for an upgrade procedure is an operator, not
 whoever is testing the candidate.
 
-When a release adds a step for provisioned deployments, check whether
-[Upgrading across versions](https://riptide.space/upgrading-across-versions) still describes how the
-steps combine. It carries only the collapse rules, never per-release detail — if it needs editing
-because a release note changed, it has started duplicating rather than deriving.
 
 The attached SBOM contains post-generation first-party license assertions: syft cannot read our license from a deb control file or attach one to the scanned directory, so `make sbom-assert` sets `licenseDeclared: GPL-3.0-or-later` (read from `nfpm.yaml`) on those two entries before the report is rendered and the file is signed.
 A release that fails at the "Assert first-party license facts" step means the SBOM shape drifted (typically after a syft upgrade) and the selectors in `deployment/sbom/assert_licenses.py` no longer match exactly one entry each — fix the selector, never ship `NOASSERTION`.
@@ -152,6 +176,14 @@ cosign verify ghcr.io/riptide-labs/riptide:X.Y.Z …   # signature is real
 `latest` and `X.Y` should now resolve to the new version. If the workflow fails
 partway, fix forward with a new patch version rather than re-pushing the tag —
 the release is already partly public.
+
+The one exception is the notes check, which runs before anything is built or published. It fails in
+seconds and leaves nothing behind, so write the file, delete the tag and re-tag rather than burning
+a version:
+
+```bash
+git push origin --delete vX.Y.Z && git tag -d vX.Y.Z
+```
 
 ## Changing the pipeline
 
