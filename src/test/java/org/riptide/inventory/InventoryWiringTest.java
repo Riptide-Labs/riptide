@@ -11,6 +11,7 @@ import org.riptide.node.LegacyNodesFlagDayCheck;
 import org.riptide.pipeline.ExporterIdentity;
 import org.riptide.secrets.SecretRefConverter;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.riptide.config.ObsoleteKeys;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -44,8 +45,11 @@ class InventoryWiringTest {
 
     @Configuration
     @EnableConfigurationProperties({SnmpProfilesConfig.class, InventoryConfig.class})
-    @Import({Inventory.class, InventoryMisplacementCheck.class, PollKeyMigrationCheck.class,
-            LegacyNodesFlagDayCheck.class, SecretRefConverter.class})
+    // ObsoleteKeys is what carries the @PostConstruct now; the three rule holders below no longer
+    // do. Importing them without it is what this test caught when the hook moved: every context
+    // booted clean, which is the #613 defect exactly, in the class written to prevent it.
+    @Import({Inventory.class, ObsoleteKeys.class, InventoryMisplacementCheck.class,
+            PollKeyMigrationCheck.class, LegacyNodesFlagDayCheck.class, SecretRefConverter.class})
     static class WiringConfiguration {
     }
 

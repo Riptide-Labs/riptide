@@ -5,16 +5,11 @@
 
 package org.riptide.inventory;
 
-import jakarta.annotation.PostConstruct;
 import org.riptide.utils.PropertyNames;
-import org.springframework.core.env.AbstractEnvironment;
-import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
-import org.springframework.stereotype.Component;
 
 import java.util.Optional;
 import java.util.stream.Stream;
-import java.util.Objects;
 import java.util.regex.Pattern;
 
 /**
@@ -24,25 +19,16 @@ import java.util.regex.Pattern;
  * them without a diagnostic — a silently empty inventory. This check fails startup
  * loudly instead (the {@code NodesConfigMigrationCheck} precedent).
  */
-@Component
-public class InventoryMisplacementCheck {
+public final class InventoryMisplacementCheck {
+
+    private InventoryMisplacementCheck() {
+    }
+
 
     private static final Pattern MISPLACED_TREE = Pattern.compile(
             "^(riptide\\.(snmp\\.agents|exporters)[.\\[]|RIPTIDE_(SNMP_AGENTS|EXPORTERS)_)");
 
-    private final Environment environment;
 
-    public InventoryMisplacementCheck(final Environment environment) {
-        this.environment = Objects.requireNonNull(environment);
-    }
-
-    @PostConstruct
-    void failOnMisplacedInventoryTrees() {
-        if (!(this.environment instanceof AbstractEnvironment abstractEnvironment)) {
-            return;
-        }
-        failOnMisplacedInventoryTrees(abstractEnvironment.getPropertySources());
-    }
 
     /** Reusable against any source stack, matching the migration-check idiom. */
     public static void failOnMisplacedInventoryTrees(final Iterable<PropertySource<?>> sources) {

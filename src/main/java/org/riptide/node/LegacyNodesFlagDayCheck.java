@@ -5,19 +5,14 @@
 
 package org.riptide.node;
 
-import jakarta.annotation.PostConstruct;
 import org.riptide.utils.PropertyNames;
-import org.springframework.core.env.AbstractEnvironment;
-import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
 import org.springframework.core.env.SystemEnvironmentPropertySource;
-import org.springframework.stereotype.Component;
 
 import java.util.Locale;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
-import java.util.Objects;
 import java.util.regex.Pattern;
 
 /**
@@ -34,25 +29,16 @@ import java.util.regex.Pattern;
  * once; it is now one spelling of a tree that has no 0.9 equivalent at all, so a single rule
  * covers both and the operator gets the same instruction either way.</p>
  */
-@Component
-public class LegacyNodesFlagDayCheck {
+public final class LegacyNodesFlagDayCheck {
+
+    private LegacyNodesFlagDayCheck() {
+    }
+
 
     private static final java.util.regex.Pattern LEGACY_KEY = java.util.regex.Pattern.compile(
             "(?i)^riptide[._-]?nodes([._\\[\\-\\s]|$)");
 
-    private final Environment environment;
 
-    public LegacyNodesFlagDayCheck(final Environment environment) {
-        this.environment = Objects.requireNonNull(environment);
-    }
-
-    @PostConstruct
-    void failOnLegacyNodes() {
-        if (!(this.environment instanceof AbstractEnvironment abstractEnvironment)) {
-            return;
-        }
-        failOnLegacyNodes(abstractEnvironment.getPropertySources());
-    }
 
     /** Reusable against any source stack — the config hot reload runs it on candidates. */
     public static void failOnLegacyNodes(final Iterable<PropertySource<?>> sources) {

@@ -5,17 +5,12 @@
 
 package org.riptide.inventory;
 
-import jakarta.annotation.PostConstruct;
 import org.riptide.utils.PropertyNames;
-import org.springframework.core.env.AbstractEnvironment;
-import org.springframework.core.env.Environment;
 import org.springframework.core.env.PropertySource;
-import org.springframework.stereotype.Component;
 
 import java.util.Optional;
 import java.util.stream.Stream;
 import java.util.Locale;
-import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -31,8 +26,11 @@ import java.util.Set;
  * tuned at all — the old keys are forbidden here and profiles are not consumed yet.
  * All of 0.9 ships as one release; this window exists only on development builds.</p>
  */
-@Component
-public class PollKeyMigrationCheck {
+public final class PollKeyMigrationCheck {
+
+    private PollKeyMigrationCheck() {
+    }
+
 
     // relaxed binding accepts kebab, camelCase, underscore, and any letter case in files,
     // and TWO env-var mappings (canonical dashes-removed and legacy underscore-per-word);
@@ -44,19 +42,7 @@ public class PollKeyMigrationCheck {
             "riptidesnmppollrefreshintervalms",
             "riptidesnmppollsnapshotexpiryms");
 
-    private final Environment environment;
 
-    public PollKeyMigrationCheck(final Environment environment) {
-        this.environment = Objects.requireNonNull(environment);
-    }
-
-    @PostConstruct
-    void failOnRetiredPollKeys() {
-        if (!(this.environment instanceof AbstractEnvironment abstractEnvironment)) {
-            return;
-        }
-        failOnRetiredPollKeys(abstractEnvironment.getPropertySources());
-    }
 
     /** Reusable against any source stack, matching the migration-check idiom. */
     public static void failOnRetiredPollKeys(final Iterable<PropertySource<?>> sources) {

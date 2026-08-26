@@ -845,9 +845,14 @@ public class ConfigFileReloaderTest {
             assertThat(inventory.profiles().credentials()).containsKey("still-serving");
         }
         // and rejected by THIS check: without naming the cause, an unrelated validation
-        // failure would keep the counter moving and the test green with the check deleted
+        // failure would keep the counter moving and the test green with the check deleted.
+        // The category label AND its own remediation, not merely that a rejection happened —
+        // the collected message names every category, so "a failure occurred" is now satisfied
+        // by any of them
         assertThat(captured).anySatisfy(event ->
-                assertThat(event.getFormattedMessage()).contains("Legacy node configuration found"));
+                assertThat(event.getFormattedMessage())
+                        .contains("riptide.nodes tree")
+                        .contains("riptide.nodes was removed in 0.9"));
         } finally {
             logger.detachAppender(appender);
         }

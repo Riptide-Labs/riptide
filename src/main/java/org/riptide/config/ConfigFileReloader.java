@@ -408,14 +408,11 @@ public class ConfigFileReloader {
             throw new IllegalStateException("all documents are profile-gated — profile activation is boot-only");
         }
 
-        // legacy indexed keys and retired poll keys fail the candidate like they
-        // fail boot — scanned over the applicable documents only, because
-        // profile-gated documents are never installed on reload
-        LegacyNodesFlagDayCheck.failOnLegacyNodes(applicable);
-        PollKeyMigrationCheck.failOnRetiredPollKeys(applicable);
-        // startup rejects an inventory tree in the main config; accepting it here and
-        // silently ignoring it would break this class's own stated contract
-        InventoryMisplacementCheck.failOnMisplacedInventoryTrees(applicable);
+        // keys this release does not read fail the candidate like they fail boot — scanned over the
+        // applicable documents only, because profile-gated documents are never installed on reload.
+        // One call rather than three: a candidate carrying keys in several categories reported one
+        // and stopped, so the operator edited and resubmitted once per category (#562)
+        ObsoleteKeys.failOnObsoleteKeys(applicable);
 
         // fidelity by construction: the candidate stack is the live stack with exactly
         // the file layer swapped — env overrides keep their boot-time precedence.
