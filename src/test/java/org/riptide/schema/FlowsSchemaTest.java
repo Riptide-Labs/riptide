@@ -32,6 +32,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class FlowsSchemaTest {
 
+    /**
+     * The literal a fallback yields, whatever the spacing: {@code ifNull(x,'')},
+     * {@code coalesce(x , '')} and {@code ifNull(x, '')} all reduce to the same thing. An earlier
+     * version compared the raw substring {@code ", '')"} and would have waved through every spelling
+     * but one.
+     */
+    private static final Pattern FALLBACK = Pattern.compile(",\\s*('[^']*'|[0-9.]+)\\s*\\)\\s*$");
+
     @Test
     void createDatabaseIsIdempotentAndQuoted() {
         assertThat(FlowsSchema.createDatabase("riptide"))
@@ -338,39 +346,100 @@ class FlowsSchemaTest {
     }
 
     /**
-     * The reserved-default rule, enforced rather than remembered (#470 §2).
+     * The reserved-default rule, enforced rather than remembered (#470 §2), over the dimensions it
+     * governs: those appended to a rollup that already held rows.
      *
      * <p>An appended dimension's only boundary is its type default: the value a row aggregated
      * before the append reads, and which a column joining the sorting key cannot be given an
      * explicit {@code DEFAULT} for. That boundary exists only while the dimension's expression
      * cannot itself emit that value.</p>
      *
-     * <p>{@code ifNull(f.application, '')} is the standing exception. It emits {@code ''}
-     * deliberately — a nullable sort key would break the {@code SummingMergeTree} collapse — and is
-     * harmless only because it predates every append. This test names it, so a second one cannot be
-     * added quietly: the day someone writes {@code ifNull(f.srcCity, '')}, the build says no and
-     * points at {@code 'unknown'} instead.</p>
+     * <p><b>Applied to every dimension this rule is not merely too strict, it is wrong.</b>
+     * {@code f.protocol} emits {@code 0} for HOPOPT and {@code f.srcAs} emits {@code 0} for the
+     * conventional unknown AS. Both are correct readings on a dimension with no pre-append rows to
+     * be confused with. Selecting on {@code appended} is what makes the rule enforceable at all,
+     * and its absence is why the previous version of this test asserted on nothing for four
+     * releases: its pattern matched only fallback-form expressions, and the sole fallback-form
+     * dimension was the one its allow-list exempted first.</p>
+     *
+     * <p>The enum arm is a live hazard rather than a theoretical one. The refusal message for an
+     * enum-typed dimension suggests adding an {@code ''} member, and applied to the <em>source</em>
+     * column instead of a rollup column that is precisely the change that breaks this: real rows
+     * would land on {@code ''}, becoming indistinguishable from rows aggregated before the append,
+     * so {@code WHERE flowProtocol != ''} would drop live traffic for the rollup's 365-day
+     * retention with nothing marking it.</p>
+     *
+     * <p>Whether an expression can <em>ever</em> emit a value is a claim about its range over every
+     * possible input, which neither a pattern match nor a server settles. So this asserts what can
+     * be asserted — that each appended dimension carries an argument, and that arguments checkable
+     * from the schema hold — and no more.</p>
      */
     @Test
-    void noDimensionAddedLaterMayEmitTheValueThatMarksItsOwnAbsence() {
-        final Set<String> allowed = Set.of("ifNull(f.application, '')");
-        // The literal a fallback yields, whatever the spacing: ifNull(x,''), coalesce(x , '') and
-        // ifNull(x, '') all reduce to the same thing. An earlier version compared the raw substring
-        // ", '')" and would have waved through every spelling but one.
-        final Pattern fallback = Pattern.compile(",\\s*('[^']*'|[0-9.]+)\\s*\\)\\s*$");
+    void everyAppendedDimensionArguesWhyItCannotEmitTheValueThatMarksItsOwnAbsence() {
+        // An expression whose safety rests on validation upstream cannot be checked here. It names
+        // where the property is enforced instead, and that name has to resolve.
+        final Map<String, String> guardedUpstream = Map.of(
+                "f.samplingInterval", "org.riptide.flows.parser.SamplingIntervalBoundaryTest");
 
-        FlowsSchema.appendableDimensions().forEach((expression, absent) -> {
-            if (allowed.contains(expression)) {
-                return;
-            }
-            final Matcher matcher = fallback.matcher(expression);
+        final Map<String, String> appended = FlowsSchema.appendedDimensions();
+        assertThat(appended)
+                .as("the appended set is what this rule governs; an empty one means the marker was"
+                        + " lost and the rule now governs nothing")
+                .isNotEmpty();
+
+        final java.util.concurrent.atomic.AtomicInteger inspected =
+                new java.util.concurrent.atomic.AtomicInteger();
+
+        appended.forEach((expression, absent) -> {
+            inspected.incrementAndGet();
+            final Matcher matcher = FALLBACK.matcher(expression);
             if (matcher.find()) {
+                // checkable here: the expression states its own fallback
                 assertThat(matcher.group(1))
                         .as("%s falls back to %s, which is the value that marks a pre-append row —"
                                 + " use a sentinel the dimension cannot otherwise hold", expression, absent)
                         .isNotEqualTo(absent);
+                return;
             }
+            final String guard = guardedUpstream.get(expression);
+            if (guard != null) {
+                boolean resolves;
+                try {
+                    Class.forName(guard);
+                    resolves = true;
+                } catch (final ClassNotFoundException e) {
+                    resolves = false;
+                }
+                assertThat(resolves)
+                        .as("%s names %s as the guard that keeps it off %s, and that class must"
+                                + " exist — a pointer to a renamed test reads as verified and is not",
+                                expression, guard, absent)
+                        .isTrue();
+                return;
+            }
+            // checkable here: the expression reads a closed set, so read the set
+            if (expression.startsWith("toString(f.")) {
+                final String column = expression.substring("toString(f.".length(), expression.length() - 1);
+                final String rawType = FlowsSchema.createFlowsTable("riptide", 30)
+                        .replaceAll("(?s).*\\b" + column + " (Enum8\\([^)]*\\)).*", "$1")
+                        .replaceAll("\\s+", " ");
+                assertThat(rawType)
+                        .as("%s reads the %s enum, so that enum must declare no member stringifying"
+                                + " to %s", expression, column, absent)
+                        .startsWith("Enum8(")
+                        .doesNotContain("''");
+                return;
+            }
+            org.assertj.core.api.Assertions.fail(
+                    "%s was appended to a live rollup but argues nothing about why it cannot emit %s."
+                            + " Either give it an expression whose fallback is a sentinel, or name the"
+                            + " guard that keeps it off that value.", expression, absent);
         });
+
+        assertThat(inspected.get())
+                .as("every appended dimension must be examined; a conditional body that reached none"
+                        + " passes identically to one that reached all of them")
+                .isEqualTo(appended.size());
     }
 
     /** The append and the reorder must be one statement, or ClickHouse rejects it with Code 36. */
@@ -510,7 +579,7 @@ class FlowsSchemaTest {
     /** The reserved value has to be the column's real type default, or the guard above is blind. */
     @Test
     void theReservedValueIsTheActualTypeDefault() {
-        final Map<String, String> byExpression = FlowsSchema.appendableDimensions();
+        final Map<String, String> byExpression = FlowsSchema.everyDimensionWithItsReservedValue();
         assertThat(byExpression.get("f.srcAddr"))
                 .as("IPv6 defaults to '::', not 0 — srcAddr and dstAddr are IPv6 dimensions today")
                 .isEqualTo("'::'");
@@ -612,36 +681,6 @@ class FlowsSchemaTest {
                 .hasMessageContaining("no boundary");
     }
 
-    /**
-     * The source enum must never declare {@code ''}, or the rollup dimension emits its own reserved
-     * value for live rows.
-     *
-     * <p>{@code flowProtocol} is carried as {@code toString(f.flowProtocol)} into a
-     * {@code LowCardinality(String)} whose reserved value is {@code ''}. That boundary holds only
-     * because no member of the source enum stringifies to {@code ''} — an assumption the dimension's
-     * javadoc states as fact and which nothing enforced. It is a live hazard rather than a
-     * theoretical one: the refusal message for an enum-typed dimension suggests adding an {@code ''}
-     * member, and applied to the source column instead of a rollup column that is precisely the
-     * change that breaks this.</p>
-     *
-     * <p>The failure would be silent and unrecoverable. Real rows would land on {@code ''}, becoming
-     * indistinguishable from rows aggregated before the append, so
-     * {@code WHERE flowProtocol != ''} would drop live traffic for the rollup's 365-day retention
-     * with nothing marking it. The regex guard in {@code appendableDimensions()} cannot see this:
-     * {@code toString(f.flowProtocol)} has no fallback literal, so it is passed without inspection.</p>
-     */
-    @Test
-    void theSourceProtocolEnumDeclaresNoEmptyMemberForTheRollupToCollideWith() {
-        final String rawType = FlowsSchema.createFlowsTable("riptide", 30)
-                .replaceAll("(?s).*flowProtocol (Enum8\\([^)]*\\)).*", "$1")
-                .replaceAll("\\s+", " ");
-
-        assertThat(rawType)
-                .as("every member of the source enum must stringify to something the rollup's"
-                        + " reserved '' cannot be confused with")
-                .startsWith("Enum8(")
-                .doesNotContain("''");
-    }
 
     /**
      * The rate sits beyond the frozen primary key on every rollup, which is the only region

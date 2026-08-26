@@ -642,17 +642,16 @@ public final class FlowsSchema {
      * <p>Read straight through, with no {@code ifNull} folding: the source column is not nullable,
      * and a fallback literal would have to avoid emitting the type default anyway.</p>
      *
-     * <p><b>Nothing at build time enforces that for this column.</b> The
-     * {@code appendableDimensions()} guard only inspects expressions that end in a fallback literal,
-     * which {@code f.samplingInterval} does not — so it passes this column without checking it. The
-     * property rests on {@code usable()} in the four builders and on {@code ClickhouseFlow}'s
-     * {@code 1.0} default, and those are what {@code SamplingIntervalBoundaryTest} and
-     * {@code SamplingIntervalResolutionTest} pin. Read the guard as covering the columns it can, not
-     * as covering this one.</p>
+     * <p><b>This cannot be checked from the schema, so it names where it is enforced instead.</b>
+     * The property rests on {@code usable()} in the four builders and on {@code ClickhouseFlow}'s
+     * {@code 1.0} default. {@code SamplingIntervalBoundaryTest} is what pins it: it drives every
+     * builder's guard reflectively and asserts each rejects {@code 0.0}, {@code -1.0}, {@code 0.5},
+     * {@code NaN} and {@code POSITIVE_INFINITY}. {@code SamplingIntervalResolutionTest} pins the
+     * resolution path that feeds it.</p>
      *
      * <p>Appended last, which is the only position {@code ALTER … MODIFY ORDER BY} permits.</p>
      */
-    private static final Dimension SAMPLING_INTERVAL = Dimension.of("samplingInterval", "Float64");
+    private static final Dimension SAMPLING_INTERVAL = Dimension.appended("samplingInterval", "Float64");
 
     /**
      * The protocol a flow arrived over, carried so sampling-corrected volume is answerable on a
@@ -693,7 +692,7 @@ public final class FlowsSchema {
      * <p>Appended after the rate, which is the only position {@code ALTER … MODIFY ORDER BY} permits.</p>
      */
     private static final Dimension FLOW_PROTOCOL =
-            new Dimension("flowProtocol", "LowCardinality(String)", "toString(f.flowProtocol)");
+            Dimension.appended("flowProtocol", "LowCardinality(String)", "toString(f.flowProtocol)");
 
     /**
      * Dimensions every rollup carries, ahead of its own. The tenant/organisation prefix mirrors the
@@ -791,11 +790,40 @@ public final class FlowsSchema {
      * {@code flows} in the view. Every expression is alias-qualified so the view never depends on
      * name resolution against the source table.
      */
-    private record Dimension(String column, String type, String expression) {
+    private record Dimension(String column, String type, String expression, boolean appended) {
 
-        /** A dimension read straight through from the identically-named source column. */
+        /**
+         * A dimension present when its rollup was created, read straight through from the
+         * identically-named source column.
+         */
         static Dimension of(final String column, final String type) {
-            return new Dimension(column, type, SOURCE_ALIAS + "." + column);
+            return new Dimension(column, type, SOURCE_ALIAS + "." + column, false);
+        }
+
+        /** A dimension present when its rollup was created, with an expression of its own. */
+        Dimension(final String column, final String type, final String expression) {
+            this(column, type, expression, false);
+        }
+
+        /**
+         * A dimension appended to a live rollup after it already held rows.
+         *
+         * <p>This is what {@link FlowsSchema#appendedDimensions()} selects on, and it is the whole
+         * reason that selection is possible. The reserved-default rule applies to these and to
+         * nothing else: a dimension present from creation has no rows that predate it, so it has no
+         * boundary to protect and may emit its own type default freely. Several do —
+         * {@code f.protocol} emits {@code 0} for HOPOPT, {@code f.srcAs} emits {@code 0} for the
+         * conventional unknown AS, and {@code f.inputSnmp} emits {@code 0} for an exporter that
+         * cannot name an interface. A check applied to every dimension reports all of them, and
+         * without this flag there is no way to tell those apart from a real violation.</p>
+         */
+        static Dimension appended(final String column, final String type) {
+            return new Dimension(column, type, SOURCE_ALIAS + "." + column, true);
+        }
+
+        /** An appended dimension with an expression of its own. */
+        static Dimension appended(final String column, final String type, final String expression) {
+            return new Dimension(column, type, expression, true);
         }
 
         String selectItem() {
@@ -809,7 +837,7 @@ public final class FlowsSchema {
          *
          * <p>That value is the only boundary an appended dimension gets: it is what distinguishes
          * "this row predates the append" from a real reading. It only works while the dimension's
-         * SELECT expression can never produce it — see {@link FlowsSchema#appendableDimensions()},
+         * SELECT expression can never produce it — see {@link FlowsSchema#appendedDimensions()},
          * which is asserted at build time rather than left to a reviewer noticing.</p>
          */
         String absent() {
@@ -855,7 +883,7 @@ public final class FlowsSchema {
      *
      * <p>Every member an enum declares is by construction a legitimate value, so an enum has a usable
      * boundary only if it declares a dedicated sentinel as its smallest member. This refuses any that
-     * does not, which fails the build through every caller of {@link #appendableDimensions()} rather
+     * does not, which fails the build through every caller of {@link #appendedDimensions()} rather
      * than needing a guard of its own.</p>
      *
      * @throws IllegalArgumentException if the type is an enum whose reserved value is a real one
@@ -917,21 +945,42 @@ public final class FlowsSchema {
     /**
      * Every dimension paired with the value that means "aggregated before this dimension existed".
      *
-     * <p>Exists so the reserved-default rule is checkable rather than remembered. A dimension may be
-     * appended to a live rollup only if its expression can never emit {@link Dimension#absent()};
-     * otherwise the type default is a legitimate reading and the append has no boundary at all.</p>
+     * <p>The whole set, including dimensions the reserved-default rule does not govern. For the set
+     * it does govern, see {@link #appendedDimensions()}.</p>
      *
      * <p>{@code APPLICATION} is the standing counter-example: {@code ifNull(f.application, '')}
      * emits {@code ''} deliberately, because a nullable sort key would break the
-     * {@code SummingMergeTree} collapse. That is harmless only because it predates every append. A
-     * dimension added later has to be written {@code ifNull(f.srcCity, 'unknown')} instead, and the
-     * test over this map is what says so.</p>
+     * {@code SummingMergeTree} collapse. That is harmless because it sits inside the frozen primary
+     * key of both rollups carrying it, and an appended dimension extends {@code ORDER BY} past the
+     * primary key by construction — so it cannot have arrived by append in either.</p>
      */
-    public static Map<String, String> appendableDimensions() {
+    public static Map<String, String> everyDimensionWithItsReservedValue() {
+        return dimensionsWithReservedValues(dimension -> true);
+    }
+
+    /**
+     * The dimensions the reserved-default rule actually governs: those appended to a rollup that
+     * already held rows, paired with the value those rows read.
+     *
+     * <p>Selecting on {@code appended} is what makes the rule enforceable. Applied to every
+     * dimension it is not merely too strict, it is wrong: {@code f.protocol} emits {@code 0} for
+     * HOPOPT and {@code f.srcAs} emits {@code 0} for the conventional unknown AS, and both are
+     * correct readings on a dimension that has no pre-append rows to distinguish them from.</p>
+     *
+     * <p>Two entries today: {@code samplingInterval} (#470) and {@code flowProtocol} (#583).</p>
+     */
+    public static Map<String, String> appendedDimensions() {
+        return dimensionsWithReservedValues(Dimension::appended);
+    }
+
+    private static Map<String, String> dimensionsWithReservedValues(
+            final java.util.function.Predicate<Dimension> select) {
         final Map<String, String> byExpression = new LinkedHashMap<>();
         for (final Rollup rollup : ROLLUPS) {
             for (final Dimension dimension : allDimensions(rollup)) {
-                byExpression.put(dimension.expression(), dimension.absent());
+                if (select.test(dimension)) {
+                    byExpression.put(dimension.expression(), dimension.absent());
+                }
             }
         }
         return Collections.unmodifiableMap(byExpression);
