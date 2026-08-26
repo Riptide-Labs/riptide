@@ -576,9 +576,17 @@ class FlowsSchemaTest {
         assertThat(FlowsSchema.planRollupRepair(Map.of(), Map.of()).refused()).isEmpty();
     }
 
-    /** The reserved value has to be the column's real type default, or the guard above is blind. */
+    /**
+     * Each dimension is pinned to the reserved value its type implies, or the guard above is blind.
+     *
+     * <p><b>This does not consult a server</b>, and its previous name said it did (#629). It fixes
+     * the mapping to what this project believes ClickHouse does, which is what makes an unnoticed
+     * edit to {@code reservedValueFor} fail here. What makes the belief true is
+     * {@code ReservedValueIT}, which appends a column of each live type to a real table and reads
+     * back what the pre-append row holds.</p>
+     */
     @Test
-    void theReservedValueIsTheActualTypeDefault() {
+    void theReservedValueMappingIsPinnedPerDimension() {
         final Map<String, String> byExpression = FlowsSchema.everyDimensionWithItsReservedValue();
         assertThat(byExpression.get("f.srcAddr"))
                 .as("IPv6 defaults to '::', not 0 — srcAddr and dstAddr are IPv6 dimensions today")
@@ -602,7 +610,9 @@ class FlowsSchemaTest {
      * would assert over an empty set and pass no matter what the rule became. The riptide enum cannot
      * distinguish the candidate rules either — {@code NetflowV5 = 1} is the first declared, the
      * smallest, and the only one adjacent to zero all at once — so the cases below are built to
-     * separate them, and each was checked against a real 26.7 server before being pinned here.</p>
+     * separate them. Both were checked against a real 26.7 server before being pinned here, and
+     * {@code ReservedValueIT} re-asks the server for the same two under {@code make e2e}: this pins the rule,
+     * that pins the rule still matching ClickHouse.</p>
      */
     @Test
     void anEnumReservesItsSmallestMemberNotItsFirstAndNotItsZero() {
@@ -642,8 +652,9 @@ class FlowsSchemaTest {
     /**
      * A wrapper type decides the reserved value on its own, whatever it wraps.
      *
-     * <p>Verified on 26.7: an appended {@code Nullable(Enum8('' = 0, 'X' = 1))} column reads
-     * {@code NULL} for pre-existing rows, not {@code ''}, and an {@code Array(…)} reads {@code []}.
+     * <p>Verified on 26.7, and re-asked of a server by {@code ReservedValueIT} under {@code make e2e}: an
+     * appended {@code Nullable(Enum8('' = 0, 'X' = 1))} column reads {@code NULL} for pre-existing
+     * rows, not {@code ''}, and an {@code Array(…)} reads {@code []}.
      * Matching the inner type through the wrapper would publish a reserved value the column can never
      * hold, so the guard would compare every expression against something none of them could emit and
      * pass all of them — the worst outcome, and the one this whole mechanism exists to prevent.</p>
