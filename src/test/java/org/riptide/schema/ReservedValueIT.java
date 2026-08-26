@@ -157,17 +157,20 @@ public class ReservedValueIT {
      * {@code DEFAULT} — which is precisely why the implicit type default is the only boundary
      * available and why this test exists.</p>
      *
-     * <p>{@code allow_nullable_key} is set because a {@code Nullable} column cannot join a sorting
-     * key without it. The rollup targets are not created with it, so the {@code Nullable} branch of
-     * {@code reservedValueFor} describes a column the production append path could not add today;
-     * the probe still asks, because the branch exists and the answer should be recorded rather than
-     * assumed.</p>
+     * <p><b>{@code allow_nullable_key} only where a Nullable is being probed.</b> Verified on 26.7:
+     * without it the {@code ALTER} is refused with {@code Sorting key contains nullable columns, but
+     * merge tree setting allow_nullable_key is disabled}. No rollup DDL sets it, so the
+     * {@code Nullable} branch of {@code reservedValueFor} describes a column the production append
+     * path could not add today — the probe still asks, because the branch exists and the answer
+     * should be recorded rather than assumed. Every other probe is created exactly as a rollup
+     * target is, because a probe carrying a setting the real tables lack is answering about a table
+     * nobody has.</p>
      */
     private static String appendColumnOfType(final String type) throws Exception {
         final String table = DATABASE + ".probe_" + PROBE.incrementAndGet();
         admin.execute("CREATE TABLE " + table + " (k UInt64, bytes UInt64)"
                 + " ENGINE = SummingMergeTree ORDER BY (k)"
-                + " SETTINGS allow_nullable_key = 1").get();
+                + (type.startsWith("Nullable(") ? " SETTINGS allow_nullable_key = 1" : "")).get();
         admin.execute("INSERT INTO " + table + " (k, bytes) VALUES (1, 1)").get();
         admin.execute("ALTER TABLE " + table
                 + " ADD COLUMN appended " + type + " AFTER k,"
