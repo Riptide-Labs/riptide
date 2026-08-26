@@ -30,6 +30,44 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check the release notes exist
+        run: |
+          # Before the build, not after: a tag missing its notes should cost seconds, not a full
+          # artefact build and signing run. This is the gate that would have caught v0.11.0, which
+          # shipped with a hand-written body and no file in the repository — the notes were a habit
+          # with nothing asking for them, so they lapsed without anything breaking (#609).
+          #
+          # Stable tags only. This workflow fires on v*.*.* which matches v0.7.1-rc2, and a release
+          # candidate is built to be thrown away: the audience for "who is affected and what to run"
+          # is an operator upgrading, not whoever is testing an rc. Requiring a hand-written file per
+          # candidate would make candidates expensive enough to skip.
+          NOTES="docs/docs/release-notes/${GITHUB_REF_NAME}.md"
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            if [[ ! -s "${NOTES}" ]]; then
+              # synthesised into the workspace, never committed. body_path must always resolve, and
+              # an empty body publishes a release that says nothing at all
+              mkdir -p "$(dirname "${NOTES}")"
+              printf '%s\n' \
+                "Release candidate. Not for production use." \
+                "" \
+                "Stable release notes are published with the stable tag." > "${NOTES}"
+              echo "prerelease ${GITHUB_REF_NAME}: synthesised a placeholder body"
+            fi
+            exit 0
+          fi
+          if [[ ! -f "${NOTES}" ]]; then
+            echo "Error: no release notes at ${NOTES}."
+            echo ""
+            echo "The published release body is taken from that file, so the tag cannot publish"
+            echo "without it. Write it, commit it, and re-tag. RELEASING.md says what it needs to"
+            echo "carry: who is affected, how they can tell, and what to run."
+            exit 1
+          fi
+          if [[ ! -s "${NOTES}" ]]; then
+            echo "Error: ${NOTES} is empty. An empty body publishes a release that says nothing."
+            exit 1
+          fi
+          echo "release notes: ${NOTES} ($(wc -l < "${NOTES}") lines)"
       - name: Set up JDK 25 for x64
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
@@ -187,6 +225,12 @@ jobs:
         with:
           draft: true
           prerelease: ${{ env.PRERELEASE == 'true' }}
+          # the repository is the source of the body, not the forge. Written by hand into GitHub
+          # after publication, the notes existed nowhere this repo or the docs site could see, and
+          # nothing noticed a release shipping without them. Verified present at the pinned SHA:
+          # action.yml declares body_path as "Path to load note-worthy description of changes in
+          # release from".
+          body_path: docs/docs/release-notes/${{ github.ref_name }}.md
           files: |
             target/*.jar
             target/*.deb

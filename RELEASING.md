@@ -63,8 +63,37 @@ disagrees with the version in `pom.xml`, or if that version is a `SNAPSHOT`.
 | Multi-arch image (`linux/amd64`, `linux/arm64`) | `ghcr.io/riptide-labs/riptide` |
 | Build provenance | attached to the release artifacts and pushed to GHCR |
 
-The release is published immediately — it is not a draft. Write the release
-notes afterwards with `gh release edit vX.Y.Z --notes-file notes.md`.
+The release is published immediately — it is not a draft, and its body is taken from
+`docs/docs/release-notes/vX.Y.Z.md` in this repository. **Write that file before you tag**: the
+release job checks for it first and fails in seconds if it is missing, so a tag without notes never
+reaches a build.
+
+That file is also published on the docs site, so it is the notes — not a draft of them. There is no
+step after the tag; `gh release edit` is only needed to correct something already published.
+
+A release note earns its place by answering three things, which is what makes
+[v0.10.0](https://riptide.space/release-notes/v0.10.0) and
+[v0.11.0](https://riptide.space/release-notes/v0.11.0) useful and is the part no template supplies:
+
+- **Who is affected.** Riptide's two deployment shapes need different things, and most releases
+  affect only one. Say which, in a heading the reader can match themselves against.
+- **How they can tell.** A query or a command that answers "is this me?" without them having to
+  reason it out.
+- **What to run.** The exact invocation, not a description of it.
+
+The file has two renderers, so keep it to what both accept: GitHub renders the release body as
+GFM, and Docusaurus renders the same file as MDX. HTML comments (`<!-- … -->`) are invisible on
+GitHub and a **build failure** in MDX; raw `<` and `{` are likewise safe in one and not the other.
+Plain markdown renders identically in both.
+
+Prereleases (`vX.Y.Z-rc1`) need no file. The job synthesises a placeholder body, because a release
+candidate is built to be thrown away and the audience for an upgrade procedure is an operator, not
+whoever is testing the candidate.
+
+When a release adds a step for provisioned deployments, check whether
+[Upgrading across versions](https://riptide.space/upgrading-across-versions) still describes how the
+steps combine. It carries only the collapse rules, never per-release detail — if it needs editing
+because a release note changed, it has started duplicating rather than deriving.
 
 The attached SBOM contains post-generation first-party license assertions: syft cannot read our license from a deb control file or attach one to the scanned directory, so `make sbom-assert` sets `licenseDeclared: GPL-3.0-or-later` (read from `nfpm.yaml`) on those two entries before the report is rendered and the file is signed.
 A release that fails at the "Assert first-party license facts" step means the SBOM shape drifted (typically after a syft upgrade) and the selectors in `deployment/sbom/assert_licenses.py` no longer match exactly one entry each — fix the selector, never ship `NOASSERTION`.
