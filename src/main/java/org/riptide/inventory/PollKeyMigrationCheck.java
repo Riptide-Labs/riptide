@@ -13,6 +13,7 @@ import org.springframework.core.env.PropertySource;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
+import java.util.stream.Stream;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
@@ -74,9 +75,29 @@ public class PollKeyMigrationCheck {
      * class growing a second matching rule of its own.
      */
     public static Optional<String> findRetiredPollKey(final Iterable<PropertySource<?>> sources) {
-        return PropertyNames.in(sources)
-                .filter(name -> RETIRED_KEYS.contains(normalize(name)))
-                .findFirst();
+        return matches(sources).map(PropertyNames.Located::name).findFirst();
+    }
+
+    /** Category label for the collected startup report. */
+    public static final String LABEL = "retired per-agent poll keys";
+
+    /**
+     * Every match, not only the first, so startup can report them together.
+     *
+     * <p>{@link #findRetiredPollKey} is derived from this rather than walking separately: one walk,
+     * two consumers, so the throwing path and the reloader's landmine probe cannot drift apart.</p>
+     */
+    public static Stream<PropertyNames.Located> matches(final Iterable<PropertySource<?>> sources) {
+        return PropertyNames.located(sources)
+                .filter(found -> RETIRED_KEYS.contains(normalize(found.name())));
+    }
+
+    /** This category's remediation, unchanged; the collected report adds structure, not prose. */
+    public static String remediation() {
+        return "refresh and expiry moved into named polling profiles: configure "
+                + "riptide.snmp.polling.<name>.refresh-interval / .snapshot-expiry and reference "
+                + "the profile from agent ranges. Fleet-level riptide.snmp.poll.* keys are "
+                + "unaffected.";
     }
 
     private static String normalize(final String name) {

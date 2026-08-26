@@ -14,7 +14,9 @@ import org.springframework.core.env.SystemEnvironmentPropertySource;
 import org.springframework.stereotype.Component;
 
 import java.util.Locale;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 import java.util.Objects;
 import java.util.regex.Pattern;
 
@@ -71,19 +73,65 @@ public class LegacyNodesFlagDayCheck {
 
     /** Non-throwing probe for the reloader's gated-document scan (#537); one probe per class, over the shared walk. */
     public static Optional<String> findLegacyNodesKey(final Iterable<PropertySource<?>> sources) {
-        // lookingAt, not matches: matches() must consume the whole name, and '.'
-        // excludes line terminators, so a key carrying a newline after "nodes" —
-        // which a quoted YAML key or a .properties line can both produce — slipped
-        // through the boundary check entirely and left the tree silently inert.
-        // \s in the boundary class covers the terminator AT the boundary too.
-        // The regex alone decides; a normalize-and-startsWith conjunct used to sit
-        // here and was fully implied by it, two matching theories where one does
-        return PropertyNames.in(sources)
-                .filter(LegacyNodesFlagDayCheck::isLegacyNodesKey)
-                .findFirst();
+        return matches(sources).map(PropertyNames.Located::name).findFirst();
     }
 
-    /** The one predicate, so the two walks above cannot drift apart. */
+    /** Category label for the collected startup report. */
+    public static final String LABEL = "riptide.nodes tree";
+
+    /**
+     * Every match with the source it came from, so startup can report them together.
+     *
+     * <p>The source is carried rather than discarded because this category's remediation depends on
+     * it: the converter reads a file, so a deployment configured entirely through the environment
+     * needs different instructions (#614). Flattening this walk would produce the right message for
+     * a file-only stack and for an environment-only stack, and the wrong one for a mixed stack —
+     * which is why {@link #remediation} takes the matches rather than a key.</p>
+     */
+    public static Stream<PropertyNames.Located> matches(final Iterable<PropertySource<?>> sources) {
+        return PropertyNames.located(sources)
+                .filter(found -> isLegacyNodesKey(found.name()));
+    }
+
+    /**
+     * This category's remediation for a whole group of matches.
+     *
+     * <p>Each variant appears only when a key of that kind actually matched. Both appear only when
+     * the configuration genuinely carries keys in both, which is accurate rather than the
+     * half-irrelevant paragraph #614 removed.</p>
+     */
+    public static String remediation(final List<PropertyNames.Located> found) {
+        final boolean fromEnvironment = found.stream()
+                .anyMatch(one -> one.source() instanceof SystemEnvironmentPropertySource);
+        final boolean fromFile = found.stream()
+                .anyMatch(one -> !(one.source() instanceof SystemEnvironmentPropertySource));
+        final String indexed = found.stream().map(PropertyNames.Located::name)
+                .filter(name -> name.contains("["))
+                .findFirst().map(LegacyNodesFlagDayCheck::indexedHint).orElse("");
+
+        final StringBuilder text = new StringBuilder();
+        if (fromFile) {
+            text.append(fileRemediation());
+        }
+        if (fromEnvironment) {
+            if (!text.isEmpty()) {
+                text.append(System.lineSeparator()).append(System.lineSeparator());
+            }
+            text.append(environmentRemediation());
+        }
+        return text + indexed;
+    }
+
+    /**
+     * The one predicate, so every walk over these keys cannot drift apart.
+     *
+     * <p>{@code lookingAt}, not {@code matches}: {@code matches()} must consume the whole name, and
+     * {@code '.'} excludes line terminators, so a key carrying a newline after "nodes" — which a
+     * quoted YAML key or a {@code .properties} line can both produce — slipped through the boundary
+     * check entirely and left the tree silently inert. {@code \s} in the boundary class covers the
+     * terminator AT the boundary too. The regex alone decides; a normalize-and-startsWith conjunct
+     * used to sit here and was fully implied by it, two matching theories where one does.</p>
+     */
     private static boolean isLegacyNodesKey(final String name) {
         return LEGACY_KEY.matcher(name).lookingAt() && !isServiceLink(name);
     }
@@ -169,8 +217,21 @@ public class LegacyNodesFlagDayCheck {
                 || name.equals("RIPTIDE_NODES_NAME");
     }
 
+    /** The remediation for keys found in a configuration file, without the finding sentence. */
+    private static final String FILE_TAIL = "riptide.nodes was removed in 0.9: exporter "
+            + "names, interface pins and SNMP credentials now come from the credential sets and "
+            + "polling profiles in the main config plus the inventory file "
+            + "(riptide.inventory.file).%n%n"
+            + "Convert it, do not delete it:%n"
+            + "    riptide convert <your-config.yaml> --out-config config.yaml "
+            + "--out-inventory inventory.yaml%n%n"
+            + "The converter deduplicates credential blocks, keeps every exporter name, and "
+            + "refuses rather than emitting anything 0.9 will not start on. Then remove the "
+            + "riptide.nodes tree from your configuration. The 0.9 release notes carry the "
+            + "full upgrade guide.";
+
     /**
-     * The remedy for a tree that lives in the process environment, where the file-based one is
+     * The remediation for keys found in the process environment, where the file-based one is
      * unactionable.
      *
      * <p>It also states something the operator cannot find out any other way: Spring never bound a
@@ -185,47 +246,48 @@ public class LegacyNodesFlagDayCheck {
      * splitting a node name from a field suffix inside an environment variable, and shape-based
      * inference on exactly these names is what produced #612.</p>
      */
+    private static final String ENVIRONMENT_TAIL = "riptide.nodes was removed in 0.9.%n%n"
+            + "If the node name has more than one word ('core-router' reaching Spring as "
+            + "RIPTIDE_NODES_CORE_ROUTER_...), it was never bound: Spring resolves that to no "
+            + "node at all, so it was NOT active in 0.8 either. There is nothing to convert. "
+            + "Remove the variable.%n%n"
+            + "Single-word names (RIPTIDE_NODES_EDGE_SUBNET_ADDRESS) did bind. 'riptide convert' "
+            + "reads a file, so write those out as nested YAML first — and bring "
+            + "RIPTIDE_SNMP_POLL_REFRESH_INTERVAL_MS / _SNAPSHOT_EXPIRY_MS across with them if "
+            + "you set either, because those are the fleet cadence and the converter turns them "
+            + "into the 'default' polling profile. Omit them and the profile silently takes 0.9's "
+            + "defaults instead of your interval:%n"
+            + "    riptide:%n"
+            + "      snmp:%n"
+            + "        poll:%n"
+            + "          refresh-interval-ms: 120000%n"
+            + "      nodes:%n"
+            + "        edge:%n"
+            + "          subnet-address: 10.0.0.0/24%n"
+            + "then run:%n"
+            + "    riptide convert <that-file.yaml> --out-config config.yaml "
+            + "--out-inventory inventory.yaml%n%n"
+            + "The 0.9 release notes carry the full upgrade guide.";
+
+    private static String fileRemediation() {
+        return FILE_TAIL.formatted();
+    }
+
+    private static String environmentRemediation() {
+        return ("These are in the process environment rather than in a configuration file. "
+                + ENVIRONMENT_TAIL).formatted();
+    }
+
     private static String environmentMessage(final String key) {
         return ("Legacy node configuration found ('%s'), in the process environment rather than in a "
-                + "configuration file. riptide.nodes was removed in 0.9.%n%n"
-                + "If the node name has more than one word ('core-router' reaching Spring as "
-                + "RIPTIDE_NODES_CORE_ROUTER_...), it was never bound: Spring resolves that to no "
-                + "node at all, so it was NOT active in 0.8 either. There is nothing to convert. "
-                + "Remove the variable.%n%n"
-                + "Single-word names (RIPTIDE_NODES_EDGE_SUBNET_ADDRESS) did bind. 'riptide convert' "
-                + "reads a file, so write those out as nested YAML first — and bring "
-                + "RIPTIDE_SNMP_POLL_REFRESH_INTERVAL_MS / _SNAPSHOT_EXPIRY_MS across with them if "
-                + "you set either, because those are the fleet cadence and the converter turns them "
-                + "into the 'default' polling profile. Omit them and the profile silently takes 0.9's "
-                + "defaults instead of your interval:%n"
-                + "    riptide:%n"
-                + "      snmp:%n"
-                + "        poll:%n"
-                + "          refresh-interval-ms: 120000%n"
-                + "      nodes:%n"
-                + "        edge:%n"
-                + "          subnet-address: 10.0.0.0/24%n"
-                + "then run:%n"
-                + "    riptide convert <that-file.yaml> --out-config config.yaml "
-                + "--out-inventory inventory.yaml%n%n"
-                + "The 0.9 release notes carry the full upgrade guide.").formatted(key);
+                + "configuration file. " + ENVIRONMENT_TAIL).formatted(key);
     }
 
     private static String message(final String key, final boolean fromEnvironment) {
         if (fromEnvironment) {
             return environmentMessage(key);
         }
-        return ("Legacy node configuration found ('%s'). riptide.nodes was removed in 0.9: exporter "
-                + "names, interface pins and SNMP credentials now come from the credential sets and "
-                + "polling profiles in the main config plus the inventory file "
-                + "(riptide.inventory.file).%n%n"
-                + "Convert it, do not delete it:%n"
-                + "    riptide convert <your-config.yaml> --out-config config.yaml "
-                + "--out-inventory inventory.yaml%n%n"
-                + "The converter deduplicates credential blocks, keeps every exporter name, and "
-                + "refuses rather than emitting anything 0.9 will not start on. Then remove the "
-                + "riptide.nodes tree from your configuration. The 0.9 release notes carry the "
-                + "full upgrade guide."
+        return ("Legacy node configuration found ('%s'). " + FILE_TAIL
                 // appended to the format string, not passed as an argument: a %n inside a %s
                 // substitution is never processed and the operator reads a literal "%n%n"
                 + indexedHint(key)).formatted(key);

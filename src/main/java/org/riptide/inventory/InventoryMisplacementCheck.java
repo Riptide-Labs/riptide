@@ -13,6 +13,7 @@ import org.springframework.core.env.PropertySource;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
+import java.util.stream.Stream;
 import java.util.Objects;
 import java.util.regex.Pattern;
 
@@ -55,8 +56,22 @@ public class InventoryMisplacementCheck {
 
     /** Non-throwing probe for the reloader's gated-document scan (#537); one probe per class, over the shared walk. */
     public static Optional<String> findMisplacedInventoryKey(final Iterable<PropertySource<?>> sources) {
-        return PropertyNames.in(sources)
-                .filter(name -> MISPLACED_TREE.matcher(name).find())
-                .findFirst();
+        return matches(sources).map(PropertyNames.Located::name).findFirst();
+    }
+
+    /** Category label for the collected startup report. */
+    public static final String LABEL = "inventory trees in the main configuration";
+
+    /** Every match, not only the first, so startup can report them together. */
+    public static Stream<PropertyNames.Located> matches(final Iterable<PropertySource<?>> sources) {
+        return PropertyNames.located(sources)
+                .filter(found -> MISPLACED_TREE.matcher(found.name()).find());
+    }
+
+    /** This category's remediation, unchanged. */
+    public static String remediation() {
+        return "riptide.snmp.agents and riptide.exporters live only in the dedicated inventory "
+                + "file named by riptide.inventory.file — they bind to nothing here and would be "
+                + "silently ignored.";
     }
 }
