@@ -121,9 +121,10 @@ public class RiptideMcpService {
      * their own earliest data rather than the deployment's.</p>
      */
     public List<Map<String, Object>> executeRangeQuery(final String sqlQuery, final String table,
-                                                       final int timeRangeMinutes) {
+                                                       final int effectiveMinutes,
+                                                       final int requestedMinutes) {
         final List<Map<String, Object>> rows = executeQuery(sqlQuery);
-        final Optional<Map<String, Object>> note = coverageShortfall(table, timeRangeMinutes);
+        final Optional<Map<String, Object>> note = coverageShortfall(table, effectiveMinutes, requestedMinutes);
         if (note.isEmpty()) {
             // returned as-is, not copied: a covered answer must be exactly what the query produced
             return rows;
@@ -150,7 +151,8 @@ public class RiptideMcpService {
      * {@code now()} on the server avoids parsing a timestamp out of JSON and then disagreeing with
      * the server about what "now" means.</p>
      */
-    private Optional<Map<String, Object>> coverageShortfall(final String table, final int timeRangeMinutes) {
+    private Optional<Map<String, Object>> coverageShortfall(final String table, final int effectiveMinutes,
+                                                            final int requestedMinutes) {
         final List<Map<String, Object>> probe = executeQuery(
                 "SELECT count() AS row_count, toString(min(timestamp)) AS earliest,"
                         + " dateDiff('minute', min(timestamp), now()) AS covered_minutes FROM " + table);
@@ -160,16 +162,31 @@ public class RiptideMcpService {
             return Optional.empty();
         }
         final Map<String, Object> row = probe.getFirst();
-        final long coveredMinutes = asLong(row.get("covered_minutes"));
-        if (!isShort(asLong(row.get("row_count")), coveredMinutes, timeRangeMinutes)) {
+        final Long coveredMinutes = optionalLong(row.get("covered_minutes"));
+        final Long rowCount = optionalLong(row.get("row_count"));
+        if (coveredMinutes == null || rowCount == null) {
+            // the probe answered in a shape this cannot read. Saying nothing beats failing a query
+            // that succeeded, which is what parsing it eagerly used to do
+            return Optional.empty();
+        }
+        // the answer reaches back the lesser of what the table holds and what the query actually
+        // ran for. Both truncate, and comparing against the clamped window alone hid the headline
+        // case entirely: a 90-day question clamped to 30 days against a 30-day table came back with
+        // no warning at all, having taught the reader that no warning means nothing is wrong
+        final long reach = Math.min(coveredMinutes, effectiveMinutes);
+        if (!isShort(rowCount, reach, requestedMinutes)) {
             return Optional.empty();
         }
 
         final Map<String, Object> note = new LinkedHashMap<>();
-        note.put("coverage_warning", ("answered from %s, which holds data from %s — %d of the %d "
-                + "minutes requested. The rest is not missing from your network, it is outside what "
-                + "this table retains.")
-                .formatted(table, row.get("earliest"), coveredMinutes, timeRangeMinutes));
+        note.put("coverage_warning", ("answered from %s, which holds data from %s. This answer "
+                + "covers %d of the %d minutes you asked for%s The rest is not missing from your "
+                + "network.")
+                .formatted(table, row.get("earliest"), reach, requestedMinutes,
+                        effectiveMinutes < requestedMinutes
+                                ? (", and riptide caps a single query at " + effectiveMinutes
+                                        + " minutes.")
+                                : ", which is what this table retains."));
         return Optional.of(note);
     }
 
@@ -196,9 +213,24 @@ public class RiptideMcpService {
         return coveredMinutes < requestedMinutes;
     }
 
-    /** JSONEachRow gives numbers back as Integer, Long or String depending on width. */
-    private static long asLong(final Object value) {
-        return value instanceof Number number ? number.longValue() : Long.parseLong(String.valueOf(value));
+    /**
+     * JSONEachRow gives numbers back as Integer, Long or String depending on width; null when the
+     * column was null.
+     *
+     * <p>Returns null rather than throwing. The annotation path must never be able to fail the query
+     * it annotates: a nullable {@code timestamp} column — which validate mode cannot rule out, since
+     * it issues no DDL and an operator's pre-existing table shape survives — used to turn a
+     * successful answer into a {@code -32603}.</p>
+     */
+    private static Long optionalLong(final Object value) {
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        try {
+            return value == null ? null : Long.valueOf(String.valueOf(value));
+        } catch (final NumberFormatException e) {
+            return null;
+        }
     }
 
     public String getDatabaseName() {

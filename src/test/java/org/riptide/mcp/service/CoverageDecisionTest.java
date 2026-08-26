@@ -38,6 +38,14 @@ class CoverageDecisionTest {
     }
 
     @Test
+    void theShorterOfTheCapAndTheDataDecides() {
+        // the table holds 60 days, the query ran for 30, the caller asked for 90: short by the cap
+        assertThat(RiptideMcpService.isShort(1, Math.min(86_400, 43_200), 129_600)).isTrue();
+        // the cap is generous, the data is not: short by retention
+        assertThat(RiptideMcpService.isShort(1, Math.min(4_320, 43_200), 43_200)).isTrue();
+    }
+
+    @Test
     void aTableThatReachesTheRequestedRangeIsNot() {
         assertThat(RiptideMcpService.isShort(1, 129_600, 129_600))
                 .as("exactly reaching the start is covered, not short")

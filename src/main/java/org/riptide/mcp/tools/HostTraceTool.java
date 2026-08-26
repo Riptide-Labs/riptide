@@ -60,6 +60,8 @@ public class HostTraceTool implements McpTool {
             return List.of(Map.of("error", "Invalid IP address parameter: " + rawIp));
         }
 
+        final int requestedRange =
+                ToolParams.requestedTimeRangeMinutes(safeParams.get("time_range_minutes"), 15);
         final int timeRange = ToolParams.timeRangeMinutes(safeParams.get("time_range_minutes"), 15);
         final String db = mcpService.getDatabaseName();
         final String table = FlowsSchema.qualifiedFlows(db);
@@ -69,6 +71,9 @@ public class HostTraceTool implements McpTool {
                 table, timeRange, ip, ip
         );
 
-        return mcpService.executeQuery(sql);
+        // raw flows unconditionally — the shortest-retention table in the deployment, and so the
+        // one most exposed to answering short. Missed on the first pass because the scope was found
+        // by grepping QueryRouter, which selects for routing rather than for taking a range
+        return mcpService.executeRangeQuery(sql, table, timeRange, requestedRange);
     }
 }

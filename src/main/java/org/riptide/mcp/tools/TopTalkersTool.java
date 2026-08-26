@@ -56,6 +56,7 @@ public class TopTalkersTool implements McpTool {
             return List.of(Map.of("error", "Invalid group_by dimension. Allowed: " + ALLOWED_GROUP_BY));
         }
 
+        final int requestedRange = ToolParams.requestedTimeRangeMinutes(safeParams.get("time_range_minutes"), 15);
         final int timeRange = ToolParams.timeRangeMinutes(safeParams.get("time_range_minutes"), 15);
         final String db = mcpService.getDatabaseName();
         final String table = QueryRouter.resolveTopTalkersTable(db, timeRange, rawGroupBy);
@@ -65,6 +66,6 @@ public class TopTalkersTool implements McpTool {
                 rawGroupBy, table, timeRange, rawGroupBy
         );
 
-        return mcpService.executeRangeQuery(sql, table, timeRange);
+        return mcpService.executeRangeQuery(sql, table, timeRange, requestedRange);
     }
 }

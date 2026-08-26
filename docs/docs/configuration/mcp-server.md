@@ -114,6 +114,21 @@ Riptide automatically discovers and registers 7 domain-standard network engineer
 
 ## Standard MCP Tools
 
+:::info[A result array can carry one non-row entry]
+Every tool taking `time_range_minutes` returns its rows, and appends a single object with a
+`coverage_warning` key when the answer is shorter than the range asked for — because the table it
+read holds less, or because riptide caps a single query at 43200 minutes. A fully covered answer is
+just the rows, so a client can treat the entry as optional.
+
+```json
+{"coverage_warning": "answered from riptide.flows, which holds data from 2026-08-19 09:14:02. This answer covers 10080 of the 43200 minutes you asked for, which is what this table retains. The rest is not missing from your network."}
+```
+
+Clients that iterate results as data rows should skip entries carrying `coverage_warning` — the same
+handling the existing `error` entry already needs. See
+[ClickHouse: rollups](clickhouse.md#rollups) for what shortens an answer.
+:::
+
 The server exposes 6 vendor-neutral flow query tools:
 
 - `riptide_get_top_talkers`: Aggregates volume by application, host IP, or protocol.

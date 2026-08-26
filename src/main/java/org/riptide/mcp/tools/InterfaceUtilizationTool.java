@@ -46,6 +46,7 @@ public class InterfaceUtilizationTool implements McpTool {
     @Override
     public List<Map<String, Object>> execute(final Map<String, Object> params) {
         final Map<String, Object> safeParams = ToolParams.safe(params);
+        final int requestedRange = ToolParams.requestedTimeRangeMinutes(safeParams.get("time_range_minutes"), 15);
         final int timeRange = ToolParams.timeRangeMinutes(safeParams.get("time_range_minutes"), 15);
         final int limit = ToolParams.limit(safeParams.get("limit"), 20);
         final String db = mcpService.getDatabaseName();
@@ -56,6 +57,6 @@ public class InterfaceUtilizationTool implements McpTool {
                 table, timeRange, limit
         );
 
-        return mcpService.executeRangeQuery(sql, table, timeRange);
+        return mcpService.executeRangeQuery(sql, table, timeRange, requestedRange);
     }
 }

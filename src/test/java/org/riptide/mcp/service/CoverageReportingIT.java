@@ -87,12 +87,12 @@ public class CoverageReportingIT {
         insertDaysAgo(3, 1);
 
         final List<Map<String, Object>> rows =
-                service().executeRangeQuery(COUNT_SQL, TABLE, 90 * 24 * 60);
+                service().executeRangeQuery(COUNT_SQL, TABLE, 90 * 24 * 60, 90 * 24 * 60);
 
         assertThat(rows).hasSize(2);
         assertThat(String.valueOf(rows.get(1).get("coverage_warning")))
                 .contains(TABLE)
-                .contains("of the " + (90 * 24 * 60) + " minutes requested");
+                .contains("of the " + (90 * 24 * 60) + " minutes you asked for");
     }
 
     /** The property worth pinning hardest: a covered answer is exactly the rows and nothing else. */
@@ -101,7 +101,7 @@ public class CoverageReportingIT {
         insertDaysAgo(30, 1);
 
         final List<Map<String, Object>> rows =
-                service().executeRangeQuery(COUNT_SQL, TABLE, 15);
+                service().executeRangeQuery(COUNT_SQL, TABLE, 15, 15);
 
         assertThat(rows).hasSize(1);
         assertThat(rows.getFirst()).doesNotContainKey("coverage_warning");
@@ -119,10 +119,61 @@ public class CoverageReportingIT {
     @Test
     void anEmptyTableIsNotReportedAsShort() {
         final List<Map<String, Object>> rows =
-                service().executeRangeQuery(COUNT_SQL, TABLE, 90 * 24 * 60);
+                service().executeRangeQuery(COUNT_SQL, TABLE, 90 * 24 * 60, 90 * 24 * 60);
 
         assertThat(rows).hasSize(1);
         assertThat(rows.getFirst()).doesNotContainKey("coverage_warning");
+    }
+
+    /**
+     * A request capped by riptide's own limit is reported, even when the table covers the capped
+     * window completely.
+     *
+     * <p>This is the case the first version missed entirely, and the miss was worse than silence: a
+     * 90-day question is capped to 30 days before it reaches here, so comparing coverage against the
+     * capped window found nothing short and returned no note — on a page that had just taught the
+     * reader that no note means nothing is wrong. The earlier IT could not catch it because it called
+     * this method directly, bypassing the cap that lives in {@code ToolParams}.</p>
+     */
+    @Test
+    void aRequestCappedByRiptideIsReportedEvenWhenTheTableCoversTheCappedWindow() throws Exception {
+        insertDaysAgo(40, 1);
+
+        final List<Map<String, Object>> rows =
+                service().executeRangeQuery(COUNT_SQL, TABLE, 43_200, 129_600);
+
+        assertThat(rows).hasSize(2);
+        assertThat(String.valueOf(rows.get(1).get("coverage_warning")))
+                .as("the table covers the capped window, so only the cap makes this short")
+                .contains("43200 of the 129600 minutes you asked for")
+                .contains("riptide caps a single query");
+    }
+
+    /**
+     * The annotation path must never fail the query it annotates.
+     *
+     * <p>Validate mode issues no DDL and table creation is {@code IF NOT EXISTS}, so an operator's
+     * pre-existing shape survives — including a nullable {@code timestamp}. With every row null the
+     * probe returns a null {@code covered_minutes}, and parsing that eagerly threw
+     * {@code NumberFormatException} out through {@code tool.execute}, turning a successful answer
+     * into a {@code -32603}. Saying nothing beats failing a query that worked.</p>
+     */
+    @Test
+    void aProbeThatCannotBeReadDoesNotFailTheAnswer() throws Exception {
+        admin.execute("DROP TABLE IF EXISTS " + DATABASE + ".nullable").get();
+        admin.execute("CREATE TABLE " + DATABASE + ".nullable ("
+                + "timestamp Nullable(DateTime64(3,'UTC')), bytes UInt64) "
+                + "ENGINE = MergeTree ORDER BY tuple()").get();
+        admin.execute("INSERT INTO " + DATABASE + ".nullable VALUES (NULL, 1)").get();
+
+        final List<Map<String, Object>> rows = service().executeRangeQuery(
+                "SELECT count() AS c FROM " + DATABASE + ".nullable",
+                DATABASE + ".nullable", 43_200, 129_600);
+
+        assertThat(rows)
+                .as("the answer survives a probe it cannot read")
+                .hasSize(1);
+        assertThat(rows.getFirst()).doesNotContainKey("error");
     }
 
     /**
@@ -137,11 +188,11 @@ public class CoverageReportingIT {
         insertDaysAgo(5);
 
         final List<Map<String, Object>> rows =
-                service().executeRangeQuery(COUNT_SQL, TABLE, 10 * 24 * 60);
+                service().executeRangeQuery(COUNT_SQL, TABLE, 10 * 24 * 60, 10 * 24 * 60);
 
         assertThat(rows).hasSize(2);
         assertThat(String.valueOf(rows.get(1).get("coverage_warning")))
                 .as("a 10-day question against 5 days of data is short, whatever the default says")
-                .contains("minutes requested");
+                .contains("minutes you asked for");
     }
 }
