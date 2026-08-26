@@ -325,14 +325,23 @@
                     <compilerArgs>
                         <arg>-XDcompilePolicy=simple</arg>
                         <arg>--should-stop=ifError=FLOW</arg>
-                        <!-- These three checks are warning-free or explicitly suppressed; hold them at ERROR so they stay that way.
-                             UnrecognisedJavadocTag is off because it cannot see straight through Lombok: Lombok copies a
-                             field's Javadoc onto the accessors it generates, and Error Prone then re-parses that copy and
-                             reports every inline {@code}/{@link} in it as an unrecognised tag. The source is valid —
-                             `javac -Xdoclint:all` on the same files reports no malformed tag — and deleting @Data from
-                             ClickhouseConfig takes its seven warnings to zero, which is the whole of the evidence. Turning
-                             it off beats degrading real Javadoc to satisfy a false positive. -->
-                        <arg>-Xplugin:ErrorProne -XepExcludedPaths:.*/target/generated-.*sources/.* -Xep:EqualsGetClass:ERROR -Xep:NarrowingCompoundAssignment:ERROR -Xep:ExposedPrivateType:ERROR -Xep:UnrecognisedJavadocTag:OFF</arg>
+                        <!-- The rule, not a count: a check reaches this list once its sites are at zero, and it stays
+                             there because the build says so. Every check below is warning-free or explicitly suppressed
+                             at the point it was added. A check left at WARN with known sites is the state this list
+                             exists to prevent — it looks like coverage and provides none, because occurrence N+1 is
+                             indistinguishable from the N that were always there. Worse on this forge specifically:
+                             GitHub caps warning annotations at ten per job, so past ten the surface a maintainer reads
+                             stops being a measurement. That is not hypothetical here. The backlog these checks were
+                             added to clear stood at 16, while the annotation view showed 10 and had been showing 10 for
+                             as long as anyone had looked.
+                             UnrecognisedJavadocTag is off, which is a different claim: the check itself is wrong here.
+                             It cannot see straight through Lombok — Lombok copies a field's Javadoc onto the accessors
+                             it generates, and Error Prone then re-parses that copy and reports every inline
+                             {@code}/{@link} in it as an unrecognised tag. The source is valid — `javac -Xdoclint:all`
+                             on the same files reports no malformed tag — and deleting @Data from ClickhouseConfig takes
+                             its seven warnings to zero, which is the whole of the evidence. Turning it off beats
+                             degrading real Javadoc to satisfy a false positive. -->
+                        <arg>-Xplugin:ErrorProne -XepExcludedPaths:.*/target/generated-.*sources/.* -Xep:EqualsGetClass:ERROR -Xep:NarrowingCompoundAssignment:ERROR -Xep:ExposedPrivateType:ERROR -Xep:PatternMatchingInstanceof:ERROR -Xep:ReferenceEquality:ERROR -Xep:ModifyCollectionInEnhancedForLoop:ERROR -Xep:UnusedMethod:ERROR -Xep:UnnecessaryParentheses:ERROR -Xep:LongDoubleConversion:ERROR -Xep:NotJavadoc:ERROR -Xep:CanonicalDuration:ERROR -Xep:UnsafeReflectiveConstructionCast:ERROR -Xep:UnrecognisedJavadocTag:OFF</arg>
                         <arg>
                             -Amapstruct.unmappedTargetPolicy=ERROR
                         </arg>

@@ -200,7 +200,12 @@ public abstract class ParserBase implements Parser {
      * gauge — the inverse of the case start()'s remove-then-register exists to handle, and it would
      * make absence mean "running".
      */
+    @SuppressWarnings("ReferenceEquality")
     static void deregisterIfOwned(final MetricRegistry registry, final String name, final Gauge<?> owned) {
+        // identity is the whole point, as the javadoc says. The gauge this guards is a lambda
+        // (see start()), which inherits Object.equals, so == and .equals coincide here — the
+        // annotation records the intent rather than defending a distinction. Writing .equals
+        // would imply a value comparison that no Gauge implementation in this class provides.
         if (owned != null && registry.getGauges().get(name) == owned) {
             registry.remove(name);
         }

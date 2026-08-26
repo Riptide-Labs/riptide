@@ -88,8 +88,16 @@ public class Inventory {
      * a snapshot built from the old ones and silently undo the rotation. Losing the race
      * means re-reading and re-parsing, which the caller does on its next cycle.</p>
      */
+    @SuppressWarnings("ReferenceEquality")
     public synchronized boolean swapIfProfilesUnchanged(final SnmpProfilesConfig parsedWith,
                                                         final InventorySnapshot snapshot) {
+        // identity on purpose: the question is whether the object this caller parsed against is
+        // still the one installed, which is what a compare-and-swap guard asks. SnmpProfilesConfig
+        // is a record, so .equals is a real alternative rather than the same test spelled
+        // differently — and a looser one. It would deep-compare both credential maps on every
+        // commit, and would accept a config that was genuinely swapped for a structurally
+        // identical one. That acceptance is harmless, the cost is not, and losing the race only
+        // means re-reading on the next cycle.
         if (this.profiles != parsedWith) {
             return false;
         }

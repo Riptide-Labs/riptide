@@ -330,13 +330,6 @@ class LegacyConverterTest {
     }
 
     /**
-     * The translation is shape-guarded like the netmask sibling: a zoned spelling whose
-     * STRIPPED form still violates a shape rule is refused naming the ORIGINAL spelling
-     * through the zone arm — the first version stripped first and then failed naming
-     * 'fe80::5/64', a string that appears nowhere in the operator's file, with the
-     * summary line explaining the rewrite discarded by the throw.
-     */
-    /**
      * A collision that only exists after a rewrite names the FILE spellings: the error
      * used to print the stripped form ('fe80::1') for a node the file spells
      * 'fe80::1%eth0', with the summary line explaining the strip discarded by the throw.
@@ -359,6 +352,13 @@ class LegacyConverterTest {
                 .hasMessageContaining("spells it 'fe80::1%eth0' in the file");
     }
 
+    /**
+     * The translation is shape-guarded like the netmask sibling: a zoned spelling whose
+     * STRIPPED form still violates a shape rule is refused naming the ORIGINAL spelling
+     * through the zone arm — the first version stripped first and then failed naming
+     * 'fe80::5/64', a string that appears nowhere in the operator's file, with the
+     * summary line explaining the rewrite discarded by the throw.
+     */
     @Test
     void aZonedSpellingWithHostBitsRefusesNamingTheOriginal() {
         assertThatThrownBy(() -> convert("""

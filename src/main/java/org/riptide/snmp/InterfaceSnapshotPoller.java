@@ -115,7 +115,13 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     private final SnmpPollConfig config;
     private final LongSupplier nanoTime;
 
-    private final Map<InetSocketAddress, Registration> registrations = new ConcurrentHashMap<>();
+    // Declared as the concrete type, not Map, because two loops here remove from it while
+    // iterating it. That is safe only under ConcurrentHashMap's iterator, which is explicitly
+    // weakly consistent and documented to tolerate concurrent removal, including by the
+    // iterating thread. Declared as Map the guarantee is invisible: a reader cannot see it and
+    // Error Prone cannot verify it, so each loop needed its own suppression repeating what this
+    // line can state once.
+    private final ConcurrentHashMap<InetSocketAddress, Registration> registrations = new ConcurrentHashMap<>();
 
     /**
      * The published inventory is read from here rather than cached in a field of our own.
@@ -327,6 +333,10 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      * <p>An equal endpoint changes nothing, so the common case (every batch re-resolving
      * the same configuration) does not disturb the schedule.</p>
      */
+    // The != below is identity on purpose, not a missed .equals. SnmpEndpoint carries Lombok's
+    // @EqualsAndHashCode, so the two differ: .equals is the deep comparison this is trying to
+    // stop paying, and would make the guard always false and the adoption dead.
+    @SuppressWarnings("ReferenceEquality")
     private boolean reresolveIfChanged(final Registration registration, final SnmpEndpoint endpoint,
                                     final long now, final InetSocketAddress address, final boolean immediate,
                                     final InventorySnapshot resolvedFrom) {
@@ -481,10 +491,6 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     }
 
     /** Package-private so tests can advance the schedule without waiting on wall-clock time. */
-    // registrations is a ConcurrentHashMap, whose iterators are explicitly weakly consistent and
-    // documented to tolerate concurrent removal — including by the iterating thread. The check
-    // fires on the shape of the loop, not on the collection's actual contract.
-    @SuppressWarnings("ModifyCollectionInEnhancedForLoop")
     void tick(final long now) {
         final long deregisterAfter = Math.max(1, (long) this.config.getDeregisterAfter());
         // summarised, not logged per address. This path is what catches a carve-out the

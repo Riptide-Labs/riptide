@@ -271,7 +271,7 @@ class InventoryLoaderTest {
 
         final var polling = snapshot.agentView().match(netflow("10.20.5.5", 0)).get().polling();
         assertThat(polling).isNotNull();
-        assertThat(polling.refreshInterval()).isEqualTo(java.time.Duration.ofMillis(600_000));
+        assertThat(polling.refreshInterval()).isEqualTo(java.time.Duration.ofMinutes(10));
     }
 
     @Test
@@ -294,7 +294,7 @@ class InventoryLoaderTest {
         final var explicit = snapshot.agentView().match(netflow("10.20.5.5", 0)).get().polling();
         final var omitted = snapshot.agentView().match(netflow("10.30.5.5", 0)).get().polling();
         assertThat(explicit).isSameAs(omitted);
-        assertThat(explicit.refreshInterval()).isEqualTo(java.time.Duration.ofMillis(600_000));
+        assertThat(explicit.refreshInterval()).isEqualTo(java.time.Duration.ofMinutes(10));
     }
 
     @Test
