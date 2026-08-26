@@ -44,6 +44,8 @@ public class TrafficSpikesTool implements McpTool {
 
     @Override
     public List<Map<String, Object>> execute(final Map<String, Object> params) {
+        final int requestedRange =
+                ToolParams.requestedTimeRangeMinutes(ToolParams.safe(params).get("time_range_minutes"), 15);
         final int timeRange = ToolParams.timeRangeMinutes(ToolParams.safe(params).get("time_range_minutes"), 15);
         final String db = mcpService.getDatabaseName();
         final String table = QueryRouter.resolveTopTalkersTable(db, timeRange, "dstAddr");
@@ -53,6 +55,6 @@ public class TrafficSpikesTool implements McpTool {
                 QueryRouter.flowCountExpression(table), table, timeRange
         );
 
-        return mcpService.executeQuery(sql);
+        return mcpService.executeRangeQuery(sql, table, timeRange, requestedRange);
     }
 }

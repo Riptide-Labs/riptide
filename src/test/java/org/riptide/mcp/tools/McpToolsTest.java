@@ -111,9 +111,48 @@ public class McpToolsTest {
         assertThat(recording.lastSql).contains("COUNT(*) AS flow_count");
     }
 
+    /**
+     * Every tool that routes to a table goes through the coverage-reporting entry point (#609).
+     *
+     * <p>Driven through the tools rather than through {@code RiptideMcpService}, because a test on
+     * the service passes while a tool that never calls it stays broken — and the issue named only
+     * two of the four routing tools, so the set had to be found rather than taken.</p>
+     */
+    @Test
+    public void everyToolTakingATimeRangeReportsCoverage() {
+        record Routing(String name, McpTool tool, RecordingMcpService service) { }
+        final List<Routing> routing = new java.util.ArrayList<>();
+        for (final String name : List.of("topTalkers", "trafficSpikes", "geoAsn",
+                "interfaceUtilization", "hostTrace")) {
+            final var recording = new RecordingMcpService();
+            routing.add(new Routing(name, switch (name) {
+                case "topTalkers" -> new TopTalkersTool(recording);
+                case "trafficSpikes" -> new TrafficSpikesTool(recording);
+                case "geoAsn" -> new GeoAsnTool(recording);
+                case "interfaceUtilization" -> new InterfaceUtilizationTool(recording);
+                // takes a range and always reads raw flows: the tool most exposed to answering
+                // short, and the one a QueryRouter grep does not find
+                default -> new HostTraceTool(recording);
+            }, recording));
+        }
+
+        for (final Routing entry : routing) {
+            // hostTrace needs an address before it will query at all; the others ignore the extra key
+            entry.tool().execute(Map.of("time_range_minutes", 1440, "ip_address", "10.0.0.1"));
+            assertThat(entry.service().lastTable)
+                    .as("%s must route through executeRangeQuery, or its answers never say they are"
+                            + " short", entry.name())
+                    .isNotNull();
+            assertThat(entry.service().lastSql)
+                    .as("%s must still pass its own SQL, not the coverage probe", entry.name())
+                    .contains(entry.service().lastTable);
+        }
+    }
+
     /** Captures the SQL a tool builds instead of running it. */
     private static final class RecordingMcpService extends RiptideMcpService {
         private String lastSql;
+        private String lastTable;
 
         private RecordingMcpService() {
             super(null, databaseNamed("riptide_test"), new McpProperties(), new ObjectMapper());
@@ -128,6 +167,20 @@ public class McpToolsTest {
         @Override
         public List<Map<String, Object>> executeQuery(final String sqlQuery) {
             this.lastSql = sqlQuery;
+            return List.of();
+        }
+
+        /**
+         * Recorded at this seam, not at {@code executeQuery}, because a routed tool now makes two
+         * round trips: its own query and the coverage probe behind it. Capturing the last
+         * {@code executeQuery} would record the probe and assert nothing about the tool.
+         */
+        @Override
+        public List<Map<String, Object>> executeRangeQuery(final String sqlQuery, final String table,
+                                                            final int effectiveMinutes,
+                                                            final int requestedMinutes) {
+            this.lastSql = sqlQuery;
+            this.lastTable = table;
             return List.of();
         }
     }

@@ -33,11 +33,16 @@ public final class QueryRouter {
      * would otherwise emit a WARN per query, indefinitely, for a condition already reported at
      * startup.</p>
      *
-     * <p><b>The fallback is not free, and the message says so.</b> Raw {@code flows} is retained for
-     * {@link FlowsSchema#DEFAULT_TTL_DAYS} days against the rollups'
-     * {@link FlowsSchema#DEFAULT_ROLLUP_TTL_DAYS} — the rollups exist partly so long-range queries
-     * outlive the raw table's expiry. A query reaching past raw retention therefore comes back
-     * <em>truncated</em>, not merely slower, and silently so unless the operator is told.</p>
+     * <p><b>The fallback is not free.</b> Raw {@code flows} is retained for far less than the
+     * rollups — the rollups exist partly so long-range queries outlive the raw table's expiry — so a
+     * query reaching past raw retention comes back <em>truncated</em>, not merely slower.</p>
+     *
+     * <p>Neither this javadoc nor the warning names the retention in days any more. The constants
+     * {@code DEFAULT_TTL_DAYS} and {@code DEFAULT_ROLLUP_TTL_DAYS} are only the defaults; the value
+     * in force is whatever {@code onboard --ttl-days} wrote into the table's TTL clause, and that
+     * never reaches the collector's configuration. A wrong number in a warning about incompleteness
+     * is worse than no number. The truncation is no longer silent either: a short answer carries its
+     * observed coverage on the response (#609).</p>
      */
     private static String rollupOrFlows(final String database, final String rollup) {
         final String table = FlowsSchema.qualifiedRollup(database, rollup);
@@ -45,10 +50,15 @@ public final class QueryRouter {
             return table;
         }
         if (RollupAvailability.firstRefusalOf(rollup)) {
+            // No retention figure here on purpose. This used to quote DEFAULT_TTL_DAYS as "the raw
+            // retention", which is only true where nobody passed onboard --ttl-days — the actual
+            // value lives in the table's TTL clause and never reaches the collector's config. A
+            // wrong number in a warning about incompleteness is worse than none, and the answer
+            // itself now carries the observed coverage (#609).
             log.warn("Rollup {} is unusable (see the startup log for what differs); answering from raw"
-                    + " flows instead. Queries are slower, and any range older than {} days — the raw"
-                    + " retention, against the rollups' {} — comes back incomplete.",
-                    rollup, FlowsSchema.DEFAULT_TTL_DAYS, FlowsSchema.DEFAULT_ROLLUP_TTL_DAYS);
+                    + " flows instead. Queries are slower, and any range reaching past what raw flows"
+                    + " retains comes back incomplete — a short answer says so on the response.",
+                    rollup);
         }
         return FlowsSchema.qualifiedFlows(database);
     }
