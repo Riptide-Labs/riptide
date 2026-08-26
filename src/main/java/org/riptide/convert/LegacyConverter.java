@@ -221,7 +221,7 @@ public final class LegacyConverter {
             version = CredentialVersion.valueOf(snmp.version().toUpperCase(java.util.Locale.ROOT));
         } catch (final IllegalArgumentException e) {
             throw new IllegalStateException(
-                    ("Node '%s' has snmp-version '%s'; 0.9 accepts v1, v2c and v3.")
+                    "Node '%s' has snmp-version '%s'; 0.9 accepts v1, v2c and v3."
                             .formatted(node.name(), snmp.version()), e);
         }
         return new CredentialSet(version,
@@ -241,7 +241,7 @@ public final class LegacyConverter {
             return TargetBuilder.AuthProtocol.valueOf(value);
         } catch (final IllegalArgumentException e) {
             throw new IllegalStateException(
-                    ("Node '%s' has auth-protocol '%s', which is not one of %s.")
+                    "Node '%s' has auth-protocol '%s', which is not one of %s."
                             .formatted(node.name(), value,
                                     java.util.Arrays.toString(TargetBuilder.AuthProtocol.values())), e);
         }
@@ -255,7 +255,7 @@ public final class LegacyConverter {
             return TargetBuilder.PrivProtocol.valueOf(value);
         } catch (final IllegalArgumentException e) {
             throw new IllegalStateException(
-                    ("Node '%s' has priv-protocol '%s', which is not one of %s.")
+                    "Node '%s' has priv-protocol '%s', which is not one of %s."
                             .formatted(node.name(), value,
                                     java.util.Arrays.toString(TargetBuilder.PrivProtocol.values())), e);
         }

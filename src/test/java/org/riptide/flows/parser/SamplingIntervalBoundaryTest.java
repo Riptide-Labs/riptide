@@ -73,8 +73,9 @@ class SamplingIntervalBoundaryTest {
      */
     @Test
     void theMapperLeavesTheDefaultAloneWhenAFlowStatesNoRate() throws Exception {
-        final var mapper = (ClickhouseRepository.FlowMapper) Class
+        final var mapper = Class
                 .forName("org.riptide.repository.clickhouse.ClickhouseRepository$FlowMapperImpl")
+                .asSubclass(ClickhouseRepository.FlowMapper.class)
                 .getDeclaredConstructor()
                 .newInstance();
 

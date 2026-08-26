@@ -392,20 +392,10 @@ public final class LegacyConfigReader {
             // Reporting only "no mapping at its root" reads as a corrupt file, when the file is
             // fine and the format is simply not the one this reads (#614).
             throw new IllegalStateException(
-                    ("Legacy file %s does not contain a mapping at its root. %s")
+                    "Legacy file %s does not contain a mapping at its root. %s"
                             .formatted(sourceName, NESTED_YAML_HINT));
         }
         return stringKeyed(loaded, "the file root");
-    }
-
-    private static Map<String, Object> section(final Map<String, Object> parent, final String key,
-                                               final String sourceName) {
-        final Map<String, Object> found = child(parent, key);
-        if (found == null) {
-            throw new IllegalStateException(
-                    "Legacy file %s: '%s' is not a mapping.".formatted(sourceName, key));
-        }
-        return found;
     }
 
     /**
@@ -481,20 +471,20 @@ public final class LegacyConfigReader {
         if (value == null) {
             return null;
         }
-        if (!(value instanceof String)) {
+        if (!(value instanceof String text)) {
             throw new IllegalStateException(
                     ("The %s is %s, which YAML read as %s rather than text. Quote it so it converts "
                             + "as the value you wrote.")
                             .formatted(where, value, value.getClass().getSimpleName()));
         }
-        return (String) value;
+        return text;
     }
 
     private static Long wholeNumber(final Object value, final String where) {
         if (value == null) {
             return null;
         }
-        if (!(value instanceof Number) || value instanceof Double || value instanceof Float) {
+        if (!(value instanceof Number number) || value instanceof Double || value instanceof Float) {
             throw new IllegalStateException(
                     "The %s is '%s', which is not a whole number.".formatted(where, value));
         }
@@ -503,7 +493,7 @@ public final class LegacyConfigReader {
             throw new IllegalStateException(
                     "The %s is '%s', which is too large.".formatted(where, value));
         }
-        return ((Number) value).longValue();
+        return number.longValue();
     }
 
     private static Integer boundedInt(final Object value, final String where) {

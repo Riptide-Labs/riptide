@@ -133,7 +133,7 @@ public final class SflowFlowBuilder {
             // Scaling by the raw wire rate while reporting a guarded one would produce a row that
             // reads as real unsampled traffic of zero volume — a rate of 0 gives bytes = 0 and
             // packets = 0, with nothing marking it as junk.
-            /**
+            /*
              * The stated frame length, scaled by the stated rate — or nothing, if the frame length is
              * not one a frame could have.
              *
@@ -176,9 +176,9 @@ public final class SflowFlowBuilder {
                 return scale();
             }
 
-            /** The rate the counters are scaled by: the exporter's, or 1 when it stated nothing usable. */
+            /* The rate the counters are scaled by: the exporter's, or 1 when it stated nothing usable. */
             private long scale() {
-                return usable(sample.samplingRate) ? sample.samplingRate : 1L;
+                return usable((double) sample.samplingRate) ? sample.samplingRate : 1L;
             }
 
             @Override
@@ -233,7 +233,7 @@ public final class SflowFlowBuilder {
 
             @Override
             public double getSamplingInterval() {
-                return usable(sample.samplingRate) ? sample.samplingRate : 1.0d;
+                return usable((double) sample.samplingRate) ? (double) sample.samplingRate : 1.0d;
             }
 
             /*
@@ -247,7 +247,7 @@ public final class SflowFlowBuilder {
              */
             @Override
             public SamplingProvenance getSamplingProvenance() {
-                return usable(sample.samplingRate) ? SamplingProvenance.Record : SamplingProvenance.Assumed;
+                return usable((double) sample.samplingRate) ? SamplingProvenance.Record : SamplingProvenance.Assumed;
             }
         };
     }
