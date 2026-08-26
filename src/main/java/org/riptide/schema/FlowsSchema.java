@@ -868,8 +868,10 @@ public final class FlowsSchema {
     /**
      * The value a column of this type holds for a row aggregated before it existed, quoted as SQL.
      *
-     * <p>Verified against 26.7 rather than assumed: a String-ish column defaults to {@code ''}, an
-     * IPv6 to {@code '::'}, a DateTime to the epoch, and a numeric to {@code 0}. Collapsing the last
+     * <p>Verified against 26.7 rather than assumed, and re-asked of a real server on every run by
+     * {@code ReservedValueIT} rather than left to this sentence (#629): a String-ish column defaults
+     * to {@code ''}, an IPv6 to {@code '::'}, a DateTime to the epoch, and a numeric to {@code 0}.
+     * Collapsing the last
      * three into {@code 0} would publish a reserved value that is not the boundary, and the guard fed
      * by this method would then wave through an expression that genuinely destroys it — {@code
      * srcAddr} and {@code dstAddr} are IPv6 dimensions today.</p>
