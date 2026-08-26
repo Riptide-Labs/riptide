@@ -304,7 +304,7 @@ Without `samplingInterval > 0`, rows aggregated before the rate was carried cont
 
 Without `flowProtocol != ''`, rows aggregated after the rate was carried but before the protocol was read `''` — and `''` is not `'SFLOW'`, so the `if()` scales them by their rate. Any sFlow inside that band is inflated, which is exactly the defect the protocol column was added to fix.
 
-There are two predicates because there were two upgrades: the rate shipped in v0.11.0 and the protocol after it. Rows aggregated in between know their rate and not their protocol. Check how much of your data is in that band with:
+There are two predicates because the two columns were added at different times, the rate first and the protocol after it. Rows aggregated in between know their rate and not their protocol. Check how much of your data is in that band with:
 
 ```sql
 SELECT countIf(samplingInterval = 0)                            AS before_rate,
@@ -327,7 +327,7 @@ Confirm with `SELECT count() FROM riptide.flows WHERE flowProtocol = 'SFLOW'` in
 :::tip[Two different questions]
 `sum(bytes * if(flowProtocol = 'SFLOW', 1, samplingInterval))` is total corrected volume: every byte in the fully-marked band, each scaled by its own protocol's factor. "Fully-marked" is doing real work there — the two boundary predicates exclude everything aggregated before each column was carried, so on a deployment that upgraded today a 90-day window is mostly excluded. Size the bands with the `countIf` query above before reading the total as a fleet figure.
 
-`sum(bytes * samplingInterval) … WHERE samplingInterval > 0 AND flowProtocol NOT IN ('', 'SFLOW')` is something narrower — corrected volume of the NetFlow/IPFIX subset. It is short by every sFlow byte you receive, because it drops those rows rather than scaling them by `1`. That is a legitimate query when you want the subset. It is not "the corrected total". Earlier versions of this page recommended it for mixed deployments, under a warning that the rollup form was unavailable there, without saying that the recommended alternative answers a narrower question.
+`sum(bytes * samplingInterval) … WHERE samplingInterval > 0 AND flowProtocol NOT IN ('', 'SFLOW')` is something narrower — corrected volume of the NetFlow/IPFIX subset. It is short by every sFlow byte you receive, because it drops those rows rather than scaling them by `1`. That is a legitimate query when you want the subset. It is not "the corrected total", and it is worth being explicit about that, because it is easy to reach for the exclusion on a mixed deployment and read the answer as a total.
 
 Note the `''` in that exclusion list. Writing the subset query as bare `WHERE flowProtocol != 'SFLOW'` looks right and is not: middle-band rows carry `''`, which is not `'SFLOW'`, so they pass the filter and get multiplied by their rate — reintroducing the exact inflation this column exists to remove, in the query meant to avoid it.
 :::

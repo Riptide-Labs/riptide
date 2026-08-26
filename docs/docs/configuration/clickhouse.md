@@ -146,12 +146,14 @@ them keeps answering from raw `flows` until it is restarted, however complete th
 Manage-mode deployments repair themselves on the next start and need nothing.
 :::
 
-:::note[Rolling back to an earlier version needs no preparation]
-Rolling forward is repaired automatically. Rolling **back** leaves the rollups alone, and you should leave them alone too.
+:::warning[Rolling back to an earlier version is not supported]
+Riptide does not support downgrading, and this page does not describe how to do it.
 
-An older riptide refuses to shrink a sorting key, so the target keeps every column. It also refuses to narrow the materialized view: `planViewRepair` treats a view selecting columns it does not know as a downgrade and declines it, and `v0.11.0` pins that with `aViewFromANewerVersionIsLeftAloneRatherThanNarrowed`. Versions before `v0.10.0` had no `MODIFY QUERY` at all, so they cannot re-point a view either. The wide view stays in place, `CREATE … IF NOT EXISTS` no-ops over it, and aggregation continues correctly into columns the running version does not read.
-
-**Do not drop the views to "help" a downgrade.** An earlier revision of this page advised exactly that, and it inverts the risk: with the views gone, a version that declines to build one for a rollup it considers drifted stops feeding that rollup entirely, and a version old enough to create its own narrow view would point it at the still-wide target — writing the reserved value into a sorting-key column for the rollup's full 365-day retention. That is the corruption, and leaving the views in place is what prevents it.
+One thing is worth stating anyway, because getting it wrong is expensive: **do not drop the rollup
+materialized views.** With the views in place an older riptide leaves them alone and keeps
+aggregating correctly into columns it does not read. With them gone, it either stops feeding the
+rollup entirely or creates a narrow view over the still-wide target, writing the reserved value into
+a sorting-key column for the rollup's full 365-day retention.
 :::
 
 

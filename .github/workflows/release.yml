@@ -30,74 +30,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check the release notes exist
-        run: |
-          # Before the build, not after: a tag missing its notes should cost seconds, not a full
-          # artefact build and signing run. This is the gate that would have caught v0.11.0, which
-          # shipped with a hand-written body and no file in the repository — the notes were a habit
-          # with nothing asking for them, so they lapsed without anything breaking (#609).
-          #
-          # Stable tags only. This workflow fires on v*.*.* which matches v0.7.1-rc2, and a release
-          # candidate is built to be thrown away: the audience for "who is affected and what to run"
-          # is an operator upgrading, not whoever is testing an rc. Requiring a hand-written file per
-          # candidate would make candidates expensive enough to skip.
-          # The file is a docs page as well as the release body, so it carries Docusaurus
-          # frontmatter that GFM has no concept of: published verbatim, a release opened with a
-          # horizontal rule and a heading reading "sidebar_position: 1 title: v0.11.0". Verified
-          # against GitHub's own renderer. body_path reads THIS output, never the source file.
-          write_body() {
-            awk 'NR==1 && $0=="---" {fm=1; next} fm && $0=="---" {fm=0; next} !fm' "$1" \
-              > "${RUNNER_TEMP}/release-body.md"
-            if [[ ! -s "${RUNNER_TEMP}/release-body.md" ]] \
-              || [[ -z "$(tr -d '[:space:]' < "${RUNNER_TEMP}/release-body.md")" ]]; then
-              echo "::error file=$1::release notes are empty once frontmatter is removed"
-              echo "Error: $1 has no body below its frontmatter."
-              exit 1
-            fi
-          }
-
-          # workflow_dispatch passes a BRANCH here, not a tag. Without this, dispatch from main
-          # died with "write it and re-tag" — a problem the operator does not have — and dispatch
-          # from any hyphenated branch took the prerelease arm below and synthesised a placeholder.
-          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
-            echo "ref ${GITHUB_REF_NAME} is a ${GITHUB_REF_TYPE}, not a tag: skipping the notes gate"
-            exit 0
-          fi
-          NOTES="docs/docs/release-notes/${GITHUB_REF_NAME}.md"
-          # A hyphen means prerelease. The same test lives in "Resolve image tags", which cannot be
-          # merged into this one: that step runs after the build and this must run before it, and it
-          # is reachable on workflow_dispatch where this step exits early. Grep `== *-*` in this file
-          # before changing either — they have to agree on what a prerelease is.
-          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
-            if [[ ! -s "${NOTES}" ]]; then
-              # synthesised into the workspace, never committed. body_path must always resolve, and
-              # an empty body publishes a release that says nothing at all
-              mkdir -p "$(dirname "${NOTES}")"
-              printf '%s\n' \
-                "Release candidate. Not for production use." \
-                "" \
-                "Stable release notes are published with the stable tag." > "${NOTES}"
-              echo "prerelease ${GITHUB_REF_NAME}: synthesised a placeholder body"
-            fi
-            write_body "${NOTES}"
-            exit 0
-          fi
-          if [[ ! -f "${NOTES}" ]]; then
-            echo "::error::no release notes at ${NOTES} for ${GITHUB_REF_NAME}"
-            echo "Error: no release notes at ${NOTES}."
-            echo ""
-            echo "The published release body is taken from that file, so the tag cannot publish"
-            echo "without it. Write it, commit it, and re-tag. RELEASING.md says what it needs to"
-            echo "carry: who is affected, how they can tell, and what to run."
-            exit 1
-          fi
-          if [[ ! -s "${NOTES}" ]]; then
-            echo "::error file=${NOTES}::release notes file is empty"
-            echo "Error: ${NOTES} is empty. An empty body publishes a release that says nothing."
-            exit 1
-          fi
-          echo "release notes: ${NOTES} ($(wc -l < "${NOTES}") lines)"
-          write_body "${NOTES}"
       - name: Set up JDK 25 for x64
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
@@ -124,7 +56,6 @@ jobs:
           # else: :latest and the floating :X.Y must keep pointing at the newest
           # *stable* release.
           image="ghcr.io/riptide-labs/riptide"
-          # See "Check the release notes exist" — same prerelease test, deliberately duplicated.
           if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
             {
               echo "PRERELEASE=true"
@@ -250,30 +181,12 @@ jobs:
       # internally, but publishes prereleases first and uploads after — which an
       # immutable release rejects (v0.7.1-rc1 failed exactly there, with zero assets).
       # Drafting unconditionally gives both flavours the same, working order.
-      # action-gh-release swallows an unreadable body_path and publishes with an unset body. These
-      # releases are immutable, so an empty body cannot be corrected afterwards — only superseded by
-      # a new version. Re-check here, at the last moment the job can still fail cheaply.
-      - name: Confirm the release body survived the build
-        run: |
-          BODY="${RUNNER_TEMP}/release-body.md"
-          if [[ ! -s "${BODY}" ]]; then
-            echo "::error::${BODY} is missing or empty at publish time"
-            echo "Error: the release body prepared before the build is gone. Publishing now would"
-            echo "produce an immutable release with no notes at all."
-            exit 1
-          fi
       - name: Release ${{ github.ref_name }}
         id: gh_release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           draft: true
           prerelease: ${{ env.PRERELEASE == 'true' }}
-          # the repository is the source of the body, not the forge. Written by hand into GitHub
-          # after publication, the notes existed nowhere this repo or the docs site could see, and
-          # nothing noticed a release shipping without them. Verified present at the pinned SHA:
-          # action.yml declares body_path as "Path to load note-worthy description of changes in
-          # release from".
-          body_path: ${{ runner.temp }}/release-body.md
           files: |
             target/*.jar
             target/*.deb
