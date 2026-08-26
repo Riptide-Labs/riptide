@@ -79,7 +79,7 @@ public final class LegacyConverter {
         final Map<String, String> rangeSpellings = new LinkedHashMap<>();
         // every polled range, and the domain-pinned subset of it. Nesting cannot be decided inside
         // the loop: it is a question about the whole set, and the covering range may sort later
-        final Map<String, IPAddress> polledRanges = new LinkedHashMap<>();
+        final Map<String, PolledRange> polledRanges = new LinkedHashMap<>();
         final Map<String, LegacyNode> pinnedPolled = new LinkedHashMap<>();
 
         // sorted, not map order: the same input has to convert to byte-identical output, and
@@ -129,12 +129,12 @@ public final class LegacyConverter {
                                             respelled(node.name(), raw.subnetAddress(), node.subnetAddress())));
                 }
                 rangeSpellings.put(canonical, raw.subnetAddress());
-                polledRanges.put(node.name(), address);
+                ranges++;
+                final boolean carveOut = node.snmp().cleartext() && address.isMultiple();
+                polledRanges.put(node.name(), new PolledRange(address, carveOut));
                 if (node.observationDomain() != null) {
                     pinnedPolled.put(node.name(), node);
                 }
-                ranges++;
-                final boolean carveOut = node.snmp().cleartext() && address.isMultiple();
                 // registered even for a carve-out. The set is unreferenced and harmless, and
                 // dropping it would delete the operator's community reference from their
                 // configuration entirely: re-enabling after enumerating the devices should be
@@ -151,7 +151,7 @@ public final class LegacyConverter {
             exporters.append(exporterEntry(node));
         }
 
-        reportPinnedNodesInsideAnotherRange(pinnedPolled, polledRanges, summary);
+        reportPinnedNodesOverlappingAnotherRange(pinnedPolled, polledRanges, summary);
 
         summary.addFirst(("Converted %d node(s): %d credential set(s), %d polling profile(s), "
                 + "%d agent range(s), %d enrichment entry/entries.")
@@ -282,50 +282,94 @@ public final class LegacyConverter {
         }
     }
 
+    /** A polled range as the report needs it: its extent, and whether FR-9 disabled it. */
+    private record PolledRange(IPAddress address, boolean carveOut) {
+    }
+
+    /** Matches {@code PinnedPrefixMatcher.rankOf}: a longer prefix is more specific. */
+    private static int specificity(final IPAddress address) {
+        final Integer prefix = address.getNetworkPrefixLength();
+        return prefix != null ? prefix : address.getBitCount();
+    }
+
     /**
-     * Reports every domain-pinned polled node that sits inside another polled range (#615).
+     * Reports every domain-pinned polled node that overlaps another polled range (#615).
      *
      * <p>The conversion is correct and is not refused: 0.9 resolves the pair by longest prefix, the
      * same rule the exporter tree uses. But it resolves it <em>differently from 0.8</em>, and the
-     * operator is owed that at the one moment they are looking at both configurations.</p>
+     * conversion is the one moment the operator is looking at both configurations.</p>
      *
-     * <p>What 0.8 actually did is worth stating precisely, because it reads as a lost capability and
-     * is not one. The poller held one registration per address — {@code Map<InetSocketAddress,
+     * <p>What 0.8 did is worth stating precisely, because it reads as a lost capability and is not
+     * one. The poller held one registration per address — {@code Map<InetSocketAddress,
      * Registration>}, unchanged since 0.8 — and its {@code register()} returned the existing
      * registration on collision, discarding the newly resolved endpoint. So a device covered by both
-     * a pinned node and a wider one was polled with whichever credentials the first flow after boot
-     * happened to select, re-decided on every restart. 0.9 replaced a race with a rule.</p>
+     * a pinned node and another polled one was polled with whichever credentials the first flow after
+     * boot happened to select, re-decided on every restart. 0.9 replaced a race with a rule.</p>
      *
-     * <p>Only the nested case is reported. A pinned node no other polled range covers never had a
-     * second candidate, so nothing about it changed, and reporting those would bury this line under
-     * noise on the common configuration.</p>
+     * <p><b>Overlap, not containment, and in both directions.</b> A first version tested only
+     * "pinned range inside another", which misses the reverse: {@code PinnedPrefixMatcher} consults
+     * the pinned pool first, so a pinned <em>wider</em> range beats an unpinned narrower one for its
+     * own domain while the narrower one serves every other domain. That is the same two-endpoint race
+     * and it went unreported — exactly the population this exists to warn. For prefixes, overlapping
+     * means one contains the other, so both directions are tested.</p>
      *
-     * <p>Containment is {@code IPAddress.contains}, which is the primitive {@code PinnedPrefixMatcher}
-     * itself uses. The matcher is deliberately <em>not</em> consulted here: it answers "which range
-     * wins for this address", and for an address inside the pinned node that is the pinned node —
-     * the question this needs is "which other range also covers it", which the matcher cannot ask.</p>
+     * <p>The fall-through named is the <em>most specific</em> overlapping range, not the first one
+     * found. Insertion order here is sorted node name, which has nothing to do with specificity, so
+     * breaking on the first pointed operators at the wrong credentials whenever a pinned node sat
+     * inside more than one range.</p>
+     *
+     * <p>A carve-out is called out rather than described as polling. An FR-9 range is emitted
+     * {@code enabled: false} with no credentials, and it still wins the match, so it shadows the
+     * wider range instead of deferring to it: those addresses are polled by <em>nothing</em>. Saying
+     * "polled with its credentials" there is false, and v2c on a subnet is the commonest legacy
+     * shape.</p>
      */
-    private static void reportPinnedNodesInsideAnotherRange(final Map<String, LegacyNode> pinnedPolled,
-                                                            final Map<String, IPAddress> polledRanges,
-                                                            final List<String> summary) {
+    private static void reportPinnedNodesOverlappingAnotherRange(final Map<String, LegacyNode> pinnedPolled,
+                                                                 final Map<String, PolledRange> polledRanges,
+                                                                 final List<String> summary) {
         for (final Map.Entry<String, LegacyNode> pinned : pinnedPolled.entrySet()) {
-            final IPAddress inner = polledRanges.get(pinned.getKey());
-            for (final Map.Entry<String, IPAddress> outer : polledRanges.entrySet()) {
-                if (outer.getKey().equals(pinned.getKey()) || !outer.getValue().contains(inner)) {
+            final PolledRange self = polledRanges.get(pinned.getKey());
+
+            String otherName = null;
+            PolledRange other = null;
+            for (final Map.Entry<String, PolledRange> candidate : polledRanges.entrySet()) {
+                if (candidate.getKey().equals(pinned.getKey())) {
                     continue;
                 }
-                summary.add(("Node '%s' (%s) pins observation-domain %d and sits inside polled range "
-                        + "'%s' (%s). In 0.8 a flow from these addresses on another domain fell "
-                        + "through to '%s', so which credentials polled the device depended on which "
-                        + "flow arrived first after start-up. In 0.9 the most specific range wins: "
-                        + "they are always polled with '%s' credentials. Naming is unchanged — the "
-                        + "pin still decides exporterName and interface pins.")
-                        .formatted(pinned.getKey(), pinned.getValue().subnetAddress(),
-                                pinned.getValue().observationDomain(),
-                                outer.getKey(), outer.getValue().toCanonicalString(),
-                                outer.getKey(), pinned.getKey()));
-                break;
+                final IPAddress extent = candidate.getValue().address();
+                if (!extent.contains(self.address()) && !self.address().contains(extent)) {
+                    continue;
+                }
+                if (other == null || specificity(extent) > specificity(other.address())) {
+                    otherName = candidate.getKey();
+                    other = candidate.getValue();
+                }
             }
+            if (other == null) {
+                continue;
+            }
+
+            // over the addresses both cover, 0.9 gives the more specific range
+            final boolean selfWins = specificity(self.address()) >= specificity(other.address());
+            final String winnerName = selfWins ? pinned.getKey() : otherName;
+            final PolledRange winner = selfWins ? self : other;
+
+            summary.add(("Node '%s' (%s) pins observation-domain %d and overlaps polled range '%s' "
+                    + "(%s). In 0.8 a flow on domain %d resolved credentials from '%s' and a flow on "
+                    + "any other domain from '%s', so which of the two polled the device depended on "
+                    + "which arrived first after start-up. In 0.9 the domain is not consulted and the "
+                    + "most specific range decides: %s Naming is unchanged — the pin still decides "
+                    + "exporterName and interface pins.")
+                    .formatted(pinned.getKey(), pinned.getValue().subnetAddress(),
+                            pinned.getValue().observationDomain(), otherName,
+                            other.address().toCanonicalString(),
+                            pinned.getValue().observationDomain(), pinned.getKey(), otherName,
+                            winner.carveOut()
+                                    ? ("the addresses both cover are polled by nothing, because '"
+                                            + winnerName + "' is emitted disabled and still wins the "
+                                            + "match rather than deferring to the wider range.")
+                                    : ("the addresses both cover are polled with '" + winnerName
+                                            + "' credentials.")));
         }
     }
 

@@ -6,7 +6,6 @@
 package org.riptide.convert;
 
 import org.junit.jupiter.api.Test;
-import org.riptide.inventory.CredentialVersion;
 import org.riptide.inventory.InventoryLoader;
 import org.riptide.snmp.SnmpPollConfig;
 import org.riptide.inventory.InventorySnapshot;
@@ -829,7 +828,9 @@ class LegacyConverterTest {
             assertThat(agent.range())
                     .as("domain %d must not change which range polls 10.20.30.5", domain)
                     .isEqualTo("10.20.30.0/24");
-            assertThat(agent.credentials().version()).isEqualTo(CredentialVersion.V3);
+            // the security name, not the version: both ranges in NESTED_PIN are v3, so asserting
+            // the version passes whichever one won and pins nothing
+            assertThat(agent.credentials().securityName()).isEqualTo("mon");
         }
     }
 
@@ -888,6 +889,99 @@ class LegacyConverterTest {
         assertThat(converted.summary())
                 .as("reporting the common case would bury the line that matters")
                 .noneSatisfy(line -> assertThat(line).contains("sits inside polled range"));
+    }
+
+    /**
+     * A carve-out that wins the match is reported as polling nothing, not as polling with its own
+     * credentials.
+     *
+     * <p>An FR-9 range is emitted {@code enabled: false} with no credentials, and it still wins the
+     * longest-prefix match, so it shadows the wider range rather than deferring to it. The first
+     * version of this report said "always polled with 'core-router' credentials" while the carve-out
+     * line two lines above said polling stops — two contradictory claims about the same node, on
+     * v2c-on-a-subnet, which is the commonest legacy shape there is.</p>
+     */
+    @Test
+    void aCarvedOutWinnerIsReportedAsPollingNothing() {
+        final var converted = convert("""
+                riptide:
+                  nodes:
+                    core-router:
+                      subnet-address: 10.20.30.0/24
+                      observation-domain: 42
+                      snmp: {snmp-version: v2c, community: public}
+                    access-switches:
+                      subnet-address: 10.20.0.0/16
+                      snmp: {snmp-version: v3, security-name: fleet}
+                """);
+
+        assertThat(converted.summary())
+                .anySatisfy(line -> assertThat(line)
+                        .contains("overlaps polled range")
+                        .contains("polled by nothing"))
+                .noneSatisfy(line -> assertThat(line)
+                        .contains("overlaps polled range")
+                        .contains("polled with 'core-router' credentials"));
+    }
+
+    /**
+     * The fall-through named is the most specific overlapping range, not the first one found.
+     *
+     * <p>Ranges are collected in sorted node-name order, which has nothing to do with specificity.
+     * Breaking on the first match named {@code aaa-wide} (a /8) where 0.8 would actually have fallen
+     * through to {@code zzz-mid} (a /16), pointing the operator at the wrong credentials.</p>
+     */
+    @Test
+    void theMostSpecificOverlappingRangeIsNamedNotTheFirstFound() {
+        final var converted = convert("""
+                riptide:
+                  nodes:
+                    aaa-wide:
+                      subnet-address: 10.0.0.0/8
+                      snmp: {snmp-version: v3, security-name: wide}
+                    zzz-mid:
+                      subnet-address: 10.20.0.0/16
+                      snmp: {snmp-version: v3, security-name: mid}
+                    core-router:
+                      subnet-address: 10.20.30.0/24
+                      observation-domain: 42
+                      snmp: {snmp-version: v3, security-name: core}
+                """);
+
+        assertThat(converted.summary())
+                .anySatisfy(line -> assertThat(line)
+                        .contains("overlaps polled range 'zzz-mid'")
+                        .doesNotContain("aaa-wide"));
+    }
+
+    /**
+     * A pinned range that <em>contains</em> an unpinned one raced identically, and was unreported.
+     *
+     * <p>{@code PinnedPrefixMatcher} consults the pinned pool first, so a pinned wider range beats an
+     * unpinned narrower one for its own domain while the narrower one serves every other domain —
+     * the same two endpoints for one address. Testing only "pinned inside another" missed exactly the
+     * population this report exists to warn.</p>
+     */
+    @Test
+    void aPinnedRangeContainingAnUnpinnedOneIsAlsoReported() {
+        final var converted = convert("""
+                riptide:
+                  nodes:
+                    core-router:
+                      subnet-address: 10.20.0.0/16
+                      observation-domain: 42
+                      snmp: {snmp-version: v3, security-name: mon}
+                    access-switches:
+                      subnet-address: 10.20.30.0/24
+                      snmp: {snmp-version: v3, security-name: fleet}
+                """);
+
+        assertThat(converted.summary())
+                .anySatisfy(line -> assertThat(line)
+                        .contains("core-router")
+                        .contains("overlaps polled range 'access-switches'")
+                        // the narrower range wins for the addresses both cover
+                        .contains("polled with 'access-switches' credentials"));
     }
 
     /** A domain-pinned /24 inside a polled /16, both with SNMP: the shape 0.8 raced on. */
