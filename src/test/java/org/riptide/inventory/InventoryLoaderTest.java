@@ -150,6 +150,54 @@ class InventoryLoaderTest {
                 .hasMessageContaining("polling profile 'warp-speed'");
     }
 
+    /**
+     * An agent range must never accept an observation-domain pin (#543).
+     *
+     * <p>This is a tripwire, not a validation test. Accepting the key would be a two-line change to
+     * {@code AGENT_KEYS} that looks harmless and is not: {@code InterfaceSnapshotPoller.resolve}
+     * re-resolves a registration <em>by address alone</em>, synthesising
+     * {@code new ExporterIdentity.NetflowIpfix(address, 0L)}. That hardcoded {@code 0} is exact only
+     * because every agent range lands in {@code PinnedPrefixMatcher}'s wildcard pool.</p>
+     *
+     * <p>Pin a range and its registrations resolve empty in the poller, get marked stop-when-idle and
+     * are deregistered on the next tick — while {@code SnmpEnricher}, which matches with the flow's
+     * real domain, keeps handing the endpoint straight back. An infinite register/deregister loop
+     * over the entire pinned population, with no error anywhere.</p>
+     *
+     * <p>{@code InterfaceSnapshotPollerTest#agentRangesResolveRegardlessOfObservationDomain}, in
+     * another package, cannot catch this: its
+     * fixture declares no pin, so the entry it parses is unpinned whether or not the loader has
+     * learned to accept one. The property has to be asserted against an inventory that <em>does</em>
+     * declare a pin, which is why this test exists rather than that one being extended.</p>
+     *
+     * <p>The pin belongs on exporter entries, which is where naming happens and where it is honoured.
+     * See {@code AgentEntry}'s javadoc for why polling cannot carry one at all.</p>
+     */
+    @Test
+    void anAgentRangeRejectsAnObservationDomainPin() {
+        assertThatThrownBy(() -> InventoryLoader.parse(profiles(), """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.32.0.0/24":
+                        credentials: corp-v3
+                        observation-domain: 42
+                """, "test.yaml"))
+                .as("accepting this silently deregisters the pinned fleet — see #543")
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("observation-domain");
+
+        // and it is still accepted where it belongs, so this is a tripwire and not a ban
+        assertThatCode(() -> InventoryLoader.parse(profiles(), """
+                riptide:
+                  exporters:
+                    core-router:
+                      address: 10.32.0.0/24
+                      observation-domain: 42
+                """, "test.yaml"))
+                .doesNotThrowAnyException();
+    }
+
     @Test
     void unknownEntryKeyFailsNamingEntryAndKey() {
         assertThatThrownBy(() -> InventoryLoader.parse(profiles(), """

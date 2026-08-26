@@ -395,8 +395,12 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      * together, so the snapshot handed here already carries the rotated value.</p>
      *
      * <p>Agent ranges carry no observation-domain pin, so resolving by address alone is
-     * exact rather than approximate; {@code agentRangesResolveRegardlessOfObservationDomain}
-     * pins that, and it is the assumption to revisit first if pinning is ever added.</p>
+     * exact rather than approximate. The test that holds that is
+     * {@code InventoryLoaderTest#anAgentRangeRejectsAnObservationDomainPin}, which refuses a pinned
+     * agent range at load. Do not reach for
+     * {@code agentRangesResolveRegardlessOfObservationDomain} here: its fixture declares no pin, so
+     * it stays green whether or not the loader has learned to accept one, and following it would
+     * conclude the assumption held in exactly the case it does not (#543).</p>
      *
      * <p>Takes no snapshot argument on purpose. A caller passing the snapshot it just
      * published would be passing what it <em>believes</em> is serving, and a reloader that
@@ -453,6 +457,22 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         }
     }
 
+    /**
+     * Re-resolves a registration from its address alone.
+     *
+     * <p>The hardcoded {@code 0} is exact only because agent ranges carry no observation-domain pin,
+     * so every one of them lands in {@code PinnedPrefixMatcher}'s wildcard pool and the domain
+     * argument is dead. There is no real domain available here: a registration is keyed by address,
+     * and this runs on inventory refresh rather than on a flow.</p>
+     *
+     * <p>If a pin were ever accepted on an agent range, every registration whose range is pinned to a
+     * non-zero domain would resolve empty here, be marked stop-when-idle and be deregistered on the
+     * next tick — while {@code SnmpEnricher}, matching with the flow's real domain, kept handing the
+     * endpoint back. An infinite register/deregister loop with no error.
+     * {@code InventoryLoaderTest#anAgentRangeRejectsAnObservationDomainPin} is the tripwire that
+     * stops that reaching here (#543); {@code AgentEntry}'s javadoc carries why polling cannot be
+     * domain-scoped at all.</p>
+     */
     private static Optional<SnmpEndpoint> resolve(final InventorySnapshot snapshot, final InetSocketAddress address) {
         final ExporterIdentity identity = new ExporterIdentity.NetflowIpfix(address.getAddress(), 0L);
         return snapshot.agentView().match(identity)
