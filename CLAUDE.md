@@ -36,11 +36,22 @@ Each of these was paid for. They come from the epic 2 and epic #470 retrospectiv
 
 **A passing mutation test is not proof until you have read the assertion that caught it.** An assertion can match the right string for the wrong reason. `hasMessageContaining("'A'")` passes on a message that merely echoes its input; the mutation survived and the suite stayed green.
 
+**A mutation run has three outcomes, not two: killed, survived, and inconclusive.** Treating the third as the second is how a real defect gets recorded as covered. Two ways it happens, both seen here:
+
+- The build never reached the tests. A mutation that orphans an import fails Checkstyle at `validate`, so surefire never runs — and a grep for test-failure lines finds nothing, exactly as it would on a clean run. Assert the build reached the test phase before reading its result.
+- The mutation never applied. A mangled string replacement leaves the original code running, and that also reports no failures. Assert the edit landed before running.
+
+**A green report is only evidence if the build that produced it succeeded.** Reading `target/surefire-reports/*.xml` for a test count is not the same as the suite passing: if the build failed earlier in the lifecycle, that file is the previous run's. Confirm `BUILD SUCCESS`, then quote the number.
+
 ### Changes must reach every site
 
 **When adding a guard, enumerate every sibling call site emitting the same statement, and fix or justify each in the same commit.** Fixing only where the report pointed has caused repeated regressions here. Grep the capability, not the filename you were handed.
 
 **Prefer removing a condition over adding a fourth place that remembers it.** If a rule is encoded in three places, the fix for the fourth bug is deleting two of them, not writing another.
+
+**Siblings include prose.** A comment asserting the thing you just disproved is a site you missed, and it is the one a reader reaches first. A javadoc naming the test that pins an assumption survived 55 lines above a new javadoc arguing that test cannot pin it — so the next maintainer would have followed the stale pointer, seen green, and concluded the assumption held. Grep the claim, not just the call.
+
+**A cross-reference nobody can grep for is not a cross-reference.** Keep a symbol name on one line: split across a javadoc line break inside `{@code}` it renders with a space in the middle, and the pointer that was the whole point of the comment stops being findable.
 
 ### Specs must name their consumer
 
