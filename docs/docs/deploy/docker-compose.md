@@ -14,6 +14,24 @@ cd riptide/deployment/riptide
 docker compose up -d
 ```
 
+:::warning Grafana ships with a default password
+
+Grafana starts with `admin`/`admin`, which is fine on a laptop and not fine anywhere else.
+The stack publishes port 3000 on every interface, so on any host with a routable address
+that login is reachable from the network.
+
+Set your own password before the first start, either in your shell or in a `.env` file in
+the deployment directory:
+
+```bash
+export GF_SECURITY_ADMIN_PASSWORD='your-secure-password-here'
+```
+
+The variable is only read when Grafana initialises its database. Changing it later has no
+effect unless you also remove the `gf-data` volume.
+
+:::
+
 This starts, from `ghcr.io/riptide-labs/riptide:latest`:
 
 | Service | Port | Purpose |
@@ -23,7 +41,7 @@ This starts, from `ghcr.io/riptide-labs/riptide:latest`:
 | ch-ui | [`:5521`](http://localhost:5521) | browse the `riptide.flows` table |
 | grafana | [`:3000`](http://localhost:3000) | dashboards (ClickHouse datasource provisioned) |
 
-Grafana (admin/admin) ships provisioned dashboards backed by the `flows` table and the
+Grafana ships provisioned dashboards backed by the `flows` table and the
 `samples` bucket-expansion view:
 
 - **Riptide - Top 10**: stacked top-10 rate panels (AS, hosts, applications, services, protocols,
