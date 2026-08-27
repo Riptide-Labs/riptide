@@ -153,6 +153,9 @@ public final class TenantProvisioner {
      * disagree.</p>
      */
     private Optional<FlowsSchema.RepairPlan> plannedRollupRepair(final String database) {
+        if (database == null || !database.matches("^[a-zA-Z0-9_]+$")) {
+            throw new IllegalArgumentException("Invalid database name");
+        }
         final Map<String, String> sortKeys = new LinkedHashMap<>();
         final Map<String, Set<String>> columns = new LinkedHashMap<>();
         try (var tables = this.admin.queryRecords("SELECT name AS n, sorting_key AS k FROM system.tables"
@@ -217,6 +220,9 @@ public final class TenantProvisioner {
      * inspected.</p>
      */
     private Set<String> viewRepair(final String database, final Set<String> refused) {
+        if (database == null || !database.matches("^[a-zA-Z0-9_]+$")) {
+            throw new IllegalArgumentException("Invalid database name");
+        }
         final Map<String, String> live = new LinkedHashMap<>();
         try (var views = this.admin.queryRecords("SELECT name AS n, as_select AS s FROM system.tables"
                 + " WHERE database = '" + database + "'").get()) {
