@@ -204,13 +204,20 @@ public final class ProvisioningDdl {
      *
      * <p>The rollup policies name the reader only: the writer reaches a rollup by {@code INSERT}
      * through its materialized view, which no row policy filters.
+     *
+     * <p>Users and policies are namespaced by database: {@code writer_<database>_<tenant>},
+     * {@code bi_<database>_<tenant>}, and {@code <database>_<tenant>_iso}. ClickHouse users and
+     * roles are instance-wide, so omitting the database would share credentials and policies across
+     * every database provisioned with the same tenant identifier — the second onboarding would
+     * change the shared users' passwords, the shared roles would accumulate grants for both
+     * databases, and offboarding one database would drop users still needed by the other.
      */
     public static List<String> onboardTenant(final String database, final String tenant, final String organisation,
                                              final String writerPassword, final String readerPassword) {
         final String flows = FlowsSchema.qualifiedFlows(database);
-        final String writer = ident("writer_" + tenant);
-        final String reader = ident("bi_" + tenant);
-        final String policy = ident(tenant + "_iso");
+        final String writer = ident("writer_" + database + "_" + tenant);
+        final String reader = ident("bi_" + database + "_" + tenant);
+        final String policy = ident(database + "_" + tenant + "_iso");
         final String pinned = " SETTINGS SQL_tenant = " + literal(tenant) + " CONST, SQL_org = "
                 + literal(organisation) + " CONST";
         final List<String> statements = new ArrayList<>(List.of(
@@ -242,18 +249,19 @@ public final class ProvisioningDdl {
     /**
      * Per-tenant teardown: drop the policy from {@code flows} and from every rollup, then the two
      * users; shared objects stay. A policy left behind on a rollup would keep denying rows there
-     * after the tenant is gone.
+     * after the tenant is gone. Users and policies are namespaced by database to prevent lifecycle
+     * collisions when the same tenant identifier is provisioned across multiple databases.
      */
     public static List<String> offboardTenant(final String database, final String tenant) {
-        final String policy = ident(tenant + "_iso");
+        final String policy = ident(database + "_" + tenant + "_iso");
         final List<String> statements = new ArrayList<>();
         statements.add("DROP ROW POLICY IF EXISTS " + policy + " ON " + FlowsSchema.qualifiedFlows(database));
         for (final String rollup : FlowsSchema.rollupTableNames()) {
             statements.add("DROP ROW POLICY IF EXISTS " + policy + " ON "
                     + FlowsSchema.qualifiedRollup(database, rollup));
         }
-        statements.add("DROP USER IF EXISTS " + ident("bi_" + tenant));
-        statements.add("DROP USER IF EXISTS " + ident("writer_" + tenant));
+        statements.add("DROP USER IF EXISTS " + ident("bi_" + database + "_" + tenant));
+        statements.add("DROP USER IF EXISTS " + ident("writer_" + database + "_" + tenant));
         return List.copyOf(statements);
     }
 

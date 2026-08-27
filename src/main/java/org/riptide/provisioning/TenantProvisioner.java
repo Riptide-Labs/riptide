@@ -284,7 +284,7 @@ public final class TenantProvisioner {
     private static String configStanza(final TenantSpec spec) {
         // Built by concatenation (not String.format) so the line separators stay literal '\n' — a
         // config stanza the operator pastes, not platform-dependent output.
-        return "riptide.clickhouse.username=writer_" + spec.tenant() + "\n"
+        return "riptide.clickhouse.username=writer_" + spec.database() + "_" + spec.tenant() + "\n"
                 + "riptide.clickhouse.password=" + spec.writerSecret() + "\n"
                 + "riptide.identity.tenant=" + spec.tenant() + "\n"
                 + "riptide.identity.organisation=" + spec.organisation();

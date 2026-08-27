@@ -102,16 +102,16 @@ class ProvisioningDdlTest {
         // The six user/grant statements, the flows policy, then one policy per rollup.
         assertThat(sql).hasSize(7 + FlowsSchema.rollupTableNames().size());
         assertThat(sql.get(0))
-                .contains("CREATE USER IF NOT EXISTS `writer_acme`")
+                .contains("CREATE USER IF NOT EXISTS `writer_riptide_acme`")
                 .contains("IDENTIFIED WITH sha256_password BY 'p\\'w'")
                 .contains("SQL_tenant = 'acme' CONST, SQL_org = 'acme-eu' CONST");
         // Password reconciled with ALTER USER so a re-run after rotation updates the credential.
-        assertThat(sql.get(1)).isEqualTo("ALTER USER `writer_acme` IDENTIFIED WITH sha256_password BY 'p\\'w'");
-        assertThat(sql.get(2)).isEqualTo("GRANT flow_writer TO `writer_acme`");
-        assertThat(sql.get(4)).isEqualTo("ALTER USER `bi_acme` IDENTIFIED WITH sha256_password BY 'r\\'w'");
+        assertThat(sql.get(1)).isEqualTo("ALTER USER `writer_riptide_acme` IDENTIFIED WITH sha256_password BY 'p\\'w'");
+        assertThat(sql.get(2)).isEqualTo("GRANT flow_writer TO `writer_riptide_acme`");
+        assertThat(sql.get(4)).isEqualTo("ALTER USER `bi_riptide_acme` IDENTIFIED WITH sha256_password BY 'r\\'w'");
         assertThat(sql.get(6))
-                .contains("CREATE ROW POLICY OR REPLACE `acme_iso` ON `riptide`.flows")
-                .contains("USING tenant = 'acme' TO `bi_acme`");
+                .contains("CREATE ROW POLICY OR REPLACE `riptide_acme_iso` ON `riptide`.flows")
+                .contains("USING tenant = 'acme' TO `bi_riptide_acme`");
     }
 
     @Test
@@ -259,15 +259,15 @@ class ProvisioningDdlTest {
         final List<String> policies = sql.stream().filter(s -> s.contains("ROW POLICY")).toList();
         assertThat(policies).hasSize(1 + FlowsSchema.rollupTableNames().size());
         assertThat(policies).allSatisfy(policy -> assertThat(policy)
-                .startsWith("CREATE ROW POLICY OR REPLACE `acme_iso` ON ")
+                .startsWith("CREATE ROW POLICY OR REPLACE `riptide_acme_iso` ON ")
                 .contains("FOR SELECT USING tenant = 'acme'"));
         // The writer is named on the flows policy (deny-by-default would otherwise starve the
         // rollup views) but not on the rollups, which it only ever reaches by INSERT.
         assertThat(policies.getFirst())
                 .contains("ON `riptide`.flows ")
-                .endsWith("TO `bi_acme`, `writer_acme`");
+                .endsWith("TO `bi_riptide_acme`, `writer_riptide_acme`");
         assertThat(policies.subList(1, policies.size()))
-                .allSatisfy(policy -> assertThat(policy).endsWith("TO `bi_acme`"));
+                .allSatisfy(policy -> assertThat(policy).endsWith("TO `bi_riptide_acme`"));
     }
 
     @Test
@@ -289,12 +289,44 @@ class ProvisioningDdlTest {
     void offboardDropsThePolicyFromFlowsAndEveryRollup() {
         // A policy left on a rollup would keep denying rows there after the tenant is gone.
         final List<String> sql = ProvisioningDdl.offboardTenant("riptide", "acme");
-        assertThat(sql).contains("DROP ROW POLICY IF EXISTS `acme_iso` ON `riptide`.flows");
+        assertThat(sql).contains("DROP ROW POLICY IF EXISTS `riptide_acme_iso` ON `riptide`.flows");
         for (final String rollup : FlowsSchema.rollupTableNames()) {
-            assertThat(sql).contains("DROP ROW POLICY IF EXISTS `acme_iso` ON "
+            assertThat(sql).contains("DROP ROW POLICY IF EXISTS `riptide_acme_iso` ON "
                     + FlowsSchema.qualifiedRollup("riptide", rollup));
         }
-        assertThat(sql.get(sql.size() - 2)).isEqualTo("DROP USER IF EXISTS `bi_acme`");
-        assertThat(sql.getLast()).isEqualTo("DROP USER IF EXISTS `writer_acme`");
+        assertThat(sql.get(sql.size() - 2)).isEqualTo("DROP USER IF EXISTS `bi_riptide_acme`");
+        assertThat(sql.getLast()).isEqualTo("DROP USER IF EXISTS `writer_riptide_acme`");
+    }
+
+    /**
+     * Users and policies are namespaced by database to prevent lifecycle collisions when the same
+     * tenant identifier is provisioned across multiple databases. ClickHouse users and roles are
+     * instance-wide, so omitting the database would share credentials and policies across every
+     * database provisioned with the same tenant identifier — the second onboarding would change
+     * the shared users' passwords, the shared roles would accumulate grants for both databases,
+     * and offboarding one database would drop users still needed by the other.
+     */
+    @Test
+    void sameTenantInDifferentDatabasesCreatesDistinctUsersAndPolicies() {
+        final List<String> dbA = ProvisioningDdl.onboardTenant("db_a", "acme", "org1", "pw1", "pw2");
+        final List<String> dbB = ProvisioningDdl.onboardTenant("db_b", "acme", "org1", "pw3", "pw4");
+
+        // Different writer users
+        assertThat(dbA).anyMatch(s -> s.contains("CREATE USER IF NOT EXISTS `writer_db_a_acme`"));
+        assertThat(dbB).anyMatch(s -> s.contains("CREATE USER IF NOT EXISTS `writer_db_b_acme`"));
+
+        // Different reader users
+        assertThat(dbA).anyMatch(s -> s.contains("CREATE USER IF NOT EXISTS `bi_db_a_acme`"));
+        assertThat(dbB).anyMatch(s -> s.contains("CREATE USER IF NOT EXISTS `bi_db_b_acme`"));
+
+        // Different row policies
+        assertThat(dbA).anyMatch(s -> s.contains("CREATE ROW POLICY OR REPLACE `db_a_acme_iso`"));
+        assertThat(dbB).anyMatch(s -> s.contains("CREATE ROW POLICY OR REPLACE `db_b_acme_iso`"));
+
+        // Offboarding one database does not affect the other
+        final List<String> offA = ProvisioningDdl.offboardTenant("db_a", "acme");
+        assertThat(offA).contains("DROP USER IF EXISTS `writer_db_a_acme`");
+        assertThat(offA).contains("DROP USER IF EXISTS `bi_db_a_acme`");
+        assertThat(offA).noneMatch(s -> s.contains("writer_db_b_acme") || s.contains("bi_db_b_acme"));
     }
 }
