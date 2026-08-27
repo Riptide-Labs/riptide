@@ -24,8 +24,8 @@ services:
       timeout: 1s
       retries: 20
     ports:
-      - "8123:8123/tcp"
-      - "9000:9000/tcp"
+      - "127.0.0.1:8123:8123/tcp"
+      - "127.0.0.1:9000:9000/tcp"
 
   ch-ui:
     image: ghcr.io/caioricciuti/ch-ui:latest
