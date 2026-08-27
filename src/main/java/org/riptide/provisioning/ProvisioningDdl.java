@@ -190,17 +190,18 @@ public final class ProvisioningDdl {
     }
 
     /**
-     * Per-tenant: the scoped writer/reader users, their role grants, and one row policy per table.
-     * Each user is created if absent and then has its password reconciled with {@code ALTER USER}
-     * — so re-running after a secret rotation updates the credential (a plain
-     * {@code CREATE … IF NOT EXISTS} would silently keep the old password). {@code ALTER USER}
+     * Per-{@code (tenant, organisation)}: the scoped writer/reader users, their role grants, and
+     * one row policy per table. Each user is created if absent and then has its password reconciled
+     * with {@code ALTER USER} — so re-running after a secret rotation updates the credential (a
+     * plain {@code CREATE … IF NOT EXISTS} would silently keep the old password). {@code ALTER USER}
      * preserves the user's {@code CONST} settings and its row-policy membership.
      *
      * <p>The writer is on the {@code flows} policy alongside the reader. A row policy on a table is
      * deny-by-default for anyone it does not name, and the writer must read {@code flows} for the
      * rollup views to push — omitting it would leave the materialized views silently pushing
-     * nothing. Its predicate is the same {@code tenant = '…'} the {@code tenant_pinned} constraint
-     * enforces on insert, so the policy grants the writer no row it could not already write.
+     * nothing. Its predicate is the same {@code tenant = '…' AND organisation = '…'} the
+     * {@code tenant_pinned} and {@code org_pinned} constraints enforce on insert, so the policy
+     * grants the writer no row it could not already write.
      *
      * <p>The rollup policies name the reader only: the writer reaches a rollup by {@code INSERT}
      * through its materialized view, which no row policy filters.
@@ -208,9 +209,9 @@ public final class ProvisioningDdl {
     public static List<String> onboardTenant(final String database, final String tenant, final String organisation,
                                              final String writerPassword, final String readerPassword) {
         final String flows = FlowsSchema.qualifiedFlows(database);
-        final String writer = ident("writer_" + tenant);
-        final String reader = ident("bi_" + tenant);
-        final String policy = ident(tenant + "_iso");
+        final String writer = ident("writer_" + tenant + "_" + organisation);
+        final String reader = ident("bi_" + tenant + "_" + organisation);
+        final String policy = ident(tenant + "_" + organisation + "_iso");
         final String pinned = " SETTINGS SQL_tenant = " + literal(tenant) + " CONST, SQL_org = "
                 + literal(organisation) + " CONST";
         final List<String> statements = new ArrayList<>(List.of(
@@ -222,38 +223,41 @@ public final class ProvisioningDdl {
                         + literal(readerPassword) + pinned,
                 "ALTER USER " + reader + " IDENTIFIED WITH sha256_password BY " + literal(readerPassword),
                 "GRANT flow_reader TO " + reader,
-                rowPolicy(policy, flows, tenant, reader + ", " + writer)));
+                rowPolicy(policy, flows, tenant, organisation, reader + ", " + writer)));
         for (final String rollup : FlowsSchema.rollupTableNames()) {
-            statements.add(rowPolicy(policy, FlowsSchema.qualifiedRollup(database, rollup), tenant, reader));
+            statements.add(rowPolicy(policy, FlowsSchema.qualifiedRollup(database, rollup), tenant, organisation, reader));
         }
         return List.copyOf(statements);
     }
 
     /**
-     * One tenant-isolating row policy. {@code OR REPLACE} rather than {@code IF NOT EXISTS} for the
-     * same reason {@link #onboardTenant} re-issues {@code ALTER USER}: a policy left over from an
-     * earlier run keeps its old {@code TO} list, so a re-run would not pick up a changed grantee.
+     * One {@code (tenant, organisation)}-isolating row policy. {@code OR REPLACE} rather than
+     * {@code IF NOT EXISTS} for the same reason {@link #onboardTenant} re-issues {@code ALTER USER}:
+     * a policy left over from an earlier run keeps its old {@code TO} list, so a re-run would not
+     * pick up a changed grantee.
      */
-    private static String rowPolicy(final String policy, final String table, final String tenant, final String to) {
+    private static String rowPolicy(final String policy, final String table, final String tenant,
+            final String organisation, final String to) {
         return "CREATE ROW POLICY OR REPLACE " + policy + " ON " + table
-                + " FOR SELECT USING tenant = " + literal(tenant) + " TO " + to;
+                + " FOR SELECT USING tenant = " + literal(tenant) + " AND organisation = " + literal(organisation)
+                + " TO " + to;
     }
 
     /**
-     * Per-tenant teardown: drop the policy from {@code flows} and from every rollup, then the two
-     * users; shared objects stay. A policy left behind on a rollup would keep denying rows there
-     * after the tenant is gone.
+     * Per-{@code (tenant, organisation)} teardown: drop the policy from {@code flows} and from
+     * every rollup, then the two users; shared objects stay. A policy left behind on a rollup would
+     * keep denying rows there after the tenant is gone.
      */
-    public static List<String> offboardTenant(final String database, final String tenant) {
-        final String policy = ident(tenant + "_iso");
+    public static List<String> offboardTenant(final String database, final String tenant, final String organisation) {
+        final String policy = ident(tenant + "_" + organisation + "_iso");
         final List<String> statements = new ArrayList<>();
         statements.add("DROP ROW POLICY IF EXISTS " + policy + " ON " + FlowsSchema.qualifiedFlows(database));
         for (final String rollup : FlowsSchema.rollupTableNames()) {
             statements.add("DROP ROW POLICY IF EXISTS " + policy + " ON "
                     + FlowsSchema.qualifiedRollup(database, rollup));
         }
-        statements.add("DROP USER IF EXISTS " + ident("bi_" + tenant));
-        statements.add("DROP USER IF EXISTS " + ident("writer_" + tenant));
+        statements.add("DROP USER IF EXISTS " + ident("bi_" + tenant + "_" + organisation));
+        statements.add("DROP USER IF EXISTS " + ident("writer_" + tenant + "_" + organisation));
         return List.copyOf(statements);
     }
 

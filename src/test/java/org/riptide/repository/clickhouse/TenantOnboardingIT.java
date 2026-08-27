@@ -71,7 +71,7 @@ public class TenantOnboardingIT {
                 .hasStackTraceContaining("VIOLATED_CONSTRAINT");
 
         // The reader sees only its own tenant (row policy) and cannot write or DDL (readonly role).
-        try (var reader = rawClient("bi_acme", "rA")) {
+        try (var reader = rawClient("bi_acme_acme-eu", "rA")) {
             final var rows = reader.queryAll(
                     "SELECT tenant FROM " + DATABASE + ".flows WHERE srcPort IN (31001, 31002)");
             Assertions.assertThat(rows).hasSize(1);
@@ -95,7 +95,7 @@ public class TenantOnboardingIT {
                 discard());
         Assertions.assertThat(code).isZero();
         Assertions.assertThat(out.toString(StandardCharsets.UTF_8))
-                .contains("riptide.clickhouse.username=writer_cfg")
+                .contains("riptide.clickhouse.username=writer_cfg_cfg-eu")
                 .contains("riptide.clickhouse.password=wC")
                 .contains("riptide.identity.tenant=cfg")
                 .contains("riptide.identity.organisation=cfg-eu");
@@ -107,17 +107,17 @@ public class TenantOnboardingIT {
     @Test
     void reonboardRotatesTheWriterPassword() throws Exception {
         Assertions.assertThat(onboard("rot", "rot-eu", "pw1", "rr1")).isZero();
-        try (var writer = rawClient("writer_rot", "pw1")) {
+        try (var writer = rawClient("writer_rot_rot-eu", "pw1")) {
             Assertions.assertThat(writer.queryAll("SELECT 1 AS c").getFirst().getLong("c")).isEqualTo(1);
         }
 
         // Re-onboard with a rotated writer secret: the new password must take effect...
         Assertions.assertThat(onboard("rot", "rot-eu", "pw2", "rr1")).isZero();
-        try (var writer = rawClient("writer_rot", "pw2")) {
+        try (var writer = rawClient("writer_rot_rot-eu", "pw2")) {
             Assertions.assertThat(writer.queryAll("SELECT 1 AS c").getFirst().getLong("c")).isEqualTo(1);
         }
         // ...and the old one must stop working.
-        try (var stale = rawClient("writer_rot", "pw1")) {
+        try (var stale = rawClient("writer_rot_rot-eu", "pw1")) {
             Assertions.assertThatThrownBy(() -> stale.queryAll("SELECT 1 AS c"))
                     .hasStackTraceContaining("AUTHENTICATION_FAILED");
         }
@@ -141,7 +141,7 @@ public class TenantOnboardingIT {
             Assertions.assertThat(admin.queryAll("EXISTS DATABASE `ript1de`")
                     .getFirst().getLong("result")).isZero();
             Assertions.assertThat(admin.queryAll(
-                            "SELECT count() AS c FROM system.users WHERE name = 'writer_phantom'")
+                            "SELECT count() AS c FROM system.users WHERE name = 'writer_phantom_phantom-eu'")
                     .getFirst().getLong("c")).isZero();
         }
     }
@@ -169,23 +169,23 @@ public class TenantOnboardingIT {
     @Test
     void offboardRevokesAccessOnlyWithYes() throws Exception {
         Assertions.assertThat(onboard("temp", "temp-eu", "wT", "rT")).isZero();
-        try (var reader = rawClient("bi_temp", "rT")) {
+        try (var reader = rawClient("bi_temp_temp-eu", "rT")) {
             Assertions.assertThat(reader.queryAll("SELECT 1 AS c").getFirst().getLong("c")).isEqualTo(1);
         }
 
         // Without --yes it refuses and changes nothing.
         Assertions.assertThat(ProvisioningCommand.run(
-                new String[] {"offboard", "--admin-url", endpoint(), "--database", DATABASE, "--tenant", "temp"},
+                new String[] {"offboard", "--admin-url", endpoint(), "--database", DATABASE, "--tenant", "temp", "--org", "temp-eu"},
                 discard(), discard())).isEqualTo(2);
-        try (var reader = rawClient("bi_temp", "rT")) {
+        try (var reader = rawClient("bi_temp_temp-eu", "rT")) {
             Assertions.assertThat(reader.queryAll("SELECT 1 AS c").getFirst().getLong("c")).isEqualTo(1);
         }
 
         // With --yes the user is gone and can no longer authenticate.
         Assertions.assertThat(ProvisioningCommand.run(
-                new String[] {"offboard", "--admin-url", endpoint(), "--database", DATABASE, "--tenant", "temp", "--yes"},
+                new String[] {"offboard", "--admin-url", endpoint(), "--database", DATABASE, "--tenant", "temp", "--org", "temp-eu", "--yes"},
                 discard(), discard())).isZero();
-        try (var reader = rawClient("bi_temp", "rT")) {
+        try (var reader = rawClient("bi_temp_temp-eu", "rT")) {
             Assertions.assertThatThrownBy(() -> reader.queryAll("SELECT 1 AS c"))
                     .hasStackTraceContaining("bi_temp");
         }
@@ -396,7 +396,7 @@ public class TenantOnboardingIT {
     private static ClickhouseRepository writerRepository(final String tenant, final String password) {
         final var config = new ClickhouseConfig();
         config.setEndpoint(endpoint());
-        config.setUsername(SecretRef.of("writer_" + tenant));
+        config.setUsername(SecretRef.of("writer_" + tenant + "_" + tenant + "-eu"));
         config.setPassword(SecretRef.of(password));
         config.setDatabase(DATABASE);
         config.setManageSchema(false);

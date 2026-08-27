@@ -261,7 +261,7 @@ public final class TenantProvisioner {
 
     /** Drop the tenant's users and row policy; the shared roles/constraints/quota are left intact. */
     public void offboard(final TenantRef ref) {
-        execute(ProvisioningDdl.offboardTenant(ref.database(), ref.tenant()));
+        execute(ProvisioningDdl.offboardTenant(ref.database(), ref.tenant(), ref.organisation()));
     }
 
     private void execute(final List<String> statements) {
@@ -284,7 +284,7 @@ public final class TenantProvisioner {
     private static String configStanza(final TenantSpec spec) {
         // Built by concatenation (not String.format) so the line separators stay literal '\n' — a
         // config stanza the operator pastes, not platform-dependent output.
-        return "riptide.clickhouse.username=writer_" + spec.tenant() + "\n"
+        return "riptide.clickhouse.username=writer_" + spec.tenant() + "_" + spec.organisation() + "\n"
                 + "riptide.clickhouse.password=" + spec.writerSecret() + "\n"
                 + "riptide.identity.tenant=" + spec.tenant() + "\n"
                 + "riptide.identity.organisation=" + spec.organisation();
@@ -301,11 +301,12 @@ public final class TenantProvisioner {
         return sql.replaceAll("(?is)(IDENTIFIED WITH \\w+ BY )'(?:\\\\.|[^'\\\\])*'", "$1'***'");
     }
 
-    /** A validated reference to an existing tenant, for teardown. */
-    public record TenantRef(String database, String tenant) {
+    /** A validated reference to an existing {@code (tenant, organisation)}, for teardown. */
+    public record TenantRef(String database, String tenant, String organisation) {
         public TenantRef {
             TenantSpec.requireSafe("database", database);
             TenantSpec.requireSafe("tenant", tenant);
+            TenantSpec.requireSafe("organisation", organisation);
         }
     }
 

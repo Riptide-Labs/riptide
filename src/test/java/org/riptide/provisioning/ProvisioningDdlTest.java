@@ -102,16 +102,16 @@ class ProvisioningDdlTest {
         // The six user/grant statements, the flows policy, then one policy per rollup.
         assertThat(sql).hasSize(7 + FlowsSchema.rollupTableNames().size());
         assertThat(sql.get(0))
-                .contains("CREATE USER IF NOT EXISTS `writer_acme`")
+                .contains("CREATE USER IF NOT EXISTS `writer_acme_acme-eu`")
                 .contains("IDENTIFIED WITH sha256_password BY 'p\\'w'")
                 .contains("SQL_tenant = 'acme' CONST, SQL_org = 'acme-eu' CONST");
         // Password reconciled with ALTER USER so a re-run after rotation updates the credential.
-        assertThat(sql.get(1)).isEqualTo("ALTER USER `writer_acme` IDENTIFIED WITH sha256_password BY 'p\\'w'");
-        assertThat(sql.get(2)).isEqualTo("GRANT flow_writer TO `writer_acme`");
-        assertThat(sql.get(4)).isEqualTo("ALTER USER `bi_acme` IDENTIFIED WITH sha256_password BY 'r\\'w'");
+        assertThat(sql.get(1)).isEqualTo("ALTER USER `writer_acme_acme-eu` IDENTIFIED WITH sha256_password BY 'p\\'w'");
+        assertThat(sql.get(2)).isEqualTo("GRANT flow_writer TO `writer_acme_acme-eu`");
+        assertThat(sql.get(4)).isEqualTo("ALTER USER `bi_acme_acme-eu` IDENTIFIED WITH sha256_password BY 'r\\'w'");
         assertThat(sql.get(6))
-                .contains("CREATE ROW POLICY OR REPLACE `acme_iso` ON `riptide`.flows")
-                .contains("USING tenant = 'acme' TO `bi_acme`");
+                .contains("CREATE ROW POLICY OR REPLACE `acme_acme-eu_iso` ON `riptide`.flows")
+                .contains("USING tenant = 'acme' AND organisation = 'acme-eu' TO `bi_acme_acme-eu`");
     }
 
     @Test
@@ -259,42 +259,45 @@ class ProvisioningDdlTest {
         final List<String> policies = sql.stream().filter(s -> s.contains("ROW POLICY")).toList();
         assertThat(policies).hasSize(1 + FlowsSchema.rollupTableNames().size());
         assertThat(policies).allSatisfy(policy -> assertThat(policy)
-                .startsWith("CREATE ROW POLICY OR REPLACE `acme_iso` ON ")
-                .contains("FOR SELECT USING tenant = 'acme'"));
+                .startsWith("CREATE ROW POLICY OR REPLACE `acme_org1_iso` ON ")
+                .contains("FOR SELECT USING tenant = 'acme' AND organisation = 'org1'"));
         // The writer is named on the flows policy (deny-by-default would otherwise starve the
         // rollup views) but not on the rollups, which it only ever reaches by INSERT.
         assertThat(policies.getFirst())
                 .contains("ON `riptide`.flows ")
-                .endsWith("TO `bi_acme`, `writer_acme`");
+                .endsWith("TO `bi_acme_org1`, `writer_acme_org1`");
         assertThat(policies.subList(1, policies.size()))
-                .allSatisfy(policy -> assertThat(policy).endsWith("TO `bi_acme`"));
+                .allSatisfy(policy -> assertThat(policy).endsWith("TO `bi_acme_org1`"));
     }
 
     @Test
     void writerPolicyPredicateMatchesTheTenantPinnedConstraint() {
-        // The policy must not widen what the CHECK barrier already pins, or the writer could read
+        // The policy must not widen what the CHECK barriers already pin, or the writer could read
         // rows it cannot write.
-        final String constraint = ProvisioningDdl.ensureShared("riptide", 1L).stream()
+        final String tenantConstraint = ProvisioningDdl.ensureShared("riptide", 1L).stream()
                 .filter(s -> s.contains("tenant_pinned")).findFirst().orElseThrow();
-        assertThat(constraint).contains("CHECK tenant = getSetting('SQL_tenant')");
+        assertThat(tenantConstraint).contains("CHECK tenant = getSetting('SQL_tenant')");
+        final String orgConstraint = ProvisioningDdl.ensureShared("riptide", 1L).stream()
+                .filter(s -> s.contains("org_pinned")).findFirst().orElseThrow();
+        assertThat(orgConstraint).contains("CHECK organisation = getSetting('SQL_org')");
         final String policy = ProvisioningDdl.onboardTenant("riptide", "acme", "org1", "w", "r").stream()
                 .filter(s -> s.contains("ROW POLICY") && s.contains("`riptide`.flows "))
                 .findFirst().orElseThrow();
-        assertThat(policy).contains("USING tenant = 'acme'");
+        assertThat(policy).contains("USING tenant = 'acme' AND organisation = 'org1'");
         assertThat(ProvisioningDdl.onboardTenant("riptide", "acme", "org1", "w", "r"))
-                .anyMatch(s -> s.contains("SETTINGS SQL_tenant = 'acme' CONST"));
+                .anyMatch(s -> s.contains("SETTINGS SQL_tenant = 'acme' CONST, SQL_org = 'org1' CONST"));
     }
 
     @Test
     void offboardDropsThePolicyFromFlowsAndEveryRollup() {
         // A policy left on a rollup would keep denying rows there after the tenant is gone.
-        final List<String> sql = ProvisioningDdl.offboardTenant("riptide", "acme");
-        assertThat(sql).contains("DROP ROW POLICY IF EXISTS `acme_iso` ON `riptide`.flows");
+        final List<String> sql = ProvisioningDdl.offboardTenant("riptide", "acme", "org1");
+        assertThat(sql).contains("DROP ROW POLICY IF EXISTS `acme_org1_iso` ON `riptide`.flows");
         for (final String rollup : FlowsSchema.rollupTableNames()) {
-            assertThat(sql).contains("DROP ROW POLICY IF EXISTS `acme_iso` ON "
+            assertThat(sql).contains("DROP ROW POLICY IF EXISTS `acme_org1_iso` ON "
                     + FlowsSchema.qualifiedRollup("riptide", rollup));
         }
-        assertThat(sql.get(sql.size() - 2)).isEqualTo("DROP USER IF EXISTS `bi_acme`");
-        assertThat(sql.getLast()).isEqualTo("DROP USER IF EXISTS `writer_acme`");
+        assertThat(sql.get(sql.size() - 2)).isEqualTo("DROP USER IF EXISTS `bi_acme_org1`");
+        assertThat(sql.getLast()).isEqualTo("DROP USER IF EXISTS `writer_acme_org1`");
     }
 }

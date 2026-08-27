@@ -120,14 +120,15 @@ public final class ProvisioningCommand {
 
     private static int offboard(final Args parsed, final String database, final TenantProvisioner provisioner,
                                 final PrintStream err) {
-        final var ref = new TenantProvisioner.TenantRef(database, parsed.require("tenant"));
+        final var ref = new TenantProvisioner.TenantRef(database, parsed.require("tenant"), parsed.require("org"));
         if (!parsed.flags.contains("yes")) {
-            err.println("refusing to offboard '" + ref.tenant()
-                    + "' without --yes (this drops the tenant's writer/reader users and row policy)");
+            err.println("refusing to offboard '" + ref.tenant() + "' (org '" + ref.organisation()
+                    + "') without --yes (this drops the tenant's writer/reader users and row policy)");
             return 2;
         }
         provisioner.offboard(ref);
-        err.println("Offboarded tenant '" + ref.tenant() + "' (dropped its users and row policy).");
+        err.println("Offboarded tenant '" + ref.tenant() + "' (org '" + ref.organisation()
+                + "', dropped its users and row policy).");
         return 0;
     }
 
@@ -174,7 +175,7 @@ public final class ProvisioningCommand {
                                    [--database DB] [--quota-bytes N] \\
                                    [--create-schema [--ttl-days N]]
                   riptide offboard --admin-url URL [--admin-user U] [--admin-password REF] \\
-                                   --tenant T [--database DB] --yes
+                                   --tenant T --org O [--database DB] --yes
                 secret REF: plain literal, env://VAR, or file:///path[#key]
                 --create-schema: bootstrap the database, flows table, and 1-minute rollup
                                  tables/views if absent (needs CREATE privileges) — also the way
