@@ -220,15 +220,15 @@ oci: deps-oci jar
 
 .PHONY: packages
 packages: deps-oci
-	@test -f target/riptide-flows-$(VERSION).jar || { echo "target/riptide-flows-$(VERSION).jar missing — run make jar first"; exit 1; }
+	@test -f "target/riptide-flows-$(VERSION).jar" || { echo "target/riptide-flows-$(VERSION).jar missing — run make jar first"; exit 1; }
 	mkdir -p target/package
-	cp target/riptide-flows-$(VERSION).jar target/package/riptide.jar
+	cp "target/riptide-flows-$(VERSION).jar" target/package/riptide.jar
 	VERSION=$(PKG_VERSION) $(NFPM) package -f nfpm.yaml -p deb -t target/
 	VERSION=$(PKG_VERSION) $(NFPM) package -f nfpm.yaml -p rpm -t target/
 
 .PHONY: packages-smoke
 packages-smoke: deps-oci
-	deployment/package/smoke-test.sh $(PKG_VERSION)
+	deployment/package/smoke-test.sh "$(PKG_VERSION)"
 
 # Sets licenseDeclared on the SBOM entries syft cannot fill for us (the deb and
 # the document root, issue #406) and licenseConcluded on the reviewed allowlist
@@ -238,7 +238,7 @@ packages-smoke: deps-oci
 .PHONY: sbom-assert
 sbom-assert:
 	@test -n "$(SBOM)" || { echo "usage: make sbom-assert SBOM=target/riptide-<version>.spdx.json"; exit 1; }
-	python3 deployment/sbom/assert_licenses.py $(SBOM)
+	python3 deployment/sbom/assert_licenses.py "$(SBOM)"
 
 .PHONY: sbom-assert-test
 sbom-assert-test:
