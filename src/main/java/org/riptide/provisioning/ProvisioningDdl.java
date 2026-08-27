@@ -206,11 +206,21 @@ public final class ProvisioningDdl {
      * through its materialized view, which no row policy filters.
      *
      * <p>Users and policies are namespaced by database: {@code writer_<database>_<tenant>},
-     * {@code bi_<database>_<tenant>}, and {@code <database>_<tenant>_iso}. ClickHouse users and
-     * roles are instance-wide, so omitting the database would share credentials and policies across
-     * every database provisioned with the same tenant identifier — the second onboarding would
-     * change the shared users' passwords, the shared roles would accumulate grants for both
-     * databases, and offboarding one database would drop users still needed by the other.
+     * {@code bi_<database>_<tenant>}, and {@code <database>_<tenant>_iso}. A ClickHouse user is
+     * instance-wide while a database is not, so an unqualified {@code writer_<tenant>} is one
+     * account shared by every database provisioned with that tenant id: the second onboarding
+     * would rotate the first one's password, and offboarding either would drop the account the
+     * other still needs.
+     *
+     * <p>The roles are a separate matter and are <em>not</em> namespaced here. {@link
+     * #ensureShared} issues {@code CREATE ROLE IF NOT EXISTS flow_writer} with no database in the
+     * name and then grants it {@code INSERT} on that database's {@code flows}, so provisioning a
+     * second database accumulates grants on the same instance-wide role. Reads stay contained,
+     * because a row policy is deny-by-default for anyone it does not name and each policy names
+     * only its own database's users. Writes do not: a writer holding {@code flow_writer} can
+     * {@code INSERT} into another database's {@code flows}, and {@code tenant_pinned} does not
+     * stop it when both databases carry the same tenant id. Tracked separately; do not read the
+     * naming above as closing that path.
      */
     public static List<String> onboardTenant(final String database, final String tenant, final String organisation,
                                              final String writerPassword, final String readerPassword) {

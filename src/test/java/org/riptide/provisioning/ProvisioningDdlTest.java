@@ -299,12 +299,14 @@ class ProvisioningDdlTest {
     }
 
     /**
-     * Users and policies are namespaced by database to prevent lifecycle collisions when the same
-     * tenant identifier is provisioned across multiple databases. ClickHouse users and roles are
-     * instance-wide, so omitting the database would share credentials and policies across every
-     * database provisioned with the same tenant identifier — the second onboarding would change
-     * the shared users' passwords, the shared roles would accumulate grants for both databases,
-     * and offboarding one database would drop users still needed by the other.
+     * Users and policies are namespaced by database, so the same tenant id provisioned into two
+     * databases does not collide. A ClickHouse user is instance-wide while a database is not: an
+     * unqualified {@code writer_<tenant>} would be one account, the second onboarding would rotate
+     * the first one's password, and offboarding either would drop the account the other needs.
+     *
+     * <p>This pins the naming only. It does not pin cross-database write isolation, which the
+     * shared {@code flow_writer} role still leaves open. See the note on
+     * {@link ProvisioningDdl#onboardTenant}.
      */
     @Test
     void sameTenantInDifferentDatabasesCreatesDistinctUsersAndPolicies() {
