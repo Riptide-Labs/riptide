@@ -11,7 +11,6 @@ UDP.
 ## 1. Start the backing services
 
 ```bash
-export GF_SECURITY_ADMIN_PASSWORD='dev-password'  # Set a password for local Grafana
 docker compose -f deployment/clickhouse/compose.yml up -d
 ```
 

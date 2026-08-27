@@ -8,27 +8,29 @@ title: Docker Compose
 The fastest way to run Riptide: a compose stack with Riptide, ClickHouse, a ClickHouse
 web UI, and Grafana — using the published image, no build toolchain required.
 
-:::warning Security: Set Grafana Admin Password
-
-The Grafana service requires `GF_SECURITY_ADMIN_PASSWORD` to be set before starting.
-Export it in your shell or add it to a `.env` file in the deployment directory:
-
-```bash
-export GF_SECURITY_ADMIN_PASSWORD='your-secure-password-here'
-```
-
-Never use a default or weak password. The compose file binds Grafana to `localhost` by
-default; if you override the port binding to expose it on `0.0.0.0`, ensure you have
-external access controls (firewall, VPN, or reverse proxy with authentication).
-
-:::
-
 ```bash
 git clone https://github.com/Riptide-Labs/riptide.git   # or copy deployment/ only
 cd riptide/deployment/riptide
-export GF_SECURITY_ADMIN_PASSWORD='your-secure-password-here'
 docker compose up -d
 ```
+
+:::warning Grafana ships with a default password
+
+Grafana starts with `admin`/`admin`, which is fine on a laptop and not fine anywhere else.
+The stack publishes port 3000 on every interface, so on any host with a routable address
+that login is reachable from the network.
+
+Set your own password before the first start, either in your shell or in a `.env` file in
+the deployment directory:
+
+```bash
+export GF_SECURITY_ADMIN_PASSWORD='your-secure-password-here'
+```
+
+The variable is only read when Grafana initialises its database. Changing it later has no
+effect unless you also remove the `gf-data` volume.
+
+:::
 
 This starts, from `ghcr.io/riptide-labs/riptide:latest`:
 
