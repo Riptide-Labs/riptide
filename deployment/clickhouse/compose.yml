@@ -23,6 +23,12 @@ services:
       interval: 2s
       timeout: 1s
       retries: 20
+    # SECURITY: Ports 8123 (HTTP) and 9000 (native) are published for development convenience
+    # (e.g., running `clickhouse-client` from the host). The 'default' user is restricted to
+    # localhost in users.xml, so external clients cannot authenticate. For production or
+    # multi-tenant deployments, remove these port mappings and access ClickHouse only through
+    # the internal compose network, or create properly scoped users with passwords and row
+    # policies. See docs/deploy/multi-tenancy.md.
     ports:
       - "8123:8123/tcp"
       - "9000:9000/tcp"
@@ -34,6 +40,10 @@ services:
         condition: service_healthy
     environment:
       TZ: UTC
+      # ch-ui connects to ClickHouse from within the compose network, so localhost references
+      # in VITE_CLICKHOUSE_URL are resolved by the browser (the host), not the container.
+      # This works because the 'default' user accepts connections from 127.0.0.1/::1 and
+      # ClickHouse ports are published. For production, use a scoped user with a password.
       VITE_CLICKHOUSE_URL: http://localhost:8123
       VITE_CLICKHOUSE_USER: default
       VITE_CLICKHOUSE_PASS: ""

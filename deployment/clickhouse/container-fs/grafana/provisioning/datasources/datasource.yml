@@ -12,7 +12,14 @@ datasources:
       defaultDatabase: riptide
       port: 9000
       host: clickhouse
+      # SECURITY: This datasource uses the global 'default' user with no row-level security
+      # policies. It is suitable ONLY for single-tenant development/demo environments where
+      # all data belongs to one tenant. Multi-tenant production deployments MUST provision
+      # one Grafana org (or instance) per tenant, each with a datasource authenticating as
+      # that tenant's bi_<tenant> user. Dashboard variables provide UX filtering within a
+      # tenant but are NOT an authorization boundary. See docs/deploy/multi-tenancy.md.
       username: default
       tlsSkipVerify: false
     secureJsonData:
       password: ""
+

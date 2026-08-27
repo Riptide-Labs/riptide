@@ -13,7 +13,11 @@
             <access_management>1</access_management>
             <profile>default</profile>
             <networks>
-                <ip>::/0</ip>
+                <!-- Restrict to localhost only. The default user has no row policies and must not
+                     be reachable from outside the compose network. Multi-tenant deployments must
+                     use per-tenant bi_<tenant> credentials with row-level security policies. -->
+                <ip>127.0.0.1</ip>
+                <ip>::1</ip>
             </networks>
             <quota>default</quota>
             <access_management>1</access_management>
@@ -24,7 +28,10 @@
         <dev>
             <password>dev</password>
             <networks>
-                <ip>::/0</ip>
+                <!-- Dev user restricted to localhost. For external access in development,
+                     create a properly scoped user with a password. -->
+                <ip>127.0.0.1</ip>
+                <ip>::1</ip>
             </networks>
             <profile>default</profile>
             <quota>default</quota>

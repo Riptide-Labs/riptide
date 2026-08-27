@@ -14,6 +14,9 @@ services:
       TZ: UTC
       LOGGING_LEVEL_ROOT: WARN
       RIPTIDE_CLICKHOUSE_ENDPOINT: http://clickhouse:8123
+      # Single-tenant development configuration using the 'default' user. Multi-tenant
+      # production deployments must use per-tenant writer_<tenant> credentials with
+      # row-level security policies. See docs/deploy/multi-tenancy.md.
       RIPTIDE_CLICKHOUSE_USERNAME: default
       RIPTIDE_CLICKHOUSE_PASSWORD: ""
       RIPTIDE_CLICKHOUSE_DATABASE: riptide
