@@ -8,9 +8,25 @@ title: Docker Compose
 The fastest way to run Riptide: a compose stack with Riptide, ClickHouse, a ClickHouse
 web UI, and Grafana — using the published image, no build toolchain required.
 
+:::warning Security: Set Grafana Admin Password
+
+The Grafana service requires `GF_SECURITY_ADMIN_PASSWORD` to be set before starting.
+Export it in your shell or add it to a `.env` file in the deployment directory:
+
+```bash
+export GF_SECURITY_ADMIN_PASSWORD='your-secure-password-here'
+```
+
+Never use a default or weak password. The compose file binds Grafana to `localhost` by
+default; if you override the port binding to expose it on `0.0.0.0`, ensure you have
+external access controls (firewall, VPN, or reverse proxy with authentication).
+
+:::
+
 ```bash
 git clone https://github.com/Riptide-Labs/riptide.git   # or copy deployment/ only
 cd riptide/deployment/riptide
+export GF_SECURITY_ADMIN_PASSWORD='your-secure-password-here'
 docker compose up -d
 ```
 
@@ -23,7 +39,7 @@ This starts, from `ghcr.io/riptide-labs/riptide:latest`:
 | ch-ui | [`:5521`](http://localhost:5521) | browse the `riptide.flows` table |
 | grafana | [`:3000`](http://localhost:3000) | dashboards (ClickHouse datasource provisioned) |
 
-Grafana (admin/admin) ships provisioned dashboards backed by the `flows` table and the
+Grafana ships provisioned dashboards backed by the `flows` table and the
 `samples` bucket-expansion view:
 
 - **Riptide - Top 10**: stacked top-10 rate panels (AS, hosts, applications, services, protocols,

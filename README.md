@@ -88,10 +88,11 @@ git clone https://github.com/Riptide-Labs/riptide.git
 Run with a local build OCI image riptide:local
 ```
 cd deployment/riptide
+export GF_SECURITY_ADMIN_PASSWORD='your-secure-password-here'
 docker compose up -d
 ```
 
-* Grafana: http://localhost:3000 with login admin/admin.
+* Grafana: http://localhost:3000 (set your admin password via `GF_SECURITY_ADMIN_PASSWORD` before starting)
 * Clickhouse UI with http://localhost:5521
 * Send flows to your Riptide server on 9999/udp
 

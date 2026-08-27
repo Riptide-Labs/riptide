@@ -469,9 +469,10 @@ Creating riptide-grafana    ... <span class="code-green">done</span></span></cod
                             <p class="tab-instructions">Deploy the full stack including Riptide, ClickHouse, and Grafana in seconds:</p>
                             <pre class="code-block"><code>git clone https://github.com/Riptide-Labs/riptide.git
 cd riptide/deployment/riptide
+export GF_SECURITY_ADMIN_PASSWORD='your-secure-password-here'
 docker compose up -d</code></pre>
                             <div class="tab-meta">
-                                <span>🌐 <strong>Grafana:</strong> http://localhost:3000 (admin/admin)</span>
+                                <span>🌐 <strong>Grafana:</strong> http://localhost:3000 (set password via <code>GF_SECURITY_ADMIN_PASSWORD</code>)</span>
                                 <span>⚡ <strong>UDP Listeners:</strong> Port 9999 for incoming flows</span>
                             </div>
                         </div>
