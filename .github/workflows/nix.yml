@@ -74,7 +74,10 @@ jobs:
             git add nix/package.nix
             git commit -m "build(nix): update mvnHash after pom change" \
               -m "Auto-committed by the nix workflow after a fixed-output hash mismatch."
-            git push "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${HEAD_REF}"
+            # Configure git to use credential helper and provide token via stdin to keep it out of process arguments
+            git config credential.helper 'cache --timeout=300'
+            printf "protocol=https\nhost=github.com\nusername=x-access-token\npassword=%s\n\n" "${PUSH_TOKEN}" | git credential approve
+            git push "https://github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${HEAD_REF}"
             {
               echo "### Stale mvnHash fixed automatically"
               echo "Pushed the corrected hash (\`${got}\`) to \`${HEAD_REF}\`. The new commit re-runs all checks; this failed run is superseded."
