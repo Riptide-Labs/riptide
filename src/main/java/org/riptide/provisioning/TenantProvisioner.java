@@ -264,6 +264,18 @@ public final class TenantProvisioner {
         execute(ProvisioningDdl.offboardTenant(ref.database(), ref.tenant()));
     }
 
+    /**
+     * Execute a list of DDL statements sequentially. ClickHouse does not support multi-statement
+     * transactions for DDL, so each statement commits independently. If a statement fails, prior
+     * statements are NOT automatically rolled back.
+     *
+     * <p>For tenant lifecycle operations ({@link #onboard}, {@link #offboard}), statement ordering
+     * is security-critical: the sequence is designed so that a failure at any point leaves the
+     * system in a safe state (either the tenant cannot authenticate, or it can authenticate but has
+     * no table privileges, or it has privileges but row policies restrict access). A failure
+     * partway through may require manual cleanup or a re-run to complete, but it must not leave a
+     * credential with unrestricted shared-table access.
+     */
     private void execute(final List<String> statements) {
         for (final String sql : statements) {
             try {

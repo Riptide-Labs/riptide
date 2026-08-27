@@ -99,8 +99,10 @@ class ProvisioningDdlTest {
     @Test
     void onboardTenantScopesUsersPolicyWithEscapedPassword() {
         final List<String> sql = ProvisioningDdl.onboardTenant("riptide", "acme", "acme-eu", "p'w", "r'w");
-        // The six user/grant statements, the flows policy, then one policy per rollup.
-        assertThat(sql).hasSize(7 + FlowsSchema.rollupTableNames().size());
+        // Two user creations (no password), the flows policy, one policy per rollup, two password
+        // sets, two role grants. Policies are installed before passwords are set, so a user that
+        // can authenticate already has its row filter in place.
+        assertThat(sql).hasSize(2 + 1 + FlowsSchema.rollupTableNames().size() + 2 + 2);
         assertThat(sql.get(0))
                 .contains("CREATE USER IF NOT EXISTS `writer_acme`")
                 .contains("IDENTIFIED WITH sha256_password BY 'p\\'w'")
@@ -294,7 +296,9 @@ class ProvisioningDdlTest {
             assertThat(sql).contains("DROP ROW POLICY IF EXISTS `acme_iso` ON "
                     + FlowsSchema.qualifiedRollup("riptide", rollup));
         }
-        assertThat(sql.get(sql.size() - 2)).isEqualTo("DROP USER IF EXISTS `bi_acme`");
-        assertThat(sql.getLast()).isEqualTo("DROP USER IF EXISTS `writer_acme`");
+        assertThat(sql.get(0)).isEqualTo("REVOKE flow_writer FROM `writer_acme`");
+        assertThat(sql.get(1)).isEqualTo("REVOKE flow_reader FROM `bi_acme`");
+        assertThat(sql.get(2)).isEqualTo("DROP USER IF EXISTS `bi_acme`");
+        assertThat(sql.get(3)).isEqualTo("DROP USER IF EXISTS `writer_acme`");
     }
 }

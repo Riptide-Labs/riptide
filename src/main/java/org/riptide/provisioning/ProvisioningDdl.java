@@ -204,6 +204,19 @@ public final class ProvisioningDdl {
      *
      * <p>The rollup policies name the reader only: the writer reaches a rollup by {@code INSERT}
      * through its materialized view, which no row policy filters.
+     *
+     * <p><b>Ordering is security-critical</b>: users are created without passwords first, then row
+     * policies are installed, then passwords are set and roles granted. A user created with its
+     * password can authenticate immediately, so granting the shared roles before installing the
+     * tenant row policies would give that credential unrestricted shared-table access during the
+     * gap. Creating the user without a password (no {@code IDENTIFIED WITH} clause) leaves it
+     * unable to authenticate until the {@code ALTER USER} that sets the password, which is ordered
+     * after the policies. The {@code GRANT} statements are ordered after the password is set
+     * because ClickHouse validates the grantee exists, but a user with a password and no role has
+     * no table privileges and therefore no exposure. The {@code CONST} settings are applied at
+     * creation so the user is pinned to its tenant even during the brief window before the
+     * {@code ALTER USER} that sets the password — a failure between the two leaves a user that
+     * cannot authenticate but is already scoped, not one that can authenticate without a policy.
      */
     public static List<String> onboardTenant(final String database, final String tenant, final String organisation,
                                              final String writerPassword, final String readerPassword) {
@@ -213,19 +226,29 @@ public final class ProvisioningDdl {
         final String policy = ident(tenant + "_iso");
         final String pinned = " SETTINGS SQL_tenant = " + literal(tenant) + " CONST, SQL_org = "
                 + literal(organisation) + " CONST";
-        final List<String> statements = new ArrayList<>(List.of(
-                "CREATE USER IF NOT EXISTS " + writer + " IDENTIFIED WITH sha256_password BY "
-                        + literal(writerPassword) + pinned,
-                "ALTER USER " + writer + " IDENTIFIED WITH sha256_password BY " + literal(writerPassword),
-                "GRANT flow_writer TO " + writer,
-                "CREATE USER IF NOT EXISTS " + reader + " IDENTIFIED WITH sha256_password BY "
-                        + literal(readerPassword) + pinned,
-                "ALTER USER " + reader + " IDENTIFIED WITH sha256_password BY " + literal(readerPassword),
-                "GRANT flow_reader TO " + reader,
-                rowPolicy(policy, flows, tenant, reader + ", " + writer)));
+        final List<String> statements = new ArrayList<>();
+        // Step 1: Create users without passwords (cannot authenticate yet) but with CONST settings
+        // (already tenant-scoped if a later failure leaves them). ClickHouse allows CREATE USER
+        // with no IDENTIFIED clause, leaving the user present but unable to authenticate.
+        statements.add("CREATE USER IF NOT EXISTS " + writer + pinned);
+        statements.add("CREATE USER IF NOT EXISTS " + reader + pinned);
+        // Step 2: Install row policies naming the users. The policies are deny-by-default, so any
+        // table the shared roles grant becomes restricted to the tenant's rows. Ordered before the
+        // password is set, so a user that can authenticate already has its policy in place.
+        statements.add(rowPolicy(policy, flows, tenant, reader + ", " + writer));
         for (final String rollup : FlowsSchema.rollupTableNames()) {
             statements.add(rowPolicy(policy, FlowsSchema.qualifiedRollup(database, rollup), tenant, reader));
         }
+        // Step 3: Set passwords (users can now authenticate, but policies are already installed).
+        // ALTER USER reconciles the password on re-runs (password rotation) and preserves the
+        // user's CONST settings and row-policy membership.
+        statements.add("ALTER USER " + writer + " IDENTIFIED WITH sha256_password BY " + literal(writerPassword));
+        statements.add("ALTER USER " + reader + " IDENTIFIED WITH sha256_password BY " + literal(readerPassword));
+        // Step 4: Grant roles (users now have table privileges, but policies already filter them).
+        // Ordered last because a user with a password but no role has no table access and therefore
+        // no exposure, while a user with a role but no policy would have unrestricted access.
+        statements.add("GRANT flow_writer TO " + writer);
+        statements.add("GRANT flow_reader TO " + reader);
         return List.copyOf(statements);
     }
 
@@ -240,20 +263,38 @@ public final class ProvisioningDdl {
     }
 
     /**
-     * Per-tenant teardown: drop the policy from {@code flows} and from every rollup, then the two
-     * users; shared objects stay. A policy left behind on a rollup would keep denying rows there
-     * after the tenant is gone.
+     * Per-tenant teardown: revoke roles, then drop the users, then drop the row policies; shared
+     * objects stay. A policy left behind on a rollup would keep denying rows there after the tenant
+     * is gone.
+     *
+     * <p><b>Ordering is security-critical</b>: roles are revoked first so the users lose their
+     * table privileges before the row policies are removed. Dropping the policies before the users
+     * would leave a window where the users retain their role grants (and therefore shared-table
+     * privileges) but have no tenant-specific row filter, allowing cross-tenant reads. Dropping the
+     * users before the policies is safe because a non-existent user cannot authenticate, so the
+     * policy's absence is irrelevant. The {@code REVOKE} statements are ordered before
+     * {@code DROP USER} because ClickHouse validates the grantee exists, but a user with no role
+     * has no table privileges and therefore no exposure even if the {@code DROP USER} fails.
      */
     public static List<String> offboardTenant(final String database, final String tenant) {
         final String policy = ident(tenant + "_iso");
+        final String writer = ident("writer_" + tenant);
+        final String reader = ident("bi_" + tenant);
         final List<String> statements = new ArrayList<>();
+        // Step 1: Revoke roles (users lose table privileges before policies are removed).
+        // IF EXISTS is not available on REVOKE in ClickHouse, but the statement is idempotent:
+        // revoking a grant that does not exist is a no-op, not an error.
+        statements.add("REVOKE flow_writer FROM " + writer);
+        statements.add("REVOKE flow_reader FROM " + reader);
+        // Step 2: Drop users (cannot authenticate anymore, so policy absence is irrelevant).
+        statements.add("DROP USER IF EXISTS " + reader);
+        statements.add("DROP USER IF EXISTS " + writer);
+        // Step 3: Drop row policies (safe because users are already gone).
         statements.add("DROP ROW POLICY IF EXISTS " + policy + " ON " + FlowsSchema.qualifiedFlows(database));
         for (final String rollup : FlowsSchema.rollupTableNames()) {
             statements.add("DROP ROW POLICY IF EXISTS " + policy + " ON "
                     + FlowsSchema.qualifiedRollup(database, rollup));
         }
-        statements.add("DROP USER IF EXISTS " + ident("bi_" + tenant));
-        statements.add("DROP USER IF EXISTS " + ident("writer_" + tenant));
         return List.copyOf(statements);
     }
 
