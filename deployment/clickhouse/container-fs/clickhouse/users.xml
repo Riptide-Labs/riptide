@@ -21,14 +21,6 @@
             <show_named_collections>1</show_named_collections>
             <show_named_collections_secrets>1</show_named_collections_secrets>
         </default>
-        <dev>
-            <password>dev</password>
-            <networks>
-                <ip>::/0</ip>
-            </networks>
-            <profile>default</profile>
-            <quota>default</quota>
-        </dev>
     </users>
     <quotas>
         <default>
