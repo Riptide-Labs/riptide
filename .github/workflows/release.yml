@@ -4,7 +4,6 @@
 name: Riptide Release
 run-name: Release Workflow
 on:
-  workflow_dispatch:
   push:
     tags:
       - 'v*.*.*'
@@ -30,6 +29,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Fetch enough history to verify the tag points to a commit on main.
+          # A shallow clone (depth: 1) would only fetch the tagged commit,
+          # preventing branch ancestry verification.
+          fetch-depth: 0
+      - name: Verify the tag points to a commit on the protected main branch
+        run: |
+          # The release process requires the version-bump PR to merge to main before
+          # tagging (RELEASING.md). This check enforces that the tagged commit has been
+          # reviewed and merged through the protected branch, preventing an attacker with
+          # repository write access from publishing artifacts built from an unreviewed ref.
+          #
+          # git merge-base --is-ancestor returns 0 if the first commit is an ancestor of
+          # the second, i.e., if the tagged commit is reachable from main's history.
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "Error: Tag ${GITHUB_REF_NAME} points to ${GITHUB_SHA}, which is not on the main branch."
+            echo "The release process requires the version bump to be merged to main before tagging."
+            echo "See RELEASING.md for the correct procedure."
+            exit 1
+          fi
+          echo "✓ Tag ${GITHUB_REF_NAME} points to a commit on main (${GITHUB_SHA})"
       - name: Set up JDK 25 for x64
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
