@@ -91,7 +91,7 @@ cd deployment/riptide
 docker compose up -d
 ```
 
-* Grafana: http://localhost:3000 with login admin/admin.
+* Grafana: http://localhost:3000 with login admin/admin. Set `GF_SECURITY_ADMIN_PASSWORD` before starting to use your own password.
 * Clickhouse UI with http://localhost:5521
 * Send flows to your Riptide server on 9999/udp
 

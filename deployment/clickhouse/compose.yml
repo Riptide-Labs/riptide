@@ -47,7 +47,10 @@ services:
         condition: service_healthy
     environment:
       TZ: UTC
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      # Defaults to admin so the quickstart stays one command on a laptop. Set
+      # GF_SECURITY_ADMIN_PASSWORD in the environment or an .env file for anything reachable
+      # beyond localhost. See docs/deploy/docker-compose.md.
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-admin}
       GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,netsage-sankey-panel
       GF_FEATURE_TOGGLES_ENABLE: nestedFolders
     volumes:
