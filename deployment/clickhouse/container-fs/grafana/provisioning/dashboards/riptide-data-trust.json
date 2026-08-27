@@ -49,6 +49,7 @@
         "includeAll": false,
         "multi": false,
         "sort": 1,
+        "regex": "^[a-zA-Z_][a-zA-Z0-9_]*$",
         "current": {
           "selected": true,
           "text": "riptide",
@@ -67,7 +68,7 @@
         "query": {
           "editorType": "sql",
           "format": 1,
-          "rawSql": "SELECT DISTINCT tenant FROM ${database}.flows ORDER BY tenant",
+          "rawSql": "SELECT DISTINCT tenant FROM `${database}`.flows ORDER BY tenant",
           "queryType": "table"
         },
         "refresh": 1,
@@ -83,7 +84,7 @@
             "$__all"
           ]
         },
-        "definition": "SELECT DISTINCT tenant FROM ${database}.flows ORDER BY tenant"
+        "definition": "SELECT DISTINCT tenant FROM `${database}`.flows ORDER BY tenant"
       },
       {
         "name": "zone",
@@ -96,7 +97,7 @@
         "query": {
           "editorType": "sql",
           "format": 1,
-          "rawSql": "SELECT DISTINCT zone FROM ${database}.flows ORDER BY zone",
+          "rawSql": "SELECT DISTINCT zone FROM `${database}`.flows ORDER BY zone",
           "queryType": "table"
         },
         "refresh": 1,
@@ -112,7 +113,7 @@
             "$__all"
           ]
         },
-        "definition": "SELECT DISTINCT zone FROM ${database}.flows ORDER BY zone"
+        "definition": "SELECT DISTINCT zone FROM `${database}`.flows ORDER BY zone"
       }
     ]
   },
@@ -179,7 +180,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT uniqExact((samplingAlgorithm, samplingInterval)) AS \"Configurations\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)",
+          "rawSql": "SELECT uniqExact((samplingAlgorithm, samplingInterval)) AS \"Configurations\"\nFROM `${database}`.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -250,7 +251,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT round(100 * countIf(clockCorrection IS NOT NULL) / nullIf(count(), 0), 2)\n       AS \"Corrected\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)",
+          "rawSql": "SELECT round(100 * countIf(clockCorrection IS NOT NULL) / nullIf(count(), 0), 2)\n       AS \"Corrected\"\nFROM `${database}`.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -304,7 +305,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT round(100 * sumIf(bytes, organisation = '') / nullIf(sum(bytes), 0), 2)\n       AS \"Unlabelled\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)",
+          "rawSql": "SELECT round(100 * sumIf(bytes, organisation = '') / nullIf(sum(bytes), 0), 2)\n       AS \"Unlabelled\"\nFROM `${database}`.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -358,7 +359,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT uniqExact(exporterAddr) AS \"Exporters\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)",
+          "rawSql": "SELECT uniqExact(exporterAddr) AS \"Exporters\"\nFROM `${database}`.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -433,7 +434,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT if(exporterName != '', exporterName, exporterAddr) AS \"Exporter\",\n       toString(samplingAlgorithm) AS \"Algorithm\",\n       samplingInterval AS \"Interval\",\n       if(samplingProvenance != '', samplingProvenance, 'before 0.8') AS \"Rate source\",\n       count() AS \"Flows\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY \"Exporter\", \"Algorithm\", \"Interval\", \"Rate source\"\nORDER BY \"Flows\" DESC LIMIT 50",
+          "rawSql": "SELECT if(exporterName != '', exporterName, exporterAddr) AS \"Exporter\",\n       toString(samplingAlgorithm) AS \"Algorithm\",\n       samplingInterval AS \"Interval\",\n       if(samplingProvenance != '', samplingProvenance, 'before 0.8') AS \"Rate source\",\n       count() AS \"Flows\",\n       sum(bytes) AS \"Bytes\"\nFROM `${database}`.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY \"Exporter\", \"Algorithm\", \"Interval\", \"Rate source\"\nORDER BY \"Flows\" DESC LIMIT 50",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -508,7 +509,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT if(exporterName != '', exporterName, exporterAddr) AS \"Exporter\",\n       countIf(clockCorrection IS NOT NULL) AS \"Corrected flows\",\n       round(100 * countIf(clockCorrection IS NOT NULL) / nullIf(count(), 0), 2)\n         AS \"Share\",\n       min(clockCorrection) AS \"Min correction\",\n       median(clockCorrection) AS \"Median correction\",\n       max(clockCorrection) AS \"Max correction\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY \"Exporter\" HAVING \"Corrected flows\" > 0\nORDER BY \"Corrected flows\" DESC LIMIT 50",
+          "rawSql": "SELECT if(exporterName != '', exporterName, exporterAddr) AS \"Exporter\",\n       countIf(clockCorrection IS NOT NULL) AS \"Corrected flows\",\n       round(100 * countIf(clockCorrection IS NOT NULL) / nullIf(count(), 0), 2)\n         AS \"Share\",\n       min(clockCorrection) AS \"Min correction\",\n       median(clockCorrection) AS \"Median correction\",\n       max(clockCorrection) AS \"Max correction\"\nFROM `${database}`.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY \"Exporter\" HAVING \"Corrected flows\" > 0\nORDER BY \"Corrected flows\" DESC LIMIT 50",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -583,7 +584,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT tenant AS \"Tenant\",\n       if(organisation = '', '(unset)', organisation) AS \"Organisation\",\n       if(zone = '', '(unset)', zone) AS \"Zone\",\n       uniqExact(exporterAddr) AS \"Exporters\", count() AS \"Flows\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY \"Tenant\", \"Organisation\", \"Zone\"\nORDER BY \"Bytes\" DESC LIMIT 50",
+          "rawSql": "SELECT tenant AS \"Tenant\",\n       if(organisation = '', '(unset)', organisation) AS \"Organisation\",\n       if(zone = '', '(unset)', zone) AS \"Zone\",\n       uniqExact(exporterAddr) AS \"Exporters\", count() AS \"Flows\",\n       sum(bytes) AS \"Bytes\"\nFROM `${database}`.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY \"Tenant\", \"Organisation\", \"Zone\"\nORDER BY \"Bytes\" DESC LIMIT 50",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -663,7 +664,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT exporterAddr AS \"Address\",\n       if(exporterName != '', exporterName, '(unnamed)') AS \"Name\",\n       if(system != '', system, '(unset)') AS \"System\",\n       toString(flowProtocol) AS \"Protocol\",\n       engineType AS \"Engine type\", engineId AS \"Engine ID\",\n       max(receivedAt) AS \"Last seen\", count() AS \"Flows\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY \"Address\", \"Name\", \"System\", \"Protocol\", \"Engine type\", \"Engine ID\"\nORDER BY \"Flows\" DESC LIMIT 50",
+          "rawSql": "SELECT exporterAddr AS \"Address\",\n       if(exporterName != '', exporterName, '(unnamed)') AS \"Name\",\n       if(system != '', system, '(unset)') AS \"System\",\n       toString(flowProtocol) AS \"Protocol\",\n       engineType AS \"Engine type\", engineId AS \"Engine ID\",\n       max(receivedAt) AS \"Last seen\", count() AS \"Flows\"\nFROM `${database}`.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY \"Address\", \"Name\", \"System\", \"Protocol\", \"Engine type\", \"Engine ID\"\nORDER BY \"Flows\" DESC LIMIT 50",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -730,7 +731,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT count() AS \"Exporters\" FROM (\n  SELECT exporterAddr FROM ${database}.flows\n  WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\n  GROUP BY exporterAddr\n  HAVING uniqExact(samplingProvenance) > 1\n)",
+          "rawSql": "SELECT count() AS \"Exporters\" FROM (\n  SELECT exporterAddr FROM `${database}`.flows\n  WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\n  GROUP BY exporterAddr\n  HAVING uniqExact(samplingProvenance) > 1\n)",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
