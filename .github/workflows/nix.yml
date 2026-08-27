@@ -46,6 +46,11 @@ jobs:
       # a GITHUB_TOKEN push would not re-trigger the required checks. Fork PRs and runs without the
       # secret fall back to surfacing the expected hash in the job summary — see #324. The job still
       # fails either way: the tree it tested had the stale hash; the pushed commit gets a fresh run.
+      #
+      # Security: The push step uses a fresh isolated checkout to prevent token exfiltration. The
+      # build step above executes PR-controlled code that could install git hooks or modify git
+      # config in the workspace. A fresh checkout in a separate directory ensures no malicious hooks
+      # or config can intercept the git operations that receive PUSH_TOKEN.
       - name: Fix or explain a hash mismatch
         if: failure() && steps.build.outcome == 'failure'
         env:
@@ -62,8 +67,14 @@ jobs:
             exit 1
           fi
           if [ "${SAME_REPO}" = "true" ] && [ -n "${PUSH_TOKEN}" ] && [ -n "${HEAD_REF}" ]; then
-            git fetch --depth=1 origin "${HEAD_REF}"
-            git checkout -B "${HEAD_REF}" FETCH_HEAD
+            # Create a fresh isolated checkout for git operations to prevent hook-based token theft.
+            # The build workspace may contain malicious hooks or git config installed by PR code.
+            isolated_dir="$(mktemp -d)"
+            trap 'rm -rf "${isolated_dir}"' EXIT
+            cd "${isolated_dir}"
+            git clone --depth=1 --branch="${HEAD_REF}" \
+              "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
+            cd repo
             sed -i -E "s|mvnHash = \"sha256-[^\"]*\";|mvnHash = \"${got}\";|" nix/package.nix
             if git diff --quiet -- nix/package.nix; then
               echo "mvnHash on \`${HEAD_REF}\` is already \`${got}\`; this run tested a stale head." >> "${GITHUB_STEP_SUMMARY}"
@@ -74,7 +85,7 @@ jobs:
             git add nix/package.nix
             git commit -m "build(nix): update mvnHash after pom change" \
               -m "Auto-committed by the nix workflow after a fixed-output hash mismatch."
-            git push "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${HEAD_REF}"
+            git push origin "HEAD:refs/heads/${HEAD_REF}"
             {
               echo "### Stale mvnHash fixed automatically"
               echo "Pushed the corrected hash (\`${got}\`) to \`${HEAD_REF}\`. The new commit re-runs all checks; this failed run is superseded."
