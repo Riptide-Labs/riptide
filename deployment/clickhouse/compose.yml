@@ -24,8 +24,8 @@ services:
       timeout: 1s
       retries: 20
     ports:
-      - "8123:8123/tcp"
-      - "9000:9000/tcp"
+      - "127.0.0.1:8123:8123/tcp"
+      - "127.0.0.1:9000:9000/tcp"
 
   ch-ui:
     image: ghcr.io/caioricciuti/ch-ui:latest
@@ -38,7 +38,7 @@ services:
       VITE_CLICKHOUSE_USER: default
       VITE_CLICKHOUSE_PASS: ""
     ports:
-      - "5521:5521/tcp"
+      - "127.0.0.1:5521:5521/tcp"
 
   grafana:
     image: docker.io/grafana/grafana-oss:latest
@@ -59,4 +59,4 @@ services:
       timeout: 1s
       retries: 20
     ports:
-      - "3000:3000/tcp"
+      - "127.0.0.1:3000:3000/tcp"

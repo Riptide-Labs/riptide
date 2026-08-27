@@ -13,7 +13,11 @@
             <access_management>1</access_management>
             <profile>default</profile>
             <networks>
-                <ip>::/0</ip>
+                <!-- Localhost access for host machine connections via port forwarding -->
+                <ip>::1</ip>
+                <ip>127.0.0.1</ip>
+                <!-- Docker Compose default bridge network range for inter-container communication -->
+                <ip>172.16.0.0/12</ip>
             </networks>
             <quota>default</quota>
             <access_management>1</access_management>
@@ -24,7 +28,9 @@
         <dev>
             <password>dev</password>
             <networks>
-                <ip>::/0</ip>
+                <ip>::1</ip>
+                <ip>127.0.0.1</ip>
+                <ip>172.16.0.0/12</ip>
             </networks>
             <profile>default</profile>
             <quota>default</quota>
