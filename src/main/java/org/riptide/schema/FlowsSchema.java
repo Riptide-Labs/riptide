@@ -368,10 +368,13 @@ public final class FlowsSchema {
         for (final Rollup rollup : ROLLUPS) {
             final String table = rollup.table();
             final String live = liveSortKeys.get(table);
-            if (live == null) {
+            final Set<String> liveColumns = liveColumnNames.get(table);
+            if (live == null || liveColumns == null) {
+                // Not visible, or visible in one catalog and not the other, is left alone: the two
+                // reads are independent, and a missing column row must not read as an empty
+                // target, which would refuse a healthy rollup as lacking every measure.
                 continue;
             }
-            final Set<String> liveColumns = liveColumnNames.getOrDefault(table, Set.of());
 
             // A missing measure is refused before the dimensions are even looked at (#654): the
             // only remedy is a rebuild, whatever the key says. Refused rather than skipped, because

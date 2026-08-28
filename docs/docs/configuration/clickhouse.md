@@ -169,7 +169,7 @@ Repair runs in manage mode at startup, and in `riptide onboard` for provisioned 
 
 - **Shrink a sorting key.** A dimension removed from a release is not removed from your table. The grain would change and existing rows would not be re-aggregated, so riptide reports it and leaves the rollup alone.
 - **Repair a corrected aggregate.** If a release changes how a measure is computed, the rollup is [declined at query time](#rollup-shape-checks-at-startup) rather than repaired. Repairing would readmit rows computed the old way with nothing to distinguish them, which is worse than answering from raw `flows`.
-- **Add a measure.** A measure reading `0` for historical rows makes a `SUM` spanning the upgrade quietly too small, with nothing in the data marking where. Dimensions have a boundary; measures do not. Riptide refuses the rollup and logs `Rollup X left as it is: measure [...] is missing`, naming the remedy: drop the rollup's view and target table and restart, which discards that rollup's aggregated history.
+- **Add a measure.** A measure reading `0` for historical rows makes a `SUM` spanning the upgrade quietly too small, with nothing in the data marking where. Dimensions have a boundary; measures do not. In manage mode and in `onboard`, riptide refuses the rollup and logs `Rollup X left as it is: measure [...] is missing`, naming the remedy. A validate-mode collector never plans repairs, so there it only reports the shape drift and declines the rollup. The remedy discards that rollup's aggregated history: drop the rollup's view and target table, then restart a manage-mode collector, or re-run `riptide onboard` for a provisioned deployment and restart the collector after it.
 
 ### Rollup shape checks at startup
 

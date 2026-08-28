@@ -612,6 +612,20 @@ class FlowsSchemaTest {
     }
 
     /**
+     * A sorting key with no column row behind it is a partial catalog, not an empty target: it is
+     * left alone rather than refused for lacking every measure.
+     */
+    @Test
+    void aRollupWithoutAColumnRowIsNeitherRepairedNorRefused() {
+        final String rollup = FlowsSchema.ROLLUP_BY_APPLICATION;
+        final var plan = FlowsSchema.planRollupRepair(
+                Map.of(rollup, FlowsSchema.rollupSortKeys().get(rollup)), Map.of());
+
+        assertThat(plan.repair()).isEmpty();
+        assertThat(plan.refused()).isEmpty();
+    }
+
+    /**
      * Each dimension is pinned to the reserved value its type implies, or the guard above is blind.
      *
      * <p><b>This does not consult a server</b>, and its previous name said it did (#629). It fixes
