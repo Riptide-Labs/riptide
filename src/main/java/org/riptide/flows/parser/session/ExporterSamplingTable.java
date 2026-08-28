@@ -397,9 +397,12 @@ public class ExporterSamplingTable implements OptionListener {
         }
         if (algorithm == null) {
             if (stated != null) {
-                // A selectorId-scoped record stating an interval this table cannot use (0, or not
-                // finite): read and served nothing from, which is the fact the meter reports. Whether
-                // it should also withdraw the Selector's entry is a separate question, not settled here.
+                // A selectorId-scoped record stating an interval this table cannot use: 0 is the
+                // protocol's withdrawal, as on the exporter-wide path. Drop the Selector's own entry
+                // so flows naming it stop resolving a rate the exporter has just retracted. The
+                // exporter-wide mirror is left alone: another Selector may have established it, and a
+                // withdrawal scoped to one Selector says nothing about the others.
+                this.selectors.invalidate(key);
                 this.selectorsSkipped.mark();
                 return Verdict.RECOGNISED_BUT_UNUSABLE;
             }

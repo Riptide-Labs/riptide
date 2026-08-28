@@ -308,6 +308,25 @@ class ExporterSamplingTableTest {
     }
 
     /**
+     * A Selector-scoped withdrawal drops that Selector's rate, so flows naming it stop resolving a
+     * rate the exporter has retracted. Before this, the entry served until retention expired.
+     */
+    @Test
+    void aSelectorScopedWithdrawalDropsThatSelectorsRate() throws Exception {
+        final var exporter = exporter("192.0.2.1", 0);
+        final var selector = List.<Value<?>>of(new UnsignedValue("selectorId", 4));
+        this.table.accept(exporter, selector,
+                List.of(new UnsignedValue("selectorAlgorithm", 1),
+                        new UnsignedValue("samplingPacketInterval", 1),
+                        new UnsignedValue("samplingPacketSpace", 99)));
+        assertThat(this.table.lookup(exporter, 4L)).isPresent();
+
+        this.table.accept(exporter, selector, samplerRecord(0));
+
+        assertThat(this.table.lookup(exporter, 4L)).isEmpty();
+    }
+
+    /**
      * A selectorId-scoped record stating an interval of 0 names no algorithm, but it does name a
      * field this table reads. Filing it as unrecognised would hide a withdrawal among the VRF tables.
      */
