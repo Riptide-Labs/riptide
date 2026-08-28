@@ -43,6 +43,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * surface a changed default instead of a rollup absorbing it. It also does not cover B — that is
  * {@code SamplingIntervalBoundaryTest} and the enum arm of {@code FlowsSchemaTest}, and #607
  * proposed exactly this test as a replacement for those, which was the wrong half.</p>
+ *
+ * <p>The section at the end asks a second question of the same server, for #581: whether the
+ * {@code SummingMergeTree} a rollup uses can carry a provenance bitmask as a <em>summary</em>, OR-ed
+ * on merge rather than summed. It shares the container and nothing else.</p>
  */
 @Testcontainers
 public class ReservedValueIT {
@@ -86,8 +90,8 @@ public class ReservedValueIT {
             }
         }
         assertThat(serverVersion)
-                .as("the server version is named in every answer this class records, so it must be"
-                        + " read rather than left null")
+                .as("the #581 probes name the server version in every answer they record, so it"
+                        + " must be read rather than left null")
                 .isNotBlank();
     }
 
@@ -254,20 +258,32 @@ public class ReservedValueIT {
     }
 
     // ---- #581 probe: can a rollup carry a provenance summary? ---------------------------------
+    //
+    // What this asks and what it does not. It asks the ENGINE: what SummingMergeTree does to a
+    // provenance mask when it merges two parts, and what a read over unmerged parts returns. It
+    // asks with one-key tables of its own, not a rollup: no materialized view feeds them, so
+    // whether `CREATE MATERIALIZED VIEW ... TO` coerces a plain integer expression into a
+    // SimpleAggregateFunction column is not asked here. #581's checkbox "probed against a real
+    // SummingMergeTree rollup" is answered for the engine half only.
+    //
+    // UInt64, not the UInt8 #581 proposes: FlowsSchema hardcodes UInt64 for every measure, at the
+    // rollup DDL and again in rollupColumns(), so a mask added as a measure would be that width.
 
     /** Its own database, so nothing here disturbs the reserved-value fixture above. */
     private static final String SUMMARY_DATABASE = "provenance_probe";
 
     /**
-     * Two masks whose bits <em>overlap</em>: {@code 0b011} and {@code 0b010}.
+     * Two masks whose bits <em>overlap</em>: {@code 0b011} and {@code 0b110}.
      *
      * <p>Overlapping on purpose. A sum and a bitwise OR agree on disjoint bits — {@code 1 + 2} and
      * {@code 1 | 2} are both {@code 3} — so a probe built on disjoint masks passes whichever
-     * aggregation the engine applies, and would have called a silently wrong column correct.
-     * {@link #twoMasksMustDisagreeUnderSumAndOr()} pins that the fixture kept this property.</p>
+     * aggregation the engine applies, and would have called a silently wrong column correct. And
+     * neither mask is a subset of the other, so the OR ({@code 0b111}) equals neither input: a read
+     * that returned one unmerged row instead of the merge would not pass for the OR either.
+     * {@link #twoMasksMustDisagreeUnderSumAndOr()} pins that the fixture kept both properties.</p>
      */
     private static final long MASK_A = 0b011;
-    private static final long MASK_B = 0b010;
+    private static final long MASK_B = 0b110;
 
     /** What a bitwise OR of the two masks is: the value a provenance summary must read. */
     private static final long ORED = MASK_A | MASK_B;
@@ -275,26 +291,67 @@ public class ReservedValueIT {
     /** What summing them gives instead: what a plain measure column would silently record. */
     private static final long SUMMED = MASK_A + MASK_B;
 
-    /** The merged value of the single row in {@code table}, after an explicit merge. */
-    private static long mergedMask(final String table) throws Exception {
-        admin.execute("OPTIMIZE TABLE " + table + " FINAL").get();
-        try (var records = admin.queryRecords("SELECT mask FROM " + table).get()) {
+    /** The {@code bytes} each probe row carries beside its mask; the two rows must sum to this. */
+    private static final long BYTES_PER_ROW = 1;
+
+    /** The single row of {@code table} after the merge: the mask and the summed measure beside it. */
+    private record Merged(long mask, long bytes) { }
+
+    /** How many active parts {@code database.table} holds right now. */
+    private static long activeParts(final String table) throws Exception {
+        final String[] name = table.split("\\.", 2);
+        try (var records = admin.queryRecords("SELECT count() AS c FROM system.parts WHERE database = '"
+                + name[0] + "' AND table = '" + name[1] + "' AND active").get()) {
             for (final var record : records) {
-                return record.getLong("mask");
+                return record.getLong("c");
+            }
+        }
+        throw new AssertionError("system.parts answered nothing for " + table);
+    }
+
+    /**
+     * Merges {@code table} explicitly and returns its single row.
+     *
+     * <p>Asserted on both sides of the merge. Before: two active parts, or the merge measures
+     * nothing. After: one row, because a read over two unmerged rows returns whichever comes first,
+     * and a value read that way says nothing about what the engine did.</p>
+     */
+    private static Merged merged(final String table) throws Exception {
+        assertThat(activeParts(table))
+                .as("%s must hold two unmerged parts before the merge, or nothing is measured", table)
+                .isEqualTo(2);
+        admin.execute("SYSTEM START MERGES " + table).get();
+        admin.execute("OPTIMIZE TABLE " + table + " FINAL").get();
+
+        try (var records = admin.queryRecords(
+                "SELECT count() AS rows, any(mask) AS mask, any(bytes) AS bytes FROM " + table).get()) {
+            for (final var record : records) {
+                assertThat(record.getLong("rows"))
+                        .as("%s must hold exactly one row after OPTIMIZE FINAL; a first-of-many read"
+                                + " would not be the merged value", table)
+                        .isEqualTo(1);
+                return new Merged(record.getLong("mask"), record.getLong("bytes"));
             }
         }
         throw new AssertionError(table + " held no row after the merge, so nothing was measured");
     }
 
-    /** A one-key table of {@code maskType}, fed the two overlapping masks as separate parts. */
+    /**
+     * A table of {@code maskType} beside a plain {@code bytes} measure, the shape #581 would ship,
+     * fed the two overlapping masks as two parts that stay unmerged until a probe asks otherwise.
+     */
     private static String tableCarrying(final String maskType) throws Exception {
         final String table = SUMMARY_DATABASE + ".probe_" + PROBE.incrementAndGet();
-        admin.execute("CREATE TABLE " + table + " (k String, mask " + maskType + ")"
+        admin.execute("CREATE TABLE " + table + " (k String, mask " + maskType + ", bytes UInt64)"
                 + " ENGINE = SummingMergeTree ORDER BY k").get();
-        // Separate INSERTs on purpose: one statement would be merged before it is written, and the
-        // question is what the ENGINE does to two parts, which is what a rollup accumulates.
-        admin.execute("INSERT INTO " + table + " VALUES ('k', " + MASK_A + ")").get();
-        admin.execute("INSERT INTO " + table + " VALUES ('k', " + MASK_B + ")").get();
+        // Background merges would otherwise collapse the two parts at a moment of their choosing,
+        // and a probe that asks about unmerged parts must be sure they are.
+        admin.execute("SYSTEM STOP MERGES " + table).get();
+        // Separate INSERTs on purpose: optimize_on_insert (default 1) merges the rows of a single
+        // statement before the part is written, and the question is what the ENGINE does to two
+        // parts, which is what a rollup accumulates.
+        admin.execute("INSERT INTO " + table + " VALUES ('k', " + MASK_A + ", " + BYTES_PER_ROW + ")").get();
+        admin.execute("INSERT INTO " + table + " VALUES ('k', " + MASK_B + ", " + BYTES_PER_ROW + ")").get();
         return table;
     }
 
@@ -303,7 +360,8 @@ public class ReservedValueIT {
      *
      * <p>This is the guard that matters here. On disjoint bits the two aggregations coincide, so a
      * probe using them would pass with a plain {@code UInt64} column that silently sums a bitmask —
-     * the exact defect the other two tests exist to catch.</p>
+     * the exact defect the other tests exist to catch. And the OR must equal neither input, or a
+     * read that never saw a merge could still return it.</p>
      */
     @Test
     void twoMasksMustDisagreeUnderSumAndOr() {
@@ -311,6 +369,11 @@ public class ReservedValueIT {
                 .as("the probe masks must overlap: with disjoint bits a sum and an OR agree, and"
                         + " every assertion in this section would hold for the wrong column type")
                 .isNotEqualTo(ORED);
+        assertThat(ORED)
+                .as("the OR must equal neither mask, or one unmerged row read first would pass as"
+                        + " the merged value")
+                .isNotEqualTo(MASK_A)
+                .isNotEqualTo(MASK_B);
     }
 
     /**
@@ -324,52 +387,71 @@ public class ReservedValueIT {
      */
     @Test
     void aPlainMeasureColumnSumsAProvenanceMaskInsteadOfOringIt() throws Exception {
-        final long merged = mergedMask(tableCarrying("UInt64"));
+        final Merged merged = merged(tableCarrying("UInt64"));
 
-        assertThat(merged)
+        assertThat(merged.mask())
                 .as("#581 [PQ-4] on ClickHouse %s: a plain UInt64 measure SUMS a bitmask — %d and %d"
                         + " merge to %d, not the %d a provenance summary means",
-                        serverVersion, MASK_A, MASK_B, merged, ORED)
+                        serverVersion, MASK_A, MASK_B, merged.mask(), ORED)
                 .isEqualTo(SUMMED)
                 .isNotEqualTo(ORED);
     }
 
     /**
-     * A {@code SimpleAggregateFunction(groupBitOr)} column ORs it, inside the same engine (#581).
+     * A {@code SimpleAggregateFunction(groupBitOr)} column ORs it, inside the same engine, beside a
+     * measure that still sums (#581).
      *
      * <p>The answer #581 needs: {@code SummingMergeTree} honours a {@code SimpleAggregateFunction}
-     * column's own function rather than summing it, so a provenance summary is expressible in the
-     * rollup engine riptide already uses — but only at that type, never as a plain measure.</p>
+     * column's own function rather than summing it, while the plain {@code bytes} beside it is
+     * summed as before. So a provenance summary is expressible in the rollup engine riptide already
+     * uses, in the shape a rollup has — but only at that type, never as a plain measure.</p>
      */
     @Test
     void aSimpleAggregateFunctionColumnOrsTheProvenanceMask() throws Exception {
-        final long merged = mergedMask(tableCarrying("SimpleAggregateFunction(groupBitOr, UInt64)"));
+        final Merged merged = merged(tableCarrying("SimpleAggregateFunction(groupBitOr, UInt64)"));
 
-        assertThat(merged)
+        assertThat(merged.mask())
                 .as("#581 [PQ-4] on ClickHouse %s: SimpleAggregateFunction(groupBitOr, UInt64) inside"
                         + " a SummingMergeTree ORs — %d and %d merge to %d", serverVersion,
-                        MASK_A, MASK_B, merged, ORED)
+                        MASK_A, MASK_B, merged.mask(), ORED)
                 .isEqualTo(ORED);
+        assertThat(merged.bytes())
+                .as("#581 [PQ-4] on ClickHouse %s: the plain measure beside the summary is still"
+                        + " summed in the same merge", serverVersion)
+                .isEqualTo(2 * BYTES_PER_ROW);
     }
 
     /**
-     * The summary survives the read a rollup query performs, not merely the merge.
+     * Over unmerged parts, the read is right only when the query names the column's function (#581).
      *
-     * <p>A rollup is read with a {@code GROUP BY}, so a column that merged correctly but re-summed
-     * on read would still be wrong for #581.</p>
+     * <p>A rollup is read between background merges, so a query sees parts the engine has not yet
+     * collapsed. Read with {@code groupBitOr} the summary is OR-ed across them. Read with
+     * {@code sum}, the way every rollup measure is read today, the same column is <em>summed</em>:
+     * the column type does not protect a reader that picks the wrong function. That is a limit
+     * #581 must carry to every consumer of the column, not a property of the engine.</p>
      */
     @Test
-    void theProvenanceSummarySurvivesAGroupByRead() throws Exception {
+    void theProvenanceSummaryReadsOredOverUnmergedPartsOnlyUnderItsOwnFunction() throws Exception {
         final String table = tableCarrying("SimpleAggregateFunction(groupBitOr, UInt64)");
-        admin.execute("OPTIMIZE TABLE " + table + " FINAL").get();
+        assertThat(activeParts(table))
+                .as("%s must still hold two unmerged parts, or this read measures a merge", table)
+                .isEqualTo(2);
 
-        try (var records = admin.queryRecords(
-                "SELECT groupBitOr(mask) AS mask FROM " + table + " GROUP BY k").get()) {
+        try (var records = admin.queryRecords("SELECT count() AS rows, groupBitOr(mask) AS ored,"
+                + " sum(mask) AS summed FROM " + table + " GROUP BY k").get()) {
             for (final var record : records) {
-                assertThat(record.getLong("mask"))
-                        .as("#581 [PQ-4]: the summary reads back OR-ed through a GROUP BY on %s",
-                                serverVersion)
+                assertThat(record.getLong("rows"))
+                        .as("the GROUP BY must have spanned both unmerged rows")
+                        .isEqualTo(2);
+                assertThat(record.getLong("ored"))
+                        .as("#581 [PQ-4] on ClickHouse %s: groupBitOr over unmerged parts reads the"
+                                + " summary OR-ed", serverVersion)
                         .isEqualTo(ORED);
+                assertThat(record.getLong("summed"))
+                        .as("#581 [PQ-4] on ClickHouse %s: sum() over the same unmerged parts, the"
+                                + " read every rollup measure gets today, gives %d and not %d",
+                                serverVersion, SUMMED, ORED)
+                        .isEqualTo(SUMMED);
                 return;
             }
         }
