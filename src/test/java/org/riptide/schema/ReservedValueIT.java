@@ -70,12 +70,25 @@ public class ReservedValueIT {
 
     private static Client admin;
 
+    /** The server that answered, read from it rather than from the image tag. */
+    private static String serverVersion;
+
     @BeforeAll
     static void bootstrap() throws Exception {
         admin = new Client.Builder()
                 .addEndpoint("http://" + CLICKHOUSE.getHost() + ":" + CLICKHOUSE.getMappedPort(8123))
                 .setUsername("riptide").setPassword("riptide").setDefaultDatabase("default").build();
         admin.execute(FlowsSchema.createDatabase(DATABASE)).get();
+        admin.execute(FlowsSchema.createDatabase(SUMMARY_DATABASE)).get();
+        try (var records = admin.queryRecords("SELECT version() AS v").get()) {
+            for (final var record : records) {
+                serverVersion = record.getString("v");
+            }
+        }
+        assertThat(serverVersion)
+                .as("the server version is named in every answer this class records, so it must be"
+                        + " read rather than left null")
+                .isNotBlank();
     }
 
     /**
@@ -238,5 +251,128 @@ public class ReservedValueIT {
             }
         }
         return null;
+    }
+
+    // ---- #581 probe: can a rollup carry a provenance summary? ---------------------------------
+
+    /** Its own database, so nothing here disturbs the reserved-value fixture above. */
+    private static final String SUMMARY_DATABASE = "provenance_probe";
+
+    /**
+     * Two masks whose bits <em>overlap</em>: {@code 0b011} and {@code 0b010}.
+     *
+     * <p>Overlapping on purpose. A sum and a bitwise OR agree on disjoint bits — {@code 1 + 2} and
+     * {@code 1 | 2} are both {@code 3} — so a probe built on disjoint masks passes whichever
+     * aggregation the engine applies, and would have called a silently wrong column correct.
+     * {@link #twoMasksMustDisagreeUnderSumAndOr()} pins that the fixture kept this property.</p>
+     */
+    private static final long MASK_A = 0b011;
+    private static final long MASK_B = 0b010;
+
+    /** What a bitwise OR of the two masks is: the value a provenance summary must read. */
+    private static final long ORED = MASK_A | MASK_B;
+
+    /** What summing them gives instead: what a plain measure column would silently record. */
+    private static final long SUMMED = MASK_A + MASK_B;
+
+    /** The merged value of the single row in {@code table}, after an explicit merge. */
+    private static long mergedMask(final String table) throws Exception {
+        admin.execute("OPTIMIZE TABLE " + table + " FINAL").get();
+        try (var records = admin.queryRecords("SELECT mask FROM " + table).get()) {
+            for (final var record : records) {
+                return record.getLong("mask");
+            }
+        }
+        throw new AssertionError(table + " held no row after the merge, so nothing was measured");
+    }
+
+    /** A one-key table of {@code maskType}, fed the two overlapping masks as separate parts. */
+    private static String tableCarrying(final String maskType) throws Exception {
+        final String table = SUMMARY_DATABASE + ".probe_" + PROBE.incrementAndGet();
+        admin.execute("CREATE TABLE " + table + " (k String, mask " + maskType + ")"
+                + " ENGINE = SummingMergeTree ORDER BY k").get();
+        // Separate INSERTs on purpose: one statement would be merged before it is written, and the
+        // question is what the ENGINE does to two parts, which is what a rollup accumulates.
+        admin.execute("INSERT INTO " + table + " VALUES ('k', " + MASK_A + ")").get();
+        admin.execute("INSERT INTO " + table + " VALUES ('k', " + MASK_B + ")").get();
+        return table;
+    }
+
+    /**
+     * The fixture's masks must disagree under sum and OR, or every assertion below is vacuous.
+     *
+     * <p>This is the guard that matters here. On disjoint bits the two aggregations coincide, so a
+     * probe using them would pass with a plain {@code UInt64} column that silently sums a bitmask —
+     * the exact defect the other two tests exist to catch.</p>
+     */
+    @Test
+    void twoMasksMustDisagreeUnderSumAndOr() {
+        assertThat(SUMMED)
+                .as("the probe masks must overlap: with disjoint bits a sum and an OR agree, and"
+                        + " every assertion in this section would hold for the wrong column type")
+                .isNotEqualTo(ORED);
+    }
+
+    /**
+     * A plain measure column sums a bitmask rather than OR-ing it, and says nothing about it (#581).
+     *
+     * <p>#581 wants sampling provenance carried into the rollups as a summary. Riptide's measures are
+     * all plain {@code UInt64} — {@code FlowsSchema} hardcodes the type at the rollup DDL and again
+     * in {@code rollupColumns()}, and its {@code Measure} record carries no type at all. So a
+     * provenance mask added the way every existing measure is added would be <em>summed</em> on
+     * merge. This asks the server what that actually produces.</p>
+     */
+    @Test
+    void aPlainMeasureColumnSumsAProvenanceMaskInsteadOfOringIt() throws Exception {
+        final long merged = mergedMask(tableCarrying("UInt64"));
+
+        assertThat(merged)
+                .as("#581 [PQ-4] on ClickHouse %s: a plain UInt64 measure SUMS a bitmask — %d and %d"
+                        + " merge to %d, not the %d a provenance summary means",
+                        serverVersion, MASK_A, MASK_B, merged, ORED)
+                .isEqualTo(SUMMED)
+                .isNotEqualTo(ORED);
+    }
+
+    /**
+     * A {@code SimpleAggregateFunction(groupBitOr)} column ORs it, inside the same engine (#581).
+     *
+     * <p>The answer #581 needs: {@code SummingMergeTree} honours a {@code SimpleAggregateFunction}
+     * column's own function rather than summing it, so a provenance summary is expressible in the
+     * rollup engine riptide already uses — but only at that type, never as a plain measure.</p>
+     */
+    @Test
+    void aSimpleAggregateFunctionColumnOrsTheProvenanceMask() throws Exception {
+        final long merged = mergedMask(tableCarrying("SimpleAggregateFunction(groupBitOr, UInt64)"));
+
+        assertThat(merged)
+                .as("#581 [PQ-4] on ClickHouse %s: SimpleAggregateFunction(groupBitOr, UInt64) inside"
+                        + " a SummingMergeTree ORs — %d and %d merge to %d", serverVersion,
+                        MASK_A, MASK_B, merged, ORED)
+                .isEqualTo(ORED);
+    }
+
+    /**
+     * The summary survives the read a rollup query performs, not merely the merge.
+     *
+     * <p>A rollup is read with a {@code GROUP BY}, so a column that merged correctly but re-summed
+     * on read would still be wrong for #581.</p>
+     */
+    @Test
+    void theProvenanceSummarySurvivesAGroupByRead() throws Exception {
+        final String table = tableCarrying("SimpleAggregateFunction(groupBitOr, UInt64)");
+        admin.execute("OPTIMIZE TABLE " + table + " FINAL").get();
+
+        try (var records = admin.queryRecords(
+                "SELECT groupBitOr(mask) AS mask FROM " + table + " GROUP BY k").get()) {
+            for (final var record : records) {
+                assertThat(record.getLong("mask"))
+                        .as("#581 [PQ-4]: the summary reads back OR-ed through a GROUP BY on %s",
+                                serverVersion)
+                        .isEqualTo(ORED);
+                return;
+            }
+        }
+        throw new AssertionError("the GROUP BY returned no row, so nothing was measured");
     }
 }
