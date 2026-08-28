@@ -310,8 +310,14 @@ public class ClickhouseRepository implements FlowRepository {
             Thread.currentThread().interrupt();
             throw e;
         } catch (final Exception e) {
-            log.warn("Rollup {}: {}: {}. Ingestion is unaffected; long-range queries fall back to raw"
-                    + " flows until it is repaired.", rollup, what, e.getMessage());
+            // Reports the failure and stops (#654). It used to end "until it is repaired", which no
+            // later start delivers when planRollupRepair is not going to plan one — the case a
+            // target missing a measure reaches, where the CREATE MATERIALIZED VIEW in start() fails
+            // with THERE_IS_NO_COLUMN. It must not assert the query-path consequence either: this
+            // runs before verifyRollupShapes, whose MATCHES branch clears the rollup again (see
+            // aRollupThatVerifiesCleanIsNotDeclinedByAFailedNoOp), so a failed no-op named here can
+            // still answer queries. What happens to the query path is that check's line to write.
+            log.warn("Rollup {}: {}: {}. Ingestion is unaffected.", rollup, what, e.getMessage());
             unrepaired.add(rollup);
         }
     }
@@ -342,7 +348,7 @@ public class ClickhouseRepository implements FlowRepository {
             // MODIFY QUERY does not validate, so it would succeed and drop the column on every
             // insert. Nothing is repaired on a start that cannot see what it is repairing.
             log.warn("Could not read the rollup shapes in database '{}': {}. Ingestion is unaffected;"
-                    + " no rollup is repaired on this start and any pending repair is deferred.",
+                    + " no rollup is repaired on this start.",
                     this.config.getDatabase(), e.getMessage());
             return Optional.empty();
         }
@@ -473,9 +479,14 @@ public class ClickhouseRepository implements FlowRepository {
             switch (result.status()) {
                 case DRIFTED -> {
                     drifted.add(result.rollup());
+                    // Makes no claim about whether a repair is coming, because this line cannot
+                    // know (#654): the decision belongs to FlowsSchema.planRollupRepair and
+                    // planViewRepair, and it logs the repairs it does plan. Deliberately not
+                    // restated here — two reverted attempts at #654 re-derived which drift is
+                    // permanent in a third place and got the set wrong both times.
                     log.warn("Rollup {} does not match this version's schema: {}. Ingestion is"
-                            + " unaffected; long-range queries will fall back to raw flows and be"
-                            + " slower until it is repaired.", result.rollup(), result.detail());
+                            + " unaffected; long-range queries fall back to raw flows for it and are"
+                            + " slower.", result.rollup(), result.detail());
                 }
                 case UNREACHABLE -> {
                     drifted.add(result.rollup());

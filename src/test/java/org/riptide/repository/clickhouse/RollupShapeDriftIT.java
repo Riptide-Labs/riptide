@@ -295,6 +295,22 @@ public class RollupShapeDriftIT {
             final List<String> logged = messages(startWriterAndCapture());
 
             assertThat(logged).anyMatch(m -> m.contains(rollup) && m.contains("does not match"));
+            // The validate-mode half of #654. This fixture's drift is a corrected view aggregate,
+            // which planViewRepair puts out of scope, so no start will ever repair it — and the
+            // drift line used to say one would. The manage-mode half, where the repair path runs and
+            // its own failure line reaches the operator first, is covered by
+            // {@code RollupRepairIT#aManageModeStartOnARollupMissingAMeasurePromisesNoRepair}.
+            assertThat(logged)
+                    .as("the drift line still reports the fallback")
+                    .anyMatch(m -> m.contains(rollup) && m.contains("fall back to raw flows"));
+            // Matched as a claim, not as one spelling: the defect was prose, and prose gets
+            // reworded. "until repaired", "will be repaired" and "pending repair is deferred" are
+            // the same promise this line must not make.
+            assertThat(logged)
+                    .as("no line may promise a repair, in any wording: this line cannot know whether"
+                            + " one is coming, and for this fixture's drift none ever is")
+                    .noneMatch(m -> m.matches("(?is).*(until .{0,40}repair|will be repaired"
+                            + "|repair is deferred|repairs itself).*"));
             assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, rollup))).isFalse();
             assertThat(QueryRouter.resolveTopTalkersTable(DATABASE, 120, "application"))
                     .isEqualTo(FlowsSchema.qualifiedFlows(DATABASE));
