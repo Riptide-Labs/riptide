@@ -245,16 +245,38 @@ public class ExporterSamplingTable implements OptionListener {
      * which (#598).</p>
      */
     @Override
-    public void accept(final ExporterIdentity identity, final Collection<Value<?>> scopes, final List<Value<?>> values) {
+    public boolean accept(final ExporterIdentity identity, final Collection<Value<?>> scopes,
+            final List<Value<?>> values) {
         final UnsignedLong selectorId = exact(scopes, "selectorId");
         if (selectorId != null) {
             acceptSelectorReport(identity, selectorId, values);
-            return;
+            return true; // scoped by selectorId: this table's record whatever it turned out to hold
         }
-        if (acceptSamplerOptions(identity, values)) {
-            return;
+        final Sampler sampler = acceptSamplerOptions(identity, values);
+        if (sampler == Sampler.STATES_A_RATE_ABOVE_ONE) {
+            return true;
         }
-        acceptSamplingAdvertisement(identity, values);
+        // Deliberately NOT `sampler == CLAIMED` alone: a record can state a rate here and a selector
+        // algorithm as well, and the advertisement path is what reads the second half.
+        final boolean advertised = acceptSamplingAdvertisement(identity, values);
+        return advertised || sampler != Sampler.NOT_A_SAMPLER_RECORD;
+    }
+
+    /**
+     * What a sampler options record turned out to be.
+     *
+     * <p>Two different questions used to share one boolean: whether the record stated a rate high
+     * enough to stop looking, and whether this table took anything from it at all. They disagree on
+     * a rate of exactly {@code 1} — consumed and stored, yet not a reason to stop — so conflating
+     * them would report a record riptide acted on as claimed by nobody (#599).</p>
+     */
+    private enum Sampler {
+        /** Not a sampler options record: no interval field of any spelling. */
+        NOT_A_SAMPLER_RECORD,
+        /** A sampler record this table acted on, but which states no rate that ends the search. */
+        CLAIMED,
+        /** A sampler record stating a usable rate above 1: nothing further to read. */
+        STATES_A_RATE_ABOVE_ONE
     }
 
     /**
@@ -268,10 +290,10 @@ public class ExporterSamplingTable implements OptionListener {
      *     algorithm is the more specific statement and is preferred, because a deprecated single
      *     field is the one an exporter is likely to have defaulted.
      */
-    private boolean acceptSamplerOptions(final ExporterIdentity identity, final List<Value<?>> values) {
+    private Sampler acceptSamplerOptions(final ExporterIdentity identity, final List<Value<?>> values) {
         final Double interval = unsigned(values, INTERVAL_FIELDS);
         if (interval == null) {
-            return false; // not a sampler option record (interface/VRF/app tables, …)
+            return Sampler.NOT_A_SAMPLER_RECORD; // interface/VRF/app tables, …
         }
         if (!isUsableRate(interval)) {
             // An explicit 1 is kept: it means "not sampling", which is an answer, and dropping it
@@ -280,12 +302,14 @@ public class ExporterSamplingTable implements OptionListener {
             // as a withdrawal and drop what was learned rather than serving it until the TTL runs.
             this.table.invalidate(identity);
             this.recordsSkipped.mark();
-            return false; // states no rate, so it cannot veto one stated elsewhere on this record
+            // States no rate, so it cannot veto one stated elsewhere on this record — but it IS a
+            // sampler record this table acted on, so it is not a record nobody claimed.
+            return Sampler.CLAIMED;
         }
         final Double mode = unsigned(values, MODE_FIELDS);
         this.table.put(identity, new AdvertisedRate(interval, mode != null ? mode.intValue() : null));
         this.recordsConsumed.mark();
-        return interval > 1.0;
+        return interval > 1.0 ? Sampler.STATES_A_RATE_ABOVE_ONE : Sampler.CLAIMED;
     }
 
     /**
@@ -308,10 +332,10 @@ public class ExporterSamplingTable implements OptionListener {
      * filter at once. An advertisement naming an algorithm that expresses no ratio describes an
      * additional process — it does not retract a rate another record taught.</p>
      */
-    private void acceptSamplingAdvertisement(final ExporterIdentity identity, final List<Value<?>> values) {
+    private boolean acceptSamplingAdvertisement(final ExporterIdentity identity, final List<Value<?>> values) {
         final Double algorithm = numeric(values, "selectorAlgorithm");
         if (algorithm == null) {
-            return; // not about sampling at all
+            return false; // not about sampling at all
         }
         if (!SelectorReport.samples(algorithm.intValue())) {
             // A filtering algorithm expresses a ratio, but not one that can share this key. Filtering
@@ -320,15 +344,18 @@ public class ExporterSamplingTable implements OptionListener {
             // for a 1:2 filter arriving after a stated 1:1000. Per Selector this is expressible,
             // because each Selector owns its entry; exporter-wide it is not. See #596.
             this.recordsSkipped.mark();
-            return;
+            // Recognised as a sampling advertisement and acted on, so not a record nobody claimed.
+            return true;
         }
         final Double computed = SelectorReport.rate(algorithm.intValue(), name -> numeric(values, name));
         if (computed == null || !isUsableRate(computed)) {
             this.recordsSkipped.mark();
-            return;
+            // Recognised as a sampling advertisement and acted on, so not a record nobody claimed.
+            return true;
         }
         this.table.put(identity, new AdvertisedRate(computed, null, algorithm.intValue()));
         this.recordsConsumed.mark();
+        return true;
     }
 
     /**

@@ -110,11 +110,11 @@ public class ExporterInterfaceTable implements OptionListener {
     }
 
     @Override
-    public void accept(final ExporterIdentity identity, final Collection<Value<?>> scopes, final List<Value<?>> values) {
+    public boolean accept(final ExporterIdentity identity, final Collection<Value<?>> scopes, final List<Value<?>> values) {
         final String name = string(values, NAME_FIELDS);
         final String description = string(values, DESCRIPTION_FIELDS);
         if (name == null && description == null) {
-            return; // not an interface option record (sampler/VRF/app tables, …)
+            return false; // not an interface option record (sampler/VRF/app tables, …)
         }
 
         Integer ifIndex = unsigned(scopes, IFINDEX_SCOPES);
@@ -124,7 +124,9 @@ public class ExporterInterfaceTable implements OptionListener {
         }
         if (ifIndex == null || ifIndex == 0) {
             this.recordsSkipped.mark();
-            return;
+            // An interface record naming no interface leaves nothing to serve, so it is not claimed:
+            // the counter this feeds asks who took something from the record, not who looked at it.
+            return false;
         }
 
         final Cache<Integer, IfInfo> forScope = scopeTable(identity);
@@ -138,6 +140,7 @@ public class ExporterInterfaceTable implements OptionListener {
         // last, while eviction keeps the window over the interfaces actually carrying traffic.
         forScope.put(ifIndex, IfInfo.merge(new IfInfo(name, description, null), existing));
         this.recordsConsumed.mark();
+        return true;
     }
 
     /**

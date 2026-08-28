@@ -182,4 +182,31 @@ class ExporterSamplingTableTest {
 
         assertThat(table.lookup(exporter)).isEmpty();
     }
+
+    /**
+     * A record this table consumed is reported as claimed, even when it states a rate of exactly 1.
+     *
+     * <p>The trap #599 had to avoid. {@code acceptSamplerOptions} already returned a boolean, but it
+     * meant "states a rate above 1" — a control signal deciding whether to keep reading the record —
+     * not "I took this". They disagree on exactly this input: a rate of 1 means "not sampling",
+     * which is an answer, so the record is stored and consumed while the old boolean said
+     * {@code false}. Reusing it as the claim verdict would have reported a record riptide acted on
+     * as claimed by nobody, and the unclaimed meter would have climbed on healthy exporters.</p>
+     */
+    @Test
+    void aSamplerRecordStatingRateOneIsStillClaimed() throws Exception {
+        assertThat(this.table.accept(exporter("192.0.2.1", 0), List.of(), samplerRecord(1)))
+                .as("a rate of 1 is an answer, not a shrug: the record was stored, so it was claimed")
+                .isTrue();
+    }
+
+    /** A record no field of which this table understands is reported as unclaimed. */
+    @Test
+    void aRecordThisTableDoesNotRecogniseIsNotClaimed() throws Exception {
+        assertThat(this.table.accept(exporter("192.0.2.1", 0), List.of(),
+                List.of(new UnsignedValue("INPUT_SNMP", 7))))
+                .as("an interface record states no rate and no selector algorithm, so this table"
+                        + " takes nothing from it")
+                .isFalse();
+    }
 }
