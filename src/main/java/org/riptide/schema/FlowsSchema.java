@@ -355,12 +355,13 @@ public final class FlowsSchema {
      * safe. Pure — the caller supplies the live state and decides what to do with the verdict —
      * which is what lets the interesting cases be unit-tested without a server.</p>
      *
-     * @param liveSortKeys        rollup target to its {@code system.tables.sorting_key}; a rollup
-     *                            absent from the map is not visible and is left alone
-     * @param liveDimensionNames  rollup target to the column names it currently has
+     * @param liveSortKeys     rollup target to its {@code system.tables.sorting_key}; a rollup
+     *                         absent from the map is not visible and is left alone
+     * @param liveColumnNames  rollup target to every column name it currently has, measures
+     *                         included
      */
     public static RepairPlan planRollupRepair(final Map<String, String> liveSortKeys,
-            final Map<String, Set<String>> liveDimensionNames) {
+            final Map<String, Set<String>> liveColumnNames) {
         final List<String> repair = new ArrayList<>();
         final Map<String, String> refused = new LinkedHashMap<>();
 
@@ -370,11 +371,30 @@ public final class FlowsSchema {
             if (live == null) {
                 continue;
             }
+            final Set<String> liveColumns = liveColumnNames.getOrDefault(table, Set.of());
+
+            // A missing measure is refused before the dimensions are even looked at (#654): the
+            // only remedy is a rebuild, whatever the key says. Refused rather than skipped, because
+            // refused is the channel that carries a reason to the operator and keeps the view's
+            // CREATE from running against a target that lacks a column its SELECT emits, which
+            // fails with THERE_IS_NO_COLUMN on every start and says nothing about why.
+            final List<String> missingMeasures = MEASURES.stream()
+                    .map(Measure::column)
+                    .filter(column -> !liveColumns.contains(column))
+                    .toList();
+            if (!missingMeasures.isEmpty()) {
+                refused.put(table, "measure " + missingMeasures + " is missing from " + table
+                        + ", and a measure cannot be added in place: it would read 0 for every row"
+                        + " aggregated before the upgrade, making a SUM spanning it quietly too small."
+                        + " Drop the rollup's view and target table and restart to have it rebuilt;"
+                        + " this discards that rollup's aggregated history");
+                continue;
+            }
+
             final List<String> liveKey = splitKey(live);
             final List<String> wantedKey = allDimensions(rollup).stream().map(Dimension::column).toList();
 
-            if (liveKey.equals(wantedKey)
-                    && liveDimensionNames.getOrDefault(table, Set.of()).containsAll(wantedKey)) {
+            if (liveKey.equals(wantedKey) && liveColumns.containsAll(wantedKey)) {
                 continue;
             }
             if (!isPrefix(liveKey, wantedKey)) {
@@ -400,7 +420,6 @@ public final class FlowsSchema {
             // who hand-adds the column after reading that riptide appends it does, and planning the
             // repair anyway would fail identically on every start and every onboard run forever with
             // nothing saying why. Refusing names the remedy instead.
-            final Set<String> liveColumns = liveDimensionNames.getOrDefault(table, Set.of());
             final List<String> outsideKey = wantedKey.stream()
                     .filter(column -> !liveKey.contains(column))
                     .filter(liveColumns::contains)
@@ -420,11 +439,12 @@ public final class FlowsSchema {
     /**
      * The rollups to repair, and the ones refused with the reason to report.
      *
-     * <p>Only dimensions are considered. A rollup missing a <em>measure</em> is not repairable by
+     * <p>Only dimensions are repaired. A rollup missing a <em>measure</em> is not repairable by
      * this path — {@code ALTER … ADD COLUMN} could add it, but a measure reading {@code 0} for
      * historical rows makes a {@code SUM} spanning the upgrade quietly too small, which is why
-     * measures are out of scope. Including them here would plan a repair that never converges and
-     * log an identical-keys line on every boot forever.</p>
+     * measures are out of scope. Planning them would plan a repair that never converges and log an
+     * identical-keys line on every boot forever. It is <em>refused</em> instead (#654), so the
+     * operator is told the reason and the remedy rather than shown the same drift line forever.</p>
      */
     public record RepairPlan(List<String> repair, Map<String, String> refused) {
     }

@@ -311,9 +311,8 @@ public class ClickhouseRepository implements FlowRepository {
             throw e;
         } catch (final Exception e) {
             // Reports the failure and stops (#654). It used to end "until it is repaired", which no
-            // later start delivers when planRollupRepair is not going to plan one — the case a
-            // target missing a measure reaches, where the CREATE MATERIALIZED VIEW in start() fails
-            // with THERE_IS_NO_COLUMN. It must not assert the query-path consequence either: this
+            // later start delivers when planRollupRepair is not going to plan one. It must not
+            // assert the query-path consequence either: this
             // runs before verifyRollupShapes, whose MATCHES branch clears the rollup again (see
             // aRollupThatVerifiesCleanIsNotDeclinedByAFailedNoOp), so a failed no-op named here can
             // still answer queries. What happens to the query path is that check's line to write.

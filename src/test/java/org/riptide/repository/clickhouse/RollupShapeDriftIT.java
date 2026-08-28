@@ -238,20 +238,26 @@ public class RollupShapeDriftIT {
 
     /** Start as the scoped writer in provisioned mode, capturing what the repository logs. */
     private static List<ILoggingEvent> startWriterAndCapture() {
+        return captureRepositoryLog(() -> new ClickhouseRepository(
+                new ClickhouseRepository$FlowMapperImpl(), config("writer", "pw", false), RESOLVERS).start());
+    }
+
+    /** What {@link ClickhouseRepository} logs while {@code action} runs. Shared with RollupRepairIT. */
+    static List<ILoggingEvent> captureRepositoryLog(final Runnable action) {
         final Logger logger = (Logger) LoggerFactory.getLogger(ClickhouseRepository.class);
         final ListAppender<ILoggingEvent> appender = new ListAppender<>();
         appender.start();
         logger.addAppender(appender);
         try {
-            new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(),
-                    config("writer", "pw", false), RESOLVERS).start();
+            action.run();
             return List.copyOf(appender.list);
         } finally {
             logger.detachAppender(appender);
+            appender.stop();
         }
     }
 
-    private static List<String> messages(final List<ILoggingEvent> events) {
+    static List<String> messages(final List<ILoggingEvent> events) {
         return events.stream().map(ILoggingEvent::getFormattedMessage).toList();
     }
 
@@ -297,20 +303,19 @@ public class RollupShapeDriftIT {
             assertThat(logged).anyMatch(m -> m.contains(rollup) && m.contains("does not match"));
             // The validate-mode half of #654. This fixture's drift is a corrected view aggregate,
             // which planViewRepair puts out of scope, so no start will ever repair it — and the
-            // drift line used to say one would. The manage-mode half, where the repair path runs and
-            // its own failure line reaches the operator first, is covered by
-            // {@code RollupRepairIT#aManageModeStartOnARollupMissingAMeasurePromisesNoRepair}.
+            // drift line used to say one would. The manage-mode half, where the planner runs and
+            // its refusal reaches the operator first, is covered by
+            // {@code RollupRepairIT#aManageModeStartOnARollupMissingAMeasureIsRefusedWithARemedy}.
             assertThat(logged)
                     .as("the drift line still reports the fallback")
                     .anyMatch(m -> m.contains(rollup) && m.contains("fall back to raw flows"));
             // Matched as a claim, not as one spelling: the defect was prose, and prose gets
-            // reworded. "until repaired", "will be repaired" and "pending repair is deferred" are
-            // the same promise this line must not make.
+            // reworded. The phrasings are RollupRepairIT's, so the two ITs cannot drift apart.
             assertThat(logged)
-                    .as("no line may promise a repair, in any wording: this line cannot know whether"
-                            + " one is coming, and for this fixture's drift none ever is")
-                    .noneMatch(m -> m.matches("(?is).*(until .{0,40}repair|will be repaired"
-                            + "|repair is deferred|repairs itself).*"));
+                    .as("no line may promise a repair in the phrasings PROMISES_A_REPAIR pins: this"
+                            + " line cannot know whether one is coming, and for this fixture's drift"
+                            + " none ever is")
+                    .noneMatch(m -> RollupRepairIT.PROMISES_A_REPAIR.matcher(m).find());
             assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, rollup))).isFalse();
             assertThat(QueryRouter.resolveTopTalkersTable(DATABASE, 120, "application"))
                     .isEqualTo(FlowsSchema.qualifiedFlows(DATABASE));
