@@ -6,9 +6,10 @@
 package org.riptide.repository.clickhouse;
 
 import com.clickhouse.client.api.Client;
-import com.google.common.base.Throwables;
+import com.clickhouse.client.api.ConnectionInitiationException;
 import com.clickhouse.client.api.ServerException;
 import com.codahale.metrics.MetricRegistry;
+import com.google.common.base.Throwables;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -24,7 +25,10 @@ import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.io.IOException;
 import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -33,6 +37,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.assertj.core.api.Assertions.catchThrowable;
 
@@ -531,42 +536,42 @@ public class ClickhouseRepositoryIT {
     private static final int POISON_POSITION = 5;
     private static final int BATCH_SIZE = 6;
 
-    private static ClickhouseRepository poisonRepository;
-    private static Client poisonQueryClient;
-
-    private static ClickhouseConfig poisonConfig(final String endpoint) {
-        final var config = new ClickhouseConfig();
-        config.setEndpoint(endpoint);
-        config.setDatabase(POISON_DB);
-        config.setUsername(SecretRef.of("riptide"));
-        config.setPassword(SecretRef.of("riptide"));
-        config.setAsyncInserts(false);
-        return config;
+    /** A started repository against {@link #POISON_DB} and a client to count its rows with. */
+    private record PoisonProbe(ClickhouseRepository repository, Client client) implements AutoCloseable {
+        @Override
+        public void close() {
+            this.client.close();
+        }
     }
 
-    private static void provisionPoisonProbe() throws Exception {
-        final String endpoint = "http://" + CLICKHOUSE.getHost() + ":" + CLICKHOUSE.getMappedPort(8123);
-        poisonRepository = new ClickhouseRepository(
-                new ClickhouseRepository$FlowMapperImpl(), poisonConfig(endpoint), RESOLVERS);
-        poisonRepository.start();
-        poisonQueryClient = new Client.Builder().addEndpoint(endpoint)
+    private static PoisonProbe provisionPoisonProbe() throws Exception {
+        final var repository = new ClickhouseRepository(
+                new ClickhouseRepository$FlowMapperImpl(), configFor(POISON_DB, true), RESOLVERS);
+        repository.start();
+        final var client = new Client.Builder().addEndpoint(configFor(POISON_DB, true).getEndpoint())
                 .setUsername("riptide").setPassword("riptide").setDefaultDatabase(POISON_DB).build();
-        poisonQueryClient.execute("ALTER TABLE " + FlowsSchema.qualifiedFlows(POISON_DB)
+        client.execute("ALTER TABLE " + FlowsSchema.qualifiedFlows(POISON_DB)
                 + " ADD CONSTRAINT probe_tenant CHECK tenant = '" + GOOD_TENANT + "'").get();
+        return new PoisonProbe(repository, client);
     }
 
     /** Rows currently in the probe's base table and in every rollup target, keyed by table. */
-    private static Map<String, Long> poisonRowCounts() throws Exception {
-        final Map<String, Long> counts = new LinkedHashMap<>();
+    private static Map<String, Long> poisonRowCounts(final Client client) throws Exception {
+        // Named, not read back from the schema: a list sized against itself can only agree with
+        // itself, and a rollup dropped from the schema would then drop out of "nothing landed
+        // anywhere" without a word.
+        Assertions.assertThat(FlowsSchema.rollupTableNames())
+                .as("the probe must count the base table AND every rollup, or 'nothing landed' is a"
+                        + " statement about one table while the others go unchecked")
+                .containsExactlyInAnyOrder(FlowsSchema.ROLLUP_BY_APPLICATION,
+                        FlowsSchema.ROLLUP_BY_CONVERSATION, FlowsSchema.ROLLUP_BY_EXPORTER_IFACE,
+                        FlowsSchema.ROLLUP_BY_GEO_ASN);
         final List<String> tables = new ArrayList<>();
         tables.add(FlowsSchema.qualifiedFlows(POISON_DB));
         FlowsSchema.rollupTableNames().forEach(r -> tables.add(FlowsSchema.qualifiedRollup(POISON_DB, r)));
-        Assertions.assertThat(tables)
-                .as("the probe must count the base table AND every rollup, or 'nothing landed' is a"
-                        + " statement about one table while four others go unchecked")
-                .hasSize(1 + FlowsSchema.rollupTableNames().size());
+        final Map<String, Long> counts = new LinkedHashMap<>();
         for (final String table : tables) {
-            try (var rows = poisonQueryClient.queryRecords("SELECT count() AS c FROM " + table).get()) {
+            try (var rows = client.queryRecords("SELECT count() AS c FROM " + table).get()) {
                 for (final var row : rows) {
                     counts.put(table, row.getLong("c"));
                 }
@@ -603,76 +608,145 @@ public class ClickhouseRepositoryIT {
      */
     @Test
     void aRejectedRowTakesTheWholeBatchWithItAndSaysWhichRowItWas() throws Exception {
-        provisionPoisonProbe();
+        try (var probe = provisionPoisonProbe()) {
+            // A clean batch first: if the constraint refused everything, every "nothing landed"
+            // assertion below would pass while proving nothing at all. Counted as a delta, because
+            // the transport probe shares this database and may have landed its own row first.
+            final long before = poisonRowCounts(probe.client()).get(FlowsSchema.qualifiedFlows(POISON_DB));
+            probe.repository().persist(List.of(ClickhouseItFlows.flow(GOOD_TENANT, "org", 19999)));
+            final Map<String, Long> afterHealthy = poisonRowCounts(probe.client());
+            Assertions.assertThat(afterHealthy.get(FlowsSchema.qualifiedFlows(POISON_DB)))
+                    .as("a healthy row must land, or the fixture rejects everything and asserts nothing")
+                    .isEqualTo(before + 1);
 
-        // A clean batch first: if the constraint refused everything, every "nothing landed"
-        // assertion below would pass while proving nothing at all.
-        poisonRepository.persist(List.of(ClickhouseItFlows.flow(GOOD_TENANT, "org", 19999)));
-        final Map<String, Long> afterHealthy = poisonRowCounts();
-        Assertions.assertThat(afterHealthy.get(FlowsSchema.qualifiedFlows(POISON_DB)))
-                .as("a healthy row must land, or the fixture rejects everything and asserts nothing")
-                .isEqualTo(1L);
+            final Throwable refusal = catchThrowable(
+                    () -> probe.repository().persist(batchWithPoisonAt(POISON_POSITION)));
 
-        final Throwable refusal = catchThrowable(
-                () -> poisonRepository.persist(batchWithPoisonAt(POISON_POSITION)));
+            Assertions.assertThat(refusal)
+                    .as("a batch carrying a constraint-violating row must be refused, not silently kept")
+                    .isNotNull();
+            final ServerException server = serverExceptionIn(refusal);
+            Assertions.assertThat(server)
+                    .as("the refusal must carry a ServerException, or no error code is readable and this"
+                            + " probe settles nothing: %s", refusal)
+                    .isNotNull();
 
-        Assertions.assertThat(refusal)
-                .as("a batch carrying a constraint-violating row must be refused, not silently kept")
-                .isNotNull();
-        final ServerException server = serverExceptionIn(refusal);
-        Assertions.assertThat(server)
-                .as("the refusal must carry a ServerException, or no error code is readable and this"
-                        + " probe settles nothing: %s", refusal)
-                .isNotNull();
+            // PQ-5: atomic across the base table and every rollup behind it.
+            Assertions.assertThat(poisonRowCounts(probe.client()))
+                    .as("PQ-5 [#548] on ClickHouse %s: a refused batch must leave no row anywhere, or a"
+                            + " bisect could re-insert a half that partly landed and double-count",
+                            serverVersionOf(probe.client()))
+                    .isEqualTo(afterHealthy);
 
-        // PQ-5: atomic across the base table and every rollup behind it.
-        Assertions.assertThat(poisonRowCounts())
-                .as("PQ-5 [#548] on ClickHouse %s: a refused batch must leave no row anywhere, or a"
-                        + " bisect could re-insert a half that partly landed and double-count",
-                        serverVersionOf(poisonQueryClient))
-                .isEqualTo(afterHealthy);
+            // PQ-6, half one: the code a rejected row answers.
+            Assertions.assertThat(server.getCode())
+                    .as("PQ-6 [#548]: rejected-row code on ClickHouse %s is %d",
+                            serverVersionOf(probe.client()), server.getCode())
+                    .isEqualTo(REJECTED_ROW_CODE);
 
-        // PQ-6, half one: the code a rejected row answers.
-        Assertions.assertThat(server.getCode())
-                .as("PQ-6 [#548]: rejected-row code on ClickHouse %s is %d",
-                        serverVersionOf(poisonQueryClient), server.getCode())
-                .isEqualTo(REJECTED_ROW_CODE);
-
-        // The offending row is named, so #548 may need neither a bisect nor a dead-letter.
-        Assertions.assertThat(server.getMessage())
-                .as("the refusal names which row offended, at the position the batch put it")
-                .contains("violated at row " + POISON_POSITION);
+            // The offending row is named, so #548 may need neither a bisect nor a dead-letter.
+            Assertions.assertThat(server.getMessage())
+                    .as("the refusal names which row offended, at the position the batch put it")
+                    .contains("violated at row " + POISON_POSITION);
+        }
     }
 
     /**
-     * A refused connection answers a different code from a refused row, so #548 can branch (#548).
+     * A TCP relay in front of the container, so a started repository can lose its transport
+     * without the shared container being paused or stopped under every other test in this class.
+     *
+     * <p>Closing it refuses new connections and resets the ones already relayed, which is the
+     * shape of a ClickHouse that went away mid-run. A paused container would measure the same
+     * thing, but only after the client's socket timeout, multiplied by its retry count.</p>
+     */
+    private static final class Relay implements AutoCloseable {
+        private final ServerSocket listener;
+        private final List<Socket> sockets = new CopyOnWriteArrayList<>();
+
+        Relay(final String targetHost, final int targetPort) throws IOException {
+            this.listener = new ServerSocket(0);
+            Thread.ofVirtual().start(() -> {
+                while (!this.listener.isClosed()) {
+                    try {
+                        final Socket inbound = this.listener.accept();
+                        final Socket outbound = new Socket(targetHost, targetPort);
+                        this.sockets.add(inbound);
+                        this.sockets.add(outbound);
+                        pump(inbound, outbound);
+                        pump(outbound, inbound);
+                    } catch (final IOException closed) {
+                        return;
+                    }
+                }
+            });
+        }
+
+        private static void pump(final Socket from, final Socket to) {
+            Thread.ofVirtual().start(() -> {
+                try {
+                    from.getInputStream().transferTo(to.getOutputStream());
+                } catch (final IOException ignored) {
+                    // The relay was closed under it; nothing to forward any more.
+                }
+            });
+        }
+
+        String endpoint() {
+            return "http://127.0.0.1:" + this.listener.getLocalPort();
+        }
+
+        @Override
+        public void close() throws IOException {
+            this.listener.close();
+            for (final Socket socket : this.sockets) {
+                socket.close();
+            }
+        }
+    }
+
+    /**
+     * A lost transport answers a different failure from a refused row, so #548 can branch (#548).
      *
      * <p>The half that matters: if the two were equal, quarantining a poison row would quarantine a
      * network blip too, and the 10,000 rows it carried would be discarded rather than retried.</p>
+     *
+     * <p>Measured on {@code persist}, the call {@code BatchingFlowRepository.flush} branches on, from
+     * a repository that started healthy: a refused connect at bootstrap is a different path and may
+     * surface a different exception.</p>
      */
     @Test
-    void aTransientFailureIsDistinguishableFromARejectedRow() {
-        final var unreachable = new ClickhouseConfig();
-        // A port nothing listens on: the transport fails before any row is examined.
-        unreachable.setEndpoint("http://127.0.0.1:1");
-        unreachable.setDatabase(POISON_DB);
-        unreachable.setUsername(SecretRef.of("riptide"));
-        unreachable.setPassword(SecretRef.of("riptide"));
-        unreachable.setAsyncInserts(false);
+    void aTransientFailureIsDistinguishableFromARejectedRow() throws Exception {
+        final Throwable transientFailure;
+        try (var relay = new Relay(CLICKHOUSE.getHost(), CLICKHOUSE.getMappedPort(8123))) {
+            final var config = configFor(POISON_DB, true);
+            config.setEndpoint(relay.endpoint());
+            final var repository = new ClickhouseRepository(
+                    new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
+            repository.start();
+            // Through the relay first, so the failure below is the relay closing and not a relay
+            // that never worked.
+            repository.persist(List.of(ClickhouseItFlows.flow(GOOD_TENANT, "org", 19998)));
 
-        final Throwable transientFailure = catchThrowable(() ->
-                new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), unreachable, RESOLVERS)
-                        .start());
+            relay.close();
+            transientFailure = catchThrowable(() ->
+                    repository.persist(List.of(ClickhouseItFlows.flow(GOOD_TENANT, "org", 19997))));
+        }
 
         Assertions.assertThat(transientFailure)
-                .as("an endpoint nothing listens on must fail, or this test compares nothing")
+                .as("a repository whose server went away must fail, or this test compares nothing")
                 .isNotNull();
-        final ServerException server = serverExceptionIn(transientFailure);
-        Assertions.assertThat(server == null || server.getCode() != REJECTED_ROW_CODE)
-                .as("PQ-6 [#548]: a transport failure must not answer the rejected-row code %d, or"
-                        + " no retry-versus-quarantine branch can be written: %s",
+        Assertions.assertThat(serverExceptionIn(transientFailure))
+                .as("PQ-6 [#548]: a lost transport must not surface as a ServerException, or the"
+                        + " rejected-row code %d is not the only thing a branch could key on: %s",
                         REJECTED_ROW_CODE, transientFailure)
-                .isTrue();
+                .isNull();
+        // Observed: the client's ConnectionInitiationException is the top of the chain, not a
+        // cause under FlowException. It is unchecked, so persist's ExecutionException wrap never
+        // sees it; a branch in BatchingFlowRepository.flush has to catch it separately.
+        Assertions.assertThat(Throwables.getCausalChain(transientFailure))
+                .as("PQ-6 [#548]: a lost transport surfaces the client's transport exception, which"
+                        + " is what a retry-versus-quarantine branch keys on: %s", transientFailure)
+                .hasAtLeastOneElementOfType(ConnectionInitiationException.class);
     }
 
     /**
