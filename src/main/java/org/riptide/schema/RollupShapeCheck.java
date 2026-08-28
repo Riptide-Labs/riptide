@@ -200,10 +200,14 @@ public final class RollupShapeCheck {
             // rollups, correct data — to a raw-flows fallback truncated at raw retention.
             //
             // The two states ARE separable, just not from system.tables: a trivial query against
-            // the view answers UNKNOWN_TABLE when it is absent and ACCESS_DENIED when it is merely
-            // ungranted. Doing that costs a round trip per rollup per start and is worth it only if
-            // the empty-rollup case shows up in practice; until then this stays conservative and
-            // says both possibilities in the message.
+            // the view answers UNKNOWN_TABLE (60) when it is absent and ACCESS_DENIED (497) when it
+            // is merely ungranted. Measured, not assumed — AbsentVersusUngrantedViewIT asks a real
+            // server both halves and pins both codes. What that buys is narrower than it sounds:
+            // *IT classes run only under the `e2e` Maven profile, so a server version that stopped
+            // separating them turns the e2e job red (`make e2e`) and leaves `make jar` and a plain
+            // `mvn verify` green. Acting on it costs a round trip per rollup per start and is worth
+            // it only if the empty-rollup case shows up in practice; until then this stays
+            // conservative and says both possibilities in the message.
             return new Result(rollup, Status.UNVERIFIABLE,
                     "materialized view " + mv + " is not visible to the connecting user — it is"
                             + " absent, or the user holds no grant on it. Re-run 'riptide onboard'"
