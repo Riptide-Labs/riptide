@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.riptide.mcp.service.QueryRouter;
 
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -520,7 +521,7 @@ class FlowsSchemaTest {
         final String live = "tenant, organisation, timestamp, zone, srcAsn";
 
         final var plan = FlowsSchema.planRollupRepair(
-                Map.of(rollup, live), Map.of(rollup, Set.of(live.split(", "))));
+                Map.of(rollup, live), Map.of(rollup, liveColumns(rollup, live)));
 
         assertThat(plan.repair()).isEmpty();
         assertThat(plan.refused()).containsKey(rollup);
@@ -534,7 +535,7 @@ class FlowsSchemaTest {
         final String live = "tenant, organisation, timestamp, zone, application";
 
         final var plan = FlowsSchema.planRollupRepair(
-                Map.of(rollup, live), Map.of(rollup, Set.of(live.split(", "))));
+                Map.of(rollup, live), Map.of(rollup, liveColumns(rollup, live)));
 
         assertThat(plan.repair()).containsExactly(rollup);
         assertThat(plan.refused()).isEmpty();
@@ -547,7 +548,7 @@ class FlowsSchemaTest {
         final String live = FlowsSchema.rollupSortKeys().get(rollup) + ", srcCity";
 
         final var plan = FlowsSchema.planRollupRepair(
-                Map.of(rollup, live), Map.of(rollup, Set.of(live.split(", "))));
+                Map.of(rollup, live), Map.of(rollup, liveColumns(rollup, live)));
 
         assertThat(plan.repair()).isEmpty();
         assertThat(plan.refused()).containsKey(rollup);
@@ -569,11 +570,59 @@ class FlowsSchemaTest {
                 .isEmpty();
     }
 
+    /**
+     * A missing measure is refused with the reason and the remedy (#654), never planned: the only
+     * remedy is a rebuild, and the drift line alone cannot tell an operator that.
+     */
+    @Test
+    void aRollupMissingAMeasureIsRefusedWithTheRebuildRemedy() {
+        final String rollup = FlowsSchema.ROLLUP_BY_APPLICATION;
+        final String live = FlowsSchema.rollupSortKeys().get(rollup);
+        final Set<String> columns = new HashSet<>(liveColumns(rollup, live));
+        columns.remove("packetsOut");
+
+        final var plan = FlowsSchema.planRollupRepair(Map.of(rollup, live), Map.of(rollup, columns));
+
+        assertThat(plan.repair()).isEmpty();
+        assertThat(plan.refused().get(rollup))
+                .as("the refusal names the column, the reason and the remedy")
+                .contains("packetsOut")
+                .contains("cannot be added in place")
+                .contains("Drop the rollup's view and target table");
+    }
+
+    /**
+     * The live columns of a target whose sorting key is {@code liveKey}: those dimensions plus
+     * every measure, which is what a real target carries and what {@code planRollupRepair} reads.
+     */
+    private static Set<String> liveColumns(final String rollup, final String liveKey) {
+        final Set<String> dimensions = Set.of(FlowsSchema.rollupSortKeys().get(rollup).split(", "));
+        final Set<String> columns = new HashSet<>(Set.of(liveKey.split(", ")));
+        FlowsSchema.rollupColumns().get(rollup).keySet().stream()
+                .filter(column -> !dimensions.contains(column))
+                .forEach(columns::add);
+        return columns;
+    }
+
     /** A rollup the connecting user cannot see is left alone, not guessed at. */
     @Test
     void anInvisibleRollupIsNotPlanned() {
         assertThat(FlowsSchema.planRollupRepair(Map.of(), Map.of()).repair()).isEmpty();
         assertThat(FlowsSchema.planRollupRepair(Map.of(), Map.of()).refused()).isEmpty();
+    }
+
+    /**
+     * A sorting key with no column row behind it is a partial catalog, not an empty target: it is
+     * left alone rather than refused for lacking every measure.
+     */
+    @Test
+    void aRollupWithoutAColumnRowIsNeitherRepairedNorRefused() {
+        final String rollup = FlowsSchema.ROLLUP_BY_APPLICATION;
+        final var plan = FlowsSchema.planRollupRepair(
+                Map.of(rollup, FlowsSchema.rollupSortKeys().get(rollup)), Map.of());
+
+        assertThat(plan.repair()).isEmpty();
+        assertThat(plan.refused()).isEmpty();
     }
 
     /**

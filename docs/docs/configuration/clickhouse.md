@@ -143,7 +143,7 @@ Then **restart the collector**. The decision about which rollups are usable is m
 startup — a schema does not change under a running collector — so a collector that declined
 them keeps answering from raw `flows` until it is restarted, however complete the repair was.
 
-Manage-mode deployments repair themselves on the next start and need nothing.
+Manage-mode deployments repair an added dimension themselves on the next start and need nothing for it. A rollup missing a measure is not repaired in either mode; see *What riptide will not do in place* below.
 :::
 
 :::warning[Rolling back to an earlier version is not supported]
@@ -169,11 +169,11 @@ Repair runs in manage mode at startup, and in `riptide onboard` for provisioned 
 
 - **Shrink a sorting key.** A dimension removed from a release is not removed from your table. The grain would change and existing rows would not be re-aggregated, so riptide reports it and leaves the rollup alone.
 - **Repair a corrected aggregate.** If a release changes how a measure is computed, the rollup is [declined at query time](#rollup-shape-checks-at-startup) rather than repaired. Repairing would readmit rows computed the old way with nothing to distinguish them, which is worse than answering from raw `flows`.
-- **Add a measure.** A measure reading `0` for historical rows makes a `SUM` spanning the upgrade quietly too small, with nothing in the data marking where. Dimensions have a boundary; measures do not.
+- **Add a measure.** A measure reading `0` for historical rows makes a `SUM` spanning the upgrade quietly too small, with nothing in the data marking where. Dimensions have a boundary; measures do not. In manage mode and in `onboard`, riptide refuses the rollup and logs `Rollup X left as it is: measure [...] is missing`, naming the remedy. A validate-mode collector never plans repairs, so there it only reports the shape drift and declines the rollup. The remedy discards that rollup's aggregated history: drop the rollup's view and target table, then restart a manage-mode collector, or re-run `riptide onboard` for a provisioned deployment and restart the collector after it.
 
 ### Rollup shape checks at startup
 
-Riptide compares every rollup against the shape the running version intends, in both schema modes, and reports what it finds. It changes nothing: there is no automatic repair, no `ALTER`, no `DROP`.
+Riptide compares every rollup against the shape the running version intends, in both schema modes, and reports what it finds. The check itself changes nothing. The in-place repair described above is a separate step that runs before it, in manage mode and in `onboard` only.
 
 The check exists because `CREATE MATERIALIZED VIEW IF NOT EXISTS` does nothing against a view that already exists. A deployment that has started riptide once keeps its original rollup shape indefinitely, so a rollup gaining a dimension or a measure in a new release reaches a fresh install and not an upgraded one. Previously nothing failed and nothing logged.
 

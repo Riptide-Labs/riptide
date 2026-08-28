@@ -26,6 +26,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -292,6 +294,91 @@ public class RollupRepairIT {
         // sorting key is the only thing wrong: exactly the state the refusal exists for.
         admin.execute("CREATE MATERIALIZED VIEW " + view + " TO " + target + " AS "
                 + FlowsSchema.rollupSelects(DATABASE).get(ROLLUP)).get();
+    }
+
+    /**
+     * A rollup missing a measure is refused with a reason and a remedy, not repaired and not
+     * left to fail (#654).
+     *
+     * <p>The rebuild is the only remedy: a measure added in place reads {@code 0} for every row
+     * aggregated before the upgrade. Before #654 the planner skipped the rollup instead of refusing
+     * it, so {@code planViewCreation} still included it and the {@code CREATE MATERIALIZED VIEW IF
+     * NOT EXISTS} failed with {@code THERE_IS_NO_COLUMN} on every start, ending "until it is
+     * repaired". Now the planner's own "left as it is" line is the operator's first word, the
+     * CREATE is not attempted, and nothing promises a repair.</p>
+     *
+     * <p>{@code RollupShapeDriftIT} covers the drift line in validate mode, where the planner never
+     * runs. Both are needed: that one cannot reach the planner at all, and this one is the only
+     * place the refusal is emitted.</p>
+     */
+    @Test
+    void aManageModeStartOnARollupMissingAMeasureIsRefusedWithARemedy() throws Exception {
+        createRollupMissingAMeasure();
+
+        final List<String> logged = RollupShapeDriftIT.messages(
+                RollupShapeDriftIT.captureRepositoryLog(() -> repository().start()));
+
+        assertThat(logged)
+                .as("the refusal names the rollup, the missing measure, the reason and the remedy")
+                .anyMatch(m -> m.contains("Rollup " + ROLLUP + " left as it is")
+                        && m.contains("packetsOut")
+                        && m.contains("cannot be added in place")
+                        && m.contains("Drop the rollup's view and target table"));
+        assertThat(logged)
+                .as("the view's CREATE is not attempted against a target it would fail on")
+                .noneMatch(m -> m.contains("THERE_IS_NO_COLUMN"));
+        // Checked on riptide's own lines only. Server text is echoed into the failure lines, and
+        // this database is literally named "repair", so a loose match over every line could trip
+        // on a DDL echo rather than on a promise.
+        assertThat(logged.stream().filter(m -> m.startsWith("Rollup ")).toList())
+                .as("no line may tell the operator a repair is coming, in the phrasings pinned by"
+                        + " PROMISES_A_REPAIR")
+                .noneMatch(m -> PROMISES_A_REPAIR.matcher(m).find());
+        assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, ROLLUP)))
+                .as("and the rollup this message is about is genuinely out of the query path")
+                .isFalse();
+    }
+
+    /**
+     * Wordings that tell an operator a repair is on its way.
+     *
+     * <p>Matched as a claim rather than as one sentence, because the defect #654 fixed was prose and
+     * prose gets reworded. Pinned phrasings, not "any wording": "until (it is) repaired", "will be
+     * repaired", "repair is deferred", "repairs itself", "repaired on the next start". Shared with
+     * {@code RollupShapeDriftIT} so the two cannot drift apart.</p>
+     */
+    static final Pattern PROMISES_A_REPAIR = Pattern.compile(
+            "until (it is |it has been )?repaired|will be repaired|repair is deferred"
+                    + "|repairs (itself|themselves)|repaired on the next start",
+            Pattern.CASE_INSENSITIVE);
+
+    /** A rollup target one measure short, with a view to match — the shape an upgrade leaves behind. */
+    private static void createRollupMissingAMeasure() throws Exception {
+        final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
+        final String view = FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP);
+        admin.execute("DROP VIEW IF EXISTS " + view).get();
+        admin.execute("DROP TABLE IF EXISTS " + target).get();
+        final String dropped = "packetsOut";
+        final String columns = FlowsSchema.rollupColumns().get(ROLLUP).entrySet().stream()
+                .filter(column -> !dropped.equals(column.getKey()))
+                .map(column -> column.getKey() + " " + column.getValue())
+                .collect(Collectors.joining(", "));
+        final String key = FlowsSchema.rollupSortKeys().get(ROLLUP);
+        admin.execute("CREATE TABLE " + target + " (" + columns + ")"
+                + " ENGINE = SummingMergeTree() PRIMARY KEY (" + key + ") ORDER BY (" + key + ")"
+                + " PARTITION BY toYYYYMM(timestamp)").get();
+        // The view as the older version wrote it, so it creates cleanly here. The measure's own
+        // expression contains a comma, so the whole projection is removed as one literal, with its
+        // leading separator; the guards below catch a reformatted SELECT.
+        final String full = FlowsSchema.rollupSelects(DATABASE).get(ROLLUP);
+        final String shortened = full.replace(
+                ",\n    sumIf(f.packets, f.direction = 'EGRESS') AS " + dropped, "");
+        assertThat(shortened)
+                .as("the %s projection must be found and removed, or the fixture builds the full"
+                        + " view and the assertions above pass for the wrong reason", dropped)
+                .isNotEqualTo(full)
+                .doesNotContain(dropped);
+        admin.execute("CREATE MATERIALIZED VIEW " + view + " TO " + target + " AS " + shortened).get();
     }
 
     /** A rollup as a pre-v0.11 riptide would have left it: three dimensions short, view to match. */
