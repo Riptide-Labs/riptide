@@ -43,8 +43,9 @@ public final class RollupShapeCheck {
         /**
          * The target table itself could not be seen, so a query routed there would fail outright —
          * with {@code UNKNOWN_TABLE} if it is absent, {@code ACCESS_DENIED} if it is merely
-         * ungranted. Distinct from {@link #UNVERIFIABLE}: this rollup is not unknown, it is
-         * unusable.
+         * ungranted. Those codes are measured for the view by {@code RollupShapeDriftIT}, not yet
+         * for the target table. Distinct from {@link #UNVERIFIABLE}: this rollup is not unknown,
+         * it is unusable.
          */
         UNREACHABLE,
         /** Could not be determined — see {@link Result#detail()}. Not evidence of drift. */
@@ -116,7 +117,8 @@ public final class RollupShapeCheck {
         final Map<String, String> live = liveColumns.get(rollup);
         if (live == null) {
             // Not merely unknown: a query routed here would fail with UNKNOWN_TABLE or
-            // ACCESS_DENIED, so the query path must avoid it and answer from raw flows instead.
+            // ACCESS_DENIED (measured for the view by RollupShapeDriftIT, not yet for the target
+            // table), so the query path must avoid it and answer from raw flows instead.
             return new Result(rollup, Status.UNREACHABLE,
                     "target table is not visible to the connecting user — it is absent, or the user "
                             + "holds no grant on it. Queries will use raw flows instead");
@@ -200,10 +202,17 @@ public final class RollupShapeCheck {
             // rollups, correct data — to a raw-flows fallback truncated at raw retention.
             //
             // The two states ARE separable, just not from system.tables: a trivial query against
-            // the view answers UNKNOWN_TABLE when it is absent and ACCESS_DENIED when it is merely
-            // ungranted. Doing that costs a round trip per rollup per start and is worth it only if
-            // the empty-rollup case shows up in practice; until then this stays conservative and
-            // says both possibilities in the message.
+            // the view answers UNKNOWN_TABLE (60) when the view is absent from a present database,
+            // UNKNOWN_DATABASE (81) when the database itself is absent, and ACCESS_DENIED (497)
+            // when the view is merely ungranted. Measured, not assumed — the #587 probe tests in
+            // RollupShapeDriftIT ask a real server all three and pin the codes; a branch on 60
+            // alone would fall through the dropped-tenant case. What that buys is narrower than
+            // it sounds:
+            // *IT classes run only under the `e2e` Maven profile, so a server version that stopped
+            // separating them turns the e2e job red (`make e2e`) and leaves `make jar` and a plain
+            // `mvn verify` green. Acting on it costs a round trip per rollup per start and is worth
+            // it only if the empty-rollup case shows up in practice; until then this stays
+            // conservative and says both possibilities in the message.
             return new Result(rollup, Status.UNVERIFIABLE,
                     "materialized view " + mv + " is not visible to the connecting user — it is"
                             + " absent, or the user holds no grant on it. Re-run 'riptide onboard'"
