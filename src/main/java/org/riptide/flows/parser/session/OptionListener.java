@@ -96,11 +96,14 @@ public interface OptionListener {
                 verdict = verdict.or(target.accept(identity, scopes, values));
             }
             offered.mark();
-            switch (verdict) {
-                case CLAIMED -> claimed.mark();
-                case RECOGNISED_BUT_UNUSABLE -> unusable.mark();
-                case UNRECOGNISED -> unrecognised.mark();
-            }
+            // A switch expression, so a fourth Verdict fails to compile here rather than being
+            // counted in `offered` alone.
+            final Meter outcome = switch (verdict) {
+                case CLAIMED -> claimed;
+                case RECOGNISED_BUT_UNUSABLE -> unusable;
+                case UNRECOGNISED -> unrecognised;
+            };
+            outcome.mark();
             return verdict;
         };
     }

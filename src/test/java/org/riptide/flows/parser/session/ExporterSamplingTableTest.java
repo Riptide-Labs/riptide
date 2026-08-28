@@ -270,4 +270,66 @@ class ExporterSamplingTableTest {
                 List.of(new UnsignedValue("INPUT_SNMP", 7))))
                 .isEqualTo(OptionListener.Verdict.UNRECOGNISED);
     }
+
+    /**
+     * The Selector Report verdicts, pinned one by one.
+     *
+     * <p>{@code IpfixSelectorReportTest} drives every one of these branches through real packets
+     * but installs the table directly, so it observes flow provenance and never the verdict. Each
+     * return below could be flipped to {@code UNRECOGNISED} with that suite green.</p>
+     */
+    @Test
+    void aSelectorReportComputingARealRateIsClaimed() throws Exception {
+        assertThat(this.table.accept(exporter("192.0.2.1", 0),
+                List.of(new UnsignedValue("selectorId", 4)),
+                List.of(new UnsignedValue("selectorAlgorithm", 1),
+                        new UnsignedValue("samplingPacketInterval", 1),
+                        new UnsignedValue("samplingPacketSpace", 99))))
+                .isEqualTo(OptionListener.Verdict.CLAIMED);
+    }
+
+    @Test
+    void aSelectorScopedRecordStatingAUsableRateIsClaimed() throws Exception {
+        assertThat(this.table.accept(exporter("192.0.2.1", 0),
+                List.of(new UnsignedValue("selectorId", 4)),
+                samplerRecord(1000)))
+                .isEqualTo(OptionListener.Verdict.CLAIMED);
+    }
+
+    /** A Selector reconfigured to filtering: read, and served nothing from (#596). */
+    @Test
+    void aSelectorReportNamingANonRatioAlgorithmIsRecognisedButUnusable() throws Exception {
+        assertThat(this.table.accept(exporter("192.0.2.1", 0),
+                List.of(new UnsignedValue("selectorId", 4)),
+                List.of(new UnsignedValue("selectorAlgorithm", 6),
+                        new UnsignedValue("hashOutputRangeMin", 0),
+                        new UnsignedValue("hashOutputRangeMax", 1))))
+                .isEqualTo(OptionListener.Verdict.RECOGNISED_BUT_UNUSABLE);
+    }
+
+    /**
+     * A selectorId-scoped record stating an interval of 0 names no algorithm, but it does name a
+     * field this table reads. Filing it as unrecognised would hide a withdrawal among the VRF tables.
+     */
+    @Test
+    void aSelectorScopedRecordStatingAnUnusableRateIsRecognisedButUnusable() throws Exception {
+        assertThat(this.table.accept(exporter("192.0.2.1", 0),
+                List.of(new UnsignedValue("selectorId", 4)),
+                samplerRecord(0)))
+                .isEqualTo(OptionListener.Verdict.RECOGNISED_BUT_UNUSABLE);
+    }
+
+    /**
+     * An advertisement naming a sampling algorithm and omitting its parameters: understood, dropped.
+     *
+     * <p>The sibling of {@link #aFilteringAlgorithmIsRecognisedButUnusable}, on the other side of
+     * the same {@code if}. {@code IpfixSelectorReportTest.anIncompletelyStatedAdvertisementTeachesNothing}
+     * reaches the branch but observes only that the earlier rate survives.</p>
+     */
+    @Test
+    void anIncompletelyStatedAdvertisementIsRecognisedButUnusable() throws Exception {
+        assertThat(this.table.accept(exporter("192.0.2.1", 0), List.of(),
+                List.of(new UnsignedValue("selectorAlgorithm", 1))))
+                .isEqualTo(OptionListener.Verdict.RECOGNISED_BUT_UNUSABLE);
+    }
 }

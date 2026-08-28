@@ -111,7 +111,7 @@ public class ExporterInterfaceTable implements OptionListener {
     }
 
     @Override
-    public OptionListener.Verdict accept(final ExporterIdentity identity,
+    public Verdict accept(final ExporterIdentity identity,
             final Collection<Value<?>> scopes, final List<Value<?>> values) {
         final String name = string(values, NAME_FIELDS);
         final String description = string(values, DESCRIPTION_FIELDS);

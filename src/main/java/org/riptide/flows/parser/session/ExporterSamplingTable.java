@@ -271,8 +271,8 @@ public class ExporterSamplingTable implements OptionListener {
      * <p>Two questions, deliberately not one field (#599). They disagree on a rate of exactly
      * {@code 1}, which is stored — so {@link Verdict#CLAIMED} — while still leaving the record's
      * selector parameters worth reading. Collapsing them makes an explicit 1 veto a real ratio
-     * stated alongside it, which {@code IpfixSelectorReportTest
-     * .anExplicitOneDoesNotVetoParametersStatingARealRatio} catches.</p>
+     * stated alongside it, which
+     * {@code IpfixSelectorReportTest.anExplicitOneDoesNotVetoParametersStatingARealRatio} catches.</p>
      */
     private record SamplerOutcome(Verdict verdict, boolean statesARateAboveOne) { }
 
@@ -396,6 +396,13 @@ public class ExporterSamplingTable implements OptionListener {
             return Verdict.CLAIMED;
         }
         if (algorithm == null) {
+            if (stated != null) {
+                // A selectorId-scoped record stating an interval this table cannot use (0, or not
+                // finite): read and served nothing from, which is the fact the meter reports. Whether
+                // it should also withdraw the Selector's entry is a separate question, not settled here.
+                this.selectorsSkipped.mark();
+                return Verdict.RECOGNISED_BUT_UNUSABLE;
+            }
             // Scoped by selectorId but neither a Selector Report nor a rate: some other per-Selector
             // options record. Ignored, exactly as `acceptSamplerOptions` ignores an options record
             // that is not about sampling. Absence is not a withdrawal — only a Selector Report that
