@@ -245,55 +245,53 @@ public class ExporterSamplingTable implements OptionListener {
      * which (#598).</p>
      */
     @Override
-    public boolean accept(final ExporterIdentity identity, final Collection<Value<?>> scopes,
+    public Verdict accept(final ExporterIdentity identity, final Collection<Value<?>> scopes,
             final List<Value<?>> values) {
         final UnsignedLong selectorId = exact(scopes, "selectorId");
         if (selectorId != null) {
-            acceptSelectorReport(identity, selectorId, values);
-            return true; // scoped by selectorId: this table's record whatever it turned out to hold
+            // Its own verdict, not a blanket claim. Returning CLAIMED here because the scope looked
+            // familiar made the meters structurally blind to every selectorId-scoped record — which
+            // is the #598 shape, sampling stated in a scope riptide drops.
+            return acceptSelectorReport(identity, selectorId, values);
         }
-        final Sampler sampler = acceptSamplerOptions(identity, values);
-        if (sampler == Sampler.STATES_A_RATE_ABOVE_ONE) {
-            return true;
+        final SamplerOutcome sampler = acceptSamplerOptions(identity, values);
+        if (sampler.statesARateAboveOne()) {
+            return sampler.verdict(); // nothing further on this record can improve on that
         }
-        // Deliberately NOT `sampler == CLAIMED` alone: a record can state a rate here and a selector
-        // algorithm as well, and the advertisement path is what reads the second half.
-        final boolean advertised = acceptSamplingAdvertisement(identity, values);
-        return advertised || sampler != Sampler.NOT_A_SAMPLER_RECORD;
+        // Otherwise the advertisement path still runs, and this is load-bearing rather than
+        // defensive: an explicit rate of 1 must not veto parameters on the same record that state a
+        // real ratio (IpfixSelectorReportTest.anExplicitOneDoesNotVetoParametersStatingARealRatio).
+        // Short-circuiting on "claimed" alone breaks that, because a stored 1 is a claim.
+        return sampler.verdict().or(acceptSamplingAdvertisement(identity, values));
     }
 
     /**
-     * What a sampler options record turned out to be.
+     * What a sampler options record was, and whether anything further on it could matter.
      *
-     * <p>Two different questions used to share one boolean: whether the record stated a rate high
-     * enough to stop looking, and whether this table took anything from it at all. They disagree on
-     * a rate of exactly {@code 1} — consumed and stored, yet not a reason to stop — so conflating
-     * them would report a record riptide acted on as claimed by nobody (#599).</p>
+     * <p>Two questions, deliberately not one field (#599). They disagree on a rate of exactly
+     * {@code 1}, which is stored — so {@link Verdict#CLAIMED} — while still leaving the record's
+     * selector parameters worth reading. Collapsing them makes an explicit 1 veto a real ratio
+     * stated alongside it, which {@code IpfixSelectorReportTest
+     * .anExplicitOneDoesNotVetoParametersStatingARealRatio} catches.</p>
      */
-    private enum Sampler {
-        /** Not a sampler options record: no interval field of any spelling. */
-        NOT_A_SAMPLER_RECORD,
-        /** A sampler record this table acted on, but which states no rate that ends the search. */
-        CLAIMED,
-        /** A sampler record stating a usable rate above 1: nothing further to read. */
-        STATES_A_RATE_ABOVE_ONE
-    }
+    private record SamplerOutcome(Verdict verdict, boolean statesARateAboveOne) { }
 
     /**
      * An IE 34/35 (or the v9 48/49/50) sampler options record, which states its interval outright.
      *
-     * @return whether this record settled the question, so the caller knows whether to try another
-     *     shape. A record may carry both a stated interval and a selector algorithm, and the stated
-     *     one wins <em>when it states a rate</em>. An interval of 0 states nothing, and an interval
-     *     of 1 states "not sampling" — which contradicts a record simultaneously stating an
-     *     algorithm and parameters that compute to something else. In that contradiction the
-     *     algorithm is the more specific statement and is preferred, because a deprecated single
-     *     field is the one an exporter is likely to have defaulted.
+     * @return what this table did with the record, and whether it settled the question so the caller
+     *     knows whether to try another shape. A record may carry both a stated interval and a
+     *     selector algorithm, and the stated one wins <em>when it states a rate above 1</em>. An
+     *     interval of 0 states nothing, and an interval of 1 states "not sampling" — which
+     *     contradicts a record simultaneously stating an algorithm and parameters that compute to
+     *     something else. In that contradiction the algorithm is the more specific statement and is
+     *     preferred, because a deprecated single field is the one an exporter is likely to have
+     *     defaulted.
      */
-    private Sampler acceptSamplerOptions(final ExporterIdentity identity, final List<Value<?>> values) {
+    private SamplerOutcome acceptSamplerOptions(final ExporterIdentity identity, final List<Value<?>> values) {
         final Double interval = unsigned(values, INTERVAL_FIELDS);
         if (interval == null) {
-            return Sampler.NOT_A_SAMPLER_RECORD; // interface/VRF/app tables, …
+            return new SamplerOutcome(Verdict.UNRECOGNISED, false); // interface/VRF/app tables, …
         }
         if (!isUsableRate(interval)) {
             // An explicit 1 is kept: it means "not sampling", which is an answer, and dropping it
@@ -302,14 +300,16 @@ public class ExporterSamplingTable implements OptionListener {
             // as a withdrawal and drop what was learned rather than serving it until the TTL runs.
             this.table.invalidate(identity);
             this.recordsSkipped.mark();
-            // States no rate, so it cannot veto one stated elsewhere on this record — but it IS a
-            // sampler record this table acted on, so it is not a record nobody claimed.
-            return Sampler.CLAIMED;
+            // A sampler record riptide understood and stored nothing from: recognised, unusable.
+            // Reporting it CLAIMED hid exactly the case the meter exists to surface.
+            return new SamplerOutcome(Verdict.RECOGNISED_BUT_UNUSABLE, false);
         }
         final Double mode = unsigned(values, MODE_FIELDS);
         this.table.put(identity, new AdvertisedRate(interval, mode != null ? mode.intValue() : null));
         this.recordsConsumed.mark();
-        return interval > 1.0 ? Sampler.STATES_A_RATE_ABOVE_ONE : Sampler.CLAIMED;
+        // Stored whatever the rate — an explicit 1 is an answer too — but only a rate above 1
+        // settles the record.
+        return new SamplerOutcome(Verdict.CLAIMED, interval > 1.0);
     }
 
     /**
@@ -332,10 +332,10 @@ public class ExporterSamplingTable implements OptionListener {
      * filter at once. An advertisement naming an algorithm that expresses no ratio describes an
      * additional process — it does not retract a rate another record taught.</p>
      */
-    private boolean acceptSamplingAdvertisement(final ExporterIdentity identity, final List<Value<?>> values) {
+    private Verdict acceptSamplingAdvertisement(final ExporterIdentity identity, final List<Value<?>> values) {
         final Double algorithm = numeric(values, "selectorAlgorithm");
         if (algorithm == null) {
-            return false; // not about sampling at all
+            return Verdict.UNRECOGNISED; // not about sampling at all
         }
         if (!SelectorReport.samples(algorithm.intValue())) {
             // A filtering algorithm expresses a ratio, but not one that can share this key. Filtering
@@ -344,18 +344,20 @@ public class ExporterSamplingTable implements OptionListener {
             // for a 1:2 filter arriving after a stated 1:1000. Per Selector this is expressible,
             // because each Selector owns its entry; exporter-wide it is not. See #596.
             this.recordsSkipped.mark();
-            // Recognised as a sampling advertisement and acted on, so not a record nobody claimed.
-            return true;
+            // Recognised as a sampling advertisement and dropped anyway: this is the #596/#598
+            // shape, an exporter stating a rate riptide serves nothing from.
+            return Verdict.RECOGNISED_BUT_UNUSABLE;
         }
         final Double computed = SelectorReport.rate(algorithm.intValue(), name -> numeric(values, name));
         if (computed == null || !isUsableRate(computed)) {
             this.recordsSkipped.mark();
-            // Recognised as a sampling advertisement and acted on, so not a record nobody claimed.
-            return true;
+            // Recognised as a sampling advertisement and dropped anyway: this is the #596/#598
+            // shape, an exporter stating a rate riptide serves nothing from.
+            return Verdict.RECOGNISED_BUT_UNUSABLE;
         }
         this.table.put(identity, new AdvertisedRate(computed, null, algorithm.intValue()));
         this.recordsConsumed.mark();
-        return true;
+        return Verdict.CLAIMED;
     }
 
     /**
@@ -363,7 +365,7 @@ public class ExporterSamplingTable implements OptionListener {
      * and that algorithm's parameters as fields. This is where the protocol puts selector
      * parameters, and riptide used to look for them on flow records instead (#584).
      */
-    private void acceptSelectorReport(final ExporterIdentity identity,
+    private Verdict acceptSelectorReport(final ExporterIdentity identity,
                                       final UnsignedLong selectorId,
                                       final List<Value<?>> values) {
         final SelectorKey key = new SelectorKey(identity, selectorId.longValue());
@@ -374,7 +376,7 @@ public class ExporterSamplingTable implements OptionListener {
         if (computed != null && isUsableRate(computed)) {
             this.selectors.put(key, new AdvertisedRate(computed, null, algorithm.intValue()));
             this.selectorsConsumed.mark();
-            return;
+            return Verdict.CLAIMED;
         }
         final Double stated = unsigned(values, INTERVAL_FIELDS);
         if (stated != null && isUsableRate(stated)) {
@@ -391,14 +393,18 @@ public class ExporterSamplingTable implements OptionListener {
             // nothing about the others, which is the guess `lookup` declines to make.
             this.table.put(identity, rate);
             this.selectorsConsumed.mark();
-            return;
+            return Verdict.CLAIMED;
         }
         if (algorithm == null) {
             // Scoped by selectorId but neither a Selector Report nor a rate: some other per-Selector
             // options record. Ignored, exactly as `acceptSamplerOptions` ignores an options record
             // that is not about sampling. Absence is not a withdrawal — only a Selector Report that
             // has stopped expressing a ratio is that, and it says so by naming its algorithm.
-            return;
+            //
+            // UNRECOGNISED, not a claim: the selectorId scope alone says nothing about whether this
+            // table understood the record, and treating it as a claim is what made the meters blind
+            // to every selectorId-scoped record (#599).
+            return Verdict.UNRECOGNISED;
         }
         // The report named an algorithm expressing no ratio, or omitted its parameters. Recording a
         // 1.0 would claim the Selector does not sample — see SelectorReport for why that claim is
@@ -406,6 +412,9 @@ public class ExporterSamplingTable implements OptionListener {
         // stopped advertising for the whole retention window.
         this.selectors.invalidate(key);
         this.selectorsSkipped.mark();
+        // A Selector Report riptide read and served nothing from: the #596 shape, and exactly what
+        // an operator should be told about.
+        return Verdict.RECOGNISED_BUT_UNUSABLE;
     }
 
     /** {@link #unsigned} as a boxed {@code Integer}, since that is what {@link AdvertisedRate} holds. */

@@ -184,29 +184,90 @@ class ExporterSamplingTableTest {
     }
 
     /**
-     * A record this table consumed is reported as claimed, even when it states a rate of exactly 1.
+     * Every verdict this table can return, pinned (#599).
      *
-     * <p>The trap #599 had to avoid. {@code acceptSamplerOptions} already returned a boolean, but it
-     * meant "states a rate above 1" — a control signal deciding whether to keep reading the record —
-     * not "I took this". They disagree on exactly this input: a rate of 1 means "not sampling",
-     * which is an answer, so the record is stored and consumed while the old boolean said
-     * {@code false}. Reusing it as the claim verdict would have reported a record riptide acted on
-     * as claimed by nobody, and the unclaimed meter would have climbed on healthy exporters.</p>
+     * <p>Not optional detail. In the first attempt at this change three mutations inverting these
+     * returns survived the full suite, because the fan-out tests used stubs and nothing asserted
+     * what a real table reports. The meter's whole meaning rests on these.</p>
      */
     @Test
-    void aSamplerRecordStatingRateOneIsStillClaimed() throws Exception {
+    void aSamplerRecordStatingRateOneIsClaimed() throws Exception {
+        // A rate of 1 means "not sampling", which is an answer: stored, and therefore taken. The
+        // internal boolean this used to reuse said `false` here, which would have reported a record
+        // riptide acted on as a gap.
         assertThat(this.table.accept(exporter("192.0.2.1", 0), List.of(), samplerRecord(1)))
-                .as("a rate of 1 is an answer, not a shrug: the record was stored, so it was claimed")
-                .isTrue();
+                .isEqualTo(OptionListener.Verdict.CLAIMED);
     }
 
-    /** A record no field of which this table understands is reported as unclaimed. */
     @Test
-    void aRecordThisTableDoesNotRecogniseIsNotClaimed() throws Exception {
+    void aSamplerRecordStatingAUsableRateIsClaimed() throws Exception {
+        assertThat(this.table.accept(exporter("192.0.2.1", 0), List.of(), samplerRecord(1000)))
+                .isEqualTo(OptionListener.Verdict.CLAIMED);
+    }
+
+    /** An interval of 0 is a withdrawal: understood, and nothing left to serve. */
+    @Test
+    void aSamplerRecordWithdrawingItsRateIsRecognisedButUnusable() throws Exception {
+        assertThat(this.table.accept(exporter("192.0.2.1", 0), List.of(), samplerRecord(0)))
+                .isEqualTo(OptionListener.Verdict.RECOGNISED_BUT_UNUSABLE);
+    }
+
+    /** Nothing about sampling at all: not this table's shape. */
+    @Test
+    void aRecordAboutNeitherRateNorSelectorIsUnrecognised() throws Exception {
         assertThat(this.table.accept(exporter("192.0.2.1", 0), List.of(),
                 List.of(new UnsignedValue("INPUT_SNMP", 7))))
-                .as("an interface record states no rate and no selector algorithm, so this table"
-                        + " takes nothing from it")
-                .isFalse();
+                .isEqualTo(OptionListener.Verdict.UNRECOGNISED);
+    }
+
+    /**
+     * An exporter-wide sampling advertisement that computes to a real rate is claimed.
+     *
+     * <p>The softflowd shape, and the case this whole change leans on: a record scoped by the
+     * metering process rather than a Selector, stating an algorithm and parameters riptide computes
+     * a rate from. Since #604 it is claimed by this table and declined by the interface table, which
+     * is what makes it the <em>negative</em> witness for the unclaimed meters — they must stay flat
+     * for it.</p>
+     *
+     * <p>Unpinned until now: a mutation inverting this verdict survived the entire suite twice.</p>
+     */
+    @Test
+    void anAdvertisementComputingARealRateIsClaimed() throws Exception {
+        assertThat(this.table.accept(exporter("192.0.2.1", 0), List.of(),
+                List.of(new UnsignedValue("selectorAlgorithm", 1),
+                        new UnsignedValue("samplingPacketInterval", 1),
+                        new UnsignedValue("samplingPacketSpace", 99))))
+                .isEqualTo(OptionListener.Verdict.CLAIMED);
+    }
+
+    /**
+     * An advertisement riptide reads and deliberately discards is recognised, not unrecognised.
+     *
+     * <p>A filtering algorithm expresses a ratio riptide cannot store exporter-wide (#596). That is
+     * precisely the loss the meters exist to surface, so it must not be filed among the shapes
+     * nobody recognised.</p>
+     */
+    @Test
+    void aFilteringAlgorithmIsRecognisedButUnusable() throws Exception {
+        assertThat(this.table.accept(exporter("192.0.2.1", 0), List.of(),
+                List.of(new UnsignedValue("selectorAlgorithm", 6),
+                        new UnsignedValue("samplingPacketInterval", 1),
+                        new UnsignedValue("samplingPacketSpace", 1))))
+                .isEqualTo(OptionListener.Verdict.RECOGNISED_BUT_UNUSABLE);
+    }
+
+    /**
+     * A selectorId scope alone is not a claim.
+     *
+     * <p>The blind spot the review found: returning CLAIMED for anything scoped by selectorId made
+     * the meters structurally unable to report a selectorId-scoped record riptide dropped, which is
+     * the #598 shape.</p>
+     */
+    @Test
+    void aSelectorScopedRecordAboutNothingRiptideReadsIsUnrecognised() throws Exception {
+        assertThat(this.table.accept(exporter("192.0.2.1", 0),
+                List.of(new UnsignedValue("selectorId", 4)),
+                List.of(new UnsignedValue("INPUT_SNMP", 7))))
+                .isEqualTo(OptionListener.Verdict.UNRECOGNISED);
     }
 }

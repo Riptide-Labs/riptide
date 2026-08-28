@@ -213,6 +213,27 @@ An explicit withdrawal — an exporter re-advertising an interval of `0`, meanin
 
 The query above finds these conditions after the fact; the counters find them as they happen.
 
+### Option records nobody used
+
+Those counters say what each consumer *did*. They cannot say what happened to a record no consumer wanted, and that is the gap that hid a hundredfold sampling undercount until someone read an exporter's source. Three counters at the tap answer it, against a denominator:
+
+```
+parser_options_offered              option data records seen
+parser_options_claimed              stored by at least one consumer
+parser_options_recognisedUnusable   understood by a consumer, which stored nothing
+parser_options_unrecognised         no consumer knew the shape
+```
+
+`offered` always equals the sum of the other three.
+
+**`unrecognised` is normal and rarely urgent.** VRF tables, application tables and metering-process statistics are routine on real exporters and riptide has no consumer for them. Expect a steady rate here and alert on changes rather than on presence.
+
+**`recognisedUnusable` is the one to watch.** It means riptide understood a record and served nothing from it — an exporter told it something and it was not kept. Two shapes reach it today: an interface option record naming no `ifIndex`, and a sampling advertisement whose algorithm expresses a ratio riptide cannot store exporter-wide. The first is benign on exporters that tag one direction only; the second means an exporter's stated rate is being dropped, and flows from it will report `assumed` or the configured fallback instead.
+
+If it climbs on an exporter you care about, compare `parser_optionSampling_consumed` and `enrichment_optionInterfaces_consumed` for the same period to see which consumer looked, then check that exporter's advertised sampling configuration against what `samplingProvenance` reports for its flows.
+
+Note the vocabulary differs from the per-consumer counters on purpose: `enrichment_optionInterfaces_skipped` means *that* table declined a record, which is routine — most records are not its own. Only these three describe what became of the record overall.
+
 :::warning[NetFlow v5 rates changed]
 Earlier releases ignored the v5 header interval. What they recorded instead depended on the receiver:
 

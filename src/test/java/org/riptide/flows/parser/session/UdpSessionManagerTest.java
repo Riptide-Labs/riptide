@@ -395,7 +395,12 @@ public class UdpSessionManagerTest {
         final var sessionKey = new Netflow9UdpParser.HostSessionKey(remoteAddress1.getAddress(), localAddress1);
         final var seen = new ArrayList<ExporterIdentity>();
         final var manager = new UdpSessionManager(Duration.ofMinutes(30), () -> new SequenceNumberTracker(32),
-                (identity, scopes, values) -> seen.add(identity));
+                (identity, scopes, values) -> {
+                    seen.add(identity);
+                    // Explicit: before the verdict was an enum this read `seen.add(identity)`, whose
+                    // boolean return silently made this listener claim every record (#599).
+                    return OptionListener.Verdict.UNRECOGNISED;
+                });
         final var session = manager.getSession(sessionKey);
 
         final var template = Template.builder(templateId1, Template.Type.OPTIONS_TEMPLATE)
