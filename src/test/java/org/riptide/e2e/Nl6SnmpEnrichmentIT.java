@@ -20,7 +20,7 @@ import org.testcontainers.containers.wait.strategy.Wait;
 import java.time.Duration;
 import java.util.Map;
 
-import static org.riptide.e2e.E2eTestSupport.await;
+import static org.riptide.e2e.E2eTestSupport.awaitCount;
 import static org.riptide.e2e.E2eTestSupport.freeUdpPort;
 
 /**
@@ -138,11 +138,12 @@ public class Nl6SnmpEnrichmentIT {
 
     @Test
     void verifyPerDeviceExporterAttribution() throws Exception {
-        await(Duration.ofMinutes(3), "nl6 ledger to reach " + MIN_RECORDS + " netflow9 records",
-                () -> sentRecordsUnchecked() >= MIN_RECORDS);
+        awaitCount(Duration.ofMinutes(3), "nl6 ledger to reach " + MIN_RECORDS + " netflow9 records",
+                () -> sentRecordsUnchecked(), MIN_RECORDS);
 
-        await(Duration.ofMinutes(2), DEVICE_COUNT + " distinct exporter addresses in ClickHouse",
-                () -> countDistinctExporters() == DEVICE_COUNT);
+        // Waits for >= DEVICE_COUNT; the containsExactly below still pins the count to exactly DEVICE_COUNT.
+        awaitCount(Duration.ofMinutes(2), DEVICE_COUNT + " distinct exporter addresses in ClickHouse",
+                () -> countDistinctExporters(), DEVICE_COUNT);
 
         final var exporters = queryClient.queryAll("SELECT DISTINCT exporterAddr FROM flows ORDER BY exporterAddr")
                 .stream().map(r -> r.getString("exporterAddr")).toList();
@@ -152,8 +153,8 @@ public class Nl6SnmpEnrichmentIT {
 
     @Test
     void verifyIfNameEnrichmentAgainstAgent() throws Exception {
-        await(Duration.ofMinutes(3), "enriched interface names for exporter " + FIRST_DEVICE,
-                () -> countEnrichedRows(FIRST_DEVICE) > 0);
+        awaitCount(Duration.ofMinutes(3), "enriched interface names for exporter " + FIRST_DEVICE,
+                () -> countEnrichedRows(FIRST_DEVICE), 1);
 
         final var row = queryClient.queryAll(
                 "SELECT any(inputSnmpIfName) AS inName, any(outputSnmpIfName) AS outName FROM flows"
