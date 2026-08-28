@@ -6,6 +6,7 @@
 package org.riptide.e2e;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicLong;
@@ -18,7 +19,7 @@ import static org.assertj.core.api.Assertions.catchThrowable;
  * What {@code awaitCount} waits on, and what it refuses to wait on (#547).
  *
  * <p>The e2e awaits it replaced measured an absolute deadline, so a busy runner and a broken ingest
- * failed identically — which is how a contended CI box reported an ingest regression that was not
+ * failed identically. That is how a contended CI box reported an ingest regression that was not
  * one. The distinction the replacement draws is <em>progress</em>, and a green run proves nothing
  * about it: a healthy suite passes under either rule. These are the tests that fail without it.</p>
  *
@@ -26,9 +27,15 @@ import static org.assertj.core.api.Assertions.catchThrowable;
  * pinning it here means {@code make jar} catches a regression that {@code make e2e} would otherwise
  * be the only gate for.</p>
  */
+@Timeout(30)
 class E2eTestSupportTest {
 
-    private static final Duration STALL = Duration.ofMillis(300);
+    /**
+     * A hundred polls wide, so one scheduler or GC pause between two polls does not read as a stall
+     * and this class does not flake on the contended runners the helper exists to tolerate. The
+     * advancing test has a second margin, the cap; see its own comment.
+     */
+    private static final Duration STALL = Duration.ofSeconds(1);
     private static final Duration POLL = Duration.ofMillis(10);
 
     /**
@@ -40,7 +47,9 @@ class E2eTestSupportTest {
     @Test
     void aSlowButAdvancingCountIsNotFailed() throws Exception {
         final var counter = new AtomicLong();
-        final long target = 60;
+        // 1.2s nominal against a 5s cap, so the runner may be 4x slower before the cap misfires.
+        // The > STALL side cannot fail from slowness: sleeps only ever overshoot.
+        final long target = 120;
 
         final long startedAt = System.nanoTime();
         E2eTestSupport.awaitCount(STALL, POLL, "a count that keeps advancing",
@@ -50,8 +59,27 @@ class E2eTestSupportTest {
         assertThat(counter.get()).isGreaterThanOrEqualTo(target);
         assertThat(elapsed)
                 .as("the wait must have outlasted the stall budget, or this proves nothing about"
-                        + " tolerating slowness — it would have passed under a deadline too")
+                        + " tolerating slowness; it would have passed under a deadline too")
                 .isGreaterThan(STALL);
+    }
+
+    /**
+     * A count that advances but never arrives is cut off at the cap, and the failure says so.
+     *
+     * <p>The other half of the bargain: tolerating slowness must not mean a degraded ingest crawls
+     * until the CI job is cancelled. The message names the cap and when the count last moved,
+     * rather than a stall, because it was not one.</p>
+     */
+    @Test
+    void aCrawlingCountIsCutOffAtTheCapAndSaysSo() {
+        final var crawling = new AtomicLong();
+
+        assertThatThrownBy(() -> E2eTestSupport.awaitCount(STALL, POLL, "a crawling count",
+                crawling::incrementAndGet, Long.MAX_VALUE))
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("Cap of 5 x PT1S reached at")
+                .hasMessageContaining("last advance")
+                .hasMessageContaining("a crawling count");
     }
 
     /** A frozen count fails, and says what it was stuck at rather than only that time ran out. */
@@ -81,10 +109,10 @@ class E2eTestSupportTest {
                 E2eTestSupport.awaitCount(STALL, POLL, "a frozen count", frozen::get, 1));
         final var elapsed = Duration.ofNanos(System.nanoTime() - startedAt);
 
-        assertThat(thrown).isInstanceOf(AssertionError.class);
+        assertThat(thrown).isInstanceOf(AssertionError.class).hasMessageContaining("Stalled at 0 of 1");
         assertThat(elapsed)
-                .as("a genuine stall must be reported promptly, not after the old deadline")
-                .isLessThan(STALL.multipliedBy(4));
+                .as("a genuine stall must be reported within its budget, not at the cap")
+                .isLessThan(STALL.multipliedBy(2));
     }
 
     /**
@@ -100,15 +128,22 @@ class E2eTestSupportTest {
         assertThatThrownBy(() -> E2eTestSupport.awaitCount(STALL, POLL, "a shrinking count",
                 shrinking::decrementAndGet, 100))
                 .isInstanceOf(AssertionError.class)
-                .hasMessageContaining("must not go backwards");
+                .hasMessageContaining("must not go backwards")
+                // the first read already decrements: 50 -> 49 seeds "best", the next read is 48
+                .hasMessageContaining("actual:\n  48L")
+                .hasMessageContaining("greater than or equal to:\n  49L");
     }
 
-    /** A count already at its target returns without waiting at all. */
+    /** A count already at its target returns after a single read, without sleeping a poll. */
     @Test
     void anAlreadySatisfiedCountReturnsImmediately() throws Exception {
-        final long startedAt = System.nanoTime();
-        E2eTestSupport.awaitCount(STALL, POLL, "an already-satisfied count", () -> 10L, 10);
+        final var reads = new AtomicLong();
 
-        assertThat(Duration.ofNanos(System.nanoTime() - startedAt)).isLessThan(STALL);
+        E2eTestSupport.awaitCount(STALL, POLL, "an already-satisfied count", () -> {
+            reads.incrementAndGet();
+            return 10L;
+        }, 10);
+
+        assertThat(reads.get()).as("one read decides; a second one means a poll was slept first").isEqualTo(1);
     }
 }

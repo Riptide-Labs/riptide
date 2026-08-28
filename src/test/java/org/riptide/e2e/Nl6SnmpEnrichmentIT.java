@@ -141,6 +141,7 @@ public class Nl6SnmpEnrichmentIT {
         awaitCount(Duration.ofMinutes(3), "nl6 ledger to reach " + MIN_RECORDS + " netflow9 records",
                 () -> sentRecordsUnchecked(), MIN_RECORDS);
 
+        // Waits for >= DEVICE_COUNT; the containsExactly below still pins the count to exactly DEVICE_COUNT.
         awaitCount(Duration.ofMinutes(2), DEVICE_COUNT + " distinct exporter addresses in ClickHouse",
                 () -> countDistinctExporters(), DEVICE_COUNT);
 
