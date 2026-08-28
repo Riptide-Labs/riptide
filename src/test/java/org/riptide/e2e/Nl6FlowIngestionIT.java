@@ -24,7 +24,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Map;
 
-import static org.riptide.e2e.E2eTestSupport.await;
+import static org.riptide.e2e.E2eTestSupport.awaitCount;
 import static org.riptide.e2e.E2eTestSupport.freeUdpPort;
 
 /**
@@ -204,10 +204,10 @@ public class Nl6FlowIngestionIT {
         Assertions.assertThat(exporters).anySatisfy(row ->
                 Assertions.assertThat(row.getString("exporterAddr")).startsWith("10.42.3."));
 
-        await(Duration.ofMinutes(1), "sFlow rows enriched via the agent-address-matched node",
+        awaitCount(Duration.ofMinutes(1), "sFlow rows enriched via the agent-address-matched node",
                 () -> queryClient.queryAll(
                         "SELECT count() AS c FROM flows WHERE flowProtocol = 'SFLOW' AND inputSnmpIfName = 'sfl-in'")
-                        .getFirst().getLong("c") > 0);
+                        .getFirst().getLong("c"), 1);
     }
 
     /**
@@ -218,17 +218,17 @@ public class Nl6FlowIngestionIT {
      */
     @Test
     void verifySflowSubAgentPinning() throws Exception {
-        await(Duration.ofMinutes(2), "sub_agent_id 7 devices attribute to the pinned node",
+        awaitCount(Duration.ofMinutes(2), "sub_agent_id 7 devices attribute to the pinned node",
                 () -> queryClient.queryAll(
                         "SELECT count() AS c FROM flows WHERE flowProtocol = 'SFLOW' "
                         + "AND exporterAddr IN ('10.42.6.1','10.42.6.2') AND inputSnmpIfName = 'pinned-in'")
-                        .getFirst().getLong("c") > 0);
+                        .getFirst().getLong("c"), 1);
 
-        await(Duration.ofMinutes(2), "other sub_agent_id devices attribute to the wildcard node",
+        awaitCount(Duration.ofMinutes(2), "other sub_agent_id devices attribute to the wildcard node",
                 () -> queryClient.queryAll(
                         "SELECT count() AS c FROM flows WHERE flowProtocol = 'SFLOW' "
                         + "AND exporterAddr IN ('10.42.6.21','10.42.6.22') AND inputSnmpIfName = 'wild-in'")
-                        .getFirst().getLong("c") > 0);
+                        .getFirst().getLong("c"), 1);
     }
 
     /**
@@ -240,18 +240,18 @@ public class Nl6FlowIngestionIT {
     @Test
     void verifyOptionRecordEnrichmentWithoutSnmp() throws Exception {
         // if-scoped (NetFlow v9): IE 82 present → interface NAME enriched
-        await(Duration.ofMinutes(2), "netflow9 flows enriched with an interface name from option records",
+        awaitCount(Duration.ofMinutes(2), "netflow9 flows enriched with an interface name from option records",
                 () -> queryClient.queryAll(
                         "SELECT count() AS c FROM flows WHERE flowProtocol = 'NetflowV9' "
                         + "AND inputSnmpIfName IS NOT NULL AND inputSnmpIfName != ''")
-                        .getFirst().getLong("c") > 0);
+                        .getFirst().getLong("c"), 1);
 
         // system-scoped (IPFIX): IE 83 only → interface ALIAS enriched, name absent
-        await(Duration.ofMinutes(2), "ipfix flows enriched with an interface alias (description-only) from option records",
+        awaitCount(Duration.ofMinutes(2), "ipfix flows enriched with an interface alias (description-only) from option records",
                 () -> queryClient.queryAll(
                         "SELECT count() AS c FROM flows WHERE flowProtocol = 'IPFIX' "
                         + "AND inputSnmpIfAlias IS NOT NULL AND inputSnmpIfAlias != ''")
-                        .getFirst().getLong("c") > 0);
+                        .getFirst().getLong("c"), 1);
     }
 
     /**
@@ -260,14 +260,14 @@ public class Nl6FlowIngestionIT {
      * count reaches the snapshot minus tolerance.
      */
     private void reconcile(final String nl6Protocol, final String chProtocol, final double epsilon) throws Exception {
-        await(Duration.ofMinutes(3), "nl6 ledger to reach " + MIN_RECORDS + " " + nl6Protocol + " records",
-                () -> sentRecordsUnchecked(nl6Protocol) >= MIN_RECORDS);
+        awaitCount(Duration.ofMinutes(3), "nl6 ledger to reach " + MIN_RECORDS + " " + nl6Protocol + " records",
+                () -> sentRecordsUnchecked(nl6Protocol), MIN_RECORDS);
 
         final long ledger = NL6.sentRecords(nl6Protocol);
         final long threshold = (long) Math.ceil(ledger * (1.0 - epsilon));
 
-        await(Duration.ofMinutes(2), chProtocol + " rows in ClickHouse to reach " + threshold + " (ledger " + ledger + ")",
-                () -> countRows(chProtocol) >= threshold);
+        awaitCount(Duration.ofMinutes(2), chProtocol + " rows in ClickHouse to reach " + threshold + " (ledger " + ledger + ")",
+                () -> countRows(chProtocol), threshold);
 
         final var row = queryClient.queryAll(
                 "SELECT exporterAddr, application FROM flows WHERE flowProtocol = '" + chProtocol + "' LIMIT 1").getFirst();
