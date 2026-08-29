@@ -6,14 +6,19 @@
 package org.riptide.e2e;
 
 import org.assertj.core.api.Assertions;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.DatagramSocket;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
 /** Shared helpers for the e2e test tier. */
 final class E2eTestSupport {
+
+    private static final Logger LOG = LoggerFactory.getLogger(E2eTestSupport.class);
 
     private E2eTestSupport() {
     }
@@ -32,10 +37,13 @@ final class E2eTestSupport {
      * from the start is therefore reported no later than under the old deadline. The budgets keep
      * their old values because their meaning, not their size, was wrong.</p>
      *
-     * <p>The wait is still bounded. A count that keeps advancing but never arrives, such as an ingest
-     * that has degraded rather than died, fails after {@link #CAP_MULTIPLE} stall budgets and says
-     * so. The bound is per wait, not per suite; it makes a single crawl a named failure rather than
-     * a cancelled job with no count attached.</p>
+     * <p>The wait is bounded twice, because one crawling wait and a suite of them fail differently.
+     * A count that keeps advancing but never arrives, such as an ingest that has degraded rather
+     * than died, fails after {@link #CAP_MULTIPLE} stall budgets and says so. That bound is per
+     * wait, and on its own it was not enough: ten of them multiply to roughly four times the CI job
+     * timeout, so a sustained crawl was cancelled with no count attached, which is the outcome this
+     * paragraph used to promise it prevented (#662). {@link #SUITE_BUDGET} bounds their sum, so the
+     * run still ends with a count and a reason.</p>
      *
      * <p>Monotonicity is the assumption that makes this sound, and a dip is treated as no progress
      * rather than as a failure (#662). That tolerance is a backstop rather than the fix: the source
@@ -62,15 +70,66 @@ final class E2eTestSupport {
     /** Upper bound on the whole wait, in stall budgets: generous for a slow runner, finite for a crawl. */
     private static final int CAP_MULTIPLE = 5;
 
+    /**
+     * Total time every wait in this JVM may spend between them, which is the bound the CI job
+     * actually imposes (#662).
+     *
+     * <p>Per-wait caps cannot provide it. The ten e2e waits carry 37 minutes of stall budget, so at
+     * {@link #CAP_MULTIPLE} the bound on their sum is about 185 minutes against
+     * {@code timeout-minutes: 45} in {@code .github/workflows/build.yml}. No value of the multiple
+     * fixes that: one that fits the job is one that no longer tolerates a slow runner, which is what
+     * #547 was filed to allow. The constraint is on the sum, so the bound has to be too.</p>
+     *
+     * <p>Sized to leave the rest of the job its share: checkout, JDK setup, the build itself,
+     * container pulls, and the ITs that do not wait on counts. Failsafe is not configured to fork
+     * per class ({@code forkCount} defaults to 1 with {@code reuseForks}), so one counter spans the
+     * whole e2e run, which is the thing being bounded.</p>
+     */
+    private static final Duration SUITE_BUDGET = Duration.ofMinutes(30);
+
+    /** Time already spent waiting, across every call in this JVM. See {@link #SUITE_BUDGET}. */
+    private static final AtomicLong SPENT_NANOS = new AtomicLong();
+
+    /**
+     * Test seam: seeds the process-wide counter so the budget can be reached without spending it.
+     *
+     * <p>Surefire and failsafe fork separately, so a unit test setting this cannot reach the e2e
+     * run. Within a class it is shared state, and a test that sets it has to restore it.</p>
+     */
+    static void seedSpentForTesting(final Duration spent) {
+        SPENT_NANOS.set(spent.toNanos());
+    }
+
+    /** Test seam: what the process-wide counter currently holds. See {@link #seedSpentForTesting}. */
+    static Duration spentForTesting() {
+        return Duration.ofNanos(SPENT_NANOS.get());
+    }
+
     /** As {@link #awaitCount(Duration, String, LongSupplier, long)}, with the poll interval given. */
     static void awaitCount(final Duration stallBudget, final Duration poll, final String description,
             final LongSupplier count, final long target) throws InterruptedException {
+        final var enteredAt = Instant.now();
+        try {
+            await(stallBudget, poll, description, count, target, enteredAt);
+        } finally {
+            // In a finally, so a wait that fails still spends its time: the budget bounds the job,
+            // and a job is not made shorter by the wait that overran it having thrown.
+            SPENT_NANOS.addAndGet(Duration.between(enteredAt, Instant.now()).toNanos());
+        }
+    }
+
+    private static void await(final Duration stallBudget, final Duration poll, final String description,
+            final LongSupplier count, final long target, final Instant enteredAt) throws InterruptedException {
+        final var alreadySpent = Duration.ofNanos(SPENT_NANOS.get());
         long best = count.getAsLong();
         // Cleared on every advance, so the note means "decreased since the count last moved" rather
         // than blaming a stale hiccup for a genuine stall minutes later.
         boolean sawDecrease = false;
-        final var started = Instant.now();
+        final var started = enteredAt;
         var lastAdvance = started;
+        // The measurement the budgets are sized from: a stall budget has to cover the longest gap
+        // between advances on the slowest runner, and nothing reported that gap before (#662).
+        var longestGap = Duration.ZERO;
         final var cap = started.plus(stallBudget.multipliedBy(CAP_MULTIPLE));
         while (best < target) {
             if (Instant.now().isAfter(lastAdvance.plus(stallBudget))) {
@@ -85,6 +144,15 @@ final class E2eTestSupport {
                         .formatted(CAP_MULTIPLE, stallBudget, best, target, description,
                                 Duration.between(lastAdvance, Instant.now()), decreaseNote(sawDecrease)));
             }
+            final var spent = alreadySpent.plus(Duration.between(started, Instant.now()));
+            if (spent.compareTo(SUITE_BUDGET) > 0) {
+                // Checked here rather than after the wait, so the run ends with a count and a reason
+                // while the job still has time to report them.
+                Assertions.fail(("Suite wait budget of %s exhausted (%s spent) at %d of %d for %s."
+                        + " The job timeout would cancel this run before it finished%s")
+                        .formatted(SUITE_BUDGET, spent, best, target, description,
+                                decreaseNote(sawDecrease)));
+            }
             Thread.sleep(poll.toMillis());
             final long now = count.getAsLong();
             if (now < best) {
@@ -93,11 +161,20 @@ final class E2eTestSupport {
                 sawDecrease = true;
             }
             if (now > best) {
+                final var advancedAt = Instant.now();
+                final var gap = Duration.between(lastAdvance, advancedAt);
+                if (gap.compareTo(longestGap) > 0) {
+                    longestGap = gap;
+                }
                 best = now;
-                lastAdvance = Instant.now();
+                lastAdvance = advancedAt;
                 sawDecrease = false;
             }
         }
+        // One line per completed wait, not per advance: enough to size the budgets and to tell a
+        // slow-but-advancing run from a hung one afterwards, without a line every poll.
+        LOG.info("Reached {} of {} for {} in {}, longest gap between advances {} against a {} budget",
+                best, target, description, Duration.between(started, Instant.now()), longestGap, stallBudget);
     }
 
     /** The suffix both failure messages carry when a read went backwards since the last advance. */

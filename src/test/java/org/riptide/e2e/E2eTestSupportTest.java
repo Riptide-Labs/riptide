@@ -227,6 +227,58 @@ class E2eTestSupportTest {
                 .hasMessageContaining("for " + STALL);
     }
 
+    /**
+     * The suite budget bounds the sum of every wait, which is the bound the CI job imposes (#662).
+     *
+     * <p>The per-wait cap could not provide it: ten waits carrying 37 minutes of stall budget
+     * multiply to roughly 185 minutes against a 45-minute job timeout, so a sustained crawl was
+     * cancelled with no count attached. That is the outcome the helper's javadoc claimed to prevent,
+     * so it was a false promise rather than a missing feature.</p>
+     *
+     * <p>Seeded rather than spent: waiting out a thirty-minute budget in a unit test is not a test.</p>
+     */
+    @Test
+    void aWaitPastTheSuiteBudgetFailsWithACountRatherThanBeingCancelled() {
+        final var frozen = new AtomicLong(4);
+        try {
+            E2eTestSupport.seedSpentForTesting(Duration.ofMinutes(31));
+
+            assertThatThrownBy(() -> E2eTestSupport.awaitCount(STALL, POLL, "a wait out of suite budget",
+                    frozen::get, 100))
+                    .isInstanceOf(AssertionError.class)
+                    .hasMessageContaining("Suite wait budget of PT30M exhausted")
+                    .as("the point of failing here is that a cancelled job carries no count")
+                    .hasMessageContaining("at 4 of 100")
+                    .hasMessageContaining("a wait out of suite budget");
+        } finally {
+            E2eTestSupport.seedSpentForTesting(Duration.ZERO);
+        }
+    }
+
+    /**
+     * A wait that fails still spends its time against the suite budget.
+     *
+     * <p>Accounting only successful waits would let a run of failures outlast the job while the
+     * budget reported room left, which is the failure this budget exists to prevent.</p>
+     */
+    @Test
+    void aFailedWaitStillSpendsItsTime() {
+        final var frozen = new AtomicLong();
+        try {
+            E2eTestSupport.seedSpentForTesting(Duration.ZERO);
+
+            assertThatThrownBy(() -> E2eTestSupport.awaitCount(STALL, POLL, "a frozen count",
+                    frozen::get, 1)).isInstanceOf(AssertionError.class);
+
+            assertThat(E2eTestSupport.spentForTesting())
+                    .as("a wait that threw still consumed job time; not counting it is how the budget"
+                            + " drifts from the thing it is bounding")
+                    .isGreaterThanOrEqualTo(STALL);
+        } finally {
+            E2eTestSupport.seedSpentForTesting(Duration.ZERO);
+        }
+    }
+
     /** A count already at its target returns after a single read, without sleeping a poll. */
     @Test
     void anAlreadySatisfiedCountReturnsImmediately() throws Exception {
