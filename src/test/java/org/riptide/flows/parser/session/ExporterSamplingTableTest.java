@@ -344,6 +344,46 @@ class ExporterSamplingTableTest {
     }
 
     /**
+     * A Selector that stated nothing exporter-wide withdraws nothing exporter-wide. The unscoped
+     * advertisement is an independent statement and stays.
+     */
+    @Test
+    void aSelectorScopedWithdrawalLeavesAnUnscopedAdvertisementAlone() throws Exception {
+        final var exporter = exporter("192.0.2.1", 0);
+        final var selector = List.<Value<?>>of(new UnsignedValue("selectorId", 7));
+        this.table.accept(exporter, List.of(), samplerRecord(1000));
+        this.table.accept(exporter, selector,
+                List.of(new UnsignedValue("selectorAlgorithm", 1),
+                        new UnsignedValue("samplingPacketInterval", 1),
+                        new UnsignedValue("samplingPacketSpace", 99)));
+
+        this.table.accept(exporter, selector, samplerRecord(0));
+
+        assertThat(this.table.lookup(exporter, 7L).map(ExporterSamplingTable.AdvertisedRate::interval))
+                .contains(1000.0);
+        assertThat(this.table.lookup(exporter).map(ExporterSamplingTable.AdvertisedRate::interval))
+                .contains(1000.0);
+    }
+
+    /** The mirror holds the last Selector's statement; an earlier Selector withdrawing does not touch it. */
+    @Test
+    void aSelectorScopedWithdrawalLeavesAnotherSelectorsMirrorAlone() throws Exception {
+        final var exporter = exporter("192.0.2.1", 0);
+        final var eight = List.<Value<?>>of(new UnsignedValue("selectorId", 8));
+        final var seven = List.<Value<?>>of(new UnsignedValue("selectorId", 7));
+        this.table.accept(exporter, eight, samplerRecord(2000));
+        this.table.accept(exporter, seven, samplerRecord(1000));
+
+        this.table.accept(exporter, eight, samplerRecord(0));
+
+        assertThat(this.table.lookup(exporter, 8L).map(ExporterSamplingTable.AdvertisedRate::interval))
+                .as("selector 8 falls back to the exporter-wide mirror, which is selector 7's")
+                .contains(1000.0);
+        assertThat(this.table.lookup(exporter).map(ExporterSamplingTable.AdvertisedRate::interval))
+                .contains(1000.0);
+    }
+
+    /**
      * A selectorId-scoped record stating an interval of 0 names no algorithm, but it does name a
      * field this table reads. Filing it as unrecognised would hide a withdrawal among the VRF tables.
      */
