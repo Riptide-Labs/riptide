@@ -121,10 +121,11 @@ class E2eTestSupportTest {
     /**
      * A dip is treated as no progress, not as a failure (#662).
      *
-     * <p>{@code Nl6Container.sentRecords} returns {@code 0} when no collector matches the protocol,
-     * with no error. Under the boolean predicate this helper replaced that was harmless. Hard-failing
-     * on it turned an nl6 status hiccup into an ingest failure — the false report #547 exists to
-     * remove, reintroduced one layer down.</p>
+     * <p>The dip this was filed for came from {@code Nl6Container.sentRecords} answering {@code 0}
+     * when no collector matched the protocol, and is now absorbed at the instrument by
+     * {@code Nl6Container.ledger}. This stays as the backstop: a supplier that dips once must not
+     * fail a run, because hard-failing on it turned an nl6 status hiccup into an ingest failure,
+     * which is the false report #547 exists to remove, reintroduced one layer down.</p>
      */
     @Test
     void aSingleDipDoesNotFailARunThatRecovers() throws Exception {

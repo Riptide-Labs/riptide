@@ -37,13 +37,15 @@ final class E2eTestSupport {
      * so. The bound is per wait, not per suite; it makes a single crawl a named failure rather than
      * a cancelled job with no count attached.</p>
      *
-     * <p>Monotonicity is the assumption that makes this sound, but a dip is treated as no progress
-     * rather than as a failure (#662). {@code Nl6Container.sentRecords} returns {@code 0} when no
-     * collector matches the protocol, with no error — harmless under the boolean predicate this
-     * replaced, which simply read false and polled again. Hard-failing on it would turn an nl6
-     * status hiccup into an ingest failure, which is the class of false report #547 exists to
-     * remove. A count that genuinely shrinks and stays down still stalls out, and the failure says a
-     * decrease was seen since the last advance so the cause is not misread as slow ingest.</p>
+     * <p>Monotonicity is the assumption that makes this sound, and a dip is treated as no progress
+     * rather than as a failure (#662). That tolerance is a backstop rather than the fix: the source
+     * that actually dipped was nl6's ledger, which answered {@code 0} with no error when no
+     * collector matched the protocol. It is now polled through {@code Nl6Container.ledger}, which
+     * holds its own high-water mark and never throws, so the quirk no longer reaches here. Every
+     * supplier passed in should be monotonic; this branch keeps one bad read from being mistaken for
+     * evidence about the ingest, which is the class of false report #547 exists to remove. A count
+     * that genuinely shrinks and stays down still stalls out, and the failure says a decrease was
+     * seen since the last advance so the cause is not misread as slow ingest.</p>
      */
     static void awaitCount(final Duration stallBudget, final String description,
             final LongSupplier count, final long target) throws InterruptedException {

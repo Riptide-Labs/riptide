@@ -261,9 +261,9 @@ public class Nl6FlowIngestionIT {
      */
     private void reconcile(final String nl6Protocol, final String chProtocol, final double epsilon) throws Exception {
         awaitCount(Duration.ofMinutes(3), "nl6 ledger to reach " + MIN_RECORDS + " " + nl6Protocol + " records",
-                () -> sentRecordsUnchecked(nl6Protocol), MIN_RECORDS);
+                () -> NL6.ledger(nl6Protocol), MIN_RECORDS);
 
-        final long ledger = NL6.sentRecords(nl6Protocol);
+        final long ledger = NL6.ledger(nl6Protocol);
         final long threshold = (long) Math.ceil(ledger * (1.0 - epsilon));
 
         awaitCount(Duration.ofMinutes(2), chProtocol + " rows in ClickHouse to reach " + threshold + " (ledger " + ledger + ")",
@@ -293,14 +293,6 @@ public class Nl6FlowIngestionIT {
         try {
             return queryClient.queryAll("SELECT count() AS c FROM flows WHERE flowProtocol = '" + chProtocol + "'")
                     .getFirst().getLong("c");
-        } catch (final Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    private long sentRecordsUnchecked(final String protocol) {
-        try {
-            return NL6.sentRecords(protocol);
         } catch (final Exception e) {
             throw new RuntimeException(e);
         }
