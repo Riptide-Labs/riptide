@@ -126,7 +126,13 @@ public final class Nl6Container extends GenericContainer<Nl6Container> {
         }
     }
 
-    /** Records sent so far for the collector speaking the given protocol, per nl6's ledger. */
+    /**
+     * Records sent so far for the collector speaking the given protocol, per nl6's ledger.
+     *
+     * <p>Reads as {@code 0}, with no error, when the status reply lists no collector for the
+     * protocol. A supplier built on this can therefore dip; {@code E2eTestSupport.awaitCount}
+     * treats that as no progress rather than as a failure (#662).</p>
+     */
     public long sentRecords(final String protocol) throws Exception {
         final var request = HttpRequest.newBuilder(URI.create(apiBase() + "/flows/status")).GET().build();
         final var response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());

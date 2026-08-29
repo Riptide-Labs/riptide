@@ -37,9 +37,13 @@ final class E2eTestSupport {
      * so. The bound is per wait, not per suite; it makes a single crawl a named failure rather than
      * a cancelled job with no count attached.</p>
      *
-     * <p>Monotonicity is the assumption that makes this sound, and it is asserted rather than
-     * trusted: a count that goes backwards means the caller is not measuring accumulated work, and
-     * "no progress" would then be meaningless.</p>
+     * <p>Monotonicity is the assumption that makes this sound, but a dip is treated as no progress
+     * rather than as a failure (#662). {@code Nl6Container.sentRecords} returns {@code 0} when no
+     * collector matches the protocol, with no error — harmless under the boolean predicate this
+     * replaced, which simply read false and polled again. Hard-failing on it would turn an nl6
+     * status hiccup into an ingest failure, which is the class of false report #547 exists to
+     * remove. A count that genuinely shrinks and stays down still stalls out, and the failure says a
+     * decrease was seen since the last advance so the cause is not misread as slow ingest.</p>
      */
     static void awaitCount(final Duration stallBudget, final String description,
             final LongSupplier count, final long target) throws InterruptedException {
@@ -48,7 +52,8 @@ final class E2eTestSupport {
 
     /**
      * How often {@link #awaitCount(Duration, String, LongSupplier, long)} re-reads the count. The
-     * five-argument overload takes the interval explicitly so its own tests need no two-second sleep.
+     * five-argument overload takes the interval explicitly so most of its tests need no two-second
+     * sleep; the one pinning this delegation goes through this value on purpose.
      */
     private static final Duration POLL_INTERVAL = Duration.ofSeconds(2);
 
@@ -59,32 +64,45 @@ final class E2eTestSupport {
     static void awaitCount(final Duration stallBudget, final Duration poll, final String description,
             final LongSupplier count, final long target) throws InterruptedException {
         long best = count.getAsLong();
+        // Cleared on every advance, so the note means "decreased since the count last moved" rather
+        // than blaming a stale hiccup for a genuine stall minutes later.
+        boolean sawDecrease = false;
         final var started = Instant.now();
         var lastAdvance = started;
         final var cap = started.plus(stallBudget.multipliedBy(CAP_MULTIPLE));
         while (best < target) {
             if (Instant.now().isAfter(lastAdvance.plus(stallBudget))) {
-                Assertions.fail("Stalled at %d of %d for %s waiting for %s, %s after the wait began"
-                        .formatted(best, target, stallBudget, description, Duration.between(started, Instant.now())));
+                Assertions.fail("Stalled at %d of %d for %s waiting for %s, %s after the wait began%s"
+                        .formatted(best, target, stallBudget, description,
+                                Duration.between(started, Instant.now()), decreaseNote(sawDecrease)));
             }
             if (Instant.now().isAfter(cap)) {
                 // Says when the count last moved rather than claiming it still does: a count that
                 // froze late in the window reaches this check before its stall budget runs out.
-                Assertions.fail("Cap of %d x %s reached at %d of %d for %s, last advance %s ago"
+                Assertions.fail("Cap of %d x %s reached at %d of %d for %s, last advance %s ago%s"
                         .formatted(CAP_MULTIPLE, stallBudget, best, target, description,
-                                Duration.between(lastAdvance, Instant.now())));
+                                Duration.between(lastAdvance, Instant.now()), decreaseNote(sawDecrease)));
             }
             Thread.sleep(poll.toMillis());
             final long now = count.getAsLong();
-            Assertions.assertThat(now)
-                    .as("%s must not go backwards: a count that shrinks is not accumulated work, and"
-                            + " waiting on its progress would mean nothing", description)
-                    .isGreaterThanOrEqualTo(best);
+            if (now < best) {
+                // Recorded, not thrown: a single bad read is not evidence about the ingest, and a
+                // persistent one reaches the stall branch above with this noted in its message.
+                sawDecrease = true;
+            }
             if (now > best) {
                 best = now;
                 lastAdvance = Instant.now();
+                sawDecrease = false;
             }
         }
+    }
+
+    /** The suffix both failure messages carry when a read went backwards since the last advance. */
+    private static String decreaseNote(final boolean sawDecrease) {
+        return sawDecrease
+                ? " (the count decreased since its last advance, so it may not be measuring accumulated work)"
+                : "";
     }
 
     static int freeUdpPort() {
