@@ -151,9 +151,10 @@ public final class Nl6Container extends GenericContainer<Nl6Container> {
      * Records sent so far for the collector speaking the given protocol, per nl6's ledger.
      *
      * <p>The raw reading: it throws, and answers {@code 0} with no error when the status reply lists
-     * no collector for the protocol. Poll {@link #ledger} instead of this from a wait.</p>
+     * no collector for the protocol. Private so a wait cannot poll it: {@link #ledger} is the only
+     * way out, and the reason is #662.</p>
      */
-    public long sentRecords(final String protocol) throws Exception {
+    private long sentRecords(final String protocol) throws Exception {
         final var request = HttpRequest.newBuilder(URI.create(apiBase() + "/flows/status")).GET().build();
         final var response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         final var collectors = objectMapper.readTree(response.body()).path("data").path("collectors");

@@ -8,8 +8,8 @@ package org.riptide.e2e;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Turns a reading of the <em>instrument</em> into one that never goes backwards and never throws.
@@ -40,8 +40,8 @@ final class LedgerReading {
 
     private static final Logger LOG = LoggerFactory.getLogger(LedgerReading.class);
 
-    /** Highest reading seen per protocol. */
-    private final Map<String, Long> highWater = new ConcurrentHashMap<>();
+    /** Highest reading seen per protocol. The awaits poll from one thread, so no locking. */
+    private final Map<String, Long> highWater = new HashMap<>();
 
     /** A reading of the instrument, which may fail. */
     @FunctionalInterface
@@ -56,7 +56,7 @@ final class LedgerReading {
     long advance(final String protocol, final Source source) {
         final long reading = advanced(highWater.getOrDefault(protocol, 0L), source,
                 "sent_records for " + protocol);
-        highWater.merge(protocol, reading, Math::max);
+        highWater.put(protocol, reading);
         return reading;
     }
 
@@ -73,8 +73,10 @@ final class LedgerReading {
             reading = source.read();
         } catch (final Exception e) {
             if (e instanceof InterruptedException) {
-                // The wait's own Thread.sleep is what turns the flag back into an exception.
+                // Not an instrument hiccup, so not logged as one. The wait's own Thread.sleep is
+                // what turns the restored flag back into an exception.
                 Thread.currentThread().interrupt();
+                return best;
             }
             // Logged, not rethrown: see the class javadoc. A persistent failure still fails the run
             // by never advancing, and this is the line that says why.
