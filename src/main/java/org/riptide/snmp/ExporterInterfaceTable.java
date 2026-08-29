@@ -15,6 +15,7 @@ import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.ie.values.visitor.StringVisitor;
 import org.riptide.flows.parser.ie.values.visitor.UnsignedLongVisitor;
 import org.riptide.flows.parser.session.OptionListener;
+import org.riptide.flows.parser.session.OptionListener.Verdict;
 import org.riptide.flows.parser.session.SessionAdmissionConfig;
 import org.riptide.pipeline.ExporterIdentity;
 import org.springframework.stereotype.Component;
@@ -110,11 +111,13 @@ public class ExporterInterfaceTable implements OptionListener {
     }
 
     @Override
-    public void accept(final ExporterIdentity identity, final Collection<Value<?>> scopes, final List<Value<?>> values) {
+    public Verdict accept(final ExporterIdentity identity,
+            final Collection<Value<?>> scopes, final List<Value<?>> values) {
         final String name = string(values, NAME_FIELDS);
         final String description = string(values, DESCRIPTION_FIELDS);
         if (name == null && description == null) {
-            return; // not an interface option record (sampler/VRF/app tables, …)
+            // Neither a name nor a description: not this table's shape at all.
+            return Verdict.UNRECOGNISED; // sampler/VRF/app tables, …
         }
 
         Integer ifIndex = unsigned(scopes, IFINDEX_SCOPES);
@@ -124,7 +127,11 @@ public class ExporterInterfaceTable implements OptionListener {
         }
         if (ifIndex == null || ifIndex == 0) {
             this.recordsSkipped.mark();
-            return;
+            // Recognised and unusable, which is a different fact from unrecognised (#599). riptide
+            // understood this record and still got nothing from it — the state worth an operator's
+            // attention. Reporting it as unrecognised would bury it among the VRF and application
+            // tables nobody is meant to read.
+            return Verdict.RECOGNISED_BUT_UNUSABLE;
         }
 
         final Cache<Integer, IfInfo> forScope = scopeTable(identity);
@@ -138,6 +145,7 @@ public class ExporterInterfaceTable implements OptionListener {
         // last, while eviction keeps the window over the interfaces actually carrying traffic.
         forScope.put(ifIndex, IfInfo.merge(new IfInfo(name, description, null), existing));
         this.recordsConsumed.mark();
+        return Verdict.CLAIMED;
     }
 
     /**

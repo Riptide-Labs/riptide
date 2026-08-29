@@ -9,6 +9,7 @@ import com.codahale.metrics.MetricRegistry;
 import org.junit.jupiter.api.Test;
 import org.riptide.flows.parser.ie.values.StringValue;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
+import org.riptide.flows.parser.session.OptionListener;
 import org.riptide.flows.parser.session.SessionAdmissionConfig;
 import org.riptide.pipeline.ExporterIdentity;
 
@@ -274,5 +275,49 @@ public class ExporterInterfaceTableTest {
 
         assertThat(this.table.lookup(identity, 12)).map(IfInfo::name).contains("egress-if");
         assertThat(this.table.lookup(identity, 13)).map(IfInfo::alias).contains("out-desc");
+    }
+
+    /**
+     * Every verdict this table can return, pinned (#599).
+     *
+     * <p>The gap the review found most damning: a mutation turning the claim below into a decline
+     * survived the whole 1511-test suite. With it shipped, every interface options record from every
+     * exporter would have been counted as a gap, and the meter would have read as a permanent fault
+     * on a healthy collector — the false alarm this counter exists to avoid.</p>
+     */
+    @Test
+    void aRecordNamingAnInterfaceIsClaimed() throws Exception {
+        final var table = new ExporterInterfaceTable(config(), new SessionAdmissionConfig(), this.metrics);
+
+        assertThat(table.accept(identity("192.0.2.1", 0),
+                List.of(new UnsignedValue("SCOPE:INTERFACE", 3)),
+                List.of(new StringValue("IF_NAME", "eth0"))))
+                .isEqualTo(OptionListener.Verdict.CLAIMED);
+    }
+
+    /**
+     * An interface record naming no interface: understood, and nothing servable in it.
+     *
+     * <p>Deliberately not {@code UNRECOGNISED}. This is the pmacct one-sided-tagging shape, and
+     * filing it among the records nobody recognised would bury a real signal in routine noise —
+     * while reporting it as a claim would hide it entirely.</p>
+     */
+    @Test
+    void anInterfaceRecordWithNoIfIndexIsRecognisedButUnusable() throws Exception {
+        final var table = new ExporterInterfaceTable(config(), new SessionAdmissionConfig(), this.metrics);
+
+        assertThat(table.accept(identity("192.0.2.1", 0), List.of(),
+                List.of(new StringValue("IF_NAME", "eth0"))))
+                .isEqualTo(OptionListener.Verdict.RECOGNISED_BUT_UNUSABLE);
+    }
+
+    /** Neither a name nor a description: not this table's shape at all. */
+    @Test
+    void aRecordNamingNoInterfaceAtAllIsUnrecognised() throws Exception {
+        final var table = new ExporterInterfaceTable(config(), new SessionAdmissionConfig(), this.metrics);
+
+        assertThat(table.accept(identity("192.0.2.1", 0), List.of(),
+                List.of(new UnsignedValue("SAMPLING_INTERVAL", 100))))
+                .isEqualTo(OptionListener.Verdict.UNRECOGNISED);
     }
 }

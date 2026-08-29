@@ -62,8 +62,10 @@ public class Daemon implements ApplicationRunner {
                   final SessionAdmissionConfig sessionAdmissionConfig,
                   final DaemonConfig config) {
         final var identity = config.resolveIdentity();
-        // One option stream, two readers: interface names and sampler rates.
-        final OptionListener optionListener = OptionListener.of(exporterInterfaceTable, exporterSamplingTable);
+        // One option stream, two readers: interface names and sampler rates — and a meter for the
+        // records neither of them claims, which is the only place that gap is visible (#599).
+        final OptionListener optionListener =
+                OptionListener.of(metricRegistry, exporterInterfaceTable, exporterSamplingTable);
         // One oracle for every receiver, so the configured bounds describe the collector's total
         // retained session state. Per-parser instances would silently multiply the ceiling by the
         // number of configured receivers and register colliding gauges.

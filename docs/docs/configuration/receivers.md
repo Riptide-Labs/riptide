@@ -209,9 +209,36 @@ A climbing `_expired` means an exporter is losing its learned rate. What its flo
 
 The `_evicted` counters mean something different: the table is full and displacing entries, including live ones. That is pressure, not silence, and it wants a different response.
 
-An explicit withdrawal — an exporter re-advertising an interval of `0`, meaning it has turned sampling off — drops the entry at once and is counted as neither.
+An explicit withdrawal — an exporter re-advertising an interval of `0`, meaning it has turned sampling off — drops the entry at once and is counted as neither. It does count under `parser_options_recognisedUnusable`, described next: the record was understood, and nothing was kept from it.
 
 The query above finds these conditions after the fact; the counters find them as they happen.
+
+### Option records nobody used
+
+Those counters say what each consumer *did*. They cannot say what happened to a record no consumer wanted, and that is the gap that hid a hundredfold sampling undercount until someone read an exporter's source. Three counters at the tap answer it, against a denominator:
+
+```
+parser_options_offered              option data records seen
+parser_options_claimed              stored by at least one consumer
+parser_options_recognisedUnusable   understood by a consumer, which stored nothing
+parser_options_unrecognised         no consumer knew the shape
+```
+
+`offered` always equals the sum of the other three.
+
+**`unrecognised` is normal and rarely urgent.** VRF tables, application tables and metering-process statistics are routine on real exporters and riptide has no consumer for them. Expect a steady rate here and alert on changes rather than on presence.
+
+**`recognisedUnusable` is the one to watch.** It means riptide understood a record and served nothing from it — an exporter told it something and it was not kept. The shapes that reach it today:
+
+- an interface option record naming no `ifIndex` — benign on exporters that tag one direction only
+- an interval of `0`, exporter-wide or per Selector — a withdrawal, routine when an exporter turns sampling off
+- a sampling advertisement or Selector Report whose algorithm expresses a ratio riptide cannot store, or names an algorithm and omits its parameters
+
+The last is the one that costs accuracy. A rate the exporter stated is being dropped. A rate learned earlier from another record keeps serving until it expires, so the effect is delayed rather than immediate; an exporter that never taught a usable rate reports `assumed` or the configured fallback from the start.
+
+These four meters are collector-wide. Nothing in them says which exporter. When `recognisedUnusable` climbs, the per-consumer `_skipped` meters say which consumer declined — `parser_optionSampling_skipped`, `parser_selectorReport_skipped` or `enrichment_optionInterfaces_skipped` move with it, never `_consumed`. To find the exporter, query `samplingProvenance` per exporter for the same period and compare against each candidate's advertised sampling configuration.
+
+Note the vocabulary differs from the per-consumer counters on purpose: `enrichment_optionInterfaces_skipped` means *that* table declined a record, which is routine — most records are not its own. Only these three describe what became of the record overall.
 
 :::warning[NetFlow v5 rates changed]
 Earlier releases ignored the v5 header interval. What they recorded instead depended on the receiver:
