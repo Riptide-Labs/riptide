@@ -105,6 +105,18 @@ public class ClickhouseRepository implements FlowRepository {
             // coalescing at all (14 vs 56 inserts/s).
             builder.serverSetting("async_insert", "1")
                     .serverSetting("wait_for_async_insert", "0");
+        } else {
+            // Sent explicitly, because "off" cannot be expressed by silence (#664). ClickHouse
+            // 26.7 defaults async_insert to 1, so omitting the setting left coalescing ON with the
+            // server's own wait_for_async_insert=1 — a third behaviour neither branch of the
+            // javadoc above describes, and not the direct insert "off" is documented to mean.
+            //
+            // Rejections surfaced either way, because the server's default wait is 1, so this is
+            // not a hole in the CHECK-barrier contract. What differed is coalescing: a refused
+            // insert is atomic on the buffered path but can leave whole blocks committed on a
+            // direct one once a batch exceeds max_insert_block_size, which is the ground #548's
+            // design stands on.
+            builder.serverSetting("async_insert", "0");
         }
         this.client = builder.build();
     }
