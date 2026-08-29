@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Timeout;
 
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -116,24 +117,69 @@ class E2eTestSupportTest {
     }
 
     /**
-     * A count that goes backwards fails on its own terms, rather than being waited on.
+     * A dip is treated as no progress, not as a failure (#662).
      *
-     * <p>Monotonicity is what makes "no progress" meaningful. A shrinking count is not accumulated
-     * work, so the helper says so instead of stalling out and blaming the ingest.</p>
+     * <p>{@code Nl6Container.sentRecords} returns {@code 0} when no collector matches the protocol,
+     * with no error. Under the boolean predicate this helper replaced that was harmless. Hard-failing
+     * on it turned an nl6 status hiccup into an ingest failure — the false report #547 exists to
+     * remove, reintroduced one layer down.</p>
      */
     @Test
-    void aCountThatGoesBackwardsIsRejected() {
+    void aSingleDipDoesNotFailARunThatRecovers() throws Exception {
+        final var reads = new java.util.concurrent.atomic.AtomicInteger();
+        // 1, 2, then a spurious 0, then on to the target.
+        final LongSupplier flaky = () -> {
+            final int n = reads.incrementAndGet();
+            return n == 3 ? 0L : n;
+        };
+
+        E2eTestSupport.awaitCount(STALL, POLL, "a count with one bad read", flaky, 6);
+
+        assertThat(reads.get())
+                .as("the wait must have continued past the dip rather than failing on it")
+                .isGreaterThanOrEqualTo(6);
+    }
+
+    /**
+     * A count that shrinks and stays down still fails, and says a decrease was seen.
+     *
+     * <p>Tolerating a dip must not mean tolerating a supplier that is not measuring accumulated
+     * work. It stalls out instead, and the message names the reason so the failure is not misread
+     * as slow ingest.</p>
+     */
+    @Test
+    void aCountThatKeepsShrinkingStallsAndNamesTheDecrease() {
         final var shrinking = new AtomicLong(50);
 
         assertThatThrownBy(() -> E2eTestSupport.awaitCount(STALL, POLL, "a shrinking count",
                 shrinking::decrementAndGet, 100))
                 .isInstanceOf(AssertionError.class)
-                .hasMessageContaining("must not go backwards")
-                // the first read already decrements: 50 -> 49 seeds "best", the next read is 48
-                .hasMessageContaining("actual:\n  48L")
-                .hasMessageContaining("greater than or equal to:\n  49L");
+                .hasMessageContaining("Stalled at")
+                .hasMessageContaining("decreased at least once");
     }
 
+    /**
+     * The four-argument overload — the one every e2e call site uses — forwards its arguments.
+     *
+     * <p>Both parameters are {@code Duration}, so transposing them in the delegation compiles
+     * cleanly, and a mutation doing exactly that survived the whole suite: all six tests here called
+     * the five-argument form. Under it the e2e tier runs with a two-second stall budget and a
+     * minutes-long poll, so the first read lands after the budget expired and every wait fails
+     * {@code Stalled at 0 of N} — while this class stayed green.</p>
+     *
+     * <p>Asserted through the message, which names the budget it was given: a transposed delegation
+     * reports {@code PT2S} (the poll interval) where this expects the budget it passed.</p>
+     */
+    @Test
+    void theDefaultPollOverloadForwardsTheBudgetAsTheBudget() {
+        final var frozen = new AtomicLong(3);
+
+        assertThatThrownBy(() -> E2eTestSupport.awaitCount(
+                Duration.ofSeconds(1), "a frozen count on the default poll", frozen::get, 9))
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("Stalled at 3 of 9")
+                .hasMessageContaining("for PT1S");
+    }
     /** A count already at its target returns after a single read, without sleeping a poll. */
     @Test
     void anAlreadySatisfiedCountReturnsImmediately() throws Exception {
