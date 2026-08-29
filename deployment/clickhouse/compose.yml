@@ -14,10 +14,10 @@ services:
       TZ: UTC
       CLICKHOUSE_USER: default
       CLICKHOUSE_DB: riptide
-      # Defaults to riptide so the quickstart stays one command on a laptop. The stack publishes
-      # 8123 and 9000 on every interface and this user holds access_management, so set
-      # CLICKHOUSE_PASSWORD in the environment or an .env file for anything reachable beyond
-      # localhost. Read by users.xml via from_env. See docs/deploy/docker-compose.md.
+      # Defaults to riptide so the quickstart stays one command on a laptop. This user holds
+      # access_management, so set CLICKHOUSE_PASSWORD in the environment or an .env file before
+      # publishing the ports below beyond loopback. Read by users.xml via from_env. See
+      # docs/deploy/docker-compose.md.
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-riptide}
     volumes:
       - clickhouse-data:/var/lib/clickhouse/
@@ -28,9 +28,13 @@ services:
       interval: 2s
       timeout: 1s
       retries: 20
+    # Loopback only: riptide and Grafana reach ClickHouse over the compose network, not through
+    # these, so this costs the stack nothing and keeps a defaulted admin off the network (#651).
+    # To reach ClickHouse from another host, override with `ports: !override` in a
+    # compose.override.yml and set CLICKHOUSE_PASSWORD first.
     ports:
-      - "8123:8123/tcp"
-      - "9000:9000/tcp"
+      - "127.0.0.1:8123:8123/tcp"
+      - "127.0.0.1:9000:9000/tcp"
 
   ch-ui:
     image: ghcr.io/caioricciuti/ch-ui:latest

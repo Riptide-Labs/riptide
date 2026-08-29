@@ -12,14 +12,15 @@
         <default>
             <!--
                 Read from the environment so the compose file owns the value and this file carries
-                no secret (#651). The stack publishes 8123 and 9000 on every interface, and this
-                user holds access_management, so without a password any host that can route to the
-                machine has ClickHouse admin. Defaulted in compose.yml to keep the quickstart one
-                command; override CLICKHOUSE_PASSWORD for anything beyond a laptop.
+                no secret (#651). This user holds access_management, so without a password anyone
+                who can reach 8123 has ClickHouse admin. Defaulted in compose.yml to keep the
+                quickstart one command, with the ports published on loopback; set
+                CLICKHOUSE_PASSWORD before publishing them wider.
 
                 Narrowing <networks> instead was tried three times and does not work here: riptide
                 and Grafana both authenticate as this user and both arrive from a compose bridge
-                address, so a loopback or fixed-CIDR rule breaks them (#636, #640, #641).
+                address, so a loopback or fixed-CIDR rule breaks them (#636, #640, #641). Binding
+                the published host ports is a different knob and does not affect them.
             -->
             <!--
                 replace="1" is required, not decorative. Setting CLICKHOUSE_USER/CLICKHOUSE_PASSWORD
@@ -28,10 +29,10 @@
                 already has a value is refused outright: "Element <password> has value and does not
                 have 'replace' attribute, can't process from_env substitution", and the server exits
                 with CANNOT_LOAD_CONFIG rather than starting insecurely. This file is the source of
-                truth for the user; the entrypoint's copy is overridden here.
+                truth for the user; the entrypoint's copy is overridden here, which relies on
+                users.d being merged in name order (default-user.xml before users.xml).
             -->
             <password from_env="CLICKHOUSE_PASSWORD" replace="1"/>
-            <access_management>1</access_management>
             <profile>default</profile>
             <networks>
                 <ip>::/0</ip>
