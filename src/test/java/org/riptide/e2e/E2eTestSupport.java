@@ -53,6 +53,11 @@ final class E2eTestSupport {
      * evidence about the ingest, which is the class of false report #547 exists to remove. A count
      * that genuinely shrinks and stays down still stalls out, and the failure says a decrease was
      * seen since the last advance so the cause is not misread as slow ingest.</p>
+     *
+     * @throws WaitFailure as {@link Stalled}, {@link CapReached} or {@link SuiteBudgetExhausted},
+     *         each an {@link AssertionError}, so a failed wait fails the test that made it
+     * @throws IllegalArgumentException for arguments that cannot produce a usable wait; see
+     *         {@link #requireUsableArguments}
      */
     static void awaitCount(final Duration stallBudget, final String description,
             final LongSupplier count, final long target) throws InterruptedException {
@@ -67,7 +72,7 @@ final class E2eTestSupport {
     private static final Duration POLL_INTERVAL = Duration.ofSeconds(2);
 
     /** Upper bound on the whole wait, in stall budgets: generous for a slow runner, finite for a crawl. */
-    private static final int CAP_MULTIPLE = 5;
+    static final int CAP_MULTIPLE = 5;
 
     /**
      * Total time every wait in this JVM may spend between them (#662).
@@ -155,7 +160,13 @@ final class E2eTestSupport {
         }
     }
 
-    /** As {@link #awaitCount(Duration, String, LongSupplier, long)}, with the poll interval given. */
+    /**
+     * As {@link #awaitCount(Duration, String, LongSupplier, long)}, with the poll interval given.
+     *
+     * @throws WaitFailure as {@link Stalled}, {@link CapReached} or {@link SuiteBudgetExhausted}
+     * @throws IllegalArgumentException for arguments that cannot produce a usable wait; see
+     *         {@link #requireUsableArguments}
+     */
     static Wait awaitCount(final Duration stallBudget, final Duration poll, final String description,
             final LongSupplier count, final long target) throws InterruptedException {
         requireUsableArguments(stallBudget, poll, target);
@@ -174,10 +185,12 @@ final class E2eTestSupport {
      * Refuses the argument combinations that wait without ever being able to report anything (#662).
      *
      * <p>Each of these used to produce a wait that looked like a wait and was not one, which is the
-     * same reader-misleading failure the rest of this helper exists to remove. A poll longer than
-     * the budget puts the first read after the budget has already expired, so every wait fails
-     * {@code Stalled at 0} however healthy the ingest; that is not hypothetical, it is what the
-     * transposed-delegation mutation did. A non-positive budget stalls on the first check. A
+     * same reader-misleading failure the rest of this helper exists to remove. A poll no shorter
+     * than the budget reads at most once per budget: a frozen count stalls after a single read, and
+     * an advancing one is cut off by the cap after {@link #CAP_MULTIPLE} reads unless the target
+     * happens to arrive within them. Either way the wait observes almost nothing about the ingest.
+     * That is not hypothetical: the transposed-delegation mutation hands the e2e sites minute-long
+     * polls against a two-second budget. A non-positive budget stalls on the first check. A
      * non-positive target is satisfied before the first read, so the call returns immediately while
      * reading in the test as though something was waited for.</p>
      *
@@ -193,10 +206,10 @@ final class E2eTestSupport {
         if (poll.isNegative() || poll.isZero()) {
             throw new IllegalArgumentException("poll interval must be positive, got " + poll);
         }
-        if (poll.compareTo(stallBudget) > 0) {
-            throw new IllegalArgumentException(("poll interval %s is longer than the stall budget %s,"
-                    + " so the first read lands after the budget expired and every wait fails"
-                    + " regardless of the ingest").formatted(poll, stallBudget));
+        if (poll.compareTo(stallBudget) >= 0) {
+            throw new IllegalArgumentException(("poll interval %s is not shorter than the stall budget %s,"
+                    + " so the wait reads at most once per budget and observes almost nothing"
+                    + " about the ingest").formatted(poll, stallBudget));
         }
         if (target <= 0) {
             throw new IllegalArgumentException(
@@ -218,8 +231,12 @@ final class E2eTestSupport {
         final var cap = started.plus(stallBudget.multipliedBy(CAP_MULTIPLE));
         while (best < target) {
             if (Instant.now().isAfter(lastAdvance.plus(stallBudget))) {
-                throw new Stalled("Stalled at %d of %d for %s waiting for %s, %s after the wait began%s%s"
+                // Names both the budget it was given and the stall it measured, as the cap does, so
+                // the two failures agree on what they report (#662).
+                throw new Stalled(("Stalled at %d of %d for %s waiting for %s, last advance %s ago,"
+                        + " %s after the wait began%s%s")
                         .formatted(best, target, stallBudget, description,
+                                Duration.between(lastAdvance, Instant.now()),
                                 Duration.between(started, Instant.now()), gapNote(longestGap),
                                 decreaseNote(sawDecrease)));
             }

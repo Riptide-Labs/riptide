@@ -371,8 +371,8 @@ class BatchingFlowRepositoryTest {
      *   <li><b>The deadline is only a bound</b> at the other call sites, which do carry the
      *       ambiguity #547 was filed about: a slow runner and a broken flush time out alike. The
      *       exposure is much smaller here than in e2e, though, because the delegate is in-process
-     *       with no container and no network, and the budgets are seconds against sub-millisecond
-     *       work.</li>
+     *       with no container and no network, and the budgets are seconds against timers of a few
+     *       hundred milliseconds or in-memory work.</li>
      * </ul>
      *
      * <p>If this is revisited, treat the two groups separately rather than alike.</p>
