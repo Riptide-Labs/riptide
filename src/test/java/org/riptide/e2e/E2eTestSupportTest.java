@@ -42,6 +42,13 @@ class E2eTestSupportTest {
     private static final Duration POLL = Duration.ofMillis(10);
 
     /**
+     * A budget longer than the helper's own two-second default poll, for the one test that goes
+     * through the four-argument overload. A shorter one is refused now that a poll longer than its
+     * budget is an argument error (#662), and that combination could never wait usefully anyway.
+     */
+    private static final Duration OVER_DEFAULT_POLL = Duration.ofSeconds(3);
+
+    /**
      * A count that keeps advancing is waited on for as long as it takes, past the stall budget.
      *
      * <p>The whole point of #547: slowness is not failure. This advances one step per poll and needs
@@ -79,8 +86,8 @@ class E2eTestSupportTest {
 
         assertThatThrownBy(() -> E2eTestSupport.awaitCount(STALL, POLL, "a crawling count",
                 crawling::incrementAndGet, Long.MAX_VALUE))
-                .isInstanceOf(AssertionError.class)
-                .hasMessageContaining("Cap of 5 x PT1S reached at")
+                .isInstanceOf(E2eTestSupport.CapReached.class)
+                .hasMessageContaining("reached at")
                 .hasMessageContaining("last advance")
                 .hasMessageContaining("a crawling count");
     }
@@ -178,8 +185,7 @@ class E2eTestSupportTest {
 
         assertThatThrownBy(() -> E2eTestSupport.awaitCount(STALL, POLL, "a crawl that dipped",
                 crawlThenDip, Long.MAX_VALUE))
-                .isInstanceOf(AssertionError.class)
-                .hasMessageContaining("Cap of 5 x PT1S reached at")
+                .isInstanceOf(E2eTestSupport.CapReached.class)
                 .hasMessageContaining("decreased since its last advance");
     }
 
@@ -213,18 +219,24 @@ class E2eTestSupportTest {
      * {@code Stalled at 0 of N} — while this class stayed green.</p>
      *
      * <p>Asserted through the message, which names the budget it was given: a transposed delegation
-     * reports the poll interval as the budget where this expects {@link #STALL}, which it passed.
-     * This test sleeps the real poll interval on purpose; that is what makes the swap visible.</p>
+     * reports the poll interval as the budget where this expects {@link #OVER_DEFAULT_POLL}, which
+     * it passed. This test sleeps the real poll interval on purpose; that is what makes the swap
+     * visible.</p>
+     *
+     * <p>The budget exceeds the default poll because argument validation now refuses the reverse
+     * (#662), which is a second and louder guard on the same mutation: transposed, the e2e call
+     * sites pass a minutes-long poll against a two-second budget and are rejected outright rather
+     * than waiting. This test still pins the delegation on its own, and does not rely on that.</p>
      */
     @Test
     void theDefaultPollOverloadForwardsTheBudgetAsTheBudget() {
         final var frozen = new AtomicLong(3);
 
         assertThatThrownBy(() -> E2eTestSupport.awaitCount(
-                STALL, "a frozen count on the default poll", frozen::get, 9))
-                .isInstanceOf(AssertionError.class)
+                OVER_DEFAULT_POLL, "a frozen count on the default poll", frozen::get, 9))
+                .isInstanceOf(E2eTestSupport.Stalled.class)
                 .hasMessageContaining("Stalled at 3 of 9")
-                .hasMessageContaining("for " + STALL);
+                .hasMessageContaining("for " + OVER_DEFAULT_POLL);
     }
 
     /**
@@ -344,6 +356,78 @@ class E2eTestSupportTest {
                 .as("a gap measured from the start of the wait would be the whole elapsed time;"
                         + " sixty polls of %s make the rest of the wait longer than the pause", POLL)
                 .isLessThan(wait.elapsed().dividedBy(2));
+    }
+
+    /**
+     * The three ways a wait fails are separable by type, not only by wording (#662).
+     *
+     * <p>They mean different things: the count stopped, the count never arrived, or the suite ran
+     * out of the job's time and this wait may be innocent. As bare {@code AssertionError}s the only
+     * way to tell them apart was matching message text, which is how a test meant to pin the cap
+     * ended up asserting on {@code CAP_MULTIPLE}'s value.</p>
+     */
+    @Test
+    void theThreeWaysAWaitFailsAreDistinguishableByType() {
+        final var frozen = new AtomicLong(2);
+        final var crawling = new AtomicLong();
+
+        assertThat(catchThrowable(() -> E2eTestSupport.awaitCount(STALL, POLL, "a frozen count",
+                frozen::get, 100)))
+                .isExactlyInstanceOf(E2eTestSupport.Stalled.class);
+
+        assertThat(catchThrowable(() -> E2eTestSupport.awaitCount(STALL, POLL, "a crawling count",
+                crawling::incrementAndGet, Long.MAX_VALUE)))
+                .isExactlyInstanceOf(E2eTestSupport.CapReached.class);
+
+        try {
+            E2eTestSupport.seedSpentForTesting(E2eTestSupport.SUITE_BUDGET.plusMinutes(1));
+            assertThat(catchThrowable(() -> E2eTestSupport.awaitCount(STALL, POLL, "a wait out of budget",
+                    frozen::get, 100)))
+                    .isExactlyInstanceOf(E2eTestSupport.SuiteBudgetExhausted.class);
+        } finally {
+            E2eTestSupport.seedSpentForTesting(Duration.ZERO);
+        }
+    }
+
+    /**
+     * A poll longer than the stall budget is refused rather than waited on.
+     *
+     * <p>It is the transposed-delegation mutation as an argument: the first read lands after the
+     * budget expired, so every wait fails {@code Stalled at 0} however healthy the ingest. A wait
+     * that cannot pass is not a wait, and this is the one degenerate combination already known to
+     * have survived a suite.</p>
+     */
+    @Test
+    void aPollLongerThanTheBudgetIsRefused() {
+        assertThatThrownBy(() -> E2eTestSupport.awaitCount(Duration.ofMillis(10), Duration.ofSeconds(1),
+                "a poll longer than its budget", () -> 0L, 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("longer than the stall budget")
+                .as("an argument mistake is not an observation about the ingest")
+                .isNotInstanceOf(E2eTestSupport.WaitFailure.class);
+    }
+
+    /** A non-positive budget stalls on its first check, so it is refused. */
+    @Test
+    void aNonPositiveBudgetIsRefused() {
+        assertThatThrownBy(() -> E2eTestSupport.awaitCount(Duration.ZERO, POLL, "a zero budget",
+                () -> 0L, 1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("stall budget must be positive");
+    }
+
+    /**
+     * A non-positive target is refused, because it returns before the first read.
+     *
+     * <p>The degenerate case that reads worst: the call site looks like it waited for something and
+     * the run is green because nothing was ever asked for.</p>
+     */
+    @Test
+    void aNonPositiveTargetIsRefused() {
+        assertThatThrownBy(() -> E2eTestSupport.awaitCount(STALL, POLL, "a target of zero",
+                () -> 0L, 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("target must be positive");
     }
 
     /** A count already at its target returns after a single read, without sleeping a poll. */
