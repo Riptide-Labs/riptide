@@ -14,9 +14,16 @@ UDP.
 docker compose -f deployment/clickhouse/compose.yml up -d
 ```
 
-ClickHouse on `localhost:8123` (which is the application default), plus
+ClickHouse on `localhost:8123` (the application default endpoint), plus
 [ch-ui](http://localhost:5521) to inspect the `flows` table and
-[Grafana](http://localhost:3000).
+[Grafana](http://localhost:3000). The stack's `default` user needs a password
+(`riptide` unless you set `CLICKHOUSE_PASSWORD`), and the application default is none, so
+pass it to Riptide, or `env://CLICKHOUSE_PASSWORD` if the variable is set in the run
+configuration:
+
+```
+--riptide.clickhouse.password=riptide
+```
 
 ## 2. Run Riptide under the debugger
 

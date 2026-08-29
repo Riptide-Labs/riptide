@@ -15,4 +15,5 @@ datasources:
       username: default
       tlsSkipVerify: false
     secureJsonData:
-      password: ""
+      # Interpolated by Grafana from the container environment; set in compose.yml (#651).
+      password: ${CLICKHOUSE_PASSWORD}
