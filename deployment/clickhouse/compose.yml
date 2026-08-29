@@ -14,6 +14,11 @@ services:
       TZ: UTC
       CLICKHOUSE_USER: default
       CLICKHOUSE_DB: riptide
+      # Defaults to riptide so the quickstart stays one command on a laptop. The stack publishes
+      # 8123 and 9000 on every interface and this user holds access_management, so set
+      # CLICKHOUSE_PASSWORD in the environment or an .env file for anything reachable beyond
+      # localhost. Read by users.xml via from_env. See docs/deploy/docker-compose.md.
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-riptide}
     volumes:
       - clickhouse-data:/var/lib/clickhouse/
       - ./container-fs/clickhouse/config.xml:/etc/clickhouse-server/config.d/config.xml
@@ -36,7 +41,7 @@ services:
       TZ: UTC
       VITE_CLICKHOUSE_URL: http://localhost:8123
       VITE_CLICKHOUSE_USER: default
-      VITE_CLICKHOUSE_PASS: ""
+      VITE_CLICKHOUSE_PASS: ${CLICKHOUSE_PASSWORD:-riptide}
     ports:
       - "5521:5521/tcp"
 
@@ -51,6 +56,8 @@ services:
       # GF_SECURITY_ADMIN_PASSWORD in the environment or an .env file for anything reachable
       # beyond localhost. See docs/deploy/docker-compose.md.
       GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-admin}
+      # Consumed by the provisioned ClickHouse datasource, which interpolates it at load.
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-riptide}
       GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,netsage-sankey-panel
       GF_FEATURE_TOGGLES_ENABLE: nestedFolders
     volumes:

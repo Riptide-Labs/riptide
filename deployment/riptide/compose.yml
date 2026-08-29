@@ -15,7 +15,7 @@ services:
       LOGGING_LEVEL_ROOT: WARN
       RIPTIDE_CLICKHOUSE_ENDPOINT: http://clickhouse:8123
       RIPTIDE_CLICKHOUSE_USERNAME: default
-      RIPTIDE_CLICKHOUSE_PASSWORD: ""
+      RIPTIDE_CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-riptide}
       RIPTIDE_CLICKHOUSE_DATABASE: riptide
       # One multi receiver parses NetFlow v5/v9, IPFIX and sFlow on the published port
       RIPTIDE_RECEIVERS_FLOWS_TYPE: multi

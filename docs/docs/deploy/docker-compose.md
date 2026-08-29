@@ -14,21 +14,37 @@ cd riptide/deployment/riptide
 docker compose up -d
 ```
 
-:::warning Grafana ships with a default password
+:::warning The stack ships with default passwords
 
-Grafana starts with `admin`/`admin`, which is fine on a laptop and not fine anywhere else.
-The stack publishes port 3000 on every interface, so on any host with a routable address
-that login is reachable from the network.
+Grafana starts with `admin`/`admin` and ClickHouse's `default` user with `riptide`. Both are
+fine on a laptop and not fine anywhere else. The stack publishes ports 3000, 8123 and 9000 on
+every interface, so on any host with a routable address both are reachable from the network,
+and the ClickHouse user holds `access_management` — it can create users and row policies.
 
-Set your own password before the first start, either in your shell or in a `.env` file in
-the deployment directory:
+Set your own before the first start, either in your shell or in a `.env` file in the
+deployment directory:
 
 ```bash
 export GF_SECURITY_ADMIN_PASSWORD='your-secure-password-here'
+export CLICKHOUSE_PASSWORD='another-secure-password-here'
 ```
 
-The variable is only read when Grafana initialises its database. Changing it later has no
-effect unless you also remove the `gf-data` volume.
+`CLICKHOUSE_PASSWORD` is read by ClickHouse, Riptide, Grafana's provisioned datasource and
+ch-ui, so one value configures the whole stack. Change it and recreate the stack and all four
+follow; there is no second place to edit.
+
+`GF_SECURITY_ADMIN_PASSWORD` is only read when Grafana initialises its database. Changing it
+later has no effect unless you also remove the `gf-data` volume.
+
+:::
+
+:::info Passwords, not firewall rules
+
+The published ports are deliberately unchanged. Binding ClickHouse to loopback, or restricting
+the `default` user by source address, breaks Riptide and Grafana: both authenticate as that
+user and both reach it from a compose bridge address that varies by network. Three attempts at
+the address-based fix failed that way. Authentication is what closes the hole; if you also want
+the ports off the public interface, override them in a `compose.override.yml`.
 
 :::
 
