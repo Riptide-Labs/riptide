@@ -14,21 +14,59 @@ cd riptide/deployment/riptide
 docker compose up -d
 ```
 
-:::warning Grafana ships with a default password
+:::warning The stack ships with default passwords
 
-Grafana starts with `admin`/`admin`, which is fine on a laptop and not fine anywhere else.
-The stack publishes port 3000 on every interface, so on any host with a routable address
-that login is reachable from the network.
+Grafana starts with `admin`/`admin` and ClickHouse's `default` user with `riptide`. Both are
+fine on a laptop and not fine anywhere else. Grafana's port 3000 is published on every
+interface, so on any host with a routable address that login is reachable from the network.
+ClickHouse's 8123 and 9000 are published on loopback only, but the `default` user holds
+`access_management` (it can create users and row policies), so change its password before
+you publish those ports wider.
 
-Set your own password before the first start, either in your shell or in a `.env` file in
-the deployment directory:
+Set your own, either in your shell:
 
 ```bash
 export GF_SECURITY_ADMIN_PASSWORD='your-secure-password-here'
+export CLICKHOUSE_PASSWORD='another-secure-password-here'
 ```
 
-The variable is only read when Grafana initialises its database. Changing it later has no
-effect unless you also remove the `gf-data` volume.
+or in a `.env` file next to `compose.yml` (no `export`; write a literal `$` as `$$`, since
+Compose interpolates the value):
+
+```
+GF_SECURITY_ADMIN_PASSWORD=your-secure-password-here
+CLICKHOUSE_PASSWORD=another-secure-password-here
+```
+
+`.env` is gitignored. `CLICKHOUSE_PASSWORD` is read by ClickHouse, Riptide and Grafana's
+provisioned datasource, so one value configures the stack. Change it and recreate the stack
+and all three follow; there is no second place to edit. Anything else that connected with an
+empty password (`clickhouse-client`, export scripts) now needs the password too.
+
+`GF_SECURITY_ADMIN_PASSWORD` is only read when Grafana initialises its database, so set it
+before the first start. Changing it later has no effect unless you also remove the `gf-data`
+volume.
+
+:::
+
+:::info Reaching ClickHouse from another host
+
+Riptide and Grafana talk to ClickHouse over the compose network, so the loopback binding costs
+the stack nothing. If you need ClickHouse from another machine, set `CLICKHOUSE_PASSWORD` and
+republish the ports in a `compose.override.yml` (gitignored, loaded automatically). Compose
+merges `ports` lists by appending, so the override has to replace the list, not add to it:
+
+```yaml
+services:
+  clickhouse:
+    ports: !override
+      - "8123:8123/tcp"
+      - "9000:9000/tcp"
+```
+
+Do not restrict the `default` user by source address in `users.xml` instead. Riptide and
+Grafana authenticate as that user from a compose bridge address that varies by network, and a
+loopback or fixed-CIDR rule breaks them.
 
 :::
 
@@ -37,7 +75,7 @@ This starts, from `ghcr.io/riptide-labs/riptide:latest`:
 | Service | Port | Purpose |
 |---|---|---|
 | riptide | `9999/udp` | flow ingest (configure your exporters to send here) |
-| clickhouse | `8123`, `9000` | flow storage |
+| clickhouse | `127.0.0.1:8123`, `127.0.0.1:9000` | flow storage (loopback only, see above) |
 | ch-ui | [`:5521`](http://localhost:5521) | browse the `riptide.flows` table |
 | grafana | [`:3000`](http://localhost:3000) | dashboards (ClickHouse datasource provisioned) |
 

@@ -62,9 +62,10 @@ application-local.properties
 result
 result-*
 
-### Docker Compose Override ###
+### Docker Compose ###
 compose.override.y*ml
 docker-compose.override.y*ml
+.env
 
 # AI tools
 _bmad-output/

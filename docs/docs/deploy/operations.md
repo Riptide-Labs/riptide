@@ -347,4 +347,4 @@ jcmd <pid> Thread.dump_to_file -format=json /tmp/threads.json
 |---|---|---|
 | `9999/udp` | NetFlow/IPFIX | default flow ingest (container `EXPOSE`; receivers are configurable) |
 | `8080` | HTTP | management endpoints (`/livez`, `/readyz`, `/metrics`) |
-| `8123` | HTTP | ClickHouse (stack-internal unless you expose it) |
+| `8123` | HTTP | ClickHouse (the compose stack publishes it on loopback only; password from `CLICKHOUSE_PASSWORD`) |
