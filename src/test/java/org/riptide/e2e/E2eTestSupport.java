@@ -5,7 +5,6 @@
 
 package org.riptide.e2e;
 
-import org.assertj.core.api.Assertions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,6 +53,11 @@ final class E2eTestSupport {
      * evidence about the ingest, which is the class of false report #547 exists to remove. A count
      * that genuinely shrinks and stays down still stalls out, and the failure says a decrease was
      * seen since the last advance so the cause is not misread as slow ingest.</p>
+     *
+     * @throws WaitFailure as {@link Stalled}, {@link CapReached} or {@link SuiteBudgetExhausted},
+     *         each an {@link AssertionError}, so a failed wait fails the test that made it
+     * @throws IllegalArgumentException for arguments that cannot produce a usable wait; see
+     *         {@link #requireUsableArguments}
      */
     static void awaitCount(final Duration stallBudget, final String description,
             final LongSupplier count, final long target) throws InterruptedException {
@@ -68,7 +72,7 @@ final class E2eTestSupport {
     private static final Duration POLL_INTERVAL = Duration.ofSeconds(2);
 
     /** Upper bound on the whole wait, in stall budgets: generous for a slow runner, finite for a crawl. */
-    private static final int CAP_MULTIPLE = 5;
+    static final int CAP_MULTIPLE = 5;
 
     /**
      * Total time every wait in this JVM may spend between them (#662).
@@ -116,9 +120,56 @@ final class E2eTestSupport {
     record Wait(long count, Duration elapsed, Duration longestGap) {
     }
 
-    /** As {@link #awaitCount(Duration, String, LongSupplier, long)}, with the poll interval given. */
+    /**
+     * Why a wait failed, carried as a type rather than only as message text (#662).
+     *
+     * <p>The three failures mean different things to whoever reads the run. A stall says the count
+     * stopped moving, a cap says it moved the whole time and never arrived, and an exhausted suite
+     * budget usually says some <em>earlier</em> wait overran and this one inherited the shortfall.
+     * Separated only by message text, nothing could tell them apart programmatically, and a test
+     * asserting on the wording of one was really asserting on constants inside the other.</p>
+     *
+     * <p>Still an {@link AssertionError}, so a failing wait keeps reading as a failed assertion to
+     * JUnit and to every existing {@code isInstanceOf(AssertionError.class)}.</p>
+     */
+    abstract static sealed class WaitFailure extends AssertionError
+            permits Stalled, CapReached, SuiteBudgetExhausted {
+        WaitFailure(final String message) {
+            super(message);
+        }
+    }
+
+    /** The count stopped advancing for a whole stall budget. */
+    static final class Stalled extends WaitFailure {
+        Stalled(final String message) {
+            super(message);
+        }
+    }
+
+    /** The count kept advancing but never arrived, so the per-wait cap cut it off. */
+    static final class CapReached extends WaitFailure {
+        CapReached(final String message) {
+            super(message);
+        }
+    }
+
+    /** The waits have used their whole share of the job timeout. See {@link #SUITE_BUDGET}. */
+    static final class SuiteBudgetExhausted extends WaitFailure {
+        SuiteBudgetExhausted(final String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * As {@link #awaitCount(Duration, String, LongSupplier, long)}, with the poll interval given.
+     *
+     * @throws WaitFailure as {@link Stalled}, {@link CapReached} or {@link SuiteBudgetExhausted}
+     * @throws IllegalArgumentException for arguments that cannot produce a usable wait; see
+     *         {@link #requireUsableArguments}
+     */
     static Wait awaitCount(final Duration stallBudget, final Duration poll, final String description,
             final LongSupplier count, final long target) throws InterruptedException {
+        requireUsableArguments(stallBudget, poll, target);
         // Monotonic, so a wall-clock step during the wait cannot credit the budget.
         final long enteredNanos = System.nanoTime();
         try {
@@ -127,6 +178,42 @@ final class E2eTestSupport {
             // In a finally, so a wait that fails still spends its time: the budget bounds the job,
             // and a job is not made shorter by the wait that overran it having thrown.
             SPENT_NANOS.addAndGet(System.nanoTime() - enteredNanos);
+        }
+    }
+
+    /**
+     * Refuses the argument combinations that wait without ever being able to report anything (#662).
+     *
+     * <p>Each of these used to produce a wait that looked like a wait and was not one, which is the
+     * same reader-misleading failure the rest of this helper exists to remove. A poll no shorter
+     * than the budget reads at most once per budget: a frozen count stalls after a single read, and
+     * an advancing one is cut off by the cap after {@link #CAP_MULTIPLE} reads unless the target
+     * happens to arrive within them. Either way the wait observes almost nothing about the ingest.
+     * That is not hypothetical: the transposed-delegation mutation hands the e2e sites minute-long
+     * polls against a two-second budget. A non-positive budget stalls on the first check. A
+     * non-positive target is satisfied before the first read, so the call returns immediately while
+     * reading in the test as though something was waited for.</p>
+     *
+     * <p>{@link IllegalArgumentException}, deliberately, not a {@link WaitFailure}: these are the
+     * caller's mistake, not an observation about the system under test, and they should not be
+     * catchable as a wait that failed.</p>
+     */
+    private static void requireUsableArguments(final Duration stallBudget, final Duration poll, final long target) {
+        if (stallBudget.isNegative() || stallBudget.isZero()) {
+            throw new IllegalArgumentException(
+                    "stall budget must be positive, got " + stallBudget + "; every wait would stall on its first check");
+        }
+        if (poll.isNegative() || poll.isZero()) {
+            throw new IllegalArgumentException("poll interval must be positive, got " + poll);
+        }
+        if (poll.compareTo(stallBudget) >= 0) {
+            throw new IllegalArgumentException(("poll interval %s is not shorter than the stall budget %s,"
+                    + " so the wait reads at most once per budget and observes almost nothing"
+                    + " about the ingest").formatted(poll, stallBudget));
+        }
+        if (target <= 0) {
+            throw new IllegalArgumentException(
+                    "target must be positive, got " + target + "; a non-positive target waits for nothing");
         }
     }
 
@@ -144,15 +231,19 @@ final class E2eTestSupport {
         final var cap = started.plus(stallBudget.multipliedBy(CAP_MULTIPLE));
         while (best < target) {
             if (Instant.now().isAfter(lastAdvance.plus(stallBudget))) {
-                Assertions.fail("Stalled at %d of %d for %s waiting for %s, %s after the wait began%s%s"
+                // Names both the budget it was given and the stall it measured, as the cap does, so
+                // the two failures agree on what they report (#662).
+                throw new Stalled(("Stalled at %d of %d for %s waiting for %s, last advance %s ago,"
+                        + " %s after the wait began%s%s")
                         .formatted(best, target, stallBudget, description,
+                                Duration.between(lastAdvance, Instant.now()),
                                 Duration.between(started, Instant.now()), gapNote(longestGap),
                                 decreaseNote(sawDecrease)));
             }
             if (Instant.now().isAfter(cap)) {
                 // Says when the count last moved rather than claiming it still does: a count that
                 // froze late in the window reaches this check before its stall budget runs out.
-                Assertions.fail("Cap of %d x %s reached at %d of %d for %s, last advance %s ago%s%s"
+                throw new CapReached("Cap of %d x %s reached at %d of %d for %s, last advance %s ago%s%s"
                         .formatted(CAP_MULTIPLE, stallBudget, best, target, description,
                                 Duration.between(lastAdvance, Instant.now()), gapNote(longestGap),
                                 decreaseNote(sawDecrease)));
@@ -163,7 +254,7 @@ final class E2eTestSupport {
                 // while the job still has time to report them. Names the share spent before entry,
                 // because every wait after the one that overran fails here too, and only the first
                 // of those failures is about its own count.
-                Assertions.fail(("Suite wait budget of %s exhausted (%s spent, %s of it before this wait)"
+                throw new SuiteBudgetExhausted(("Suite wait budget of %s exhausted (%s spent, %s of it before this wait)"
                         + " at %d of %d for %s. The waits have used the share of the job timeout set"
                         + " aside for them%s%s")
                         .formatted(SUITE_BUDGET, spent, spentBefore, best, target, description,
