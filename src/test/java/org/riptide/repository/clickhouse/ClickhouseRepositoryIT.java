@@ -68,6 +68,8 @@ public class ClickhouseRepositoryIT {
         config.setUsername(SecretRef.of("riptide"));
         config.setPassword(SecretRef.of("riptide"));
         // Read-after-write assertions need synchronous inserts; async has its own test below.
+        // That "off" really is a direct insert is pinned by
+        // turningAsyncInsertsOffSendsTheSettingRatherThanStayingSilent (#664).
         config.setAsyncInserts(false);
 
         repository = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
@@ -459,6 +461,7 @@ public class ClickhouseRepositoryIT {
         config.setDatabase(database);
         config.setManageSchema(manageSchema);
         // These tests assert read-after-write; the coalesced path gets its own dedicated test.
+        // Pinned by turningAsyncInsertsOffSendsTheSettingRatherThanStayingSilent (#664).
         config.setAsyncInserts(false);
         return config;
     }
@@ -778,5 +781,119 @@ public class ClickhouseRepositoryIT {
             }
         }
         throw new AssertionError("version() returned no rows");
+    }
+
+    // ---- #664: what the connection actually resolves ------------------------------------------
+
+    /**
+     * The value {@code system.query_log} recorded for a setting on the last insert into
+     * {@code database}, or the empty string when it recorded nothing.
+     *
+     * <p>{@code system.query_log.Settings} records the settings whose value <em>differs from the
+     * server default</em> — not, as one might assume, every setting the query sent. Measured on the
+     * pinned image: sending {@code async_insert=1} against a default of 1 records nothing, while
+     * sending {@code 0} records {@code "0"}. Hence the name: this is not the resolved value, it is
+     * the value the server recorded as changed.</p>
+     *
+     * <p>That is still the discriminator this needs, and it is the only one available: a setting
+     * riptide never sent reads as absent, exactly as a setting sent at the default does — but "off"
+     * is precisely the value that differs from ClickHouse 26.7's default, so the case #664 is about
+     * is visible here. The mirror below leans on {@code wait_for_async_insert} for the same
+     * reason.</p>
+     */
+    private static String settingRecordedAsChanged(final String database, final String setting)
+            throws Exception {
+        queryClient.execute("SYSTEM FLUSH LOGS").get();
+        try (var rows = queryClient.queryRecords(
+                "SELECT Settings['" + setting + "'] AS v FROM system.query_log"
+                        + " WHERE type = 'QueryFinish' AND query_kind = 'Insert'"
+                        // current_database, not the query text: the client sends "INSERT INTO flows"
+                        // and takes the database from the connection, so the name never appears in
+                        // the statement.
+                        + " AND current_database = '" + database + "'"
+                        + " ORDER BY event_time_microseconds DESC LIMIT 1").get()) {
+            for (final var row : rows) {
+                return row.getString("v");
+            }
+        }
+        throw new AssertionError("no insert into " + database + " was logged, so nothing was measured");
+    }
+
+    /**
+     * Both probes below read {@code Settings} as "differs from the server default", so they only
+     * mean what they say while the pinned image defaults {@code async_insert} to 1. If a bump of
+     * {@code .github/e2e-images/clickhouse.Dockerfile} flips that default, this fails and names the
+     * image, instead of the off probe failing and pointing at the repository.
+     */
+    private static void assumeServerDefaultsAsyncInsertOn() throws Exception {
+        Assertions.assertThat(queryClient.queryAll(
+                        "SELECT value FROM system.settings WHERE name = 'async_insert'")
+                .getFirst().getString("value"))
+                .as("the probes below rely on the pinned image defaulting async_insert to 1;"
+                        + " if the image changed its default, rework the probes, not the repository")
+                .isEqualTo("1");
+    }
+
+    private static void persistOneRowInto(final String database, final boolean asyncInserts) throws Exception {
+        final var config = configFor(database, true);
+        config.setAsyncInserts(asyncInserts);
+        final var repository = new ClickhouseRepository(
+                new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
+        repository.start();
+        repository.persist(List.of(testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 51001, 443, 7L)));
+    }
+
+    /**
+     * Turning coalescing off actually turns it off (#664).
+     *
+     * <p>It did not. {@code ClickhouseRepository} only ever <em>added</em> {@code async_insert=1},
+     * so "off" sent nothing and ClickHouse 26.7's own default of {@code async_insert = 1} applied —
+     * a third behaviour neither branch of {@code ClickhouseConfig#asyncInserts} describes. Rejections
+     * still surfaced, because the server's {@code wait_for_async_insert} defaults to 1, so this was
+     * never a hole in the CHECK-barrier contract; what differed was coalescing, and with it the
+     * atomicity of a refused insert that #548's design rests on.
+     *
+     * <p>Asserted against the server's own record of the query rather than against the config,
+     * because the config was never the thing in doubt. This is also the test the rest of this class
+     * leans on: every other test here sets the flag off and asserts read-after-write.</p>
+     */
+    @Test
+    void turningAsyncInsertsOffSendsTheSettingRatherThanStayingSilent() throws Exception {
+        assumeServerDefaultsAsyncInsertOn();
+        persistOneRowInto("async_off_probe", false);
+
+        Assertions.assertThat(settingRecordedAsChanged("async_off_probe", "async_insert"))
+                .as("off must send async_insert=0; empty means nothing was sent and the server"
+                        + " default (coalescing) applied")
+                .isEqualTo("0");
+    }
+
+    /**
+     * And turning it on still sends the pair it always did.
+     *
+     * <p>The mirror matters: without it the test above passes for a build that hardcodes
+     * {@code async_insert=0} and ignores the flag entirely. Such a build sends no
+     * {@code wait_for_async_insert} at all, so the first assertion reads empty and fails.</p>
+     *
+     * <p>The second assertion closes the other gap: a build that keeps the wait at 0 but sends
+     * {@code async_insert=0} on the on branch too. On this image "sent 1" and "sent nothing" both
+     * record empty, so empty is the only value the on branch may produce; {@code "0"} is the one it
+     * must not.</p>
+     */
+    @Test
+    void turningAsyncInsertsOnStillSendsCoalescingAndSkipsTheWait() throws Exception {
+        assumeServerDefaultsAsyncInsertOn();
+        persistOneRowInto("async_on_probe", true);
+
+        // wait_for_async_insert differs from the default and is what the coalescing path is
+        // actually for.
+        Assertions.assertThat(settingRecordedAsChanged("async_on_probe", "wait_for_async_insert"))
+                .as("the coalescing path must still skip the wait, or turning the flag on buys"
+                        + " nothing it is documented to buy")
+                .isEqualTo("0");
+        Assertions.assertThat(settingRecordedAsChanged("async_on_probe", "async_insert"))
+                .as("1 is the server default, so the on path must record nothing here;"
+                        + " \"0\" means the on branch turned coalescing off")
+                .isEmpty();
     }
 }
