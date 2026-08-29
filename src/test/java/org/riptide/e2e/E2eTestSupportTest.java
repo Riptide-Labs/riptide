@@ -9,6 +9,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
@@ -126,7 +128,7 @@ class E2eTestSupportTest {
      */
     @Test
     void aSingleDipDoesNotFailARunThatRecovers() throws Exception {
-        final var reads = new java.util.concurrent.atomic.AtomicInteger();
+        final var reads = new AtomicInteger();
         // 1, 2, then a spurious 0, then on to the target.
         final LongSupplier flaky = () -> {
             final int n = reads.incrementAndGet();
@@ -136,8 +138,9 @@ class E2eTestSupportTest {
         E2eTestSupport.awaitCount(STALL, POLL, "a count with one bad read", flaky, 6);
 
         assertThat(reads.get())
-                .as("the wait must have continued past the dip rather than failing on it")
-                .isGreaterThanOrEqualTo(6);
+                .as("the dip must cost exactly one poll: the wait continues past it and returns on the"
+                        + " read that reaches the target")
+                .isEqualTo(6);
     }
 
     /**
@@ -154,32 +157,75 @@ class E2eTestSupportTest {
         assertThatThrownBy(() -> E2eTestSupport.awaitCount(STALL, POLL, "a shrinking count",
                 shrinking::decrementAndGet, 100))
                 .isInstanceOf(AssertionError.class)
-                .hasMessageContaining("Stalled at")
-                .hasMessageContaining("decreased at least once");
+                // the first read already decrements: 50 -> 49 seeds "best", which stays the high-water mark
+                .hasMessageContaining("Stalled at 49 of 100")
+                .hasMessageContaining("decreased since its last advance");
+    }
+
+    /**
+     * The cap carries the same decrease note as the stall: a count that crawls and then dips is not
+     * misread as a slow ingest either.
+     */
+    @Test
+    void aCrawlThatDipsBeforeTheCapSaysSoAtTheCap() {
+        final var reads = new AtomicInteger();
+        final var began = Instant.now();
+        // Advances every poll until 4.3 budgets in, then reads 0. The cap fires at 5 budgets, thirty
+        // polls before the stall would (last advance + 1), so the cap is the branch that reports.
+        final LongSupplier crawlThenDip = () -> Duration.between(began, Instant.now())
+                .compareTo(STALL.multipliedBy(43).dividedBy(10)) < 0 ? reads.incrementAndGet() : 0L;
+
+        assertThatThrownBy(() -> E2eTestSupport.awaitCount(STALL, POLL, "a crawl that dipped",
+                crawlThenDip, Long.MAX_VALUE))
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("Cap of 5 x PT1S reached at")
+                .hasMessageContaining("decreased since its last advance");
+    }
+
+    /**
+     * The decrease note is cleared by an advance. A hiccup early in the wait must not be blamed for
+     * a genuine stall later, or the reader is steered at nl6 status when the ingest stopped.
+     */
+    @Test
+    void aDipBeforeAnAdvanceIsNotBlamedForALaterStall() {
+        final var reads = new AtomicInteger();
+        // 1, a spurious 0, up to 3, then frozen at 3.
+        final LongSupplier dipRecoverFreeze = () -> {
+            final int n = reads.incrementAndGet();
+            return n == 2 ? 0L : Math.min(n, 3);
+        };
+
+        assertThatThrownBy(() -> E2eTestSupport.awaitCount(STALL, POLL, "a recovered count",
+                dipRecoverFreeze, 9))
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("Stalled at 3 of 9")
+                .satisfies(e -> assertThat(e.getMessage()).doesNotContain("decreased"));
     }
 
     /**
      * The four-argument overload — the one every e2e call site uses — forwards its arguments.
      *
      * <p>Both parameters are {@code Duration}, so transposing them in the delegation compiles
-     * cleanly, and a mutation doing exactly that survived the whole suite: all six tests here called
-     * the five-argument form. Under it the e2e tier runs with a two-second stall budget and a
+     * cleanly, and a mutation doing exactly that survived the whole suite: every other test here
+     * calls the five-argument form. Under it the e2e tier runs with a two-second stall budget and a
      * minutes-long poll, so the first read lands after the budget expired and every wait fails
      * {@code Stalled at 0 of N} — while this class stayed green.</p>
      *
      * <p>Asserted through the message, which names the budget it was given: a transposed delegation
-     * reports {@code PT2S} (the poll interval) where this expects the budget it passed.</p>
+     * reports the poll interval as the budget where this expects {@link #STALL}, which it passed.
+     * This test sleeps the real poll interval on purpose; that is what makes the swap visible.</p>
      */
     @Test
     void theDefaultPollOverloadForwardsTheBudgetAsTheBudget() {
         final var frozen = new AtomicLong(3);
 
         assertThatThrownBy(() -> E2eTestSupport.awaitCount(
-                Duration.ofSeconds(1), "a frozen count on the default poll", frozen::get, 9))
+                STALL, "a frozen count on the default poll", frozen::get, 9))
                 .isInstanceOf(AssertionError.class)
                 .hasMessageContaining("Stalled at 3 of 9")
-                .hasMessageContaining("for PT1S");
+                .hasMessageContaining("for " + STALL);
     }
+
     /** A count already at its target returns after a single read, without sleeping a poll. */
     @Test
     void anAlreadySatisfiedCountReturnsImmediately() throws Exception {
