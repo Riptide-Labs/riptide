@@ -327,6 +327,23 @@ class ExporterSamplingTableTest {
     }
 
     /**
+     * A stated interval in Selector scope is mirrored exporter-wide, so its withdrawal must reach
+     * the mirror too. Otherwise flows naming no Selector keep a multiplier the exporter retracted.
+     */
+    @Test
+    void aSelectorScopedWithdrawalDropsTheExporterWideMirrorToo() throws Exception {
+        final var exporter = exporter("192.0.2.1", 0);
+        final var selector = List.<Value<?>>of(new UnsignedValue("selectorId", 4));
+        this.table.accept(exporter, selector, samplerRecord(1000));
+        assertThat(this.table.lookup(exporter)).isPresent();
+
+        this.table.accept(exporter, selector, samplerRecord(0));
+
+        assertThat(this.table.lookup(exporter, 4L)).isEmpty();
+        assertThat(this.table.lookup(exporter)).isEmpty();
+    }
+
+    /**
      * A selectorId-scoped record stating an interval of 0 names no algorithm, but it does name a
      * field this table reads. Filing it as unrecognised would hide a withdrawal among the VRF tables.
      */

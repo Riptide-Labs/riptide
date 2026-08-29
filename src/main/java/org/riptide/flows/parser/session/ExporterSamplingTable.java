@@ -399,10 +399,13 @@ public class ExporterSamplingTable implements OptionListener {
             if (stated != null) {
                 // A selectorId-scoped record stating an interval this table cannot use: 0 is the
                 // protocol's withdrawal, as on the exporter-wide path. Drop the Selector's own entry
-                // so flows naming it stop resolving a rate the exporter has just retracted. The
-                // exporter-wide mirror is left alone: another Selector may have established it, and a
-                // withdrawal scoped to one Selector says nothing about the others.
+                // so flows naming it stop resolving a rate the exporter has just retracted, and the
+                // exporter-wide mirror with it: a stated interval was mirrored there because it is
+                // the same number whichever Selector announced it, and a stated withdrawal is the
+                // same statement. Leaving the mirror would keep serving a multiplier the exporter
+                // has retracted to every flow naming no Selector, for the whole retention window.
                 this.selectors.invalidate(key);
+                this.table.invalidate(identity);
                 this.selectorsSkipped.mark();
                 return Verdict.RECOGNISED_BUT_UNUSABLE;
             }
