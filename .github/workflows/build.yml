@@ -57,6 +57,7 @@ jobs:
             target/*.jar
   e2e:
     runs-on: ubuntu-24.04
+    # E2eTestSupport.SUITE_BUDGET (30 min) is sized against this; lowering it means lowering that.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

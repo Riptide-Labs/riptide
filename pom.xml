@@ -494,6 +494,9 @@
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-failsafe-plugin</artifactId>
+                        <!-- Deliberately no forkCount/reuseForks/parallel: E2eTestSupport.SUITE_BUDGET
+                             bounds the sum of every wait in one JVM, so a per-class fork would silently
+                             turn it into a per-class budget. -->
                         <executions>
                             <execution>
                                 <goals>

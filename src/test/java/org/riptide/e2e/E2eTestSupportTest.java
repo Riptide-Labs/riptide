@@ -227,6 +227,125 @@ class E2eTestSupportTest {
                 .hasMessageContaining("for " + STALL);
     }
 
+    /**
+     * The suite budget bounds the sum of every wait, which is the bound the CI job imposes (#662).
+     *
+     * <p>The per-wait cap could not provide it: sixteen waits carrying 37 minutes of stall budget
+     * multiply to roughly 185 minutes against a 45-minute job timeout, so a sustained crawl was
+     * cancelled with no count attached. That is the outcome the helper's javadoc claimed to prevent,
+     * so it was a false promise rather than a missing feature.</p>
+     *
+     * <p>Seeded rather than spent: waiting out a thirty-minute budget in a unit test is not a test.</p>
+     */
+    @Test
+    void aWaitPastTheSuiteBudgetFailsWithACountRatherThanBeingCancelled() {
+        final var frozen = new AtomicLong(4);
+        final var before = E2eTestSupport.spentForTesting();
+        try {
+            final var seeded = E2eTestSupport.SUITE_BUDGET.plusMinutes(1);
+            E2eTestSupport.seedSpentForTesting(seeded);
+
+            assertThatThrownBy(() -> E2eTestSupport.awaitCount(STALL, POLL, "a wait out of suite budget",
+                    frozen::get, 100))
+                    .isInstanceOf(AssertionError.class)
+                    .hasMessageContaining("Suite wait budget of " + E2eTestSupport.SUITE_BUDGET + " exhausted")
+                    .as("the point of failing here is that a cancelled job carries no count")
+                    .hasMessageContaining("at 4 of 100")
+                    .as("every wait after the overrun fails here too; only the first is about its own count")
+                    .hasMessageContaining(seeded + " of it before this wait")
+                    .hasMessageContaining("a wait out of suite budget");
+        } finally {
+            E2eTestSupport.seedSpentForTesting(before);
+        }
+    }
+
+    /**
+     * A wait that fails still spends its time against the suite budget.
+     *
+     * <p>Accounting only successful waits would let a run of failures outlast the job while the
+     * budget reported room left, which is the failure this budget exists to prevent.</p>
+     */
+    @Test
+    void aFailedWaitStillSpendsItsTime() {
+        final var frozen = new AtomicLong();
+        final var before = E2eTestSupport.spentForTesting();
+        try {
+            E2eTestSupport.seedSpentForTesting(Duration.ZERO);
+
+            assertThatThrownBy(() -> E2eTestSupport.awaitCount(STALL, POLL, "a frozen count",
+                    frozen::get, 1)).isInstanceOf(AssertionError.class);
+
+            assertThat(E2eTestSupport.spentForTesting())
+                    .as("a wait that threw still consumed job time; not counting it is how the budget"
+                            + " drifts from the thing it is bounding")
+                    .isGreaterThanOrEqualTo(STALL);
+        } finally {
+            E2eTestSupport.seedSpentForTesting(before);
+        }
+    }
+
+    /**
+     * The counter holds the sum of every wait, not the last one.
+     *
+     * <p>{@link #aFailedWaitStillSpendsItsTime} seeds zero and runs one wait, so it cannot tell an
+     * accumulating counter from one that is overwritten on each call. Two stalls in a row can.</p>
+     */
+    @Test
+    void theBudgetAccumulatesAcrossWaits() {
+        final var frozen = new AtomicLong();
+        final var before = E2eTestSupport.spentForTesting();
+        try {
+            E2eTestSupport.seedSpentForTesting(Duration.ZERO);
+
+            for (int i = 0; i < 2; i++) {
+                assertThatThrownBy(() -> E2eTestSupport.awaitCount(STALL, POLL, "a frozen count",
+                        frozen::get, 1)).isInstanceOf(AssertionError.class);
+            }
+
+            assertThat(E2eTestSupport.spentForTesting())
+                    .as("two stalls of one budget each; a counter that is set rather than added"
+                            + " to reports one")
+                    .isGreaterThanOrEqualTo(STALL.multipliedBy(2));
+        } finally {
+            E2eTestSupport.seedSpentForTesting(before);
+        }
+    }
+
+    /**
+     * The reported longest gap is measured between consecutive advances, not from the start.
+     *
+     * <p>It is the number the stall budgets are sized from (#662), so it has to be the quantity the
+     * budgets are compared against. A count that advances every poll except for one 200ms pause has
+     * a longest gap of about that pause; measured from the start of the wait it would be the whole
+     * elapsed time instead, and the next sizing decision would be made from the wrong number.</p>
+     */
+    @Test
+    void theLongestGapIsMeasuredBetweenAdvances() throws Exception {
+        final var pause = Duration.ofMillis(200);
+        final var reads = new AtomicLong();
+        final LongSupplier pausesOnce = () -> {
+            final long read = reads.incrementAndGet();
+            if (read == 10) {
+                try {
+                    Thread.sleep(pause.toMillis());
+                } catch (final InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return read;
+        };
+
+        final var wait = E2eTestSupport.awaitCount(STALL, POLL, "a count that pauses once", pausesOnce, 60);
+
+        assertThat(wait.longestGap())
+                .as("the one pause is the longest gap")
+                .isGreaterThanOrEqualTo(pause);
+        assertThat(wait.longestGap())
+                .as("a gap measured from the start of the wait would be the whole elapsed time;"
+                        + " sixty polls of %s make the rest of the wait longer than the pause", POLL)
+                .isLessThan(wait.elapsed().dividedBy(2));
+    }
+
     /** A count already at its target returns after a single read, without sleeping a poll. */
     @Test
     void anAlreadySatisfiedCountReturnsImmediately() throws Exception {
