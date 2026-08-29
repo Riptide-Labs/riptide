@@ -8,10 +8,10 @@ package org.riptide.e2e;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import java.io.IOException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.catchThrowable;
 
 /**
  * What a reading of the nl6 instrument does when nl6 misreports (#662).
@@ -26,24 +26,49 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 @Timeout(30)
 class LedgerReadingTest {
 
-    /** A reading that fails contributes nothing, rather than propagating out of the wait. */
+    /**
+     * A reading that fails contributes nothing, rather than propagating out of the wait.
+     *
+     * <p>The exception is checked on purpose: {@code Source.read} declares {@code throws Exception}
+     * for the {@code IOException} and {@code InterruptedException} that {@code HttpClient.send}
+     * raises, and this is the case that catch exists for. Were {@code advanced} to rethrow, the
+     * throw fails this test on its own; it would reach {@code awaitCount}, which catches nothing,
+     * and fail the run blaming ingest for an nl6 hiccup.</p>
+     */
     @Test
     void aFailedReadHoldsTheLastValueInsteadOfThrowing() {
-        final Throwable thrown = catchThrowable(() -> {
+        final long held = LedgerReading.advanced(41L, () -> {
+            throw new IOException("Connection refused");
+        }, "sent_records for netflow9");
+
+        assertThat(held)
+                .as("a failed instrument read is not evidence about the ingest, so the previous"
+                        + " high-water mark stands")
+                .isEqualTo(41L);
+    }
+
+    /**
+     * An interrupt is not an instrument hiccup, and must not be absorbed as one.
+     *
+     * <p>{@code InterruptedException} is an {@code Exception} too. Swallowing it would leave the
+     * wait polling until its stall budget; restoring the flag lets the wait's next
+     * {@code Thread.sleep} stop it.</p>
+     */
+    @Test
+    void anInterruptedReadRestoresTheInterruptFlag() {
+        try {
             final long held = LedgerReading.advanced(41L, () -> {
-                throw new IllegalStateException("nl6 status returned 503");
+                throw new InterruptedException("test interrupt");
             }, "sent_records for netflow9");
 
-            assertThat(held)
-                    .as("a failed instrument read is not evidence about the ingest, so the previous"
-                            + " high-water mark stands")
-                    .isEqualTo(41L);
-        });
-
-        assertThat(thrown)
-                .as("throwing here is the defect: it reaches awaitCount, which catches nothing, and"
-                        + " fails the run blaming ingest for an nl6 hiccup")
-                .isNull();
+            assertThat(held).as("the mark still stands; only the flag is restored").isEqualTo(41L);
+            assertThat(Thread.currentThread().isInterrupted())
+                    .as("the interrupt must survive the catch, or the wait cannot be stopped")
+                    .isTrue();
+        } finally {
+            // Clear the flag so it does not leak into the next test on this thread.
+            Thread.interrupted();
+        }
     }
 
     /**
@@ -89,7 +114,31 @@ class LedgerReadingTest {
             reading = LedgerReading.advanced(reading, flaky, "sent_records for netflow9");
         }
 
-        assertThat(reading).isEqualTo(500L);
+        assertThat(reading).as("once nl6 answers again the reading has to advance").isEqualTo(500L);
         assertThat(reads.get()).as("every call must attempt a read; a latched failure never recovers").isEqualTo(4);
+    }
+
+    /**
+     * An instance keeps one mark per protocol, starting at {@code 0}.
+     *
+     * <p>This is the wiring {@code Nl6Container.ledger} delegates to. Before it lived here it was
+     * only reached by the e2e suites against a healthy nl6, so it could regress back to the raw read
+     * with every gate green.</p>
+     */
+    @Test
+    void aMarkIsKeptPerProtocol() {
+        final var ledger = new LedgerReading();
+
+        assertThat(ledger.advance("netflow9", () -> 10L)).isEqualTo(10L);
+        assertThat(ledger.advance("ipfix", () -> 0L))
+                .as("a protocol never read starts at 0, not at another protocol's mark")
+                .isEqualTo(0L);
+        assertThat(ledger.advance("netflow9", () -> 0L))
+                .as("a missing collector answers 0; the netflow9 mark must hold")
+                .isEqualTo(10L);
+        assertThat(ledger.advance("netflow9", () -> {
+            throw new IOException("Connection refused");
+        })).as("a failed read holds the mark for its own protocol").isEqualTo(10L);
+        assertThat(ledger.advance("netflow9", () -> 11L)).isEqualTo(11L);
     }
 }

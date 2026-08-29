@@ -18,7 +18,6 @@ import java.net.http.HttpResponse;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * The nl6 network simulator (https://github.com/labmonkeys-space/nl6) as a
@@ -39,8 +38,8 @@ public final class Nl6Container extends GenericContainer<Nl6Container> {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newHttpClient();
 
-    /** Highest ledger reading seen per protocol; see {@link #ledger}. */
-    private final Map<String, Long> ledgerHighWater = new ConcurrentHashMap<>();
+    /** The monotonic, non-throwing view of {@link #sentRecords}; see {@link #ledger}. */
+    private final LedgerReading ledger = new LedgerReading();
 
     public Nl6Container() {
         super(IMAGE);
@@ -140,12 +139,12 @@ public final class Nl6Container extends GenericContainer<Nl6Container> {
      * a {@code RuntimeException} that failed the run outright.</p>
      *
      * <p>A broken nl6 still fails the run. The reading simply stops advancing, the wait stalls out
-     * against its budget, and {@link LedgerReading} logs the cause of every failed read.</p>
+     * against its budget, and {@link LedgerReading} logs the cause of every failed read. The keying
+     * and the high-water mark live there so {@code LedgerReadingTest} pins them without Docker; this
+     * is only the delegate.</p>
      */
     public long ledger(final String protocol) {
-        return ledgerHighWater.compute(protocol,
-                (name, best) -> LedgerReading.advanced(best == null ? 0L : best,
-                        () -> sentRecords(name), "sent_records for " + name));
+        return ledger.advance(protocol, () -> sentRecords(protocol));
     }
 
     /**

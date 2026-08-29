@@ -8,6 +8,9 @@ package org.riptide.e2e;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
  * Turns a reading of the <em>instrument</em> into one that never goes backwards and never throws.
  *
@@ -25,14 +28,20 @@ import org.slf4j.LoggerFactory;
  *
  * <p>The high-water mark also keeps nl6's other quirk from reaching the helper at all:
  * {@code Nl6Container.sentRecords} answers {@code 0}, with no error, when the status reply lists no
- * collector for the protocol.</p>
+ * collector for the protocol. A read that comes back lower than the mark is logged too, since the
+ * decrease note {@code awaitCount} would otherwise have attached to its failure can no longer fire
+ * for a source polled through here.</p>
+ *
+ * <p>An instance keeps one mark per protocol. The static {@link #advanced} is the step it takes, kept
+ * separate so both the step and the keying are pinned by {@code LedgerReadingTest} under
+ * {@code make jar} rather than only by an e2e run against a healthy nl6.</p>
  */
 final class LedgerReading {
 
     private static final Logger LOG = LoggerFactory.getLogger(LedgerReading.class);
 
-    private LedgerReading() {
-    }
+    /** Highest reading seen per protocol. */
+    private final Map<String, Long> highWater = new ConcurrentHashMap<>();
 
     /** A reading of the instrument, which may fail. */
     @FunctionalInterface
@@ -41,20 +50,43 @@ final class LedgerReading {
     }
 
     /**
+     * The reading for {@code protocol} after one more attempt at {@code source}: monotonic, starting
+     * at {@code 0}, and never throwing.
+     */
+    long advance(final String protocol, final Source source) {
+        final long reading = advanced(highWater.getOrDefault(protocol, 0L), source,
+                "sent_records for " + protocol);
+        highWater.merge(protocol, reading, Math::max);
+        return reading;
+    }
+
+    /**
      * The higher of {@code best} and a fresh reading, or {@code best} if the reading failed.
      *
-     * @param best  the highest reading seen so far, and the floor of the result
-     * @param what  names the reading in the log line a failure produces
+     * @param best   the highest reading seen so far, and the floor of the result
+     * @param source where the fresh reading comes from
+     * @param what   names the reading in the log line a failure or a decrease produces
      */
     static long advanced(final long best, final Source source, final String what) {
+        final long reading;
         try {
-            return Math.max(best, source.read());
+            reading = source.read();
         } catch (final Exception e) {
+            if (e instanceof InterruptedException) {
+                // The wait's own Thread.sleep is what turns the flag back into an exception.
+                Thread.currentThread().interrupt();
+            }
             // Logged, not rethrown: see the class javadoc. A persistent failure still fails the run
             // by never advancing, and this is the line that says why.
             LOG.warn("Reading {} from the nl6 instrument failed; holding the last value {}. Cause: {}",
                     what, best, e.toString());
             return best;
         }
+        if (reading < best) {
+            LOG.warn("Reading {} from the nl6 instrument went backwards to {}; holding the last value {}",
+                    what, reading, best);
+            return best;
+        }
+        return reading;
     }
 }
