@@ -108,8 +108,9 @@ public class ClickhouseRepository implements FlowRepository {
         } else {
             // Sent explicitly, because "off" cannot be expressed by silence (#664). ClickHouse
             // 26.7 defaults async_insert to 1, so omitting the setting left coalescing ON with the
-            // server's own wait_for_async_insert=1 — a third behaviour neither branch of the
-            // javadoc above describes, and not the direct insert "off" is documented to mean.
+            // server's own wait_for_async_insert=1 — a third behaviour neither branch of
+            // ClickhouseConfig#asyncInserts describes, and not the direct insert "off" is
+            // documented to mean. Pinned by ClickhouseRepositoryIT's #664 probes.
             //
             // Rejections surfaced either way, because the server's default wait is 1, so this is
             // not a hole in the CHECK-barrier contract. What differed is coalescing: a refused
