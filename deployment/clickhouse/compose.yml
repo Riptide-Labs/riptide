@@ -45,9 +45,11 @@ services:
       TZ: UTC
       VITE_CLICKHOUSE_URL: http://localhost:8123
       VITE_CLICKHOUSE_USER: default
-      VITE_CLICKHOUSE_PASS: ${CLICKHOUSE_PASSWORD:-riptide}
+      # No VITE_CLICKHOUSE_PASS: a VITE_ value is baked into the browser bundle, so it would hand
+      # the admin password to anyone who can load this page. The current image ignores VITE_*
+      # anyway and listens on 3488, so 5521 is dead until #671 settles how ch-ui is configured.
     ports:
-      - "5521:5521/tcp"
+      - "127.0.0.1:5521:5521/tcp"
 
   grafana:
     image: docker.io/grafana/grafana-oss:latest
