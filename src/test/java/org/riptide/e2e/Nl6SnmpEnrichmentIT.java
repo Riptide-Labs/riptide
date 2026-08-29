@@ -139,7 +139,7 @@ public class Nl6SnmpEnrichmentIT {
     @Test
     void verifyPerDeviceExporterAttribution() throws Exception {
         awaitCount(Duration.ofMinutes(3), "nl6 ledger to reach " + MIN_RECORDS + " netflow9 records",
-                () -> sentRecordsUnchecked(), MIN_RECORDS);
+                () -> NL6.ledger("netflow9"), MIN_RECORDS);
 
         // Waits for >= DEVICE_COUNT; the containsExactly below still pins the count to exactly DEVICE_COUNT.
         awaitCount(Duration.ofMinutes(2), DEVICE_COUNT + " distinct exporter addresses in ClickHouse",
@@ -183,11 +183,4 @@ public class Nl6SnmpEnrichmentIT {
         }
     }
 
-    private long sentRecordsUnchecked() {
-        try {
-            return NL6.sentRecords("netflow9");
-        } catch (final Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
 }

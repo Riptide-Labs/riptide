@@ -38,6 +38,9 @@ public final class Nl6Container extends GenericContainer<Nl6Container> {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newHttpClient();
 
+    /** The monotonic, non-throwing view of {@link #sentRecords}; see {@link #ledger}. */
+    private final LedgerReading ledger = new LedgerReading();
+
     public Nl6Container() {
         super(IMAGE);
         withExposedPorts(8080);
@@ -127,13 +130,31 @@ public final class Nl6Container extends GenericContainer<Nl6Container> {
     }
 
     /**
+     * The ledger reading the e2e awaits poll: monotonic per protocol, and never throwing.
+     *
+     * <p>Both of {@link #sentRecords}' ways of misreporting are absorbed here, at the instrument,
+     * rather than tolerated by the general-purpose helper that waits on it (#662). A missing
+     * collector answers {@code 0} with no error, and a status call can fail outright; neither is
+     * evidence about the ingest under test, and both used to reach {@code awaitCount} as a dip or as
+     * a {@code RuntimeException} that failed the run outright.</p>
+     *
+     * <p>A broken nl6 still fails the run. The reading simply stops advancing, the wait stalls out
+     * against its budget, and {@link LedgerReading} logs the cause of every failed read. The keying
+     * and the high-water mark live there so {@code LedgerReadingTest} pins them without Docker; this
+     * is only the delegate.</p>
+     */
+    public long ledger(final String protocol) {
+        return ledger.advance(protocol, () -> sentRecords(protocol));
+    }
+
+    /**
      * Records sent so far for the collector speaking the given protocol, per nl6's ledger.
      *
-     * <p>Reads as {@code 0}, with no error, when the status reply lists no collector for the
-     * protocol. A supplier built on this can therefore dip; {@code E2eTestSupport.awaitCount}
-     * treats that as no progress rather than as a failure (#662).</p>
+     * <p>The raw reading: it throws, and answers {@code 0} with no error when the status reply lists
+     * no collector for the protocol. Private so a wait cannot poll it: {@link #ledger} is the only
+     * way out, and the reason is #662.</p>
      */
-    public long sentRecords(final String protocol) throws Exception {
+    private long sentRecords(final String protocol) throws Exception {
         final var request = HttpRequest.newBuilder(URI.create(apiBase() + "/flows/status")).GET().build();
         final var response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         final var collectors = objectMapper.readTree(response.body()).path("data").path("collectors");
