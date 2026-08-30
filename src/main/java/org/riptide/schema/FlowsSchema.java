@@ -173,9 +173,8 @@ public final class FlowsSchema {
      * the type it carries and collapsed on merge by the {@code SummingMergeTree} engine.
      *
      * <p>Every measure is a {@code UInt64} today, and summing is what the engine does to one. A
-     * measure is free to name another type — see {@link Measure} — and that is not only a width
-     * choice: the engine honours {@code SimpleAggregateFunction}, which is how a column would
-     * combine by something other than a sum.</p>
+     * measure is free to name another type; {@link Measure} carries the reason the type travels
+     * with the measure, and the evidence for what the engine does with one that is not summed.</p>
      */
     private static String rollupTable(final String database, final Rollup rollup, final int ttlDays) {
         final List<Dimension> columns = allDimensions(rollup);
@@ -453,6 +452,11 @@ public final class FlowsSchema {
      * measures are out of scope. Planning them would plan a repair that never converges and log an
      * identical-keys line on every boot forever. It is <em>refused</em> instead (#654), so the
      * operator is told the reason and the remedy rather than shown the same drift line forever.</p>
+     *
+     * <p>The {@code SUM} rationale is stated for summed measures, which every measure today is.
+     * Whether #581's {@code groupBitOr} summary escapes it — a mask reading {@code 0} asserts
+     * absence of information rather than a wrong total (#674) — is the migration's open item,
+     * revisited there rather than here.</p>
      */
     public record RepairPlan(List<String> repair, Map<String, String> refused) {
     }
@@ -582,9 +586,9 @@ public final class FlowsSchema {
             allDimensions(rollup).forEach(dimension -> types.put(dimension.column(), dimension.type()));
             // A measure's declared type is part of the contract, not an implementation detail: this
             // map is what the shape check compares against a live server. For the volume measures
-            // that means the width specifically — a type narrower than UInt64 would overflow on
-            // a busy exporter and wrap silently. It is read from the measure rather than hardcoded here so
-            // this site and the DDL cannot declare different types for the same column.
+            // that means the width specifically — a type narrower than UInt64 would overflow on a
+            // busy exporter and wrap silently. It is read from the measure rather than hardcoded
+            // here so this site and the DDL cannot declare different types for the same column.
             MEASURES.forEach(measure -> types.put(measure.column(), measure.type()));
             columns.put(rollup.table(), Collections.unmodifiableMap(types));
         }
@@ -1026,8 +1030,8 @@ public final class FlowsSchema {
      * <p>The type is carried rather than assumed because two sites used to hardcode {@code UInt64}
      * independently — the rollup DDL and {@link #rollupColumns()} — and the shape check compares the
      * second against a live server. A width declared in one and claimed by the other is drift that
-     * reports every deployment as stale, or none. Both now read this field, so they cannot
-     * disagree.</p>
+     * reports every deployment as stale, or none. Both now read this field, and the rendered
+     * agreement is pinned by {@code everyMeasureDeclaresOneTypeInBothTheDdlAndTheColumnMap}.</p>
      *
      * <p>Every measure today is {@code UInt64} and the emitted DDL is unchanged by carrying it.
      * Provenance (#581) is the first measure that would name a different type, and it is not a

@@ -236,11 +236,25 @@ class FlowsSchemaTest {
                     .filter(column -> !sortKey.contains(column))
                     .toList();
             assertThat(measures)
-                    .as("the seven volume measures must survive the sort-key subtraction in %s;"
+                    .as("the seven measures must survive the sort-key subtraction in %s;"
                             + " anything further is a measure added since, held to the same"
                             + " assertions below", table)
                     .contains("bytes", "packets", "flowCount",
                             "bytesIn", "bytesOut", "packetsIn", "packetsOut");
+            final List<String> declarations = ddl
+                    .substring(ddl.indexOf("(\n") + 2, ddl.indexOf("\n) ENGINE"))
+                    .lines()
+                    .map(line -> line.strip().replaceAll(",$", ""))
+                    .toList();
+            final List<String> ddlMeasures = declarations.stream()
+                    .map(declaration -> declaration.split(" ")[0])
+                    .filter(column -> !sortKey.contains(column))
+                    .toList();
+            assertThat(ddlMeasures)
+                    .as("the DDL and rollupColumns() must carry the same measure columns for %s:"
+                            + " one declaring a measure the other lacks is drift the shape check"
+                            + " cannot see", table)
+                    .containsExactlyInAnyOrderElementsOf(measures);
             for (final String measure : measures) {
                 final String type = columns.get(measure);
                 assertThat(type)
@@ -248,11 +262,12 @@ class FlowsSchemaTest {
                                 + " carried, and a summed measure of a narrower width would wrap"
                                 + " silently on a busy exporter", measure, table)
                         .isEqualTo("UInt64");
-                assertThat(ddl)
+                assertThat(declarations)
                         .as("%s is declared %s by rollupColumns(), so the DDL that creates %s must"
-                                + " declare it the same or the shape check compares against a table"
-                                + " this code never emits", measure, type, table)
-                        .contains("    " + measure + " " + type);
+                                + " declare it the same, as a whole declaration line so a longer"
+                                + " type cannot pass a prefix probe, or the shape check compares"
+                                + " against a table this code never emits", measure, type, table)
+                        .contains(measure + " " + type);
             }
         });
     }
