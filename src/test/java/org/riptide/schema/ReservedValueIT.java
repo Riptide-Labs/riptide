@@ -266,8 +266,10 @@ public class ReservedValueIT {
     // SimpleAggregateFunction column is not asked here. #581's checkbox "probed against a real
     // SummingMergeTree rollup" is answered for the engine half only.
     //
-    // UInt64, not the UInt8 #581 proposes: FlowsSchema hardcodes UInt64 for every measure, at the
-    // rollup DDL and again in rollupColumns(), so a mask added as a measure would be that width.
+    // Both widths are asked. UInt64 is what a mask added as a measure would be TODAY, because
+    // FlowsSchema hardcodes it at the rollup DDL and again in rollupColumns(). UInt8 is what #581
+    // proposes, and it is the width the migration would have to give Measure a type to express, so
+    // it is measured here rather than assumed from the UInt64 result.
 
     /** Its own database, so nothing here disturbs the reserved-value fixture above. */
     private static final String SUMMARY_DATABASE = "provenance_probe";
@@ -341,6 +343,12 @@ public class ReservedValueIT {
      * fed the two overlapping masks as two parts that stay unmerged until a probe asks otherwise.
      */
     private static String tableCarrying(final String maskType) throws Exception {
+        return tableCarrying(maskType, MASK_A, MASK_B);
+    }
+
+    /** As {@link #tableCarrying(String)}, with the two masks given: the top rung needs its own pair. */
+    private static String tableCarrying(final String maskType, final long maskA, final long maskB)
+            throws Exception {
         final String table = SUMMARY_DATABASE + ".probe_" + PROBE.incrementAndGet();
         admin.execute("CREATE TABLE " + table + " (k String, mask " + maskType + ", bytes UInt64)"
                 + " ENGINE = SummingMergeTree ORDER BY k").get();
@@ -350,9 +358,113 @@ public class ReservedValueIT {
         // Separate INSERTs on purpose: optimize_on_insert (default 1) merges the rows of a single
         // statement before the part is written, and the question is what the ENGINE does to two
         // parts, which is what a rollup accumulates.
-        admin.execute("INSERT INTO " + table + " VALUES ('k', " + MASK_A + ", " + BYTES_PER_ROW + ")").get();
-        admin.execute("INSERT INTO " + table + " VALUES ('k', " + MASK_B + ", " + BYTES_PER_ROW + ")").get();
+        admin.execute("INSERT INTO " + table + " VALUES ('k', " + maskA + ", " + BYTES_PER_ROW + ")").get();
+        admin.execute("INSERT INTO " + table + " VALUES ('k', " + maskB + ", " + BYTES_PER_ROW + ")").get();
         return table;
+    }
+
+    /**
+     * The width #581 proposes ORs exactly as the {@code UInt64} one does.
+     *
+     * <p>Asked because #581 specifies {@code UInt8} while the measured answer above is
+     * {@code UInt64}, and the two are not the same claim: {@code SimpleAggregateFunction} is
+     * parameterised by its value type, so support for one width is not evidence about another. The
+     * migration has to name a width, and this is the one it would name.</p>
+     */
+    @Test
+    void aUInt8SummaryOrsTheProvenanceMaskAsTheUInt64OneDoes() throws Exception {
+        final Merged merged = merged(tableCarrying("SimpleAggregateFunction(groupBitOr, UInt8)"));
+
+        assertThat(merged.mask())
+                .as("#581 [PQ-4] on ClickHouse %s: SimpleAggregateFunction(groupBitOr, UInt8) must OR"
+                        + " %d and %d to %d, not sum them to %d",
+                        serverVersion, MASK_A, MASK_B, ORED, SUMMED)
+                .isEqualTo(ORED);
+        assertThat(merged.bytes())
+                .as("the plain measure beside it must still sum, or the narrower width bought the OR"
+                        + " by breaking the column next to it")
+                .isEqualTo(BYTES_PER_ROW * 2);
+    }
+
+    /**
+     * A rung in the top bit survives {@code UInt8}, and a summed column of that width would not.
+     *
+     * <p>One bit per rung means eight rungs fit, and the eighth is the one a width chosen by
+     * eyeballing would lose. These two masks overlap <em>and</em> sum past 255: {@code 0b11000000 +
+     * 0b10000001} is 321, which a {@code UInt8} holds as 65. So this pins the OR exactly and shows
+     * the second way a plain measure of this width corrupts a mask — the first being the sum, the
+     * second being the wrap. A probe on {@code UInt64} could not surface the wrap at all.</p>
+     */
+    @Test
+    void theTopRungSurvivesAUInt8SummaryThatASumWouldWrap() throws Exception {
+        final long topRung = 0b1100_0000;
+        final long lowRung = 0b1000_0001;
+        final long ored = topRung | lowRung;
+        final long wrapped = (topRung + lowRung) % 256;
+
+        assertThat(ored)
+                .as("the pair must overlap and must not agree with the wrapped sum, or this proves"
+                        + " nothing about which aggregation ran")
+                .isNotEqualTo(wrapped);
+
+        final Merged merged = merged(tableCarrying("SimpleAggregateFunction(groupBitOr, UInt8)", topRung, lowRung));
+
+        assertThat(merged.mask())
+                .as("#581 [PQ-4] on ClickHouse %s: the top rung must survive a UInt8 summary — %d and"
+                        + " %d OR to %d, where a summed UInt8 would wrap to %d",
+                        serverVersion, topRung, lowRung, ored, wrapped)
+                .isEqualTo(ored);
+    }
+
+    /**
+     * A materialized view writes a plain integer expression into the summary column, and the target
+     * ORs across the rows it produced.
+     *
+     * <p>The half the section header above says is not asked, and the migration rests on it: every
+     * riptide rollup is fed by {@code CREATE MATERIALIZED VIEW ... TO <target>}, so a provenance
+     * summary is only shippable if a view's ordinary integer expression is accepted by a
+     * {@code SimpleAggregateFunction} column. Nothing in the engine result above implies it —
+     * those tables were written by direct INSERT.</p>
+     *
+     * <p>Shaped like a real rollup rather than a direct insert: the view groups, the target
+     * collapses on a narrower key than the view groups by, and the OR therefore has to happen
+     * across two view-produced rows.</p>
+     */
+    @Test
+    void aMaterializedViewWritesAPlainExpressionIntoTheSummaryColumn() throws Exception {
+        final int probe = PROBE.incrementAndGet();
+        final String source = SUMMARY_DATABASE + ".mv_source_" + probe;
+        final String target = SUMMARY_DATABASE + ".mv_target_" + probe;
+        final String view = SUMMARY_DATABASE + ".mv_" + probe;
+
+        admin.execute("CREATE TABLE " + source + " (k String, rung UInt8, bytes UInt64)"
+                + " ENGINE = MergeTree ORDER BY k").get();
+        admin.execute("CREATE TABLE " + target + " (k String,"
+                + " mask SimpleAggregateFunction(groupBitOr, UInt8), bytes UInt64)"
+                + " ENGINE = SummingMergeTree ORDER BY k").get();
+        // `rung` is a plain UInt8 column, so `rung AS mask` is exactly the ordinary expression a
+        // rollup SELECT would carry. Grouping by it and collapsing on k alone forces the target to
+        // combine the two rows the view emits.
+        admin.execute("CREATE MATERIALIZED VIEW " + view + " TO " + target + " AS"
+                + " SELECT k, rung AS mask, sum(bytes) AS bytes FROM " + source
+                + " GROUP BY k, rung").get();
+        admin.execute("SYSTEM STOP MERGES " + target).get();
+        admin.execute("INSERT INTO " + source + " VALUES ('k', " + MASK_A + ", " + BYTES_PER_ROW + ")").get();
+        admin.execute("INSERT INTO " + source + " VALUES ('k', " + MASK_B + ", " + BYTES_PER_ROW + ")").get();
+
+        final Merged merged = merged(target);
+
+        assertThat(merged.mask())
+                .as("#581 [PQ-4] on ClickHouse %s: a materialized view must be able to write a plain"
+                        + " integer expression into a SimpleAggregateFunction(groupBitOr, UInt8)"
+                        + " column, and the target must OR %d and %d to %d rather than summing to %d."
+                        + " If this fails, a provenance summary is not expressible as a rollup measure"
+                        + " however the engine behaves on direct inserts",
+                        serverVersion, MASK_A, MASK_B, ORED, SUMMED)
+                .isEqualTo(ORED);
+        assertThat(merged.bytes())
+                .as("the summed measure beside it must still sum through the view")
+                .isEqualTo(BYTES_PER_ROW * 2);
     }
 
     /**
