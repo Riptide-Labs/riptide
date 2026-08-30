@@ -627,6 +627,122 @@ public class ReservedValueIT {
                 .isEqualTo(ORED);
     }
 
+    /** The SELECT the server stored for a view in {@link #SUMMARY_DATABASE}, as it re-serialises it. */
+    private static String storedQueryOf(final String view) throws Exception {
+        try (var records = admin.queryRecords("SELECT as_select AS q FROM system.tables"
+                + " WHERE database = '" + SUMMARY_DATABASE + "' AND name = '" + view + "'").get()) {
+            for (final var record : records) {
+                return record.getString("q");
+            }
+        }
+        throw new AssertionError("system.tables answered nothing for view " + view);
+    }
+
+    /**
+     * A measure is appended without touching the sort key, which is what a summary column is.
+     *
+     * <p>{@link #appendColumnOfType(String)} appends a <em>dimension</em>: it adds the column and
+     * extends the ORDER BY. A provenance summary is a measure, so it is added and the key is left
+     * alone. The two paths are different {@code ALTER}s and only one of them is what #581 would
+     * emit.</p>
+     */
+    private static String appendMeasureOfType(final String type) throws Exception {
+        final String table = SUMMARY_DATABASE + ".probe_" + PROBE.incrementAndGet();
+        admin.execute("CREATE TABLE " + table + " (k UInt64, bytes UInt64)"
+                + " ENGINE = SummingMergeTree ORDER BY (k)").get();
+        admin.execute("INSERT INTO " + table + " (k, bytes) VALUES (1, 1)").get();
+        admin.execute("ALTER TABLE " + table + " ADD COLUMN appended " + type).get();
+        return table;
+    }
+
+    /**
+     * What a row aggregated before the summary column existed reads afterwards.
+     *
+     * <p>#581's central claim rests on this and nothing has asked it. The issue argues a bitmask
+     * escapes {@code evolve-rollup-shape}'s exclusion of measures because "{@code 0} means nothing
+     * recorded: either the row predates the column, or every flow it aggregated predates #467 —
+     * both mean no provenance information, which is a true statement rather than a collision". That
+     * is an assertion about what the server writes into a {@code SimpleAggregateFunction} column
+     * for rows that predate it, and a summed measure reading {@code 0} for historical rows is
+     * exactly what that rule excludes measures <em>for</em>. If it reads anything else the argument
+     * does not hold and #581 needs a sentinel after all.</p>
+     *
+     * <p>Note for the migration: {@code FlowsSchema.reservedValueFor} has no arm for this type, and
+     * {@link #everyLiveColumnTypeReadsItsReservedValue()} derives its type set from
+     * {@code rollupColumns()}, which includes measures. Adding the summary therefore turns that
+     * test red until an arm exists and {@code LIVE_TYPES} is raised — by design, and this is the
+     * measurement the arm should be written from rather than a guess.</p>
+     */
+    @Test
+    void aPreAppendRowReadsZeroForAnAppendedProvenanceSummary() throws Exception {
+        final String type = "SimpleAggregateFunction(groupBitOr, UInt8)";
+        final String table = appendMeasureOfType(type);
+
+        assertThat(preAppendRowValue(table))
+                .as("#581 [PQ-4] on ClickHouse %s: a row aggregated before an appended %s column"
+                        + " must read 0, because #581's whole case for carrying provenance as a"
+                        + " measure is that 0 asserts the absence of information. Anything else and"
+                        + " the design needs a sentinel", serverVersion, type)
+                .isEqualTo("0");
+    }
+
+    /**
+     * {@code ALTER TABLE … MODIFY QUERY} accepts a view whose expression is wider than its target.
+     *
+     * <p>The upgrade path, and the one the earlier probes did not take. A fresh install gets
+     * {@code CREATE MATERIALIZED VIEW}, which was measured to narrow a too-wide expression
+     * silently; an existing deployment gets the column through {@code MODIFY QUERY}, which is
+     * documented not to validate against its target at all. Both roads therefore have to be asked
+     * separately, and this is the one every already-running deployment takes.</p>
+     *
+     * <p>Consequence either way: nothing on the server rejects a summary expression that does not
+     * fit its column, so riptide has to pin the width and the rung count in its own tests. The
+     * failure this prevents is a ninth rung that reads as never set on upgraded installs only.</p>
+     */
+    @Test
+    void modifyQueryAcceptsAWiderExpressionThanTheSummaryColumnHolds() throws Exception {
+        final int probe = PROBE.incrementAndGet();
+        final String source = SUMMARY_DATABASE + ".mq_source_" + probe;
+        final String target = SUMMARY_DATABASE + ".mq_target_" + probe;
+        final String view = SUMMARY_DATABASE + ".mq_" + probe;
+
+        admin.execute("CREATE TABLE " + source + " (k String, rung UInt16, bytes UInt64)"
+                + " ENGINE = MergeTree ORDER BY k").get();
+        admin.execute("CREATE TABLE " + target + " (k String,"
+                + " mask SimpleAggregateFunction(groupBitOr, UInt8), bytes UInt64)"
+                + " ENGINE = SummingMergeTree ORDER BY k").get();
+        admin.execute("CREATE MATERIALIZED VIEW " + view + " TO " + target + " AS"
+                + " SELECT k, toUInt8(rung) AS mask, sum(bytes) AS bytes FROM " + source
+                + " GROUP BY k, rung").get();
+
+        // The ninth rung: a bit the UInt8 summary cannot hold, introduced the way an upgrade would.
+        admin.execute("ALTER TABLE " + view + " MODIFY QUERY"
+                + " SELECT k, toUInt16(rung) + 256 AS mask, sum(bytes) AS bytes FROM " + source
+                + " GROUP BY k, rung").get();
+        admin.execute("SYSTEM STOP MERGES " + target).get();
+        admin.execute("INSERT INTO " + source + " VALUES ('k', " + MASK_A + ", " + BYTES_PER_ROW + ")").get();
+        admin.execute("INSERT INTO " + source + " VALUES ('k', " + MASK_B + ", " + BYTES_PER_ROW + ")").get();
+
+        // Read back what the server stored, so "the wide expression was accepted" is asserted rather
+        // than inferred from the ALTER not throwing. Without this the assertion below holds whether
+        // or not bit 256 was ever in the query, because a UInt8 cannot carry it either way.
+        assertThat(storedQueryOf("mq_" + probe))
+                .as("MODIFY QUERY must have accepted and stored the too-wide expression, or this test"
+                        + " measures nothing about validation")
+                .contains("256");
+
+        final Merged merged = merged(target);
+
+        assertThat(merged.mask())
+                .as("#581 [PQ-4] on ClickHouse %s: MODIFY QUERY accepted an expression carrying bit"
+                        + " 256, which the UInt8 summary cannot hold, and the bit reads as never"
+                        + " set. The low bits still OR to %d, so the column looks correct while a"
+                        + " rung is missing — silently, on the upgrade path, with no error on any"
+                        + " surface. riptide must pin the width itself",
+                        serverVersion, ORED)
+                .isEqualTo(ORED);
+    }
+
     /**
      * The fixture's masks must disagree under sum and OR, or every assertion below is vacuous.
      *
