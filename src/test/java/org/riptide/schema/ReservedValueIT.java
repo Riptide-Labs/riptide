@@ -261,10 +261,15 @@ public class ReservedValueIT {
     //
     // What this asks and what it does not. It asks the ENGINE: what SummingMergeTree does to a
     // provenance mask when it merges two parts, and what a read over unmerged parts returns. It
-    // asks with one-key tables of its own, not a rollup: no materialized view feeds them, so
-    // whether `CREATE MATERIALIZED VIEW ... TO` coerces a plain integer expression into a
-    // SimpleAggregateFunction column is not asked here. #581's checkbox "probed against a real
-    // SummingMergeTree rollup" is answered for the engine half only.
+    // asks with one-key tables of its own, not a rollup. It also asks the VIEW: whether
+    // `CREATE MATERIALIZED VIEW ... TO` writes an integer expression into a SimpleAggregateFunction
+    // column, first as a bare column and then in the shape a rollup has, groupBitOr over a multiIf
+    // on the provenance string, including one wider than the summary (it is narrowed, silently).
+    //
+    // Not asked: a column added to an existing rollup arrives through `ALTER TABLE ... MODIFY
+    // QUERY`, which does not validate against its target, not through CREATE. #581's checkbox
+    // "probed against a real SummingMergeTree rollup" is answered for the engine and for the view
+    // mechanism, not for riptide's rollup DDL.
     //
     // Both widths are asked. UInt64 is what a mask added as a measure would be TODAY, because
     // FlowsSchema hardcodes it at the rollup DDL and again in rollupColumns(). UInt8 is what #581
@@ -379,7 +384,8 @@ public class ReservedValueIT {
                 .as("#581 [PQ-4] on ClickHouse %s: SimpleAggregateFunction(groupBitOr, UInt8) must OR"
                         + " %d and %d to %d, not sum them to %d",
                         serverVersion, MASK_A, MASK_B, ORED, SUMMED)
-                .isEqualTo(ORED);
+                .isEqualTo(ORED)
+                .isNotEqualTo(SUMMED);
         assertThat(merged.bytes())
                 .as("the plain measure beside it must still sum, or the narrower width bought the OR"
                         + " by breaking the column next to it")
@@ -387,48 +393,113 @@ public class ReservedValueIT {
     }
 
     /**
-     * A rung in the top bit survives {@code UInt8}, and a summed column of that width would not.
+     * Two masks that both set the top bit of a {@code UInt8} and sum past 255: {@code 0b11000000}
+     * and {@code 0b10000001}.
      *
-     * <p>One bit per rung means eight rungs fit, and the eighth is the one a width chosen by
-     * eyeballing would lose. These two masks overlap <em>and</em> sum past 255: {@code 0b11000000 +
-     * 0b10000001} is 321, which a {@code UInt8} holds as 65. So this pins the OR exactly and shows
-     * the second way a plain measure of this width corrupts a mask — the first being the sum, the
-     * second being the wrap. A probe on {@code UInt64} could not surface the wrap at all.</p>
+     * <p>One bit per rung means eight rungs fit in the width #581 proposes, and the eighth is the
+     * one a width chosen by eyeballing would lose. The pair overlaps on that bit, so a sum and an OR
+     * disagree; and the sum is 321, which a {@code UInt8} cannot hold, so a plain measure of this
+     * width fails a second way that a {@code UInt64} probe could never surface.
+     * {@link #theTopBitPairMustOverlapAndDisagreeUnderSumAndOr()} pins both properties.</p>
+     */
+    private static final long TOP_BIT_A = 0b1100_0000;
+    private static final long TOP_BIT_B = 0b1000_0001;
+
+    /** What the summary must read for the top-bit pair. */
+    private static final long TOP_BIT_ORED = TOP_BIT_A | TOP_BIT_B;
+
+    /** What the pair sums to, past the width. */
+    private static final long TOP_BIT_SUMMED = TOP_BIT_A + TOP_BIT_B;
+
+    /** What a {@code UInt8} holds of that sum if the engine wraps rather than saturates or refuses. */
+    private static final long TOP_BIT_WRAPPED = TOP_BIT_SUMMED % 256;
+
+    /**
+     * The top-bit pair keeps the same two properties {@link #twoMasksMustDisagreeUnderSumAndOr()}
+     * pins for the main pair, plus the one it exists for: its sum does not fit.
      */
     @Test
-    void theTopRungSurvivesAUInt8SummaryThatASumWouldWrap() throws Exception {
-        final long topRung = 0b1100_0000;
-        final long lowRung = 0b1000_0001;
-        final long ored = topRung | lowRung;
-        final long wrapped = (topRung + lowRung) % 256;
+    void theTopBitPairMustOverlapAndDisagreeUnderSumAndOr() {
+        assertThat(TOP_BIT_A & TOP_BIT_B)
+                .as("the top-bit pair must overlap, or a sum and an OR agree and the probe on it"
+                        + " proves nothing about which aggregation ran")
+                .isNotZero();
+        assertThat(TOP_BIT_ORED)
+                .as("the OR must equal neither mask, or one unmerged row read first would pass as"
+                        + " the merged value")
+                .isNotEqualTo(TOP_BIT_A)
+                .isNotEqualTo(TOP_BIT_B);
+        assertThat(TOP_BIT_SUMMED)
+                .as("the pair must sum past 255, or the wrap this pair exists to surface cannot occur")
+                .isGreaterThan(255);
+        assertThat(TOP_BIT_WRAPPED)
+                .as("the wrapped sum must differ from the OR, or a wrapping plain column would pass"
+                        + " as a summary")
+                .isNotEqualTo(TOP_BIT_ORED);
+    }
 
-        assertThat(ored)
-                .as("the pair must overlap and must not agree with the wrapped sum, or this proves"
-                        + " nothing about which aggregation ran")
-                .isNotEqualTo(wrapped);
-
-        final Merged merged = merged(tableCarrying("SimpleAggregateFunction(groupBitOr, UInt8)", topRung, lowRung));
+    /**
+     * A rung in the top bit survives a {@code UInt8} summary.
+     *
+     * <p>Pins the OR at the bit a narrower width is most likely to lose, beside a plain measure that
+     * must still sum. What a plain column of the same width does to this pair is measured
+     * separately, in {@link #aPlainUInt8MeasureWrapsTheTopBitPair()}.</p>
+     */
+    @Test
+    void theTopRungSurvivesAUInt8Summary() throws Exception {
+        final Merged merged = merged(tableCarrying("SimpleAggregateFunction(groupBitOr, UInt8)",
+                TOP_BIT_A, TOP_BIT_B));
 
         assertThat(merged.mask())
                 .as("#581 [PQ-4] on ClickHouse %s: the top rung must survive a UInt8 summary — %d and"
-                        + " %d OR to %d, where a summed UInt8 would wrap to %d",
-                        serverVersion, topRung, lowRung, ored, wrapped)
-                .isEqualTo(ored);
+                        + " %d OR to %d", serverVersion, TOP_BIT_A, TOP_BIT_B, TOP_BIT_ORED)
+                .isEqualTo(TOP_BIT_ORED);
+        assertThat(merged.bytes())
+                .as("the plain measure beside it must still sum")
+                .isEqualTo(BYTES_PER_ROW * 2);
+    }
+
+    /**
+     * A plain {@code UInt8} measure corrupts the top-bit pair a second way: the sum wraps.
+     *
+     * <p>{@link #aPlainMeasureColumnSumsAProvenanceMaskInsteadOfOringIt()} shows a plain column
+     * sums, at a width where the sum fits. At {@code UInt8} this pair's sum does not fit, and what
+     * the engine does then — wrap, saturate, or refuse the merge — is the server's to answer, not
+     * arithmetic to do here. Asserted at the wrapped value because that is what ClickHouse 26.7
+     * returned; a server that saturates or refuses fails this test, and the answer #581 records
+     * changes with it.</p>
+     */
+    @Test
+    void aPlainUInt8MeasureWrapsTheTopBitPair() throws Exception {
+        final Merged merged = merged(tableCarrying("UInt8", TOP_BIT_A, TOP_BIT_B));
+
+        assertThat(merged.mask())
+                .as("#581 [PQ-4] on ClickHouse %s: a plain UInt8 measure holds %d + %d = %d as %d,"
+                        + " not the %d a summary reads", serverVersion, TOP_BIT_A, TOP_BIT_B,
+                        TOP_BIT_SUMMED, merged.mask(), TOP_BIT_ORED)
+                .isEqualTo(TOP_BIT_WRAPPED)
+                .isNotEqualTo(TOP_BIT_ORED);
     }
 
     /**
      * A materialized view writes a plain integer expression into the summary column, and the target
      * ORs across the rows it produced.
      *
-     * <p>The half the section header above says is not asked, and the migration rests on it: every
-     * riptide rollup is fed by {@code CREATE MATERIALIZED VIEW ... TO <target>}, so a provenance
-     * summary is only shippable if a view's ordinary integer expression is accepted by a
-     * {@code SimpleAggregateFunction} column. Nothing in the engine result above implies it —
-     * those tables were written by direct INSERT.</p>
+     * <p>The migration rests on this: every riptide rollup is created as
+     * {@code CREATE MATERIALIZED VIEW ... TO <target>}, so a provenance summary is only shippable
+     * if a view's ordinary integer expression is accepted by a {@code SimpleAggregateFunction}
+     * column. Nothing in the engine result above implies it — those tables were written by direct
+     * INSERT.</p>
      *
      * <p>Shaped like a real rollup rather than a direct insert: the view groups, the target
      * collapses on a narrower key than the view groups by, and the OR therefore has to happen
      * across two view-produced rows.</p>
+     *
+     * <p>The expression here is a bare {@code UInt8} column; the rollup-shaped variants below
+     * derive it from the provenance string and aggregate it. What none of them ask: a column added
+     * to an existing rollup reaches its view through {@code ALTER TABLE ... MODIFY QUERY} (see
+     * {@code FlowsSchema.modifyRollupViews}), which does not validate against its target; every
+     * probe here exercises CREATE.</p>
      */
     @Test
     void aMaterializedViewWritesAPlainExpressionIntoTheSummaryColumn() throws Exception {
@@ -465,6 +536,95 @@ public class ReservedValueIT {
         assertThat(merged.bytes())
                 .as("the summed measure beside it must still sum through the view")
                 .isEqualTo(BYTES_PER_ROW * 2);
+    }
+
+    /**
+     * The expression a rollup would carry: the provenance string mapped to its rung's bit, MASK_A
+     * for one value and MASK_B for the other, so the two rows OR to {@link #ORED}.
+     */
+    private static final String RUNG_OF_PROVENANCE =
+            "multiIf(provenance = 'record', " + MASK_A + ", provenance = 'options', " + MASK_B + ", 0)";
+
+    /**
+     * A rollup-shaped view over a raw-shaped source: {@code samplingProvenance} as a
+     * {@code LowCardinality(String)}, the view grouping by {@code k} alone and carrying
+     * {@code groupBitOr(maskExpression) AS mask} into a {@code SimpleAggregateFunction(groupBitOr,
+     * UInt8)} target. Returns the target, fed two rows of different provenance as two parts.
+     */
+    private static String viewTargetCarrying(final String maskExpression) throws Exception {
+        final int probe = PROBE.incrementAndGet();
+        final String source = SUMMARY_DATABASE + ".rollup_source_" + probe;
+        final String target = SUMMARY_DATABASE + ".rollup_target_" + probe;
+        final String view = SUMMARY_DATABASE + ".rollup_" + probe;
+
+        admin.execute("CREATE TABLE " + source
+                + " (k String, provenance LowCardinality(String), bytes UInt64)"
+                + " ENGINE = MergeTree ORDER BY k").get();
+        admin.execute("CREATE TABLE " + target + " (k String,"
+                + " mask SimpleAggregateFunction(groupBitOr, UInt8), bytes UInt64)"
+                + " ENGINE = SummingMergeTree ORDER BY k").get();
+        admin.execute("CREATE MATERIALIZED VIEW " + view + " TO " + target + " AS"
+                + " SELECT k, groupBitOr(" + maskExpression + ") AS mask, sum(bytes) AS bytes"
+                + " FROM " + source + " GROUP BY k").get();
+        admin.execute("SYSTEM STOP MERGES " + target).get();
+        admin.execute("INSERT INTO " + source + " VALUES ('k', 'record', " + BYTES_PER_ROW + ")").get();
+        admin.execute("INSERT INTO " + source + " VALUES ('k', 'options', " + BYTES_PER_ROW + ")").get();
+        return target;
+    }
+
+    /**
+     * The shape #581 would ship: a view aggregating {@code groupBitOr} over an expression derived
+     * from the provenance string, grouped by the rollup's own key, into the summary column.
+     *
+     * <p>The test above writes a grouped-by column. A rollup does not have that column; it derives
+     * the rung from {@code samplingProvenance} and must aggregate it, because the view's
+     * {@code GROUP BY} is the rollup's dimensions and not the rung. So what reaches the target is
+     * the result of {@code groupBitOr}, and this asks whether that is accepted and OR-ed onward.</p>
+     */
+    @Test
+    void aRollupShapedViewAggregatesTheProvenanceExpressionIntoTheSummaryColumn() throws Exception {
+        final Merged merged = merged(viewTargetCarrying(RUNG_OF_PROVENANCE));
+
+        assertThat(merged.mask())
+                .as("#581 [PQ-4] on ClickHouse %s: groupBitOr(multiIf(provenance ...)) in a view"
+                        + " grouped by the rollup key must land in the UInt8 summary and OR %d and %d"
+                        + " to %d across the view's parts", serverVersion, MASK_A, MASK_B, ORED)
+                .isEqualTo(ORED);
+        assertThat(merged.bytes())
+                .as("the summed measure beside it must still sum through the view")
+                .isEqualTo(BYTES_PER_ROW * 2);
+    }
+
+    /**
+     * The same view with the expression forced wider than the summary: {@code UInt64} into a
+     * {@code UInt8} column. The server narrows it, and does not say so.
+     *
+     * <p>How the mask expression is written decides its type, and {@code Measure} has no type to
+     * pin it with. This asks what the server does when the view's result is wider than the
+     * target's summary: refuse at {@code CREATE}, or narrow it. Measured: it narrows. So a bit set
+     * above the width is dropped in the view, silently, which is asserted here with the rung bits
+     * shifted past the eighth: the summary reads as if they had never been set. That is the
+     * constraint #581 carries: the expression's width is nothing the server checks, so a ninth
+     * rung added to a {@code UInt8} summary vanishes without an error anywhere.</p>
+     */
+    @Test
+    void aRollupShapedViewNarrowsAWiderExpressionSilently() throws Exception {
+        final Merged narrowed = merged(viewTargetCarrying("toUInt64(" + RUNG_OF_PROVENANCE + ")"));
+
+        assertThat(narrowed.mask())
+                .as("#581 [PQ-4] on ClickHouse %s: a UInt64 groupBitOr result is accepted into the"
+                        + " UInt8 summary at CREATE and still ORs %d and %d to %d", serverVersion,
+                        MASK_A, MASK_B, ORED)
+                .isEqualTo(ORED);
+
+        final Merged truncated = merged(viewTargetCarrying(
+                "toUInt64(" + RUNG_OF_PROVENANCE + ") + 256"));
+
+        assertThat(truncated.mask())
+                .as("#581 [PQ-4] on ClickHouse %s: a bit above the summary's width is dropped by"
+                        + " the view without an error — %d | %d with bit 8 set reads as %d, the"
+                        + " value with bit 8 never set", serverVersion, MASK_A, MASK_B, ORED)
+                .isEqualTo(ORED);
     }
 
     /**
