@@ -582,8 +582,8 @@ public final class FlowsSchema {
             allDimensions(rollup).forEach(dimension -> types.put(dimension.column(), dimension.type()));
             // A measure's declared type is part of the contract, not an implementation detail: this
             // map is what the shape check compares against a live server. For the volume measures
-            // that means the width specifically — a narrower UInt64 would overflow on a busy
-            // exporter and wrap silently. It is read from the measure rather than hardcoded here so
+            // that means the width specifically — a type narrower than UInt64 would overflow on
+            // a busy exporter and wrap silently. It is read from the measure rather than hardcoded here so
             // this site and the DDL cannot declare different types for the same column.
             MEASURES.forEach(measure -> types.put(measure.column(), measure.type()));
             columns.put(rollup.table(), Collections.unmodifiableMap(types));
@@ -1026,7 +1026,8 @@ public final class FlowsSchema {
      * <p>The type is carried rather than assumed because two sites used to hardcode {@code UInt64}
      * independently — the rollup DDL and {@link #rollupColumns()} — and the shape check compares the
      * second against a live server. A width declared in one and claimed by the other is drift that
-     * reports every deployment as stale, or none. Both now read this field, so they cannot disagree.
+     * reports every deployment as stale, or none. Both now read this field, so they cannot
+     * disagree.</p>
      *
      * <p>Every measure today is {@code UInt64} and the emitted DDL is unchanged by carrying it.
      * Provenance (#581) is the first measure that would name a different type, and it is not a

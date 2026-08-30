@@ -273,10 +273,11 @@ public class ReservedValueIT {
     // "probed against a real SummingMergeTree rollup" is answered for the engine and for both view
     // mechanisms, not for riptide's rollup DDL: every table here is the probe's own.
     //
-    // Both widths are asked. UInt64 is what a mask added as a measure would be TODAY, because
-    // FlowsSchema hardcodes it at the rollup DDL and again in rollupColumns(). UInt8 is what #581
-    // proposes, and it is the width the migration would have to give Measure a type to express, so
-    // it is measured here rather than assumed from the UInt64 result.
+    // Both widths are asked. UInt64 is what a mask added as a measure would be TODAY, because it
+    // is the type every entry in FlowsSchema's MEASURES declares — the Measure record carries the
+    // type, and the rollup DDL and rollupColumns() both read it. UInt8 is what #581 proposes, the
+    // type the migration would have a provenance measure declare, so it is measured here rather
+    // than assumed from the UInt64 result.
 
     /** Its own database, so nothing here disturbs the reserved-value fixture above. */
     private static final String SUMMARY_DATABASE = "provenance_probe";
@@ -786,10 +787,10 @@ public class ReservedValueIT {
      * A plain measure column sums a bitmask rather than OR-ing it, and says nothing about it (#581).
      *
      * <p>#581 wants sampling provenance carried into the rollups as a summary. Riptide's measures are
-     * all plain {@code UInt64} — {@code FlowsSchema} hardcodes the type at the rollup DDL and again
-     * in {@code rollupColumns()}, and its {@code Measure} record carries no type at all. So a
-     * provenance mask added the way every existing measure is added would be <em>summed</em> on
-     * merge. This asks the server what that actually produces.</p>
+     * all plain {@code UInt64} — the type every entry in {@code FlowsSchema}'s {@code MEASURES}
+     * declares, read by the rollup DDL and {@code rollupColumns()} alike. So a provenance mask
+     * added the way every existing measure is added would be <em>summed</em> on merge. This asks
+     * the server what that actually produces.</p>
      */
     @Test
     void aPlainMeasureColumnSumsAProvenanceMaskInsteadOfOringIt() throws Exception {

@@ -211,25 +211,36 @@ class FlowsSchemaTest {
      * is wrong.</p>
      *
      * <p>The {@code UInt64} half is the guard on the refactor that introduced the field: carrying a
-     * type must not change the type carried. It is asserted from {@code rollupColumns()} rather
-     * than from a list written here, so a measure declared in a new type fails this test rather
-     * than passing it by matching a hardcode that was updated to suit.</p>
+     * type must not change the type carried. The measure names are derived from each table's
+     * columns minus its sort key rather than listed here, so a measure added later — #581's
+     * provenance summary would be the first — is held to the same assertions, and one declaring a
+     * new type fails this test until the pin is consciously relaxed.</p>
      */
     @Test
     void everyMeasureDeclaresOneTypeInBothTheDdlAndTheColumnMap() {
-        final List<String> measures =
-                List.of("bytes", "packets", "flowCount", "bytesIn", "bytesOut", "packetsIn", "packetsOut");
         final List<String> ddls = FlowsSchema.createRollupTables("riptide");
 
         assertThat(FlowsSchema.rollupColumns())
-                .as("derived from the live schema; an empty map would assert nothing below")
+                .as("derived from the schema definition; an empty map would assert nothing below")
                 .isNotEmpty();
 
         FlowsSchema.rollupColumns().forEach((table, columns) -> {
+            final String create =
+                    "CREATE TABLE IF NOT EXISTS " + FlowsSchema.qualifiedRollup("riptide", table) + " (";
             final String ddl = ddls.stream()
-                    .filter(candidate -> candidate.contains(table))
+                    .filter(candidate -> candidate.contains(create))
                     .findFirst()
                     .orElseThrow(() -> new AssertionError("no CREATE TABLE emitted for " + table));
+            final Set<String> sortKey = Set.of(keyList(ddl, "ORDER BY (").split(", "));
+            final List<String> measures = columns.keySet().stream()
+                    .filter(column -> !sortKey.contains(column))
+                    .toList();
+            assertThat(measures)
+                    .as("the seven volume measures must survive the sort-key subtraction in %s;"
+                            + " anything further is a measure added since, held to the same"
+                            + " assertions below", table)
+                    .contains("bytes", "packets", "flowCount",
+                            "bytesIn", "bytesOut", "packetsIn", "packetsOut");
             for (final String measure : measures) {
                 final String type = columns.get(measure);
                 assertThat(type)
