@@ -169,8 +169,13 @@ public final class FlowsSchema {
     }
 
     /**
-     * A rollup target table: every dimension in the sort key, every measure a {@code UInt64} the
-     * {@code SummingMergeTree} engine collapses on merge.
+     * A rollup target table: every dimension in the sort key, every measure out of it, declared with
+     * the type it carries and collapsed on merge by the {@code SummingMergeTree} engine.
+     *
+     * <p>Every measure is a {@code UInt64} today, and summing is what the engine does to one. A
+     * measure is free to name another type — see {@link Measure} — and that is not only a width
+     * choice: the engine honours {@code SimpleAggregateFunction}, which is how a column would
+     * combine by something other than a sum.</p>
      */
     private static String rollupTable(final String database, final Rollup rollup, final int ttlDays) {
         final List<Dimension> columns = allDimensions(rollup);
@@ -181,7 +186,7 @@ public final class FlowsSchema {
             ddl.append("    ").append(dimension.column()).append(' ').append(dimension.type()).append(",\n");
         }
         ddl.append(MEASURES.stream()
-                .map(measure -> "    " + measure.column() + " UInt64")
+                .map(measure -> "    " + measure.column() + ' ' + measure.type())
                 .collect(Collectors.joining(",\n")));
         // Sorting by every dimension is what makes SummingMergeTree collapse correctly: rows agree
         // on the full key or they are distinct facts.
@@ -575,10 +580,12 @@ public final class FlowsSchema {
         for (final Rollup rollup : ROLLUPS) {
             final Map<String, String> types = new LinkedHashMap<>();
             allDimensions(rollup).forEach(dimension -> types.put(dimension.column(), dimension.type()));
-            // Every measure is a UInt64 the SummingMergeTree collapses on merge; the width is part
-            // of the contract, not an implementation detail — a narrower one would overflow on a
-            // busy exporter and wrap silently.
-            MEASURES.forEach(measure -> types.put(measure.column(), "UInt64"));
+            // A measure's declared type is part of the contract, not an implementation detail: this
+            // map is what the shape check compares against a live server. For the volume measures
+            // that means the width specifically — a narrower UInt64 would overflow on a busy
+            // exporter and wrap silently. It is read from the measure rather than hardcoded here so
+            // this site and the DDL cannot declare different types for the same column.
+            MEASURES.forEach(measure -> types.put(measure.column(), measure.type()));
             columns.put(rollup.table(), Collections.unmodifiableMap(types));
         }
         return Collections.unmodifiableMap(columns);
@@ -735,13 +742,13 @@ public final class FlowsSchema {
      * forced to re-derive it from the raw table.
      */
     private static final List<Measure> MEASURES = List.of(
-            new Measure("bytes", "sum(f.bytes)"),
-            new Measure("packets", "sum(f.packets)"),
-            new Measure("flowCount", "count()"),
-            new Measure("bytesIn", "sumIf(f.bytes, f.direction = 'INGRESS')"),
-            new Measure("bytesOut", "sumIf(f.bytes, f.direction = 'EGRESS')"),
-            new Measure("packetsIn", "sumIf(f.packets, f.direction = 'INGRESS')"),
-            new Measure("packetsOut", "sumIf(f.packets, f.direction = 'EGRESS')"));
+            new Measure("bytes", "UInt64", "sum(f.bytes)"),
+            new Measure("packets", "UInt64", "sum(f.packets)"),
+            new Measure("flowCount", "UInt64", "count()"),
+            new Measure("bytesIn", "UInt64", "sumIf(f.bytes, f.direction = 'INGRESS')"),
+            new Measure("bytesOut", "UInt64", "sumIf(f.bytes, f.direction = 'EGRESS')"),
+            new Measure("packetsIn", "UInt64", "sumIf(f.packets, f.direction = 'INGRESS')"),
+            new Measure("packetsOut", "UInt64", "sumIf(f.packets, f.direction = 'EGRESS')"));
 
     /**
      * The rollup target-table names. A query router picking a rollup by dimension has to name one,
@@ -1012,8 +1019,21 @@ public final class FlowsSchema {
         return Collections.unmodifiableMap(byExpression);
     }
 
-    /** An aggregate carried by every rollup: its target column and the aggregating expression. */
-    private record Measure(String column, String expression) {
+    /**
+     * An aggregate carried by every rollup: its target column, its declared type, and the
+     * aggregating expression.
+     *
+     * <p>The type is carried rather than assumed because two sites used to hardcode {@code UInt64}
+     * independently — the rollup DDL and {@link #rollupColumns()} — and the shape check compares the
+     * second against a live server. A width declared in one and claimed by the other is drift that
+     * reports every deployment as stale, or none. Both now read this field, so they cannot disagree.
+     *
+     * <p>Every measure today is {@code UInt64} and the emitted DDL is unchanged by carrying it.
+     * Provenance (#581) is the first measure that would name a different type, and it is not a
+     * width choice: {@code SimpleAggregateFunction(groupBitOr, …)} is what makes a bitmask OR
+     * instead of summing, measured in {@code ReservedValueIT}.</p>
+     */
+    private record Measure(String column, String type, String expression) {
     }
 
     // Placeholder tokens substituted with the qualified names / TTL. Plain replace() (not

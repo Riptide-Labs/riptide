@@ -200,6 +200,52 @@ class FlowsSchemaTest {
                         + "srcAddr, dstAddr, srcPort, dstPort");
     }
 
+    /**
+     * The DDL and {@code rollupColumns()} declare each measure with the same type, and today it is
+     * {@code UInt64} everywhere.
+     *
+     * <p>Two sites hardcoded {@code UInt64} independently until {@code Measure} carried its own
+     * type, and nothing compared them. They are read by different consumers — the DDL creates the
+     * table, {@code rollupColumns()} is what the shape check compares against a live server — so a
+     * disagreement is drift that reports every deployment as stale, or none, depending which side
+     * is wrong.</p>
+     *
+     * <p>The {@code UInt64} half is the guard on the refactor that introduced the field: carrying a
+     * type must not change the type carried. It is asserted from {@code rollupColumns()} rather
+     * than from a list written here, so a measure declared in a new type fails this test rather
+     * than passing it by matching a hardcode that was updated to suit.</p>
+     */
+    @Test
+    void everyMeasureDeclaresOneTypeInBothTheDdlAndTheColumnMap() {
+        final List<String> measures =
+                List.of("bytes", "packets", "flowCount", "bytesIn", "bytesOut", "packetsIn", "packetsOut");
+        final List<String> ddls = FlowsSchema.createRollupTables("riptide");
+
+        assertThat(FlowsSchema.rollupColumns())
+                .as("derived from the live schema; an empty map would assert nothing below")
+                .isNotEmpty();
+
+        FlowsSchema.rollupColumns().forEach((table, columns) -> {
+            final String ddl = ddls.stream()
+                    .filter(candidate -> candidate.contains(table))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("no CREATE TABLE emitted for " + table));
+            for (final String measure : measures) {
+                final String type = columns.get(measure);
+                assertThat(type)
+                        .as("%s must still be UInt64 in %s: carrying a type must not change the type"
+                                + " carried, and a summed measure of a narrower width would wrap"
+                                + " silently on a busy exporter", measure, table)
+                        .isEqualTo("UInt64");
+                assertThat(ddl)
+                        .as("%s is declared %s by rollupColumns(), so the DDL that creates %s must"
+                                + " declare it the same or the shape check compares against a table"
+                                + " this code never emits", measure, type, table)
+                        .contains("    " + measure + " " + type);
+            }
+        });
+    }
+
     @Test
     void rollupTablesSummingEveryDimensionIntoTheSortKey() {
         // SummingMergeTree collapses rows that agree on the sort key, summing the rest. That is
