@@ -219,7 +219,8 @@ public final class FlowsSchema {
 
     /**
      * The in-place repair for every rollup target: one {@code ALTER} per rollup that adds any
-     * missing dimension and sets the sorting key to this version's (#470).
+     * missing dimension, adds any measure declared addable in place (#581), and sets the sorting
+     * key to this version's (#470).
      *
      * <p><b>Emitted only for the rollups {@link #planRollupRepair} selects</b>, never unconditionally
      * — both callers gate it, and classifying first is the point. The statement is idempotent where
@@ -276,13 +277,14 @@ public final class FlowsSchema {
             }
             ddl.append(',');
         }
-        // A measure the engine does not SUM can be added in place, and is added here so an upgraded
-        // target reaches the shape a fresh one is created with. Positioned after the column it
-        // follows in the fresh DDL, for the same positional-backfill reason as the dimensions above.
+        // A measure whose combiner treats 0 as "no information" can be added in place, and is added
+        // here so an upgraded target reaches the shape a fresh one is created with. Positioned after
+        // the column it follows in the fresh DDL, for the same positional-backfill reason as the
+        // dimensions above.
         final List<String> order = new ArrayList<>(columns.stream().map(Dimension::column).toList());
         MEASURES.forEach(measure -> order.add(measure.column()));
         for (final Measure measure : MEASURES) {
-            if (measure.combinesBySum()) {
+            if (!measure.addableInPlace()) {
                 continue;
             }
             ddl.append("\n    ADD COLUMN IF NOT EXISTS ")
@@ -402,30 +404,30 @@ public final class FlowsSchema {
             final List<Measure> missing = MEASURES.stream()
                     .filter(measure -> !liveColumns.contains(measure.column()))
                     .toList();
-            final List<String> missingSummed = missing.stream()
-                    .filter(Measure::combinesBySum)
+            final List<String> missingRefused = missing.stream()
+                    .filter(measure -> !measure.addableInPlace())
                     .map(Measure::column)
                     .toList();
-            if (!missingSummed.isEmpty()) {
-                refused.put(table, "measure " + missingSummed + " is missing from " + table
-                        + ", and a summed measure cannot be added in place: it would read 0 for every"
-                        + " row aggregated before the upgrade, making a SUM spanning it quietly too"
-                        + " small. Drop the rollup's view and target table and restart to have it"
-                        + " rebuilt; this discards that rollup's aggregated history");
+            if (!missingRefused.isEmpty()) {
+                refused.put(table, "measure " + missingRefused + " is missing from " + table
+                        + ", and it cannot be added in place: it would read 0 for every row"
+                        + " aggregated before the upgrade, which for any combiner not measured to"
+                        + " treat 0 as 'no information' (#674) makes a result spanning the upgrade"
+                        + " quietly wrong. Drop the rollup's view and target table and restart to"
+                        + " have it rebuilt; this discards that rollup's aggregated history");
                 continue;
             }
-            // What is left is a measure the engine combines by something other than a sum, and 0 is
-            // what a row aggregated before it existed reads (#674). For groupBitOr that is not a
-            // wrong total but the absence of information, so it is added in place rather than
+            // What is left is a measure whose combiner was measured to treat 0 as the absence of
+            // information rather than a wrong total (#674), so it is added in place rather than
             // refused — the distinction #654's blanket refusal did not have to draw.
-            final boolean missingCombinable = missing.size() > missingSummed.size();
+            final boolean missingAddable = !missing.isEmpty();
 
             final List<String> liveKey = splitKey(live);
             final List<String> wantedKey = allDimensions(rollup).stream().map(Dimension::column).toList();
 
             if (liveKey.equals(wantedKey) && liveColumns.containsAll(wantedKey)) {
                 // The key is already right, so only the added-in-place measure can need anything.
-                if (missingCombinable) {
+                if (missingAddable) {
                     repair.add(table);
                 }
                 continue;
@@ -472,17 +474,14 @@ public final class FlowsSchema {
     /**
      * The rollups to repair, and the ones refused with the reason to report.
      *
-     * <p>Only dimensions are repaired. A rollup missing a <em>measure</em> is not repairable by
-     * this path — {@code ALTER … ADD COLUMN} could add it, but a measure reading {@code 0} for
-     * historical rows makes a {@code SUM} spanning the upgrade quietly too small, which is why
-     * measures are out of scope. Planning them would plan a repair that never converges and log an
-     * identical-keys line on every boot forever. It is <em>refused</em> instead (#654), so the
-     * operator is told the reason and the remedy rather than shown the same drift line forever.</p>
-     *
-     * <p>The {@code SUM} rationale is stated for summed measures, which every measure today is.
-     * Whether #581's {@code groupBitOr} summary escapes it — a mask reading {@code 0} asserts
-     * absence of information rather than a wrong total (#674) — is the migration's open item,
-     * revisited there rather than here.</p>
+     * <p>Dimensions are repaired, and so is a measure whose combiner treats an appended column's
+     * {@code 0} as "no provenance information" — today {@code groupBitOr}, #581's summary, measured
+     * in #674. Any other missing measure is not repairable by this path: {@code ALTER … ADD COLUMN}
+     * could add it, but reading {@code 0} for historical rows makes a {@code SUM} spanning the
+     * upgrade quietly too small, and planning it anyway would plan a repair that never converges
+     * and log an identical-keys line on every boot forever. It is <em>refused</em> instead (#654),
+     * so the operator is told the reason and the remedy rather than shown the same drift line
+     * forever. {@code Measure#addableInPlace} is the line between the two.</p>
      */
     public record RepairPlan(List<String> repair, Map<String, String> refused) {
     }
@@ -790,10 +789,6 @@ public final class FlowsSchema {
             "fallback", 16,
             "assumed", 32);
 
-    /** The rung tokens in bit order, so the emitted SQL is stable across runs. */
-    private static final List<String> PROVENANCE_RUNGS =
-            List.of("record", "options", "header", "derived", "fallback", "assumed");
-
     /**
      * The summary's column type, and with it the number of rungs that fit.
      *
@@ -802,12 +797,30 @@ public final class FlowsSchema {
      * and {@code ALTER TABLE … MODIFY QUERY} on an upgrade — were measured to narrow a too-wide
      * expression <em>silently</em>, with no error on any surface (#673, #674). A ninth rung would
      * therefore read as never set rather than failing, so {@code FlowsSchemaTest} asserts the rungs
-     * fit instead of leaving it to the server.</p>
+     * fit instead of leaving it to the server. Its bit budget and the cast in
+     * {@link #provenanceMaskExpression()} are both derived from this declaration via
+     * {@link #provenanceSummaryBits()}, so widening the type widens them with it.</p>
      */
     private static final String PROVENANCE_SUMMARY_TYPE = "SimpleAggregateFunction(groupBitOr, UInt8)";
 
-    /** Bits available in {@link #PROVENANCE_SUMMARY_TYPE}; nothing on the server enforces it. */
-    static final int PROVENANCE_SUMMARY_BITS = 8;
+    /** The width parser for {@link #provenanceSummaryBits()}: the {@code UIntN} closing the type. */
+    private static final Pattern PROVENANCE_SUMMARY_WIDTH = Pattern.compile("UInt(8|16|32|64)\\)$");
+
+    /**
+     * Bits available in {@link #PROVENANCE_SUMMARY_TYPE}; nothing on the server enforces it.
+     *
+     * <p>Parsed from the declared type rather than kept as a second constant, because a
+     * free-standing number is exactly the kind of sibling that drifts: widen the type and forget
+     * the number, and the width guard in {@code FlowsSchemaTest} rejects a valid rung; widen the
+     * number alone and it waves through bits the column silently drops (#673, #674).</p>
+     */
+    static int provenanceSummaryBits() {
+        final Matcher width = PROVENANCE_SUMMARY_WIDTH.matcher(PROVENANCE_SUMMARY_TYPE);
+        if (!width.find()) {
+            throw new IllegalStateException("cannot read the width of " + PROVENANCE_SUMMARY_TYPE);
+        }
+        return Integer.parseInt(width.group(1));
+    }
 
     /** The rung-to-bit mapping, exposed so a test can bind it to the enum that owns the tokens. */
     static Map<String, Integer> provenanceBits() {
@@ -817,17 +830,19 @@ public final class FlowsSchema {
     /**
      * {@code groupBitOr} over each row's rung bit: the provenance summary's aggregating expression.
      *
-     * <p>{@code toUInt8} is written explicitly rather than left to inference. The measured
-     * behaviour is that a wider expression is narrowed without complaint, so stating the width
-     * here is what makes a mismatch a compile-time-visible fact in this file rather than a bit that
-     * disappears on a server.</p>
+     * <p>The cast is written explicitly rather than left to inference. The measured behaviour is
+     * that a wider expression is narrowed without complaint, so stating the width here is what
+     * makes a mismatch visible in this file rather than a bit that disappears on a server. The
+     * width is {@link #provenanceSummaryBits()}, read from the declared column type, so the cast
+     * cannot narrow past the column it feeds. Rungs are emitted in bit order, so the SQL is stable
+     * across runs without a second copy of the token list.</p>
      */
     private static String provenanceMaskExpression() {
-        final StringBuilder mask = new StringBuilder("groupBitOr(toUInt8(multiIf(");
-        for (final String rung : PROVENANCE_RUNGS) {
-            mask.append("f.samplingProvenance = '").append(rung).append("', ")
-                    .append(PROVENANCE_BITS.get(rung)).append(", ");
-        }
+        final StringBuilder mask = new StringBuilder("groupBitOr(toUInt")
+                .append(provenanceSummaryBits()).append("(multiIf(");
+        PROVENANCE_BITS.entrySet().stream().sorted(Map.Entry.comparingByValue()).forEach(rung ->
+                mask.append("f.samplingProvenance = '").append(rung.getKey()).append("', ")
+                        .append(rung.getValue()).append(", "));
         // The else arm: '' for a row written before #467, and any rung a future riptide records
         // that this one does not know. Both are "no information", which is what 0 means here.
         return mask.append("0)))").toString();
@@ -1041,7 +1056,9 @@ public final class FlowsSchema {
         // SimpleAggregateFunction over a String-ish inner type would then answer 0 as well, and
         // nothing would say why. ReservedValueIT re-asks a real server for whatever type ships.
         if (type.startsWith("SimpleAggregateFunction(")) {
-            final int comma = type.lastIndexOf(',');
+            // The FIRST comma: the function name cannot contain one, the inner type can
+            // (Decimal(18, 2)), and splitting on the last would hand the recursion a fragment.
+            final int comma = type.indexOf(',');
             if (comma < 0 || !type.endsWith(")")) {
                 throw new IllegalArgumentException("cannot read the inner type of " + type);
             }
@@ -1152,18 +1169,41 @@ public final class FlowsSchema {
     private record Measure(String column, String type, String expression) {
 
         /**
-         * Whether {@code SummingMergeTree} combines this column by adding it.
+         * Whether this measure can be appended to an existing rollup target (#581).
          *
-         * <p>Decided by the type and nowhere else, because the type is what tells the engine. A
-         * plain numeric column is summed; a {@code SimpleAggregateFunction} column is combined by
-         * the function it names, measured in {@code ReservedValueIT}. The distinction decides
-         * whether the measure can be added to an existing rollup: a summed column reading {@code 0}
-         * for historical rows makes a total spanning the upgrade quietly too small, while a
-         * {@code groupBitOr} mask reading {@code 0} asserts the absence of information (#581).</p>
+         * <p>Decided by the type and nowhere else, because the type is what tells the engine how
+         * the column combines. A column added in place reads {@code 0} for every row aggregated
+         * before the upgrade (#674), so only a combiner for which {@code 0} asserts the absence of
+         * information qualifies — {@link FlowsSchema#ZERO_SAFE_COMBINERS}, measured in
+         * {@code ReservedValueIT}. Everything else takes the refusal path: a plain numeric column
+         * is summed by {@code SummingMergeTree}, and a {@code SimpleAggregateFunction} naming an
+         * unmeasured function — {@code sum} would undercount, {@code min} would clamp — must not
+         * ride in on the wrapper alone.</p>
          */
-        boolean combinesBySum() {
-            return !this.type.startsWith("SimpleAggregateFunction(");
+        boolean addableInPlace() {
+            return FlowsSchema.addableInPlace(this.type);
         }
+    }
+
+    /**
+     * Combining functions measured to make an appended column's {@code 0} mean "no provenance
+     * information" rather than a wrong result (#674). A function not in this set is refused when
+     * missing, so a future {@code SimpleAggregateFunction(sum, …)} measure cannot slip into the
+     * add-in-place path on the strength of the wrapper and silently undercount history.
+     */
+    private static final Set<String> ZERO_SAFE_COMBINERS = Set.of("groupBitOr");
+
+    /** See {@link Measure#addableInPlace()}; static and package-private so a test can probe it. */
+    static boolean addableInPlace(final String type) {
+        if (!type.startsWith("SimpleAggregateFunction(")) {
+            return false;
+        }
+        final int comma = type.indexOf(',');
+        if (comma < 0) {
+            return false;
+        }
+        final String function = type.substring("SimpleAggregateFunction(".length(), comma).trim();
+        return ZERO_SAFE_COMBINERS.contains(function);
     }
 
     // Placeholder tokens substituted with the qualified names / TTL. Plain replace() (not

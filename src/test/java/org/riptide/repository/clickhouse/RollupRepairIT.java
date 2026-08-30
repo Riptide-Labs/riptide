@@ -414,6 +414,103 @@ public class RollupRepairIT {
                 + " GROUP BY tenant, organisation, timestamp, zone, application").get();
     }
 
+    /**
+     * The rollup exactly as the release before #581 left it: every column but the provenance
+     * summary, the sorting key already at this version's, and a view to match. This is the state
+     * every up-to-date deployment is in when it upgrades, and the one the dimension fixtures above
+     * cannot produce: the repair must add the measure while changing nothing else.
+     */
+    private static void createRollupMissingOnlyTheProvenanceSummary() throws Exception {
+        final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
+        final String view = FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP);
+        admin.execute("DROP VIEW IF EXISTS " + view).get();
+        admin.execute("DROP TABLE IF EXISTS " + target).get();
+        final String dropped = "samplingProvenanceMask";
+        final String columns = FlowsSchema.rollupColumns().get(ROLLUP).entrySet().stream()
+                .filter(column -> !dropped.equals(column.getKey()))
+                .map(column -> column.getKey() + " " + column.getValue())
+                .collect(Collectors.joining(", "));
+        final String key = FlowsSchema.rollupSortKeys().get(ROLLUP);
+        admin.execute("CREATE TABLE " + target + " (" + columns + ")"
+                + " ENGINE = SummingMergeTree() PRIMARY KEY (" + key + ") ORDER BY (" + key + ")"
+                + " PARTITION BY toYYYYMM(timestamp)").get();
+        // The view as the older version wrote it. The mask projection is removed as one literal,
+        // with its leading separator; the guards below catch a reformatted SELECT.
+        final String marker = " AS " + dropped;
+        final String full = FlowsSchema.rollupSelects(DATABASE).get(ROLLUP);
+        final int from = full.indexOf(",\n    groupBitOr(");
+        final int to = full.indexOf(marker);
+        assertThat(from)
+                .as("the %s projection must be found and removed, or the fixture builds the full"
+                        + " view and the repair below has nothing to do", dropped)
+                .isPositive();
+        assertThat(to).isGreaterThan(from);
+        final String shortened = full.substring(0, from) + full.substring(to + marker.length());
+        assertThat(shortened).isNotEqualTo(full).doesNotContain(dropped);
+        admin.execute("CREATE MATERIALIZED VIEW " + view + " TO " + target + " AS " + shortened).get();
+    }
+
+    /**
+     * A rollup missing only the provenance summary is repaired in place, end to end (#581).
+     *
+     * <p>The planning half is pinned by {@code FlowsSchemaTest}; this runs the statement it plans
+     * against a real server, in the exact state every up-to-date deployment is in on upgrade: an
+     * {@code ADD COLUMN} that must land after {@code packetsOut}, a {@code MODIFY ORDER BY} naming
+     * the key the table already has, and the view's {@code MODIFY QUERY}. Rows aggregated before
+     * the repair read {@code 0} — no provenance information — and rows after carry their rung's
+     * bit, which is the entire meaning #581 assigns the column.</p>
+     */
+    @Test
+    void aRollupMissingOnlyTheProvenanceSummaryIsRepairedEndToEnd() throws Exception {
+        createRollupMissingOnlyTheProvenanceSummary();
+        final var repo = startedWriter();
+        repo.persist(List.of(flow("before", "org", 1111)));
+        Thread.sleep(300);
+
+        repository().start();          // the repair happens here
+
+        final var after = flow("after", "org", 2222);
+        after.setSamplingProvenance(Flow.SamplingProvenance.Record);
+        repo.persist(List.of(after));
+        Thread.sleep(300);
+
+        assertThat(sortKeyOf(ROLLUP))
+                .as("the sorting key was already this version's and must come out unchanged")
+                .isEqualTo(FlowsSchema.rollupSortKeys().get(ROLLUP));
+        final List<String> physical = physicalColumnsOf(ROLLUP);
+        assertThat(physical)
+                .as("the mask must land directly after packetsOut, where a fresh table declares it,"
+                        + " or a positional backfill corrupts an upgraded target")
+                .containsSequence("packetsOut", "samplingProvenanceMask");
+        assertThat(scalar("SELECT count() AS v FROM "
+                + FlowsSchema.qualifiedRollup(DATABASE, ROLLUP) + " WHERE tenant = 'before'"))
+                .as("the pre-repair flow must have been aggregated, or the 0 below is an aggregate"
+                        + " over nothing rather than a statement about history")
+                .isPositive();
+        assertThat(scalar("SELECT groupBitOr(samplingProvenanceMask) AS v FROM "
+                + FlowsSchema.qualifiedRollup(DATABASE, ROLLUP) + " WHERE tenant = 'before'"))
+                .as("rows aggregated before the repair read 0: no provenance information")
+                .isZero();
+        assertThat(scalar("SELECT groupBitOr(samplingProvenanceMask) AS v FROM "
+                + FlowsSchema.qualifiedRollup(DATABASE, ROLLUP) + " WHERE tenant = 'after'"))
+                .as("rows aggregated after the repair carry the record rung's bit")
+                .isEqualTo(1L);
+
+        repository().start();          // and this shape's second start must be a no-op too
+        assertThat(physicalColumnsOf(ROLLUP))
+                .as("re-running the idempotent repair must not disturb the physical order")
+                .isEqualTo(physical);
+    }
+
+    private static List<String> physicalColumnsOf(final String table) throws Exception {
+        final List<String> columns = new java.util.ArrayList<>();
+        try (var records = admin.queryRecords("SELECT name FROM system.columns WHERE database = '"
+                + DATABASE + "' AND table = '" + table + "' ORDER BY position").get()) {
+            records.forEach(record -> columns.add(record.getString("name")));
+        }
+        return columns;
+    }
+
     private static long scalar(final String sql) throws Exception {
         try (var records = admin.queryRecords(sql).get()) {
             for (final var record : records) {

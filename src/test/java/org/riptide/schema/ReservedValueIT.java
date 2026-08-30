@@ -58,8 +58,9 @@ public class ReservedValueIT {
      * Distinct column types across every rollup, asserted so the derivation below cannot quietly
      * empty out. A loop over a shrunk set passes without asserting anything, which is the failure
      * mode this repo keeps meeting: {@code String}, {@code DateTime('UTC')},
-     * {@code LowCardinality(String)}, {@code Float64}, {@code UInt8}, {@code IPv6}, {@code UInt32}
-     * and {@code UInt64}. Adding a dimension of a new type is meant to fail here first.
+     * {@code LowCardinality(String)}, {@code Float64}, {@code UInt8}, {@code IPv6}, {@code UInt32},
+     * {@code UInt64} and {@code SimpleAggregateFunction(groupBitOr, UInt8)}. Adding a column of a
+     * new type — dimension or measure — is meant to fail here first.
      */
     private static final int LIVE_TYPES = 9;
 
@@ -148,7 +149,7 @@ public class ReservedValueIT {
             assertThat(preAppendRowMatches(table, type, reserved))
                     .as("a row aggregated before an appended %s measure should read %s on this"
                             + " server — which for the provenance summary is what makes 0 mean"
-                            + "'no information' rather than a wrong total (#581) — but reads %s",
+                            + " 'no information' rather than a wrong total (#581) — but reads %s",
                             type, reserved, preAppendRowValueOrUnrenderable(table))
                     .isTrue();
         }

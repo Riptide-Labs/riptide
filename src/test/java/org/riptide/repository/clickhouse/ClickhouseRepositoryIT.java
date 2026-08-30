@@ -453,6 +453,81 @@ public class ClickhouseRepositoryIT {
         }
     }
 
+    /**
+     * Every rung reads back as its own bit through the real materialized view (#581).
+     *
+     * <p>The rung-to-bit mapping is pinned as SQL text by {@code RollupShapeCheckTest}, but text
+     * equality proves the emitted expression, not its effect: a wrong literal bit or a typo'd
+     * token ships identically in the emitted and the pinned copy and stays green everywhere. So
+     * each rung is driven through the real view and its bit read back — one minute per rung, so
+     * the rollup keeps the flows apart without touching any dimension — plus the else arm, which
+     * the collector cannot produce: {@code ClickhouseFlow} deliberately defaults an unset
+     * provenance to {@code assumed}, and {@code ''} is reserved for rows written before #467. So
+     * the else arm is driven the only way it occurs, as a raw row inserted past the mapper.</p>
+     *
+     * <p>The bits are a deliberate literal, not a read of {@code FlowsSchema}: derived from the
+     * thing under test, they would agree with a wrong bit.</p>
+     */
+    @Test
+    void everySamplingProvenanceReadsItsOwnBitThroughTheRollup() throws Exception {
+        final var database = "provenance_mask_bits";
+        final var repo = new ClickhouseRepository(
+                new ClickhouseRepository$FlowMapperImpl(), configFor(database, true), RESOLVERS);
+        repo.start();
+
+        final var bits = Map.of(
+                Flow.SamplingProvenance.Record, 1L,
+                Flow.SamplingProvenance.Options, 2L,
+                Flow.SamplingProvenance.Header, 4L,
+                Flow.SamplingProvenance.Derived, 8L,
+                Flow.SamplingProvenance.Fallback, 16L,
+                Flow.SamplingProvenance.Assumed, 32L);
+        Assertions.assertThat(bits.keySet())
+                .as("every rung the parser can record must be driven, or a new rung ships unprobed")
+                .containsExactlyInAnyOrder(Flow.SamplingProvenance.values());
+
+        final var start = Instant.now().truncatedTo(ChronoUnit.MINUTES).minusSeconds(3600);
+        final var minutes = new LinkedHashMap<Flow.SamplingProvenance, Instant>();
+        int slot = 0;
+        for (final var provenance : Flow.SamplingProvenance.values()) {
+            final var minute = start.plusSeconds(60L * slot);
+            final var flow = testFlow(minute, 62000 + slot, 443, 100L);
+            flow.setSamplingProvenance(provenance);
+            repo.persist(List.of(flow));
+            minutes.put(provenance, minute);
+            slot++;
+        }
+        final var unrecorded = start.plusSeconds(60L * slot);
+        final var bare = testFlow(unrecorded, 62000 + slot, 443, 100L);
+        bare.setSamplingProvenance(null);
+        repo.persist(List.of(bare));
+        final var preProvenance = start.plusSeconds(60L * (slot + 1));
+        queryClient.execute("INSERT INTO " + database + ".flows (timestamp, tenant, organisation,"
+                + " zone, samplingProvenance) VALUES (fromUnixTimestamp("
+                + preProvenance.getEpochSecond() + "), 'default', 'default', 'default', '')").get();
+
+        for (final var entry : minutes.entrySet()) {
+            Assertions.assertThat(maskAt(database, entry.getValue()))
+                    .describedAs("mask for %s", entry.getKey())
+                    .isEqualTo(bits.get(entry.getKey()));
+        }
+        Assertions.assertThat(maskAt(database, unrecorded))
+                .describedAs("a persisted flow with provenance unset is written as 'assumed' by"
+                        + " ClickhouseFlow's deliberate column default, never as the else arm")
+                .isEqualTo(bits.get(Flow.SamplingProvenance.Assumed));
+        Assertions.assertThat(maskAt(database, preProvenance))
+                .describedAs("'' — the shape of a raw row written before #467, which the collector"
+                        + " itself cannot produce — is the multiIf else arm and reads 0")
+                .isZero();
+    }
+
+    private static long maskAt(final String database, final Instant minute) {
+        return queryClient.queryAll("SELECT groupBitOr(samplingProvenanceMask) AS v FROM " + database
+                + "." + FlowsSchema.ROLLUP_BY_APPLICATION
+                + " WHERE toUnixTimestamp(timestamp) = " + minute.getEpochSecond())
+                .getFirst().getLong("v");
+    }
+
     private static ClickhouseConfig configFor(final String database, final boolean manageSchema) {
         final var config = new ClickhouseConfig();
         config.setEndpoint("http://" + CLICKHOUSE.getHost() + ":" + CLICKHOUSE.getMappedPort(8123));

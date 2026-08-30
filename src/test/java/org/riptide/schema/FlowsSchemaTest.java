@@ -14,10 +14,10 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import com.google.common.base.Splitter;
 
@@ -232,9 +232,10 @@ class FlowsSchemaTest {
                                 + " the server rejects this: a wider expression is narrowed silently"
                                 + " on both the CREATE and the MODIFY QUERY path, so the rung would"
                                 + " read as never set instead of failing. Widen the column type"
-                                + " deliberately, and re-measure it in ReservedValueIT",
-                                rung, bit, FlowsSchema.PROVENANCE_SUMMARY_BITS)
-                        .isLessThan(1 << FlowsSchema.PROVENANCE_SUMMARY_BITS));
+                                + " deliberately, and re-measure it in ReservedValueIT — the bit"
+                                + " budget and the toUIntN cast both follow the declared type",
+                                rung, bit, FlowsSchema.provenanceSummaryBits())
+                        .isLessThan(1 << FlowsSchema.provenanceSummaryBits()));
     }
 
     /**
@@ -278,8 +279,8 @@ class FlowsSchemaTest {
             "samplingProvenanceMask", "SimpleAggregateFunction(groupBitOr, UInt8)");
 
     /**
-     * The DDL and {@code rollupColumns()} declare each measure with the same type, and today it is
-     * {@code UInt64} everywhere.
+     * The DDL and {@code rollupColumns()} declare each measure with the type
+     * {@link #EXPECTED_MEASURE_TYPES} pins for it.
      *
      * <p>Two sites hardcoded {@code UInt64} independently until {@code Measure} carried its own
      * type, and nothing compared them. They are read by different consumers — the DDL creates the
@@ -287,13 +288,12 @@ class FlowsSchemaTest {
      * disagreement is drift that reports every deployment as stale, or none, depending which side
      * is wrong.</p>
      *
-     * <p>The {@code UInt64} half is the guard on the refactor that introduced the field: carrying a
-     * type must not change the type carried. The measure names are derived from each table's
-     * columns minus its sort key rather than listed here, so a measure added later — #581's
-     * provenance summary would be the first — is held to the same assertions, and one declaring a
-     * new type fails this test until the pin is consciously relaxed.</p>
+     * <p>Every measure was {@code UInt64} until #581's provenance summary declared
+     * {@code SimpleAggregateFunction(groupBitOr, UInt8)}, which turned the blanket pin into the
+     * per-measure map above: the volume measures stay pinned to the width that does not wrap on a
+     * busy exporter, the summary to the type that makes it OR instead of sum, and a measure added
+     * later fails this test until its type is deliberately named there.</p>
      */
-
     @Test
     void everyMeasureDeclaresOneTypeInBothTheDdlAndTheColumnMap() {
         final List<String> ddls = FlowsSchema.createRollupTables("riptide");
@@ -1080,6 +1080,60 @@ class FlowsSchemaTest {
                         .containsPattern("ADD COLUMN IF NOT EXISTS " + freshOrder.get(i)
                                 + "[^,]* AFTER " + freshOrder.get(i - 1) + ",");
             }
+
+            // An appended measure gets the same guarantee, from the full declaration order rather
+            // than the sort key it does not sit in. Nothing else pins its AFTER: pointing it at the
+            // wrong sibling emits valid SQL every server accepts, so only this assertion stands
+            // between an upgraded target and the positional-backfill corruption above.
+            final List<String> declared = ddl
+                    .substring(ddl.indexOf("(\n") + 2, ddl.indexOf("\n) ENGINE"))
+                    .lines()
+                    .map(line -> line.strip().split(" ")[0])
+                    .toList();
+            int appendedMeasures = 0;
+            for (int i = 1; i < declared.size(); i++) {
+                final String column = declared.get(i);
+                if (freshOrder.contains(column)
+                        || !alter.contains("ADD COLUMN IF NOT EXISTS " + column + " ")) {
+                    continue;
+                }
+                appendedMeasures++;
+                assertThat(alter)
+                        .as("%s: appended measure %s must be added after %s, where the fresh DDL"
+                                + " declares it, or a positional backfill lands measures in the"
+                                + " wrong columns", rollup, column, declared.get(i - 1))
+                        .containsPattern("ADD COLUMN IF NOT EXISTS " + column
+                                + ".*? AFTER " + declared.get(i - 1) + ",");
+            }
+            assertThat(appendedMeasures)
+                    .as("%s: the ALTER must append at least the provenance summary, or the measure"
+                            + " half of this test checked nothing", rollup)
+                    .isPositive();
         }
+    }
+
+    /**
+     * Only a combiner measured to treat {@code 0} as "no information" rides the add-in-place path.
+     *
+     * <p>{@code SimpleAggregateFunction} is a wrapper, not a promise: {@code sum} inside it would
+     * undercount history exactly like a plain summed column, and {@code min} would clamp to the
+     * appended rows' {@code 0}. The wrapper alone must therefore never qualify a measure — only a
+     * function measured on a real server (#674) may, and an unknown one falls to the refusal path
+     * where the operator is told the remedy.</p>
+     */
+    @Test
+    void onlyAMeasuredZeroSafeCombinerIsAddableInPlace() {
+        assertThat(FlowsSchema.addableInPlace("SimpleAggregateFunction(groupBitOr, UInt8)"))
+                .as("the provenance summary is the measured, addable case")
+                .isTrue();
+        assertThat(FlowsSchema.addableInPlace("UInt64"))
+                .as("a plain numeric measure is summed and must be refused")
+                .isFalse();
+        assertThat(FlowsSchema.addableInPlace("SimpleAggregateFunction(sum, UInt64)"))
+                .as("an additive combiner undercounts history; the wrapper must not qualify it")
+                .isFalse();
+        assertThat(FlowsSchema.addableInPlace("SimpleAggregateFunction(min, UInt64)"))
+                .as("an unmeasured combiner must fall to the refusal path, not ride the wrapper")
+                .isFalse();
     }
 }
