@@ -200,6 +200,78 @@ class FlowsSchemaTest {
                         + "srcAddr, dstAddr, srcPort, dstPort");
     }
 
+    /**
+     * The DDL and {@code rollupColumns()} declare each measure with the same type, and today it is
+     * {@code UInt64} everywhere.
+     *
+     * <p>Two sites hardcoded {@code UInt64} independently until {@code Measure} carried its own
+     * type, and nothing compared them. They are read by different consumers — the DDL creates the
+     * table, {@code rollupColumns()} is what the shape check compares against a live server — so a
+     * disagreement is drift that reports every deployment as stale, or none, depending which side
+     * is wrong.</p>
+     *
+     * <p>The {@code UInt64} half is the guard on the refactor that introduced the field: carrying a
+     * type must not change the type carried. The measure names are derived from each table's
+     * columns minus its sort key rather than listed here, so a measure added later — #581's
+     * provenance summary would be the first — is held to the same assertions, and one declaring a
+     * new type fails this test until the pin is consciously relaxed.</p>
+     */
+    @Test
+    void everyMeasureDeclaresOneTypeInBothTheDdlAndTheColumnMap() {
+        final List<String> ddls = FlowsSchema.createRollupTables("riptide");
+
+        assertThat(FlowsSchema.rollupColumns())
+                .as("derived from the schema definition; an empty map would assert nothing below")
+                .isNotEmpty();
+
+        FlowsSchema.rollupColumns().forEach((table, columns) -> {
+            final String create =
+                    "CREATE TABLE IF NOT EXISTS " + FlowsSchema.qualifiedRollup("riptide", table) + " (";
+            final String ddl = ddls.stream()
+                    .filter(candidate -> candidate.contains(create))
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError("no CREATE TABLE emitted for " + table));
+            final Set<String> sortKey = Set.of(keyList(ddl, "ORDER BY (").split(", "));
+            final List<String> measures = columns.keySet().stream()
+                    .filter(column -> !sortKey.contains(column))
+                    .toList();
+            assertThat(measures)
+                    .as("the seven measures must survive the sort-key subtraction in %s;"
+                            + " anything further is a measure added since, held to the same"
+                            + " assertions below", table)
+                    .contains("bytes", "packets", "flowCount",
+                            "bytesIn", "bytesOut", "packetsIn", "packetsOut");
+            final List<String> declarations = ddl
+                    .substring(ddl.indexOf("(\n") + 2, ddl.indexOf("\n) ENGINE"))
+                    .lines()
+                    .map(line -> line.strip().replaceAll(",$", ""))
+                    .toList();
+            final List<String> ddlMeasures = declarations.stream()
+                    .map(declaration -> declaration.split(" ")[0])
+                    .filter(column -> !sortKey.contains(column))
+                    .toList();
+            assertThat(ddlMeasures)
+                    .as("the DDL and rollupColumns() must carry the same measure columns for %s:"
+                            + " one declaring a measure the other lacks is drift the shape check"
+                            + " cannot see", table)
+                    .containsExactlyInAnyOrderElementsOf(measures);
+            for (final String measure : measures) {
+                final String type = columns.get(measure);
+                assertThat(type)
+                        .as("%s must still be UInt64 in %s: carrying a type must not change the type"
+                                + " carried, and a summed measure of a narrower width would wrap"
+                                + " silently on a busy exporter", measure, table)
+                        .isEqualTo("UInt64");
+                assertThat(declarations)
+                        .as("%s is declared %s by rollupColumns(), so the DDL that creates %s must"
+                                + " declare it the same, as a whole declaration line so a longer"
+                                + " type cannot pass a prefix probe, or the shape check compares"
+                                + " against a table this code never emits", measure, type, table)
+                        .contains(measure + " " + type);
+            }
+        });
+    }
+
     @Test
     void rollupTablesSummingEveryDimensionIntoTheSortKey() {
         // SummingMergeTree collapses rows that agree on the sort key, summing the rest. That is
