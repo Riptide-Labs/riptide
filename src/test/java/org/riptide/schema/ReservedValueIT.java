@@ -266,10 +266,12 @@ public class ReservedValueIT {
     // column, first as a bare column and then in the shape a rollup has, groupBitOr over a multiIf
     // on the provenance string, including one wider than the summary (it is narrowed, silently).
     //
-    // Not asked: a column added to an existing rollup arrives through `ALTER TABLE ... MODIFY
-    // QUERY`, which does not validate against its target, not through CREATE. #581's checkbox
-    // "probed against a real SummingMergeTree rollup" is answered for the engine and for the view
-    // mechanism, not for riptide's rollup DDL.
+    // The upgrade path is asked too: a column added to an existing rollup arrives through
+    // `ALTER TABLE ... MODIFY QUERY`, not CREATE, and modifyQueryAcceptsAWiderExpressionThanTheSummaryColumnHolds
+    // measures that it validates nothing either. What a row aggregated BEFORE the column existed
+    // reads is asked by aPreAppendRowReadsZeroForAnAppendedProvenanceSummary. #581's checkbox
+    // "probed against a real SummingMergeTree rollup" is answered for the engine and for both view
+    // mechanisms, not for riptide's rollup DDL: every table here is the probe's own.
     //
     // Both widths are asked. UInt64 is what a mask added as a measure would be TODAY, because
     // FlowsSchema hardcodes it at the rollup DDL and again in rollupColumns(). UInt8 is what #581
@@ -496,10 +498,10 @@ public class ReservedValueIT {
      * across two view-produced rows.</p>
      *
      * <p>The expression here is a bare {@code UInt8} column; the rollup-shaped variants below
-     * derive it from the provenance string and aggregate it. What none of them ask: a column added
-     * to an existing rollup reaches its view through {@code ALTER TABLE ... MODIFY QUERY} (see
-     * {@code FlowsSchema.modifyRollupViews}), which does not validate against its target; every
-     * probe here exercises CREATE.</p>
+     * derive it from the provenance string and aggregate it. All of them exercise CREATE; a column
+     * added to an existing rollup reaches its view through {@code ALTER TABLE ... MODIFY QUERY}
+     * (see {@code FlowsSchema.modifyRollupViews}), which
+     * {@link #modifyQueryAcceptsAWiderExpressionThanTheSummaryColumnHolds()} asks separately.</p>
      */
     @Test
     void aMaterializedViewWritesAPlainExpressionIntoTheSummaryColumn() throws Exception {
@@ -627,10 +629,11 @@ public class ReservedValueIT {
                 .isEqualTo(ORED);
     }
 
-    /** The SELECT the server stored for a view in {@link #SUMMARY_DATABASE}, as it re-serialises it. */
+    /** The SELECT the server stored for the view {@code database.view}, as it re-serialises it. */
     private static String storedQueryOf(final String view) throws Exception {
+        final String[] name = view.split("\\.", 2);
         try (var records = admin.queryRecords("SELECT as_select AS q FROM system.tables"
-                + " WHERE database = '" + SUMMARY_DATABASE + "' AND name = '" + view + "'").get()) {
+                + " WHERE database = '" + name[0] + "' AND name = '" + name[1] + "'").get()) {
             for (final var record : records) {
                 return record.getString("q");
             }
@@ -667,11 +670,14 @@ public class ReservedValueIT {
      * exactly what that rule excludes measures <em>for</em>. If it reads anything else the argument
      * does not hold and #581 needs a sentinel after all.</p>
      *
-     * <p>Note for the migration: {@code FlowsSchema.reservedValueFor} has no arm for this type, and
-     * {@link #everyLiveColumnTypeReadsItsReservedValue()} derives its type set from
-     * {@code rollupColumns()}, which includes measures. Adding the summary therefore turns that
-     * test red until an arm exists and {@code LIVE_TYPES} is raised — by design, and this is the
-     * measurement the arm should be written from rather than a guess.</p>
+     * <p>Note for the migration: {@code FlowsSchema.reservedValueFor} already answers {@code 0}
+     * for this type, by its fall-through arm, and that is the value measured here. What turns red
+     * is {@link #everyLiveColumnTypeReadsItsReservedValue()}: it derives its type set from
+     * {@code rollupColumns()}, which includes measures, so adding the summary fails its
+     * {@code LIVE_TYPES} count, and it appends every type through
+     * {@link #appendColumnOfType(String)}, which puts the column in the sort key, where a summary
+     * does not go. Raising the count is not enough; the measure has to be routed through
+     * {@link #appendMeasureOfType(String)} or kept out of the dimension loop.</p>
      */
     @Test
     void aPreAppendRowReadsZeroForAnAppendedProvenanceSummary() throws Exception {
@@ -682,7 +688,9 @@ public class ReservedValueIT {
                 .as("#581 [PQ-4] on ClickHouse %s: a row aggregated before an appended %s column"
                         + " must read 0, because #581's whole case for carrying provenance as a"
                         + " measure is that 0 asserts the absence of information. Anything else and"
-                        + " the design needs a sentinel", serverVersion, type)
+                        + " the design needs a sentinel; it reads %s (NULL means the fixture row"
+                        + " is missing, not that the value is null)",
+                        serverVersion, type, preAppendRowValueOrUnrenderable(table))
                 .isEqualTo("0");
     }
 
@@ -711,9 +719,16 @@ public class ReservedValueIT {
         admin.execute("CREATE TABLE " + target + " (k String,"
                 + " mask SimpleAggregateFunction(groupBitOr, UInt8), bytes UInt64)"
                 + " ENGINE = SummingMergeTree ORDER BY k").get();
+        // The view as created never sets a bit, so ORED below is reachable only through the
+        // modified SELECT: the CREATE and the MODIFY must not agree on the mask, or the merge could
+        // not tell which of them populated the target.
         admin.execute("CREATE MATERIALIZED VIEW " + view + " TO " + target + " AS"
-                + " SELECT k, toUInt8(rung) AS mask, sum(bytes) AS bytes FROM " + source
+                + " SELECT k, toUInt8(0) AS mask, sum(bytes) AS bytes FROM " + source
                 + " GROUP BY k, rung").get();
+        assertThat(storedQueryOf(view))
+                .as("the view as created must carry no rung bit, or the OR below would read %d"
+                        + " whether or not the modified SELECT is the one running", ORED)
+                .contains("toUInt8(0) AS mask");
 
         // The ninth rung: a bit the UInt8 summary cannot hold, introduced the way an upgrade would.
         admin.execute("ALTER TABLE " + view + " MODIFY QUERY"
@@ -726,10 +741,10 @@ public class ReservedValueIT {
         // Read back what the server stored, so "the wide expression was accepted" is asserted rather
         // than inferred from the ALTER not throwing. Without this the assertion below holds whether
         // or not bit 256 was ever in the query, because a UInt8 cannot carry it either way.
-        assertThat(storedQueryOf("mq_" + probe))
+        assertThat(storedQueryOf(view))
                 .as("MODIFY QUERY must have accepted and stored the too-wide expression, or this test"
                         + " measures nothing about validation")
-                .contains("256");
+                .contains("+ 256");
 
         final Merged merged = merged(target);
 
@@ -741,6 +756,9 @@ public class ReservedValueIT {
                         + " surface. riptide must pin the width itself",
                         serverVersion, ORED)
                 .isEqualTo(ORED);
+        assertThat(merged.bytes())
+                .as("the summed measure beside it must still sum through the modified view")
+                .isEqualTo(BYTES_PER_ROW * 2);
     }
 
     /**
