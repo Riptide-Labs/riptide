@@ -6,6 +6,7 @@
 package org.riptide.schema;
 
 import org.junit.jupiter.api.Test;
+import org.riptide.flows.parser.data.Flow;
 import org.riptide.mcp.service.QueryRouter;
 
 import java.util.Arrays;
@@ -16,6 +17,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import com.google.common.base.Splitter;
 
@@ -201,8 +203,84 @@ class FlowsSchemaTest {
     }
 
     /**
-     * The DDL and {@code rollupColumns()} declare each measure with the same type, and today it is
-     * {@code UInt64} everywhere.
+     * Every provenance rung has a distinct bit, and they all fit the summary column.
+     *
+     * <p>This is riptide's own width guard, and it exists because the server has none. Both ways a
+     * summary column can be written were measured to narrow a too-wide expression <b>silently</b>:
+     * {@code CREATE MATERIALIZED VIEW} on a fresh install (#673) and {@code ALTER TABLE … MODIFY
+     * QUERY} on an upgrade (#674). A ninth rung would therefore not fail anywhere — it would read
+     * as never set, on upgraded deployments, with no error on any surface. So it fails here.</p>
+     *
+     * <p>Distinctness matters as much as the width: two rungs sharing a bit makes the summary
+     * report the wrong one, and OR-ing hides it rather than colliding visibly.</p>
+     */
+    @Test
+    void everyProvenanceRungHasADistinctBitThatFitsTheSummary() {
+        final Map<String, Integer> bits = FlowsSchema.provenanceBits();
+
+        assertThat(bits).as("an empty table would make every assertion below vacuous").isNotEmpty();
+        assertThat(bits.values())
+                .as("two rungs sharing a bit are indistinguishable once OR-ed, which is silent")
+                .doesNotHaveDuplicates();
+        assertThat(bits)
+                .allSatisfy((rung, bit) -> assertThat(Integer.bitCount(bit))
+                        .as("rung %s must contribute exactly one bit, not %d", rung, bit)
+                        .isEqualTo(1));
+        assertThat(bits)
+                .allSatisfy((rung, bit) -> assertThat(bit)
+                        .as("rung %s needs bit %d, past the %d the summary column holds. Nothing on"
+                                + " the server rejects this: a wider expression is narrowed silently"
+                                + " on both the CREATE and the MODIFY QUERY path, so the rung would"
+                                + " read as never set instead of failing. Widen the column type"
+                                + " deliberately, and re-measure it in ReservedValueIT — the bit"
+                                + " budget and the toUIntN cast both follow the declared type",
+                                rung, bit, FlowsSchema.provenanceSummaryBits())
+                        .isLessThan(1 << FlowsSchema.provenanceSummaryBits()));
+    }
+
+    /**
+     * The rung table names exactly the rungs the parser can record.
+     *
+     * <p>{@code FlowsSchema} keeps its own copy of the tokens because it deliberately has no project
+     * dependencies. That duplication is only safe if something fails when the two diverge, and this
+     * is it. A rung added to the enum without a bit would otherwise fall to the {@code multiIf}'s
+     * else arm and be recorded as "no information" — a silent misreport of the exact fact the
+     * summary exists to carry.</p>
+     */
+    @Test
+    void theRungTableCoversEverySamplingProvenanceTheParserCanRecord() {
+        final Set<String> declared = Arrays.stream(Flow.SamplingProvenance.values())
+                .map(Flow.SamplingProvenance::token)
+                .collect(Collectors.toSet());
+
+        assertThat(FlowsSchema.provenanceBits().keySet())
+                .as("a rung the parser can write but the schema has no bit for is recorded as 'no"
+                        + " provenance information', which is exactly the misreport this column"
+                        + " exists to prevent; a bit for a rung that no longer exists is dead SQL")
+                .containsExactlyInAnyOrderElementsOf(declared);
+    }
+
+    /**
+     * Every measure and the type it is declared with: the one place a new measure must be named.
+     *
+     * <p>Deliberately a literal rather than a read of {@code FlowsSchema}'s own list. Deriving it
+     * from the thing under test would make every assertion below agree with whatever the schema
+     * currently says, including a type changed by accident. Adding a measure fails here first, and
+     * that failure is the prompt to decide what the type should be.</p>
+     */
+    private static final Map<String, String> EXPECTED_MEASURE_TYPES = Map.of(
+            "bytes", "UInt64",
+            "packets", "UInt64",
+            "flowCount", "UInt64",
+            "bytesIn", "UInt64",
+            "bytesOut", "UInt64",
+            "packetsIn", "UInt64",
+            "packetsOut", "UInt64",
+            "samplingProvenanceMask", "SimpleAggregateFunction(groupBitOr, UInt8)");
+
+    /**
+     * The DDL and {@code rollupColumns()} declare each measure with the type
+     * {@link #EXPECTED_MEASURE_TYPES} pins for it.
      *
      * <p>Two sites hardcoded {@code UInt64} independently until {@code Measure} carried its own
      * type, and nothing compared them. They are read by different consumers — the DDL creates the
@@ -210,11 +288,11 @@ class FlowsSchemaTest {
      * disagreement is drift that reports every deployment as stale, or none, depending which side
      * is wrong.</p>
      *
-     * <p>The {@code UInt64} half is the guard on the refactor that introduced the field: carrying a
-     * type must not change the type carried. The measure names are derived from each table's
-     * columns minus its sort key rather than listed here, so a measure added later — #581's
-     * provenance summary would be the first — is held to the same assertions, and one declaring a
-     * new type fails this test until the pin is consciously relaxed.</p>
+     * <p>Every measure was {@code UInt64} until #581's provenance summary declared
+     * {@code SimpleAggregateFunction(groupBitOr, UInt8)}, which turned the blanket pin into the
+     * per-measure map above: the volume measures stay pinned to the width that does not wrap on a
+     * busy exporter, the summary to the type that makes it OR instead of sum, and a measure added
+     * later fails this test until its type is deliberately named there.</p>
      */
     @Test
     void everyMeasureDeclaresOneTypeInBothTheDdlAndTheColumnMap() {
@@ -236,11 +314,10 @@ class FlowsSchemaTest {
                     .filter(column -> !sortKey.contains(column))
                     .toList();
             assertThat(measures)
-                    .as("the seven measures must survive the sort-key subtraction in %s;"
-                            + " anything further is a measure added since, held to the same"
-                            + " assertions below", table)
-                    .contains("bytes", "packets", "flowCount",
-                            "bytesIn", "bytesOut", "packetsIn", "packetsOut");
+                    .as("every measure must survive the sort-key subtraction in %s; anything"
+                            + " further is a measure added since, held to the same assertions"
+                            + " below", table)
+                    .containsExactlyInAnyOrderElementsOf(EXPECTED_MEASURE_TYPES.keySet());
             final List<String> declarations = ddl
                     .substring(ddl.indexOf("(\n") + 2, ddl.indexOf("\n) ENGINE"))
                     .lines()
@@ -258,10 +335,14 @@ class FlowsSchemaTest {
             for (final String measure : measures) {
                 final String type = columns.get(measure);
                 assertThat(type)
-                        .as("%s must still be UInt64 in %s: carrying a type must not change the type"
-                                + " carried, and a summed measure of a narrower width would wrap"
-                                + " silently on a busy exporter", measure, table)
-                        .isEqualTo("UInt64");
+                        .as("%s carries an unexpected type in %s. A measure's type is not an"
+                                + " implementation detail: for the volume measures the UInt64 width"
+                                + " is the contract, since a narrower one would wrap silently on a"
+                                + " busy exporter, and for the provenance summary the"
+                                + " SimpleAggregateFunction is what makes the column OR instead of"
+                                + " sum. Changing either is a deliberate act, so it is a deliberate"
+                                + " edit here", measure, table)
+                        .isEqualTo(EXPECTED_MEASURE_TYPES.get(measure));
                 assertThat(declarations)
                         .as("%s is declared %s by rollupColumns(), so the DDL that creates %s must"
                                 + " declare it the same, as a whole declaration line so a longer"
@@ -276,8 +357,10 @@ class FlowsSchemaTest {
     void rollupTablesSummingEveryDimensionIntoTheSortKey() {
         // SummingMergeTree collapses rows that agree on the sort key, summing the rest. That is
         // only correct if the split is exact: every dimension in the key, every measure out of it.
-        final List<String> measures =
-                List.of("bytes", "packets", "flowCount", "bytesIn", "bytesOut", "packetsIn", "packetsOut");
+        // Derived, not listed: a measure added without being named here used to read as a dimension
+        // and demand a place in the sort key, which is a failure about the test rather than the
+        // schema. EXPECTED_MEASURE_TYPES is the one place a new measure has to be declared.
+        final Set<String> measures = EXPECTED_MEASURE_TYPES.keySet();
         for (final String ddl : FlowsSchema.createRollupTables("riptide")) {
             assertThat(ddl).contains("ENGINE = SummingMergeTree()");
             final String sortKey = between(ddl, "ORDER BY (", ")");
@@ -638,8 +721,45 @@ class FlowsSchemaTest {
 
         assertThat(FlowsSchema.planRollupRepair(
                 Map.of(rollup, live), Map.of(rollup, Set.of(live.split(", ")))).repair())
-                .as("measures are out of scope; a missing one must not plan an endless repair")
+                .as("a summed measure is missing here, which is refused rather than planned; a"
+                        + " planned repair would never converge and would log a drift line on every"
+                        + " boot forever. The measure that CAN be added in place is covered by"
+                        + " aRollupMissingOnlyTheProvenanceSummaryIsRepairedNotRefused")
                 .isEmpty();
+    }
+
+    /**
+     * A rollup missing only the provenance summary is repaired in place, not refused (#581).
+     *
+     * <p>The distinction #654's blanket refusal did not have to draw. A summed measure reading
+     * {@code 0} for historical rows makes a total spanning the upgrade quietly too small, which is
+     * why measures were refused wholesale. A {@code groupBitOr} summary reading {@code 0} asserts
+     * the absence of information — measured on a real server (#674), not argued — so it can be
+     * added to an existing target instead of costing the operator that rollup's whole history.</p>
+     *
+     * <p>Without this, every existing deployment would be refused forever and the column would
+     * reach only fresh installs, which is precisely the deployments #581 is least about: the
+     * rollups matter most where the raw table's retention has already passed.</p>
+     */
+    @Test
+    void aRollupMissingOnlyTheProvenanceSummaryIsRepairedNotRefused() {
+        final String rollup = FlowsSchema.ROLLUP_BY_APPLICATION;
+        final String live = FlowsSchema.rollupSortKeys().get(rollup);
+        final Set<String> columns = new HashSet<>(liveColumns(rollup, live));
+        assertThat(columns.remove("samplingProvenanceMask"))
+                .as("the fixture must actually remove the summary, or this asserts nothing")
+                .isTrue();
+
+        final var plan = FlowsSchema.planRollupRepair(Map.of(rollup, live), Map.of(rollup, columns));
+
+        assertThat(plan.refused())
+                .as("refusing this costs the operator the rollup's history for a column that can be"
+                        + " added in place")
+                .isEmpty();
+        assertThat(plan.repair())
+                .as("the sorting key is already correct, so the summary is the only thing to add and"
+                        + " the repair must still be planned")
+                .containsExactly(rollup);
     }
 
     /**
@@ -960,6 +1080,60 @@ class FlowsSchemaTest {
                         .containsPattern("ADD COLUMN IF NOT EXISTS " + freshOrder.get(i)
                                 + "[^,]* AFTER " + freshOrder.get(i - 1) + ",");
             }
+
+            // An appended measure gets the same guarantee, from the full declaration order rather
+            // than the sort key it does not sit in. Nothing else pins its AFTER: pointing it at the
+            // wrong sibling emits valid SQL every server accepts, so only this assertion stands
+            // between an upgraded target and the positional-backfill corruption above.
+            final List<String> declared = ddl
+                    .substring(ddl.indexOf("(\n") + 2, ddl.indexOf("\n) ENGINE"))
+                    .lines()
+                    .map(line -> line.strip().split(" ")[0])
+                    .toList();
+            int appendedMeasures = 0;
+            for (int i = 1; i < declared.size(); i++) {
+                final String column = declared.get(i);
+                if (freshOrder.contains(column)
+                        || !alter.contains("ADD COLUMN IF NOT EXISTS " + column + " ")) {
+                    continue;
+                }
+                appendedMeasures++;
+                assertThat(alter)
+                        .as("%s: appended measure %s must be added after %s, where the fresh DDL"
+                                + " declares it, or a positional backfill lands measures in the"
+                                + " wrong columns", rollup, column, declared.get(i - 1))
+                        .containsPattern("ADD COLUMN IF NOT EXISTS " + column
+                                + ".*? AFTER " + declared.get(i - 1) + ",");
+            }
+            assertThat(appendedMeasures)
+                    .as("%s: the ALTER must append at least the provenance summary, or the measure"
+                            + " half of this test checked nothing", rollup)
+                    .isPositive();
         }
+    }
+
+    /**
+     * Only a combiner measured to treat {@code 0} as "no information" rides the add-in-place path.
+     *
+     * <p>{@code SimpleAggregateFunction} is a wrapper, not a promise: {@code sum} inside it would
+     * undercount history exactly like a plain summed column, and {@code min} would clamp to the
+     * appended rows' {@code 0}. The wrapper alone must therefore never qualify a measure — only a
+     * function measured on a real server (#674) may, and an unknown one falls to the refusal path
+     * where the operator is told the remedy.</p>
+     */
+    @Test
+    void onlyAMeasuredZeroSafeCombinerIsAddableInPlace() {
+        assertThat(FlowsSchema.addableInPlace("SimpleAggregateFunction(groupBitOr, UInt8)"))
+                .as("the provenance summary is the measured, addable case")
+                .isTrue();
+        assertThat(FlowsSchema.addableInPlace("UInt64"))
+                .as("a plain numeric measure is summed and must be refused")
+                .isFalse();
+        assertThat(FlowsSchema.addableInPlace("SimpleAggregateFunction(sum, UInt64)"))
+                .as("an additive combiner undercounts history; the wrapper must not qualify it")
+                .isFalse();
+        assertThat(FlowsSchema.addableInPlace("SimpleAggregateFunction(min, UInt64)"))
+                .as("an unmeasured combiner must fall to the refusal path, not ride the wrapper")
+                .isFalse();
     }
 }

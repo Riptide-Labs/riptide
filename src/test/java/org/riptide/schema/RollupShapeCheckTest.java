@@ -50,7 +50,11 @@ class RollupShapeCheckTest {
                     + "sumIf(f.bytes, f.direction = 'INGRESS') AS bytesIn, "
                     + "sumIf(f.bytes, f.direction = 'EGRESS') AS bytesOut, "
                     + "sumIf(f.packets, f.direction = 'INGRESS') AS packetsIn, "
-                    + "sumIf(f.packets, f.direction = 'EGRESS') AS packetsOut "
+                    + "sumIf(f.packets, f.direction = 'EGRESS') AS packetsOut, "
+                    + "groupBitOr(toUInt8(multiIf(f.samplingProvenance = 'record', 1, "
+                    + "f.samplingProvenance = 'options', 2, f.samplingProvenance = 'header', 4, "
+                    + "f.samplingProvenance = 'derived', 8, f.samplingProvenance = 'fallback', 16, "
+                    + "f.samplingProvenance = 'assumed', 32, 0))) AS samplingProvenanceMask "
                     + "FROM riptide.flows AS f "
                     + "GROUP BY tenant, organisation, timestamp, zone, application, protocol,"
                     + " samplingInterval, flowProtocol";
