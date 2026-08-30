@@ -1199,7 +1199,9 @@ public final class FlowsSchema {
             return false;
         }
         final int comma = type.indexOf(',');
-        if (comma < 0) {
+        if (comma < 0 || !type.endsWith(")")) {
+            // The same shape reservedValueFor refuses to parse; false lands it on the refusal
+            // path, where the operator is told the remedy, rather than qualifying on a prefix.
             return false;
         }
         final String function = type.substring("SimpleAggregateFunction(".length(), comma).trim();

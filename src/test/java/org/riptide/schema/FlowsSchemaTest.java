@@ -226,16 +226,25 @@ class FlowsSchemaTest {
                 .allSatisfy((rung, bit) -> assertThat(Integer.bitCount(bit))
                         .as("rung %s must contribute exactly one bit, not %d", rung, bit)
                         .isEqualTo(1));
+        // 1 << width in int arithmetic wraps to 1 at UInt32 (and 1L << 64 wraps too), which would
+        // reject every rung on exactly the widen path the javadoc directs a maintainer to. Bits
+        // are ints, so any positive value fits a width of 64 anyway.
+        final int width = FlowsSchema.provenanceSummaryBits();
+        final long budget = width >= Long.SIZE ? Long.MAX_VALUE : 1L << width;
         assertThat(bits)
-                .allSatisfy((rung, bit) -> assertThat(bit)
+                .allSatisfy((rung, bit) -> assertThat(bit.longValue())
+                        .as("rung %s must contribute a positive bit: 1 << 31 is a single negative"
+                                + " bit that would pass the bitCount and width checks and emit a"
+                                + " negative literal into the mask SQL", rung)
+                        .isPositive()
                         .as("rung %s needs bit %d, past the %d the summary column holds. Nothing on"
                                 + " the server rejects this: a wider expression is narrowed silently"
                                 + " on both the CREATE and the MODIFY QUERY path, so the rung would"
                                 + " read as never set instead of failing. Widen the column type"
                                 + " deliberately, and re-measure it in ReservedValueIT — the bit"
                                 + " budget and the toUIntN cast both follow the declared type",
-                                rung, bit, FlowsSchema.provenanceSummaryBits())
-                        .isLessThan(1 << FlowsSchema.provenanceSummaryBits()));
+                                rung, bit, width)
+                        .isLessThan(budget));
     }
 
     /**
@@ -1134,6 +1143,10 @@ class FlowsSchemaTest {
                 .isFalse();
         assertThat(FlowsSchema.addableInPlace("SimpleAggregateFunction(min, UInt64)"))
                 .as("an unmeasured combiner must fall to the refusal path, not ride the wrapper")
+                .isFalse();
+        assertThat(FlowsSchema.addableInPlace("SimpleAggregateFunction(groupBitOr, UInt8"))
+                .as("a malformed type must fall to the refusal path, matching the strictness"
+                        + " reservedValueFor applies to the same syntax")
                 .isFalse();
     }
 }
