@@ -168,6 +168,7 @@ public class ReservedValueIT {
     @Test
     void theSummaryTypeCannotBeUsedAsADimensionAtAll() {
         assertThatThrownBy(() -> appendColumnOfType("SimpleAggregateFunction(groupBitOr, UInt8)"))
+                .isInstanceOf(ServerException.class)
                 .hasMessageContaining("DATA_TYPE_CANNOT_BE_USED_IN_KEY");
     }
 

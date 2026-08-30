@@ -23,6 +23,7 @@ import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -444,7 +445,10 @@ public class RollupRepairIT {
                 .as("the %s projection must be found and removed, or the fixture builds the full"
                         + " view and the repair below has nothing to do", dropped)
                 .isPositive();
-        assertThat(to).isGreaterThan(from);
+        assertThat(to)
+                .as("the ' AS %s' marker must close the projection the splice starts at, or the"
+                        + " substring below cuts a nonsense span", dropped)
+                .isGreaterThan(from);
         final String shortened = full.substring(0, from) + full.substring(to + marker.length());
         assertThat(shortened).isNotEqualTo(full).doesNotContain(dropped);
         admin.execute("CREATE MATERIALIZED VIEW " + view + " TO " + target + " AS " + shortened).get();
@@ -482,6 +486,11 @@ public class RollupRepairIT {
                 .as("the mask must land directly after packetsOut, where a fresh table declares it,"
                         + " or a positional backfill corrupts an upgraded target")
                 .containsSequence("packetsOut", "samplingProvenanceMask");
+        assertThat(columnTypeOf(ROLLUP, "samplingProvenanceMask"))
+                .as("the appended column must carry the summary type on the server: a bare UInt8 in"
+                        + " the right position would pass the order check above and then be summed"
+                        + " on merge instead of OR-ed")
+                .isEqualTo("SimpleAggregateFunction(groupBitOr, UInt8)");
         assertThat(scalar("SELECT count() AS v FROM "
                 + FlowsSchema.qualifiedRollup(DATABASE, ROLLUP) + " WHERE tenant = 'before'"))
                 .as("the pre-repair flow must have been aggregated, or the 0 below is an aggregate"
@@ -502,8 +511,18 @@ public class RollupRepairIT {
                 .isEqualTo(physical);
     }
 
+    private static String columnTypeOf(final String table, final String column) throws Exception {
+        try (var records = admin.queryRecords("SELECT type FROM system.columns WHERE database = '"
+                + DATABASE + "' AND table = '" + table + "' AND name = '" + column + "'").get()) {
+            for (final var record : records) {
+                return record.getString("type");
+            }
+        }
+        throw new AssertionError(column + " is not a column of " + table);
+    }
+
     private static List<String> physicalColumnsOf(final String table) throws Exception {
-        final List<String> columns = new java.util.ArrayList<>();
+        final List<String> columns = new ArrayList<>();
         try (var records = admin.queryRecords("SELECT name FROM system.columns WHERE database = '"
                 + DATABASE + "' AND table = '" + table + "' ORDER BY position").get()) {
             records.forEach(record -> columns.add(record.getString("name")));

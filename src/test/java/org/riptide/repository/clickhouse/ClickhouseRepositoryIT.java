@@ -515,10 +515,22 @@ public class ClickhouseRepositoryIT {
                 .describedAs("a persisted flow with provenance unset is written as 'assumed' by"
                         + " ClickhouseFlow's deliberate column default, never as the else arm")
                 .isEqualTo(bits.get(Flow.SamplingProvenance.Assumed));
+        Assertions.assertThat(rollupRowsAt(database, preProvenance))
+                .describedAs("the raw '' row must have been aggregated into the rollup, or the 0"
+                        + " below is groupBitOr over no rows — which also reads 0 — rather than a"
+                        + " statement about the else arm")
+                .isPositive();
         Assertions.assertThat(maskAt(database, preProvenance))
                 .describedAs("'' — the shape of a raw row written before #467, which the collector"
                         + " itself cannot produce — is the multiIf else arm and reads 0")
                 .isZero();
+    }
+
+    private static long rollupRowsAt(final String database, final Instant minute) {
+        return queryClient.queryAll("SELECT count() AS v FROM " + database
+                + "." + FlowsSchema.ROLLUP_BY_APPLICATION
+                + " WHERE toUnixTimestamp(timestamp) = " + minute.getEpochSecond())
+                .getFirst().getLong("v");
     }
 
     private static long maskAt(final String database, final Instant minute) {
