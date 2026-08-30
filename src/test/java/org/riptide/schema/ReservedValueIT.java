@@ -21,6 +21,7 @@ import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * What a row aggregated before an appended column actually reads, asked of a real server (#629).
@@ -60,7 +61,7 @@ public class ReservedValueIT {
      * {@code LowCardinality(String)}, {@code Float64}, {@code UInt8}, {@code IPv6}, {@code UInt32}
      * and {@code UInt64}. Adding a dimension of a new type is meant to fail here first.
      */
-    private static final int LIVE_TYPES = 8;
+    private static final int LIVE_TYPES = 9;
 
     /** Each probe needs a table of its own; JUnit promises no order and these all mutate DDL. */
     private static final AtomicInteger PROBE = new AtomicInteger();
@@ -99,28 +100,74 @@ public class ReservedValueIT {
      * Every type the rollups actually carry reads back what {@code reservedValueFor} claims.
      *
      * <p>The type set is derived from {@link FlowsSchema#rollupColumns()} rather than listed, so a
-     * dimension added in a type nobody has probed fails here rather than at the next append.</p>
+     * column added in a type nobody has probed fails here rather than at the next append.</p>
+     *
+     * <p><b>Split by how the column is appended, because they are different {@code ALTER}s.</b> A
+     * dimension is added and joins the sorting key; a measure is added and does not. Running every
+     * type through the dimension path stopped working the moment a measure carried a type of its
+     * own: the server refuses {@code SimpleAggregateFunction} in a key outright with
+     * {@code DATA_TYPE_CANNOT_BE_USED_IN_KEY}, pinned by
+     * {@link #theSummaryTypeCannotBeUsedAsADimensionAtAll()}. Probing a measure through the
+     * dimension path would therefore have measured an {@code ALTER} riptide never emits.</p>
      */
     @Test
     void everyLiveColumnTypeReadsItsReservedValue() throws Exception {
-        final Set<String> types = new TreeSet<>();
-        FlowsSchema.rollupColumns().values().forEach(columns -> types.addAll(columns.values()));
+        final Set<String> dimensionTypes = new TreeSet<>();
+        final Set<String> measureTypes = new TreeSet<>();
+        FlowsSchema.rollupColumns().forEach((table, columns) -> {
+            final Set<String> key = Set.of(FlowsSchema.rollupSortKeys().get(table).split(", "));
+            columns.forEach((column, type) ->
+                    (key.contains(column) ? dimensionTypes : measureTypes).add(type));
+        });
 
-        assertThat(types)
-                .as("derived from the live schema; if this empties out the loop below asserts nothing"
-                        + " and still passes")
+        final Set<String> all = new TreeSet<>(dimensionTypes);
+        all.addAll(measureTypes);
+        assertThat(all)
+                .as("derived from the live schema; if this empties out the loops below assert"
+                        + " nothing and still pass")
                 .hasSize(LIVE_TYPES)
-                .contains("IPv6", "DateTime('UTC')", "LowCardinality(String)", "Float64", "UInt64");
+                .contains("IPv6", "DateTime('UTC')", "LowCardinality(String)", "Float64", "UInt64",
+                        "SimpleAggregateFunction(groupBitOr, UInt8)");
+        assertThat(measureTypes)
+                .as("a measure type probed through the dimension path would measure an ALTER riptide"
+                        + " never emits, so the split must be non-empty on both sides")
+                .isNotEmpty();
 
-        for (final String type : types) {
+        for (final String type : dimensionTypes) {
             final String reserved = FlowsSchema.reservedValueFor(type);
             final String table = appendColumnOfType(type);
             assertThat(preAppendRowMatches(table, type, reserved))
-                    .as("a row aggregated before an appended %s column should read %s on this"
+                    .as("a row aggregated before an appended %s dimension should read %s on this"
                             + " server, the boundary every appended dimension of that type rests"
                             + " on, but reads %s", type, reserved, preAppendRowValueOrUnrenderable(table))
                     .isTrue();
         }
+        for (final String type : measureTypes) {
+            final String reserved = FlowsSchema.reservedValueFor(type);
+            final String table = appendMeasureOfType(type);
+            assertThat(preAppendRowMatches(table, type, reserved))
+                    .as("a row aggregated before an appended %s measure should read %s on this"
+                            + " server — which for the provenance summary is what makes 0 mean"
+                            + "'no information' rather than a wrong total (#581) — but reads %s",
+                            type, reserved, preAppendRowValueOrUnrenderable(table))
+                    .isTrue();
+        }
+    }
+
+    /**
+     * The summary's type cannot be a sorting-key column, so it can only ever be a measure.
+     *
+     * <p>#581 argues provenance belongs in the rollups as a summary rather than a dimension, on
+     * cardinality grounds: a rung can split a group inside a single exporter. The server settles it
+     * separately and more bluntly — {@code SimpleAggregateFunction} is refused in a key with
+     * {@code DATA_TYPE_CANNOT_BE_USED_IN_KEY}. Worth pinning because it is the reason the type set
+     * above has to be split by append path, and because a future attempt to "just add it to the
+     * key" fails here with the reason rather than at a deployment's next ALTER.</p>
+     */
+    @Test
+    void theSummaryTypeCannotBeUsedAsADimensionAtAll() {
+        assertThatThrownBy(() -> appendColumnOfType("SimpleAggregateFunction(groupBitOr, UInt8)"))
+                .hasMessageContaining("DATA_TYPE_CANNOT_BE_USED_IN_KEY");
     }
 
     /**

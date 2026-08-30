@@ -282,7 +282,12 @@ public class RollupRepairIT {
                 + " application LowCardinality(String), protocol UInt8,"
                 + " samplingInterval Float64, flowProtocol LowCardinality(String),"
                 + " bytes UInt64, packets UInt64, flowCount UInt64,"
-                + " bytesIn UInt64, bytesOut UInt64, packetsIn UInt64, packetsOut UInt64)"
+                + " bytesIn UInt64, bytesOut UInt64, packetsIn UInt64, packetsOut UInt64,"
+                // Present for the same reason as every other column here: this fixture's point
+                // is that the sorting key is the ONLY thing wrong, so a missing measure would
+                // fail the view's CREATE with THERE_IS_NO_COLUMN and the refusal path this
+                // test exists for would never run.
+                + " samplingProvenanceMask SimpleAggregateFunction(groupBitOr, UInt8))"
                 + " ENGINE = SummingMergeTree()"
                 + " PRIMARY KEY (tenant, organisation, timestamp, zone, application, protocol)"
                 + " ORDER BY (tenant, organisation, timestamp, zone, application, protocol)"

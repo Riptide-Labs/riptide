@@ -276,6 +276,20 @@ public final class FlowsSchema {
             }
             ddl.append(',');
         }
+        // A measure the engine does not SUM can be added in place, and is added here so an upgraded
+        // target reaches the shape a fresh one is created with. Positioned after the column it
+        // follows in the fresh DDL, for the same positional-backfill reason as the dimensions above.
+        final List<String> order = new ArrayList<>(columns.stream().map(Dimension::column).toList());
+        MEASURES.forEach(measure -> order.add(measure.column()));
+        for (final Measure measure : MEASURES) {
+            if (measure.combinesBySum()) {
+                continue;
+            }
+            ddl.append("\n    ADD COLUMN IF NOT EXISTS ")
+                    .append(measure.column()).append(' ').append(measure.type())
+                    .append(" AFTER ").append(order.get(order.indexOf(measure.column()) - 1))
+                    .append(',');
+        }
         ddl.append("\n    MODIFY ORDER BY (").append(sortKey(rollup)).append(')');
         return ddl.toString();
     }
@@ -385,23 +399,35 @@ public final class FlowsSchema {
             // refused is the channel that carries a reason to the operator and keeps the view's
             // CREATE from running against a target that lacks a column its SELECT emits, which
             // fails with THERE_IS_NO_COLUMN on every start and says nothing about why.
-            final List<String> missingMeasures = MEASURES.stream()
-                    .map(Measure::column)
-                    .filter(column -> !liveColumns.contains(column))
+            final List<Measure> missing = MEASURES.stream()
+                    .filter(measure -> !liveColumns.contains(measure.column()))
                     .toList();
-            if (!missingMeasures.isEmpty()) {
-                refused.put(table, "measure " + missingMeasures + " is missing from " + table
-                        + ", and a measure cannot be added in place: it would read 0 for every row"
-                        + " aggregated before the upgrade, making a SUM spanning it quietly too small."
-                        + " Drop the rollup's view and target table and restart to have it rebuilt;"
-                        + " this discards that rollup's aggregated history");
+            final List<String> missingSummed = missing.stream()
+                    .filter(Measure::combinesBySum)
+                    .map(Measure::column)
+                    .toList();
+            if (!missingSummed.isEmpty()) {
+                refused.put(table, "measure " + missingSummed + " is missing from " + table
+                        + ", and a summed measure cannot be added in place: it would read 0 for every"
+                        + " row aggregated before the upgrade, making a SUM spanning it quietly too"
+                        + " small. Drop the rollup's view and target table and restart to have it"
+                        + " rebuilt; this discards that rollup's aggregated history");
                 continue;
             }
+            // What is left is a measure the engine combines by something other than a sum, and 0 is
+            // what a row aggregated before it existed reads (#674). For groupBitOr that is not a
+            // wrong total but the absence of information, so it is added in place rather than
+            // refused — the distinction #654's blanket refusal did not have to draw.
+            final boolean missingCombinable = missing.size() > missingSummed.size();
 
             final List<String> liveKey = splitKey(live);
             final List<String> wantedKey = allDimensions(rollup).stream().map(Dimension::column).toList();
 
             if (liveKey.equals(wantedKey) && liveColumns.containsAll(wantedKey)) {
+                // The key is already right, so only the added-in-place measure can need anything.
+                if (missingCombinable) {
+                    repair.add(table);
+                }
                 continue;
             }
             if (!isPrefix(liveKey, wantedKey)) {
@@ -741,6 +767,73 @@ public final class FlowsSchema {
             Dimension.of("zone", "String"));
 
     /**
+     * The bit each {@code samplingProvenance} rung contributes to the rollup provenance summary.
+     *
+     * <p>Explicit values, not {@code 1 << ordinal()}. The rung tokens are already stable
+     * identifiers — {@code Flow.SamplingProvenance}'s javadoc says renaming a constant must not
+     * rewrite what stored rows mean — and a bit derived from declaration order would break exactly
+     * that on a reorder, silently, for rows already written.</p>
+     *
+     * <p>Duplicated from the enum rather than imported: this class deliberately has no project
+     * dependencies, so that the schema can be reasoned about on its own. {@code FlowsSchemaTest}
+     * binds the two, failing if a rung is added, removed or renamed without a bit.</p>
+     *
+     * <p>A row with no rung recorded contributes {@code 0}, which is also what a row aggregated
+     * before the column existed reads (#674). Both mean "no provenance information", which is why
+     * this can be a measure at all.</p>
+     */
+    private static final Map<String, Integer> PROVENANCE_BITS = Map.of(
+            "record", 1,
+            "options", 2,
+            "header", 4,
+            "derived", 8,
+            "fallback", 16,
+            "assumed", 32);
+
+    /** The rung tokens in bit order, so the emitted SQL is stable across runs. */
+    private static final List<String> PROVENANCE_RUNGS =
+            List.of("record", "options", "header", "derived", "fallback", "assumed");
+
+    /**
+     * The summary's column type, and with it the number of rungs that fit.
+     *
+     * <p>{@code UInt8} holds eight, and six are declared. The width is riptide's to police: both
+     * ways a summary column can be written — {@code CREATE MATERIALIZED VIEW} on a fresh install
+     * and {@code ALTER TABLE … MODIFY QUERY} on an upgrade — were measured to narrow a too-wide
+     * expression <em>silently</em>, with no error on any surface (#673, #674). A ninth rung would
+     * therefore read as never set rather than failing, so {@code FlowsSchemaTest} asserts the rungs
+     * fit instead of leaving it to the server.</p>
+     */
+    private static final String PROVENANCE_SUMMARY_TYPE = "SimpleAggregateFunction(groupBitOr, UInt8)";
+
+    /** Bits available in {@link #PROVENANCE_SUMMARY_TYPE}; nothing on the server enforces it. */
+    static final int PROVENANCE_SUMMARY_BITS = 8;
+
+    /** The rung-to-bit mapping, exposed so a test can bind it to the enum that owns the tokens. */
+    static Map<String, Integer> provenanceBits() {
+        return PROVENANCE_BITS;
+    }
+
+    /**
+     * {@code groupBitOr} over each row's rung bit: the provenance summary's aggregating expression.
+     *
+     * <p>{@code toUInt8} is written explicitly rather than left to inference. The measured
+     * behaviour is that a wider expression is narrowed without complaint, so stating the width
+     * here is what makes a mismatch a compile-time-visible fact in this file rather than a bit that
+     * disappears on a server.</p>
+     */
+    private static String provenanceMaskExpression() {
+        final StringBuilder mask = new StringBuilder("groupBitOr(toUInt8(multiIf(");
+        for (final String rung : PROVENANCE_RUNGS) {
+            mask.append("f.samplingProvenance = '").append(rung).append("', ")
+                    .append(PROVENANCE_BITS.get(rung)).append(", ");
+        }
+        // The else arm: '' for a row written before #467, and any rung a future riptide records
+        // that this one does not know. Both are "no information", which is what 0 means here.
+        return mask.append("0)))").toString();
+    }
+
+    /**
      * The measures every rollup carries. Undirected totals sit alongside the ingress/egress split
      * so a query that does not care about direction needs no reassembly, and one that does is not
      * forced to re-derive it from the raw table.
@@ -752,7 +845,12 @@ public final class FlowsSchema {
             new Measure("bytesIn", "UInt64", "sumIf(f.bytes, f.direction = 'INGRESS')"),
             new Measure("bytesOut", "UInt64", "sumIf(f.bytes, f.direction = 'EGRESS')"),
             new Measure("packetsIn", "UInt64", "sumIf(f.packets, f.direction = 'INGRESS')"),
-            new Measure("packetsOut", "UInt64", "sumIf(f.packets, f.direction = 'EGRESS')"));
+            new Measure("packetsOut", "UInt64", "sumIf(f.packets, f.direction = 'EGRESS')"),
+            // Last on purpose: ADD COLUMN places it after the existing measures on an upgrade, so an
+            // upgraded target has the same physical column order as a fresh one. INSERT ... SELECT
+            // without a column list is positional, and that is the backfill operators are told to
+            // write.
+            new Measure("samplingProvenanceMask", PROVENANCE_SUMMARY_TYPE, provenanceMaskExpression()));
 
     /**
      * The rollup target-table names. A query router picking a rollup by dimension has to name one,
@@ -936,6 +1034,19 @@ public final class FlowsSchema {
         if (type.startsWith("Array(")) {
             return "[]";
         }
+        // The one wrapper that DOES defer to what it wraps, and the only one measured to: an
+        // appended SimpleAggregateFunction(groupBitOr, UInt8) reads 0, the same as the bare UInt8
+        // would (#674). Handled by prefix anyway rather than left to fall through to the numeric
+        // arm on the strength of containing "UInt8", because that would be an accident: a
+        // SimpleAggregateFunction over a String-ish inner type would then answer 0 as well, and
+        // nothing would say why. ReservedValueIT re-asks a real server for whatever type ships.
+        if (type.startsWith("SimpleAggregateFunction(")) {
+            final int comma = type.lastIndexOf(',');
+            if (comma < 0 || !type.endsWith(")")) {
+                throw new IllegalArgumentException("cannot read the inner type of " + type);
+            }
+            return reservedValueFor(type.substring(comma + 1, type.length() - 1).trim());
+        }
         if (type.contains("Enum")) {
             // The smallest member, not the first declared and not the zero member: on 26.7,
             // Enum8('B' = 2, 'A' = 1) reads back 'A' and Enum8('N' = -1, '' = 0, 'P' = 1) reads back
@@ -1039,6 +1150,20 @@ public final class FlowsSchema {
      * instead of summing, measured in {@code ReservedValueIT}.</p>
      */
     private record Measure(String column, String type, String expression) {
+
+        /**
+         * Whether {@code SummingMergeTree} combines this column by adding it.
+         *
+         * <p>Decided by the type and nowhere else, because the type is what tells the engine. A
+         * plain numeric column is summed; a {@code SimpleAggregateFunction} column is combined by
+         * the function it names, measured in {@code ReservedValueIT}. The distinction decides
+         * whether the measure can be added to an existing rollup: a summed column reading {@code 0}
+         * for historical rows makes a total spanning the upgrade quietly too small, while a
+         * {@code groupBitOr} mask reading {@code 0} asserts the absence of information (#581).</p>
+         */
+        boolean combinesBySum() {
+            return !this.type.startsWith("SimpleAggregateFunction(");
+        }
     }
 
     // Placeholder tokens substituted with the qualified names / TTL. Plain replace() (not
