@@ -38,6 +38,9 @@ public class ConfigFileReloaderTest {
 
     private static final Path CONFIG = createTempConfigPath();
 
+    /** The blank-skip sentence, which since #561 says "empty or whitespace-only". */
+    private static final String BLANK_SKIP = "is empty or whitespace-only — skipping reload cycle";
+
     /**
      * Declared at boot, like a real deployment: the inventory watcher captures its path at
      * start, so the config reloader deliberately will not follow a path that only appears
@@ -289,6 +292,89 @@ public class ConfigFileReloaderTest {
     }
 
     /**
+     * #561, the divergence the shared trigger settled. A whitespace-only file is the same
+     * truncate-write race a zero-byte one is, and the inventory watcher has always skipped
+     * it — but this reloader tested {@code content.length == 0}, so two spaces reached
+     * {@code reload()}, failed there with "parsed to no property sources", counted a
+     * {@code config.reload.failures} and latched the stale gauge. The operations doc calls
+     * this shape a skip, and it now is one on both reloaders.
+     *
+     * <p>The pending-partial setup is not decoration: the skip has to keep running the idle
+     * hook, so this also pins that the healing retry survives a truncated config file that
+     * is whitespace rather than zero bytes.</p>
+     */
+    @Test
+    public void aWhitespaceOnlyConfigFileIsABenignSkipThatStillRunsTheRetry() throws Exception {
+        latchPendingPartial("rotblank");
+        healInventory();
+        final long failuresBefore = metrics.counter("config.reload.failures").getCount();
+        final long successesBefore = metrics.counter("config.reload.successes").getCount();
+
+        Files.writeString(CONFIG, "  \n\t\n   ");
+        reloader.poll();
+
+        assertThat(metrics.counter("config.reload.failures").getCount())
+                .as("a truncate-write race is a skip, not a failure").isEqualTo(failuresBefore);
+        assertThat(metrics.counter("config.reload.successes").getCount())
+                .as("and it commits nothing either").isEqualTo(successesBefore);
+        // the idle hook ran during this very skip: the stranded rotation healed off the
+        // inventory file, which is also the proof that the committed config is serving
+        assertThat(inventory.profiles().credentials()).containsKey("rotblank");
+        assertThat((Integer) metrics.getGauges().get("config.reload.stale").getValue()).isZero();
+    }
+
+    /**
+     * #561, the other half: this reloader had no {@code warnedEmpty} latch, so a truncated
+     * file warned on every single poll — forever, at whatever the reload interval is. The
+     * inventory watcher's latch (and its re-arming) is now the shared behaviour.
+     */
+    @Test
+    public void aTruncatedConfigFileWarnsOnceAndTheLatchReArms() throws Exception {
+        // the latch lives on the trigger inside the cached Spring context, and cleanSlate()
+        // resets the files, not the latches: a sibling test ending on a blank-file skip
+        // leaves it armed. A non-blank read clears it, so this test starts from a known
+        // state instead of from whatever ran before it
+        write("""
+                riptide:
+                  snmp:
+                    credentials:
+                      before-truncation:
+                        version: v3
+                        security-name: monitoring
+                """);
+        reloader.poll();
+
+        final var captured = captureReloaderLog();
+        try {
+            Files.writeString(CONFIG, "");
+            for (int poll = 0; poll < 10; poll++) {
+                reloader.poll();
+            }
+            assertThat(warnCount(captured, BLANK_SKIP)).as("ten polls, one warning").isEqualTo(1);
+
+            write("""
+                    riptide:
+                      snmp:
+                        credentials:
+                          after-truncation:
+                            version: v3
+                            security-name: monitoring
+                    """);
+            reloader.poll();
+            assertThat(inventory.profiles().credentials()).containsKey("after-truncation");
+
+            // truncated again — and blank rather than empty, the shape that used to reach
+            // reload() instead of this branch: the latch re-arms and warns once more
+            Files.writeString(CONFIG, "   \n");
+            reloader.poll();
+            assertThat(warnCount(captured, BLANK_SKIP))
+                    .as("the latch re-arms when content returns").isEqualTo(2);
+        } finally {
+            releaseReloaderLog(captured);
+        }
+    }
+
+    /**
      * "Retried every poll" includes polls whose CHANGED content fails validation: a
      * rejected candidate neither supersedes the pending edit nor — in the first version —
      * retried it, so a continuously churning broken config file starved a stranded
@@ -454,13 +540,30 @@ public class ConfigFileReloaderTest {
                         version: v3
                         security-name: monitoring
                 """);
+        final var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(ConfigFileReloader.class);
+        final var previousLevel = logger.getLevel();
+        logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+        final var captured = captureReloaderLog();
         Thread.currentThread().interrupt();
         try {
             reloader.poll();
         } finally {
             // clear the flag or it poisons the next test on this thread
             Thread.interrupted();
+            releaseReloaderLog(captured);
+            logger.setLevel(previousLevel);
         }
+
+        // the before-poll sentence, not the mid-cycle one: the two are adjacent String
+        // arguments, both DEBUG, and only the mid-cycle one carries a placeholder — so a
+        // swap would read plausibly while silently dropping an exception message
+        assertThat(captured.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                .isEqualTo("Config reload poll skipped: thread interrupted (shutdown)"));
+        // and the poll thread carries this reloader's name: threadName and metricPrefix
+        // are adjacent String arguments to the trigger, and only the gauges pin the other
+        assertThat(Thread.getAllStackTraces().keySet())
+                .anyMatch(thread -> "ConfigFileReloader".equals(thread.getName()));
 
         assertThat(metrics.counter("config.reload.successes").getCount())
                 .as("an interrupted poll commits nothing").isEqualTo(successesBefore);
@@ -654,9 +757,9 @@ public class ConfigFileReloaderTest {
                     .contains("only a restart reads them"));
 
             // unchanged content: the hash latch means no reload at all, so no repetition
-            final long importWarns = importWarnCount(captured);
+            final long importWarns = warnCount(captured, "nested spring.config.import");
             reloader.poll();
-            assertThat(importWarnCount(captured)).isEqualTo(importWarns);
+            assertThat(warnCount(captured, "nested spring.config.import")).isEqualTo(importWarns);
 
             // a NEW content version still carrying the import warns again: once per content
             // version is the documented semantics — the reminder working, not a defect
@@ -675,16 +778,18 @@ public class ConfigFileReloaderTest {
                             security-name: monitoring
                     """);
             reloader.poll();
-            assertThat(importWarnCount(captured)).isEqualTo(importWarns + 1);
+            assertThat(warnCount(captured, "nested spring.config.import")).isEqualTo(importWarns + 1);
         } finally {
             releaseReloaderLog(captured);
         }
     }
 
-    private static long importWarnCount(
-            final ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> captured) {
+    /** Warnings whose rendered message contains {@code needle}. */
+    private static long warnCount(
+            final ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> captured,
+            final String needle) {
         return captured.list.stream()
-                .filter(event -> event.getFormattedMessage().contains("nested spring.config.import"))
+                .filter(event -> event.getFormattedMessage().contains(needle))
                 .count();
     }
 

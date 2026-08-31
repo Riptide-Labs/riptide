@@ -169,19 +169,80 @@ class InventoryFileReloaderTest {
         this.reloader.poll();
         assertThat(successes()).isEqualTo(1);
 
-        write("""
-                riptide:
-                  snmp:
-                    agents:
-                      "10.20.0.0/16":
-                        credentials: nope
-                """);
-        this.reloader.poll();
+        final var appender = capture(InventoryFileReloader.class);
+        try {
+            write("""
+                    riptide:
+                      snmp:
+                        agents:
+                          "10.20.0.0/16":
+                            credentials: nope
+                    """);
+            this.reloader.poll();
+        } finally {
+            release(InventoryFileReloader.class, appender);
+        }
 
         // swap rejected: the previous snapshot serves, failure counted, staleness latched
         assertThat(this.inventory.snapshot().agentView().match(netflow("10.20.5.5"))).isPresent();
         assertThat(failures()).isEqualTo(1);
         assertThat(stale()).isEqualTo(1);
+        // and the operator is told WHY, which operations.md promises ("logs a warning
+        // naming the problem"). The counter and the gauge both move without a word being
+        // said, so emptying this reloader's failure sentence left the whole suite green
+        assertThat(appender.list).anySatisfy(event -> {
+            assertThat(event.getLevel()).hasToString("WARN");
+            assertThat(event.getFormattedMessage())
+                    .contains("Inventory reload failed, keeping the last good inventory")
+                    .contains("nope");
+        });
+    }
+
+    /**
+     * The two skip sentences describe different conditions with different remediations —
+     * "the file is gone" versus "the file is truncated" — and they are adjacent
+     * same-typed arguments where this reloader builds its messages. Swapping them
+     * compiles and, until this test, changed no assertion anywhere.
+     */
+    @Test
+    void theSkipSentencesNameTheConditionTheyActuallyDescribe() throws Exception {
+        final var appender = capture(InventoryFileReloader.class);
+        try {
+            Files.delete(this.file);
+            this.reloader.poll();
+            assertThat(warnings(appender)).containsExactly(missingWarning());
+
+            // truncated, not deleted: the other sentence, and only once across five polls
+            write("   \n\t\n");
+            for (int poll = 0; poll < 5; poll++) {
+                this.reloader.poll();
+            }
+            assertThat(warnings(appender))
+                    .as("five truncated polls, one warning")
+                    .containsExactly(missingWarning(), blankWarning());
+        } finally {
+            release(InventoryFileReloader.class, appender);
+        }
+        assertThat(failures()).as("neither shape is a reload failure").isZero();
+    }
+
+    private String missingWarning() {
+        return ("Inventory file %s is missing: skipping reload cycles until it reappears "
+                + "(deletion and atomic replacement are indistinguishable; keeping the running inventory)")
+                .formatted(this.file);
+    }
+
+    private String blankWarning() {
+        return ("Inventory file %s is empty or whitespace-only: skipping reload cycle "
+                + "(truncate-write race or intentional; keeping the running inventory)").formatted(this.file);
+    }
+
+    private static java.util.List<String> warnings(
+            final ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender) {
+        return appender.list.stream()
+                .filter(event -> "WARN".equals(event.getLevel().toString()))
+                .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .toList();
     }
 
     @Test
@@ -541,16 +602,28 @@ class InventoryFileReloaderTest {
                       "10.20.0.0/16":
                         credentials: corp-v3
                 """);
+        final var logger = (ch.qos.logback.classic.Logger)
+                org.slf4j.LoggerFactory.getLogger(InventoryFileReloader.class);
+        final var previousLevel = logger.getLevel();
+        logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+        final var appender = capture(InventoryFileReloader.class);
         Thread.currentThread().interrupt();
         try {
             this.reloader.poll();
         } finally {
             // clear the flag or it poisons the next test on this thread
             Thread.interrupted();
+            release(InventoryFileReloader.class, appender);
+            logger.setLevel(previousLevel);
         }
         assertThat(successes()).as("an interrupted poll reads nothing").isZero();
         assertThat(failures()).as("shutdown is not a failure").isZero();
         assertThat(stale()).isZero();
+        // the before-poll sentence, not the mid-cycle one: the two are adjacent String
+        // arguments, both DEBUG, and only the mid-cycle one carries a placeholder — so a
+        // swap would read plausibly while silently dropping an exception message
+        assertThat(appender.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                .isEqualTo("Inventory reload poll skipped: thread interrupted (shutdown)"));
 
         // the content was never consumed, so the next clean poll serves it normally
         this.reloader.poll();
@@ -682,6 +755,87 @@ class InventoryFileReloaderTest {
         assertThat(stale()).as("what is serving matches the file").isZero();
         assertThat(appender.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
                 .contains("refreshing polled endpoints failed"));
+    }
+
+    /**
+     * Loses the compare-and-swap once, exactly as a concurrent main-config reload does
+     * when it republishes the profiles while this candidate is being parsed. That race
+     * cannot be scheduled from a single-threaded test, so it is injected here instead.
+     */
+    private static final class RacingInventory extends Inventory {
+        private int refusals;
+
+        private RacingInventory(final SnmpProfilesConfig profiles, final InventoryConfig config) {
+            super(profiles, config);
+        }
+
+        @Override
+        public synchronized boolean swapIfProfilesUnchanged(final SnmpProfilesConfig parsedWith,
+                                                            final org.riptide.inventory.InventorySnapshot snapshot) {
+            if (this.refusals > 0) {
+                this.refusals--;
+                return false;
+            }
+            return super.swapIfProfilesUnchanged(parsedWith, snapshot);
+        }
+    }
+
+    /**
+     * A deferred candidate is re-offered on the following cycle. The deferral resets the
+     * attempted hash — {@code rollbackAttempt()}, not {@code markCommitted()}, two
+     * adjacent no-arg calls on the same object five lines apart. With the wrong one the
+     * candidate is recorded as committed, the next cycle short-circuits it as unchanged,
+     * the stale gauge reads 0, and the edit is dropped permanently with nothing said.
+     */
+    @Test
+    void aDeferredCandidateIsReOfferedOnTheNextCycle() throws Exception {
+        final InventoryConfig config = new InventoryConfig();
+        config.setFile(this.file);
+        final ConfigReloadProperties properties = new ConfigReloadProperties();
+        properties.setReloadInterval(Duration.ofHours(1));
+        final RacingInventory racing = new RacingInventory(this.profiles, config);
+        racing.load();
+        final MetricRegistry fresh = new MetricRegistry();
+        final var deferring = new InventoryFileReloader(properties, config, racing, this.poller, fresh);
+        deferring.start();
+        try {
+            racing.refusals = 1;
+            write("""
+                    riptide:
+                      snmp:
+                        agents:
+                          "10.20.0.0/16":
+                            credentials: corp-v3
+                    """);
+
+            deferring.poll();
+            assertThat(fresh.counter("inventory.reload.successes").getCount())
+                    .as("deferred: nothing was published").isZero();
+            assertThat(racing.snapshot().agentCount()).isZero();
+            assertThat(fresh.counter("inventory.reload.failures").getCount())
+                    .as("a lost race is not a failure").isZero();
+
+            // the SAME unchanged bytes must be read and parsed again, not short-circuited
+            deferring.poll();
+            assertThat(fresh.counter("inventory.reload.successes").getCount()).isEqualTo(1);
+            assertThat(racing.snapshot().agentView().match(netflow("10.20.5.5"))).isPresent();
+            assertThat((Integer) ((Gauge<?>) fresh.getGauges().get("inventory.reload.stale")).getValue())
+                    .isZero();
+        } finally {
+            deferring.stop();
+        }
+    }
+
+    /**
+     * The poll thread carries this reloader's name. {@code threadName} and
+     * {@code metricPrefix} are adjacent String arguments to the trigger
+     * ("InventoryFileReloader" / "inventory"); swapping them compiles, and the thread
+     * name is the half nothing else reads.
+     */
+    @Test
+    void thePollThreadIsNamedForThisReloader() {
+        assertThat(Thread.getAllStackTraces().keySet())
+                .anyMatch(thread -> "InventoryFileReloader".equals(thread.getName()));
     }
 
     private int dead() {
