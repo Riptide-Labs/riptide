@@ -23,7 +23,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>Bound through the real context and read back through the schedule it is supposed to
  * start: {@code classification.reload.dead} is registered only past the interval gate, so
- * its presence here is the property, not the bound value. {@code ReloaderDisabledMetricsTest}
+ * its presence here is the property, not the bound value — this suite configures an hour
+ * and never lets a cycle run, so {@code HttpRulesRefreshOnIntervalTest} is what observes a
+ * configured interval actually firing. {@code ReloaderDisabledMetricsTest}
  * is the other half — the same gauge is absent with no interval set.</p>
  */
 @SpringBootTest(properties = "riptide.classification.reload-interval=1h")
