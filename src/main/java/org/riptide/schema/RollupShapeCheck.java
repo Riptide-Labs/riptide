@@ -48,6 +48,15 @@ public final class RollupShapeCheck {
          * it is unusable.
          */
         UNREACHABLE,
+        /**
+         * The target is readable, but nothing writes to it: its materialized view does not exist.
+         *
+         * <p>Distinct from {@link #UNREACHABLE}, which is about the target itself. Here a query
+         * routed to the rollup <em>succeeds</em> and returns whatever a table nothing feeds
+         * contains, which for a long-range query is a silence that reads like an answer. That is
+         * why it declines rather than merely reporting (#587).</p>
+         */
+        NO_VIEW,
         /** Could not be determined — see {@link Result#detail()}. Not evidence of drift. */
         UNVERIFIABLE
     }
@@ -65,15 +74,43 @@ public final class RollupShapeCheck {
         /**
          * Whether the query path must avoid this rollup.
          *
-         * <p>Drift and unreachability both qualify, for different reasons: a drifted rollup would
-         * answer from a shape this version did not write, and an unreachable one would not answer
-         * at all. {@link Status#UNVERIFIABLE} does not — a rollup that could not be checked is not
-         * thereby known to be wrong, and declining it would degrade every query on a deployment
-         * whose only fault is a missing grant.</p>
+         * <p>Three qualify, for three reasons: a drifted rollup would answer from a shape this
+         * version did not write, an unreachable one would not answer at all, and one with
+         * {@link Status#NO_VIEW} would answer from a table nothing writes to.
+         * {@link Status#UNVERIFIABLE} does not — a rollup that could not be checked is not thereby
+         * known to be wrong, and declining it would degrade every query on a deployment whose only
+         * fault is a missing grant.</p>
          */
         public boolean declineForQueries() {
-            return this.status == Status.DRIFTED || this.status == Status.UNREACHABLE;
+            // Inverted on purpose. As a list of the statuses that decline, every status added later
+            // had to be remembered here or it silently joined the query path — the fourth-place
+            // pattern this repo's rules warn about, and NO_VIEW was the third entry. Stated as
+            // "everything except the two that keep it", a new status has to argue its way OUT.
+            return this.status != Status.MATCHES && this.status != Status.UNVERIFIABLE;
         }
+    }
+
+    /**
+     * What a trivial query against a rollup's materialized view answered, when the catalog could
+     * not see it (#587).
+     *
+     * <p>Supplied by the caller rather than read here, so this class stays pure and server-free and
+     * its cases remain unit-testable — the same property {@code FlowsSchema.planRollupRepair} is
+     * built on.</p>
+     */
+    public enum ViewProbe {
+        /** {@code UNKNOWN_TABLE} (60): the view is absent from a database that exists. */
+        ABSENT,
+        /** {@code ACCESS_DENIED} (497): the view exists and the connecting user holds no grant. */
+        UNGRANTED,
+        /**
+         * Anything else: an unrecognised code, a transport failure, or the query succeeding.
+         *
+         * <p>Deliberately not a fourth verdict. An outcome nobody has measured must not decide
+         * whether a rollup leaves the query path, so it yields the conservative answer this version
+         * gave before the probe existed.</p>
+         */
+        INCONCLUSIVE
     }
 
     /** Backticks and line breaks are the server's formatting, not the query's meaning. */
@@ -91,18 +128,25 @@ public final class RollupShapeCheck {
      * @param liveSortKeys   rollup target table to its {@code system.tables.sorting_key}. A rollup
      *                       absent from this map has an unread key, which is reported rather than
      *                       assumed correct — see {@link #compareOne}.
+     * @param viewProbes     rollup target table to what a query against its view answered, for the
+     *                       rollups whose view was not visible (#587). A rollup absent from this
+     *                       map was not probed, which reads the same as
+     *                       {@link ViewProbe#INCONCLUSIVE}: the caller probes only invisible views,
+     *                       so a healthy deployment supplies an empty map and pays nothing.
      */
     public static List<Result> compare(final String database,
             final Map<String, String> liveSelects,
             final Map<String, Map<String, String>> liveColumns,
-            final Map<String, String> liveSortKeys) {
+            final Map<String, String> liveSortKeys,
+            final Map<String, ViewProbe> viewProbes) {
         final Map<String, String> intendedSelects = FlowsSchema.rollupSelects(database);
         final Map<String, String> intendedSortKeys = FlowsSchema.rollupSortKeys();
         final List<Result> results = new ArrayList<>();
         for (final var intended : FlowsSchema.rollupColumns().entrySet()) {
             results.add(compareOne(intended.getKey(), intended.getValue(),
                     intendedSelects.get(intended.getKey()), liveSelects, liveColumns,
-                    intendedSortKeys.get(intended.getKey()), liveSortKeys));
+                    intendedSortKeys.get(intended.getKey()), liveSortKeys,
+                    viewProbes.getOrDefault(intended.getKey(), ViewProbe.INCONCLUSIVE)));
         }
         return List.copyOf(results);
     }
@@ -113,7 +157,8 @@ public final class RollupShapeCheck {
             final Map<String, String> liveSelects,
             final Map<String, Map<String, String>> liveColumns,
             final String intendedSortKey,
-            final Map<String, String> liveSortKeys) {
+            final Map<String, String> liveSortKeys,
+            final ViewProbe viewProbe) {
         final Map<String, String> live = liveColumns.get(rollup);
         if (live == null) {
             // Not merely unknown: a query routed here would fail with UNKNOWN_TABLE or
@@ -186,7 +231,7 @@ public final class RollupShapeCheck {
                             + intendedSortKey + ") — " + why);
         }
 
-        final String mv = rollup + "_mv";
+        final String mv = FlowsSchema.rollupViewName(rollup);
         final String liveSelect = liveSelects.get(mv);
         if (liveSelect == null) {
             // NOT declined, and the reasoning is narrower than it looks. ClickHouse filters
@@ -201,22 +246,53 @@ public final class RollupShapeCheck {
             // that grant. Declining on this evidence would degrade every one of them — healthy
             // rollups, correct data — to a raw-flows fallback truncated at raw retention.
             //
-            // The two states ARE separable, just not from system.tables: a trivial query against
-            // the view answers UNKNOWN_TABLE (60) when the view is absent from a present database,
-            // UNKNOWN_DATABASE (81) when the database itself is absent, and ACCESS_DENIED (497)
-            // when the view is merely ungranted. Measured, not assumed — the #587 probe tests in
-            // RollupShapeDriftIT ask a real server all three and pin the codes; a branch on 60
-            // alone would fall through the dropped-tenant case. What that buys is narrower than
-            // it sounds:
-            // *IT classes run only under the `e2e` Maven profile, so a server version that stopped
-            // separating them turns the e2e job red (`make e2e`) and leaves `make jar` and a plain
-            // `mvn verify` green. Acting on it costs a round trip per rollup per start and is worth
-            // it only if the empty-rollup case shows up in practice; until then this stays
-            // conservative and says both possibilities in the message.
-            return new Result(rollup, Status.UNVERIFIABLE,
-                    "materialized view " + mv + " is not visible to the connecting user — it is"
-                            + " absent, or the user holds no grant on it. Re-run 'riptide onboard'"
-                            + " to recreate it, or GRANT SHOW TABLES ON " + mv + " to its role");
+            // So the server is asked instead (#587). A trivial query against the view answers
+            // UNKNOWN_TABLE (60) when the view is absent and ACCESS_DENIED (497) when it is merely
+            // ungranted. Measured, not assumed — the #587 probe tests in RollupShapeDriftIT ask a
+            // real server and pin the codes.
+            //
+            // The server also answers UNKNOWN_DATABASE (81) for a vanished database, and there is
+            // deliberately no arm for it. This branch is only reached once liveColumns held this
+            // rollup, and a database that does not exist yields no system.columns rows — so a
+            // dropped database already returned UNREACHABLE above, which declines it too.
+            //
+            // That holds while the database is gone BEFORE the catalog is read. Dropped between the
+            // columns read and the probe, 81 arrives here and falls to INCONCLUSIVE, leaving the
+            // rollup in the query path. Accepted rather than armed: every query against a database
+            // that no longer exists fails loudly, so nothing is silently wrong, and the next start
+            // reads an empty catalog and answers UNREACHABLE.
+            //
+            // The caller runs the query and passes the outcome, for two reasons. This class stays
+            // pure, so these cases are unit-testable without a server. And only an invisible view
+            // is probed, so a healthy deployment issues no extra round trip at all.
+            //
+            // The bound on all of this: *IT classes run only under the `e2e` Maven profile, so a
+            // server version that stopped separating the codes turns the e2e job red (`make e2e`)
+            // while `make jar` and a plain `mvn verify` stay green. An unrecognised outcome
+            // therefore decides nothing and falls to the conservative answer this version gave
+            // before the probe existed.
+            return switch (viewProbe) {
+                case ABSENT -> new Result(rollup, Status.NO_VIEW,
+                        "materialized view " + mv + " does not exist, so nothing writes to "
+                                + rollup + " and it would answer long-range queries from a table"
+                                + " nothing feeds. Queries will use raw flows instead. In"
+                                + " validate mode re-run 'riptide onboard --create-schema' to"
+                                + " recreate it, which is the flag the provisioner refuses without;"
+                                + " in manage mode this start either could not create it, and said"
+                                + " why above, or did not try because the catalog was unreadable");
+                case UNGRANTED -> new Result(rollup, Status.UNVERIFIABLE,
+                        "materialized view " + mv + " exists but the connecting user holds no grant"
+                                + " on it, so its shape was not checked. The rollup stays in the"
+                                + " query path — an unchecked rollup is not a known-bad one, and"
+                                + " declining it would degrade every deployment whose only fault is"
+                                + " a missing grant. GRANT SHOW TABLES ON " + mv + " to its role to"
+                                + " have it verified");
+                case INCONCLUSIVE -> new Result(rollup, Status.UNVERIFIABLE,
+                        "materialized view " + mv + " is not visible to the connecting user — it is"
+                                + " absent, or the user holds no grant on it. Re-run 'riptide"
+                                + " onboard' to recreate it, or GRANT SHOW TABLES ON " + mv
+                                + " to its role");
+            };
         }
         if (liveSortKey == null) {
             // Reached only when everything readable matched. Reported last so a real drift is never

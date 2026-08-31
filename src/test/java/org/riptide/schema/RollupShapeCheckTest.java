@@ -79,7 +79,7 @@ class RollupShapeCheckTest {
 
         final Map<String, String> live = liveSelects();
         live.put(FlowsSchema.ROLLUP_BY_APPLICATION + "_mv", AS_SELECT_FROM_CLICKHOUSE_26_7);
-        assertThat(RollupShapeCheck.compare(DB, live, liveColumns(), liveSortKeys()))
+        assertThat(RollupShapeCheck.compare(DB, live, liveColumns(), liveSortKeys(), Map.of()))
                 .allSatisfy(r -> assertThat(r.status()).isEqualTo(RollupShapeCheck.Status.MATCHES));
     }
 
@@ -106,7 +106,7 @@ class RollupShapeCheckTest {
     @Test
     void aCurrentDeploymentIsSilent() {
         final List<RollupShapeCheck.Result> results =
-                RollupShapeCheck.compare(DB, liveSelects(), liveColumns(), liveSortKeys());
+                RollupShapeCheck.compare(DB, liveSelects(), liveColumns(), liveSortKeys(), Map.of());
 
         assertThat(results).hasSize(4)
                 .allSatisfy(r -> assertThat(r.status()).isEqualTo(RollupShapeCheck.Status.MATCHES));
@@ -123,7 +123,7 @@ class RollupShapeCheckTest {
         live.put(mv, live.get(mv).replace("sumIf(f.packets, f.direction = 'EGRESS') AS packetsOut",
                 "sum(f.packets) AS packetsOut"));
 
-        final List<RollupShapeCheck.Result> results = RollupShapeCheck.compare(DB, live, liveColumns(), liveSortKeys());
+        final List<RollupShapeCheck.Result> results = RollupShapeCheck.compare(DB, live, liveColumns(), liveSortKeys(), Map.of());
 
         assertThat(results)
                 .filteredOn(RollupShapeCheck.Result::drifted)
@@ -143,7 +143,7 @@ class RollupShapeCheckTest {
         FlowsSchema.rollupSelects(DB).forEach((table, select) -> live.put(table + "_mv",
                 "\n  " + select.replace("`", "").replaceAll("\\s+", "\n\t") + "  \n"));
 
-        assertThat(RollupShapeCheck.compare(DB, live, liveColumns(), liveSortKeys()))
+        assertThat(RollupShapeCheck.compare(DB, live, liveColumns(), liveSortKeys(), Map.of()))
                 .allSatisfy(r -> assertThat(r.status()).isEqualTo(RollupShapeCheck.Status.MATCHES));
     }
 
@@ -152,7 +152,7 @@ class RollupShapeCheckTest {
         final Map<String, Map<String, String>> columns = liveColumns();
         columns.get(FlowsSchema.ROLLUP_BY_GEO_ASN).remove("dstCountry");
 
-        assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns, liveSortKeys()))
+        assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns, liveSortKeys(), Map.of()))
                 .filteredOn(RollupShapeCheck.Result::drifted)
                 .singleElement()
                 .satisfies(r -> assertThat(r.detail()).contains("missing").contains("dstCountry"));
@@ -164,7 +164,7 @@ class RollupShapeCheckTest {
         final Map<String, Map<String, String>> columns = liveColumns();
         columns.get(FlowsSchema.ROLLUP_BY_CONVERSATION).put("srcCity", "LowCardinality(String)");
 
-        assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns, liveSortKeys()))
+        assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns, liveSortKeys(), Map.of()))
                 .filteredOn(RollupShapeCheck.Result::drifted)
                 .singleElement()
                 .satisfies(r -> {
@@ -189,7 +189,7 @@ class RollupShapeCheckTest {
         final Map<String, String> live = liveSelects();
         live.remove(FlowsSchema.ROLLUP_BY_EXPORTER_IFACE + "_mv");
 
-        final List<RollupShapeCheck.Result> results = RollupShapeCheck.compare(DB, live, liveColumns(), liveSortKeys());
+        final List<RollupShapeCheck.Result> results = RollupShapeCheck.compare(DB, live, liveColumns(), liveSortKeys(), Map.of());
 
         assertThat(results)
                 .filteredOn(r -> r.status() == RollupShapeCheck.Status.UNVERIFIABLE)
@@ -212,7 +212,7 @@ class RollupShapeCheckTest {
         final Map<String, Map<String, String>> columns = liveColumns();
         columns.get(FlowsSchema.ROLLUP_BY_GEO_ASN).remove("srcAs");
 
-        assertThat(RollupShapeCheck.compare(DB, live, columns, liveSortKeys()))
+        assertThat(RollupShapeCheck.compare(DB, live, columns, liveSortKeys(), Map.of()))
                 .filteredOn(r -> r.rollup().equals(FlowsSchema.ROLLUP_BY_GEO_ASN))
                 .singleElement()
                 .satisfies(r -> {
@@ -232,7 +232,7 @@ class RollupShapeCheckTest {
         final Map<String, Map<String, String>> columns = liveColumns();
         columns.remove(FlowsSchema.ROLLUP_BY_APPLICATION);
 
-        assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns, liveSortKeys()))
+        assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns, liveSortKeys(), Map.of()))
                 .filteredOn(r -> r.status() == RollupShapeCheck.Status.UNREACHABLE)
                 .singleElement()
                 .satisfies(r -> {
@@ -250,7 +250,7 @@ class RollupShapeCheckTest {
         final Map<String, Map<String, String>> columns = liveColumns();
         columns.get(FlowsSchema.ROLLUP_BY_GEO_ASN).put("srcAs", "UInt32");
 
-        assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns, liveSortKeys()))
+        assertThat(RollupShapeCheck.compare(DB, liveSelects(), columns, liveSortKeys(), Map.of()))
                 .filteredOn(RollupShapeCheck.Result::drifted)
                 .singleElement()
                 .satisfies(r -> assertThat(r.detail())
@@ -270,7 +270,7 @@ class RollupShapeCheckTest {
         final Map<String, String> keys = liveSortKeys();
         keys.remove(FlowsSchema.ROLLUP_BY_EXPORTER_IFACE);
 
-        assertThat(RollupShapeCheck.compare(DB, liveSelects(), liveColumns(), keys))
+        assertThat(RollupShapeCheck.compare(DB, liveSelects(), liveColumns(), keys, Map.of()))
                 .filteredOn(r -> r.status() == RollupShapeCheck.Status.UNVERIFIABLE)
                 .singleElement()
                 .satisfies(r -> {
@@ -330,7 +330,7 @@ class RollupShapeCheckTest {
         keys.put(rollup, keys.get(rollup).replace(", samplingInterval", ""));
 
         final List<RollupShapeCheck.Result> results =
-                RollupShapeCheck.compare(DB, liveSelects(), liveColumns(), keys);
+                RollupShapeCheck.compare(DB, liveSelects(), liveColumns(), keys, Map.of());
 
         assertThat(results).filteredOn(r -> r.rollup().equals(rollup))
                 .singleElement()
@@ -345,13 +345,124 @@ class RollupShapeCheckTest {
                         .isFalse());
     }
 
+    /**
+     * An absent view declines the rollup, because nothing writes to it (#587).
+     *
+     * <p>The state this issue exists for. The target is readable and a query against the rollup
+     * would succeed, returning whatever a table nothing feeds contains: for a long-range query that
+     * is a silence that reads like an answer, which is worse than a fallback to raw flows.</p>
+     */
+    @Test
+    void aViewTheServerSaysIsAbsentDeclinesTheRollup() {
+        final Map<String, String> live = liveSelects();
+        final String rollup = FlowsSchema.rollupTableNames().getFirst();
+        live.remove(FlowsSchema.rollupViewName(rollup));
+
+        assertThat(RollupShapeCheck.compare(DB, live, liveColumns(), liveSortKeys(),
+                Map.of(rollup, RollupShapeCheck.ViewProbe.ABSENT)))
+                .filteredOn(r -> r.rollup().equals(rollup))
+                .singleElement()
+                .satisfies(r -> {
+                    assertThat(r.status()).isEqualTo(RollupShapeCheck.Status.NO_VIEW);
+                    assertThat(r.declineForQueries()).isTrue();
+                    assertThat(r.detail())
+                            .as("the detail must say the view is gone, not offer a grant remedy for"
+                                    + " a view that does not exist")
+                            .contains("does not exist")
+                            .doesNotContain("GRANT");
+                    assertThat(r.detail())
+                            .as("and must name the flag the provisioner refuses without — the only"
+                                    + " part of this message an operator can act on, and deletable"
+                                    + " today with every test still green")
+                            .contains("--create-schema");
+                });
+    }
+
+    /**
+     * An ungranted view is NOT declined, which is the regression that reverted a previous attempt.
+     *
+     * <p>Riptide grants per object, so a writer holding {@code INSERT} on the target and no
+     * {@code SHOW TABLES} on the view is an ordinary deployment provisioned before #572. Declining
+     * it would degrade a healthy rollup with correct data to a fallback truncated at raw
+     * retention.</p>
+     */
+    @Test
+    void anUngrantedViewIsReportedButKeptInTheQueryPath() {
+        final Map<String, String> live = liveSelects();
+        final String rollup = FlowsSchema.rollupTableNames().getFirst();
+        live.remove(FlowsSchema.rollupViewName(rollup));
+
+        assertThat(RollupShapeCheck.compare(DB, live, liveColumns(), liveSortKeys(),
+                Map.of(rollup, RollupShapeCheck.ViewProbe.UNGRANTED)))
+                .filteredOn(r -> r.rollup().equals(rollup))
+                .singleElement()
+                .satisfies(r -> {
+                    assertThat(r.status()).isEqualTo(RollupShapeCheck.Status.UNVERIFIABLE);
+                    assertThat(r.declineForQueries())
+                            .as("degrading a pre-#572 deployment is what reverted the last attempt"
+                                    + " at this issue")
+                            .isFalse();
+                    assertThat(r.detail())
+                            .as("the actionable half: the grant that would let riptide verify it")
+                            .contains("GRANT SHOW TABLES");
+                    assertThat(r.detail())
+                            .as("and it must not call an unverified rollup healthy — UNVERIFIABLE"
+                                    + " means its shape was never read")
+                            .doesNotContain("healthy");
+                });
+    }
+
+    /**
+     * An outcome nobody measured changes nothing.
+     *
+     * <p>Both the un-probed case (absent from the map) and an explicit inconclusive answer must
+     * give the verdict this version produced before the probe existed. A rollup must never leave
+     * the query path on an answer the codes were not pinned for.</p>
+     */
+    @Test
+    void anInconclusiveOrAbsentProbeKeepsTodaysConservativeVerdict() {
+        final Map<String, String> live = liveSelects();
+        final String rollup = FlowsSchema.rollupTableNames().getFirst();
+        live.remove(FlowsSchema.rollupViewName(rollup));
+
+        for (final Map<String, RollupShapeCheck.ViewProbe> probes
+                : List.of(Map.<String, RollupShapeCheck.ViewProbe>of(),
+                        Map.of(rollup, RollupShapeCheck.ViewProbe.INCONCLUSIVE))) {
+            assertThat(RollupShapeCheck.compare(DB, live, liveColumns(), liveSortKeys(), probes))
+                    .filteredOn(r -> r.rollup().equals(rollup))
+                    .singleElement()
+                    .satisfies(r -> {
+                        assertThat(r.status()).isEqualTo(RollupShapeCheck.Status.UNVERIFIABLE);
+                        assertThat(r.declineForQueries()).isFalse();
+                        assertThat(r.detail()).contains("is not visible to the connecting user");
+                    });
+        }
+    }
+
+    /**
+     * A probe outcome for a rollup whose view IS visible changes nothing.
+     *
+     * <p>Guards the branch against firing on the wrong rollup: the probe is only consulted when the
+     * catalog could not see the view, so a stale or mistaken entry must not decline a healthy one.</p>
+     */
+    @Test
+    void aProbeOutcomeIsIgnoredWhenTheViewIsVisible() {
+        final String rollup = FlowsSchema.rollupTableNames().getFirst();
+
+        assertThat(RollupShapeCheck.compare(DB, liveSelects(), liveColumns(), liveSortKeys(),
+                Map.of(rollup, RollupShapeCheck.ViewProbe.ABSENT)))
+                .allSatisfy(r -> assertThat(r.declineForQueries())
+                        .as("a visible view is verified from its SELECT; the probe has no say")
+                        .isFalse());
+    }
+
     /** Spacing and backticks are the server's formatting, not a different key. */
     @Test
     void aKeyDifferingOnlyInFormattingIsTheSameKey() {
         final Map<String, String> keys = liveSortKeys();
         keys.replaceAll((rollup, key) -> "`" + key.replace(", ", "`,  `") + "`");
 
-        assertThat(RollupShapeCheck.compare(DB, liveSelects(), liveColumns(), keys))
+        assertThat(RollupShapeCheck.compare(DB, liveSelects(), liveColumns(), keys, Map.of()))
                 .allSatisfy(r -> assertThat(r.declineForQueries()).isFalse());
     }
 }

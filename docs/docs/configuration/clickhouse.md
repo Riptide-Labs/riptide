@@ -177,7 +177,7 @@ Riptide compares every rollup against the shape the running version intends, in 
 
 The check exists because `CREATE MATERIALIZED VIEW IF NOT EXISTS` does nothing against a view that already exists. A deployment that has started riptide once keeps its original rollup shape indefinitely, so a rollup gaining a dimension or a measure in a new release reaches a fresh install and not an upgraded one. Previously nothing failed and nothing logged.
 
-Two messages are possible, and they mean different things.
+Four messages are possible, and they mean different things.
 
 **"does not match this version's schema"** — the rollup's columns, their types, its **sorting key**, or its view's SELECT differ from what this version emits. Ingestion is unaffected: raw `flows` still receives every flow, and a rollup is a query-path optimisation, not a collection path. Long-range queries stop using that rollup and are answered from raw `flows` instead. The other rollups keep serving.
 
@@ -221,11 +221,19 @@ DROP TABLE IF EXISTS riptide.flows_by_application_1m;
 
 This discards that rollup's aggregated history. The raw `flows` table is untouched, so queries stay correct throughout, but they read raw rows for the affected range until the rollup accumulates again — and a materialized view does not backfill, so the pre-existing history does not come back. Weigh that against how much of the rollup's retention window you actually query. A future release makes this an in-place repair with no loss.
 
-**"could not be verified"** — riptide could not read the rollup's view definition or its sorting key, so it has no opinion either way. The rollup stays in use, because a rollup that has not been checked is not a rollup known to be wrong.
+**"could not be verified"** — riptide could not read the rollup's view definition or its sorting key, so it has no opinion either way. The rollup stays in use, because a rollup that has not been checked is not a rollup known to be wrong. When the cause is a missing grant on the view, the message says so explicitly; when riptide asked the server and could not interpret the answer, it says only that the view is not visible.
 
-**"cannot be reached"** — the rollup's target table itself is not visible, so it either does not exist or the connecting user has no grant on it. A query routed there would fail outright, so riptide declines it and answers from raw `flows`. The usual cause is a database onboarded without `--create-rollups`.
+**"cannot be reached"** — the rollup's target table itself is not visible, so it either does not exist or the connecting user has no grant on it. A query routed there would fail outright, so riptide declines it and answers from raw `flows`. The usual cause is a database onboarded without `--create-schema`.
 
-The usual cause of the "could not be verified" message is grants. Riptide's collector connects as the writer, and ClickHouse hides objects a role holds no grant on rather than refusing the query, so a view the writer cannot see reads as zero rows. `riptide onboard` grants `SHOW TABLES` on each `X_mv` to `flow_writer`; a database provisioned before that grant existed, or by hand, needs it added:
+**"has no materialized view writing to it"** — the target table is fine, but the view that should feed it does not exist, so nothing is being written and the rollup would answer long-range queries from a table nothing fills. That is worse than a fallback, because an empty answer looks like a real one, so riptide declines the rollup and answers from raw `flows`. In validate mode, re-run `riptide onboard --create-schema` to recreate it — the provisioner refuses without that flag. In manage mode this start either tried and failed, in which case the reason is logged just before this message, or did not try because it could not read the catalog.
+
+Riptide tells this apart from a missing grant by asking the server: a trivial query against the view answers `UNKNOWN_TABLE` when it is absent and `ACCESS_DENIED` when it exists but is not granted. The query is only issued for a view riptide could not see and whose target it *can* read, so a healthy deployment issues none.
+
+:::note[The probe is a denied query by design]
+On a deployment whose writer has not been granted `SHOW TABLES` on a view, that probe is refused, so each affected rollup produces one `ACCESS_DENIED` entry in `system.query_log` per start. That is expected, not a fault: the writer is deliberately not granted `SELECT` on a view, because rows read through a view's name are not filtered by a row policy on its target. Granting `SELECT` to silence it would open a read path around the policy. Add the `SHOW TABLES` grant below instead, which removes the probe entirely.
+:::
+
+The usual cause of the "could not be verified" message is grants — specifically a view that exists but is not granted, which riptide now says explicitly. It also covers the case where riptide asked the server and could not make sense of the answer. Riptide's collector connects as the writer, and ClickHouse hides objects a role holds no grant on rather than refusing the query, so a view the writer cannot see reads as zero rows. `riptide onboard` grants `SHOW TABLES` on each `X_mv` to `flow_writer`; a database provisioned before that grant existed, or by hand, needs it added:
 
 ```sql
 GRANT SHOW TABLES ON riptide.flows_by_application_1m_mv TO flow_writer;
