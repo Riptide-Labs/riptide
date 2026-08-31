@@ -97,26 +97,55 @@ If you alert on `config.reload.failures` to catch a `> config.yaml` truncation, 
 
 ## Classification rule reloads
 
-The classification rules are a separate family with a separate posture, and today it is inert.
+The classification rules are a separate family with a separate posture, and their own opt-in schedule.
 
 The resource named by `riptide.classification.rules` is parsed once, eagerly, while the context starts: an unreadable or unparseable resource fails the boot there, naming the parse error.
-The engine then loads those rules into its decision tree on a background thread, and **nothing triggers a reload afterwards** — no watcher, no interval, no endpoint.
-Until a reload trigger ships, the three metrics below can only move during startup.
+For an `http(s)://` resource that eager parse is a network fetch, so **a rules server that is down is a startup outage** — the collector will not come up until it answers. Weigh that against the convenience of serving one ruleset to a fleet; a local file with a configuration-management tool writing it has no such coupling.
+The engine then loads those rules into its decision tree on a background thread.
+Afterwards, nothing re-reads the resource unless you configure an interval:
+
+```properties
+riptide.classification.reload-interval=5m   # absent or 0 = disabled (the default)
+```
+
+With an interval set, the rules resource is polled on that schedule and a change applies without a restart.
+The resource is any Spring resource location, so this covers `file:/etc/riptide/classification-rules.csv` as readily as an `http://rules.internal/riptide.csv` endpoint serving one ruleset to a fleet.
+Point it at a file or a URL, not at the bundled `classpath:` default: a classpath resource inside the packaged jar cannot change, so the schedule polls it forever and never has anything to apply.
+
+Semantics, which are the config reloader's (same poll loop) with a source that can be a URL:
+
+- **Content-hash polling** — the resource is re-resolved and its bytes hashed every cycle. Unchanged bytes rebuild nothing: the hash decides, not the clock. A cycle that finds no change costs one fetch and no work; a cycle that finds one costs two, because the engine re-reads the resource itself when it rebuilds. Startup costs three (the eager parse, the engine's first load, and the schedule's own baseline).
+- **A remote fetch is bounded end to end** — 10 seconds to connect, 10 seconds for each read, **and** 10 seconds for the whole response. The last of those is the one that matters: a server sending one byte at a time resets a per-read timer forever, so only a deadline across the response ends the cycle. Worst case is roughly twice the bound, because a read already blocked when the deadline passes still has to time out on its own. A response larger than 8 MiB is refused unread rather than buffered.
+- **Only a 200 is a ruleset** — any other status is a failure naming the code, so a redirect this fetch does not follow, a 5xx, or a proxy's error page served as HTML never reaches the CSV parser. The one exception is 404, which is absence and skips.
+- **A source that is not there skips** — a 404, or a deleted file. The last good rules keep classifying, nothing is counted as a failure, and the skip warns once per episode rather than once per poll. So does a response with an empty or whitespace-only body: an empty ruleset is never committed. A *local* file that is present but unreadable (a permission denial) is a failure, not a skip — telling an operator to make a file reappear when it is already there would send them the wrong way.
+- **A failed fetch or a failed load keeps the last good rules serving** — flows keep being classified by whatever loaded last, and nothing is thrown at a flow. See the two cases below.
+- **A ruleset that failed to load is attempted once** — not once per interval. Bytes that would not parse this cycle will not parse next cycle, so a retry loop would rebuild nothing and bury the first, real failure under one per interval. The failure stays counted and holds the stale gauge at 1; fix the ruleset and the next poll picks the fix up as an ordinary change.
+- **No authentication** — no credentials are sent, no conditional `GET`, no ETag or `Last-Modified` handling; the endpoint must answer an unconditional `GET`. Protect it at the network layer. Credentials embedded in the location (`http://user:token@…`) are **not** a supported way to authenticate; they are redacted wherever Riptide logs the location, but they still travel in the clear.
 
 | Metric | Meaning |
 |---|---|
 | `classification.reload.successes` | Loads that published a ruleset. A healthy start leaves this at 1. |
-| `classification.reload.failures` | Loads that threw. Not latched: every attempt that fails counts again. |
-| `classification.reload.stale` | 1 when the last load attempt failed and no later one has succeeded; 0 otherwise. |
+| `classification.reload.failures` | Reloads that did not happen: a fetch that failed, or a load that threw. Not latched: every attempt that fails counts again. |
+| `classification.reload.stale` | 1 when the last fetch or load attempt failed and no later one has succeeded; 0 otherwise. |
+| `classification.reload.dead` | 1 if the poll schedule stopped and will never run again. Present only while an interval is configured. |
 
-Unlike `config.reload.stale` and `inventory.reload.stale`, this gauge is registered unconditionally — including now, when nothing can move it.
-It claims less than they do: they assert a relationship between a file on disk and what is serving, so a permanent 0 would falsely read "in sync", while this one asserts only "the last load attempt failed and has not recovered".
-With no trigger, 0 is simply true.
+**One family, two layers.** Fetching the rules and loading them are done by different parts — the reload schedule fetches, the engine loads — and they report on the same three series rather than on two families that could disagree.
+They cannot double-count: a fetch that fails never reaches the engine, and a ruleset that fails to parse was fetched successfully.
+`classification.reload.stale` covers both halves, so 1 means "the rules that are serving are not the rules the source has", whichever half is at fault; the log line names which.
+
+**A skipped cycle leaves the gauges where they were.** A skip decides nothing about whether the source and what is serving agree, so `classification.reload.stale` is not recomputed and not latched: an endpoint that has answered 404 for an hour reads `stale=0`, and so does a ruleset that has been empty all day. This is the same trap the config reloader carries, and it matters more here because the whole page tells you to alert on `stale`. Alert on the once-per-episode warning as well, or on the absence of successful reloads.
+
+**A dead schedule is visible.** `classification.reload.dead` reads 1 if the poll schedule stopped and will never run again (the realistic cause: an `Error` such as OOM mid-cycle). Alert on `> 0`; the only recovery is a restart.
+
+Unlike `config.reload.stale` and `inventory.reload.stale`, **`classification.reload.stale`** is registered unconditionally, including when no interval is configured.
+It claims less than they do: they assert a relationship between a file on disk and what is serving, so a permanent 0 would falsely read "in sync", while this one asserts only "the last attempt failed and has not recovered".
+With no interval, 0 is simply true.
+**`classification.reload.dead`** follows the other reloaders instead and is **absent** with no interval configured — a dead-schedule gauge reading 0 would claim there is a schedule.
 
 What a failure does depends on whether any rules ever loaded:
 
 - **Rules already serving** — nothing an operator or a flow can see changes. A rebuild publishes atomically, so a failed one leaves the previous rules classifying, complete. The failure is reported by a WARN naming the cause, plus the counter and the gauge. This is the case where the gauge is the only durable signal: no flow fails and no error is logged.
-- **No rules ever loaded** — classification is unavailable. Every flow's classification throws, an ERROR is logged, and no reload exists to recover it. Reaching this needs the resource to become unreadable between the eager startup parse and the background load a moment later; the window is narrow, but the context starts normally and stays up, so the ERROR and `classification.reload.stale` at 1 are the only signals. Restart once the resource is readable.
+- **No rules ever loaded** — classification is unavailable. Every flow's classification throws and an ERROR is logged. Reaching this needs the resource to become unreadable between the eager startup parse and the background load a moment later; the window is narrow, but the context starts normally and stays up, so the ERROR and `classification.reload.stale` at 1 are the only signals. With a reload interval configured this recovers on its own in the ordinary case: the schedule could not read a baseline either, so the first poll that reads anything hands it to the engine. Only if the resource became readable in the window *between* the schedule taking its baseline and the next poll does recovery wait for the rules to actually change, because from then on the hash decides. Restarting once the resource is readable resolves both.
 
 Shutdown counts nothing here either: a reload interrupted or refused during an orderly stop moves no counter and latches no gauge.
 

@@ -166,8 +166,16 @@ put specific rules (address + port) above broad ones (port-only), or the broad r
 shadow them.
 
 The rules resource is parsed once while the context starts — an unreadable or unparseable resource fails the boot there — and then loaded into the engine's decision tree on a background thread.
-Nothing re-reads the resource while the process runs, so an edit takes effect on the next restart.
-The engine still publishes a `classification.reload.*` metric family, and there is one narrow startup case that leaves classification unavailable with the process up: both are described under [classification rule reloads](deploy/operations.md#classification-rule-reloads).
+Nothing re-reads the resource afterwards unless you ask for it:
+
+```properties
+riptide.classification.reload-interval=5m   # absent or 0 = disabled (the default)
+```
+
+With an interval, the resource is polled on that schedule and a changed ruleset — a local file or an `http(s)://` endpoint — classifies without a restart; unchanged bytes rebuild nothing.
+A fetch that fails and a ruleset that will not parse both keep the last good rules classifying.
+An `http(s)://` ruleset carries two costs worth knowing before you choose it: the endpoint is fetched eagerly at startup, so a rules server that is down keeps the collector from coming up, and nothing authenticates the fetch — protect the endpoint at the network layer.
+The schedule, the `classification.reload.*` metric family and the one narrow startup case that leaves classification unavailable with the process up are described under [classification rule reloads](deploy/operations.md#classification-rule-reloads).
 
 ## Locality
 

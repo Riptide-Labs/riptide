@@ -109,7 +109,9 @@ public class AsyncReloadingClassificationEngine implements ClassificationEngine 
         // disk and what is serving, so a constant 0 would falsely read "in sync". This one claims only "the last
         // reload attempt failed and has not recovered", and 0 is simply true when no reload has run.
         // Remove-then-register, not Dropwizard's get-or-create: get-or-create would hand a restarted bean
-        // (devtools, cached test contexts) the OLD instance's lambda, permanently reading dead fields
+        // (devtools, cached test contexts) the OLD instance's lambda, permanently reading dead fields.
+        // With a reload interval configured, ClassificationRuleReloader re-registers this same name over a gauge
+        // that ORs {@link #isStale()} with its own fetch latch, so the one series covers both halves (#655)
         final String staleName = MetricRegistry.name("classification", "reload", "stale");
         metrics.remove(staleName);
         metrics.register(staleName, (Gauge<Integer>) () -> this.stale ? 1 : 0);
@@ -211,6 +213,16 @@ public class AsyncReloadingClassificationEngine implements ClassificationEngine 
         // `failures` move must already see `stale` at 1. Incrementing first published a moment where an operator
         // alerting on the counter could read the gauge as 0 in the very same scrape
         reloadFailures.inc();
+    }
+
+    /**
+     * Whether the last reload attempt failed and none has succeeded since — the value behind
+     * {@code classification.reload.stale}. Read by {@link ClassificationRuleReloader}, which ORs it with its own
+     * fetch latch: a source it could not fetch never reaches a reload here, so neither half sees the other's
+     * failure and one gauge has to carry both.
+     */
+    public boolean isStale() {
+        return this.stale;
     }
 
     @Override
