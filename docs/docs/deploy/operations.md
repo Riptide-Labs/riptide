@@ -53,9 +53,18 @@ Semantics:
 - **Bad config never wins** — candidates run the same validation as startup; a failing
   reload keeps the running configuration, logs a warning naming the problem, and
   raises `config.reload.failures` plus a `config.reload.stale` gauge (alert on it).
-- **A missing or empty file skips the cycle** — deletion is indistinguishable from an
-  atomic replacement in progress, so the running config is kept. Removing the file
-  layer for real requires a restart.
+- **A missing, empty or whitespace-only file skips the cycle** — deletion is
+  indistinguishable from an atomic replacement in progress, and a shell `>` redirect
+  truncates before writing, so the running config is kept and nothing is counted as a
+  failure. Both the config file and the inventory file behave this way. The skip warns
+  once per episode, not once per poll. Removing the file layer for real requires a
+  restart.
+- **A skipped cycle leaves the gauges where they were** — a skip decides nothing about
+  whether disk and serving agree, so `*.reload.stale` is not recomputed and not latched.
+  A file that has been truncated for an hour therefore reads `stale=0`. Alert on the
+  once-per-episode warning above, or on the absence of successful reloads; the stale
+  gauge answers "did the last file we could read commit", not "is the file on disk
+  serving".
 - On a successful reload the SNMP interface cache and the SOPS decrypted-file cache
   refresh; exporter-pushed interface names (option records) are kept — they describe
   devices, not configuration. Reloads trigger on **config-file changes only**: after
@@ -63,8 +72,10 @@ Semantics:
   drops and the next poll picks up the new secret.
 - **The gauges exist only while reloading is enabled** — `config.reload.stale` /
   `inventory.reload.stale` and the dead-schedule gauges below are absent when
-  reloading is disabled. Absence means "not watching"; a 0 always means "watching and
-  in sync". Alert on absence separately if hot-reload is mandatory in your deployment.
+  reloading is disabled. Absence means "not watching"; a 0 means "the last file we could
+  read is what is serving" — not "the file on disk is serving", because a skipped cycle
+  reads no file and changes no gauge. Alert on absence separately if hot-reload is
+  mandatory in your deployment.
 - **A dead schedule is visible** — `config.reload.dead` / `inventory.reload.dead`
   read 1 if the poll schedule stopped and will never run again (the realistic cause:
   an `Error` such as OOM on an oversized file mid-read). Alert on `> 0`; the only
@@ -75,6 +86,14 @@ Semantics:
 Limitations: profile-activated YAML documents and nested `spring.config.import` inside
 the reloaded file are boot-only; `env://` secret references cannot rotate in-process
 (the environment is immutable per process) — those need a restart.
+
+:::note[Alerting contract change]
+
+A whitespace-only `config.yaml` used to increment `config.reload.failures` and latch `config.reload.stale`.
+It is now a skip, matching this page's description and what the inventory file has always done.
+If you alert on `config.reload.failures` to catch a `> config.yaml` truncation, that alert stops firing: the truncation now surfaces as the once-per-episode warning above and as reloads that stop happening, not as a failure.
+
+:::
 
 ## Upgrading
 

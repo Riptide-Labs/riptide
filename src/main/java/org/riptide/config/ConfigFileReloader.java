@@ -6,7 +6,6 @@
 package org.riptide.config;
 
 import com.codahale.metrics.Counter;
-import com.codahale.metrics.Gauge;
 import com.codahale.metrics.MetricRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -40,27 +39,21 @@ import org.springframework.core.io.ByteArrayResource;
 import org.springframework.stereotype.Component;
 
 import java.nio.channels.ClosedByInterruptException;
-import java.nio.file.Files;
-import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
-import java.security.MessageDigest;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Opt-in hot-reload of the external config file ({@code spring.config.import}):
  * node and routing changes apply without a restart.
  *
- * <p><b>Trigger</b>: an mtime-independent content-hash poll — the path is re-resolved
- * every cycle, so docker bind mounts and Kubernetes ConfigMap symlink swaps are seen
- * where a {@code WatchService} would miss them. A missing file skips the cycle (an
- * atomic {@code rm}+{@code mv} replacement is indistinguishable from deletion; never
- * commit on absence).</p>
+ * <p><b>Trigger</b>: {@link FileWatchTrigger}, the loop this class shares with
+ * {@link InventoryFileReloader} — an mtime-independent content-hash poll, the path
+ * re-resolved every cycle, so docker bind mounts and Kubernetes ConfigMap symlink swaps
+ * are seen where a {@code WatchService} would miss them. A missing file skips the cycle
+ * (an atomic {@code rm}+{@code mv} replacement is indistinguishable from deletion; never
+ * commit on absence), and so does an empty or whitespace-only one.</p>
  *
  * <p><b>Layering fidelity by construction</b>: candidates are bound from a copy of the
  * live property-source stack with exactly the file layer swapped — environment-variable
@@ -112,17 +105,13 @@ public class ConfigFileReloader {
     private volatile SnmpProfilesConfig pendingProfiles;
     /** Last pending-retry failure message; retries repeat quietly, a changed cause WARNs. */
     private String lastPendingRetryFailure;
-    private volatile boolean stale = false;
 
     /** Boot's binding conversion, reproduced: defaults plus the context's binding converters. */
     private final ConversionService conversionService;
 
-    private ScheduledExecutorService executor;
-    private ScheduledFuture<?> polling;
+    /** The shared poll loop: schedule, hashes, skips, failure counting, gauges. */
+    private FileWatchTrigger trigger;
     private Path location;
-    private byte[] lastAttemptedHash = new byte[0];
-    private byte[] lastCommittedHash = new byte[0];
-    private boolean warnedMissing = false;
 
     public ConfigFileReloader(final ConfigurableEnvironment environment,
                               final ConfigReloadProperties properties,
@@ -179,30 +168,58 @@ public class ConfigFileReloader {
             log.warn("Config hot-reload requested but spring.config.import is not a single file: location — disabled");
             return;
         }
-        final long millis = this.properties.getReloadInterval().toMillis();
-        this.executor = Executors.newSingleThreadScheduledExecutor(
-                runnable -> new Thread(runnable, "ConfigFileReloader"));
-        // The handle is kept and cancelled explicitly rather than discarded. poll() swallows every
-        // Exception itself, so a bad reload cycle cannot silently cancel the schedule and leave
-        // hot-reload dead for the process lifetime — and the dead gauge below is what finally
-        // makes that visible: an Error (the realistic one: OOM on an oversized file mid-read)
-        // still propagates and cancels the task, deliberately — catching Throwable and marching
-        // on would hide a process in real trouble. Fail-visible, not resilience theater
-        this.polling = this.executor.scheduleWithFixedDelay(this::poll, millis, millis, TimeUnit.MILLISECONDS);
-        registerGauge(MetricRegistry.name("config", "reload", "stale"),
-                () -> this.stale || this.pendingProfiles != null ? 1 : 0);
-        registerGauge(MetricRegistry.name("config", "reload", "dead"),
-                () -> this.polling.isDone() ? 1 : 0);
+        // hashes are NOT seeded from the file as it stands at boot: this reloader's first
+        // poll commits the file it finds, which is how a file created after boot (the
+        // optional: import) reaches the running configuration at all
+        this.trigger = new FileWatchTrigger(log, this.location, this.properties.getReloadInterval(),
+                "ConfigFileReloader", messages(this.location), this.metrics, "config",
+                this.reloadFailures, false, new FileWatchTrigger.Cycle() {
+                    @Override
+                    public void onContent(final byte[] content) throws Exception {
+                        reload(content);
+                    }
+
+                    @Override
+                    public void onIdle() {
+                        retryPendingRebuild();
+                    }
+
+                    @Override
+                    public void onFailure(final Exception e) {
+                        log.warn("Config reload failed — keeping the running configuration: {}", e.getMessage(), e);
+                    }
+                });
+        // the gauge is owner-supplied, not the trigger's flag read directly: a partially
+        // applied edit is stale for as long as its profiles have not reached the inventory
+        this.trigger.start(() -> this.trigger.isStale() || this.pendingProfiles != null ? 1 : 0);
         log.info("Config hot-reload enabled: watching {} every {}", this.location, this.properties.getReloadInterval());
+    }
+
+    /** The skip and shutdown sentences, spelled the way this reloader has always spelled them. */
+    private static FileWatchTrigger.Messages messages(final Path location) {
+        return new FileWatchTrigger.Messages(
+                "Config reload poll skipped: thread interrupted (shutdown)",
+                "Config reload poll interrupted mid-cycle (shutdown): {}",
+                ("Config file %s is missing — skipping reload cycles until it reappears "
+                        + "(deletion and atomic replacement are indistinguishable; keeping the running config)")
+                        .formatted(location),
+                // "empty or whitespace-only", not "empty": the skip covers both since #561,
+                // and an operator told "is empty" about an 8-byte file goes looking for a
+                // second problem that does not exist
+                ("Config file %s is empty or whitespace-only — skipping reload cycle "
+                        + "(truncate-write race or intentional; keeping the running config)").formatted(location),
+                "Retrying the pending inventory rebuild failed unexpectedly; the config reload "
+                        + "schedule keeps running: {}");
     }
 
     /**
      * Shutdown recognition for the rebuild-path catches, where the poll-level belt cannot
      * reach: {@code InventoryLoader.load} wraps an interrupted read's
      * {@link ClosedByInterruptException} into its "not readable" IllegalStateException,
-     * so both the flag and the cause chain must be consulted. Untestable
-     * deterministically for the same reason as the poll-level belt (the interrupt must
-     * land mid-cycle, past the top-of-poll check); verified by inspection.
+     * so both the flag and the cause chain must be consulted. Still untested: the
+     * trigger's own mid-cycle belt is now pinned through the Cycle seam
+     * ({@code FileWatchTriggerTest}), but that seam does not reach here — this one needs
+     * the interrupt to land inside {@code rebuildAndSwap}. Verified by inspection.
      */
     private static boolean interruptedShutdown(final Exception e) {
         if (Thread.currentThread().isInterrupted()) {
@@ -216,23 +233,10 @@ public class ConfigFileReloader {
         return false;
     }
 
-    /**
-     * Remove-then-register, NOT Dropwizard's get-or-create {@code gauge(name, supplier)}:
-     * get-or-create would hand a restarted bean (devtools, cached test contexts) the OLD
-     * bean's gauge lambda, permanently reading dead fields. Plain register threw instead.
-     */
-    private void registerGauge(final String name, final Gauge<Integer> gauge) {
-        this.metrics.remove(name);
-        this.metrics.register(name, gauge);
-    }
-
     @PreDestroy
     void stop() {
-        if (this.polling != null) {
-            this.polling.cancel(true);
-        }
-        if (this.executor != null) {
-            this.executor.shutdownNow();
+        if (this.trigger != null) {
+            this.trigger.stop();
         }
     }
 
@@ -306,75 +310,11 @@ public class ConfigFileReloader {
     }
 
     // visible for the scheduled task and tests; never throws (a throwing scheduled
-    // task would silently cancel the schedule)
+    // task would silently cancel the schedule). The loop itself lives in the trigger,
+    // which calls back into reload() and retryPendingRebuild()
     void poll() {
-        if (Thread.currentThread().isInterrupted()) {
-            // orderly shutdown: polling.cancel(true) interrupts this thread, and a cycle
-            // that begins interrupted must not read, count, or latch anything — counting
-            // it corrupted the failure counter's meaning for alerting (#539)
-            log.debug("Config reload poll skipped: thread interrupted (shutdown)");
-            return;
-        }
-        try {
-            if (!Files.isRegularFile(this.location)) {
-                if (!this.warnedMissing) {
-                    log.warn("Config file {} is missing — skipping reload cycles until it reappears "
-                            + "(deletion and atomic replacement are indistinguishable; keeping the running config)", this.location);
-                    this.warnedMissing = true;
-                }
-                // a pending partial heals from the INVENTORY file, which this branch says
-                // nothing about — suspending the retry here would falsify the commit-time
-                // WARN's "retried every poll" exactly in the degraded states
-                retryPendingRebuild();
-                return;
-            }
-            this.warnedMissing = false;
-
-            final byte[] content;
-            try {
-                content = Files.readAllBytes(this.location);
-            } catch (final NoSuchFileException e) {
-                // vanished between the check and the read: an atomic rm+mv replacement
-                // or a symlink swap, the healthy deploy this class expects
-                retryPendingRebuild();
-                return;
-            }
-            if (content.length == 0) {
-                // a shell '>' redirect truncates before writing — indistinguishable
-                // from an intentionally emptied file; never commit on empty
-                log.warn("Config file {} is empty — skipping reload cycle (truncate-write race or intentional; keeping the running config)", this.location);
-                retryPendingRebuild();
-                return;
-            }
-            final byte[] hash = MessageDigest.getInstance("SHA-256").digest(content);
-            if (MessageDigest.isEqual(hash, this.lastAttemptedHash)) {
-                // unchanged, or the same bad content we already warned about; staleness
-                // reflects whether the file matches what is running (a transient read
-                // failure must not latch the gauge)
-                this.stale = !MessageDigest.isEqual(hash, this.lastCommittedHash);
-                retryPendingRebuild();
-                return;
-            }
-            this.lastAttemptedHash = hash;
-
-            reload(content);
-        } catch (final Exception e) {
-            if (e instanceof ClosedByInterruptException || Thread.currentThread().isInterrupted()) {
-                // the belt for an interrupt DELIVERED mid-read (the check above catches
-                // one already pending): same shutdown, same silence. Untestable
-                // deterministically — a pre-set flag does not fault the read on this
-                // JDK — kept for the delivered-interrupt race and verified by inspection
-                Thread.currentThread().interrupt();
-                log.debug("Config reload poll interrupted mid-cycle (shutdown): {}", e.getMessage());
-                return;
-            }
-            this.reloadFailures.inc();
-            this.stale = true;
-            log.warn("Config reload failed — keeping the running configuration: {}", e.getMessage(), e);
-            // a rejected CANDIDATE neither supersedes nor retries the pending edit (the
-            // supersede sits after validation), so without this a continuously churning
-            // broken config file would starve the retry while both WARNs promise it
-            retryPendingRebuild();
+        if (this.trigger != null) {
+            this.trigger.poll();
         }
     }
 
@@ -453,7 +393,7 @@ public class ConfigFileReloader {
 
         // commit: live environment stays truthful, snapshots swap atomically, caches refresh
         substitute(this.environment.getPropertySources(), ordered);
-        this.lastCommittedHash = this.lastAttemptedHash;
+        this.trigger.markCommitted();
         this.routingConfig.swap(parsedRouting);
         // swap, then refresh (AD-6): profiles and the inventory built from them move
         // together, and the poller re-resolves what it is already walking, which is what
@@ -541,7 +481,7 @@ public class ConfigFileReloader {
         // clean gauge and a reloaded log line (#534). Partial keeps it latched, counted on
         // its own meter; the remediation is the one the WARN above names
         if (inventoryPublished) {
-            this.stale = false;
+            this.trigger.setStale(false);
         } else {
             // counted once per edit, not once per retry; the pending profiles keep the
             // stale gauge at 1 until a retry or a newer edit publishes. Note partial is a
