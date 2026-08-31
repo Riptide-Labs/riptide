@@ -31,7 +31,9 @@ public class ClassificationRuleProviderTest {
         final var config = new ClassificationConfig();
         config.setRules(new FileSystemResource(rulesFile));
 
-        final var provider = new RiptideConfiguration().classificationRuleProvider(new CsvImporter(), config);
+        final var configuration = new RiptideConfiguration();
+        final var provider = configuration.classificationRuleProvider(
+                new CsvImporter(), configuration.classificationRulesSource(config));
         Assertions.assertThat(provider.getRules()).hasSize(1);
 
         Files.writeString(rulesFile, HEADER + "ntp;udp;;;;123;;true\nssh;tcp;;;;22;;true\n");
@@ -43,7 +45,9 @@ public class ClassificationRuleProviderTest {
         final var config = new ClassificationConfig();
         config.setRules(new FileSystemResource(tempDir.resolve("missing.csv")));
 
-        Assertions.assertThatThrownBy(() -> new RiptideConfiguration().classificationRuleProvider(new CsvImporter(), config))
+        final var configuration = new RiptideConfiguration();
+        Assertions.assertThatThrownBy(() -> configuration.classificationRuleProvider(
+                        new CsvImporter(), configuration.classificationRulesSource(config)))
                 .isInstanceOf(UncheckedIOException.class);
     }
 }
