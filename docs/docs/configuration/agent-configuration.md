@@ -89,6 +89,10 @@ riptide:
 A device inside a credentialed range is polled from its first flow, without being named anywhere.
 Longest prefix wins, so a host entry overrides the segment it sits in, and `enabled: false` carves an address or a sub-range out of a wider range.
 Keys are strict: unknown keys, malformed addresses (`10.0.1.5/24` with host bits, leading zeros, wildcards, `inet_aton` shorthand, netmask spellings) and unresolvable credential or profile references all fail the load naming the entry.
+A failed load reports every bad entry it reached, not just the first, so a file with six mistakes fails once instead of six times.
+Each entry contributes its first problem; an exporter's interface pins count one problem each, capped at five per entry.
+Past twenty bad entries the rest are counted rather than named.
+Two entries that collide on the same coverage are reported once the other problems are fixed, because that check runs only on a file that is otherwise clean.
 IPv6 zone ids (`fe80::1%eth0`) are rejected too: matching ignores zones, so a zoned entry would silently match flows from any interface, and the error names the zone-free form to write instead.
 
 :::danger[Cleartext communities do not travel on wide ranges]

@@ -522,6 +522,62 @@ public class ConfigFileReloaderTest {
     }
 
     /**
+     * #630 here: the loader's failure is now a multi-line report, and this is the only
+     * site that interpolates a rebuild failure into the MIDDLE of a sentence.
+     *
+     * <p>Every other fixture in this class carries exactly one bad inventory entry, so a
+     * substring assertion passes identically whether the interpolated block is one line
+     * or twenty-two. With a real report inside the parenthesis, "they are retried every
+     * poll" landed below the last bullet — orphaned from the sentence it completes, at
+     * the one message that explains a credential rotation is not serving yet.</p>
+     */
+    @Test
+    public void aMultiProblemRebuildKeepsItsRemediationAheadOfTheReport() throws Exception {
+        Files.writeString(INVENTORY, """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.88.0.1":
+                        credentials: not-defined-anywhere
+                      "10.88.0.2":
+                        polling: no-such-profile
+                  exporters:
+                    neutral:
+                      address: 198.51.100.1
+                """);
+        final var appender = captureReloaderLog();
+        try {
+            write("""
+                    riptide:
+                      snmp:
+                        credentials:
+                          rotthrow:
+                            version: v3
+                            security-name: monitoring
+                    """);
+            reloader.poll();
+
+            assertThat(appender.list).anySatisfy(event -> {
+                final String message = event.getFormattedMessage();
+                assertThat(message)
+                        .contains("carries problems in 2 entries")
+                        .contains("not-defined-anywhere")
+                        .contains("no-such-profile");
+                assertThat(message.indexOf("retried every poll"))
+                        .as("the remediation finishes its sentence before the report starts")
+                        .isLessThan(message.indexOf("\n  - "));
+            });
+        } finally {
+            releaseReloaderLog(appender);
+        }
+
+        // the promise still holds with several problems: fixing the file alone heals it
+        healInventory();
+        reloader.poll();
+        assertThat(inventory.profiles().credentials()).containsKey("rotthrow");
+    }
+
+    /**
      * #539, config half: a poll that begins interrupted is shutdown, not a reload
      * failure — it must not read, count, or commit anything. (The mid-read
      * ClosedByInterruptException belt in the catch is deliberately untested: a PRE-SET

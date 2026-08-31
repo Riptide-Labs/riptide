@@ -267,7 +267,10 @@ public class ConfigFileReloader {
             }
             // quiet on repetition (the commit-time WARN named the cause, the gauge holds
             // it visible), but a CHANGED cause is new information the operator otherwise
-            // never sees: the file was edited and now fails differently
+            // never sees: the file was edited and now fails differently.
+            // The compared message may be the loader's whole multi-line report (#630),
+            // which is deterministic — document-order entries, '\n' separators, a sorted
+            // known-key list — so an unchanged file keeps comparing equal and stays quiet
             if (!Objects.equals(e.getMessage(), this.lastPendingRetryFailure)) {
                 this.lastPendingRetryFailure = e.getMessage();
                 log.warn("Pending inventory rebuild still failing, now with: {}", e.getMessage());
@@ -454,9 +457,14 @@ public class ConfigFileReloader {
             // said "edit the config again, or restart" here — a needless restart for a
             // state the next poll heals once the inventory file is fixed
             this.lastPendingRetryFailure = e.getMessage();
-            log.warn("Config reloaded, but the inventory could not be rebuilt from {} ({}). The credential "
+            // the cause goes LAST, not into a parenthesis mid-sentence: since #630 it can
+            // be the loader's whole multi-line report, and interpolated inline it pushed
+            // the remediation clause below the last bullet, orphaned from the sentence it
+            // completes — at the one site that explains a credential rotation is not live
+            log.warn("Config reloaded, but the inventory could not be rebuilt from {}. The credential "
                     + "and profile changes in this edit are NOT serving until the inventory file is fixed; "
-                    + "they are retried every poll", this.inventoryConfig.getFile(), e.getMessage());
+                    + "they are retried every poll. The inventory file says: {}",
+                    this.inventoryConfig.getFile(), e.getMessage());
         }
         if (inventoryPublished) {
             // outside the rebuild try: the snapshot IS serving by now, so a refresh failure

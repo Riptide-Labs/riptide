@@ -198,6 +198,40 @@ class InventoryWiringTest {
                 });
     }
 
+    /**
+     * The boot path an operator actually meets (#630): the collected report reaches them
+     * through Spring's startup failure, whole.
+     *
+     * <p>Every other inventory failure is one line, so nothing covered what a multi-line
+     * message does on the way out of a {@code @PostConstruct} — the place a startup
+     * failure gets wrapped, and where a renderer would truncate or reflow it. Asserted as
+     * the whole root-cause message rather than a substring, because a substring passes
+     * identically on a report that lost every line but one.</p>
+     */
+    @Test
+    void aMultiProblemInventoryFailsStartupCarryingTheWholeReport() throws Exception {
+        final Path file = this.tempDir.resolve("inventory.yaml");
+        Files.writeString(file, """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.0.0.0/24":
+                        credentials: nope
+                      "10.0.1.0/24":
+                        port: 70000
+                """);
+
+        this.runner
+                .withPropertyValues("riptide.inventory.file=" + file)
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure()).rootCause().hasMessage("""
+                            Inventory file %s carries problems in 2 entries:
+                              - Agent range '10.0.0.0/24' references credential set 'nope' which is not defined.
+                              - Agent range '10.0.1.0/24' has a port 70000 outside 1..65535.""".formatted(file));
+                });
+    }
+
     @Test
     void malformedCredentialShapesFailBindNamingTheSetAndField() {
         this.runner

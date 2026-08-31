@@ -17,11 +17,13 @@ import org.slf4j.LoggerFactory;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 class InventoryLoaderTest {
 
@@ -1131,6 +1133,343 @@ class InventoryLoaderTest {
                 """, "test.yaml");
 
         assertThat(snapshot.agentView().match(netflow("10.99.0.1", 0))).isEmpty();
+    }
+
+    /**
+     * The #630 collection: an operator hand-writing this file meets every mistake in one
+     * boot, and each problem keeps the exact text it produced when it was the only one
+     * reported. Six problems, spread across both trees so neither section can be the one
+     * that happens to be walked.
+     */
+    @Test
+    void everyProblemInOneFileIsReportedInOneFailure() {
+        final var thrown = catchThrowable(() -> InventoryLoader.parse(profiles(), """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.0.0.0/24":
+                        credentials: nope
+                      "10.0.1.0/24":
+                        credentials: corp-v3
+                        port: 70000
+                      "not-an-ip": {}
+                  exporters:
+                    nameless:
+                      observation-domain: 1
+                    quoted:
+                      address: 10.0.2.1
+                      observation-domain: "42"
+                    typo:
+                      address: 10.0.3.1
+                      adress: 10.0.3.1
+                """, "test.yaml"));
+
+        final List<String> expected = List.of(
+                "Agent range '10.0.0.0/24' references credential set 'nope' which is not defined.",
+                "Agent range '10.0.1.0/24' has a port 70000 outside 1..65535.",
+                "The agent range 'not-an-ip' is not a host address or CIDR prefix.",
+                "Exporter 'nameless' has no address — every enrichment entry needs one.",
+                "Exporter 'quoted' observation-domain '42' is not a whole number.",
+                "The exporter 'typo' has an unknown key 'adress'");
+
+        assertThat(thrown).isInstanceOf(IllegalStateException.class);
+        assertThat(thrown.getMessage())
+                .as("every problem verbatim, plus the file")
+                .contains("test.yaml")
+                .contains(expected);
+        // the count and the line tally both against a number this test computes, so a
+        // seventh fixture problem cannot pass by matching a stale literal. One problem per
+        // entry here, so the entry count and the line count are the same number
+        assertThat(problemLines(thrown.getMessage())).hasSameSizeAs(expected);
+        assertThat(thrown.getMessage()).contains("carries problems in %d entries".formatted(expected.size()));
+    }
+
+    /**
+     * The bound counts entries, and the remainder is counted rather than dropped. Both
+     * halves are asserted numerically: a conditional assertion inside a loop passes
+     * identically whether every element satisfied it or none reached it, and a bounded
+     * list is exactly where an off-by-one hides (the #562 lesson).
+     */
+    @Test
+    void theReportNamesBoundedEntriesAndCountsTheRest() {
+        final int bad = 27;
+        final StringBuilder yaml = new StringBuilder("riptide:\n  snmp:\n    agents:\n");
+        for (int i = 0; i < bad; i++) {
+            yaml.append("      \"10.60.%d.0/24\":\n        credentials: nope\n".formatted(i));
+        }
+
+        final var thrown = catchThrowable(() -> InventoryLoader.parse(profiles(), yaml.toString(), "test.yaml"));
+
+        assertThat(thrown).isInstanceOf(IllegalStateException.class);
+        final String message = thrown.getMessage();
+        assertThat(message).contains("carries problems in %d entries".formatted(bad));
+        final List<String> named = problemLines(message);
+        assertThat(named).as("the bound itself").hasSize(20);
+        final var overflow = java.util.regex.Pattern
+                .compile("problems in (\\d+) entries are listed no further").matcher(message);
+        assertThat(overflow.find()).as("the remainder is counted, not silently dropped").isTrue();
+        assertThat(named.size() + Integer.parseInt(overflow.group(1)))
+                .as("named + counted must account for every bad entry")
+                .isEqualTo(bad);
+    }
+
+    /**
+     * One entry, one problem. The value checks are a dependency graph — the cleartext
+     * width rule reads what the credential resolve produced — so a check skipped because
+     * its input failed must not appear in a report that would then be claiming it ran.
+     */
+    @Test
+    void anEntryWithSeveralFaultsYieldsOnlyTheFirst() {
+        final var thrown = catchThrowable(() -> InventoryLoader.parse(profiles(), """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.4.0.0/24":
+                        enabled: nope
+                        port: 70000
+                        credentials: alsonope
+                """, "test.yaml"));
+
+        assertThat(thrown).isInstanceOf(IllegalStateException.class);
+        assertThat(problemLines(thrown.getMessage())).hasSize(1);
+        assertThat(thrown.getMessage())
+                .contains("carries problems in 1 entry:")
+                .contains("non-boolean enabled value 'nope'")
+                .doesNotContain("outside 1..")
+                .doesNotContain("credential set 'alsonope'");
+    }
+
+    /**
+     * The staging cost, stated rather than discovered: pass 2 runs only on a clean pass
+     * 1, so a duplicate is never reported alongside a value problem. That is also what
+     * keeps the builder from ever being fed a failed entry — the contract
+     * {@code PinnedPrefixMatcherTest.duplicateFailurePoisonsTheBuilder} exists to defend.
+     */
+    @Test
+    void aDuplicateSurfacesOnlyOnceTheValueProblemsAreGone() {
+        // the colliding pair is VALID, so hoisting the build ahead of the report would
+        // reach it and drop the dangling reference on the floor
+        final String withBoth = """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.0.0.7":
+                        credentials: corp-v3
+                      "10.0.0.7/32":
+                        credentials: corp-v3
+                      "10.5.0.0/24":
+                        credentials: nope
+                """;
+
+        assertThatThrownBy(() -> InventoryLoader.parse(profiles(), withBoth, "test.yaml"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("credential set 'nope'")
+                .hasMessageNotContaining("Ambiguous matcher entries");
+
+        // fix the value problem and the duplicate surfaces, worded exactly as it always was
+        assertThatThrownBy(() -> InventoryLoader.parse(profiles(),
+                withBoth.replace("credentials: nope", "credentials: corp-v3"), "test.yaml"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Ambiguous matcher entries")
+                .hasMessageContaining("10.0.0.7")
+                .hasMessageContaining("10.0.0.7/32");
+    }
+
+    /** A stray key at two tree levels is reported once each, not one of them twice over. */
+    @Test
+    void aStrayKeyAtTwoLevelsIsReportedOnceEach() {
+        final var thrown = catchThrowable(() -> InventoryLoader.parse(profiles(), """
+                riptide:
+                  snmp:
+                    agnets:
+                      "10.0.0.0/24": {}
+                  exporterz:
+                    x:
+                      address: 10.0.0.1
+                """, "test.yaml"));
+
+        assertThat(thrown).isInstanceOf(IllegalStateException.class);
+        assertThat(problemLines(thrown.getMessage())).hasSize(2);
+        assertThat(thrown.getMessage())
+                .contains("Unknown key 'agnets' under 'riptide.snmp'")
+                .contains("Unknown key 'exporterz' under 'riptide'")
+                .as("two levels, two entries")
+                .contains("carries problems in 2 entries");
+    }
+
+    /**
+     * An exporter's interfaces map is its own iteration, so each bad pin recovers on its
+     * own: a generated exporter with thirty blank aliases used to cost thirty boots. The
+     * exporter's own checks stay one problem — a pin problem here proves the entry got
+     * past them.
+     */
+    @Test
+    void everyBadInterfacePinIsItsOwnProblem() {
+        final var thrown = catchThrowable(() -> parseExporter("""
+                      interfaces:
+                        4093: { alias: "  " }
+                        4094: { alias: "  " }
+                        4095: { nmae: eth0 }
+                """));
+
+        assertThat(thrown).isInstanceOf(IllegalStateException.class);
+        assertThat(problemLines(thrown.getMessage())).hasSize(3);
+        assertThat(thrown.getMessage())
+                .contains("interface 4093")
+                .contains("interface 4094")
+                .contains("interface 4095")
+                // three lines, but ONE entry: the bound counts exporters, not their pins
+                .contains("carries problems in 1 entry:");
+    }
+
+    /**
+     * The two-spellings rule holds even when the first spelling's value was rejected.
+     *
+     * <p>The collision is decided from the key, before the value is parsed. Deciding it
+     * from what landed in the map let a blank alias on {@code 4095} hide the {@code
+     * "4095"} below it — and left {@code interfacePins}' javadoc promising an error that
+     * was not raised.</p>
+     */
+    @Test
+    void aDuplicateIfIndexIsReportedEvenWhenTheFirstSpellingsValueFailed() {
+        final var thrown = catchThrowable(() -> parseExporter("""
+                      interfaces:
+                        4095: { alias: "  " }
+                        "4095": { name: quoted }
+                """));
+
+        assertThat(thrown).isInstanceOf(IllegalStateException.class);
+        assertThat(problemLines(thrown.getMessage())).hasSize(2);
+        assertThat(thrown.getMessage())
+                .contains("blank alias")
+                .contains("interface 4095 twice");
+    }
+
+    /**
+     * The bound counts entries, so one pathological entry cannot crowd out the others.
+     *
+     * <p>Twenty-five blank aliases on a single exporter is one bad entry with
+     * twenty-five problems. Bounding problems instead let it fill every named slot while
+     * a second exporter — with no address at all, a different mistake needing a
+     * different fix — was swallowed into the remainder count. That is the exact failure
+     * this collection exists to kill, so it gets its own test.</p>
+     */
+    @Test
+    void onePathologicalEntryDoesNotCrowdOutTheOthers() {
+        final int pins = 25;
+        final StringBuilder yaml = new StringBuilder("""
+                riptide:
+                  exporters:
+                    generated:
+                      address: 10.0.0.1
+                      interfaces:
+                """);
+        for (int i = 1; i <= pins; i++) {
+            yaml.append("        %d: { alias: \"  \" }\n".formatted(i));
+        }
+        yaml.append("    nameless:\n      observation-domain: 1\n");
+
+        final var thrown = catchThrowable(() -> InventoryLoader.parse(profiles(), yaml.toString(), "test.yaml"));
+
+        assertThat(thrown).isInstanceOf(IllegalStateException.class);
+        assertThat(thrown.getMessage())
+                .as("the second broken entry is named, not swallowed")
+                .contains("Exporter 'nameless' has no address")
+                .contains("carries problems in 2 entries")
+                // and the pathological entry is capped in place, its remainder counted
+                .contains("and %d more in this entry, listed no further".formatted(pins - 5));
+    }
+
+    /**
+     * A structural failure ends the pass; it must not take the report down with it.
+     *
+     * <p>{@code agents: notamap} has no entries to walk, so pass 1 cannot continue. The
+     * stray key above it was already collected, and dropping it would leave an operator
+     * strictly blinder than before problems were collected at all — that key used to be
+     * the thing they were told about.</p>
+     */
+    @Test
+    void problemsCollectedBeforeAStructuralFailureAreStillReported() {
+        final var thrown = catchThrowable(() -> InventoryLoader.parse(profiles(), """
+                riptide:
+                  exporterz: {}
+                  snmp:
+                    agents: notamap
+                """, "test.yaml"));
+
+        assertThat(thrown).isInstanceOf(IllegalStateException.class);
+        assertThat(thrown.getMessage())
+                .contains("Unknown key 'exporterz' under 'riptide'")
+                .contains("'agents' must be a mapping, found String")
+                .contains("carries problems in 2 entries");
+    }
+
+    /**
+     * The report as an operator reads it, asserted whole rather than grepped.
+     *
+     * <p>Substring assertions pass identically on a report whose header is wrong, whose
+     * lines are in a different order, or which lost its indentation. This pins the header
+     * sentence, the entry count, tree order (agents before exporters), the per-entry line
+     * cap and its remainder line, the two indents, and that the separator is {@code \\n}
+     * on every platform.</p>
+     */
+    @Test
+    void theWholeRenderedReportIsWhatAnOperatorReads() {
+        final StringBuilder yaml = new StringBuilder("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.0.0.0/24":
+                        credentials: nope
+                  exporters:
+                    core-router:
+                      address: 10.0.0.1
+                      interfaces:
+                """);
+        for (int ifIndex = 1; ifIndex <= 7; ifIndex++) {
+            yaml.append("        %d: { alias: \"  \" }\n".formatted(ifIndex));
+        }
+
+        final var thrown = catchThrowable(() -> InventoryLoader.parse(profiles(), yaml.toString(), "test.yaml"));
+
+        assertThat(thrown).isInstanceOf(IllegalStateException.class);
+        assertThat(thrown.getMessage()).isEqualTo("""
+                Inventory file test.yaml carries problems in 2 entries:
+                  - Agent range '10.0.0.0/24' references credential set 'nope' which is not defined.
+                  - Exporter 'core-router' interface 1 has a blank alias: remove the key to fall back to SNMP.
+                  - Exporter 'core-router' interface 2 has a blank alias: remove the key to fall back to SNMP.
+                  - Exporter 'core-router' interface 3 has a blank alias: remove the key to fall back to SNMP.
+                  - Exporter 'core-router' interface 4 has a blank alias: remove the key to fall back to SNMP.
+                  - Exporter 'core-router' interface 5 has a blank alias: remove the key to fall back to SNMP.
+                    and 2 more in this entry, listed no further""");
+    }
+
+    /**
+     * The report is what a startup failure carries, so it must not lose the throwables its
+     * lines came from: the reloader hands the exception to SLF4J, and a stack of nothing
+     * but loader frames drops what an ifIndex key's {@code NumberFormatException} said.
+     */
+    @Test
+    void theReportCarriesTheThrowablesItsLinesCameFrom() {
+        final var thrown = catchThrowable(() -> InventoryLoader.parse(profiles(), """
+                riptide:
+                  exporters:
+                    core-router:
+                      address: 10.0.0.1
+                      interfaces:
+                        4294967296: { name: eth0 }
+                """, "test.yaml"));
+
+        assertThat(thrown).isInstanceOf(IllegalStateException.class);
+        assertThat(thrown.getSuppressed())
+                .as("the rejected pin's own throwable")
+                .hasSize(1);
+        assertThat(thrown.getSuppressed()[0]).hasMessageContaining("outside the ifIndex range");
+    }
+
+    /** The report's own problem lines, so a test counts entries instead of grepping prose. */
+    private static List<String> problemLines(final String report) {
+        return report.lines().filter(line -> line.startsWith("  - ")).toList();
     }
 
     private static long warnings(final ListAppender<ILoggingEvent> appender, final String range) {
