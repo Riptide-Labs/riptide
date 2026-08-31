@@ -143,7 +143,7 @@ Then **restart the collector**. The decision about which rollups are usable is m
 startup — a schema does not change under a running collector — so a collector that declined
 them keeps answering from raw `flows` until it is restarted, however complete the repair was.
 
-Manage-mode deployments repair an added dimension themselves on the next start and need nothing for it. A rollup missing a measure is not repaired in either mode; see *What riptide will not do in place* below.
+Manage-mode deployments repair an added dimension themselves on the next start and need nothing for it. A missing measure depends on how the engine combines it: one that is summed is not repaired in either mode, because reading `0` for every pre-upgrade row would make a total spanning the upgrade quietly too small — see *What riptide will not do in place* below. A measure combined some other way, such as the sampling-provenance bitmask, is added in place in manage mode, because `0` there means "no information recorded" rather than a wrong total.
 :::
 
 :::warning[Rolling back to an earlier version is not supported]
@@ -165,11 +165,14 @@ When a release adds a dimension to a rollup, riptide appends it to the existing 
 
 Repair runs in manage mode at startup, and in `riptide onboard` for provisioned deployments. It is idempotent, so it runs on every start and does nothing after the first. Riptide logs a line naming the rollup and the key change when it actually repairs something, and stays silent otherwise.
 
+**A measure is added in place when the engine does not sum it.** The sampling-provenance bitmask is `SimpleAggregateFunction(groupBitOr, …)`, so a historical row reading `0` means "no provenance recorded" rather than a total that is too small. Riptide adds it to the existing table in manage mode and in `onboard`, with no loss and no rebuild. The distinction is the aggregation, not the fact that it is a measure — a *summed* measure is the case below. A validate-mode collector plans no repairs, so there it is reported and the rollup declined until a manage-mode start or `onboard` adds it.
+
 **What riptide will not do in place:**
 
 - **Shrink a sorting key.** A dimension removed from a release is not removed from your table. The grain would change and existing rows would not be re-aggregated, so riptide reports it and leaves the rollup alone.
 - **Repair a corrected aggregate.** If a release changes how a measure is computed, the rollup is [declined at query time](#rollup-shape-checks-at-startup) rather than repaired. Repairing would readmit rows computed the old way with nothing to distinguish them, which is worse than answering from raw `flows`.
-- **Add a measure.** A measure reading `0` for historical rows makes a `SUM` spanning the upgrade quietly too small, with nothing in the data marking where. Dimensions have a boundary; measures do not. In manage mode and in `onboard`, riptide refuses the rollup and logs `Rollup X left as it is: measure [...] is missing`, naming the remedy. A validate-mode collector never plans repairs, so there it only reports the shape drift and declines the rollup. The remedy discards that rollup's aggregated history: drop the rollup's view and target table, then restart a manage-mode collector, or re-run `riptide onboard` for a provisioned deployment and restart the collector after it.
+- **Add a summed measure.** A summed measure reading `0` for historical rows makes a `SUM` spanning the upgrade quietly too small, with nothing in the data marking where. Dimensions have a boundary; summed measures do not. In manage mode and in `onboard`, riptide refuses the rollup and logs `Rollup X left as it is: measure [...] is missing`, naming the remedy. A validate-mode collector never plans repairs, so there it only reports the shape drift and declines the rollup. The remedy discards that rollup's aggregated history: drop the rollup's view and target table, then restart a manage-mode collector, or re-run `riptide onboard` for a provisioned deployment and restart the collector after it.
+
 
 ### Rollup shape checks at startup
 
@@ -179,7 +182,20 @@ The check exists because `CREATE MATERIALIZED VIEW IF NOT EXISTS` does nothing a
 
 Four messages are possible, and they mean different things.
 
-**"does not match this version's schema"** — the rollup's columns, their types, its **sorting key**, or its view's SELECT differ from what this version emits. Ingestion is unaffected: raw `flows` still receives every flow, and a rollup is a query-path optimisation, not a collection path. Long-range queries stop using that rollup and are answered from raw `flows` instead. The other rollups keep serving.
+**"does not match this version's schema"** — the rollup's columns, their types, its **sorting key**, or its view's SELECT differ from what this version emits.
+
+The line ends by saying what **this start** did about that rollup, in one of these:
+
+- *"Work on it was attempted on this start and did not succeed; the failure is logged above."* — a statement ran for it and threw. The failure is a separate line, earlier in the same start.
+- *"A repair was planned for it on this start and ran, and it still differs."* — the repair succeeded and something else about the rollup is still not what this version emits.
+- *"No repair was planned for it on this start."* — the planner saw it and planned nothing for it.
+- *"No repair was planned for any rollup on this start."* — the catalog could not be read, so the planner saw nothing at all.
+- *"No repair is attempted on any start, because this deployment does not manage the schema."* — validate mode.
+- Nothing further — the repair was refused, and the `left as it is` line above already gave the reason.
+
+None of them says what a **later** start will do. One start's outcome does not establish that, and the next start can differ: a catalog read that failed transiently succeeds the second time and repairs the rollup unattended.
+
+Ingestion is unaffected: raw `flows` still receives every flow, and a rollup is a query-path optimisation, not a collection path. Long-range queries stop using that rollup and are answered from raw `flows` instead. The other rollups keep serving.
 
 ::::warning[The fallback is bounded by raw retention]
 Raw `flows` is kept for 30 days by default; the rollups are kept for 365. Part of why the rollups exist is that long-range queries outlive the raw table's expiry. So a query that falls back and reaches further back than the raw retention comes back **incomplete**, not merely slower — it returns the rows that still exist and, until riptide learned to say so, said nothing about the rest.
@@ -212,14 +228,14 @@ One drift has a cheaper remedy than the rest. If the message names the **sorting
 ALTER TABLE riptide.flows_by_application_1m DROP COLUMN samplingInterval;
 ```
 
-Otherwise repair is manual for now. Drop the rollup's view and its target table and let riptide recreate both on the next start in manage mode:
+Otherwise repair is manual. Drop the rollup's view and its target table and let riptide recreate both on the next start in manage mode:
 
 ```sql
 DROP VIEW IF EXISTS riptide.flows_by_application_1m_mv;
 DROP TABLE IF EXISTS riptide.flows_by_application_1m;
 ```
 
-This discards that rollup's aggregated history. The raw `flows` table is untouched, so queries stay correct throughout, but they read raw rows for the affected range until the rollup accumulates again — and a materialized view does not backfill, so the pre-existing history does not come back. Weigh that against how much of the rollup's retention window you actually query. A future release makes this an in-place repair with no loss.
+This discards that rollup's aggregated history. The raw `flows` table is untouched, so queries stay correct throughout, but they read raw rows for the affected range until the rollup accumulates again — and a materialized view does not backfill, so the pre-existing history does not come back. Weigh that against how much of the rollup's retention window you actually query.
 
 **"could not be verified"** — riptide could not read the rollup's view definition or its sorting key, so it has no opinion either way. The rollup stays in use, because a rollup that has not been checked is not a rollup known to be wrong. When the cause is a missing grant on the view, the message says so explicitly; when riptide asked the server and could not interpret the answer, it says only that the view is not visible.
 

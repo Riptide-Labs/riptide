@@ -316,7 +316,20 @@ public class RollupShapeDriftIT {
                     .as("no line may promise a repair in the phrasings PROMISES_A_REPAIR pins: this"
                             + " line cannot know whether one is coming, and for this fixture's drift"
                             + " none ever is")
-                    .noneMatch(m -> RollupRepairIT.PROMISES_A_REPAIR.matcher(m).find());
+                    .noneMatch(m -> RepairPromises.PROMISES_A_REPAIR.matcher(m).find());
+            // #657, and asserted on the SAME line rather than anywhere in the log: the outlook is
+            // appended to the drift warning, so a test matching it on any line would still pass if
+            // the argument were dropped and some other line happened to carry the words. Without
+            // this, deleting repairOutlook(...) from the log call leaves the whole suite green —
+            // RepairOutlookTest never goes through start(), and the assertions above all match text
+            // that appears before the appended sentence.
+            assertThat(logged)
+                    .as("this fixture is a validate-mode start, so the drift line must say no start"
+                            + " repairs anything here — the multi-tenant default, and the mode a"
+                            + " reverted attempt got wrong by naming manage mode alone")
+                    .anyMatch(m -> m.contains(rollup)
+                            && m.contains("does not match")
+                            && m.contains("No repair is attempted on any start"));
             assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, rollup))).isFalse();
             assertThat(QueryRouter.resolveTopTalkersTable(DATABASE, 120, "application"))
                     .isEqualTo(FlowsSchema.qualifiedFlows(DATABASE));
@@ -432,7 +445,7 @@ public class RollupShapeDriftIT {
                     .as("the #654 defect was prose promising a repair nobody would perform, and this"
                             + " line names a remedy, so it is exactly the shape that regression"
                             + " targets")
-                    .noneMatch(m -> RollupRepairIT.PROMISES_A_REPAIR.matcher(m).find());
+                    .noneMatch(m -> RepairPromises.PROMISES_A_REPAIR.matcher(m).find());
             assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, rollup)))
                     .as("a rollup nothing writes to must leave the query path; answering from it"
                             + " returns a silence that reads like an answer")

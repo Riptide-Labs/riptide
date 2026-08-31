@@ -27,7 +27,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -187,10 +186,7 @@ public class RollupRepairIT {
     @Test
     void aRollupThatVerifiesCleanIsNotDeclinedByAFailedNoOp() throws Exception {
         repository().start();                                   // everything correct, as admin
-        admin.execute("DROP USER IF EXISTS noalter").get();
-        admin.execute("CREATE USER noalter IDENTIFIED WITH plaintext_password BY 'noalter'").get();
-        admin.execute("GRANT SELECT, INSERT, CREATE DATABASE, CREATE TABLE, DROP TABLE, CREATE VIEW,"
-                + " DROP VIEW, ALTER, SHOW ON " + DATABASE + ".* TO noalter").get();
+        createFullyGrantedUser();
         // The CREATE for this one view will be denied — and it is a statement that would have
         // no-oped, because the view is already there and already right.
         admin.execute("REVOKE CREATE TABLE, CREATE VIEW ON " + DATABASE + "." + ROLLUP
@@ -350,25 +346,12 @@ public class RollupRepairIT {
         // on a DDL echo rather than on a promise.
         assertThat(logged.stream().filter(m -> m.startsWith("Rollup ")).toList())
                 .as("no line may tell the operator a repair is coming, in the phrasings pinned by"
-                        + " PROMISES_A_REPAIR")
-                .noneMatch(m -> PROMISES_A_REPAIR.matcher(m).find());
+                        + " RepairPromises.PROMISES_A_REPAIR")
+                .noneMatch(m -> RepairPromises.PROMISES_A_REPAIR.matcher(m).find());
         assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, ROLLUP)))
                 .as("and the rollup this message is about is genuinely out of the query path")
                 .isFalse();
     }
-
-    /**
-     * Wordings that tell an operator a repair is on its way.
-     *
-     * <p>Matched as a claim rather than as one sentence, because the defect #654 fixed was prose and
-     * prose gets reworded. Pinned phrasings, not "any wording": "until (it is) repaired", "will be
-     * repaired", "repair is deferred", "repairs itself", "repaired on the next start". Shared with
-     * {@code RollupShapeDriftIT} so the two cannot drift apart.</p>
-     */
-    static final Pattern PROMISES_A_REPAIR = Pattern.compile(
-            "until (it is |it has been )?repaired|will be repaired|repair is deferred"
-                    + "|repairs (itself|themselves)|repaired on the next start",
-            Pattern.CASE_INSENSITIVE);
 
     /** A rollup target one measure short, with a view to match — the shape an upgrade leaves behind. */
     private static void createRollupMissingAMeasure() throws Exception {
@@ -397,6 +380,139 @@ public class RollupRepairIT {
                 .isNotEqualTo(full)
                 .doesNotContain(dropped);
         admin.execute("CREATE MATERIALIZED VIEW " + view + " TO " + target + " AS " + shortened).get();
+    }
+
+    /**
+     * A manage-mode drift line says work on THIS rollup was attempted and did not succeed (#657).
+     *
+     * <p>The {@code unrepaired} branch, pinned through a real start: the unit tests hand the sets
+     * in, and a validate-mode start returns at the {@code NOT_MANAGED} branch before any of them is
+     * read. Without a manage-mode assertion, a rollup whose repair failed can be told none was ever
+     * planned for it while its failure sits three lines above in the same log.</p>
+     *
+     * <p>It does not pin the planned set — the branch above it answers first, by design, because an
+     * unread catalog fills {@code unrepaired} with rollups nothing was tried on. {@code
+     * aRepairThatWasPlannedAndRanButLeftDriftSaysSo} is the fixture for the planned branch.</p>
+     *
+     * <p>The fixture is a target that genuinely needs a repair and a user that genuinely cannot
+     * perform it: {@code ALTER} revoked on that one target, so the planner plans it, the statement
+     * fails, and the rollup lands in both the planned and the unrepaired set.</p>
+     */
+    @Test
+    void aManageModeDriftLineSaysWorkWasAttemptedOnItAndFailed() throws Exception {
+        createRollupMissingItsLastDimension();
+        createFullyGrantedUser();
+        admin.execute("REVOKE ALTER ON " + FlowsSchema.qualifiedRollup(DATABASE, ROLLUP)
+                + " FROM noalter").get();
+        try {
+            RollupAvailability.recordDrifted(List.of());
+            final var config = config(true);
+            config.setUsername(SecretRef.of("noalter"));
+            config.setPassword(SecretRef.of("noalter"));
+
+            final List<String> logged = RollupShapeDriftIT.messages(
+                    RollupShapeDriftIT.captureRepositoryLog(() -> {
+                        final var collector = new ClickhouseRepository(
+                                new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
+                        collector.start();
+                    }));
+
+            assertThat(logged)
+                    .as("the outlook must be on the SAME line as the drift report, and must name"
+                            + " THIS rollup's failed attempt — a start-wide flag cannot say it,"
+                            + " which is why the per-rollup sets are passed at all")
+                    .anyMatch(m -> m.contains(ROLLUP)
+                            && m.contains("does not match")
+                            && m.contains("Work on it was attempted on this start")
+                            && m.contains("did not succeed"));
+            assertThat(logged)
+                    .as("and must never claim none was planned while its failure sits above")
+                    .noneMatch(m -> m.contains(ROLLUP) && m.contains("No repair was planned"));
+            assertThat(logged)
+                    .as("nor promise one, in any pinned phrasing")
+                    .noneMatch(m -> RepairPromises.PROMISES_A_REPAIR.matcher(m).find());
+        } finally {
+            admin.execute("DROP USER IF EXISTS noalter").get();
+            RollupAvailability.recordDrifted(List.of());
+        }
+    }
+
+    /**
+     * A user holding every grant riptide needs, so a test can revoke exactly one and know that is
+     * the reason a statement failed.
+     *
+     * <p>Named for what the callers do with it rather than for the grant they take away: one
+     * revokes {@code CREATE} on a view, the other {@code ALTER} on a target.</p>
+     */
+    private static void createFullyGrantedUser() throws Exception {
+        admin.execute("DROP USER IF EXISTS noalter").get();
+        admin.execute("CREATE USER noalter IDENTIFIED WITH plaintext_password BY 'noalter'").get();
+        admin.execute("GRANT SELECT, INSERT, CREATE DATABASE, CREATE TABLE, DROP TABLE, CREATE VIEW,"
+                + " DROP VIEW, ALTER, SHOW ON " + DATABASE + ".* TO noalter").get();
+    }
+
+    /**
+     * A rollup with two defects: one the planner repairs, one it never touches.
+     *
+     * <p>Built for the only branch that reads the planned set. A target missing its last dimension
+     * is planned and repaired; a measure typed {@code UInt32} instead of {@code UInt64} is neither
+     * planned nor refused — the planner checks measures by name, not by type — so the shape check
+     * still reports DRIFTED once the repair has run. Every other drift fixture in this class either
+     * refuses (empty outlook) or fails (the attempted-and-did-not-succeed branch).</p>
+     */
+    private static void createRollupRepairableButAlsoRetyped() throws Exception {
+        final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
+        final String view = FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP);
+        admin.execute("DROP VIEW IF EXISTS " + view).get();
+        admin.execute("DROP TABLE IF EXISTS " + target).get();
+        admin.execute("CREATE TABLE " + target + " ("
+                + "tenant String, organisation String, timestamp DateTime('UTC'), zone String,"
+                + " application LowCardinality(String),"
+                // The defect the planner never plans: right name, wrong width.
+                + " bytes UInt32, packets UInt64, flowCount UInt64,"
+                + " bytesIn UInt64, bytesOut UInt64, packetsIn UInt64, packetsOut UInt64,"
+                // Present, and typed as this version types it, so the ONLY planned repair is the
+                // missing dimension. Omitting it makes the mask a second planned-and-repaired
+                // measure, which still reaches this branch — by luck, and invisibly if the type
+                // ever changes again.
+                + " samplingProvenanceMask SimpleAggregateFunction(groupBitOr, UInt8))"
+                + " ENGINE = SummingMergeTree()"
+                + " PRIMARY KEY (tenant, organisation, timestamp, zone, application)"
+                + " ORDER BY (tenant, organisation, timestamp, zone, application)"
+                + " PARTITION BY toYYYYMM(timestamp)").get();
+    }
+
+    /**
+     * A repair that was planned, ran, and left the rollup differing says exactly that (#657).
+     *
+     * <p>The only branch that reads the planned set. Every other manage-mode fixture either refuses
+     * the rollup, which appends nothing, or fails the repair, which the attempted branch answers
+     * before the plan is consulted — so without this fixture, dropping the planned set makes the
+     * line say no repair was planned on a start where one was planned and ran.</p>
+     */
+    @Test
+    void aRepairThatWasPlannedAndRanButLeftDriftSaysSo() throws Exception {
+        createRollupRepairableButAlsoRetyped();
+        try {
+            RollupAvailability.recordDrifted(List.of());
+
+            final List<String> logged = RollupShapeDriftIT.messages(
+                    RollupShapeDriftIT.captureRepositoryLog(() -> repository().start()));
+
+            assertThat(logged)
+                    .as("the dimension repair was planned and succeeded, and the retyped measure"
+                            + " still differs — so the line must say a repair ran, not that none was"
+                            + " planned")
+                    .anyMatch(m -> m.contains(ROLLUP)
+                            && m.contains("does not match")
+                            && m.contains("A repair was planned for it on this start and ran")
+                            && m.contains("it still differs"));
+            assertThat(logged)
+                    .as("and must never deny the repair it just performed")
+                    .noneMatch(m -> m.contains(ROLLUP) && m.contains("No repair was planned"));
+        } finally {
+            RollupAvailability.recordDrifted(List.of());
+        }
     }
 
     /** A rollup as a pre-v0.11 riptide would have left it: three dimensions short, view to match. */
@@ -752,6 +868,43 @@ public class RollupRepairIT {
         assertThat(RollupAvailability.usable(target))
                 .as("and the rollup is declined rather than quietly narrowed")
                 .isFalse();
+    }
+
+    /**
+     * The refusal above is logged, and the drift line does not then restate a remedy for it (#657).
+     *
+     * <p>Separate from the behaviour test because it pins a different thing: that a view downgrade
+     * reaches {@code refused}, which is what makes {@code repairOutlook} stay silent for it. Without
+     * this, dropping {@code refused.add(rollup)} in {@code planViewRepair} leaves the sibling green
+     * — the view is still left alone — while the drift line starts telling the operator no repair
+     * was planned for a rollup this start deliberately declined to repair.</p>
+     */
+    @Test
+    void aRefusedViewDowngradeIsLoggedOnceAndNotSecondGuessedByTheDriftLine() throws Exception {
+        repository().start();
+        final String target = FlowsSchema.qualifiedRollup(DATABASE, ROLLUP);
+        final String view = FlowsSchema.qualifiedRollupView(DATABASE, ROLLUP);
+        admin.execute("ALTER TABLE " + target + " ADD COLUMN IF NOT EXISTS fromTheFuture UInt8").get();
+        final String wider = FlowsSchema.rollupSelects(DATABASE).get(ROLLUP)
+                .replace("SELECT", "SELECT toUInt8(0) AS fromTheFuture,");
+        admin.execute("ALTER TABLE " + view + " MODIFY QUERY " + wider).get();
+        try {
+            RollupAvailability.recordDrifted(List.of());
+
+            final List<String> logged = RollupShapeDriftIT.messages(
+                    RollupShapeDriftIT.captureRepositoryLog(() -> repository().start()));
+
+            assertThat(logged)
+                    .as("the refusal itself must be logged — it is the only place the operator is"
+                            + " told why this rollup is out of the query path")
+                    .anyMatch(m -> m.contains(ROLLUP) && m.contains("left as it is"));
+            assertThat(logged)
+                    .as("and the drift line must not then claim none was planned for it; the"
+                            + " refusal line already said what happened")
+                    .noneMatch(m -> m.contains(ROLLUP) && m.contains("No repair was planned for it"));
+        } finally {
+            RollupAvailability.recordDrifted(List.of());
+        }
     }
 
     /** Whether the under-privileged user is genuinely refused the view CREATE it just attempted. */
