@@ -14,10 +14,12 @@ import org.riptide.classification.Rule;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 public class DefaultClassificationEngineTest {
 
@@ -123,5 +125,34 @@ public class DefaultClassificationEngineTest {
     @Timeout(5)
     void verifyInitializesQuickly() throws InterruptedException {
         new DefaultClassificationEngine(() -> List.of(DefaultRule.builder().withName("Test").withSrcPort("0-10000").build()));
+    }
+
+    /**
+     * The atomic-publish property {@code AsyncReloadingClassificationEngine} rests on, asserted against the engine
+     * that actually provides it rather than against a test double that has it by construction. If a rebuild ever
+     * published incrementally — or cleared what is serving before starting — a failed reload would silently classify
+     * every flow against an empty tree while the wrapper's metrics reported exactly the documented behaviour.
+     */
+    @Test
+    @Timeout(5)
+    void verifyFailedReloadLeavesThePreviousRulesetServing() throws InterruptedException {
+        final var loads = new AtomicInteger();
+        final var engine = new DefaultClassificationEngine(() -> {
+            if (loads.getAndIncrement() > 0) {
+                throw new IllegalStateException("rules file is unreadable");
+            }
+            return List.of(
+                    DefaultRule.builder().withName("good").withPosition(1).withDstPort(80).build(),
+                    DefaultRule.builder().withName("broken").withPosition(2).withDstPort("not-a-port").build());
+        });
+        final var request = ClassificationRequest.builder().withSrcPort(1234).withDstPort(80).build();
+        assertThat(engine.classify(request)).isEqualTo("good");
+        assertThat(engine.getInvalidRules()).extracting(Rule::getName).containsExactly("broken");
+
+        assertThatThrownBy(engine::reload).isInstanceOf(IllegalStateException.class);
+
+        assertThat(engine.classify(request)).as("the previous tree keeps classifying").isEqualTo("good");
+        assertThat(engine.getInvalidRules()).as("and so does the invalid-rule list it was published with")
+                .extracting(Rule::getName).containsExactly("broken");
     }
 }

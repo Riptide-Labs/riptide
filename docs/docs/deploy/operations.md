@@ -95,6 +95,33 @@ If you alert on `config.reload.failures` to catch a `> config.yaml` truncation, 
 
 :::
 
+## Classification rule reloads
+
+The classification rules are a separate family with a separate posture, and today it is inert.
+
+The resource named by `riptide.classification.rules` is parsed once, eagerly, while the context starts: an unreadable or unparseable resource fails the boot there, naming the parse error.
+The engine then loads those rules into its decision tree on a background thread, and **nothing triggers a reload afterwards** — no watcher, no interval, no endpoint.
+Until a reload trigger ships, the three metrics below can only move during startup.
+
+| Metric | Meaning |
+|---|---|
+| `classification.reload.successes` | Loads that published a ruleset. A healthy start leaves this at 1. |
+| `classification.reload.failures` | Loads that threw. Not latched: every attempt that fails counts again. |
+| `classification.reload.stale` | 1 when the last load attempt failed and no later one has succeeded; 0 otherwise. |
+
+Unlike `config.reload.stale` and `inventory.reload.stale`, this gauge is registered unconditionally — including now, when nothing can move it.
+It claims less than they do: they assert a relationship between a file on disk and what is serving, so a permanent 0 would falsely read "in sync", while this one asserts only "the last load attempt failed and has not recovered".
+With no trigger, 0 is simply true.
+
+What a failure does depends on whether any rules ever loaded:
+
+- **Rules already serving** — nothing an operator or a flow can see changes. A rebuild publishes atomically, so a failed one leaves the previous rules classifying, complete. The failure is reported by a WARN naming the cause, plus the counter and the gauge. This is the case where the gauge is the only durable signal: no flow fails and no error is logged.
+- **No rules ever loaded** — classification is unavailable. Every flow's classification throws, an ERROR is logged, and no reload exists to recover it. Reaching this needs the resource to become unreadable between the eager startup parse and the background load a moment later; the window is narrow, but the context starts normally and stays up, so the ERROR and `classification.reload.stale` at 1 are the only signals. Restart once the resource is readable.
+
+Shutdown counts nothing here either: a reload interrupted or refused during an orderly stop moves no counter and latches no gauge.
+
+Dots become underscores at `/metrics` (see [Metrics endpoint](#metrics-endpoint)), so the series to alert on is `classification_reload_stale`.
+
 ## Upgrading
 
 Compose: `docker compose pull && docker compose up -d`. Plain JAR: replace the jar,
