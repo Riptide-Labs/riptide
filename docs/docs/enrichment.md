@@ -165,6 +165,10 @@ matching row wins, in both directions of an omnidirectional rule. In a custom ru
 put specific rules (address + port) above broad ones (port-only), or the broad row will
 shadow them.
 
+The rules resource is parsed once while the context starts — an unreadable or unparseable resource fails the boot there — and then loaded into the engine's decision tree on a background thread.
+Nothing re-reads the resource while the process runs, so an edit takes effect on the next restart.
+The engine still publishes a `classification.reload.*` metric family, and there is one narrow startup case that leaves classification unavailable with the process up: both are described under [classification rule reloads](deploy/operations.md#classification-rule-reloads).
+
 ## Locality
 
 Source/destination/flow locality (private vs. public address space) is derived for every

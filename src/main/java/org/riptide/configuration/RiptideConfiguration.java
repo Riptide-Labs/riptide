@@ -78,6 +78,6 @@ public class RiptideConfiguration {
                                               final MetricRegistry metricRegistry) throws InterruptedException {
         final var engine = new DefaultClassificationEngine(classificationRuleProvider, false);
         final var timingEngine = new TimingClassificationEngine(metricRegistry, engine);
-        return new AsyncReloadingClassificationEngine(timingEngine);
+        return new AsyncReloadingClassificationEngine(timingEngine, metricRegistry);
     }
 }
