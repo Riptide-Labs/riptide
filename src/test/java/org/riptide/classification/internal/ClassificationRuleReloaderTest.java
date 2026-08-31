@@ -44,13 +44,12 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.riptide.classification.internal.ClassificationRulesTestSupport.rules;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.assertj.core.api.Assertions.fail;
 
 /**
  * The scheduled rules reload (#655), against a real HTTP server: the source is fetched,
@@ -63,7 +62,9 @@ import static org.assertj.core.api.Assertions.fail;
  * <p>The schedule is set to an hour and the cycles are driven by hand, so every row here
  * is deterministic; that the interval is read at all, and that nothing is scheduled
  * without it, is pinned by {@code ClassificationReloadIntervalTest} and
- * {@code ReloaderDisabledMetricsTest} through the real Spring context.</p>
+ * {@code ReloaderDisabledMetricsTest} through the real Spring context. Neither of those
+ * lets a schedule fire either: {@code HttpRulesRefreshOnIntervalTest} is the only test
+ * that does, and it is where "applies without a restart" is actually observed.</p>
  *
  * <p>The class-level timeout is not decoration: the hung-server and dribbling-server rows
  * fail by hanging.</p>
@@ -71,12 +72,6 @@ import static org.assertj.core.api.Assertions.fail;
 @Timeout(60)
 class ClassificationRuleReloaderTest {
 
-    private static final String HEADER =
-            "name;protocol;srcAddress;srcPort;dstAddress;dstPort;exporterFilter;omnidirectional\n";
-
-    private static String rules(final String name) {
-        return HEADER + name + ";;;;;80;;false\n";
-    }
 
     /** What the server answers next; {@code null} is a 404. */
     private volatile String body = rules("alpha");
@@ -705,13 +700,6 @@ class ClassificationRuleReloaderTest {
     }
 
     private static void await(final String what, final BooleanSupplier condition) throws InterruptedException {
-        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-        while (System.nanoTime() < deadline) {
-            if (condition.getAsBoolean()) {
-                return;
-            }
-            Thread.sleep(5);
-        }
-        fail("timed out waiting for " + what);
+        ClassificationRulesTestSupport.await(what, Duration.ofSeconds(10), condition);
     }
 }
