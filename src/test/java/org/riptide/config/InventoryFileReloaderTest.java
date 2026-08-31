@@ -240,7 +240,7 @@ class InventoryFileReloaderTest {
         assertThat(warnings(appender)).hasSize(1);
         assertThat(warnings(appender).get(0))
                 .contains("keeping the last good inventory")
-                .contains("carries 3 problem(s)")
+                .contains("carries problems in 3 entries")
                 .contains("nope")
                 .contains("warp-speed")
                 .contains("70000");
