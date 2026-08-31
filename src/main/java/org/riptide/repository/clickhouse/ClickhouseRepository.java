@@ -180,9 +180,20 @@ public class ClickhouseRepository implements FlowRepository {
         // Kept apart from `unrepaired` because the two clear differently. A statement that failed
         // may have been a no-op on a healthy rollup, so a clean shape verdict overrides it. A
         // REFUSED rollup is refused precisely because its shape is one this version cannot reach,
-        // and the shape check cannot see the difference — it compares columns and the view's SELECT,
-        // never the sorting key, which is the thing a refusal is usually about.
+        // and they clear differently. A statement that failed may have been a no-op on a healthy
+        // rollup, so a clean shape verdict overrides it; a REFUSED rollup is refused because its
+        // shape is one this version cannot reach in place, which a later clean verdict must not
+        // erase. The shape check does compare columns, types, the sorting key and the view's
+        // SELECT — an earlier version of this comment said it never compares the key, which was
+        // false and contradicted the comment on drifted.addAll below.
         final Set<String> refused = new LinkedHashSet<>();
+        // The rollups a repair was actually planned for. Without it no line here can say anything
+        // true about ONE rollup, only about the start — and a per-rollup claim built from
+        // start-wide state is the category error this whole approach exists to avoid.
+        final Set<String> plannedRepairs = new LinkedHashSet<>();
+        // Set inside the manage block once the catalog read is known to have succeeded. Validate
+        // mode never enters it, and NOT_MANAGED is the true statement there: no start repairs.
+        RepairPosture posture = RepairPosture.NOT_MANAGED;
 
         if (this.config.isManageSchema()) {
             // Rollups come after the flows check, not with the DDL above: their materialized views
@@ -216,13 +227,20 @@ public class ClickhouseRepository implements FlowRepository {
             // out, and it does not stop being one because the failing statement is a repair.
             final Map<String, String> alters = FlowsSchema.alterRollupTargets(this.config.getDatabase());
             final Optional<List<String>> targets = planTargetRepair(refused);
+            // Interrupt included deliberately: planTargetRepair returns empty for it too, and the
+            // sentence says only that no repair was planned, which is true either way. What it must
+            // not do is name a cause, so it does not.
+            posture = postureOf(targets.isPresent(), true, plannedRepairs.isEmpty());
+            plannedRepairs.addAll(targets.orElseGet(List::of));
             for (final String rollup : targets.orElseGet(List::of)) {
                 repair(unrepaired, rollup, alters.get(rollup),
                         "target could not be brought up to date");
             }
             // A start that could not read the catalog repairs nothing at all — not the targets it
             // does not know about, and not the views whose targets it does not know about either.
-            final boolean planned = targets.isPresent();
+            // Read off the posture rather than re-deriving targets.isPresent(): one condition, one
+            // place, which is the rule this change's own javadoc argues for.
+            final boolean catalogRead = posture == RepairPosture.PLANNED;
 
             // Per rollup, and tolerant, because the SELECT now names a column an unrepaired target
             // can lack. CREATE MATERIALIZED VIEW IF NOT EXISTS validates its SELECT even when it
@@ -231,7 +249,7 @@ public class ClickhouseRepository implements FlowRepository {
             // rollup-only concern. That is the outage verifyRollupShapes exists to avoid, and
             // before the rate was appended it could not happen: no rollup SELECT named a column an
             // unrepaired target could be missing.
-            final ViewCreation views = planViewCreation(planned, refused,
+            final ViewCreation views = planViewCreation(catalogRead, refused,
                     FlowsSchema.rollupTableNames());
             unrepaired.addAll(views.decline());
             final Map<String, String> creates =
@@ -250,7 +268,16 @@ public class ClickhouseRepository implements FlowRepository {
             // and anything before its MODIFY QUERY throws, the next start sees a target that is
             // already current, plans no repair for it, and never fixes the view.
             final Map<String, String> modifies = FlowsSchema.modifyRollupViews(this.config.getDatabase());
-            for (final String rollup : planned ? planViewRepair(refused) : List.<String>of()) {
+            // Recorded as planned, like the target repairs above. Not for the failure case —
+            // `unrepaired` is read before the plan, so a failed view repair reports as attempted
+            // either way — but for the one that survives success: a view repair that ran while the
+            // rollup still differs for another reason must not be told none was planned for it.
+            final Optional<List<String>> viewPlan =
+                    catalogRead ? planViewRepair(refused) : Optional.<List<String>>empty();
+            posture = postureOf(targets.isPresent(), viewPlan.isPresent(), plannedRepairs.isEmpty());
+            final List<String> viewRepairs = viewPlan.orElseGet(List::of);
+            plannedRepairs.addAll(viewRepairs);
+            for (final String rollup : viewRepairs) {
                 if (unrepaired.contains(rollup) || refused.contains(rollup)) {
                     // Its target did not get the column, so re-pointing the view would not fail —
                     // MODIFY QUERY does not validate — it would produce a view aggregating by a
@@ -267,7 +294,7 @@ public class ClickhouseRepository implements FlowRepository {
         // query path off it. Runs last because in manage mode the CREATEs and the repair above are
         // what a fresh or upgraded install's shape comes from. Never fails startup — see
         // verifyRollupShapes.
-        verifyRollupShapes(unrepaired, refused);
+        verifyRollupShapes(plannedRepairs, unrepaired, refused, posture);
 
         this.client.register(ClickhouseFlow.class, schema);
     }
@@ -404,7 +431,7 @@ public class ClickhouseRepository implements FlowRepository {
      * is refused: see the comment on that branch. The target keeps the column either way, so the
      * only thing a repair would achieve is writing type defaults over live rows.</p>
      */
-    private List<String> planViewRepair(final Set<String> refused) {
+    private Optional<List<String>> planViewRepair(final Set<String> refused) {
         final Map<String, String> live;
         try {
             live = readRollupSelects();
@@ -412,17 +439,22 @@ public class ClickhouseRepository implements FlowRepository {
             // Same discipline as repair() and verifyRollupShapes(): a shutdown interrupt is not a
             // rollup verdict, and swallowing the flag leaves the thread doing work nobody awaits.
             Thread.currentThread().interrupt();
-            return List.of();
+            return Optional.empty();
         } catch (final Exception e) {
             log.warn("Could not read the rollup views in database '{}': {}. No view repair is planned"
                     + " on this start.", this.config.getDatabase(), e.getMessage());
-            return List.of();
+            return Optional.empty();
         }
         final FlowsSchema.RepairPlan plan =
                 FlowsSchema.planViewRepair(this.config.getDatabase(), live, refused);
-        plan.refused().forEach((rollup, why) ->
-                log.warn("Rollup {} left as it is: {}. It is kept out of the query path.", rollup, why));
-        return plan.repair();
+        // Added to `refused`, not merely logged. Without this a view-refused rollup falls through
+        // to "no repair was planned for it", contradicting the line logged here — the duplicate,
+        // contradictory statement the outlook exists to prevent.
+        plan.refused().forEach((rollup, why) -> {
+            refused.add(rollup);
+            log.warn("Rollup {} left as it is: {}. It is kept out of the query path.", rollup, why);
+        });
+        return Optional.of(plan.repair());
     }
 
     /** Each rollup target's live column names, for the repair planner. */
@@ -452,6 +484,89 @@ public class ClickhouseRepository implements FlowRepository {
     }
 
     /**
+     * What a start may say about repairs, from whether each catalog read succeeded and whether the
+     * plan came to anything.
+     *
+     * <p>Both reads matter and either can fail alone, because {@code planTargetRepair} and {@code
+     * planViewRepair} read the catalog separately. The third argument is what keeps a failed read
+     * from erasing work that already happened: a view read that fails after target repairs were
+     * planned and ran must not report {@code CATALOG_UNREADABLE}, which tells the operator no
+     * repair was planned for any rollup while those repairs' outcomes sit in the same log.</p>
+     */
+    static RepairPosture postureOf(final boolean targetsRead, final boolean viewsRead,
+            final boolean nothingPlanned) {
+        if (targetsRead && viewsRead) {
+            return RepairPosture.PLANNED;
+        }
+        return nothingPlanned ? RepairPosture.CATALOG_UNREADABLE : RepairPosture.PLANNED;
+    }
+
+    /**
+     * What this start was able to do about repairs, which is what a drift line may say about one.
+     *
+     * <p>Derived from the start's own state and passed in, never re-derived from the drift shape.
+     * Two attempts at #654 enumerated which drift classes are permanent inside the shape check and
+     * both were reverted with the set wrong — the second telling operators to drop a view and
+     * target, discarding up to a year of aggregates, where a lossless ALTER would have done.</p>
+     */
+    enum RepairPosture {
+        /** Schema management is off, so no repair is ever attempted on any start. */
+        NOT_MANAGED,
+        /** Manage mode, but this start could not read the shapes, so it planned nothing. */
+        CATALOG_UNREADABLE,
+        /** Manage mode with the catalog read: whatever was planned, was planned. */
+        PLANNED
+    }
+
+    /**
+     * The sentence a drifted rollup's line ends with, or nothing.
+     *
+     * <p>Answers only what this start <em>did</em> about this rollup, from the sets it already
+     * holds. It names no drift class and no remedy: a refused rollup already got both from
+     * {@code planTargetRepair}, and any other remedy would be a promise this line cannot keep,
+     * because {@code planRollupRepair} refuses several drift classes and {@code riptide onboard}
+     * runs that same planner.</p>
+     */
+    static String repairOutlook(final String rollup, final Set<String> planned,
+            final Set<String> unrepaired, final Set<String> refused, final RepairPosture posture) {
+        // Ordered, and the order is load-bearing. CATALOG_UNREADABLE first, because an unread
+        // catalog declines every rollup into `unrepaired`, where that set means "not repaired"
+        // rather than "tried and failed". Then a real failure, which must be pointed at even for a
+        // rollup that was also refused. Only then silence for a refusal already explained.
+        if (posture == RepairPosture.CATALOG_UNREADABLE) {
+            return " No repair was planned for any rollup on this start.";
+        }
+        if (posture == RepairPosture.NOT_MANAGED) {
+            // No remedy named, deliberately. `riptide onboard` runs the same planner, which refuses
+            // a shrunk sorting key, a corrected aggregate, a summed missing measure and a column
+            // outside the sorting key, so offering it as the fix is #654's false promise in new
+            // words. The docs carry the per-case remedies; this line carries only what happened.
+            return " No repair is attempted on any start, because this deployment does not manage"
+                    + " the schema.";
+        }
+        if (unrepaired.contains(rollup)) {
+            return " Work on it was attempted on this start and did not succeed; the failure is"
+                    + " logged above.";
+        }
+        if (refused.contains(rollup)) {
+            // Already told why, by planTargetRepair or planViewRepair. Only the first of those
+            // carries a remedy: planViewRepair's downgrade refusal states a reason and no action,
+            // which is a gap in that message rather than something to restate here.
+            return "";
+        }
+        if (planned.contains(rollup)) {
+            // Says what ran, and stops. A tail naming what this version does not repair would be a
+            // claim about every future start inferred from one, which is #654's defect class.
+            return " A repair was planned for it on this start and ran, and it still differs.";
+        }
+        // No tail, for the same reason: "it will be reported again on every start" would assert
+        // what every future start does from one start's outcome, and is false whenever
+        // planViewRepair's catalog read failed transiently — the next start then repairs it
+        // unattended.
+        return " No repair was planned for it on this start.";
+    }
+
+    /**
      * Compare every rollup's live shape against this version's and act on the result (#470).
      *
      * <p><b>Why this warns rather than fails, when a stale {@code flows} table throws.</b> A stale
@@ -465,7 +580,8 @@ public class ClickhouseRepository implements FlowRepository {
      * swallowed: a deployment whose role cannot reach {@code system.tables} at all is exactly the
      * case this check must not turn into an outage.</p>
      */
-    private void verifyRollupShapes(final Set<String> unrepaired, final Set<String> refused) {
+    private void verifyRollupShapes(final Set<String> planned, final Set<String> unrepaired,
+            final Set<String> refused, final RepairPosture posture) {
         final List<RollupShapeCheck.Result> results;
         try {
             final Map<String, String> selects = readRollupSelects();
@@ -504,16 +620,17 @@ public class ClickhouseRepository implements FlowRepository {
             switch (result.status()) {
                 case DRIFTED -> {
                     drifted.add(result.rollup());
-                    // Makes no claim about whether a repair is coming, because this line cannot
-                    // know (#654): the decision belongs to FlowsSchema.planRollupRepair and
-                    // planViewRepair, and it logs the repairs it does plan. Deliberately not
-                    // restated here — two reverted attempts at #654 re-derived which drift is
-                    // permanent in a third place and got the set wrong both times.
                     log.warn("Rollup {} does not match this version's schema: {}. Ingestion is"
                             + " unaffected; long-range queries fall back to raw flows for it and are"
-                            + " slower.", result.rollup(), result.detail());
+                            + " slower.{}", result.rollup(), result.detail(),
+                            repairOutlook(result.rollup(), planned, unrepaired, refused, posture));
                 }
                 case UNREACHABLE -> {
+                    // No outlook, and the reason is `plannedRepairs`, not an oversight. This
+                    // rollup's target columns could not be read, so the planner never saw it and
+                    // its absence from the planned set says nothing about what this start would
+                    // have done. "No repair was planned for it" would be a claim built from a read
+                    // that failed.
                     drifted.add(result.rollup());
                     log.warn("Rollup {} cannot be reached: {}.", result.rollup(), result.detail());
                 }
@@ -522,6 +639,14 @@ public class ClickhouseRepository implements FlowRepository {
                     // that is the problem. A query against it succeeds and returns what a table
                     // nothing writes to holds, so the fallback to raw flows is the only answer that
                     // is not silently short (#587).
+                    //
+                    // No outlook here either, for a sharper reason: the repair for a missing view
+                    // is the CREATE loop above, and that loop is deliberately NOT in
+                    // `plannedRepairs` — it returns every non-refused rollup and its statement is
+                    // IF NOT EXISTS, so adding it would make the set mean "all rollups". So the
+                    // planned set cannot answer this rollup's question, and the sentence it would
+                    // produce, "No repair was planned for it on this start", is false on a manage-
+                    // mode start that issued exactly the CREATE that would fix it.
                     drifted.add(result.rollup());
                     log.warn("Rollup {} has no materialized view writing to it: {}. Ingestion is"
                             + " unaffected; long-range queries fall back to raw flows for it and are"
@@ -546,10 +671,11 @@ public class ClickhouseRepository implements FlowRepository {
         // After the MATCHES pass, never before it: a refusal is structural and a clean-looking
         // shape must not clear it.
         //
-        // Redundant today, and kept deliberately. Every refusal riptide currently issues is about
-        // the sorting key, which the shape check now compares itself — so removing this line breaks
-        // no test, and a mutation of it survives. It stays because the refusal reasons and the check
-        // are independent things that need not remain congruent: a future refusal that is not
+        // Kept deliberately. The refusals riptide issues are about the sorting key, a missing
+        // summed measure, or a view downgrade (#657); the shape check catches the first and third
+        // itself, so removing this line breaks no test today and a mutation of it survives. It stays
+        // because the refusal reasons and the check are independent things that need not remain
+        // congruent: a future refusal that is not
         // key-shaped would otherwise be silently unenforced, which is how this whole class of defect
         // arose in the first place.
         drifted.addAll(refused);
