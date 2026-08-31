@@ -199,6 +199,54 @@ class InventoryFileReloaderTest {
     }
 
     /**
+     * #630 on the reload path: the loader now fails once with every bad entry, and that
+     * report has to arrive as ONE warning. A per-problem log would interleave with other
+     * threads and stop being one readable failure. Nothing starts throwing either — the
+     * last good snapshot keeps serving, exactly as for a single problem.
+     */
+    @Test
+    void aFileWithSeveralProblemsArrivesAsOneWarningCarryingThemAll() throws Exception {
+        write("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """);
+        this.reloader.poll();
+        assertThat(successes()).isEqualTo(1);
+
+        final var appender = capture(InventoryFileReloader.class);
+        try {
+            write("""
+                    riptide:
+                      snmp:
+                        agents:
+                          "10.20.0.0/16":
+                            credentials: nope
+                          "10.21.0.0/16":
+                            polling: warp-speed
+                          "10.22.0.0/16":
+                            port: 70000
+                    """);
+            this.reloader.poll();
+        } finally {
+            release(InventoryFileReloader.class, appender);
+        }
+
+        assertThat(this.inventory.snapshot().agentView().match(netflow("10.20.5.5")))
+                .as("the last good snapshot keeps serving").isPresent();
+        assertThat(failures()).isEqualTo(1);
+        assertThat(warnings(appender)).hasSize(1);
+        assertThat(warnings(appender).get(0))
+                .contains("keeping the last good inventory")
+                .contains("carries 3 problem(s)")
+                .contains("nope")
+                .contains("warp-speed")
+                .contains("70000");
+    }
+
+    /**
      * The two skip sentences describe different conditions with different remediations —
      * "the file is gone" versus "the file is truncated" — and they are adjacent
      * same-typed arguments where this reloader builds its messages. Swapping them

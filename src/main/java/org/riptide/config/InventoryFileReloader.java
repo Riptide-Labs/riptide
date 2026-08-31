@@ -122,6 +122,11 @@ public class InventoryFileReloader {
 
                     @Override
                     public void onFailure(final Exception e) {
+                        // one WARN, and since #630 the loader's message is a multi-line
+                        // report listing every bad entry: it renders as a multi-line WARN
+                        // here, deliberately. The alternative — one line per problem —
+                        // interleaves with other threads' logging and stops being one
+                        // readable failure, which is the whole point of collecting them
                         log.warn("Inventory reload failed, keeping the last good inventory: {}", e.getMessage(), e);
                     }
                 });

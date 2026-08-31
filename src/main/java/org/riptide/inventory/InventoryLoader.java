@@ -59,7 +59,9 @@ public final class InventoryLoader {
 
     private static final java.util.regex.Pattern CANONICAL_IF_INDEX = java.util.regex.Pattern.compile("[1-9][0-9]*");
 
-    // bounded diagnostics: name a readable number of half-finished entries, then count
+    // bounded diagnostics: name a readable number of entries, then count the rest.
+    // Two diagnostics share it — the declares-nothing warning and the problem report
+    // (#630) — because an operator should meet one style of bound, not three
     private static final int MAX_NAMED_EMPTY_ENTRIES = 20;
 
     // roughly 700k entries; generous but finite, so a runaway generated file is a
@@ -146,18 +148,37 @@ public final class InventoryLoader {
      * warnings instead of logging them. The walk's warnings read as descriptions of
      * live state ("it still matches, so it can shadow wider ranges"), so the caller
      * flushes them only once the candidate is actually published.
+     *
+     * <p>Two passes, staged rather than hoisted (#630). Pass 1 walks every entry,
+     * validates it, and collects the problems alongside the entries that survived; if
+     * anything was collected it fails once with the lot, so an operator fixing a
+     * hand-written file meets every mistake in one boot instead of one per restart.
+     * Pass 2 feeds the matcher builders, fail-fast and unchanged, and runs only on a
+     * clean pass 1 — which is what keeps {@link PinnedPrefixMatcher}'s
+     * duplicate-poisoning unreachable rather than reversed: no builder is ever handed
+     * an entry that failed validation. The cost is that a duplicate is never reported
+     * alongside a value problem, so five typos and one duplicate take two boots.</p>
      */
     public static ParseResult parseWithWarnings(final SnmpProfilesConfig profiles, final String content,
                                                 final String sourceName) {
         final List<String> warnings = new ArrayList<>();
+        final Problems problems = new Problems();
         final Map<String, Object> root = parseYaml(content, sourceName);
-        requireKnownKeys(sourceName, "the file root", root, ROOT_KEYS);
+        requireKnownKeys(sourceName, "the file root", root, ROOT_KEYS, problems);
         final Map<String, Object> riptide = section(root, "riptide", sourceName);
-        requireKnownKeys(sourceName, "'riptide'", riptide, RIPTIDE_KEYS);
+        requireKnownKeys(sourceName, "'riptide'", riptide, RIPTIDE_KEYS, problems);
         final Map<String, Object> snmp = section(riptide, "snmp", sourceName);
-        requireKnownKeys(sourceName, "'riptide.snmp'", snmp, SNMP_KEYS);
+        requireKnownKeys(sourceName, "'riptide.snmp'", snmp, SNMP_KEYS, problems);
         final Map<String, Object> agents = section(snmp, "agents", sourceName);
         final Map<String, Object> exporters = section(riptide, "exporters", sourceName);
+
+        // pass 1: both trees, so a file broken in agents AND exporters reports both
+        final List<AgentCandidate> agentCandidates = validateAgents(profiles, agents, warnings, problems);
+        final List<ExporterEntry> exporterCandidates = validateExporters(exporters, warnings, problems);
+        if (!problems.isEmpty()) {
+            // the report names the file itself, so it is raised outside the wrap below
+            throw problems.report(sourceName);
+        }
 
         try {
             // declaredness travels with the build: an explicit empty mapping is a deliberate
@@ -168,7 +189,7 @@ public final class InventoryLoader {
             final boolean riptideEmpty = root.get("riptide") instanceof java.util.Map<?, ?> r && r.isEmpty();
             final boolean snmpEmpty = riptide.get("snmp") instanceof java.util.Map<?, ?> m && m.isEmpty();
             return new ParseResult(new InventorySnapshot(
-                    agents(profiles, agents, warnings), exporters(exporters, warnings),
+                    agents(agentCandidates), exporters(exporterCandidates),
                     snmp.get("agents") instanceof java.util.Map || snmpEmpty || riptideEmpty,
                     riptide.get("exporters") instanceof java.util.Map || riptideEmpty), warnings);
         } catch (final IllegalStateException e) {
@@ -179,50 +200,128 @@ public final class InventoryLoader {
         }
     }
 
-    private static PinnedPrefixMatcher<AgentEntry> agents(final SnmpProfilesConfig profiles,
-                                                          final Map<String, Object> agents,
-                                                          final List<String> warnings) {
+    /**
+     * The problems one validating pass collected, bounded by entries.
+     *
+     * <p>Each rejected entry contributes exactly one problem — the first check it
+     * failed — so bounding the named list bounds <em>entries</em>: twenty faults on one
+     * pathological entry can never crowd out four hundred other broken ones, which is
+     * the failure this bound exists to prevent. Same constant and the same "listed no
+     * further" phrasing as the declares-nothing warning below, so an operator meets one
+     * style of bounded diagnostic ({@code ObsoleteKeys.MAX_NAMED_KEYS} mirrors it too).</p>
+     */
+    private static final class Problems {
+
+        private final List<String> named = new ArrayList<>();
+        private int count;
+
+        /** Records one entry's problem, verbatim: the text is what ~46 tests and every operator read. */
+        void add(final String problem) {
+            this.count++;
+            if (this.named.size() < MAX_NAMED_EMPTY_ENTRIES) {
+                this.named.add(problem);
+            }
+        }
+
+        boolean isEmpty() {
+            return this.count == 0;
+        }
+
+        /** One failure carrying the lot, file-named like every other loader error. */
+        IllegalStateException report(final String sourceName) {
+            final String newline = System.lineSeparator();
+            final StringBuilder text = new StringBuilder()
+                    .append("Inventory file %s carries %d problem(s):".formatted(sourceName, this.count))
+                    .append(newline);
+            for (final String problem : this.named) {
+                text.append(newline).append("  - ").append(problem);
+            }
+            if (this.count > this.named.size()) {
+                text.append(newline).append("  %d further entries have problems and are listed no further"
+                        .formatted(this.count - this.named.size()));
+            }
+            return new IllegalStateException(text.toString());
+        }
+    }
+
+    /**
+     * One agent range that survived validation: the parsed key, which only pass 1 has,
+     * plus the entry pass 2 hands to the matcher.
+     */
+    private record AgentCandidate(IPAddressString address, AgentEntry entry) {
+    }
+
+    /**
+     * Pass 1 over the agents tree: validate every range, collect one problem per bad one.
+     *
+     * <p>The recovery boundary is the iteration boundary, deliberately. The six value
+     * checks below are a dependency graph rather than a list — the cleartext-width rule
+     * reads the credential set the resolve step produced — so a check skipped because
+     * its input failed would be indistinguishable in the report from one that passed.
+     * One entry yields at most one problem here.</p>
+     */
+    private static List<AgentCandidate> validateAgents(final SnmpProfilesConfig profiles,
+                                                       final Map<String, Object> agents,
+                                                       final List<String> warnings,
+                                                       final Problems problems) {
         // one instance per build: every range that names no profile shares it (FR-7)
         final PollingProfile defaultProfile =
                 profiles.polling().getOrDefault("default", PollingProfile.builtInDefault());
-        final PinnedPrefixMatcher.Builder<AgentEntry> builder = PinnedPrefixMatcher.builder();
+        final List<AgentCandidate> candidates = new ArrayList<>(agents.size());
         int declaredNothing = 0;
         for (final Map.Entry<String, Object> entry : agents.entrySet()) {
-            final Map<String, Object> entryBody = body(entry, "agent range");
-            requireEntryKeys(entry.getKey(), "agent range", entryBody, AGENT_KEYS);
-            final boolean enabled = enabled(entry.getKey(), entryBody.get("enabled"));
-            final int port = port(entry.getKey(), entryBody.get("port"));
-            final CredentialSet credentials = resolve(entry.getKey(), "credential set",
-                    entryBody.get("credentials"), profiles.credentials());
-            final Object pollingReference = entryBody.get("polling");
-            // an explicit "default" is the spelled-out form of the omitted key, so both
-            // resolve identically: operator-defined default wins, built-in otherwise
-            final PollingProfile polling = pollingReference == null || "default".equals(pollingReference)
-                    ? defaultProfile
-                    : resolve(entry.getKey(), "polling profile", pollingReference, profiles.polling());
-            // warn only once the key is known to be a usable range: an unparseable
-            // key is about to fail hard, and telling the operator it is live and
-            // shadowing would be the opposite of true
-            final IPAddressString address = strictAddress(entry.getKey(), "agent range", false);
-            requireSingleAddressForCleartext(entry.getKey(), address, credentials,
-                    entryBody.get("credentials"));
-            if (declaresNothing(entryBody)) {
-                declaredNothing++;
-                if (declaredNothing <= MAX_NAMED_EMPTY_ENTRIES) {
-                    warnings.add(("Agent range '%s' declares nothing: it still matches, so it can shadow wider "
-                            + "ranges, and with no credential set it is never polled. Give it a credential set, "
-                            + "or spell the exclusion as 'enabled: false' if that is what you meant")
-                            .formatted(entry.getKey()));
+            try {
+                final Map<String, Object> entryBody = body(entry, "agent range");
+                requireEntryKeys(entry.getKey(), "agent range", entryBody, AGENT_KEYS);
+                final boolean enabled = enabled(entry.getKey(), entryBody.get("enabled"));
+                final int port = port(entry.getKey(), entryBody.get("port"));
+                final CredentialSet credentials = resolve(entry.getKey(), "credential set",
+                        entryBody.get("credentials"), profiles.credentials());
+                final Object pollingReference = entryBody.get("polling");
+                // an explicit "default" is the spelled-out form of the omitted key, so both
+                // resolve identically: operator-defined default wins, built-in otherwise
+                final PollingProfile polling = pollingReference == null || "default".equals(pollingReference)
+                        ? defaultProfile
+                        : resolve(entry.getKey(), "polling profile", pollingReference, profiles.polling());
+                // warn only once the key is known to be a usable range: an unparseable
+                // key is about to fail hard, and telling the operator it is live and
+                // shadowing would be the opposite of true
+                final IPAddressString address = strictAddress(entry.getKey(), "agent range", false);
+                requireSingleAddressForCleartext(entry.getKey(), address, credentials,
+                        entryBody.get("credentials"));
+                if (declaresNothing(entryBody)) {
+                    declaredNothing++;
+                    if (declaredNothing <= MAX_NAMED_EMPTY_ENTRIES) {
+                        warnings.add(("Agent range '%s' declares nothing: it still matches, so it can shadow wider "
+                                + "ranges, and with no credential set it is never polled. Give it a credential set, "
+                                + "or spell the exclusion as 'enabled: false' if that is what you meant")
+                                .formatted(entry.getKey()));
+                    }
                 }
+                candidates.add(new AgentCandidate(address,
+                        new AgentEntry(entry.getKey(), credentials, polling, enabled, port)));
+            } catch (final IllegalStateException e) {
+                problems.add(e.getMessage());
             }
-            builder.add(entry.getKey(), address, null,
-                    new AgentEntry(entry.getKey(), credentials, polling, enabled, port));
         }
         if (declaredNothing > MAX_NAMED_EMPTY_ENTRIES) {
             // a generated inventory can carry thousands of these; naming every one
             // would bury the rest of startup (the bounded-diagnostic idiom)
             warnings.add("%d further agent ranges declare nothing and are listed no further"
                     .formatted(declaredNothing - MAX_NAMED_EMPTY_ENTRIES));
+        }
+        return candidates;
+    }
+
+    /**
+     * Pass 2 over the agents tree: fail-fast, and reached only when pass 1 collected
+     * nothing, so the builder's duplicate poisoning can never be caught and continued.
+     */
+    private static PinnedPrefixMatcher<AgentEntry> agents(final List<AgentCandidate> candidates) {
+        final PinnedPrefixMatcher.Builder<AgentEntry> builder = PinnedPrefixMatcher.builder();
+        for (final AgentCandidate candidate : candidates) {
+            // never pinned (#543/#615): every agent range lands in the wildcard pool
+            builder.add(candidate.entry().range(), candidate.address(), null, candidate.entry());
         }
         return builder.build();
     }
@@ -285,26 +384,50 @@ public final class InventoryLoader {
         return entryBody.values().stream().allMatch(Objects::isNull);
     }
 
-    private static PinnedPrefixMatcher<ExporterEntry> exporters(final Map<String, Object> exporters,
-                                                                final List<String> warnings) {
-        final PinnedPrefixMatcher.Builder<ExporterEntry> builder = PinnedPrefixMatcher.builder();
+    /**
+     * Pass 1 over the exporters tree. One problem per bad exporter, as for agent ranges
+     * — except that the interfaces map is itself an iteration, so its pins recover one
+     * by one inside {@link #interfacePins}: a script-generated exporter with thirty
+     * blank aliases is thirty bad entries, not one, and reporting one of them is thirty
+     * boots. An exporter whose own address or pin fails never reaches its interfaces,
+     * because those checks are its dependency graph.
+     */
+    private static List<ExporterEntry> validateExporters(final Map<String, Object> exporters,
+                                                         final List<String> warnings,
+                                                         final Problems problems) {
+        final List<ExporterEntry> candidates = new ArrayList<>(exporters.size());
         for (final Map.Entry<String, Object> entry : exporters.entrySet()) {
-            final Map<String, Object> entryBody = body(entry, "exporter");
-            requireEntryKeys(entry.getKey(), "exporter", entryBody, EXPORTER_KEYS);
-            final Object address = entryBody.get("address");
-            if (address == null) {
-                throw new IllegalStateException(
-                        "Exporter '%s' has no address — every enrichment entry needs one.".formatted(entry.getKey()));
+            try {
+                final Map<String, Object> entryBody = body(entry, "exporter");
+                requireEntryKeys(entry.getKey(), "exporter", entryBody, EXPORTER_KEYS);
+                final Object address = entryBody.get("address");
+                if (address == null) {
+                    throw new IllegalStateException("Exporter '%s' has no address — every enrichment entry needs one."
+                            .formatted(entry.getKey()));
+                }
+                // prefixes allowed, like agent ranges: an entry may label and pin a whole
+                // subnet, which is how a site-scoped label survives the move off the legacy
+                // tree. Most specific still wins, so a bare host beats a prefix covering it
+                final IPAddressString parsedAddress = strictAddress(String.valueOf(address),
+                        "exporter '%s' address".formatted(entry.getKey()), false);
+                final Long pin = observationDomain(entry.getKey(), entryBody.get("observation-domain"));
+                candidates.add(new ExporterEntry(entry.getKey(), parsedAddress, pin,
+                        interfacePins(entry.getKey(), entryBody.get("interfaces"), warnings, problems)));
+            } catch (final IllegalStateException e) {
+                problems.add(e.getMessage());
             }
-            // prefixes allowed, like agent ranges: an entry may label and pin a whole
-            // subnet, which is how a site-scoped label survives the move off the legacy
-            // tree. Most specific still wins, so a bare host beats a prefix covering it
-            final IPAddressString parsedAddress = strictAddress(String.valueOf(address),
-                    "exporter '%s' address".formatted(entry.getKey()), false);
-            final Long pin = observationDomain(entry.getKey(), entryBody.get("observation-domain"));
-            builder.add(entry.getKey(), parsedAddress, pin,
-                    new ExporterEntry(entry.getKey(), parsedAddress, pin,
-                            interfacePins(entry.getKey(), entryBody.get("interfaces"), warnings)));
+        }
+        return candidates;
+    }
+
+    /**
+     * Pass 2 over the exporters tree: the name, address and pin travel on the entry, so
+     * this reads back what pass 1 validated rather than re-deriving any of it.
+     */
+    private static PinnedPrefixMatcher<ExporterEntry> exporters(final List<ExporterEntry> candidates) {
+        final PinnedPrefixMatcher.Builder<ExporterEntry> builder = PinnedPrefixMatcher.builder();
+        for (final ExporterEntry entry : candidates) {
+            builder.add(entry.name(), entry.address(), entry.observationDomain(), entry);
         }
         return builder.build();
     }
@@ -393,15 +516,21 @@ public final class InventoryLoader {
         return resolved;
     }
 
+    /**
+     * Collects rather than throws: this runs once per tree level, and a stray key at the
+     * file root used to hide the one under {@code riptide.snmp} until the operator had
+     * fixed the first and restarted. Each unknown key is its own entry at its level, so
+     * each is its own problem.
+     */
     private static void requireKnownKeys(final String sourceName, final String where,
-                                         final Map<String, Object> map, final Set<String> known) {
+                                         final Map<String, Object> map, final Set<String> known,
+                                         final Problems problems) {
         for (final String key : map.keySet()) {
             if (!known.contains(key)) {
                 // sorted: Set.of iteration order is salt-randomized, so the listed
                 // keys would otherwise shuffle between runs of the same binary
-                throw new IllegalStateException(
-                        "Inventory file %s: unknown key '%s' under %s; known keys are %s."
-                                .formatted(sourceName, key, where, new TreeSet<>(known)));
+                problems.add("Inventory file %s: unknown key '%s' under %s; known keys are %s."
+                        .formatted(sourceName, key, where, new TreeSet<>(known)));
             }
         }
     }
@@ -467,34 +596,44 @@ public final class InventoryLoader {
      * mean, and declaring one ifIndex both ways is an error rather than a silent
      * last-one-wins.
      *
-     * <p>Errors fire in document order, which is what makes the first complaint about
-     * a file stable across runs.</p>
+     * <p>Errors are collected in document order, which is what makes the report about a
+     * file stable across runs. One problem per pin, not per exporter: an exporter with a
+     * hundred generated pins, thirty of them blank, is thirty bad entries.</p>
      *
      * <p>One YAML wart survives and cannot be seen from here: an unquoted {@code 010}
      * is resolved to 8 by YAML 1.1 octal rules before the loader is handed the key.
      * Quote it, or write it without the leading zero.</p>
      */
     private static Map<Integer, InterfacePin> interfacePins(final String exporter, final Object value,
-                                                            final List<String> warnings) {
+                                                            final List<String> warnings,
+                                                            final Problems problems) {
         if (value == null) {
             return Map.of();
         }
         if (!(value instanceof Map<?, ?> pins)) {
+            // the exporter's own shape, not a pin's: thrown, so it is the one problem
+            // that entry reports and no pin is walked against a non-mapping
             throw new IllegalStateException(
                     "Exporter '%s' interfaces must be a mapping of ifIndex to pins, found %s."
                             .formatted(exporter, value.getClass().getSimpleName()));
         }
         final Map<Integer, InterfacePin> parsed = new LinkedHashMap<>(pins.size() * 2);
         for (final Map.Entry<?, ?> pin : pins.entrySet()) {
-            final int ifIndex = ifIndex(exporter, pin.getKey());
-            final InterfacePin previous = parsed.putIfAbsent(ifIndex,
-                    interfacePin(exporter, ifIndex, pin.getValue(), warnings));
-            if (previous != null) {
-                // quoted and unquoted spellings are distinct keys to SnakeYAML, so its
-                // own duplicate-key check cannot see this one
-                throw new IllegalStateException(
-                        ("Exporter '%s' pins interface %d twice, once quoted and once not: "
-                                + "keep one spelling.").formatted(exporter, ifIndex));
+            try {
+                final int ifIndex = ifIndex(exporter, pin.getKey());
+                final InterfacePin previous = parsed.putIfAbsent(ifIndex,
+                        interfacePin(exporter, ifIndex, pin.getValue(), warnings));
+                if (previous != null) {
+                    // quoted and unquoted spellings are distinct keys to SnakeYAML, so its
+                    // own duplicate-key check cannot see this one
+                    throw new IllegalStateException(
+                            ("Exporter '%s' pins interface %d twice, once quoted and once not: "
+                                    + "keep one spelling.").formatted(exporter, ifIndex));
+                }
+            } catch (final IllegalStateException e) {
+                // a rejected pin never lands in the result; the collected problem stops
+                // this half-built map from reaching a builder anyway
+                problems.add(e.getMessage());
             }
         }
         return Map.copyOf(parsed);
