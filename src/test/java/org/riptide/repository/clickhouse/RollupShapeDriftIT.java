@@ -18,6 +18,7 @@ import org.riptide.e2e.ContainerImages;
 import org.riptide.mcp.service.QueryRouter;
 import org.riptide.provisioning.ProvisioningDdl;
 import org.riptide.schema.FlowsSchema;
+import org.riptide.schema.RollupShapeCheck;
 import org.riptide.schema.RollupAvailability;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
@@ -332,10 +333,39 @@ public class RollupShapeDriftIT {
     }
 
     /**
+     * The codes this server answers are the codes the production discriminator acts on.
+     *
+     * <p>Without this the two halves are unlinked facts: the probes above measure what the server
+     * says, and {@code ClickhouseRepository.outcomeOf} separately decides what each number means.
+     * Nothing asserted that the second was built from the first, so the server could answer 497 and
+     * the discriminator could branch on some other literal, and every test would stay green while
+     * the feature silently did nothing.</p>
+     *
+     * <p>The vanished database is asserted as INCONCLUSIVE on purpose. There is deliberately no arm
+     * for it — a database with no readable tables answers UNREACHABLE one branch earlier — so this
+     * pins that the absence is a decision rather than an oversight.</p>
+     */
+    @Test
+    void theMeasuredCodesAreTheOnesTheDiscriminatorActsOn() {
+        assertThat(ClickhouseRepository.outcomeOf(absent.code()))
+                .as("an absent view measured at %s must be what production calls ABSENT", absent)
+                .isEqualTo(RollupShapeCheck.ViewProbe.ABSENT);
+        assertThat(ClickhouseRepository.outcomeOf(ungranted.code()))
+                .as("an ungranted view measured at %s must be what production calls UNGRANTED,"
+                        + " because declining it would degrade every pre-#572 deployment", ungranted)
+                .isEqualTo(RollupShapeCheck.ViewProbe.UNGRANTED);
+        assertThat(ClickhouseRepository.outcomeOf(absentDatabase.code()))
+                .as("a vanished database measured at %s has no arm by design; UNREACHABLE already"
+                        + " declines it one branch earlier", absentDatabase)
+                .isEqualTo(RollupShapeCheck.ViewProbe.INCONCLUSIVE);
+    }
+
+    /**
      * The grant problem, and the reason it needs its own outcome. Without the grant the view is
-     * zero rows — indistinguishable from absent — so calling it stale would condemn every
-     * deployment provisioned before that grant existed, and calling it fine would be silent on real
-     * drift.
+     * zero rows in {@code system.tables} — which is what an absent view also looks like there, so
+     * calling it stale would condemn every deployment provisioned before that grant existed, and
+     * calling it fine would be silent on real drift. Since #587 the two are separated by asking the
+     * server, and this test pins the half that must keep its rollup.
      */
     @Test
     void aViewTheWriterCannotSeeIsReportedAsUnverifiableAndStillUsed() throws Exception {
@@ -348,14 +378,71 @@ public class RollupShapeDriftIT {
             final List<String> logged = messages(startWriterAndCapture());
 
             assertThat(logged)
-                    .as("an unreadable view must name the grant, not accuse the rollup")
+                    .as("an unreadable view must name the grant, not accuse the rollup — and must do"
+                            + " so through the UNGRANTED arm. The wording asserted here is unique to"
+                            + " it: the INCONCLUSIVE fallback also says 'could not be verified' and"
+                            + " 'GRANT SHOW TABLES', so matching only those would stay green if the"
+                            + " probe silently degraded to this version's pre-#587 behaviour")
                     .anyMatch(m -> m.contains(rollup) && m.contains("could not be verified")
-                            && m.contains("GRANT SHOW TABLES"));
+                            && m.contains("exists but the connecting user holds no grant"));
             assertThat(logged).noneMatch(m -> m.contains(rollup) && m.contains("does not match"));
             assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, rollup)))
                     .as("a rollup that could not be checked is not thereby known to be wrong")
                     .isTrue();
         } finally {
+            admin.execute("GRANT SHOW TABLES ON " + mv + " TO flow_writer").get();
+            RollupAvailability.recordDrifted(List.of());
+        }
+    }
+
+    /**
+     * A rollup whose view is gone is declined, and the message says why (#587).
+     *
+     * <p>The state this whole discriminator exists for, and the one the catalog cannot report: with
+     * the view dropped, {@code system.tables} yields the same zero rows as the revoked-grant case
+     * above. The two are separated by asking the server, and they must end differently — that test
+     * keeps its rollup, this one loses it.</p>
+     *
+     * <p>Declined rather than merely reported because the target is still perfectly readable. A
+     * query against it succeeds and returns what a table nothing writes to holds, which for a
+     * long-range query is a silence that reads like an answer.</p>
+     */
+    @Test
+    void aRollupWhoseViewWasDroppedIsDeclinedAndNamesTheMissingView() throws Exception {
+        final String rollup = FlowsSchema.ROLLUP_BY_CONVERSATION;
+        final String mv = FlowsSchema.qualifiedRollupView(DATABASE, rollup);
+        admin.execute("DROP VIEW IF EXISTS " + mv).get();
+        try {
+            RollupAvailability.recordDrifted(List.of());
+
+            final List<String> logged = messages(startWriterAndCapture());
+
+            assertThat(logged)
+                    .as("the operator must be told the view is missing, and told that queries still"
+                            + " work — the sibling drift test pins the same fallback wording, and"
+                            + " both halves are deletable today with the suite green")
+                    .anyMatch(m -> m.contains(rollup) && m.contains("no materialized view")
+                            && m.contains("fall back to raw flows"));
+            assertThat(logged)
+                    .as("and must not be offered the grant remedy for a view that does not exist —"
+                            + " asserted, not merely described, because the unit test asserts it and"
+                            + " the message an operator actually reads is built here")
+                    .noneMatch(m -> m.contains(rollup) && m.contains("GRANT SHOW TABLES"));
+            assertThat(logged)
+                    .as("the #654 defect was prose promising a repair nobody would perform, and this"
+                            + " line names a remedy, so it is exactly the shape that regression"
+                            + " targets")
+                    .noneMatch(m -> RollupRepairIT.PROMISES_A_REPAIR.matcher(m).find());
+            assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, rollup)))
+                    .as("a rollup nothing writes to must leave the query path; answering from it"
+                            + " returns a silence that reads like an answer")
+                    .isFalse();
+        } finally {
+            admin.execute(FlowsSchema.createRollupViewsByRollup(DATABASE).get(rollup)).get();
+            // Re-granted like every sibling teardown in this class: riptide grants per object by
+            // name (ProvisioningDdl), and whether a grant survives DROP VIEW is not asserted
+            // anywhere. Without this the class is order-dependent — a later test would see this
+            // rollup as ungranted.
             admin.execute("GRANT SHOW TABLES ON " + mv + " TO flow_writer").get();
             RollupAvailability.recordDrifted(List.of());
         }
@@ -424,7 +511,7 @@ public class RollupShapeDriftIT {
             }
             assertThat(visible).as("the check needs the views visible").isPositive();
 
-            assertThatThrownBy(() -> writer.queryRecords("SELECT count() FROM " + mv).get())
+            assertThatThrownBy(() -> writer.queryRecords(ClickhouseRepository.PROBE_STATEMENT + mv).get())
                     .as("SELECT through the view would bypass the target's row policy")
                     .hasMessageContaining("Not enough privileges");
         }
@@ -550,14 +637,16 @@ public class RollupShapeDriftIT {
     }
 
     /**
-     * The server's refusal for a trivial query against {@code view}, run as the probe user through
-     * {@code queryRecords(...).get()}, the path {@code ClickhouseRepository.readRollupSelects} reads
-     * on. That path wraps the {@link ServerException} in an {@code ExecutionException}, hence the
-     * walk down the cause chain.
+     * The server's refusal for a trivial query against {@code view}, run as the probe user with
+     * {@code ClickhouseRepository.PROBE_STATEMENT} — the same statement production issues, taken
+     * from the same constant so the two cannot drift and leave this measuring a query riptide no
+     * longer sends. The path is {@code queryRecords(...).get()}, which is what
+     * {@code ClickhouseRepository.probeView} reads on, and it wraps the {@link ServerException} in
+     * an {@code ExecutionException} — hence the walk down the cause chain.
      */
     private static Answer refusalOf(final String view) {
         final Throwable thrown = catchThrowable(() -> {
-            try (var records = probe.queryRecords("SELECT count() FROM " + view).get()) {
+            try (var records = probe.queryRecords(ClickhouseRepository.PROBE_STATEMENT + view).get()) {
                 // The refusal this probe reads is thrown by get(); on the path where it is not,
                 // the assertion below is what fails, and the resource still closes.
                 assertThat(records).isNotNull();

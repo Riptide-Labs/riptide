@@ -100,9 +100,21 @@ public final class FlowsSchema {
         return ident(database) + "." + table;
     }
 
+    /**
+     * The unqualified name of the materialized view feeding {@code table}.
+     *
+     * <p>One place, because the suffix was spelled in three and the repo's rule is to remove a
+     * condition rather than add a place that remembers it. Two of those three compare a name built
+     * here against a name read from {@code system.tables}, so a suffix that drifted between them
+     * would not fail loudly: every view would simply read as invisible.</p>
+     */
+    public static String rollupViewName(final String table) {
+        return table + "_mv";
+    }
+
     /** The qualified {@code `<db>`.<rollup>_mv} materialized-view name. */
     public static String qualifiedRollupView(final String database, final String table) {
-        return qualifiedRollup(database, table) + "_mv";
+        return qualifiedRollup(database, rollupViewName(table));
     }
 
     /**
@@ -325,7 +337,7 @@ public final class FlowsSchema {
         final List<String> stale = new ArrayList<>();
         final Map<String, String> declined = new LinkedHashMap<>();
         rollupSelects(database).forEach((rollup, intended) -> {
-            final String current = liveSelects.get(rollup + "_mv");
+            final String current = liveSelects.get(rollupViewName(rollup));
             if (current == null || refused.contains(rollup)) {
                 return;
             }

@@ -124,11 +124,21 @@ public class RollupRepairIT {
      * create tables but not views, so the four targets are created at this version's shape and none
      * of their views can be.</p>
      *
-     * <p>That combination is precisely the one the shape check does <em>not</em> catch: columns
-     * match, the view is invisible, and the verdict is {@code UNVERIFIABLE}, which is deliberately
-     * not declined ("an unverified rollup is not a known-bad one"). So the only thing standing
-     * between an empty rollup and every long-range query is the repair recording what it could not
-     * do. Deleting that seed leaves every other rollup test green.</p>
+     * <p><b>This test no longer isolates the repair's seed, and that is a real loss.</b> It used to:
+     * columns matched, the view was invisible, and the shape check called it {@code UNVERIFIABLE},
+     * which is deliberately not declined — so the seed was the only thing standing between an empty
+     * rollup and every long-range query. Since #587 the shape check asks the server about an
+     * invisible view, gets {@code UNKNOWN_TABLE} for these four, and declines them itself as
+     * {@code NO_VIEW}. The rollup is still correctly declined, so what this test asserts still
+     * holds; it just no longer fails if {@code unrepaired.add(rollup)} is deleted.</p>
+     *
+     * <p>The seed is not redundant. It still carries failures the shape check cannot classify — a
+     * DDL failure on a rollup whose view exists but is invisible probes as {@code UNGRANTED}, stays
+     * {@code UNVERIFIABLE}, and is declined by the seed alone. That state could not be built as a
+     * fixture: planning the {@code MODIFY QUERY} that would fail requires reading the view's SELECT,
+     * which requires the very {@code SHOW TABLES} grant whose absence defines the case. Stated here
+     * rather than behind a pointer: the planning notes that record it are not in this repository, so
+     * a link to them is one a reader of the merged code cannot follow.</p>
      */
     @Test
     void aRollupWhoseDdlFailedIsDeclinedAndStartupSurvivesIt() throws Exception {
@@ -157,8 +167,10 @@ public class RollupRepairIT {
                 .as("the view really could not be created — otherwise this test proves nothing")
                 .isNull();
         assertThat(RollupAvailability.usable(FlowsSchema.qualifiedRollup(DATABASE, ROLLUP)))
-                .as("a rollup nothing is writing to must not answer queries, even though its target's"
-                        + " columns match and the shape check therefore calls it UNVERIFIABLE")
+                .as("a rollup nothing is writing to must not answer queries. Since #587 two"
+                        + " independent things now decline it — the repair's seed and the shape"
+                        + " check's NO_VIEW verdict — so this assertion no longer distinguishes"
+                        + " them; see the class javadoc above")
                 .isFalse();
     }
 

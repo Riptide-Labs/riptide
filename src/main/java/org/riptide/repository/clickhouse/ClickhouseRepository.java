@@ -6,6 +6,7 @@
 package org.riptide.repository.clickhouse;
 
 import com.clickhouse.client.api.Client;
+import com.clickhouse.client.api.ServerException;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.mapstruct.BeanMapping;
@@ -29,12 +30,15 @@ import java.net.Inet6Address;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.net.InetAddress;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -167,8 +171,11 @@ public class ClickhouseRepository implements FlowRepository {
         // Rollups whose repair did not complete on this start. Every statement below is guarded, so
         // one rollup's failure cannot stop the others or stop ingestion — but a rollup left
         // half-repaired must not keep answering queries either, and the shape check alone will not
-        // always catch it (a target created current with no view reads as UNVERIFIABLE, which is
-        // deliberately NOT declined). What this start could not fix, it declines.
+        // always catch it. Before #587 a target created current with no view read as UNVERIFIABLE
+        // and was deliberately NOT declined; the shape check now asks the server and declines it as
+        // NO_VIEW. The seed still covers what the check cannot classify — a DDL failure on a rollup
+        // whose view exists but is invisible probes as UNGRANTED and stays UNVERIFIABLE. What this
+        // start could not fix, it declines.
         final Set<String> unrepaired = new LinkedHashSet<>();
         // Kept apart from `unrepaired` because the two clear differently. A statement that failed
         // may have been a no-op on a healthy rollup, so a clean shape verdict overrides it. A
@@ -279,9 +286,11 @@ public class ClickhouseRepository implements FlowRepository {
      *
      * <p>An unread catalog ({@code !planned}) skips every view for the same reason one step further
      * out — a refused target is then indistinguishable from a healthy one — and those skips
-     * <b>must</b> be declined. A target whose columns and sorting key are current with no view reads
-     * as UNVERIFIABLE, which is deliberately not declined, so skipping silently would leave four
-     * empty tables answering every long-range query. Declining is safe for a healthy deployment
+     * <b>must</b> be declined. A target whose columns and sorting key are current with no view is
+     * declined by the shape check itself since #587, which asks the server rather than reading it as
+     * UNVERIFIABLE; before that, skipping silently would have left four empty tables answering every
+     * long-range query. Declining here still matters, because on an unread catalog the probe outcome
+     * is no more trustworthy than the catalog was. Declining is safe for a healthy deployment
      * because a MATCHES verdict clears it on the same pass.</p>
      *
      * <p>Not reachable from an IT: a refused rollup needs hand-built DDL, and an unread catalog
@@ -459,8 +468,12 @@ public class ClickhouseRepository implements FlowRepository {
     private void verifyRollupShapes(final Set<String> unrepaired, final Set<String> refused) {
         final List<RollupShapeCheck.Result> results;
         try {
-            results = RollupShapeCheck.compare(this.config.getDatabase(), readRollupSelects(),
-                    readRollupColumns(), readRollupSortKeys());
+            final Map<String, String> selects = readRollupSelects();
+            // Read once and shared: the probe needs to know which targets are readable, and reading
+            // system.columns twice could disagree with itself between the two calls.
+            final Map<String, Map<String, String>> columns = readRollupColumns();
+            results = RollupShapeCheck.compare(this.config.getDatabase(), selects, columns,
+                    readRollupSortKeys(), probeInvisibleViews(selects, columns.keySet()));
         } catch (final InterruptedException e) {
             // Startup is being torn down. Restore the flag and record only what the repair already
             // knew it could not fix, rather than judging anything on a half-read catalog.
@@ -504,6 +517,16 @@ public class ClickhouseRepository implements FlowRepository {
                     drifted.add(result.rollup());
                     log.warn("Rollup {} cannot be reached: {}.", result.rollup(), result.detail());
                 }
+                case NO_VIEW -> {
+                    // Declined for the opposite reason to UNREACHABLE: this rollup IS readable, and
+                    // that is the problem. A query against it succeeds and returns what a table
+                    // nothing writes to holds, so the fallback to raw flows is the only answer that
+                    // is not silently short (#587).
+                    drifted.add(result.rollup());
+                    log.warn("Rollup {} has no materialized view writing to it: {}. Ingestion is"
+                            + " unaffected; long-range queries fall back to raw flows for it and are"
+                            + " slower.", result.rollup(), result.detail());
+                }
                 case UNVERIFIABLE -> log.warn("Rollup {} could not be verified: {}. It is still used"
                         + " for queries — an unverified rollup is not a known-bad one.",
                         result.rollup(), result.detail());
@@ -534,12 +557,265 @@ public class ClickhouseRepository implements FlowRepository {
     }
 
     /**
+     * What the server says about each rollup view the catalog could not see (#587).
+     *
+     * <p>{@code system.tables} is filtered by access rather than refused, so an absent view and an
+     * ungranted one are the same zero rows there. A query against the view itself separates them by
+     * error code, and the two want opposite responses: an absent view means nothing writes to the
+     * rollup, while an ungranted one means the rollup is healthy and only its shape is unverifiable.
+     *
+     * <p><b>Only the invisible ones are probed.</b> A healthy deployment has every view in
+     * {@code selects} and issues no query here at all, so this costs nothing in the case that is
+     * not the exception.
+     *
+     * <p>Throws only on interrupt. This runs inside the startup path that must not turn a rollup
+     * concern into an ingestion outage, so a server error or a transport failure becomes
+     * {@link RollupShapeCheck.ViewProbe#INCONCLUSIVE}, which decides nothing. An interrupt is the
+     * exception: it means teardown, and {@code verifyRollupShapes} already refuses to judge a
+     * half-read catalog, so it is propagated there rather than absorbed here.
+     */
+    private Map<String, RollupShapeCheck.ViewProbe> probeInvisibleViews(final Map<String, String> selects,
+            final Set<String> visibleTargets) throws InterruptedException {
+        return probeViews(selects, visibleTargets, this.config.getDatabase(), this::probeView);
+    }
+
+    /** Issues one probe. Separated so the map-building around it can be tested without a server. */
+    @FunctionalInterface
+    interface ViewProber {
+        RollupShapeCheck.ViewProbe probe(String qualifiedView) throws InterruptedException;
+    }
+
+    /**
+     * The probe outcomes, keyed the way {@code RollupShapeCheck.compare} looks them up.
+     *
+     * <p>Extracted because this is where the feature can go silently inert. {@code compare} reads
+     * the map by <em>rollup target</em> name while the query needs the <em>qualified view</em>
+     * name, and the two differ. Key it by the view name and every lookup misses, every rollup reads
+     * INCONCLUSIVE, nothing is ever declined — and no verdict-level assertion notices, because they
+     * all hand-build this map rather than producing it.</p>
+     */
+    static Map<String, RollupShapeCheck.ViewProbe> probeViews(final Map<String, String> selects,
+            final Set<String> visibleTargets, final String database, final ViewProber prober)
+            throws InterruptedException {
+        final Map<String, RollupShapeCheck.ViewProbe> probes = new LinkedHashMap<>();
+        for (final String rollup : rollupsNeedingProbe(selects, visibleTargets)) {
+            probes.put(rollup, prober.probe(FlowsSchema.qualifiedRollupView(database, rollup)));
+        }
+        return probes;
+    }
+
+    /**
+     * Which rollups the catalog could not see a view for, and therefore the only ones worth asking
+     * the server about.
+     *
+     * <p>Extracted so it can be tested, like {@code planViewCreation}: that a healthy deployment
+     * issues no probe at all is the property that makes this change free for everyone not in the
+     * broken state, and it is not observable from the verdicts.</p>
+     */
+    static List<String> rollupsNeedingProbe(final Map<String, String> selects,
+            final Set<String> visibleTargets) {
+        return FlowsSchema.rollupTableNames().stream()
+                .filter(rollup -> !selects.containsKey(FlowsSchema.rollupViewName(rollup)))
+                // A rollup whose TARGET is unreadable answers UNREACHABLE before the view branch is
+                // reached, so its probe outcome is discarded. Asking anyway spends a round trip per
+                // rollup on a start that is already degraded, which is when a deployment can least
+                // afford it.
+                .filter(visibleTargets::contains)
+                .toList();
+    }
+
+    /**
+     * One probe: the server's answer to a trivial query against {@code view}.
+     *
+     * <p><b>Do not "fix" this by granting the writer SELECT on the view.</b> A maintainer who sees
+     * every probe answer UNGRANTED will find that tempting, and it is the one change that must not
+     * be made: {@code ProvisioningDdl} withholds SELECT on each {@code _mv} on purpose, because a
+     * row policy on the target does not apply to rows read through the view's name, so the grant
+     * would hand every tenant's writer a read path around the policy. That reasoning is on the
+     * ClickHouse configuration page, under the grants it lists for {@code flow_writer}.
+     * The probe works precisely because it is denied — a dropped view answers
+     * UNKNOWN_TABLE while an existing one answers ACCESS_DENIED, which is the whole discrimination.
+     *
+     * <p>The statement and the path are the ones {@code RollupShapeDriftIT} measured the codes on.
+     * The client wraps a {@link ServerException} in an {@code ExecutionException}, so the cause
+     * chain is walked rather than the top-level type inspected — a check on the thrown type alone
+     * finds nothing and would report every state as inconclusive.
+     */
+    private RollupShapeCheck.ViewProbe probeView(final String view) throws InterruptedException {
+        return outcomeOfProbe(view, () -> {
+            awaitBounded(this.client.queryRecords(PROBE_STATEMENT + view), PROBE_TIMEOUT, view);
+        });
+    }
+
+    /**
+     * The probe's statement, shared with the test that measured what the server answers to it.
+     *
+     * <p>Package-private and referenced by {@code RollupShapeDriftIT} rather than re-typed there.
+     * The codes this class branches on were measured for <em>this</em> statement; a second copy
+     * could drift, and the IT would go on measuring a query production no longer issues while
+     * staying green.</p>
+     */
+    static final String PROBE_STATEMENT = "SELECT count() FROM ";
+
+    /** One probe attempt, which may fail in any of the ways a network call can. */
+    @FunctionalInterface
+    interface ProbeCall {
+        void run() throws Exception;
+    }
+
+    /**
+     * What one probe attempt means, separated from issuing it so the paths that are not an error
+     * code can be tested at all.
+     *
+     * <p>Three of the four outcomes here never reach {@link #outcomeOf(Throwable)}: a query that
+     * succeeds, a timeout, and an interrupt. Without this seam they were reachable only from a
+     * server that misbehaves on cue, which is to say untested.</p>
+     */
+    static RollupShapeCheck.ViewProbe outcomeOfProbe(final String view, final ProbeCall call)
+            throws InterruptedException {
+        try {
+            call.run();
+            // Reached when the view is both present and readable, which contradicts the catalog
+            // read that sent us here. Nothing measured says what that means, so it decides nothing.
+            log.debug("Probe of {} succeeded though the catalog did not list it; not acting on it", view);
+            return RollupShapeCheck.ViewProbe.INCONCLUSIVE;
+        } catch (final InterruptedException e) {
+            // Rethrown, not swallowed. verifyRollupShapes has an InterruptedException arm that
+            // refuses to judge anything on a half-read catalog during teardown, and swallowing here
+            // would walk past it: every remaining probe would fail instantly and silently, and
+            // verdicts would be recorded from a catalog nobody finished reading.
+            throw e;
+        } catch (final Exception e) {
+            if (carriesInterrupt(e)) {
+                Thread.currentThread().interrupt();
+                throw new InterruptedException("probe of " + view + " interrupted: " + e);
+            }
+            final RollupShapeCheck.ViewProbe outcome = outcomeOf(e);
+            if (outcome == RollupShapeCheck.ViewProbe.INCONCLUSIVE) {
+                // The only evidence an operator gets that the discriminator ran at all. Without it,
+                // "could not be verified" is indistinguishable from a probe that never fired or a
+                // server that stopped separating the codes.
+                log.debug("Probe of {} decided nothing: {}", view, e.toString());
+            }
+            return outcome;
+        }
+    }
+
+    /**
+     * Waits for one probe's result, bounded, closing or cancelling whatever it gets.
+     *
+     * <p>Extracted so the bound is testable. Inlined, a change from {@code get(timeout)} to a bare
+     * {@code get()} restores an unbounded startup wait and no test notices: the ITs run against a
+     * container that answers at once, so bounded and unbounded are indistinguishable there.</p>
+     */
+    static void awaitBounded(final java.util.concurrent.Future<? extends AutoCloseable> pending,
+            final Duration timeout, final String view) throws Exception {
+        try (var records = pending.get(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
+            // Nothing to read: the refusal this probe exists for arrives from get(), which is the
+            // path RollupShapeDriftIT measured the codes on. A result that does arrive means the
+            // view was readable after all, which decides nothing either way.
+            log.trace("Probe of {} returned {}", view, records);
+        } catch (final TimeoutException | InterruptedException e) {
+            // Both abandon the query, so both must cancel it. Only the timeout did, which left the
+            // same leak on the teardown path it was written to prevent on the timeout path.
+            pending.cancel(true);
+            throw e;
+        }
+    }
+
+    /**
+     * How long one probe may block.
+     *
+     * <p>Bounded because this runs on the startup path. {@code get()} without a timeout waits
+     * forever on a server that accepts the connection and never answers, once per invisible rollup,
+     * and ingestion never begins — an outage caused by a rollup-only concern, which is the outcome
+     * every guard on this path exists to prevent.</p>
+     *
+     * <p>Per probe, not in aggregate. Four invisible views against a server that accepts the
+     * connection and never answers therefore add four times this before ingestion begins. That is
+     * accepted rather than bounded: a total budget would be new untested control flow on the
+     * startup path, and the case needs every view invisible AND a server that connects but never
+     * replies. Stated here so the number is known rather than discovered.</p>
+     *
+     * <p>Converted with {@code toMillis()}, not {@code toSeconds()}: a later value below one second
+     * would truncate to {@code get(0, SECONDS)}, and every probe would time out immediately and
+     * report INCONCLUSIVE with nothing saying why.</p>
+     */
+    private static final Duration PROBE_TIMEOUT = Duration.ofSeconds(10);
+
+    /**
+     * The probe outcome for a thrown failure.
+     *
+     * <p>The cause chain is walked rather than the thrown type inspected. The client wraps a
+     * {@link ServerException} in an {@code ExecutionException}, so a check on the top-level type
+     * finds nothing and would report every state as inconclusive — the discriminator would compile,
+     * pass a unit test built on the same mistake, and never fire on a real server.</p>
+     *
+     * <p>A failure carrying no {@code ServerException} at all is a transport problem rather than an
+     * answer about the view, and decides nothing.</p>
+     */
+    static RollupShapeCheck.ViewProbe outcomeOf(final Throwable thrown) {
+        // Hand-rolled rather than Guava's getCausalChain, which throws IllegalArgumentException on
+        // a self-referential chain. That exception would escape this method, escape probeView's
+        // catch, and abort the shape check for every rollup — breaking the "a transport failure
+        // becomes INCONCLUSIVE" promise on the one input that is already pathological.
+        final Set<Throwable> seen = new LinkedHashSet<>();
+        for (Throwable cause = thrown; cause != null && seen.add(cause); cause = cause.getCause()) {
+            if (cause instanceof ServerException server) {
+                return outcomeOf(server.getCode());
+            }
+        }
+        return RollupShapeCheck.ViewProbe.INCONCLUSIVE;
+    }
+
+    /**
+     * Whether a failure carries an interrupt anywhere in its cause chain.
+     *
+     * <p>{@code get()} throws {@link InterruptedException} directly when this thread is
+     * interrupted, but a client that interrupts its own worker surfaces it wrapped in an
+     * {@code ExecutionException}. Unwrapped, teardown walks straight past the arm in
+     * {@code verifyRollupShapes} that refuses to judge a half-read catalog.</p>
+     */
+    static boolean carriesInterrupt(final Throwable thrown) {
+        final Set<Throwable> seen = new LinkedHashSet<>();
+        for (Throwable cause = thrown; cause != null && seen.add(cause); cause = cause.getCause()) {
+            if (cause instanceof InterruptedException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The probe outcome for one server error code.
+     *
+     * <p>An if-chain rather than a switch because {@code ErrorCodes} accessors are method calls and
+     * cannot be case labels. {@code TABLE_NOT_FOUND} is read from the client so a renumbering stays
+     * correct; {@code ACCESS_DENIED} is a literal because client-v2 0.10.0 has no member for it.
+     * There is no arm for {@code UNKNOWN_DATABASE} — see {@code RollupShapeCheck.compareOne}, which
+     * explains why that case is answered one branch earlier.</p>
+     */
+    static RollupShapeCheck.ViewProbe outcomeOf(final int code) {
+        if (code == ServerException.ErrorCodes.TABLE_NOT_FOUND.getCode()) {
+            return RollupShapeCheck.ViewProbe.ABSENT;
+        }
+        if (code == VIEW_UNGRANTED_CODE) {
+            return RollupShapeCheck.ViewProbe.UNGRANTED;
+        }
+        return RollupShapeCheck.ViewProbe.INCONCLUSIVE;
+    }
+
+    /** {@code ACCESS_DENIED}. A literal because client-v2 0.10.0 has no enum member for it. */
+    private static final int VIEW_UNGRANTED_CODE = 497;
+
+    /**
      * Each {@code <rollup>_mv}'s stored SELECT, for those the connecting user can see.
      *
      * <p>A rollup absent from the result is <em>not visible</em>, which ClickHouse does not
      * distinguish from absent: it filters {@code system.tables} by access rather than refusing the
-     * query, so a role without a grant on the view gets zero rows and no error. Telling those two
-     * apart is {@link RollupShapeCheck}'s job, and it needs the absence rather than an exception.</p>
+     * query, so a role without a grant on the view gets zero rows and no error. This read reports
+     * the absence rather than an exception, and {@link #probeInvisibleViews} then asks the server
+     * which of the two it is (#587).</p>
      */
     private Map<String, String> readRollupSelects() throws Exception {
         final Map<String, String> selects = new LinkedHashMap<>();
