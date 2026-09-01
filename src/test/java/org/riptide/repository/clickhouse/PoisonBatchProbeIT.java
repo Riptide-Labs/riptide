@@ -72,9 +72,10 @@ import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
  * answer for the 10,000-row batches {@code BatchingFlowRepository} actually flushes ({@code
  * ClickhouseConfig.maxRows}). #548 must not read this as a general atomicity guarantee.
  *
- * <p>That gap is now filled elsewhere rather than left open: {@code MultiBlockPoisonProbeIT} (#700)
- * measures both sides of the boundary, and {@code ClickhouseRepository} warns when a configured
- * batch could cross it. An earlier version of this paragraph added that {@code
+ * <p>{@code MultiBlockPoisonProbeIT} (#700) measures both sides of that boundary and shows a
+ * partial write is real in at least one server tuning. It does not close the gap: which servers are
+ * affected is still unstated, deliberately, because two attempts to model it in a startup check
+ * were each wrong in both directions. An earlier version of this paragraph added that {@code
  * max_insert_block_size} "appears exactly once in the whole repository" — true when written, and
  * falsified by exactly that work.</p>
  *

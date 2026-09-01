@@ -13,7 +13,9 @@ package org.riptide.repository.clickhouse;
  * remembered in three places before this class existed: {@link TenantWriteBarrierIT},
  * {@link TenantOnboardingIT}, and {@code ClickhouseRepositoryIT}, whose own {@code REJECTED_ROW_CODE}
  * the change that introduced this class deletes. {@link PoisonBatchProbeIT} arrives with this class
- * and reads from it rather than becoming a fourth.</p>
+ * and reads from it rather than becoming a fourth; {@link MultiBlockPoisonProbeIT} (#700) is the
+ * fifth reader and reads from here too. This enumeration exists to stop the next one becoming a
+ * copy, so it is worth keeping current.</p>
  *
  * <p>Every code this package <em>asserts</em> lives here. One code it merely mentions does not:
  * {@code 181} ({@code ILLEGAL_FINAL}) appears in {@link PoisonBatchProbeIT}'s javadoc as prose about

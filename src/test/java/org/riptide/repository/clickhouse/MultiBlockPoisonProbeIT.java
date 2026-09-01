@@ -5,12 +5,8 @@
 
 package org.riptide.repository.clickhouse;
 
-import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.read.ListAppender;
 import com.clickhouse.client.api.Client;
 import org.assertj.core.api.Assertions;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.riptide.config.ClickhouseConfig;
@@ -19,7 +15,6 @@ import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.schema.FlowsSchema;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
-import org.slf4j.LoggerFactory;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.images.builder.Transferable;
@@ -47,39 +42,40 @@ import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
  * between bisecting a poisoned batch and dead-lettering it on exactly this fact, because a bisect
  * re-inserts a half and double-counts whatever the original left behind.</p>
  *
- * <p><b>The parse size is not the boundary, and this fixture exists to prove it both ways.</b>
- * {@code max_insert_block_size} decides only how the incoming stream is cut up. {@code
- * min_insert_block_size_rows} then squashes those pieces back together before they are committed,
- * and the squashed size is what decides atomicity. The two containers below differ in exactly that
- * one setting, and they answer PQ-5 differently — which is why {@code ClickhouseRepository}'s
- * advisory compares against the squash threshold. An earlier version compared against the parse
- * size and refused startup on servers where nothing could go wrong.</p>
+ * <p><b>What is settled: a refused insert is not always atomic.</b> With the parse size lowered and
+ * row-squashing pinned to it, a six-row batch whose fifth row violates a CHECK leaves the earlier
+ * blocks committed. With only the parse size lowered, the same batch commits nothing. Those two
+ * measurements are what this fixture pins, and they are enough for #548 to know a bisect-and-retry
+ * cannot assume it is re-inserting into an empty slot.</p>
+ *
+ * <p><b>What is NOT settled, and is deliberately not encoded anywhere: which servers are at risk.</b>
+ * #700 tried twice to turn this into a startup check. The first compared the configured batch
+ * against {@code max_insert_block_size} and refused startup on servers that commit nothing; the
+ * second compared against {@code min_insert_block_size_rows} and was wrong in both directions —
+ * silent on a server that partial-writes when {@code min_insert_block_size_bytes} is small, and
+ * warning on a server that does not when the parse size is large. Two independent measurements of
+ * the squash settings then produced contradictory rules, one concluding the predicate is OR and the
+ * other AND, each falsified by the other's data. A further control deepens it: a two-million-row
+ * insert against a completely untouched server committed nothing on refusal, where any row-count
+ * model predicts about a million. So riptide states no boundary, and this fixture claims none.</p>
  *
  * <p>Rather than build a million-row batch, both containers lower the boundary to meet the batch: a
  * six-row batch with the poison row fifth, so blocks one and two are clean and are offered to the
- * server before it ever sees the offending row.</p>
+ * server before it ever sees the offending row. That is a stand-in for exceeding a stock boundary,
+ * and the control above is the reason it should be read as one rather than as the same thing.</p>
  *
  * <p><b>What this measures and what it does not.</b> It measures what the pinned server does to
  * blocks it already accepted when a later block is refused, on the direct insert path riptide uses.
- * It does not measure the 10,000-row batches {@code BatchingFlowRepository} actually flushes at the
- * real thresholds; lowering the settings is a stand-in for exceeding them, and the two are the same
- * question only if the behaviour depends on block count rather than on row count. That assumption is
- * stated rather than hidden. It also says nothing about {@code min_insert_block_size_bytes}, which
- * can merge blocks this fixture expects to stay separate.</p>
- *
- * <p><b>Two controls worth recording, because they bound what the measurement means.</b> Request
- * compression is not the cause: rerunning the hazard case with {@code compress-requests} off gives
- * the identical result. And the boundary has never actually been crossed through the real client at
- * stock settings — a two-million-row insert issued as raw TSV against an untouched server committed
- * nothing on refusal, while riptide's own client at a lowered threshold commits rows every time. So
- * the hazard is real on riptide's path, but every demonstration of it lowers the boundary to meet
- * the batch rather than raising the batch past a stock boundary.</p>
+ * It does not measure the 10,000-row batches {@code BatchingFlowRepository} actually flushes at
+ * stock thresholds — see the control above, which is the closest anyone got and points the other
+ * way. Request compression is not the cause: rerunning the hazard case with {@code compress-requests}
+ * off gives the identical result.</p>
  *
  * <p><b>What this fixture does not release.</b> {@code ClickhouseRepository} does not override
  * {@code FlowRepository.stop()}, so the {@code stop()} calls below are the fixture's side of a
  * lifecycle the repository does not yet implement: each test leaks the repository's HTTP connection
  * pool for the life of the JVM. Same known leak as {@code PoisonBatchProbeIT}, left alone for the
- * same reason — closing it means changing production code that is not this issue's business.</p>
+ * same reason.</p>
  */
 @Testcontainers
 @Timeout(value = 3, unit = TimeUnit.MINUTES, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
@@ -89,15 +85,16 @@ public class MultiBlockPoisonProbeIT {
     private static final int BLOCK_ROWS = 2;
 
     /**
-     * A server that both splits at {@link #BLOCK_ROWS} and does not squash the pieces back.
+     * A server that splits at {@link #BLOCK_ROWS} and squashes back only to that same size.
      *
-     * <p>All three settings are load-bearing, and saying so is the correction this fixture carries:
+     * <p>Named for what it does, not for "squashing off": it sets the row threshold TO the parse
+     * size, and the setting it actually disables is the byte one. All three are load-bearing —
      * with only {@code max_insert_block_size} lowered, the same refused batch commits nothing. The
      * settings live in the server's own default profile rather than being applied with {@code ALTER
      * USER}, because setting {@code CLICKHOUSE_USER} makes the image's {@code default} user require
      * a password, so no admin connection is available to issue that statement.</p>
      */
-    private static final String SQUASHING_OFF_PROFILE = """
+    private static final String SQUASH_AT_PARSE_SIZE_PROFILE = """
             <clickhouse>
                 <profiles>
                     <default>
@@ -127,7 +124,7 @@ public class MultiBlockPoisonProbeIT {
             """.formatted(BLOCK_ROWS);
 
     @Container
-    private static final GenericContainer<?> SQUASHING_OFF = clickhouse(SQUASHING_OFF_PROFILE);
+    private static final GenericContainer<?> SQUASH_AT_PARSE_SIZE = clickhouse(SQUASH_AT_PARSE_SIZE_PROFILE);
 
     @Container
     private static final GenericContainer<?> PARSE_ONLY = clickhouse(PARSE_ONLY_PROFILE);
@@ -151,34 +148,7 @@ public class MultiBlockPoisonProbeIT {
     private static final int BATCH_SIZE = 6;
     private static final int POISON_POSITION = 5;
 
-    /** What an operator actually runs, and what the advisory has to judge against each server. */
-    private static final int SHIPPED_MAX_ROWS = 10_000;
-
     private static final long QUERY_TIMEOUT_SECONDS = 30;
-
-    private ListAppender<ILoggingEvent> appender;
-    private ch.qos.logback.classic.Logger logger;
-
-    @BeforeEach
-    void captureLogs() {
-        this.logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(ClickhouseRepository.class);
-        this.appender = new ListAppender<>();
-        this.appender.start();
-        this.logger.addAppender(this.appender);
-    }
-
-    @AfterEach
-    void releaseLogs() {
-        this.logger.detachAppender(this.appender);
-        this.appender.stop();
-    }
-
-    private List<String> warnings() {
-        return this.appender.list.stream()
-                .filter(event -> event.getLevel() == ch.qos.logback.classic.Level.WARN)
-                .map(ILoggingEvent::getFormattedMessage)
-                .toList();
-    }
 
     private static <T> T awaiting(final String statement, final CompletableFuture<T> future) throws Exception {
         try {
@@ -285,9 +255,9 @@ public class MultiBlockPoisonProbeIT {
     @Test
     void aRefusedMultiBlockBatchLeavesEarlierBlocksCommitted() throws Exception {
         final var repository = new ClickhouseRepository(
-                new ClickhouseRepository$FlowMapperImpl(), configFor(SQUASHING_OFF, 1), RESOLVERS);
-        repository.start();
-        try (var probe = probeClient(SQUASHING_OFF)) {
+                new ClickhouseRepository$FlowMapperImpl(), configFor(SQUASH_AT_PARSE_SIZE, 1), RESOLVERS);
+        try (var probe = probeClient(SQUASH_AT_PARSE_SIZE)) {
+            repository.start();
             constrain(probe);
             Assertions.assertThat(effective(probe, "max_insert_block_size"))
                     .as("the lowered parse size must be in force, or this measures a stock server")
@@ -296,7 +266,25 @@ public class MultiBlockPoisonProbeIT {
                     .as("and squashing must be off, which is the setting that actually decides this")
                     .isEqualTo(BLOCK_ROWS);
 
+            // A healthy row first, and every rollup asserted to move. PoisonBatchProbeIT documents
+            // why this is load-bearing rather than decoration: four absent, ungranted or mis-shaped
+            // materialized views read 0 in both snapshots, and every assertion below would then
+            // pass over four dead tables. An earlier version of this fixture copied that file's
+            // measurement guards but not this control.
+            final Map<String, Long> empty = measures(probe);
+            repository.persist(List.of(flow(GOOD_TENANT, "org", 39999)));
             final Map<String, Long> before = measures(probe);
+            Assertions.assertThat(before.get(FlowsSchema.qualifiedFlows(DB)))
+                    .as("a healthy row must land, or this fixture rejects everything")
+                    .isEqualTo(empty.get(FlowsSchema.qualifiedFlows(DB)) + 1);
+            for (final String rollup : FlowsSchema.rollupTableNames()) {
+                final String table = FlowsSchema.qualifiedRollup(DB, rollup);
+                Assertions.assertThat(before.get(table))
+                        .as("%s must aggregate the healthy row, or the rollup assertions below"
+                                + " compare dead tables", table)
+                        .isEqualTo(empty.get(table) + 1);
+            }
+
             final Throwable refusal = catchThrowable(() -> repository.persist(poisonedBatch(40000)));
             final Map<String, Long> after = measures(probe);
 
@@ -319,14 +307,16 @@ public class MultiBlockPoisonProbeIT {
                             + " double-count them", BATCH_SIZE / BLOCK_ROWS)
                     .isGreaterThan(before.get(FlowsSchema.qualifiedFlows(DB)));
 
-            // And the rollups disagree with the base table. Asserted rather than printed: this is
-            // the half that says a partial write is not merely short but inconsistent, and an
-            // earlier version of this fixture only logged it.
-            Assertions.assertThat(FlowsSchema.rollupTableNames().stream()
-                            .map(rollup -> after.get(FlowsSchema.qualifiedRollup(DB, rollup)))
-                            .distinct())
-                    .as("the rollups do not all agree with each other after a partial write: %s", after)
-                    .hasSizeGreaterThan(1);
+            // And at least one rollup disagrees with the BASE TABLE, which is the claim the issue
+            // and the docs actually make. An earlier version asserted the rollups differ from each
+            // OTHER, which is a different property and a non-deterministic one: the same data
+            // records which rollups receive rows as varying between runs, and a server that refused
+            // the block before any view ran would leave all four equal to each other and still
+            // short against the base — the same hazard, failing that assertion.
+            Assertions.assertThat(FlowsSchema.rollupTableNames())
+                    .as("a partial write leaves the rollups inconsistent with the base table: %s", after)
+                    .anySatisfy(rollup -> Assertions.assertThat(after.get(FlowsSchema.qualifiedRollup(DB, rollup)))
+                            .isNotEqualTo(after.get(FlowsSchema.qualifiedFlows(DB))));
         } finally {
             repository.stop();
         }
@@ -343,8 +333,8 @@ public class MultiBlockPoisonProbeIT {
     void aRefusedBatchIsAtomicWhenTheServerSquashesTheBlocksBackTogether() throws Exception {
         final var repository = new ClickhouseRepository(
                 new ClickhouseRepository$FlowMapperImpl(), configFor(PARSE_ONLY, 1), RESOLVERS);
-        repository.start();
         try (var probe = probeClient(PARSE_ONLY)) {
+            repository.start();
             constrain(probe);
             Assertions.assertThat(effective(probe, "max_insert_block_size"))
                     .as("the parse size is lowered here too, so it is not what differs")
@@ -371,56 +361,4 @@ public class MultiBlockPoisonProbeIT {
         }
     }
 
-    /**
-     * The advisory fires where the hazard is real, and names both settings.
-     *
-     * <p>{@code maxRows} is the shipped default: the configuration is legal today and legal against
-     * a stock server, and only this server's settings make it worth a word. That is the case a
-     * constant ceiling inside riptide would have missed.</p>
-     */
-    @Test
-    void theAdvisoryWarnsWhenABatchCanSpanCommittedBlocks() {
-        final var repository = new ClickhouseRepository(
-                new ClickhouseRepository$FlowMapperImpl(),
-                configFor(SQUASHING_OFF, SHIPPED_MAX_ROWS), RESOLVERS);
-        try {
-            repository.start();
-            Assertions.assertThat(warnings())
-                    .as("startup must warn, and must not fail: an advisory that refuses to boot"
-                            + " trades a consistency risk for an outage")
-                    .anySatisfy(message -> Assertions.assertThat(message)
-                            .contains("riptide.clickhouse.batch.max-rows is " + SHIPPED_MAX_ROWS)
-                            .contains("committed insert block of " + BLOCK_ROWS + " rows")
-                            // Both settings named, because an operator who reads only the parse
-                            // size will change the one that does not decide this.
-                            .contains("max_insert_block_size=" + BLOCK_ROWS)
-                            .contains("min_insert_block_size_rows=" + BLOCK_ROWS));
-        } finally {
-            repository.stop();
-        }
-    }
-
-    /**
-     * And it stays quiet where the hazard is not, which is the whole correction.
-     *
-     * <p>Parse size 2, batch size 10,000 — every input the first version of the advisory looked at
-     * says "danger", and it refused to start. The squash threshold says otherwise, and the test
-     * above proves the server agrees.</p>
-     */
-    @Test
-    void theAdvisoryStaysQuietWhenTheServerSquashesTheBlocksBackTogether() {
-        final var repository = new ClickhouseRepository(
-                new ClickhouseRepository$FlowMapperImpl(),
-                configFor(PARSE_ONLY, SHIPPED_MAX_ROWS), RESOLVERS);
-        try {
-            repository.start();
-            Assertions.assertThat(warnings())
-                    .as("no warning: max-rows is far above the parse size but far below the squash"
-                            + " threshold, and it is the squash threshold that decides atomicity")
-                    .noneSatisfy(message -> Assertions.assertThat(message)
-                            .contains("riptide.clickhouse.batch.max-rows"));
-        } finally {
-            repository.stop();
-        }
-    }
 }
