@@ -18,6 +18,11 @@ import org.springframework.boot.context.properties.bind.PropertySourcesPlacehold
 import org.springframework.boot.convert.ApplicationConversionService;
 import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.core.io.ByteArrayResource;
+import org.riptide.inventory.CredentialSet;
+import org.riptide.inventory.CredentialVersion;
+import org.riptide.inventory.PollingProfile;
+import org.riptide.secrets.SecretRef;
+import org.snmp4j.fluent.TargetBuilder;
 import org.yaml.snakeyaml.Yaml;
 
 import java.net.InetAddress;
@@ -1060,4 +1065,131 @@ class LegacyConverterTest {
                 .map(entry -> entry.name())
                 .orElseThrow(() -> new AssertionError("no enrichment entry matched " + ip));
     }
+
+    /** The legacy poll block both optional-key fixtures share; every value is non-default. */
+    private static final String LEGACY_POLL = """
+            riptide:
+              snmp:
+                poll:
+                  refresh-interval-ms: 300000
+                  snapshot-expiry-ms: 900000
+              nodes:
+            """;
+
+    /**
+     * <b>authNoPriv</b>, and alone in its fixture, which is what makes it evidence.
+     *
+     * <p>In an authPriv set the auth pair is effectively mandatory: {@code
+     * CredentialSet.validateUsm} rejects priv-without-auth, so a mis-spelled auth key there
+     * fails at bind time and the existing harness already catches it. Only with priv absent
+     * does dropping the auth pair produce a <em>legal</em> noAuthNoPriv set that validates
+     * clean. And it has to be the only node in the file: any authPriv sibling would fail the
+     * same bind, so the mis-spelling would be caught by that sibling rather than by the value
+     * assertion this fixture exists for.</p>
+     */
+    private static final String LEGACY_AUTH_ONLY = LEGACY_POLL + """
+                auth-only:
+                  subnet-address: 10.40.50.60
+                  snmp:
+                    snmp-version: v3
+                    security-name: authonly
+                    auth-protocol: hmac192sha256
+                    auth-passphrase: "vault://secret/snmp/authonly#auth"
+                    timeout: 4000
+                    retries: 7
+            """;
+
+    /** <b>authPriv</b>, alone for the mirror reason: dropping the priv pair leaves a legal authNoPriv set. */
+    private static final String LEGACY_AUTH_PRIV = LEGACY_POLL + """
+                auth-priv:
+                  subnet-address: 10.40.50.61
+                  snmp:
+                    snmp-version: v3
+                    security-name: authpriv
+                    auth-protocol: hmac192sha256
+                    auth-passphrase: "vault://secret/snmp/authpriv#auth"
+                    priv-protocol: aes256
+                    priv-passphrase: "vault://secret/snmp/authpriv#priv"
+                    timeout: 4000
+                    retries: 7
+            """;
+
+    /**
+     * An emitted auth pair that binds to nothing degrades the set to noAuthNoPriv, silently (#544).
+     *
+     * <p>{@code profilesFrom} catches a mis-spelled <em>mandatory</em> key on its own, because
+     * binding to nothing makes validation throw — that is how the shipped {@code snmp-version}
+     * -vs-{@code version} bug was found. It cannot catch this one: the result is a legal set,
+     * so in production every walk for it would go out unauthenticated with a green suite. Only
+     * the value can tell.</p>
+     *
+     * <p>Whole-record equality, so the record's <em>enumeration</em> is pinned too: a new
+     * optional component on {@code CredentialSet} makes this a compile error and forces the
+     * coverage question, where a list of getters would leave it silently uncovered.</p>
+     */
+    @Test
+    void anAuthPairThatBindsToNothingIsCaughtByItsValue() {
+        final var profiles = profilesFrom(convert(LEGACY_AUTH_ONLY).mainConfig());
+
+        assertThat(theOnlySet(profiles))
+                .as("dropping the auth pair here is a LEGAL noAuthNoPriv set: nothing but this"
+                        + " value stands between a typo and unauthenticated SNMP")
+                .isEqualTo(new CredentialSet(CredentialVersion.V3, null, "authonly",
+                        TargetBuilder.AuthProtocol.hmac192sha256,
+                        SecretRef.of("vault://secret/snmp/authonly#auth"), null, null));
+    }
+
+    /** The mirror: an emitted priv pair that binds to nothing leaves a legal authNoPriv set (#544). */
+    @Test
+    void aPrivPairThatBindsToNothingIsCaughtByItsValue() {
+        final var profiles = profilesFrom(convert(LEGACY_AUTH_PRIV).mainConfig());
+
+        assertThat(theOnlySet(profiles))
+                .as("dropping the priv pair leaves a legal authNoPriv set, so every walk for it"
+                        + " would go out unencrypted with the suite still green")
+                .isEqualTo(new CredentialSet(CredentialVersion.V3, null, "authpriv",
+                        TargetBuilder.AuthProtocol.hmac192sha256,
+                        SecretRef.of("vault://secret/snmp/authpriv#auth"),
+                        TargetBuilder.PrivProtocol.aes256,
+                        SecretRef.of("vault://secret/snmp/authpriv#priv")));
+    }
+
+    /**
+     * The polling profile survives the round trip with every value (#544).
+     *
+     * <p>Of the four keys, {@code refresh-interval} and {@code timeout} are already pinned by
+     * {@code aPerNodeTimeoutBecomesItsOwnPollingProfile}; {@code snapshot-expiry} and {@code
+     * retries} are what this adds. The whole record covers all four in one place and pins the
+     * enumeration, which is cheaper than arguing about which two are new.</p>
+     *
+     * <p>Routed through {@link #boot} like every sibling here, so it proves the profile is also
+     * <em>referenced</em> by the range: binding alone would pass on a correct profile that no
+     * agent points at.</p>
+     */
+    @Test
+    void thePollingProfileSurvivesTheRoundTripWithEveryValue() throws Exception {
+        final var snapshot = boot(convert(LEGACY_AUTH_ONLY));
+
+        final var agent = snapshot.agentView()
+                .match(new ExporterIdentity.NetflowIpfix(InetAddress.getByName("10.40.50.60"), 0L))
+                .orElseThrow(() -> new AssertionError("the converted range did not match"));
+
+        assertThat(agent.polling())
+                .as("every polling key carries a @DefaultValue, so a mis-spelled one binds to the"
+                        + " default rather than failing and only the value can catch it")
+                .isEqualTo(new PollingProfile(Duration.ofMinutes(5), Duration.ofMinutes(15), 4000, 7));
+        assertThat(agent.polling())
+                .as("and the fixture must differ from the built-in default, or a mis-spelling"
+                        + " would be indistinguishable from a correct bind")
+                .isNotEqualTo(PollingProfile.builtInDefault());
+    }
+
+    /** The fixture's single credential set; fails loudly rather than picking one of several. */
+    private static CredentialSet theOnlySet(final SnmpProfilesConfig profiles) {
+        assertThat(profiles.credentials())
+                .as("the fixture is deliberately one node, so an assertion cannot pick the wrong set")
+                .hasSize(1);
+        return profiles.credentials().values().iterator().next();
+    }
+
 }
