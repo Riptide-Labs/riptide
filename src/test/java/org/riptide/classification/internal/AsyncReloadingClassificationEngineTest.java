@@ -136,7 +136,12 @@ class AsyncReloadingClassificationEngineTest {
         // on the gauge, not on the classification: doReload publishes the new tree inside
         // delegate.reload() and only then enters onReloadSucceeded, which clears stale. A wait
         // on classify() therefore returns while stale is still 1, and this failed on CI under
-        // load while passing in isolation
+        // load while passing in isolation.
+        //
+        // Valid here, and NOT in aSupersededReloadIsCancelledAndTheNewestWins below, for one
+        // reason: the failed reload above latched the gauge to 1 — asserted on the line before —
+        // so this condition is false when the wait begins. Where nothing has failed, stale is
+        // already 0 and the identical line waits for nothing at all (#699).
         await("the recovering reload to clear staleness", () -> stale() == 0);
 
         assertThat(this.engine.classify(request()))
@@ -285,27 +290,67 @@ class AsyncReloadingClassificationEngineTest {
     void aSupersededReloadIsCancelledAndTheNewestWins() throws Exception {
         givenRulesLoaded("rules-1");
 
-        final CountDownLatch entered = new CountDownLatch(1);
+        final CountDownLatch supersededEntered = new CountDownLatch(1);
         final CountDownLatch neverReleased = new CountDownLatch(1);
+        // Its own ruleset, because the test's name is a claim about which reload won and the served
+        // value has to be able to say so. Publishing "rules-2" from both reloads would satisfy the
+        // final assertion whether the newest won or the superseded one escaped cancellation, and
+        // leave interrupted == 1 as the only thing separating those stories.
+        this.delegate.nextRules = "rules-superseded";
         this.delegate.onReload = () -> {
-            entered.countDown();
+            supersededEntered.countDown();
             neverReleased.await();
         };
         this.engine.reload();
-        assertThat(entered.await(10, TimeUnit.SECONDS)).as("the superseded reload started").isTrue();
+        assertThat(supersededEntered.await(10, TimeUnit.SECONDS)).as("the superseded reload started").isTrue();
 
-        this.delegate.onReload = () -> { };
+        // The winning reload parks here until this test lets it publish. That is what makes the two
+        // assertions below observations rather than a race: they run while the publish is provably
+        // still pending. Structural, not timed — delete the latch and those assertions start racing
+        // the publish and failing, which is the property an earlier version of this test bought
+        // with a sleep that nothing enforced.
+        final CountDownLatch publish = new CountDownLatch(1);
+        final CountDownLatch winnerEntered = new CountDownLatch(1);
+        this.delegate.onReload = () -> {
+            winnerEntered.countDown();
+            publish.await();
+            // The publish lags the release, so a wait on a condition that is already true loses
+            // the race every time instead of sometimes. This is the ONLY thing making a wrong wait
+            // fail deterministically: measured, reverting the wait below with this line present
+            // fails 5/5, and with it removed it survives 5/5 — the latch alone proves the
+            // pre-publish state but does not catch a regression of the wait.
+            Thread.sleep(PUBLISH_LAG_MILLIS);
+        };
         this.delegate.nextRules = "rules-2";
+        assertThat(successes()).as("only the construction-time load has succeeded so far").isEqualTo(1);
+
         this.engine.reload();
-        // same window again: stale is cleared after the tree is published
-        await("the newest reload to settle", () -> stale() == 0);
+        assertThat(winnerEntered.await(10, TimeUnit.SECONDS)).as("the winning reload started").isTrue();
+
+        // Why the counter and not the gauge, pinned instead of argued. With the publish still
+        // pending, stale already reads 0 — it is set only by onReloadFailed and nothing here has
+        // failed — so a wait on `stale() == 0` returns at exactly this point, while the rules below
+        // are demonstrably not serving yet. That is #699, asserted rather than described.
+        assertThat(stale()).as("stale is already 0 while the publish is still pending").isZero();
+        assertThat(this.engine.classify(request()))
+                .as("and the newest rules are not serving yet, so staleness cannot be the signal")
+                .isEqualTo("rules-1");
+
+        publish.countDown();
+
+        // successes moves in onReloadSucceeded, strictly after delegate.reload() publishes, and the
+        // superseded reload moves no counter at all — doReload treats an interrupt as neither a
+        // success nor a failure. So this waits for the publish and for nothing else. Same idiom as
+        // everySuccessfulReloadIsCounted. Written as >= so that an unexpected extra success fails
+        // on the assertions below rather than spinning to the deadline on a target already passed.
+        await("the winning reload to be counted", () -> successes() >= 2);
 
         assertThat(this.engine.classify(request()))
                 .as("the newest reload's rules are the ones serving")
                 .isEqualTo("rules-2");
+        assertThat(successes()).as("and the superseded reload counted nothing").isEqualTo(2);
         assertThat(this.delegate.interrupted.get()).as("the in-flight reload was cancelled").isEqualTo(1);
         assertThat(failures()).as("cancellation is not a failure").isZero();
-        assertThat(stale()).isEqualTo(0);
     }
 
     @Test
@@ -400,6 +445,15 @@ class AsyncReloadingClassificationEngineTest {
     private static ClassificationRequest request() {
         return ClassificationRequest.builder().build();
     }
+
+    /**
+     * How long the winning reload delays its publish after the test releases it.
+     *
+     * <p>Deleting this downgrades the superseded-reload test silently: it keeps passing, and it
+     * keeps proving the pre-publish state through its latch, but it stops catching a regression of
+     * the wait it exists to protect. Measured both ways — see the comment at the call site.</p>
+     */
+    private static final long PUBLISH_LAG_MILLIS = 300;
 
     private static void await(final String what, final BooleanSupplier condition) throws InterruptedException {
         final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
