@@ -311,6 +311,12 @@ moves on (one bad batch never wedges ingestion), but a persistent source of reje
 mis-tenanted collector against the multi-tenant CHECK barrier, say — now costs proportionally
 more data. Lowering `max-rows` limits the blast radius at the cost of throughput.
 
+**And "a whole batch" is only true while a batch fits one committed insert block.** ClickHouse cuts an incoming insert into blocks of `max_insert_block_size` rows and then squashes those pieces back together until `min_insert_block_size_rows` is reached; it is that squashed size that decides whether a refusal is atomic. A batch larger than one committed block is *not* refused atomically: the blocks the server already accepted stay committed, so part of the batch persists while the drop counter reports all of it lost, and the rollups are left disagreeing with the base table.
+
+At the shipped defaults this cannot happen — `max-rows` is 10,000 against a squash threshold six orders of magnitude larger — so the loss model above holds as written. It stops holding if you raise `max-rows` past the server's threshold, or lower the server's threshold below `max-rows`. riptide checks the two at startup and logs a `WARN` naming both settings and the value to lower `max-rows` to; it does **not** refuse to start, because a consistency risk in an unusual tuning is not worth trading for an outage. The check is advisory and it is read once at startup, so lowering the server setting on a running collector re-opens the gap silently.
+
+Measured on the pinned ClickHouse image; see `MultiBlockPoisonProbeIT`, which demonstrates both sides of the boundary.
+
 On shutdown the repository stops accepting new flows and drains everything already accepted —
 buffered flows are flushed before the repository stops, preserving at-least-once delivery for
 accepted flows.

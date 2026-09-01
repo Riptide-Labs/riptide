@@ -67,12 +67,16 @@ import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
  * the risk it was written to settle as: a refused insert is atomic on the buffered path but "can
  * leave whole blocks committed on a direct one <em>once a batch exceeds
  * {@code max_insert_block_size}</em>". {@link #BATCH_SIZE} is six, six orders of magnitude below the
- * server default, so this probe never crosses that boundary — and {@code max_insert_block_size}
- * appears exactly once in the whole repository, in that comment: nothing sets it, lowers it, or
- * builds a batch that spans two blocks. So "a refused batch leaves no row anywhere" is measured
- * where a partial write is impossible by construction, and is <em>not</em> an answer for the 10,000-row
- * batches {@code BatchingFlowRepository} actually flushes ({@code ClickhouseConfig.maxRows}). #548
- * must not read this as a general atomicity guarantee.</p>
+ * server default, so this probe never crosses that boundary. So "a refused batch leaves no row
+ * anywhere" is measured where a partial write is impossible by construction, and is <em>not</em> an
+ * answer for the 10,000-row batches {@code BatchingFlowRepository} actually flushes ({@code
+ * ClickhouseConfig.maxRows}). #548 must not read this as a general atomicity guarantee.
+ *
+ * <p>That gap is now filled elsewhere rather than left open: {@code MultiBlockPoisonProbeIT} (#700)
+ * measures both sides of the boundary, and {@code ClickhouseRepository} warns when a configured
+ * batch could cross it. An earlier version of this paragraph added that {@code
+ * max_insert_block_size} "appears exactly once in the whole repository" — true when written, and
+ * falsified by exactly that work.</p>
  *
  * <p><b>What the class-level {@link Timeout} covers, and what it does not.</b> This fixture severs a
  * live transport on purpose, and {@code persist} waits on a client this issue must not change, so
@@ -94,16 +98,16 @@ import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
  *       wedged wait — and the sockets under it — survives to the end of the JVM. What the mode buys
  *       is a <em>result</em> instead of a cancelled job, not a cleaned-up test.</li>
  * </ul>
- * <p>The precedent for a class-level bound in this package is {@code ViewProbePolicyTest}; this is
- * the first {@code *IT} to carry one.</p>
+ * <p>The precedent for a class-level bound in this package is {@code ViewProbePolicyTest}. This was
+ * the first {@code *IT} to carry one; {@code MultiBlockPoisonProbeIT} is the second.</p>
  *
  * <p><b>Cost.</b> Extracting this from {@code ClickhouseRepositoryIT} added a ClickHouse container
- * to the IT tier, which now runs thirteen — the number of {@code ContainerImages.clickhouse()} call
- * sites under {@code src/test/java}, so a fourteenth arriving falsifies the sentence. It said
- * twelve until {@code MultiBlockPoisonProbeIT} (#700) arrived, which is the count doing its job
- * rather than breaking. Observed once at 5.2s to start on the pinned image with the layer already
- * cached: one observation on one machine, not a fleet figure, and a cold pull or a loaded runner
- * moves it.
+ * to the IT tier, which now starts <b>fourteen</b> across <b>thirteen</b> files calling {@code
+ * ContainerImages.clickhouse()} — {@code MultiBlockPoisonProbeIT} runs two from one call site, so
+ * counting call sites no longer counts containers. The count said twelve, then thirteen, and is
+ * fourteen now; each correction was the sentence doing its job rather than breaking. Observed once
+ * at 5.2s to start on the pinned image with the layer already cached: one observation on one
+ * machine, not a fleet figure, and a cold pull or a loaded runner moves it.
  * That is job wall-clock and nothing else: {@code E2eTestSupport.SUITE_BUDGET} bounds the sum of
  * {@code awaitCount} waits, and its counter is advanced in exactly one place — inside
  * {@code awaitCount} itself — so a container start is not charged against it.</p>

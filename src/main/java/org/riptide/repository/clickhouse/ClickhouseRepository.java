@@ -119,8 +119,11 @@ public class ClickhouseRepository implements FlowRepository {
             // Rejections surfaced either way, because the server's default wait is 1, so this is
             // not a hole in the CHECK-barrier contract. What differed is coalescing: a refused
             // insert is atomic on the buffered path but can leave whole blocks committed on a
-            // direct one once a batch exceeds max_insert_block_size, which is the ground #548's
-            // design stands on.
+            // direct one once a batch exceeds the server's COMMITTED block size, which is the
+            // ground #548's design stands on. No longer an open premise: MultiBlockPoisonProbeIT
+            // measures it both ways, and warnIfBatchCanSpanCommittedBlocks below warns when the
+            // configured batch could cross that boundary. Note the boundary is the squash
+            // threshold, not max_insert_block_size — see that method.
             builder.serverSetting("async_insert", "0");
         }
         this.client = builder.build();
@@ -143,61 +146,117 @@ public class ClickhouseRepository implements FlowRepository {
         }
     }
 
-    /** ClickHouse's own name for the row boundary an insert is split on. */
-    private static final String INSERT_BLOCK_SIZE_SETTING = "max_insert_block_size";
+    /** Where the server splits an insert while parsing it. */
+    private static final String PARSE_BLOCK_SETTING = "max_insert_block_size";
+
+    /** How far the server squashes those parsed blocks back together before committing them. */
+    private static final String SQUASH_ROWS_SETTING = "min_insert_block_size_rows";
 
     /**
-     * Refuse a configured batch that would split into more than one insert block (#700).
+     * Warn when a configured batch could span more than one <em>committed</em> insert block (#700).
      *
      * <p>Measured on the pinned image by {@code MultiBlockPoisonProbeIT}: when a refused insert
-     * spans more than one block, the blocks the server already accepted <em>stay committed</em>.
-     * One bad row then becomes a silent partial write — {@code BatchingFlowRepository.flush} drops
-     * the batch and counts every row as lost, while a prefix persisted and the rollups are left
-     * disagreeing with the base table and with each other. Below the boundary a refusal is atomic,
-     * which is what {@code PoisonBatchProbeIT} measures and what #548's design rests on.</p>
+     * spans more than one committed block, the blocks the server already accepted <em>stay
+     * committed</em>. One bad row then becomes a silent partial write — {@code
+     * BatchingFlowRepository.flush} drops the batch and counts every row as lost, while a prefix
+     * persisted. Below the boundary a refusal is atomic, which is what {@code PoisonBatchProbeIT}
+     * measures and what #548's design rests on.</p>
      *
-     * <p>The boundary is read from the server, not assumed: {@code max_insert_block_size} is a
-     * server-side setting an operator can profile per user, so a constant here would be right only
-     * by luck. At the shipped defaults — 10,000 rows against 1,048,576 — this check never fires;
-     * it exists because {@code max-rows} is operator-settable and {@code BatchConfig.validate()}
-     * bounds it only at {@code > 0}.</p>
+     * <p><b>The boundary is the squash threshold, not the parse size.</b> {@code
+     * max_insert_block_size} only decides how the incoming stream is cut up; {@code
+     * min_insert_block_size_rows} then merges those pieces back together before they are committed,
+     * and it is the merged size that decides atomicity. Measured, because the first version of this
+     * check got it wrong and refused startup on safe servers: with {@code max_insert_block_size=2}
+     * alone, a refused six-row batch commits <b>0</b> rows; adding {@code
+     * min_insert_block_size_rows=2} makes the same batch commit <b>2</b>. At ten thousand rows,
+     * {@code max_insert_block_size=1000} with a stock squash setting commits 0, and lowering the
+     * squash setting to 1000 commits 8,000.</p>
      *
-     * <p>Two limits worth naming. It is skipped on the coalesced path, where a refused insert is
-     * atomic regardless of size, and when batching is off, where {@code maxRows} governs nothing.
-     * And it bounds the <em>configured</em> batch, not an arbitrary {@code persist} call: a caller
-     * handing this repository a larger list directly still spans blocks. The only production caller
-     * that batches is {@code BatchingFlowRepository}, which never exceeds {@code maxRows}.</p>
+     * <p><b>Advisory, not fatal.</b> This logs and returns; it never stops startup. The hazard is a
+     * consistency problem in an unusual tuning, and refusing to boot would trade it for an outage —
+     * which is what the first version of this check did on servers where the hazard did not exist.
+     * For the same reason a setting that cannot be read is logged and skipped rather than fatal.</p>
+     *
+     * <p><b>Limits, all four real.</b> It is skipped when batching is off, where {@code maxRows}
+     * governs nothing, and on the coalesced path — but that skip rests on an <em>unmeasured</em>
+     * claim and is stated as one: nothing here measures whether a refused async insert is atomic,
+     * and riptide sends {@code wait_for_async_insert=0} on that path, so a rejected row never
+     * reaches the client to be counted either way. The skip is therefore about a path whose loss
+     * model is different, not about a path proven safe.
+     * It bounds the <em>configured</em> batch, not an arbitrary {@code persist} call — the only
+     * production caller that batches is {@code BatchingFlowRepository}, which never exceeds {@code
+     * maxRows}. And it reads the server once, here: an operator who lowers the squash setting while
+     * riptide is running re-opens the hazard with nothing re-checking and no second warning.</p>
+     *
+     * <p>Conservative by construction: {@code min_insert_block_size_bytes} can merge blocks that
+     * this row-based comparison expects to stay separate, so the warning can fire where no partial
+     * write would occur. That direction is deliberate — a spurious warning costs a log line, and the
+     * check is advisory precisely so being wrong is cheap.</p>
      */
-    private void checkBatchFitsOneInsertBlock() {
+    private void warnIfBatchCanSpanCommittedBlocks() {
         if (!this.config.getBatch().isEnabled() || this.config.isAsyncInserts()) {
             return;
         }
-        final long blockRows = readInsertBlockSize();
+        final long parseBlock;
+        final long squashRows;
+        try {
+            parseBlock = readRowSetting(PARSE_BLOCK_SETTING);
+            squashRows = readRowSetting(SQUASH_ROWS_SETTING);
+        } catch (final Exception e) {
+            // Logged and skipped rather than rethrown: an advisory check that cannot answer must
+            // not be the reason a collector fails to start.
+            log.warn("Could not read {} / {} from the server, so riptide cannot say whether "
+                            + "riptide.clickhouse.batch.max-rows ({}) can span more than one "
+                            + "committed insert block; continuing without the check (see #700)",
+                    PARSE_BLOCK_SETTING, SQUASH_ROWS_SETTING,
+                    this.config.getBatch().getMaxRows(), e);
+            return;
+        }
+
+        // Zero disables row-based squashing, and then the parse size is what gets committed.
+        final long committedBlockRows = squashRows > 0 ? squashRows : parseBlock;
         final int maxRows = this.config.getBatch().getMaxRows();
-        if (maxRows >= blockRows) {
-            throw new IllegalStateException(
-                    "riptide.clickhouse.batch.max-rows is " + maxRows + ", which is not below the "
-                            + "server's " + INSERT_BLOCK_SIZE_SETTING + " of " + blockRows + ". A batch "
-                            + "that spans more than one insert block is not refused atomically: a "
-                            + "single rejected row leaves the earlier blocks committed, so part of "
-                            + "the batch persists while the drop counter reports all of it lost. "
-                            + "Lower max-rows below " + blockRows + ", or raise "
-                            + INSERT_BLOCK_SIZE_SETTING + " on the server.");
+        if (maxRows > committedBlockRows) {
+            log.warn("riptide.clickhouse.batch.max-rows is {}, above this server's committed insert "
+                            + "block of {} rows ({}={}, {}={}). A batch larger than one committed "
+                            + "block is not refused atomically: one rejected row leaves the earlier "
+                            + "blocks committed, so part of the batch persists while the drop "
+                            + "counter reports all of it lost. Lower max-rows to {} or below, or "
+                            + "raise the server's {}. See #700.",
+                    maxRows, committedBlockRows, PARSE_BLOCK_SETTING, parseBlock,
+                    SQUASH_ROWS_SETTING, squashRows, committedBlockRows, SQUASH_ROWS_SETTING);
         }
     }
 
-    /** The effective {@link #INSERT_BLOCK_SIZE_SETTING} for the user riptide connects as. */
-    @SneakyThrows
-    private long readInsertBlockSize() {
-        final String query = "SELECT getSetting('" + INSERT_BLOCK_SIZE_SETTING + "') AS v";
-        try (var rows = this.client.queryRecords(query).get()) {
+    /**
+     * One row-valued server setting, bounded.
+     *
+     * <p>Bounded for the reason {@link #awaitBounded} exists and its javadoc states: a bare {@code
+     * get()} here would restore an unbounded startup wait against a server that accepts the
+     * connection and never answers, and no IT would notice. It does not call that helper because
+     * this needs the value, and that one only closes what it waits for.</p>
+     */
+    private long readRowSetting(final String name) throws Exception {
+        final String query = "SELECT getSetting('" + name + "') AS v";
+        final var pending = this.client.queryRecords(query);
+        try (var rows = pending.get(PROBE_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
             for (final var row : rows) {
                 return Long.parseLong(row.getString("v"));
             }
+        } catch (final InterruptedException e) {
+            // Restore the flag before rethrowing, as persist() and start() both do: the pool clears
+            // it before the next task, but a stop in progress above us must still see it.
+            Thread.currentThread().interrupt();
+            pending.cancel(true);
+            throw e;
+        } catch (final TimeoutException e) {
+            // Abandoning the wait must abandon the query, as awaitBounded does.
+            pending.cancel(true);
+            throw e;
         }
-        throw new IllegalStateException(
-                "could not read " + INSERT_BLOCK_SIZE_SETTING + " from the server: " + query
-                        + " returned no rows, so the batch size cannot be checked against it");
+        // Not reachable against a server that answered at all; present so the caller's one catch
+        // covers every way this method can fail to produce a number.
+        throw new IllegalStateException(query + " returned no rows");
     }
 
     @Override
@@ -228,9 +287,9 @@ public class ClickhouseRepository implements FlowRepository {
         // After the schema block, not before it: the main client pins the database via
         // setDefaultDatabase, so ANY query issued ahead of ensureDatabase() fails with
         // UNKNOWN_DATABASE on a fresh server — the same trap the manage-mode comment above names
-        // for DDL. Being after the DDL costs nothing that matters: what this guard protects is the
-        // first insert, and no row has been written yet.
-        checkBatchFitsOneInsertBlock();
+        // for DDL. Being after the DDL costs nothing: this warns about the first insert, and no
+        // row has been written yet.
+        warnIfBatchCanSpanCommittedBlocks();
 
         // Rollups whose repair did not complete on this start. Every statement below is guarded, so
         // one rollup's failure cannot stop the others or stop ingestion — but a rollup left
