@@ -13,7 +13,7 @@ services:
     # clickhouse.Dockerfile), so what an operator runs is what riptide is tested on.
     # Floating :latest drifted to 26.8, whose schema response client-v2 0.10.0 cannot
     # parse, and every test stayed green because no test starts this stack (#672).
-    image: clickhouse/clickhouse-server:26.7@sha256:f90a77560f72b10802106ee49e9870e41668cbc496e280c3911f6e3b216657f3
+    image: clickhouse/clickhouse-server:26.8@sha256:9f8fa0d51f86611fda226c4085cdafdddce35312a60c934de2e4450d61fcb99a
     environment:
       TZ: UTC
       CLICKHOUSE_USER: default
