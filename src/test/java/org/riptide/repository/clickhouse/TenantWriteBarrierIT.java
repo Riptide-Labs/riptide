@@ -10,6 +10,7 @@ import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.riptide.config.ClickhouseConfig;
+import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
 import org.riptide.e2e.ContainerImages;
@@ -19,6 +20,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.MountableFile;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
@@ -124,7 +126,7 @@ public class TenantWriteBarrierIT {
     }
 
     @Test
-    void crossTenantWriteRejectedWith469() {
+    void crossTenantWriteRejectedWith469() throws Exception {
         final var writer = writerRepository("writer_acme");
 
         // The collector's config lies (tenant=evil) but its credential's CONST setting is 'acme':
@@ -133,8 +135,26 @@ public class TenantWriteBarrierIT {
         // is violated at row 1. Expression: (tenant = getSetting('SQL_tenant')). Column values:
         // tenant = 'evil'. (VIOLATED_CONSTRAINT)
         Assertions.assertThatThrownBy(() -> writer.persist(List.of(flow("evil", "acme-eu", 21003))))
-                .hasStackTraceContaining("469")
-                .hasStackTraceContaining("VIOLATED_CONSTRAINT");
+                .hasStackTraceContaining(ClickhouseServerErrors.VIOLATED_CONSTRAINT_MESSAGE_PREFIX)
+                .hasStackTraceContaining("VIOLATED_CONSTRAINT")
+                // The row shape, not just the code: PoisonBatchProbeIT justifies its synthetic
+                // CHECK against this shipped barrier by arguing both name the offending row the
+                // same way, and an argument nothing asserts is an assumption. One row in, so row 1.
+                .hasStackTraceContaining("is violated at row 1.");
+
+        // The same claim where it can actually fail. The single-row case above cannot tell a
+        // reported index from a constant, because row 1 is both answers — and PoisonBatchProbeIT
+        // leans on this fixture for exactly the half a constant would hide: that the index names
+        // the offending row INSIDE a batch. Six rows, the tampered one fifth, mirroring that
+        // probe's POISON_POSITION so the two fixtures make the same statement about the same
+        // server. A barrier that always said "row 1" now fails here.
+        final List<EnrichedFlow> tamperedFifth = new ArrayList<>();
+        for (int i = 1; i <= 6; i++) {
+            tamperedFifth.add(flow(i == 5 ? "evil" : "acme", "acme-eu", 21009 + i));
+        }
+        Assertions.assertThatThrownBy(() -> writer.persist(tamperedFifth))
+                .hasStackTraceContaining(ClickhouseServerErrors.VIOLATED_CONSTRAINT_MESSAGE_PREFIX)
+                .hasStackTraceContaining("is violated at row 5.");
 
         final long count = admin.queryAll(
                         "SELECT count() AS c FROM " + DATABASE + ".flows WHERE tenant = 'evil'")
@@ -156,7 +176,7 @@ public class TenantWriteBarrierIT {
         // (SETTING_CONSTRAINT_VIOLATION)
         Assertions.assertThatThrownBy(
                         () -> writerClient.queryAll("SELECT getSetting('SQL_tenant') SETTINGS SQL_tenant = 'other'"))
-                .hasStackTraceContaining("452")
+                .hasStackTraceContaining(ClickhouseServerErrors.SETTING_CONSTRAINT_VIOLATION_MESSAGE_PREFIX)
                 .hasStackTraceContaining("SETTING_CONSTRAINT_VIOLATION");
     }
 
@@ -193,6 +213,12 @@ public class TenantWriteBarrierIT {
         config.setDatabase(DATABASE);
         // Provisioned mode: riptide validates the admin-owned schema, never creates it.
         config.setManageSchema(false);
+        // Explicit, not derived. isAsyncInserts() falls back to !batch.isEnabled() && manageSchema,
+        // so this writer reaches the direct insert path only as a side effect of the line above.
+        // PoisonBatchProbeIT cites this fixture to argue its synthetic CHECK sees the same refusal
+        // as the shipped barrier, and that argument holds only on the same insert path — which a
+        // change to either default would move, with nothing here failing.
+        config.setAsyncInserts(false);
         final var repository = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
         // Validate-mode start: describe the provisioned table and register the insert POJO.
         repository.start();
