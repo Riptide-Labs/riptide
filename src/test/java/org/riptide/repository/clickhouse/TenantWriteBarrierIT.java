@@ -133,8 +133,12 @@ public class TenantWriteBarrierIT {
         // is violated at row 1. Expression: (tenant = getSetting('SQL_tenant')). Column values:
         // tenant = 'evil'. (VIOLATED_CONSTRAINT)
         Assertions.assertThatThrownBy(() -> writer.persist(List.of(flow("evil", "acme-eu", 21003))))
-                .hasStackTraceContaining("469")
-                .hasStackTraceContaining("VIOLATED_CONSTRAINT");
+                .hasStackTraceContaining(ClickhouseServerErrors.VIOLATED_CONSTRAINT_TEXT)
+                .hasStackTraceContaining("VIOLATED_CONSTRAINT")
+                // The row shape, not just the code: PoisonBatchProbeIT justifies its synthetic
+                // CHECK against this shipped barrier by arguing both name the offending row the
+                // same way, and an argument nothing asserts is an assumption. One row in, so row 1.
+                .hasStackTraceContaining("is violated at row 1.");
 
         final long count = admin.queryAll(
                         "SELECT count() AS c FROM " + DATABASE + ".flows WHERE tenant = 'evil'")

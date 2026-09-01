@@ -6,10 +6,7 @@
 package org.riptide.repository.clickhouse;
 
 import com.clickhouse.client.api.Client;
-import com.clickhouse.client.api.ConnectionInitiationException;
-import com.clickhouse.client.api.ServerException;
 import com.codahale.metrics.MetricRegistry;
-import com.google.common.base.Throwables;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -25,10 +22,7 @@ import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import java.io.IOException;
 import java.net.InetAddress;
-import java.net.ServerSocket;
-import java.net.Socket;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -37,9 +31,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CopyOnWriteArrayList;
-
-import static org.assertj.core.api.Assertions.catchThrowable;
 
 /**
  * First real-ClickHouse test of the repository: schema creation on a fresh
@@ -609,265 +600,6 @@ public class ClickhouseRepositoryIT {
                 .dstLocality(Flow.Locality.PUBLIC)
                 .flowLocality(Flow.Locality.PUBLIC)
                 .build();
-    }
-
-    // ---- #548 probe: PQ-5 atomicity, PQ-6 rejected row vs transient failure -------------------
-
-    /** Its own database, so the constraint below cannot disturb any fixture above. */
-    private static final String POISON_DB = "poison_probe";
-
-    /** The tenant the probe's CHECK constraint admits. */
-    private static final String GOOD_TENANT = "ok";
-
-    /** A tenant the constraint refuses — one row of a batch carrying this poisons the whole insert. */
-    private static final String BAD_TENANT = "rejected";
-
-    /** Where the poison row sits, 1-based, so the reported index can be checked rather than guessed. */
-    private static final int POISON_POSITION = 5;
-    private static final int BATCH_SIZE = 6;
-
-    /** A started repository against {@link #POISON_DB} and a client to count its rows with. */
-    private record PoisonProbe(ClickhouseRepository repository, Client client) implements AutoCloseable {
-        @Override
-        public void close() {
-            this.client.close();
-        }
-    }
-
-    private static PoisonProbe provisionPoisonProbe() throws Exception {
-        final var repository = new ClickhouseRepository(
-                new ClickhouseRepository$FlowMapperImpl(), configFor(POISON_DB, true), RESOLVERS);
-        repository.start();
-        final var client = new Client.Builder().addEndpoint(configFor(POISON_DB, true).getEndpoint())
-                .setUsername("riptide").setPassword("riptide").setDefaultDatabase(POISON_DB).build();
-        client.execute("ALTER TABLE " + FlowsSchema.qualifiedFlows(POISON_DB)
-                + " ADD CONSTRAINT probe_tenant CHECK tenant = '" + GOOD_TENANT + "'").get();
-        return new PoisonProbe(repository, client);
-    }
-
-    /** Rows currently in the probe's base table and in every rollup target, keyed by table. */
-    private static Map<String, Long> poisonRowCounts(final Client client) throws Exception {
-        // Named, not read back from the schema: a list sized against itself can only agree with
-        // itself, and a rollup dropped from the schema would then drop out of "nothing landed
-        // anywhere" without a word.
-        Assertions.assertThat(FlowsSchema.rollupTableNames())
-                .as("the probe must count the base table AND every rollup, or 'nothing landed' is a"
-                        + " statement about one table while the others go unchecked")
-                .containsExactlyInAnyOrder(FlowsSchema.ROLLUP_BY_APPLICATION,
-                        FlowsSchema.ROLLUP_BY_CONVERSATION, FlowsSchema.ROLLUP_BY_EXPORTER_IFACE,
-                        FlowsSchema.ROLLUP_BY_GEO_ASN);
-        final List<String> tables = new ArrayList<>();
-        tables.add(FlowsSchema.qualifiedFlows(POISON_DB));
-        FlowsSchema.rollupTableNames().forEach(r -> tables.add(FlowsSchema.qualifiedRollup(POISON_DB, r)));
-        final Map<String, Long> counts = new LinkedHashMap<>();
-        for (final String table : tables) {
-            try (var rows = client.queryRecords("SELECT count() AS c FROM " + table).get()) {
-                for (final var row : rows) {
-                    counts.put(table, row.getLong("c"));
-                }
-            }
-        }
-        return counts;
-    }
-
-    private static List<EnrichedFlow> batchWithPoisonAt(final int position) throws Exception {
-        final List<EnrichedFlow> batch = new ArrayList<>();
-        for (int i = 1; i <= BATCH_SIZE; i++) {
-            batch.add(ClickhouseItFlows.flow(i == position ? BAD_TENANT : GOOD_TENANT, "org", 20000 + i));
-        }
-        return batch;
-    }
-
-    /**
-     * What one rejected row does to the batch around it, and whether the refusal is legible (#548).
-     *
-     * <p>#548 must choose between bisecting a poisoned batch and dead-lettering it, and both rest on
-     * facts nobody had measured: whether a refused insert can leave a partial write — in which case
-     * re-inserting a bisected half double-counts — and whether a rejected row is distinguishable from
-     * a dropped connection, which {@code BatchingFlowRepository.flush} currently cannot tell apart.</p>
-     *
-     * <p>Asked through {@code ClickhouseRepository.persist}, not raw SQL: the question is what
-     * riptide's own path does, and a probe issuing its own INSERT would measure a path production
-     * never takes.</p>
-     *
-     * <p><b>What this is not.</b> A regression test against the server pinned in
-     * {@code .github/e2e-images/clickhouse.Dockerfile}, not a proof. It says the batch behaves this
-     * way on the ClickHouse it runs against, which is what makes a version bump surface a change
-     * rather than let #548's design rest on a stale measurement. It does not implement #548, and it
-     * says nothing about whether riptide can map a reported row index back to its own batch.</p>
-     */
-    @Test
-    void aRejectedRowTakesTheWholeBatchWithItAndSaysWhichRowItWas() throws Exception {
-        try (var probe = provisionPoisonProbe()) {
-            // A clean batch first: if the constraint refused everything, every "nothing landed"
-            // assertion below would pass while proving nothing at all. Counted as a delta, because
-            // the transport probe shares this database and may have landed its own row first.
-            final long before = poisonRowCounts(probe.client()).get(FlowsSchema.qualifiedFlows(POISON_DB));
-            probe.repository().persist(List.of(ClickhouseItFlows.flow(GOOD_TENANT, "org", 19999)));
-            final Map<String, Long> afterHealthy = poisonRowCounts(probe.client());
-            Assertions.assertThat(afterHealthy.get(FlowsSchema.qualifiedFlows(POISON_DB)))
-                    .as("a healthy row must land, or the fixture rejects everything and asserts nothing")
-                    .isEqualTo(before + 1);
-
-            final Throwable refusal = catchThrowable(
-                    () -> probe.repository().persist(batchWithPoisonAt(POISON_POSITION)));
-
-            Assertions.assertThat(refusal)
-                    .as("a batch carrying a constraint-violating row must be refused, not silently kept")
-                    .isNotNull();
-            final ServerException server = serverExceptionIn(refusal);
-            Assertions.assertThat(server)
-                    .as("the refusal must carry a ServerException, or no error code is readable and this"
-                            + " probe settles nothing: %s", refusal)
-                    .isNotNull();
-
-            // PQ-5: atomic across the base table and every rollup behind it.
-            Assertions.assertThat(poisonRowCounts(probe.client()))
-                    .as("PQ-5 [#548] on ClickHouse %s: a refused batch must leave no row anywhere, or a"
-                            + " bisect could re-insert a half that partly landed and double-count",
-                            serverVersionOf(probe.client()))
-                    .isEqualTo(afterHealthy);
-
-            // PQ-6, half one: the code a rejected row answers.
-            Assertions.assertThat(server.getCode())
-                    .as("PQ-6 [#548]: rejected-row code on ClickHouse %s is %d",
-                            serverVersionOf(probe.client()), server.getCode())
-                    .isEqualTo(REJECTED_ROW_CODE);
-
-            // The offending row is named, so #548 may need neither a bisect nor a dead-letter.
-            Assertions.assertThat(server.getMessage())
-                    .as("the refusal names which row offended, at the position the batch put it")
-                    .contains("violated at row " + POISON_POSITION);
-        }
-    }
-
-    /**
-     * A TCP relay in front of the container, so a started repository can lose its transport
-     * without the shared container being paused or stopped under every other test in this class.
-     *
-     * <p>Closing it refuses new connections and resets the ones already relayed, which is the
-     * shape of a ClickHouse that went away mid-run. A paused container would measure the same
-     * thing, but only after the client's socket timeout, multiplied by its retry count.</p>
-     */
-    private static final class Relay implements AutoCloseable {
-        private final ServerSocket listener;
-        private final List<Socket> sockets = new CopyOnWriteArrayList<>();
-
-        Relay(final String targetHost, final int targetPort) throws IOException {
-            this.listener = new ServerSocket(0);
-            Thread.ofVirtual().start(() -> {
-                while (!this.listener.isClosed()) {
-                    try {
-                        final Socket inbound = this.listener.accept();
-                        final Socket outbound = new Socket(targetHost, targetPort);
-                        this.sockets.add(inbound);
-                        this.sockets.add(outbound);
-                        pump(inbound, outbound);
-                        pump(outbound, inbound);
-                    } catch (final IOException closed) {
-                        return;
-                    }
-                }
-            });
-        }
-
-        private static void pump(final Socket from, final Socket to) {
-            Thread.ofVirtual().start(() -> {
-                try {
-                    from.getInputStream().transferTo(to.getOutputStream());
-                } catch (final IOException ignored) {
-                    // The relay was closed under it; nothing to forward any more.
-                }
-            });
-        }
-
-        String endpoint() {
-            return "http://127.0.0.1:" + this.listener.getLocalPort();
-        }
-
-        @Override
-        public void close() throws IOException {
-            this.listener.close();
-            for (final Socket socket : this.sockets) {
-                socket.close();
-            }
-        }
-    }
-
-    /**
-     * A lost transport answers a different failure from a refused row, so #548 can branch (#548).
-     *
-     * <p>The half that matters: if the two were equal, quarantining a poison row would quarantine a
-     * network blip too, and the 10,000 rows it carried would be discarded rather than retried.</p>
-     *
-     * <p>Measured on {@code persist}, the call {@code BatchingFlowRepository.flush} branches on, from
-     * a repository that started healthy: a refused connect at bootstrap is a different path and may
-     * surface a different exception.</p>
-     */
-    @Test
-    void aTransientFailureIsDistinguishableFromARejectedRow() throws Exception {
-        final Throwable transientFailure;
-        try (var relay = new Relay(CLICKHOUSE.getHost(), CLICKHOUSE.getMappedPort(8123))) {
-            final var config = configFor(POISON_DB, true);
-            config.setEndpoint(relay.endpoint());
-            final var repository = new ClickhouseRepository(
-                    new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
-            repository.start();
-            // Through the relay first, so the failure below is the relay closing and not a relay
-            // that never worked.
-            repository.persist(List.of(ClickhouseItFlows.flow(GOOD_TENANT, "org", 19998)));
-
-            relay.close();
-            transientFailure = catchThrowable(() ->
-                    repository.persist(List.of(ClickhouseItFlows.flow(GOOD_TENANT, "org", 19997))));
-        }
-
-        Assertions.assertThat(transientFailure)
-                .as("a repository whose server went away must fail, or this test compares nothing")
-                .isNotNull();
-        Assertions.assertThat(serverExceptionIn(transientFailure))
-                .as("PQ-6 [#548]: a lost transport must not surface as a ServerException, or the"
-                        + " rejected-row code %d is not the only thing a branch could key on: %s",
-                        REJECTED_ROW_CODE, transientFailure)
-                .isNull();
-        // Observed: the client's ConnectionInitiationException is the top of the chain, not a
-        // cause under FlowException. It is unchecked, so persist's ExecutionException wrap never
-        // sees it; a branch in BatchingFlowRepository.flush has to catch it separately.
-        Assertions.assertThat(Throwables.getCausalChain(transientFailure))
-                .as("PQ-6 [#548]: a lost transport surfaces the client's transport exception, which"
-                        + " is what a retry-versus-quarantine branch keys on: %s", transientFailure)
-                .hasAtLeastOneElementOfType(ConnectionInitiationException.class);
-    }
-
-    /**
-     * The code a constraint-violating row answers, read off the server rather than predicted.
-     *
-     * <p>A literal because client-v2 0.10.0 names no enum member for it.</p>
-     */
-    private static final int REJECTED_ROW_CODE = 469;
-
-    /**
-     * The first {@link ServerException} in a cause chain, or null when there is none.
-     *
-     * <p>Walked with Guava rather than by hand: {@code getCausalChain} bounds the walk and rejects a
-     * cycle itself, where a hand-rolled loop needs a reference comparison Error Prone refuses.</p>
-     */
-    private static ServerException serverExceptionIn(final Throwable thrown) {
-        return Throwables.getCausalChain(thrown).stream()
-                .filter(ServerException.class::isInstance)
-                .map(ServerException.class::cast)
-                .findFirst()
-                .orElse(null);
-    }
-
-    /** The server that answered, read from it rather than from the image tag. */
-    private static String serverVersionOf(final Client client) throws Exception {
-        try (var rows = client.queryRecords("SELECT version() AS v").get()) {
-            for (final var row : rows) {
-                return row.getString("v");
-            }
-        }
-        throw new AssertionError("version() returned no rows");
     }
 
     // ---- #664: what the connection actually resolves ------------------------------------------

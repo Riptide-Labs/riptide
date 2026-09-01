@@ -67,7 +67,7 @@ public class TenantOnboardingIT {
 
         // Cross-tenant write (config lies about tenant) is rejected by the CHECK barrier.
         Assertions.assertThatThrownBy(() -> writerRepository("acme", "wA").persist(List.of(flow("evil", "acme-eu", 31003))))
-                .hasStackTraceContaining("469")
+                .hasStackTraceContaining(ClickhouseServerErrors.VIOLATED_CONSTRAINT_TEXT)
                 .hasStackTraceContaining("VIOLATED_CONSTRAINT");
 
         // The reader sees only its own tenant (row policy) and cannot write or DDL (readonly role).

@@ -13,9 +13,11 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
 /**
- * Shared flow builder for the multi-tenant ClickHouse ITs ({@link TenantWriteBarrierIT},
- * {@link TenantQueryIsolationIT}). A single fixture so the {@link EnrichedFlow} shape lives in one
- * place — when a required column is added, both ITs pick it up from here rather than drifting.
+ * Shared flow builder for the ClickHouse ITs that need a fully-populated flow stamped with a chosen
+ * identity: {@link TenantWriteBarrierIT}, {@link TenantQueryIsolationIT}, {@link TenantOnboardingIT},
+ * {@link RollupRepairIT} and {@link PoisonBatchProbeIT}. A single fixture so the {@link EnrichedFlow}
+ * shape lives in one place — when a required column is added, every one of them picks it up from
+ * here rather than drifting.
  */
 final class ClickhouseItFlows {
 
