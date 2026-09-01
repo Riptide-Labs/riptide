@@ -9,7 +9,11 @@ volumes:
 
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:latest
+    # Pinned to the version the integration suite runs against (.github/e2e-images/
+    # clickhouse.Dockerfile), so what an operator runs is what riptide is tested on.
+    # Floating :latest drifted to 26.8, whose schema response client-v2 0.10.0 cannot
+    # parse, and every test stayed green because no test starts this stack (#672).
+    image: clickhouse/clickhouse-server:26.7@sha256:f90a77560f72b10802106ee49e9870e41668cbc496e280c3911f6e3b216657f3
     environment:
       TZ: UTC
       CLICKHOUSE_USER: default
@@ -52,7 +56,10 @@ services:
       - "127.0.0.1:5521:5521/tcp"
 
   grafana:
-    image: docker.io/grafana/grafana-oss:latest
+    # Pinned with ClickHouse below it: the provisioned datasource interpolates
+    # ${CLICKHOUSE_PASSWORD} at Grafana's startup, so a floating tag can change that
+    # behaviour with no code change here. Dependabot keeps both current (#672).
+    image: docker.io/grafana/grafana-oss:13.0.2@sha256:5dad0df181cb644a14e13617b913b261a54f7d4fd4510721dba420929f35bea2
     depends_on:
       clickhouse:
         condition: service_healthy

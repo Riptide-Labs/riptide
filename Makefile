@@ -51,6 +51,7 @@ help:
 	@echo "  oci:          Build OCI container image"
 	@echo "  packages:     Build DEB and RPM packages from the jar (requires Docker)"
 	@echo "  packages-smoke: Install the packages in Debian and Rocky containers and smoke-test them (requires Docker)"
+	@echo "  compose-smoke: Bring up the shipped compose stack and assert its ClickHouse and Grafana wiring (requires Docker)"
 	@echo "  sbom-assert:  Assert license facts in a release SBOM; SBOM=<path to .spdx.json>"
 	@echo "  sbom-assert-test: Run the SBOM assertion script's fixture tests"
 	@echo "  nix:          Build the flake package from source (requires Nix)"
@@ -229,6 +230,13 @@ packages: deps-oci
 .PHONY: packages-smoke
 packages-smoke: deps-oci
 	deployment/package/smoke-test.sh "$(PKG_VERSION)"
+
+# The only gate on the compose stack: every *IT class builds its own bare
+# GenericContainer, so nothing else mounts users.xml or config.xml and the
+# properties #670 established by hand would regress green (#672).
+.PHONY: compose-smoke
+compose-smoke: deps-oci
+	deployment/riptide/smoke-test.sh
 
 # Sets licenseDeclared on the SBOM entries syft cannot fill for us (the deb and
 # the document root, issue #406) and licenseConcluded on the reviewed allowlist

@@ -79,6 +79,9 @@ This starts, from `ghcr.io/riptide-labs/riptide:latest`:
 | ch-ui | [`:5521`](http://localhost:5521) | browse the `riptide.flows` table |
 | grafana | [`:3000`](http://localhost:3000) | dashboards (ClickHouse datasource provisioned) |
 
+ClickHouse and Grafana are pinned by digest to the versions riptide is tested against, and Dependabot keeps them current.
+Riptide's own image tracks `:latest`, so `docker compose pull` still moves the collector forward on its own.
+
 Grafana ships provisioned dashboards backed by the `flows` table and the
 `samples` bucket-expansion view:
 
