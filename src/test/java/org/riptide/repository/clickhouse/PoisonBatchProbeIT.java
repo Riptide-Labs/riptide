@@ -63,14 +63,28 @@ import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
  * let #548's design rest on a stale measurement. It does not implement #548, and it says nothing
  * about whether riptide can map a reported row index back to its own batch.</p>
  *
- * <p><b>What the class-level {@link Timeout} covers, and what it does not.</b> The transient test's
- * whole method is manufacturing a severed-but-open transport, which is precisely the state that
- * makes an unbounded wait wait forever. Every statement this fixture issues itself is bounded (see
- * {@link #awaiting}, and note what that bound required), but {@code persist} waits inside production
- * code this issue must not change, so the class bound is the backstop. {@link Timeout.ThreadMode#SEPARATE_THREAD} on purpose: the
- * default mode enforces the bound by interrupting the test thread and only reports once that thread
- * returns, so a wait that does not answer an interrupt would still burn the job. Two limits, both
- * real:
+ * <p><b>And PQ-5's answer is for a single-block insert only.</b> {@code ClickhouseRepository} states
+ * the risk it was written to settle as: a refused insert is atomic on the buffered path but "can
+ * leave whole blocks committed on a direct one <em>once a batch exceeds
+ * {@code max_insert_block_size}</em>". {@link #BATCH_SIZE} is six, six orders of magnitude below the
+ * server default, so this probe never crosses that boundary — and {@code max_insert_block_size}
+ * appears exactly once in the whole repository, in that comment: nothing sets it, lowers it, or
+ * builds a batch that spans two blocks. So "a refused batch leaves no row anywhere" is measured
+ * where a partial write is impossible by construction, and is <em>not</em> an answer for the 10,000-row
+ * batches {@code BatchingFlowRepository} actually flushes ({@code ClickhouseConfig.maxRows}). #548
+ * must not read this as a general atomicity guarantee.</p>
+ *
+ * <p><b>What the class-level {@link Timeout} covers, and what it does not.</b> This fixture severs a
+ * live transport on purpose, and {@code persist} waits on a client this issue must not change, so
+ * the class bound is the backstop for a wait that never answers. Note what the severing itself does
+ * <em>not</em> produce: {@link Relay} closes its sockets, which sends FIN, so the client is refused
+ * or reset promptly rather than left hanging — see that class's javadoc. The open-and-unanswered
+ * socket, the state that actually makes an unbounded wait wait forever, is what pausing the
+ * container would give, and this fixture deliberately does not do that. Every statement the fixture
+ * issues itself is separately bounded (see {@link #awaiting}, and note what that bound required).
+ * {@link Timeout.ThreadMode#SEPARATE_THREAD} on purpose: the default mode enforces the bound by
+ * interrupting the test thread and only reports once that thread returns, so a wait that does not
+ * answer an interrupt would still burn the job. Two limits, both real:
  * <ul>
  *   <li>It does not cover starting the container. {@code @Timeout} applies to test and lifecycle
  *       methods; the {@code @Container} field is started by the Testcontainers extension's own
@@ -83,8 +97,11 @@ import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
  * <p>The precedent for a class-level bound in this package is {@code ViewProbePolicyTest}; this is
  * the first {@code *IT} to carry one.</p>
  *
- * <p><b>Cost.</b> Extracting this from {@code ClickhouseRepositoryIT} added a fifteenth ClickHouse
- * container to the IT tier, measured at 5.2s to start on the pinned image with the layer cached.
+ * <p><b>Cost.</b> Extracting this from {@code ClickhouseRepositoryIT} added a twelfth ClickHouse
+ * container to the IT tier — twelve being the number of {@code ContainerImages.clickhouse()} call
+ * sites under {@code src/test/java}, this one included, so a thirteenth arriving falsifies the
+ * sentence. Observed once at 5.2s to start on the pinned image with the layer already cached: one
+ * observation on one machine, not a fleet figure, and a cold pull or a loaded runner moves it.
  * That is job wall-clock and nothing else: {@code E2eTestSupport.SUITE_BUDGET} bounds the sum of
  * {@code awaitCount} waits, and its counter is advanced in exactly one place — inside
  * {@code awaitCount} itself — so a container start is not charged against it.</p>
@@ -222,26 +239,31 @@ public class PoisonBatchProbeIT {
         final var config = configFor(POISON_DB);
         final var repository = new ClickhouseRepository(
                 new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
-        repository.start();
-        final var client = new Client.Builder().addEndpoint(config.getEndpoint())
-                .setUsername("riptide").setPassword("riptide").setDefaultDatabase(POISON_DB)
-                // Load-bearing, not a preference: see awaiting(). Without it every future this
-                // fixture waits on is already complete and its bound can never fire.
-                .useAsyncRequests(true)
-                .build();
-        // Everything after the client exists is inside the guard: a failing or timing-out ALTER
-        // would otherwise return no PoisonProbe, so the caller's try-with-resources never runs and
-        // both the client and the repository leak — in the one fixture whose subject is leaks.
-        final var probe = new PoisonProbe(repository, client);
+        Client client = null;
         try {
+            repository.start();
+            client = new Client.Builder().addEndpoint(config.getEndpoint())
+                    .setUsername("riptide").setPassword("riptide").setDefaultDatabase(POISON_DB)
+                    // Load-bearing, not a preference: see awaiting(). Without it every future this
+                    // fixture waits on is already complete and its bound can never fire.
+                    .useAsyncRequests(true)
+                    .build();
             final String alter = "ALTER TABLE " + FlowsSchema.qualifiedFlows(POISON_DB)
                     + " ADD CONSTRAINT IF NOT EXISTS probe_tenant CHECK tenant = '" + GOOD_TENANT + "'";
             awaiting(alter, client.execute(alter));
-        } catch (final Exception e) {
-            probe.close();
+            return new PoisonProbe(repository, client);
+        } catch (final AssertionError | Exception e) {
+            // The guard starts at start(), not at the ALTER. Any of the three steps failing returns
+            // no PoisonProbe, so the caller's try-with-resources never runs and whatever was already
+            // opened leaks — in the one fixture whose subject is leaks. AssertionError is named
+            // because awaiting() reports a breached bound by throwing one, and an Error is not an
+            // Exception, so the timeout path is exactly what a bare catch here would miss.
+            if (client != null) {
+                client.close();
+            }
+            repository.stop();
             throw e;
         }
-        return probe;
     }
 
     /**
@@ -260,9 +282,12 @@ public class PoisonBatchProbeIT {
      *
      * <p><b>Why not {@code count() FINAL} on the rollups.</b> It is merge-invariant too, and it is
      * blind to the one thing PQ-5 exists to catch. Every rollup's sorting key is
-     * {@code tenant, organisation, toStartOfMinute(timestamp), zone} plus that rollup's dimensions,
-     * and {@code srcPort} — the only field this probe varies — is in none of them. Every row this
-     * fixture writes therefore collapses into a single group, so {@code count() FINAL} reads 1
+     * {@code tenant, organisation, toStartOfMinute(timestamp), zone} plus that rollup's dimensions.
+     * {@code srcPort} is the only field this probe varies <em>deliberately</em>, and it is in none of
+     * them. The one key field that moves on its own is the timestamp: {@code ClickhouseItFlows.flow}
+     * stamps {@code Instant.now()}, so the rows this fixture writes share a group only while they
+     * land inside the same minute — which they do, the test running in seconds, except across a
+     * minute boundary. Within that group {@code count() FINAL} reads 1
      * whether none or all five of the poisoned batch's healthy rows landed. Measured on the pinned
      * image: three same-key inserts give {@code count()} = 3 and {@code count() FINAL} = 1. The
      * rollup half is PQ-5's only unique detection power, since the base count already covers a
@@ -473,7 +498,9 @@ public class PoisonBatchProbeIT {
                         ClickhouseServerErrors.VIOLATED_CONSTRAINT, transientFailure)
                 .isNull();
         // Asserted on the THROWN type, not on its cause chain, because the thrown type is the fact
-        // #548 needs: flush() catches and branches on what persist throws. Both shapes are unchecked,
+        // #548 needs: flush() catches what persist throws in ONE clause with one outcome
+        // (FlowException | IOException | RuntimeException), so it cannot branch on the cause today —
+        // the thrown type is what a branch would have to key on. Both shapes are unchecked,
         // so persist's ExecutionException wrap never sees them and they leave persist as themselves —
         // and a chain assertion cannot tell that from a build that wrapped them in a FlowException,
         // where every assertion here would still pass while a branch keying on the thrown type never
@@ -557,11 +584,16 @@ public class PoisonBatchProbeIT {
                         outbound.connect(new InetSocketAddress(targetHost, targetPort), CONNECT_TIMEOUT_MS);
                         pump(inbound, outbound);
                         pump(outbound, inbound);
-                    } catch (final IOException relayFailed) {
+                    } catch (final IOException | RuntimeException relayFailed) {
                         // This one connection could not be relayed; keep accepting. Closed here
                         // because this relay is torn down by the test rather than by a finally, so
                         // an abandoned pair would leak descriptors for the whole run. Harmless if
                         // close() already took them: closing twice is a no-op.
+                        //
+                        // RuntimeException is in the clause because catching only IOException let an
+                        // unchecked throw kill this virtual thread silently. The relay then accepted
+                        // nothing further and the test blocked to the class timeout rather than
+                        // failing with a cause.
                         closeQuietly(inbound);
                         closeQuietly(outbound);
                     }
@@ -649,6 +681,12 @@ public class PoisonBatchProbeIT {
      * <p>Only ever called while a failure description is being rendered, so it must not throw: an
      * assertion that failed on row measures has to report the row measures, not a secondary failure
      * from the version lookup. A lookup that cannot answer names why in place of the version.</p>
+     *
+     * <p>{@link AssertionError} is caught explicitly, and it is the case that matters rather than a
+     * defensive flourish: {@link #awaiting} reports a breached bound by throwing one, and an
+     * {@code Error} is not an {@link Exception}. Catching only {@code Exception} here left the single
+     * failure this contract exists to absorb — a stalled {@code version()} during failure rendering —
+     * as the one that would escape and replace the real assertion failure.</p>
      */
     private static String serverVersionOf(final Client client) {
         final String query = "SELECT version() AS v";
@@ -659,7 +697,7 @@ public class PoisonBatchProbeIT {
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
             return "unknown (interrupted)";
-        } catch (final Exception e) {
+        } catch (final AssertionError | Exception e) {
             return "unknown (" + e + ")";
         }
         return "unknown (version() returned no rows)";

@@ -35,7 +35,8 @@ import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
  * (issues #246/#267; the collector only validates in {@code manage-schema=false} mode) before it
  * can grant and constrain them. Then the CLI is driven exactly
  * as an operator would: {@code onboard} a tenant, and the resulting scoped credentials must satisfy
- * the full isolation matrix — honest write persists, cross-tenant write is rejected (469), the
+ * the full isolation matrix — honest write persists, cross-tenant write is rejected (469,
+ * {@code VIOLATED_CONSTRAINT}), the
  * reader sees only its tenant and cannot write/DDL — and {@code offboard} must revoke access.
  *
  * <p>The server needs {@code custom_settings_prefixes: SQL_} for the CHECK barrier the onboarding
@@ -67,7 +68,7 @@ public class TenantOnboardingIT {
 
         // Cross-tenant write (config lies about tenant) is rejected by the CHECK barrier.
         Assertions.assertThatThrownBy(() -> writerRepository("acme", "wA").persist(List.of(flow("evil", "acme-eu", 31003))))
-                .hasStackTraceContaining(ClickhouseServerErrors.VIOLATED_CONSTRAINT_TEXT)
+                .hasStackTraceContaining(ClickhouseServerErrors.VIOLATED_CONSTRAINT_MESSAGE_PREFIX)
                 .hasStackTraceContaining("VIOLATED_CONSTRAINT");
 
         // The reader sees only its own tenant (row policy) and cannot write or DDL (readonly role).
