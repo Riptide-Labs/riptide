@@ -246,7 +246,13 @@ class ClassificationRuleReloaderTest {
         this.body = rules("beta");
         this.reloader.poll();
 
-        await("the new rules to serve", () -> "beta".equals(classification()));
+        // On the counter, not on the classification: the engine publishes the new tree inside
+        // delegate.reload() and only then runs onReloadSucceeded, which writes stale and the
+        // counter. Waiting on classify() therefore returns while both still hold their old values,
+        // and the three assertions below would read them mid-flight. Same direction as #699, which
+        // is the same defect one class over.
+        await("the reload to be counted", () -> successes() >= 2);
+        assertThat(classification()).as("the new rules serve").isEqualTo("beta");
         assertThat(successes()).as("the startup load and this one").isEqualTo(2);
         assertThat(failures()).isZero();
         assertThat(stale()).isZero();
@@ -463,8 +469,11 @@ class ClassificationRuleReloaderTest {
         // and fixing the ruleset is an ordinary change, picked up on the next poll
         this.body = rules("beta");
         this.reloader.poll();
-        await("the fixed ruleset to serve", () -> "beta".equals(classification()));
-        assertThat(stale()).isZero();
+        // On the gauge here, and it is a real wait because the failure above latched it to 1 —
+        // asserted three lines up. The engine clears it in onReloadSucceeded, after the publish,
+        // so waiting on the classification would return with stale still 1 (#699).
+        await("the recovering reload to clear staleness", () -> stale() == 0);
+        assertThat(classification()).as("the fixed ruleset serves").isEqualTo("beta");
     }
 
     /**
