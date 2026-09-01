@@ -1,0 +1,40 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# The only gate on the shipped compose stack. Every *IT class builds its own bare
+# GenericContainer, so nothing else mounts users.xml or config.xml and the
+# properties #670 established by hand would regress with the suite green (#672).
+# Also covers Dependabot's compose image bumps, which change the entrypoint merge
+# and the datasource interpolation with no code change here.
+name: Riptide Compose Smoke
+run-name: Bring up the compose stack and assert its wiring
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [ 'main' ]
+    paths:
+      - 'deployment/riptide/**'
+      - 'deployment/clickhouse/**'
+      - 'Makefile'
+      - '.github/workflows/compose-smoke.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compose-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compose-smoke:
+    runs-on: ubuntu-24.04
+    # The stack pulls four images and waits on three healthchecks; the script's own
+    # --wait-timeout is 300s, so this bounds the pulls rather than the run.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Bring up the compose stack and assert its wiring
+        run: |
+          make compose-smoke
