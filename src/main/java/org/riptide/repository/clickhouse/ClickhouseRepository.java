@@ -119,8 +119,13 @@ public class ClickhouseRepository implements FlowRepository {
             // Rejections surfaced either way, because the server's default wait is 1, so this is
             // not a hole in the CHECK-barrier contract. What differed is coalescing: a refused
             // insert is atomic on the buffered path but can leave whole blocks committed on a
-            // direct one once a batch exceeds max_insert_block_size, which is the ground #548's
-            // design stands on.
+            // direct one once a batch exceeds the server's COMMITTED block size, which is the
+            // ground #548's design stands on. MultiBlockPoisonProbeIT measures that a partial write
+            // is real in at least one server tuning. What nobody has managed to state is WHICH
+            // tuning: two independent measurements of the squash settings produced contradictory
+            // rules, and two attempts at a startup check that modelled them were each wrong in both
+            // directions (#700). So this stays an open premise, deliberately — riptide makes no
+            // claim about where the boundary is.
             builder.serverSetting("async_insert", "0");
         }
         this.client = builder.build();

@@ -311,6 +311,14 @@ moves on (one bad batch never wedges ingestion), but a persistent source of reje
 mis-tenanted collector against the multi-tenant CHECK barrier, say — now costs proportionally
 more data. Lowering `max-rows` limits the blast radius at the cost of throughput.
 
+**And "a whole batch" is only true while the whole batch lands in one committed block.** ClickHouse cuts an incoming insert into blocks and may commit them separately. When it does, a refused insert is *not* atomic: the blocks already accepted stay committed, so part of the batch persists while the whole batch is counted as failed, and the rollups are left inconsistent with the base table. Measured on the pinned image by `MultiBlockPoisonProbeIT`, which pins both a server that behaves this way and one that does not.
+
+Note the counter: a refused batch increments `persister.batch.failedRows`, not `persister.batch.droppedRows`. The drop counter is for queue-full and post-shutdown loss and stays at zero for this failure.
+
+**riptide does not tell you whether your server is affected, and neither does this page.** Two attempts at a startup check that modelled the relevant server settings were each wrong in both directions, and two independent measurements of those settings produced contradictory rules. A two-million-row insert against a completely untouched server committed nothing on refusal, so no simple "raise `max-rows` past N" statement survived contact with the data either. The settings involved are `max_insert_block_size`, `min_insert_block_size_rows` and `min_insert_block_size_bytes`; how they combine is not something we can currently state, and a wrong rule here would either cry wolf or miss the case. See #700.
+
+What is safe to say: no partial write has been produced at stock server settings, so the whole-batch loss model above is the one to plan against unless you have tuned those settings. If you have, the loss model is not known to hold.
+
 On shutdown the repository stops accepting new flows and drains everything already accepted —
 buffered flows are flushed before the repository stops, preserving at-least-once delivery for
 accepted flows.
