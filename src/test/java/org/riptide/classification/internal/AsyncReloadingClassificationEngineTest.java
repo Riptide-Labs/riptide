@@ -133,9 +133,15 @@ class AsyncReloadingClassificationEngineTest {
         this.delegate.onReload = () -> { };
         this.delegate.nextRules = "rules-2";
         this.engine.reload();
-        await("the recovering reload to settle", () -> "rules-2".equals(this.engine.classify(request())));
+        // on the gauge, not on the classification: doReload publishes the new tree inside
+        // delegate.reload() and only then enters onReloadSucceeded, which clears stale. A wait
+        // on classify() therefore returns while stale is still 1, and this failed on CI under
+        // load while passing in isolation
+        await("the recovering reload to clear staleness", () -> stale() == 0);
 
-        assertThat(stale()).isEqualTo(0);
+        assertThat(this.engine.classify(request()))
+                .as("and the cleared gauge means the new rules are the ones serving")
+                .isEqualTo("rules-2");
         assertThat(failures()).as("the recovery does not un-count the failure").isEqualTo(1);
     }
 
@@ -164,8 +170,11 @@ class AsyncReloadingClassificationEngineTest {
 
         this.delegate.nextRules = "rules-2";
         this.engine.reload();
-        await("the second reload to settle", () -> "rules-2".equals(this.engine.classify(request())));
+        // the counter is incremented after the publish, so waiting on the classification
+        // would return before it moves — the same window as the recovery test above
+        await("the second reload to be counted", () -> successes() == 2);
 
+        assertThat(this.engine.classify(request())).isEqualTo("rules-2");
         assertThat(successes()).isEqualTo(2);
         assertThat(failures()).isZero();
     }
@@ -288,8 +297,12 @@ class AsyncReloadingClassificationEngineTest {
         this.delegate.onReload = () -> { };
         this.delegate.nextRules = "rules-2";
         this.engine.reload();
-        await("the newest reload to win", () -> "rules-2".equals(this.engine.classify(request())));
+        // same window again: stale is cleared after the tree is published
+        await("the newest reload to settle", () -> stale() == 0);
 
+        assertThat(this.engine.classify(request()))
+                .as("the newest reload's rules are the ones serving")
+                .isEqualTo("rules-2");
         assertThat(this.delegate.interrupted.get()).as("the in-flight reload was cancelled").isEqualTo(1);
         assertThat(failures()).as("cancellation is not a failure").isZero();
         assertThat(stale()).isEqualTo(0);
