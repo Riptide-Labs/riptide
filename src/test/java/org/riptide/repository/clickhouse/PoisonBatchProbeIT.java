@@ -97,11 +97,13 @@ import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
  * <p>The precedent for a class-level bound in this package is {@code ViewProbePolicyTest}; this is
  * the first {@code *IT} to carry one.</p>
  *
- * <p><b>Cost.</b> Extracting this from {@code ClickhouseRepositoryIT} added a twelfth ClickHouse
- * container to the IT tier — twelve being the number of {@code ContainerImages.clickhouse()} call
- * sites under {@code src/test/java}, this one included, so a thirteenth arriving falsifies the
- * sentence. Observed once at 5.2s to start on the pinned image with the layer already cached: one
- * observation on one machine, not a fleet figure, and a cold pull or a loaded runner moves it.
+ * <p><b>Cost.</b> Extracting this from {@code ClickhouseRepositoryIT} added a ClickHouse container
+ * to the IT tier, which now runs thirteen — the number of {@code ContainerImages.clickhouse()} call
+ * sites under {@code src/test/java}, so a fourteenth arriving falsifies the sentence. It said
+ * twelve until {@code MultiBlockPoisonProbeIT} (#700) arrived, which is the count doing its job
+ * rather than breaking. Observed once at 5.2s to start on the pinned image with the layer already
+ * cached: one observation on one machine, not a fleet figure, and a cold pull or a loaded runner
+ * moves it.
  * That is job wall-clock and nothing else: {@code E2eTestSupport.SUITE_BUDGET} bounds the sum of
  * {@code awaitCount} waits, and its counter is advanced in exactly one place — inside
  * {@code awaitCount} itself — so a container start is not charged against it.</p>

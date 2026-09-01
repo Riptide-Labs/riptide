@@ -143,6 +143,63 @@ public class ClickhouseRepository implements FlowRepository {
         }
     }
 
+    /** ClickHouse's own name for the row boundary an insert is split on. */
+    private static final String INSERT_BLOCK_SIZE_SETTING = "max_insert_block_size";
+
+    /**
+     * Refuse a configured batch that would split into more than one insert block (#700).
+     *
+     * <p>Measured on the pinned image by {@code MultiBlockPoisonProbeIT}: when a refused insert
+     * spans more than one block, the blocks the server already accepted <em>stay committed</em>.
+     * One bad row then becomes a silent partial write — {@code BatchingFlowRepository.flush} drops
+     * the batch and counts every row as lost, while a prefix persisted and the rollups are left
+     * disagreeing with the base table and with each other. Below the boundary a refusal is atomic,
+     * which is what {@code PoisonBatchProbeIT} measures and what #548's design rests on.</p>
+     *
+     * <p>The boundary is read from the server, not assumed: {@code max_insert_block_size} is a
+     * server-side setting an operator can profile per user, so a constant here would be right only
+     * by luck. At the shipped defaults — 10,000 rows against 1,048,576 — this check never fires;
+     * it exists because {@code max-rows} is operator-settable and {@code BatchConfig.validate()}
+     * bounds it only at {@code > 0}.</p>
+     *
+     * <p>Two limits worth naming. It is skipped on the coalesced path, where a refused insert is
+     * atomic regardless of size, and when batching is off, where {@code maxRows} governs nothing.
+     * And it bounds the <em>configured</em> batch, not an arbitrary {@code persist} call: a caller
+     * handing this repository a larger list directly still spans blocks. The only production caller
+     * that batches is {@code BatchingFlowRepository}, which never exceeds {@code maxRows}.</p>
+     */
+    private void checkBatchFitsOneInsertBlock() {
+        if (!this.config.getBatch().isEnabled() || this.config.isAsyncInserts()) {
+            return;
+        }
+        final long blockRows = readInsertBlockSize();
+        final int maxRows = this.config.getBatch().getMaxRows();
+        if (maxRows >= blockRows) {
+            throw new IllegalStateException(
+                    "riptide.clickhouse.batch.max-rows is " + maxRows + ", which is not below the "
+                            + "server's " + INSERT_BLOCK_SIZE_SETTING + " of " + blockRows + ". A batch "
+                            + "that spans more than one insert block is not refused atomically: a "
+                            + "single rejected row leaves the earlier blocks committed, so part of "
+                            + "the batch persists while the drop counter reports all of it lost. "
+                            + "Lower max-rows below " + blockRows + ", or raise "
+                            + INSERT_BLOCK_SIZE_SETTING + " on the server.");
+        }
+    }
+
+    /** The effective {@link #INSERT_BLOCK_SIZE_SETTING} for the user riptide connects as. */
+    @SneakyThrows
+    private long readInsertBlockSize() {
+        final String query = "SELECT getSetting('" + INSERT_BLOCK_SIZE_SETTING + "') AS v";
+        try (var rows = this.client.queryRecords(query).get()) {
+            for (final var row : rows) {
+                return Long.parseLong(row.getString("v"));
+            }
+        }
+        throw new IllegalStateException(
+                "could not read " + INSERT_BLOCK_SIZE_SETTING + " from the server: " + query
+                        + " returned no rows, so the batch size cannot be checked against it");
+    }
+
     @Override
     @SneakyThrows
     public void start() {
@@ -167,6 +224,13 @@ public class ClickhouseRepository implements FlowRepository {
         // EXISTS no-oped over; in validate mode it catches an absent or mis-provisioned schema —
         // before the first insert would fail with an opaque error. Reuses the schema for register.
         final TableSchema schema = checkSchema();
+
+        // After the schema block, not before it: the main client pins the database via
+        // setDefaultDatabase, so ANY query issued ahead of ensureDatabase() fails with
+        // UNKNOWN_DATABASE on a fresh server — the same trap the manage-mode comment above names
+        // for DDL. Being after the DDL costs nothing that matters: what this guard protects is the
+        // first insert, and no row has been written yet.
+        checkBatchFitsOneInsertBlock();
 
         // Rollups whose repair did not complete on this start. Every statement below is guarded, so
         // one rollup's failure cannot stop the others or stop ingestion — but a rollup left
