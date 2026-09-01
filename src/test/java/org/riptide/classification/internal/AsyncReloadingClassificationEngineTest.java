@@ -294,11 +294,27 @@ class AsyncReloadingClassificationEngineTest {
         this.engine.reload();
         assertThat(entered.await(10, TimeUnit.SECONDS)).as("the superseded reload started").isTrue();
 
-        this.delegate.onReload = () -> { };
+        // Not a sleep standing in for a wait — a deliberately widened publish window, and the only
+        // reason this test can fail when the wait below is wrong. Without it the defect this test
+        // now pins reproduced in roughly half of full-suite runs and never in isolation, which is
+        // how it survived review and then blocked two PRs. With it, reverting the wait below fails
+        // this test every time.
+        this.delegate.onReload = () -> Thread.sleep(PUBLISH_WINDOW_MILLIS);
         this.delegate.nextRules = "rules-2";
+        // Asserted rather than assumed, because it is the whole difference between a wait and a
+        // no-op: a condition already true when the wait starts is not a wait. Nothing has failed
+        // in this test, so stale is 0 here and the `stale() == 0` this line replaces returned
+        // immediately, leaving the assertion below racing the publish (#699).
+        assertThat(stale()).as("nothing failed here, so staleness cannot be the signal").isZero();
+        final long publishedBefore = successes();
+
         this.engine.reload();
-        // same window again: stale is cleared after the tree is published
-        await("the newest reload to settle", () -> stale() == 0);
+
+        // successes moves in onReloadSucceeded, after the new tree is published, and the superseded
+        // reload moves no counter at all — doReload treats an interrupt as neither success nor
+        // failure. So this is the signal the assertion below is actually about, and it is the idiom
+        // everySuccessfulReloadIsCounted already uses for the same reason.
+        await("the newest reload to be counted", () -> successes() == publishedBefore + 1);
 
         assertThat(this.engine.classify(request()))
                 .as("the newest reload's rules are the ones serving")
@@ -400,6 +416,14 @@ class AsyncReloadingClassificationEngineTest {
     private static ClassificationRequest request() {
         return ClassificationRequest.builder().build();
     }
+
+    /**
+     * How long the superseded-reload test holds the winning reload inside {@code delegate.reload()}
+     * before it publishes. Comfortably inside {@link #await}'s ten-second deadline, and long enough
+     * that a wait on a condition which is already true loses the race every time rather than
+     * sometimes.
+     */
+    private static final long PUBLISH_WINDOW_MILLIS = 300;
 
     private static void await(final String what, final BooleanSupplier condition) throws InterruptedException {
         final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
