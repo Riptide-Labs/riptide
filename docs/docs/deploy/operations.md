@@ -72,14 +72,21 @@ Semantics:
   drops and the next poll picks up the new secret.
 - **The gauges exist only while reloading is enabled** — `config.reload.stale` /
   `inventory.reload.stale` and the dead-schedule gauges below are absent when
-  reloading is disabled. Absence means "not watching"; a 0 means "the last file we could
+  reloading is disabled. They are registered by the first start and are deliberately
+  *not* removed by a stop, so a stopped schedule stays visible rather than vanishing.
+  That cuts both ways: after a stop, `*.reload.dead` reads 1 (see below) while
+  `*.reload.stale` freezes at whatever it last computed — commonly `0`, which this page
+  otherwise defines as "the last file we could read is what is serving". Neither gauge
+  is meaningful once the schedule has stopped; read `dead` first. Absence means "not watching"; a 0 means "the last file we could
   read is what is serving" — not "the file on disk is serving", because a skipped cycle
   reads no file and changes no gauge. Alert on absence separately if hot-reload is
   mandatory in your deployment.
 - **A dead schedule is visible** — `config.reload.dead` / `inventory.reload.dead`
   read 1 if the poll schedule stopped and will never run again (the realistic cause:
   an `Error` such as OOM on an oversized file mid-read). Alert on `> 0`; the only
-  recovery is a restart.
+  recovery is a restart. A deliberate shutdown reads 1 too — the gauge says the
+  schedule is not running, not why — so scope that alert to processes you expect to be
+  up, or it fires once on every planned stop.
 - **Shutdown counts nothing** — an interrupt landing mid-poll during an orderly stop
   is not a reload failure: no counter moves and no stale latch is set.
 
@@ -128,7 +135,7 @@ Semantics, which are the config reloader's (same poll loop) with a source that c
 | `classification.reload.successes` | Loads that published a ruleset. A healthy start leaves this at 1. |
 | `classification.reload.failures` | Reloads that did not happen: a fetch that failed, or a load that threw. Not latched: every attempt that fails counts again. |
 | `classification.reload.stale` | 1 when the last fetch or load attempt failed and no later one has succeeded; 0 otherwise. |
-| `classification.reload.dead` | 1 if the poll schedule stopped and will never run again. Present only while an interval is configured. |
+| `classification.reload.dead` | 1 if the poll schedule stopped and will never run again, including after a deliberate shutdown. Registered once an interval is configured, and kept after a stop. |
 
 **One family, two layers.** Fetching the rules and loading them are done by different parts — the reload schedule fetches, the engine loads — and they report on the same three series rather than on two families that could disagree.
 They cannot double-count: a fetch that fails never reaches the engine, and a ruleset that fails to parse was fetched successfully.
@@ -136,7 +143,7 @@ They cannot double-count: a fetch that fails never reaches the engine, and a rul
 
 **A skipped cycle leaves the gauges where they were.** A skip decides nothing about whether the source and what is serving agree, so `classification.reload.stale` is not recomputed and not latched: an endpoint that has answered 404 for an hour reads `stale=0`, and so does a ruleset that has been empty all day. This is the same trap the config reloader carries, and it matters more here because the whole page tells you to alert on `stale`. Alert on the once-per-episode warning as well, or on the absence of successful reloads.
 
-**A dead schedule is visible.** `classification.reload.dead` reads 1 if the poll schedule stopped and will never run again (the realistic cause: an `Error` such as OOM mid-cycle). Alert on `> 0`; the only recovery is a restart.
+**A dead schedule is visible.** `classification.reload.dead` reads 1 if the poll schedule stopped and will never run again (the realistic cause: an `Error` such as OOM mid-cycle). Alert on `> 0`; the only recovery is a restart. As with the config and inventory schedules, a deliberate shutdown reads 1 as well — the gauge reports that the schedule is not running, not why — so scope the alert to processes you expect to be up.
 
 Unlike `config.reload.stale` and `inventory.reload.stale`, **`classification.reload.stale`** is registered unconditionally, including when no interval is configured.
 It claims less than they do: they assert a relationship between a file on disk and what is serving, so a permanent 0 would falsely read "in sync", while this one asserts only "the last attempt failed and has not recovered".

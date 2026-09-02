@@ -272,8 +272,15 @@ public final class FileWatchTrigger {
             seedHashesFromCurrentContent();
         }
         final long millis = this.interval.toMillis();
-        this.executor = Executors.newSingleThreadScheduledExecutor(
-                runnable -> new Thread(runnable, this.threadName));
+        // Daemon: a poll parked in a socket read is not interruptible by cancel(true), and a
+        // non-daemon thread in that state holds the JVM open past @PreDestroy for as long as the
+        // fetch deadline allows. Harmless while every source was a local file; a reload source can
+        // be a URL since #655.
+        this.executor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            final Thread thread = new Thread(runnable, this.threadName);
+            thread.setDaemon(true);
+            return thread;
+        });
         // The handle is kept and cancelled explicitly rather than discarded. poll() swallows every
         // Exception itself, so a bad reload cycle cannot silently cancel the schedule and leave
         // hot-reload dead for the process lifetime — and the dead gauge below is what finally
@@ -322,6 +329,18 @@ public final class FileWatchTrigger {
         if (this.executor != null) {
             this.executor.shutdownNow();
         }
+        // The gauges are deliberately NOT removed here, and #715 was closed by correcting the docs
+        // instead. The reason is name-sharing, not rebinding: a gauge name is derived from the
+        // metric prefix alone, so every trigger with that prefix registers and would remove the
+        // same two names. registerGauge already removes-then-registers, so rebinding a restarted
+        // bean works whether or not stop() cleaned up — what a by-name remove() here would buy is
+        // the ability for a short-lived second instance to deregister a still-running first one's
+        // gauges on its way out. Probed: adding the removal makes
+        // FileWatchTriggerTest.aSecondTriggerRebindsTheGaugesToItself fail while the first trigger
+        // is still scheduled and alive.
+        //
+        // Cleared so a stopped trigger can be started again.
+        this.executor = null;
     }
 
     /**
@@ -347,6 +366,12 @@ public final class FileWatchTrigger {
                     this.log.warn(this.messages.missingSource());
                     this.warnedMissing = true;
                 }
+                // The blank latch re-arms here too. It clears only after a non-blank read, so
+                // without this a blank -> absent -> blank sequence warned once and then went
+                // silent: the file disappearing ends the blank episode, and its return blank is a
+                // new one. warnedMissing has always re-armed this way (cleared below for Vanished
+                // as well as Present); this is the half that did not.
+                this.warnedEmpty = false;
                 // a pending partial heals from a file this branch says nothing about —
                 // suspending the retry here would falsify the commit-time WARN's
                 // "retried every poll" exactly in the degraded states
@@ -438,8 +463,16 @@ public final class FileWatchTrigger {
 
     /** Whitespace is ASCII-safe in UTF-8, so blankness is decidable on raw bytes. */
     private static boolean isBlank(final byte[] content) {
-        for (final byte b : content) {
-            if (b != ' ' && b != '\n' && b != '\r' && b != '\t') {
+        // A leading UTF-8 BOM is deliberately NOT treated as blank. Doing so closes only the rare
+        // half — a file truncated to nothing but a BOM — while the common half, a BOM followed by
+        // real content, still reaches the parser with U+FEFF on the front. It would also make the
+        // blank WARN say "empty or whitespace-only" about a three-byte file, which is the exact
+        // wild-goose chase InventoryLoader's own comment says that wording exists to prevent.
+        for (int i = 0; i < content.length; i++) {
+            final byte b = content[i];
+            // Form feed and vertical tab too: both are whitespace an editor can flush mid-write,
+            // and both used to reach the commit path.
+            if (b != ' ' && b != '\n' && b != '\r' && b != '\t' && b != '\f' && b != 0x0B) {
                 return false;
             }
         }
