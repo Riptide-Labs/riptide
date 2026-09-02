@@ -5,16 +5,28 @@
 
 package org.riptide.classification.internal;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.riptide.classification.ClassificationEngine.ClassificationRulesReloadedListener;
+import org.riptide.classification.ClassificationEngine.Publication;
 import org.riptide.classification.ClassificationRequest;
+import org.riptide.classification.ClassificationRuleProvider;
 import org.riptide.classification.DefaultRule;
 import org.riptide.classification.ProtocolType;
 import org.riptide.classification.Rule;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -22,6 +34,32 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 public class DefaultClassificationEngineTest {
+
+    /** One valid rule, so a publish has something nameable in it and no ERROR of its own. */
+    private static final ClassificationRuleProvider ONE_RULE =
+            () -> List.of(DefaultRule.builder().withName("rule1").withPosition(1).withDstPort(80).build());
+
+    /** A ruleset the engine accepts in part: {@code broken} cannot be preprocessed and is rejected. */
+    private static final ClassificationRuleProvider ONE_GOOD_ONE_BROKEN = () -> List.of(
+            DefaultRule.builder().withName("good").withPosition(1).withDstPort(80).build(),
+            DefaultRule.builder().withName("broken").withPosition(2).withDstPort("not-a-port").build());
+
+    private ListAppender<ILoggingEvent> appender;
+    private ch.qos.logback.classic.Logger logger;
+
+    @BeforeEach
+    void captureLogs() {
+        this.logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(DefaultClassificationEngine.class);
+        this.appender = new ListAppender<>();
+        this.appender.start();
+        this.logger.addAppender(this.appender);
+    }
+
+    @AfterEach
+    void detachAppender() {
+        this.logger.detachAppender(this.appender);
+        this.appender.stop();
+    }
 
     @Test
     void verifyRuleEngineBasic() throws InterruptedException {
@@ -154,5 +192,225 @@ public class DefaultClassificationEngineTest {
         assertThat(engine.classify(request)).as("the previous tree keeps classifying").isEqualTo("good");
         assertThat(engine.getInvalidRules()).as("and so does the invalid-rule list it was published with")
                 .extracting(Rule::getName).containsExactly("broken");
+    }
+
+    /**
+     * This engine is the single owner of the listener registrations for the whole stack, and its list used to be a
+     * plain {@code ArrayList} mutated with no synchronisation while a reload iterated it. A registration landing
+     * mid-fire therefore threw {@code ConcurrentModificationException} out of {@code reload()} — and out of the
+     * <em>initial</em> load that is not a lost notification but a permanent outage, because the wrapper above
+     * never sets {@code everLoaded} and every caller then blocks or throws.
+     */
+    @Test
+    @Timeout(10)
+    void aListenerRegisteringWhileAReloadFiresDoesNotBreakTheReload() throws InterruptedException {
+        final var engine = new DefaultClassificationEngine(ONE_RULE, false);
+        final var lateSaw = new AtomicInteger();
+        final ClassificationRulesReloadedListener late = rules -> lateSaw.incrementAndGet();
+
+        // once, not on every fire: registering again from the second reload would add a second registration of
+        // the same listener and the count below would stop meaning "delivered once"
+        final var alreadyRegistered = new AtomicBoolean();
+        engine.addClassificationRulesReloadedListener(rules -> {
+            if (alreadyRegistered.compareAndSet(false, true)) {
+                joined(() -> engine.addClassificationRulesReloadedListener(late));
+            }
+        });
+
+        assertThatCode(engine::reload).doesNotThrowAnyException();
+
+        assertThat(lateSaw)
+                .as("no replay: this publish had already captured its listeners when the registration landed")
+                .hasValue(0);
+
+        engine.reload();
+        assertThat(lateSaw).as("and it is fired by the next publish like any other").hasValue(1);
+    }
+
+    @Test
+    @Timeout(10)
+    void aListenerRemovedWhileAReloadFiresDoesNotBreakTheReload() throws InterruptedException {
+        final var engine = new DefaultClassificationEngine(ONE_RULE, false);
+        final var removedSaw = new AtomicInteger();
+        final var survivorSaw = new AtomicInteger();
+        final ClassificationRulesReloadedListener removed = rules -> removedSaw.incrementAndGet();
+
+        // three registrations, not two: the ArrayList iterator this replaced only comodification-checks in
+        // next(), so removing one of two left the cursor at the shrunken size and the loop exited quietly
+        // instead of throwing. Two listeners would have passed against the defect this pins
+        engine.addClassificationRulesReloadedListener(rules -> joined(
+                () -> engine.removeClassificationRulesReloadedListener(removed)));
+        engine.addClassificationRulesReloadedListener(rules -> survivorSaw.incrementAndGet());
+        engine.addClassificationRulesReloadedListener(removed);
+
+        assertThatCode(engine::reload).doesNotThrowAnyException();
+
+        assertThat(survivorSaw).as("the listeners queued behind the removal still got the publish").hasValue(1);
+        assertThat(removedSaw)
+                .as("the publish had already captured its listeners, so the removal does not cancel this delivery")
+                .hasValue(1);
+
+        engine.reload();
+        assertThat(removedSaw).as("the removal takes effect from the next publish onwards").hasValue(1);
+    }
+
+    /**
+     * A consumer's bug is the consumer's problem, not classification's. Unisolated, the first throw ended the walk
+     * and escaped {@code reload()}; on the boot load that is the "no rules have ever been loaded" outage this
+     * seam exists to report on, reached through the seam itself.
+     */
+    @Test
+    @Timeout(10)
+    void aListenerThatThrowsIsLoggedAndTheRemainingListenersStillGetThePublish() throws InterruptedException {
+        final var engine = new DefaultClassificationEngine(ONE_RULE, false);
+        final var before = new AtomicInteger();
+        final var after = new AtomicInteger();
+        engine.addClassificationRulesReloadedListener(rules -> before.incrementAndGet());
+        engine.addClassificationRulesReloadedListener(rules -> {
+            throw new IllegalStateException("listener is broken");
+        });
+        engine.addClassificationRulesReloadedListener(rules -> after.incrementAndGet());
+
+        assertThatCode(engine::reload).doesNotThrowAnyException();
+
+        assertThat(before).hasValue(1);
+        assertThat(after).as("delivery continued past the throw rather than ending on it").hasValue(1);
+        // the rules published, so the reload really did succeed rather than merely not throwing
+        assertThat(engine.classify(ClassificationRequest.builder().withDstPort(80).build())).isEqualTo("rule1");
+
+        // ONE_RULE is valid, so nothing else in this reload logs an ERROR; the cause is read off the event
+        // rather than off a message that could merely be echoing its own input
+        assertThat(errors()).singleElement().satisfies(event -> {
+            assertThat(event.getFormattedMessage()).contains("Classification rules reloaded listener");
+            assertThat(event.getThrowableProxy()).isNotNull();
+            assertThat(event.getThrowableProxy().getMessage()).isEqualTo("listener is broken");
+        });
+    }
+
+    /**
+     * The other half of "throws anything". A consumer's realistic boot failure is not an exception at all: a
+     * listener touching a class that is not on the path raises {@link NoClassDefFoundError}, which a
+     * {@code catch (Exception)} lets straight through into {@code reload()}. Probed, that produced the exact
+     * outage this change exists to remove — {@code classify()} permanently answering "no rules have ever been
+     * loaded" while the engine already held a complete ruleset.
+     * <p>
+     * Deliberately a separate row from the {@code IllegalStateException} one above: the two differ only in the
+     * width of one catch clause, and a single row covering both cannot say which width it proved.
+     */
+    @Test
+    @Timeout(10)
+    void aListenerThatThrowsAnErrorIsAlsoIsolated() throws InterruptedException {
+        final var engine = new DefaultClassificationEngine(ONE_RULE, false);
+        final var after = new AtomicInteger();
+        engine.addClassificationRulesReloadedListener(rules -> {
+            throw new NoClassDefFoundError("org/example/NotOnThePath");
+        });
+        engine.addClassificationRulesReloadedListener(rules -> after.incrementAndGet());
+
+        assertThatCode(engine::reload).doesNotThrowAnyException();
+
+        assertThat(after).as("delivery continued past the Error").hasValue(1);
+        assertThat(engine.classify(ClassificationRequest.builder().withDstPort(80).build()))
+                .as("and the rules are serving, which is the outage this prevents").isEqualTo("rule1");
+        assertThat(errors()).singleElement().satisfies(event -> {
+            assertThat(event.getFormattedMessage()).contains("Classification rules reloaded listener");
+            assertThat(event.getThrowableProxy()).isNotNull();
+            assertThat(event.getThrowableProxy().getClassName()).isEqualTo(NoClassDefFoundError.class.getName());
+        });
+    }
+
+    /**
+     * The publish happens before the fire, so a callback asking what is published is answered with the ruleset it
+     * was just handed rather than the previous one — or, on the boot load, rather than "nothing published yet".
+     * <p>
+     * Pinned here, where the claim is made, and not only through the reloader three classes away: the ordering is
+     * two adjacent statements in {@code reload()} and swapping them is a one-line edit a reader of this class
+     * would have no reason to think twice about.
+     */
+    @Test
+    @Timeout(10)
+    void aCallbackIsAnsweredWithThePublicationItWasJustHanded() throws InterruptedException {
+        final var engine = new DefaultClassificationEngine(ONE_GOOD_ONE_BROKEN, false);
+        final var seenFromCallback = new AtomicReference<Optional<Publication>>();
+        engine.addClassificationRulesReloadedListener(rules -> seenFromCallback.set(engine.currentPublication()));
+
+        engine.reload();
+
+        assertThat(seenFromCallback.get())
+                .as("the publish precedes the fire, so this is never 'nothing published yet'")
+                .get()
+                .satisfies(publication -> assertThat(publication.invalidRules())
+                        .extracting(Rule::getName).containsExactly("broken"));
+    }
+
+    /**
+     * A publication is a copy, not a view. {@code reload()} hands the record a live {@code ArrayList} it is still
+     * holding, and {@code getInvalidRules()} used to return {@code Collections.unmodifiableList(...)} — so
+     * dropping the record's defensive copies would quietly hand callers a mutable list and let a rule provider
+     * reaching into what it returned change a ruleset that is already serving.
+     */
+    @Test
+    @Timeout(10)
+    void aPublicationIsACopyAndCannotBeChangedThroughTheListItCameFrom() throws InterruptedException {
+        final List<Rule> handedOver = new ArrayList<>(ONE_GOOD_ONE_BROKEN.getRules());
+        final var engine = new DefaultClassificationEngine(() -> handedOver, false);
+        engine.reload();
+        final var publication = engine.currentPublication().orElseThrow();
+
+        handedOver.clear();
+
+        assertThat(publication.rules()).as("the publication kept its own copy of the ruleset")
+                .extracting(Rule::getName).containsExactly("good", "broken");
+        final Rule intruder = DefaultRule.builder().withName("intruder").build();
+        assertThatThrownBy(() -> publication.rules().add(intruder))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> engine.getInvalidRules().add(intruder))
+                .as("the guarantee getInvalidRules() made before this change")
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    /**
+     * The accessor a listener uses to learn what it was just handed, and the only way a consumer registering after
+     * the boot load can see that load at all — nothing is replayed to a late registrant.
+     * <p>
+     * Asserted on a rejected rule's name, deliberately. An empty invalid-rule list cannot distinguish a real read
+     * from the field's default, and the "nothing published yet" arm has to be distinguishable from "published, and
+     * every rule was accepted" — which is why this returns an {@code Optional} and not a list.
+     */
+    @Test
+    @Timeout(10)
+    void theCurrentPublicationTellsNothingPublishedApartFromAPublishedRuleset() throws InterruptedException {
+        final var engine = new DefaultClassificationEngine(ONE_GOOD_ONE_BROKEN, false);
+
+        assertThat(engine.currentPublication()).as("the constructor did not load, so nothing is published").isEmpty();
+
+        engine.reload();
+
+        assertThat(engine.currentPublication()).get().satisfies(publication -> {
+            assertThat(publication.rules()).as("the ruleset it was handed, rejected rules included")
+                    .extracting(Rule::getName).containsExactly("good", "broken");
+            assertThat(publication.invalidRules()).as("and which of them classify nothing")
+                    .extracting(Rule::getName).containsExactly("broken");
+        });
+    }
+
+    private List<ILoggingEvent> errors() {
+        return this.appender.list.stream().filter(event -> event.getLevel() == Level.ERROR).toList();
+    }
+
+    /**
+     * Runs {@code action} on another thread and waits for it, so "on one thread while the reload thread iterates"
+     * is a fact of the test rather than a timing hope. Safe to call from inside a callback: the engine holds no
+     * lock while firing.
+     */
+    private static void joined(final Runnable action) {
+        final var thread = new Thread(action, "listener-registrar");
+        thread.start();
+        try {
+            thread.join();
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("interrupted while waiting for the concurrent registration", e);
+        }
     }
 }

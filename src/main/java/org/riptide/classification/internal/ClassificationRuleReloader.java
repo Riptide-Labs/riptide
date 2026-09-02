@@ -10,11 +10,17 @@ import com.codahale.metrics.MetricRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
+import org.riptide.classification.ClassificationEngine;
+import org.riptide.classification.Rule;
 import org.riptide.config.ClassificationConfig;
 import org.riptide.config.FileWatchTrigger;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 /**
  * Opt-in hot-reload of the classification rules ({@code riptide.classification.rules}):
@@ -38,6 +44,21 @@ import java.util.Objects;
  * because the reload runs asynchronously and returns before it can fail — so nothing is
  * counted twice. The stale gauge ORs both latches for the same reason.
  *
+ * <p><b>What a reload published</b> is reported here too, from the listener seam
+ * ({@link org.riptide.classification.ClassificationEngine#addClassificationRulesReloadedListener}),
+ * not from the counters: a ruleset whose rules the engine could not all use is a
+ * <em>success</em> — it publishes, the counter moves and the gauge stays 0 — so nothing in
+ * this metric family says that half the operator's edit is classifying nothing. See
+ * {@link #logPublication}.
+ *
+ * <p><b>Registering is not enough</b>: the engine's constructor submits the boot load before
+ * this bean exists, so by the time {@link #start()} runs that load has usually published
+ * already and no callback is coming — the seam replays nothing to a late registrant, by
+ * design. So {@link #start()} registers and then <em>asks</em>
+ * ({@link org.riptide.classification.ClassificationEngine#currentPublication()}). Whichever of
+ * the two paths reaches a publication first reports it and the other finds it claimed, so the
+ * boot publish is logged exactly once whether the callback wins the race or the pull does.
+ *
  * <p><b>A ruleset that fails to load is attempted once</b>, deliberately, and is not
  * re-attempted until its content changes — the same posture as the two file reloaders,
  * whose {@code theSameBadContentIsAttemptedOnlyOnce} pins it. Bytes that would not parse
@@ -58,6 +79,9 @@ import java.util.Objects;
  */
 @Slf4j
 public class ClassificationRuleReloader {
+
+    /** How many rejected rules the publish WARN names before it summarises the rest. */
+    private static final int MAX_REJECTED_RULES_NAMED = 20;
 
     private final ClassificationConfig config;
     private final AsyncReloadingClassificationEngine engine;
@@ -86,8 +110,52 @@ public class ClassificationRuleReloader {
         this.reloadFailures = metrics.counter(MetricRegistry.name("classification", "reload", "failures"));
     }
 
+    /**
+     * Registered on the engine for the reloader's lifetime, and the reason the seam in
+     * {@link org.riptide.classification.ClassificationEngine} exists (#685). Kept as a field so
+     * {@link #stop()} can take it off again — a stopped reloader reports nothing more, which is
+     * what {@code aStoppedReloaderReportsNothingMore} pins. The engine outlives this bean in a
+     * context that restarts only part of itself, so deregistering is not merely tidy.
+     *
+     * <p>The callback argument is deliberately ignored. The seam hands over the rules alone, and
+     * every line this class writes needs the rejected ones too, so both the callback and the pull
+     * in {@link #start()} go through the same single read of
+     * {@link ClassificationEngine#currentPublication()} rather than describing one publication
+     * from two different sources.</p>
+     */
+    private final ClassificationEngine.ClassificationRulesReloadedListener publishedRulesLogger =
+            rules -> reportCurrentPublication();
+
+    /**
+     * The last publication reported, so the boot publish is reported exactly once no matter which
+     * of the two paths reaches it first.
+     *
+     * <p>Compared by <b>identity</b>, not by {@code equals}: every reload constructs a fresh
+     * {@code Publication}, so identity means "this same publish", whereas record equality would
+     * silence a genuine later reload that happened to publish a byte-identical ruleset.</p>
+     *
+     * <p>This is not replay by another name. Nothing is re-delivered and the engine remembers no
+     * listener: the consumer asks once, on its own thread, and this reference only decides whether
+     * the answer has already been written to the log.</p>
+     */
+    private final AtomicReference<ClassificationEngine.Publication> reported = new AtomicReference<>();
+
     @PostConstruct
     void start() {
+        // above the interval gate: a reload can be requested without a schedule, and what a
+        // reload published is worth reporting either way. A disabled reloader simply never
+        // sees one, because nothing here triggers it
+        this.engine.addClassificationRulesReloadedListener(this.publishedRulesLogger);
+        // ...and then ask, because registering is not enough. The engine's constructor submits the
+        // boot load before this bean exists, so by now that load has usually already published and
+        // its callback is gone for good — replay is deliberately not on offer (#685), so the only
+        // way a late registrant learns what is serving is to ask. compareAndSet, not a plain read:
+        // if the callback got there first the pull must add nothing, and if the publish lands
+        // between the registration above and this line both paths see it and exactly one wins
+        final Optional<ClassificationEngine.Publication> bootPublication = this.engine.currentPublication();
+        if (bootPublication.isPresent() && this.reported.compareAndSet(null, bootPublication.get())) {
+            logPublication(bootPublication.get());
+        }
         final Duration interval = this.config.getReloadInterval();
         if (interval == null || interval.isZero() || interval.isNegative()) {
             log.debug("Classification rule hot-reload disabled (no riptide.classification.reload-interval)");
@@ -108,8 +176,9 @@ public class ClassificationRuleReloader {
                         // cycle costs one. A change landing between the two reads is seen
                         // by the next cycle, whose hash no longer matches what was
                         // attempted here
-                        log.info("Classification rules at {} changed ({} bytes) — reloading; the engine logs "
-                                + "the ruleset it publishes and counts the outcome on classification.reload.*",
+                        log.info("Classification rules at {} changed ({} bytes) — reloading; the reload is "
+                                + "asynchronous, so what was published is logged when it lands and the "
+                                + "outcome is counted on classification.reload.*",
                                 source.describe(), content.length);
                         engine.reload();
                         trigger.markCommitted();
@@ -134,6 +203,75 @@ public class ClassificationRuleReloader {
         log.info("Classification rule hot-reload enabled: watching {} every {}", this.source.describe(), interval);
     }
 
+    /**
+     * The listener half of the report: describes whatever is published now, unless the pull in
+     * {@link #start()} already described that same publication.
+     *
+     * <p>Runs on the reload thread, inside {@code reload()}, so it reads
+     * {@link ClassificationEngine#currentPublication()} — the accessor that does not wait — rather
+     * than {@code getInvalidRules()}, which on the initial load would park this thread waiting for
+     * itself. A throw from here cannot fail the reload: {@code DefaultClassificationEngine} isolates
+     * each listener, which is where that guarantee lives rather than in a catch block per consumer.</p>
+     */
+    // identity is the point, not an oversight: "the same publish", not "a ruleset that compares equal".
+    // Record equality would silence a genuine later reload that republished a byte-identical ruleset
+    @SuppressWarnings("ReferenceEquality")
+    private void reportCurrentPublication() {
+        final ClassificationEngine.Publication publication = this.engine.currentPublication().orElse(null);
+        // getAndSet, so the loser of a race with the pull is whichever arrives second rather than
+        // whichever is on which thread. A null publication cannot happen from inside a callback —
+        // the publish precedes the fire — and is skipped rather than reported as an empty ruleset
+        if (publication == null || this.reported.getAndSet(publication) == publication) {
+            return;
+        }
+        logPublication(publication);
+    }
+
+    /**
+     * What a reload actually published, written once the publish has landed — the outcome the
+     * pre-reload INFO above can only promise, because the reload is asynchronous and that line is
+     * written before the ruleset has been read, let alone accepted.
+     *
+     * <p>The rejected rules are the half nothing else reports in one place: the engine logs each
+     * one as it is dropped, mid-rebuild and interleaved with the tree statistics, so an operator
+     * reading the reload's own lines cannot tell whether the ruleset that is now serving is the
+     * one they edited. This says how many of their rules are classifying nothing, and names them.</p>
+     *
+     * <p>The location comes from {@link ClassificationRulesSource#describe()}, which is the one place
+     * applying the userinfo redaction the operator docs promise — never from the raw resource. It is
+     * the same source the engine's provider reads through, which is what makes naming it here a
+     * statement about these rules rather than about an unrelated file that happens to be configured.</p>
+     */
+    private void logPublication(final ClassificationEngine.Publication publication) {
+        final List<Rule> rejected = publication.invalidRules();
+        if (rejected.isEmpty()) {
+            log.info("Classification rules from {} published: {} rules, none rejected",
+                    this.source.describe(), publication.rules().size());
+        } else if (log.isWarnEnabled()) {
+            // guarded, unlike the INFO above: naming the rejected rules builds a string, and a ruleset
+            // whose every rule fails preprocessing would build it once per reload for a disabled level
+            log.warn("Classification rules from {} published: {} rules, of which {} were rejected and "
+                            + "classify nothing: {}",
+                    this.source.describe(), publication.rules().size(), rejected.size(),
+                    describeRejected(rejected));
+        }
+    }
+
+    /**
+     * The rejected rules' names, capped. A ruleset that fails wholesale — a column reordered, a
+     * delimiter changed — rejects every rule it has, and this line would otherwise carry thousands of
+     * names on one physical line, at boot and again on every reload. The count above is the number
+     * that matters; the names are here to start the operator off, not to be exhaustive.
+     */
+    private static String describeRejected(final List<Rule> rejected) {
+        final String names = rejected.stream()
+                .limit(MAX_REJECTED_RULES_NAMED)
+                .map(Rule::getName)
+                .collect(Collectors.joining(", "));
+        final int remaining = rejected.size() - MAX_REJECTED_RULES_NAMED;
+        return remaining > 0 ? names + ", and %d more".formatted(remaining) : names;
+    }
+
     /** The skip and shutdown sentences, spelled for a source that can be a URL as easily as a file. */
     private static FileWatchTrigger.Messages messages(final String location) {
         return new FileWatchTrigger.Messages(
@@ -149,6 +287,7 @@ public class ClassificationRuleReloader {
 
     @PreDestroy
     void stop() {
+        this.engine.removeClassificationRulesReloadedListener(this.publishedRulesLogger);
         if (this.trigger != null) {
             this.trigger.stop();
         }

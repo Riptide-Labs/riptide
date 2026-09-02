@@ -17,6 +17,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -27,9 +29,23 @@ import java.util.concurrent.atomic.AtomicReference;
 @Slf4j
 public class DefaultClassificationEngine implements ClassificationEngine {
 
-    private List<ClassificationRulesReloadedListener> classificationRulesReloadedListeners = new ArrayList<>();
+    /**
+     * The single owner of the listener registrations for the whole engine stack — the wrappers pass through to
+     * here. The declared type is load-bearing, not decoration: registrations arrive on caller threads while the
+     * reload thread walks the list, so a plain {@link ArrayList} throws {@link java.util.ConcurrentModificationException}
+     * out of {@code reload()}, and out of the <em>initial</em> reload that is a permanent outage rather than a
+     * lost notification. Copy-on-write also gives {@link #fireClassificationReloadedListeners} its snapshot for
+     * free, so no lock is ever held across a callback.
+     */
+    private final CopyOnWriteArrayList<ClassificationRulesReloadedListener> classificationRulesReloadedListeners =
+            new CopyOnWriteArrayList<>();
 
-    private final AtomicReference<TreeAndInvalidRules> treeAndInvalidRules = new AtomicReference<>(new TreeAndInvalidRules(Tree.empty(), Collections.emptyList()));
+    /**
+     * Everything one reload publishes, swapped in one reference write. The publication is {@code null} until the
+     * first reload succeeds, which is what {@link #currentPublication()} reports as "nothing published yet".
+     */
+    private final AtomicReference<TreeAndPublication> treeAndPublication =
+            new AtomicReference<>(new TreeAndPublication(Tree.empty(), null));
 
     private final ClassificationRuleProvider ruleProvider;
 
@@ -89,38 +105,59 @@ public class DefaultClassificationEngine implements ClassificationEngine {
             log.info(sb.toString());
         }
 
-        treeAndInvalidRules.set(new TreeAndInvalidRules(tree, invalid));
+        final var publication = new Publication(rules, invalid);
+        treeAndPublication.set(new TreeAndPublication(tree, publication));
 
-        fireClassificationReloadedListeners(Collections.unmodifiableList(rules));
+        fireClassificationReloadedListeners(publication.rules());
     }
 
+    /**
+     * Delivers one publish to everything registered when the walk started.
+     * <p>
+     * Two properties, both of them the point of this method. The walk is over a copy-on-write snapshot and holds
+     * no lock, so a listener is free to register, deregister, or ask this engine what was just published from
+     * inside its own callback. And each listener is isolated: a consumer's bug becomes an ERROR here and the
+     * delivery continues, because a throw escaping {@code reload()} fails the reload — and on the initial load
+     * that leaves the wrapper above with nothing serviceable for the rest of the process.
+     * <p>
+     * {@code Throwable}, not {@code Exception}, and that width is load-bearing rather than defensive. The rules
+     * are already published by the time this runs, so there is nothing left to abandon — whereas the realistic
+     * consumer failure at boot is a {@code NoClassDefFoundError} from a listener touching a class that is not on
+     * the path, and catching only {@code Exception} let exactly that reach {@code reload()} and produce the
+     * permanent "no rules have ever been loaded" outage while a complete ruleset sat in {@link #treeAndPublication}.
+     */
     private void fireClassificationReloadedListeners(final List<Rule> rules) {
         for (final ClassificationRulesReloadedListener classificationRulesReloadedListener : this.classificationRulesReloadedListeners) {
-            classificationRulesReloadedListener.classificationRulesReloaded(rules);
+            try {
+                classificationRulesReloadedListener.classificationRulesReloaded(rules);
+            } catch (final Throwable ex) {
+                log.error("Classification rules reloaded listener {} failed. The reloaded rules are published and "
+                        + "the remaining listeners are still notified.", classificationRulesReloadedListener, ex);
+            }
         }
     }
 
     @Override
     public List<Rule> getInvalidRules() {
-        return Collections.unmodifiableList(treeAndInvalidRules.get().invalidRules);
+        return currentPublication().map(Publication::invalidRules).orElseGet(Collections::emptyList);
+    }
+
+    @Override
+    public Optional<Publication> currentPublication() {
+        return Optional.ofNullable(treeAndPublication.get().publication);
     }
 
     public Tree getTree() {
-        return treeAndInvalidRules.get().tree;
+        return treeAndPublication.get().tree;
     }
 
     @Override
     public String classify(ClassificationRequest classificationRequest) {
-        return treeAndInvalidRules.get().tree.classify(classificationRequest);
+        return treeAndPublication.get().tree.classify(classificationRequest);
     }
 
-    private static final class TreeAndInvalidRules {
-        private final Tree tree;
-        private final List<Rule> invalidRules;
-        private TreeAndInvalidRules(Tree tree, List<Rule> invalidRules) {
-            this.tree = tree;
-            this.invalidRules = invalidRules;
-        }
+    /** The tree and the publication it was built from, swapped together so neither can be read against the other. */
+    private record TreeAndPublication(Tree tree, Publication publication) {
     }
 
     @Override

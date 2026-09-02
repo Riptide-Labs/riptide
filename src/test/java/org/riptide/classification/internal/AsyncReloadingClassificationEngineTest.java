@@ -21,12 +21,16 @@ import org.riptide.classification.Rule;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -409,6 +413,178 @@ class AsyncReloadingClassificationEngineTest {
         assertThat(this.engine.classify(request())).isEqualTo("rules-1");
     }
 
+    /**
+     * The seam's deadlock, which is one thread and not two. {@code doReload} runs on this wrapper's pool thread and
+     * calls {@code delegate.reload()}, which fires its listeners as its last act; a listener that then asks the
+     * wrapper what was published reaches it with {@code everLoaded} still false and the state still
+     * {@code RELOADING}, so a waiting accessor parks it for a transition only that same parked thread can make.
+     * {@link AsyncReloadingClassificationEngine#currentPublication()} is the path that does not wait.
+     */
+    @Test
+    void aListenerCanReadTheCurrentPublicationFromInsideTheInitialLoadsCallback() throws Exception {
+        final AtomicReference<AsyncReloadingClassificationEngine> holder = new AtomicReference<>();
+        final CountDownLatch engineVisible = new CountDownLatch(1);
+        final CompletableFuture<Optional<ClassificationEngine.Publication>> readFromCallback =
+                new CompletableFuture<>();
+
+        // the initial load is submitted from the constructor and runs on the pool thread, so it can reach the
+        // callback before the constructor has even returned. Holding it at its start is what lets the callback
+        // reach the wrapper at all — without changing what it is: still the initial load, still not everLoaded
+        this.delegate.onReload = engineVisible::await;
+        this.delegate.addClassificationRulesReloadedListener(rules -> {
+            try {
+                readFromCallback.complete(holder.get().currentPublication());
+            } catch (final Throwable t) {
+                readFromCallback.completeExceptionally(t);
+            }
+        });
+
+        this.engine = new AsyncReloadingClassificationEngine(this.delegate, this.metrics);
+        holder.set(this.engine);
+        engineVisible.countDown();
+
+        // bounded, because the regression fails by never returning: a wrapper that waited here would park the
+        // reload thread for the rest of the process, and an untimed get() would park the suite with it
+        assertThat(readFromCallback.get(10, TimeUnit.SECONDS))
+                .as("the callback sees a publication, not 'nothing published yet'")
+                .get()
+                .satisfies(publication -> assertThat(publication.invalidRules())
+                        .as("and reads the rejected rules of the publish it was just handed")
+                        .extracting(Rule::getName).containsExactly("rules-1-invalid"));
+    }
+
+    /**
+     * The empty arm of the accessor, through the wrapper: before the first load has published there is nothing to
+     * report, and the caller is told so immediately rather than blocked until there is. This is the state
+     * {@code getInvalidRules()} answers by parking the caller, and the one a consumer registering at startup can
+     * genuinely land in.
+     */
+    @Test
+    void theWrapperAnswersEmptyWithoutBlockingWhileNothingHasBeenPublished() throws Exception {
+        final CountDownLatch entered = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        this.delegate.onReload = () -> {
+            entered.countDown();
+            release.await();
+        };
+        this.engine = new AsyncReloadingClassificationEngine(this.delegate, this.metrics);
+        assertThat(entered.await(10, TimeUnit.SECONDS)).as("the first load started").isTrue();
+
+        // off the test thread: were this to wait for the initial load like the other accessors do, the
+        // regression would be a park, and get() turns that into a failure rather than a hung suite
+        final CompletableFuture<Optional<ClassificationEngine.Publication>> answer =
+                CompletableFuture.supplyAsync(() -> this.engine.currentPublication());
+        assertThat(answer.get(10, TimeUnit.SECONDS))
+                .as("nothing published yet, answered rather than waited for").isEmpty();
+
+        release.countDown();
+        await("the first load to publish", () -> successes() == 1);
+        assertThat(this.engine.currentPublication()).as("and present once it has").isPresent();
+    }
+
+    /**
+     * A consumer never holds {@code DefaultClassificationEngine}: the injected bean is this wrapper around
+     * {@link TimingClassificationEngine} around it, so the accessor is only usable if <em>both</em> wrappers pass
+     * it down. Asserted through the stack that is actually wired in {@code RiptideConfiguration}, and on a
+     * rejected rule's name — a wrapper that answered with an empty publication of its own would pass an
+     * emptiness check.
+     */
+    @Test
+    void theWrapperStackPassesTheCurrentPublicationDownToTheEngineThatHasIt() throws Exception {
+        final var real = new DefaultClassificationEngine(() -> List.of(
+                DefaultRule.builder().withName("good").withPosition(1).withDstPort(80).build(),
+                DefaultRule.builder().withName("broken").withPosition(2).withDstPort("not-a-port").build()), false);
+        this.engine = new AsyncReloadingClassificationEngine(
+                new TimingClassificationEngine(this.metrics, real), this.metrics);
+        await("the boot load to publish", () -> successes() == 1);
+
+        assertThat(this.engine.currentPublication()).get().satisfies(publication -> {
+            assertThat(publication.rules()).extracting(Rule::getName).containsExactly("good", "broken");
+            assertThat(publication.invalidRules()).extracting(Rule::getName).containsExactly("broken");
+        });
+    }
+
+    /**
+     * A consumer's bug reaching the boot load used to be a process-lifetime outage: the throw came out of
+     * {@code delegate.reload()} into {@code onReloadFailed}, which leaves {@code everLoaded} false, so every later
+     * caller blocked or threw with "no rules have ever been loaded". The assertion is therefore serviceability,
+     * not the absence of a throw — and it is made through the real delegate, because that is where the isolation
+     * lives.
+     */
+    @Test
+    void aThrowingListenerOnTheBootLoadLeavesClassificationServiceable() throws Exception {
+        final var real = new DefaultClassificationEngine(
+                () -> List.of(DefaultRule.builder().withName("boot").withPosition(1).withDstPort(80).build()), false);
+        real.addClassificationRulesReloadedListener(rules -> {
+            throw new IllegalStateException("listener is broken");
+        });
+
+        this.engine = new AsyncReloadingClassificationEngine(
+                new TimingClassificationEngine(this.metrics, real), this.metrics);
+
+        // off the test thread with a deadline: a caller that parks here is the regression, and get() turns
+        // that into a failed assertion. A caller that throws fails on the ExecutionException instead
+        final CompletableFuture<String> answer = CompletableFuture.supplyAsync(
+                () -> this.engine.classify(ClassificationRequest.builder().withSrcPort(1234).withDstPort(80).build()));
+        assertThat(answer.get(10, TimeUnit.SECONDS))
+                .as("the boot load published despite the listener, so classification is serviceable")
+                .isEqualTo("boot");
+        assertThat(failures()).as("a consumer's throw is not a reload failure").isZero();
+        assertThat(successes()).isEqualTo(1);
+    }
+
+    /**
+     * Why the registration race is worth fixing, asserted where the damage lands rather than where the race
+     * happens. {@code DefaultClassificationEngineTest} pins that a registration mid-fire does not break the
+     * reload; this pins the consequence when that reload is the <em>initial</em> one, where a failure is not a
+     * degraded reload but classification unavailable for the rest of the process.
+     */
+    @Test
+    void aRegistrationRacingTheInitialLoadLeavesClassificationServiceable() throws Exception {
+        // the real engine, because the race is in its listener list, and the real wrapper stack around it,
+        // because the outage this pins is the wrapper's everLoaded. The registration below goes to the same
+        // list the wrapper's add() passes through to — the wrapper does not exist yet while its own
+        // constructor is running the load, which is exactly the window under test
+        final var real = new DefaultClassificationEngine(
+                () -> List.of(DefaultRule.builder().withName("boot").withPosition(1).withDstPort(80).build()), false);
+        final var alreadyRegistered = new AtomicBoolean();
+        final var lateSaw = new AtomicInteger();
+        real.addClassificationRulesReloadedListener(rules -> {
+            if (!alreadyRegistered.compareAndSet(false, true)) {
+                return;
+            }
+            // on another thread, joined, so the registration provably lands while the boot load is still
+            // walking its listeners rather than whenever the scheduler feels like it
+            final var registrar = new Thread(
+                    () -> real.addClassificationRulesReloadedListener(rules2 -> lateSaw.incrementAndGet()),
+                    "registrar-racing-the-initial-load");
+            registrar.start();
+            try {
+                registrar.join();
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("interrupted while waiting for the racing registration", e);
+            }
+        });
+
+        this.engine = new AsyncReloadingClassificationEngine(
+                new TimingClassificationEngine(this.metrics, real), this.metrics);
+
+        final CompletableFuture<String> answer = CompletableFuture.supplyAsync(
+                () -> this.engine.classify(ClassificationRequest.builder().withSrcPort(1234).withDstPort(80).build()));
+        assertThat(answer.get(10, TimeUnit.SECONDS))
+                .as("the initial load survived the race, so classification is serviceable")
+                .isEqualTo("boot");
+        assertThat(failures()).as("and the initial load did not fail, which is what everLoaded turns on").isZero();
+        assertThat(successes()).isEqualTo(1);
+
+        // the registration landed, and it is live from the next publish onwards — nothing is replayed to it
+        assertThat(lateSaw).as("no replay of the publish it registered during").hasValue(0);
+        this.engine.reload();
+        await("the next reload to be counted", () -> successes() == 2);
+        assertThat(lateSaw).as("the listener that registered during the race is registered").hasValue(1);
+    }
+
     /** Constructs the engine and blocks until its construction-time load has published {@code rules}. */
     private void givenRulesLoaded(final String rules) {
         this.delegate.nextRules = rules;
@@ -475,9 +651,11 @@ class AsyncReloadingClassificationEngineTest {
         }
 
         private final AtomicInteger interrupted = new AtomicInteger();
+        private final List<ClassificationRulesReloadedListener> listeners = new CopyOnWriteArrayList<>();
         private volatile ReloadAction onReload = () -> { };
         private volatile String nextRules = "rules-1";
         private volatile String serving = "<nothing ever loaded>";
+        private volatile boolean published;
 
         @Override
         public void reload() throws InterruptedException {
@@ -492,6 +670,14 @@ class AsyncReloadingClassificationEngineTest {
             // property is not evidence that the real delegate does — DefaultClassificationEngineTest
             // pins that separately, against the engine actually wrapped in production
             this.serving = this.nextRules;
+            this.published = true;
+            // fired after the publish and before returning, which is where DefaultClassificationEngine fires
+            // them. That placement is the whole point: it puts the callback on the reload thread, inside the
+            // reload, which is the state the wrapper's waiting accessors cannot be called from
+            final List<Rule> rules = List.of(DefaultRule.builder().withName(this.serving).build());
+            for (final ClassificationRulesReloadedListener listener : this.listeners) {
+                listener.classificationRulesReloaded(rules);
+            }
         }
 
         @Override
@@ -507,13 +693,29 @@ class AsyncReloadingClassificationEngineTest {
         }
 
         @Override
+        public Optional<Publication> currentPublication() {
+            // empty until this fake has actually published, like the real delegate — a fake that always
+            // answered present would let the wrapper's empty path go untested while looking covered, and
+            // that distinction is the whole reason this returns an Optional
+            if (!this.published) {
+                return Optional.empty();
+            }
+            // one field read, nothing to wait for down here, and derived from the same field the two
+            // accessors above answer from
+            return Optional.of(new Publication(
+                    List.of(DefaultRule.builder().withName(this.serving).build()), getInvalidRules()));
+        }
+
+        @Override
         public void addClassificationRulesReloadedListener(final ClassificationRulesReloadedListener listener) {
-            // no listener behaviour under test
+            // registers for real: without it there is no callback to reach the wrapper from, and the deadlock
+            // this class pins only exists on the reload thread
+            this.listeners.add(listener);
         }
 
         @Override
         public void removeClassificationRulesReloadedListener(final ClassificationRulesReloadedListener listener) {
-            // no listener behaviour under test
+            this.listeners.remove(listener);
         }
     }
 }

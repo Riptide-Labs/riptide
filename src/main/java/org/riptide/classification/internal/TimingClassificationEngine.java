@@ -13,6 +13,7 @@ import org.riptide.classification.Rule;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 public class TimingClassificationEngine implements ClassificationEngine {
 
@@ -47,6 +48,16 @@ public class TimingClassificationEngine implements ClassificationEngine {
         try (Timer.Context ctx = getInvalidRulesTimer.time()) {
             return delegate.getInvalidRules();
         }
+    }
+
+    /**
+     * Unmeasured, like the two listener methods below: a reference read that a callback makes while the reload
+     * thread is inside {@code reload()} would be timed under the reload timer that same callback is nested in,
+     * and a timer that never blocks measures nothing an operator can act on.
+     */
+    @Override
+    public Optional<Publication> currentPublication() {
+        return delegate.currentPublication();
     }
 
     @Override
