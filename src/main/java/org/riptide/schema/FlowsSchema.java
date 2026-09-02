@@ -277,11 +277,17 @@ public final class FlowsSchema {
             // POSITIONED, not appended. Without AFTER, ClickHouse puts a new column last — past the
             // measures — so an upgraded target ends up with a different physical column order than a
             // fresh one. Riptide itself does not care (a materialized view with TO matches by name),
-            // but INSERT ... SELECT without a column list is POSITIONAL, and that is exactly the
-            // backfill the ClickHouse guide tells operators to write. On an upgraded target it would
-            // land the rate in `bytes` and shift every measure by one, while samplingInterval takes
-            // its type default — the reserved sentinel — so `WHERE samplingInterval > 0` then hides
-            // the corruption it just caused. The flows table already guarantees this invariant
+            // but INSERT ... SELECT without a column list is POSITIONAL, and that is the backfill an
+            // operator may already have written (the ClickHouse guide now tells them to name the
+            // columns, and says why). Against a target whose order drifted, the columns after the
+            // drift point land to the RIGHT of where they belong — one place per un-positioned
+            // append — because such a column sits last and pushes nothing; its own value lands far
+            // to the left. Measured on the pinned 26.7 image: today that insert usually
+            // FAILS rather than corrupting, since flowProtocol is LowCardinality(String) between the
+            // dimensions and the UInt64 measures and a shift across it raises CANNOT_PARSE_TEXT. It
+            // is silent only where every column crossed is numeric — which the pre-flowProtocol
+            // shape was, and a future all-numeric dimension would be again. That is the case this
+            // AFTER exists for. The flows table already guarantees the invariant
             // (addAdditiveColumns); rollups must too. Verified on 26.7: AFTER is accepted in the
             // same statement as MODIFY ORDER BY, and re-running it changes nothing.
             if (i > 0) {
@@ -874,9 +880,11 @@ public final class FlowsSchema {
             new Measure("packetsIn", "UInt64", "sumIf(f.packets, f.direction = 'INGRESS')"),
             new Measure("packetsOut", "UInt64", "sumIf(f.packets, f.direction = 'EGRESS')"),
             // Last on purpose: ADD COLUMN places it after the existing measures on an upgrade, so an
-            // upgraded target has the same physical column order as a fresh one. INSERT ... SELECT
-            // without a column list is positional, and that is the backfill operators are told to
-            // write.
+            // upgraded target has the same physical column order as a fresh one. That keeps a
+            // positional INSERT ... SELECT correct against a riptide-managed target. The guide no
+            // longer tells operators to rely on it — clickhouse.md's backfill warning tells them to
+            // name the columns — but this ordering is what makes the positional form safe for anyone
+            // who already wrote one.
             new Measure("samplingProvenanceMask", PROVENANCE_SUMMARY_TYPE, provenanceMaskExpression()));
 
     /**
