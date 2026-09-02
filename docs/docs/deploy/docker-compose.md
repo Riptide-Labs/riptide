@@ -14,7 +14,7 @@ cd riptide/deployment/riptide
 docker compose up -d
 ```
 
-:::warning The stack ships with default passwords
+:::warning[The stack ships with default passwords]
 
 Grafana starts with `admin`/`admin` and ClickHouse's `default` user with `riptide`. Both are
 fine on a laptop and not fine anywhere else. Grafana's port 3000 is published on every
@@ -49,7 +49,7 @@ volume.
 
 :::
 
-:::info Reaching ClickHouse from another host
+:::info[Reaching ClickHouse from another host]
 
 Riptide and Grafana talk to ClickHouse over the compose network, so the loopback binding costs
 the stack nothing. If you need ClickHouse from another machine, set `CLICKHOUSE_PASSWORD` and
