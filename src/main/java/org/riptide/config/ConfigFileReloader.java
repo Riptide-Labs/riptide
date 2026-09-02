@@ -396,7 +396,6 @@ public class ConfigFileReloader {
 
         // commit: live environment stays truthful, snapshots swap atomically, caches refresh
         substitute(this.environment.getPropertySources(), ordered);
-        this.trigger.markCommitted();
         this.routingConfig.swap(parsedRouting);
         // swap, then refresh (AD-6): profiles and the inventory built from them move
         // together, and the poller re-resolves what it is already walking, which is what
@@ -404,6 +403,20 @@ public class ConfigFileReloader {
         // secrets first: a refresh can make a walk due immediately, and it must not read
         // a value the rotation just replaced
         this.sopsSecretResolver.invalidateCache();
+        // Marked once everything that changes what is serving has changed — after swap() and
+        // invalidateCache(), not right after substitute(). markCommitted() records this content as
+        // serving, and an unchanged cycle recomputes staleness as hash != lastCommittedHash, so
+        // marking before swap() meant a throw from it was counted and latched, and then the very
+        // next unchanged poll read the gauge back to 0 against content whose routing had never
+        // swapped: the alarm cleared itself while the edit was not serving.
+        //
+        // Not a claim that nothing below can throw. Several statements after this are unguarded —
+        // the success counter, setStale(false), the partial bookkeeping, the closing log — and two
+        // of those are the stale gauge's own inputs, so a throw between here and them lands in the
+        // same shape on a narrower window. What the position buys is that the mark now follows the
+        // serving change rather than preceding it; closing the rest means moving that bookkeeping
+        // inside the guard below, which is a larger change than #718.
+        this.trigger.markCommitted();
         // rebuilt and published in one monitor-held read, so nothing can change between
         // validating the candidate and committing it, and guarded because the config is
         // already serving by now: a throw here must not be reported as a failed reload

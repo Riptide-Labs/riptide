@@ -222,6 +222,12 @@ public class InventoryFileReloader {
                     + "was being parsed, so it is re-read on the next cycle", this.location);
             return;
         }
+        // Marked here, immediately after the swap above — #718's rule is "mark once what is
+        // serving has changed", and swapIfProfilesUnchanged is that point. Everything below is
+        // bookkeeping over a snapshot that is already live: flushWarnings() only logs. Moving the
+        // mark past it was tried and reverted, because a throw from logging would then leave the
+        // inventory serving and matching the file while stale latched at 1 with no self-heal until
+        // the content changed — a permanent false alarm, worse than the transient one.
         this.trigger.markCommitted();
         this.reloadSuccesses.inc();
         this.trigger.setStale(false);

@@ -237,6 +237,108 @@ class FileWatchTriggerTest {
     }
 
     /**
+     * Form feed and vertical tab are whitespace an editor can flush mid-write, and both used to
+     * reach the commit path: the blank test knew only space, LF, CR and TAB, so a file of them was
+     * handed to the owner and the resulting parse error was counted as a reload failure.
+     *
+     * <p>A leading UTF-8 BOM is deliberately not covered — see {@code isBlank}, and #725.</p>
+     */
+    @Test
+    void formFeedAndVerticalTabCountAsBlank() throws IOException {
+        start(false);
+        write("\f \n\f");
+
+        this.trigger.poll();
+
+        assertThat(this.cycle.commits).as("whitespace must never reach the commit path").isEmpty();
+        assertThat(this.failures.getCount()).as("and must not be counted as a failure").isZero();
+        assertThat(warnings()).containsExactly("the-file-is-blank");
+    }
+
+    /**
+     * The blank latch re-arms across an intervening absent cycle, as the missing latch always has.
+     *
+     * <p>Probed before the fix: blank, then absent, then blank reported only {@code [BLANK,
+     * MISSING]} — the second blank episode was silent, because the latch cleared only after a
+     * non-blank read. The file disappearing ends the episode; its return blank is a new one.</p>
+     */
+    @Test
+    void theBlankLatchReArmsAfterAnAbsentCycle() throws IOException {
+        start(false);
+
+        write("   \n");
+        this.trigger.poll();
+        Files.delete(this.file);
+        this.trigger.poll();
+        write("   \n");
+        this.trigger.poll();
+
+        assertThat(warnings())
+                .as("both blank episodes are reported, with the absence between them")
+                .containsExactly("the-file-is-blank", "the-file-is-missing", "the-file-is-blank");
+    }
+
+    /**
+     * Why an owner must call {@link FileWatchTrigger#markCommitted()} last, after everything
+     * unguarded that can still throw (#718).
+     *
+     * <p>An unchanged cycle recomputes staleness as {@code hash != lastCommittedHash}. So an owner
+     * that marks committed and then throws gets the worst of both: the failure is counted and
+     * staleness latched, and then the very next unchanged poll reads the gauge straight back to 0 —
+     * against content that never finished committing. The counter keeps its increment, but the
+     * gauge operators are told to alert on clears itself.</p>
+     *
+     * <p>Marking after the throwing step instead keeps the gauge honest, which is the property both
+     * file reloaders now rely on. This row exists so that reordering either of them back fails
+     * here, with the reason attached.</p>
+     */
+    @Test
+    void committingBeforeAThrowLetsTheFailureClearItself() throws Exception {
+        start(false);
+        write("committed-then-threw: yes\n");
+        this.cycle.duringContent = () -> this.trigger.markCommitted();
+        this.cycle.throwOnContent = new IllegalStateException("an unguarded step after the commit");
+
+        this.trigger.poll();
+
+        assertThat(this.failures.getCount()).as("the throw is counted").isEqualTo(1);
+        assertThat(stale()).as("and latched, correctly, at the moment it happens").isEqualTo(1);
+
+        // the same content again: nothing re-attempts it, and the mark decides the gauge
+        this.cycle.duringContent = () -> { };
+        this.cycle.throwOnContent = null;
+        this.trigger.poll();
+
+        assertThat(stale())
+                .as("marked committed before the throw, so the unchanged poll clears a failure"
+                        + " whose work never completed — the hazard the reloaders order around")
+                .isZero();
+    }
+
+    /**
+     * The other half of {@link #committingBeforeAThrowLetsTheFailureClearItself()}: an owner that
+     * throws before marking leaves the gauge telling the truth across the unchanged poll.
+     */
+    @Test
+    void throwingBeforeTheCommitKeepsStaleLatched() throws Exception {
+        start(false);
+        write("threw-before-commit: yes\n");
+        this.cycle.throwOnContent = new IllegalStateException("an unguarded step before the commit");
+
+        this.trigger.poll();
+
+        assertThat(this.failures.getCount()).isEqualTo(1);
+        assertThat(stale()).isEqualTo(1);
+
+        this.cycle.throwOnContent = null;
+        this.trigger.poll();
+
+        assertThat(stale())
+                .as("never marked committed, so the file still does not match what is serving")
+                .isEqualTo(1);
+    }
+
+    /**
      * A poll that begins interrupted is shutdown: it reads nothing, counts nothing,
      * latches nothing — and, unlike every other skip, does <em>not</em> run the idle
      * hook. That asymmetry is the contract; the config reloader's healing retry hangs
