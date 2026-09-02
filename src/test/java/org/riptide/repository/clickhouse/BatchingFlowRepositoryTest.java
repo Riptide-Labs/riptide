@@ -5,15 +5,21 @@
 
 package org.riptide.repository.clickhouse;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.codahale.metrics.MetricRegistry;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.riptide.config.ClickhouseConfig;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
 import org.riptide.repository.FlowRepository;
 import org.riptide.repository.TestRepository;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -37,11 +43,45 @@ class BatchingFlowRepositoryTest {
 
     private BatchingFlowRepository repository;
 
+    private Logger repositoryLog;
+
+    private ListAppender<ILoggingEvent> logEvents;
+
+    private Level originalLogLevel;
+
+    @BeforeEach
+    void captureFlusherLog() {
+        this.repositoryLog = (Logger) LoggerFactory.getLogger(BatchingFlowRepository.class);
+        this.originalLogLevel = this.repositoryLog.getLevel();
+        // TRACE, not ERROR: the negative assertion below hunts a loss claim anywhere in this
+        // class's output, and pinning at ERROR would filter out the very events it looks for — a
+        // WARN restating "dropping the batch" beside the correct ERROR line would go unseen. The
+        // positive branch asserts the level explicitly, so widening the capture cannot make the
+        // test vacuous. Pinned rather than inherited so ambient test logging cannot narrow it.
+        this.repositoryLog.setLevel(Level.TRACE);
+        this.logEvents = new ListAppender<>();
+        this.logEvents.start();
+        this.repositoryLog.addAppender(this.logEvents);
+    }
+
+    /**
+     * One method, not two: the logger restore has to happen after the repository is stopped, and
+     * JUnit does not order two {@code @AfterEach} methods of the same class relative to each
+     * other. Every field is null-guarded so a {@code @BeforeEach} that threw before assigning
+     * them reports its own cause instead of an NPE from the teardown that followed it.
+     */
     @AfterEach
     void tearDown() {
         if (this.repository != null) {
             this.delegate.unblock();
             this.repository.stop();
+        }
+        if (this.repositoryLog != null) {
+            if (this.logEvents != null) {
+                this.repositoryLog.detachAppender(this.logEvents);
+                this.logEvents.stop();
+            }
+            this.repositoryLog.setLevel(this.originalLogLevel);
         }
     }
 
@@ -135,20 +175,74 @@ class BatchingFlowRepositoryTest {
     }
 
     @Test
-    void poisonBatchIsDroppedAndSubsequentBatchesStillFlush() throws Exception {
-        this.delegate.failuresRemaining.set(1);
-        this.repository = repository(batchConfig(2, Duration.ofMillis(600)));
-
-        // Queued before start(): the flusher finds both rows waiting and drains them as one
-        // deterministic batch, which the delegate poisons.
-        this.repository.persist(flows(2));
-        this.repository.start();
-        await(Duration.ofSeconds(3), "poison batch attempted", () -> this.delegate.inserts.get() == 1);
+    void poisonBatchIsCountedAndSubsequentBatchesStillFlush() throws Exception {
+        attemptOnePoisonedBatchOfTwo();
 
         this.repository.persist(flows(2));
 
         await(Duration.ofSeconds(3), "flush after the poison batch", () -> this.delegate.count() == 2);
         Assertions.assertThat(failedRows()).isEqualTo(2);
+        // clickhouse.md states as fact that the drop counter stays at zero for an insert failure,
+        // so that the two counters keep meaning different things to an operator alerting on them.
+        Assertions.assertThat(droppedRows())
+                .as("a refused insert is a failure, not a drop")
+                .isZero();
+    }
+
+    @Test
+    void poisonBatchLogRefusesToClaimTheBatchWasDropped() throws Exception {
+        // The flusher's ERROR line is the operator's first signal, and two docs pages state as
+        // fact that it admits the batch may be partly committed — a refused ClickHouse insert is
+        // not always atomic, so failedRows bounds the loss instead of measuring it. Nothing else
+        // in this class reads log output, so without this the wording could regress to the old
+        // "dropping the batch" claim with every test still green.
+        attemptOnePoisonedBatchOfTwo();
+
+        // Asserted only after stop() has joined the flusher. ListAppender.list is a plain
+        // ArrayList written by the flusher thread, so reading it while that thread is alive is a
+        // data race, and AssertJ walks it more than once below.
+        this.repository.stop();
+
+        Assertions.assertThat(this.logEvents.list)
+                .as("the insert failure names the batch size, who is not retrying, that rows may "
+                        + "be committed, and carries the cause")
+                .anySatisfy(event -> {
+                    Assertions.assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+                    Assertions.assertThat(event.getFormattedMessage())
+                            .contains("Failed to persist a batch of 2 flows")
+                            .contains("flusher does not retry")
+                            .contains("some may be committed");
+                    // The stack trace is the operator's only clue why the server refused the
+                    // insert; the message alone never says.
+                    Assertions.assertThat(event.getThrowableProxy())
+                            .as("the cause is attached")
+                            .isNotNull();
+                });
+        // Deliberately over every captured event, not just the insert-failure line: a second
+        // statement restating the loss claim beside the correct one would mislead just as badly.
+        // Nothing is dropped in this scenario — the queue holds 1000 and sees 2 rows — so loss
+        // vocabulary anywhere here can only be the flusher describing an outcome it cannot know.
+        Assertions.assertThat(this.logEvents.list)
+                .extracting(ILoggingEvent::getFormattedMessage)
+                .as("no flusher log claims the rows are gone")
+                .allSatisfy(message -> Assertions.assertThat(message)
+                        .doesNotContainIgnoringCase("drop", "discard", "lost", "gone"));
+    }
+
+    /**
+     * Arrange the deterministic poison batch both tests above need: two rows queued before
+     * {@code start()}, so the flusher finds them waiting and drains them as one batch, which the
+     * delegate then refuses. Returns once that insert has been attempted.
+     */
+    private void attemptOnePoisonedBatchOfTwo() throws Exception {
+        this.delegate.failuresRemaining.set(1);
+        this.repository = repository(batchConfig(2, Duration.ofMillis(600)));
+
+        this.repository.persist(flows(2));
+        this.repository.start();
+        // Polls an AtomicInteger, not the appender's list: the condition must be safe to read
+        // while the flusher thread is running.
+        await(Duration.ofSeconds(3), "poison batch attempted", () -> this.delegate.inserts.get() == 1);
     }
 
     @Test
@@ -242,6 +336,13 @@ class BatchingFlowRepositoryTest {
         this.repository.stop();
 
         final int total = threads * perThread;
+        // Equality, deliberately, and it is a property of this fixture rather than of the system:
+        // ObservableRepository either stores the whole batch or stores none of it, so no row can
+        // be both delivered and counted failed. Against a real server it can be: a refused insert
+        // may commit a prefix, and those rows would land in delegate.count() while the whole batch
+        // is charged to failedRows — pushing the sum above the total, not below it. Do not relax
+        // this to isGreaterThanOrEqualTo to accommodate that; the fake cannot produce it, so the
+        // relaxation would only stop catching silent loss, which is what this assertion is for.
         Assertions.assertThat(this.delegate.count() + droppedRows() + failedRows())
                 .as("every flow is either delivered or counted")
                 .isEqualTo(total);
