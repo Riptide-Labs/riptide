@@ -56,6 +56,7 @@ const config: Config = {
   projectName: 'riptide',
 
   onBrokenLinks: 'throw',
+  onBrokenAnchors: 'throw',
 
   markdown: {
     hooks: {
