@@ -161,6 +161,7 @@ public final class LegacyConverter {
             summary.add("Re-enable a disabled range by enumerating its devices as single addresses, "
                     + "or by moving the segment to v3. Both are in the comment above each entry.");
         }
+        requireConvertibleCadence(legacy, profiles);
         return new Converted(mainConfig(credentials, profiles), inventory(agents, exporters), summary);
     }
 
@@ -197,10 +198,61 @@ public final class LegacyConverter {
         // the real records, validated by their own contract: a shape check written here would
         // drift from the one that actually runs at startup
         credentialSet(node).validate("the credentials of node '" + node.name() + "'");
-        new PollingProfile(Duration.ofMinutes(10), Duration.ofMinutes(30),
+        new PollingProfile(PollingProfile.builtInDefault().refreshInterval(),
+                PollingProfile.builtInDefault().snapshotExpiry(),
                 snmp.timeout() == null ? DEFAULT_TIMEOUT_MS : snmp.timeout(),
                 snmp.retries() == null ? DEFAULT_RETRIES : snmp.retries())
                 .validate("the polling settings of node '" + node.name() + "'");
+    }
+
+    /**
+     * The global poll cadence, checked once it is known that a profile will carry it.
+     *
+     * <p>{@code SnmpPollConfig} bounds neither field, so a 0.8 file could carry a zero or a
+     * multi-day interval and run. {@link PollingProfile} rejects both, so a converted file
+     * carrying that cadence fails at startup — in a message naming a profile the converter
+     * invented, which appears nowhere in the operator's file.</p>
+     *
+     * <p>Gated on a profile actually being emitted. A label-only file, or one whose every polled
+     * node is an FR-9 carve-out, emits no {@code polling:} block at all, and refusing those would
+     * block a conversion over a value that never reaches the output.</p>
+     *
+     * <p>Validated by building the real record rather than re-checking its rules here, for the
+     * reason the node checks above give: a copy of the bounds would drift from the ones that
+     * actually run at startup. Each key is paired with a partner chosen so that
+     * {@code validate}'s expiry-shorter-than-refresh branch cannot be reached — that branch
+     * logs, and this command has no Spring context, so its logger writes to the same stdout the
+     * generated configuration is being written to.</p>
+     */
+    private static void requireConvertibleCadence(final LegacyConfigReader.LegacyConfig legacy,
+                                                  final Profiles profiles) {
+        if (profiles.emitted.isEmpty()) {
+            return;
+        }
+        if (legacy.refreshIntervalMs() != null) {
+            final Duration refresh = Duration.ofMillis(legacy.refreshIntervalMs());
+            // paired with itself: equal durations never trip the shorter-than warning
+            checkCadence(refresh, refresh, "refresh-interval-ms", legacy.refreshIntervalMs());
+        }
+        if (legacy.snapshotExpiryMs() != null) {
+            final Duration expiry = Duration.ofMillis(legacy.snapshotExpiryMs());
+            // one millisecond is below any expiry the record accepts, so the pair never warns
+            checkCadence(Duration.ofMillis(1), expiry, "snapshot-expiry-ms", legacy.snapshotExpiryMs());
+        }
+    }
+
+    private static void checkCadence(final Duration refresh, final Duration expiry,
+                                     final String key, final long written) {
+        try {
+            new PollingProfile(refresh, expiry, DEFAULT_TIMEOUT_MS, DEFAULT_RETRIES)
+                    .validate("the converted polling cadence");
+        } catch (final IllegalStateException e) {
+            throw new IllegalStateException(
+                    ("riptide.snmp.poll.%s is %d ms, which 0.9 will not accept, so converting it "
+                            + "would produce a polling profile that fails at startup: %s Set it to a "
+                            + "positive value no larger than a day, then convert again.")
+                            .formatted(key, written, e.getMessage()), e);
+        }
     }
 
     private static void requireNonBlank(final LegacyNode node, final int ifIndex,
