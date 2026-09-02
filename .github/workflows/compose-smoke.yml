@@ -28,7 +28,7 @@ concurrency:
 jobs:
   compose-smoke:
     runs-on: ubuntu-24.04
-    # The stack pulls four images and waits on three healthchecks; the script's own
+    # The stack pulls three images and waits on three healthchecks; the script's own
     # --wait-timeout is 300s, so this bounds the pulls rather than the run.
     timeout-minutes: 20
     steps:

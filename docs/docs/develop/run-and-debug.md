@@ -15,8 +15,9 @@ docker compose -f deployment/clickhouse/compose.yml up -d
 ```
 
 ClickHouse on `localhost:8123` (the application default endpoint), plus
-[ch-ui](http://localhost:5521) to inspect the `flows` table and
-[Grafana](http://localhost:3000). The stack's `default` user needs a password
+[Grafana](http://localhost:3000), logging in with `admin`/`admin`. Its Explore view
+queries the provisioned ClickHouse datasource, so `SELECT * FROM flows` there needs no
+setup if you want to inspect the table directly. The stack's `default` user needs a password
 (`riptide` unless you set `CLICKHOUSE_PASSWORD`), and the application default is none, so
 pass it to Riptide, or `env://CLICKHOUSE_PASSWORD` if the variable is set in the run
 configuration:
@@ -53,4 +54,4 @@ emits NetFlow v5/v9 and IPFIX from simulated devices; the [e2e tier](testing.md)
 automatically, and `src/test/java/org/riptide/e2e/Nl6Container.java` shows how to run it
 standalone.
 
-Watch enriched rows land in `riptide.flows` via ch-ui.
+Watch enriched rows land in `riptide.flows` via Grafana's Explore view.

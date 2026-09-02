@@ -93,7 +93,6 @@ docker compose up -d
 
 * Grafana: http://localhost:3000 with login admin/admin. Set `GF_SECURITY_ADMIN_PASSWORD` before starting to use your own password.
 * ClickHouse on `127.0.0.1:8123` with login default/riptide. Set `CLICKHOUSE_PASSWORD` to use your own; the whole stack follows it.
-* Clickhouse UI with http://localhost:5521
 * Send flows to your Riptide server on 9999/udp
 
 > [!TIP]

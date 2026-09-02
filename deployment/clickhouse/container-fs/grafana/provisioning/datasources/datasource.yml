@@ -8,6 +8,11 @@ datasources:
     # Stable uid so provisioned dashboards can reference this datasource.
     uid: riptide-clickhouse
     type: grafana-clickhouse-datasource
+    # Explicit, not inherited: Grafana auto-promotes a lone datasource, so Explore lands here
+    # today only by accident of there being one. The docs send operators to Explore for the
+    # ad-hoc queries ch-ui used to serve (#671), and a second datasource would quietly take
+    # that landing spot away.
+    isDefault: true
     jsonData:
       defaultDatabase: riptide
       port: 9000
