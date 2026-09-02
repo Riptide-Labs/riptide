@@ -75,7 +75,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * that does, and it is where "applies without a restart" is actually observed.</p>
  *
  * <p>The class-level timeout is not decoration: the hung-server and dribbling-server rows
- * fail by hanging.</p>
+ * fail by hanging, and 60s is sized for rows that otherwise finish in fractions of a
+ * second. It does not fit every row: {@link #anIntervalAgainstTheBundledClasspathRulesetPollsHarmlessly}
+ * builds the real bundled decision tree, costs tens of seconds doing it, and so carries
+ * its own 5-minute method-level bound, sized in the comment directly above it. The 60s
+ * governs the body of every other row, and no bound at all covers setUp or tearDown.</p>
  */
 @Timeout(60)
 class ClassificationRuleReloaderTest {
@@ -917,7 +921,49 @@ class ClassificationRuleReloaderTest {
      * change — so it commits nothing and says nothing, forever. Pinned so the docs' advice
      * to point the interval at a file or a URL is describing real behaviour.
      */
+    // Bounded here rather than by the class's 60s, which fits rows finishing in fractions of
+    // a second: the hung-server and dribbling-server rows are 0.33s each. This row loads the
+    // real bundled ruleset, and building the decision tree from it is nearly its whole cost.
+    //
+    // That cost is load-sensitive rather than fixed. Completed runs of this row have landed
+    // anywhere between roughly 25s and 55s on identical code, because every unit class shares
+    // one surefire JVM (this repo sets no forkCount, reuseForks or parallel), so unrelated
+    // tests change what this row costs without changing the row. The individual runs and
+    // their venues are recorded on #706 rather than copied here, where they would rot.
+    // 5 minutes is more than 5x the slowest completion seen.
+    //
+    // The five failures that prompted this are not measurements of the row. Each was
+    // terminated at the 60s bound, so together they put a floor under the cost and leave the
+    // ceiling unknown. The ~180s floated in #706 is under 4x the slowest completion, which is
+    // thin against a spread this wide.
+    //
+    // A bound is still needed at all because classify() blocks on the load, so a reload that
+    // never settles would park the row forever.
+    //
+    // #706 is the alarm this silences, not the flake itself: the row is still nearly the
+    // whole cost of the class and still slows under load, the bound simply no longer fires.
+    // #707 is that cost. This annotation should come off once the cost actually drops, which
+    // is not the same as #707 closing, since one route canvassed there makes classify()
+    // non-blocking and leaves the build just as slow. Removing it means editing two places,
+    // here and the class javadoc, which also names this bound.
+    //
+    // What this bound does not cover:
+    // - CI, where this has never failed. Runners complete the whole class faster than this
+    //   machine does, so CI had headroom under the old bound and all five failures were
+    //   local. This fixes a developer-machine flake.
+    // - Lifecycle methods, which no bound covers. On junit-jupiter 6.0.3 a class-level
+    //   @Timeout governs test method bodies only, and nothing here sets the separate
+    //   junit.jupiter.execution.timeout.*.default properties, so setUp and tearDown are
+    //   unbounded. Probed, not assumed: a 3s @BeforeEach under a class-level @Timeout(1)
+    //   passes.
+    // - A regression in the build cost, whose only mechanical detector this removes. Under
+    //   60s a build growing to ~150s failed this row; it now passes silently under the new
+    //   bound, because every assertion below reads counters and warnings, never a clock. A
+    //   duration ceiling was considered, and timePoll() above makes one cheap, but the spread
+    //   is wide enough that a non-flaky ceiling would sit near half the bound and catch
+    //   little the bound would not. That gap belongs to #707.
     @Test
+    @Timeout(value = 5, unit = TimeUnit.MINUTES)
     void anIntervalAgainstTheBundledClasspathRulesetPollsHarmlessly() throws Exception {
         buildStack(new ClassPathResource("classification-rules.csv"), Duration.ofHours(1));
         assertThat(this.engine.classify(ClassificationRequest.builder()
