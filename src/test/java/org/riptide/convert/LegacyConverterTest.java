@@ -517,6 +517,95 @@ class LegacyConverterTest {
         }
     }
 
+    /**
+     * The sibling of {@link #outOfRangeNumbersFailDuringConversion()} for the two cadence keys.
+     *
+     * <p>That test varies only the node body, and the cadence lives in {@code riptide.snmp.poll},
+     * so neither key was reachable from it. {@code SnmpPollConfig} bounds neither, so a 0.8 file
+     * carrying a zero or a multi-day interval ran; every converted file carries that cadence into
+     * a polling profile, which 0.9 rejects. The conversion used to succeed and hand the operator a
+     * startup failure naming a profile the converter invented — one that appears nowhere in their
+     * file.</p>
+     *
+     * <p>The message must name the key the operator wrote, which is why this asserts on
+     * {@code riptide.snmp.poll} rather than on the profile name.</p>
+     */
+    @Test
+    void outOfRangeCadenceFailsDuringConversion() {
+        record Case(String label, String poll, String key) { }
+        for (final Case bad : new Case[] {
+                new Case("zero refresh interval", "refresh-interval-ms: 0", "refresh-interval-ms"),
+                new Case("negative refresh interval", "refresh-interval-ms: -1", "refresh-interval-ms"),
+                new Case("refresh interval over a day", "refresh-interval-ms: 172800000", "refresh-interval-ms"),
+                new Case("a weekly refresh, plausible for a stable table", "refresh-interval-ms: 604800000",
+                        "refresh-interval-ms"),
+                new Case("zero snapshot expiry", "snapshot-expiry-ms: 0", "snapshot-expiry-ms"),
+                new Case("snapshot expiry over a day", "snapshot-expiry-ms: 172800000", "snapshot-expiry-ms")}) {
+            assertThatThrownBy(() -> convert("""
+                    riptide:
+                      snmp:
+                        poll:
+                          %s
+                      nodes:
+                        core-router:
+                          subnet-address: 10.0.0.1
+                          snmp: {snmp-version: v3, security-name: m}
+                    """.formatted(bad.poll())))
+                    .as(bad.label())
+                    .isInstanceOf(IllegalStateException.class)
+                    // not just "riptide.snmp.poll": LegacyConfigReader emits that substring for an
+                    // unmappable key and for a non-integer value, so asserting on it alone would
+                    // stay green if a case later tripped the reader instead of this guard
+                    .hasMessageContaining("which 0.9 will not accept")
+                    .hasMessageContaining(bad.key());
+        }
+    }
+
+    /**
+     * A file that emits no polling profile is not refused over a cadence that never reaches the
+     * output. Every polled node here is an FR-9 carve-out — cleartext v2c on a multi-address
+     * range, which {@code LegacyConverter} calls the commonest legacy shape — so no
+     * {@code polling:} block is emitted at all.
+     */
+    @Test
+    void anUnconvertibleCadenceIsIgnoredWhenNoProfileIsEmitted() {
+        final var converted = convert("""
+                riptide:
+                  snmp:
+                    poll:
+                      refresh-interval-ms: 604800000
+                  nodes:
+                    core-router:
+                      subnet-address: 10.0.0.0/16
+                      snmp: {snmp-version: v2c, community: public}
+                """);
+
+        assertThat(converted.mainConfig())
+                .as("no profile carries the cadence, so nothing can fail at startup over it")
+                .doesNotContain("refresh-interval:");
+    }
+
+    /** A cadence 0.9 accepts still converts, so the guard above cannot be a blanket refusal. */
+    @Test
+    void anInRangeCadenceStillConverts() {
+        final var converted = convert("""
+                riptide:
+                  snmp:
+                    poll:
+                      refresh-interval-ms: 3600000
+                      snapshot-expiry-ms: 7200000
+                  nodes:
+                    core-router:
+                      subnet-address: 10.0.0.1
+                      snmp: {snmp-version: v3, security-name: m}
+                """);
+
+        assertThat(converted.mainConfig())
+                .as("the hourly cadence reaches the emitted profile")
+                .contains("refresh-interval: PT1H")
+                .contains("snapshot-expiry: PT2H");
+    }
+
     /** A blank pin is rejected by 0.9, so it must not be emitted; 0.8 accepted the empty string. */
     @Test
     void aBlankPinFieldFailsDuringConversion() {
