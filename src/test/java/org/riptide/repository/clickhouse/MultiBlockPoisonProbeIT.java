@@ -5,7 +5,13 @@
 
 package org.riptide.repository.clickhouse;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.classic.spi.ThrowableProxyUtil;
+import ch.qos.logback.core.read.ListAppender;
 import com.clickhouse.client.api.Client;
+import com.codahale.metrics.MetricRegistry;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -15,12 +21,14 @@ import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.schema.FlowsSchema;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
+import org.slf4j.LoggerFactory;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.images.builder.Transferable;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -65,10 +73,15 @@ import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
  * and the control above is the reason it should be read as one rather than as the same thing.</p>
  *
  * <p><b>What this measures and what it does not.</b> It measures what the pinned server does to
- * blocks it already accepted when a later block is refused, on the direct insert path riptide uses.
- * It does not measure the 10,000-row batches {@code BatchingFlowRepository} actually flushes at
- * stock thresholds — see the control above, which is the closest anyone got and points the other
- * way. Request compression is not the cause: rerunning the hazard case with {@code compress-requests}
+ * blocks it already accepted when a later block is refused, on the direct insert path riptide uses,
+ * and — since #710 — what {@code BatchingFlowRepository} then reports about such a flush: the third
+ * test below puts that layer in front of the same repository and pins its {@code failedRows} counter
+ * charging the whole batch while the base table kept part of it. It still does not measure the
+ * 10,000-row batches that layer flushes at stock thresholds: as with the two direct tests, the
+ * boundary is lowered to meet the batch rather than the batch raised to meet the boundary, and
+ * {@code max-rows} is lowered to the six-row batch so one flush carries all of it — see the control
+ * above, which is the closest anyone got to a stock-threshold measurement and points the other way.
+ * Request compression is not the cause: rerunning the hazard case with {@code compress-requests}
  * off gives the identical result.</p>
  *
  * <p><b>What this fixture does not release.</b> {@code ClickhouseRepository} does not override
@@ -313,10 +326,22 @@ public class MultiBlockPoisonProbeIT {
             // records which rollups receive rows as varying between runs, and a server that refused
             // the block before any view ran would leave all four equal to each other and still
             // short against the base — the same hazard, failing that assertion.
+            // Compared as deltas against this test's own snapshot, not as absolute totals. Another
+            // test in this class now writes a partial batch into the same database, so an absolute
+            // comparison could be satisfied by that residue instead of by this test's own poisoned
+            // batch. It happens to run first today only because JUnit's default order sorts these
+            // three method names by hash; renaming any of them would reorder them and hollow this
+            // assertion out with nothing failing. Deltas do not care what ran before.
+            final long baseWritten = after.get(FlowsSchema.qualifiedFlows(DB))
+                    - before.get(FlowsSchema.qualifiedFlows(DB));
             Assertions.assertThat(FlowsSchema.rollupTableNames())
-                    .as("a partial write leaves the rollups inconsistent with the base table: %s", after)
-                    .anySatisfy(rollup -> Assertions.assertThat(after.get(FlowsSchema.qualifiedRollup(DB, rollup)))
-                            .isNotEqualTo(after.get(FlowsSchema.qualifiedFlows(DB))));
+                    .as("a partial write leaves the rollups inconsistent with the base table:"
+                            + " before=%s after=%s", before, after)
+                    .anySatisfy(rollup -> {
+                        final String table = FlowsSchema.qualifiedRollup(DB, rollup);
+                        Assertions.assertThat(after.get(table) - before.get(table))
+                                .isNotEqualTo(baseWritten);
+                    });
         } finally {
             repository.stop();
         }
@@ -358,6 +383,142 @@ public class MultiBlockPoisonProbeIT {
                     .isEqualTo(before);
         } finally {
             repository.stop();
+        }
+    }
+
+    /**
+     * The join (#710): {@code persister.batch.failedRows} over-counts a real partial write.
+     *
+     * <p>Two operator-facing pages state that the counter is an upper bound on the loss rather than a
+     * tally of it, because a refused insert can still have committed a prefix. That claim spans two
+     * layers and until this test was measured at neither join: the two tests above produce a genuine
+     * partial commit but drive {@code ClickhouseRepository} directly, with no counter in the picture,
+     * while {@code BatchingFlowRepositoryTest} asserts the counter against a fake whose own comment
+     * says it either stores a whole batch or none of it. This is the only place the two proven halves
+     * meet, and the only place {@code delivered + failedRows > batch size} has ever been observed.</p>
+     *
+     * <p><b>Why {@code max-rows} equals the batch size.</b> The layer has to hand the delegate all six
+     * rows as one insert. A shorter batch would split the poison row into a flush of its own and the
+     * partial-commit regime — earlier blocks accepted before the server sees the offending row — would
+     * never be entered at all.</p>
+     *
+     * <p><b>Why the constraint guard reads the log rather than a throwable.</b> {@code
+     * BatchingFlowRepository.persist} enqueues and does not throw; the failure surfaces only on the
+     * flusher thread, as the counter and an ERROR record. So there is nothing for {@code catchThrowable}
+     * to catch, and a {@code ListAppender} on that class's logger is what gives this test the same
+     * evidence the two tests above get from the refusal they catch. Without it a dropped connection
+     * would leave rows behind and charge six as well, and this test would report that as a partial
+     * write.</p>
+     */
+    @Test
+    void theBatchingLayerChargesTheWholeBatchWhileTheServerKeepsPartOfIt() throws Exception {
+        final var config = configFor(SQUASH_AT_PARSE_SIZE, BATCH_SIZE);
+        // Both defaults are widened, and only for this test. The 2s flush window can expire between
+        // the offer of row one and row six, which splits the batch and defeats the multi-block
+        // regime; the 5s grace can interrupt the flusher mid-insert, which produces a FlowException
+        // that looks identical here to a refusal. Neither would report a false partial write — the
+        // histogram and the constraint guard below turn both into loud failures — but both are
+        // spurious reds on a loaded host, and widening the windows removes them rather than
+        // documenting them. validate() requires maxLatency to be at most half the grace.
+        config.getBatch().setMaxLatency(Duration.ofSeconds(20));
+        config.getBatch().setShutdownGracePeriod(Duration.ofSeconds(60));
+        final var metrics = new MetricRegistry();
+        final var repository = new BatchingFlowRepository(
+                new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS),
+                config.getBatch(), metrics);
+
+        // TRACE for the same reason BatchingFlowRepositoryTest pins it there: the level is asserted
+        // explicitly below, so widening the capture cannot make this vacuous, and narrowing it to
+        // ERROR would hide a second record that contradicted the one being read.
+        final var flusherLog = (Logger) LoggerFactory.getLogger(BatchingFlowRepository.class);
+        final Level originalLevel = flusherLog.getLevel();
+        final var logEvents = new ListAppender<ILoggingEvent>();
+        logEvents.start();
+        flusherLog.setLevel(Level.TRACE);
+        flusherLog.addAppender(logEvents);
+
+        try (var probe = probeClient(SQUASH_AT_PARSE_SIZE)) {
+            // start() runs the delegate's manage-mode DDL before it starts the flusher, so the
+            // constraint can only be added after it — and nothing is queued yet, so the flusher has
+            // nothing to flush in between.
+            repository.start();
+            constrain(probe);
+            Assertions.assertThat(effective(probe, "max_insert_block_size"))
+                    .as("the lowered parse size must be in force, or this measures a stock server")
+                    .isEqualTo(BLOCK_ROWS);
+            Assertions.assertThat(effective(probe, "min_insert_block_size_rows"))
+                    .as("and squashing must be off — the same tuning the hazard test above pins,"
+                            + " which is what makes a partial commit possible at all")
+                    .isEqualTo(BLOCK_ROWS);
+
+            final Map<String, Long> before = measures(probe);
+
+            // Port base 60000: 40000 and 50000 belong to the two tests above, and this container is
+            // shared with the first of them, so a colliding row would land in the same base table
+            // and be counted here.
+            repository.persist(poisonedBatch(60000));
+            // No polling: persist() returns with all six rows queued, and stop() joins the flusher,
+            // so the flush has happened by the time stop() returns. That it was a single flush of
+            // all six rows is arranged rather than guaranteed — max-rows equals the batch and the
+            // flush window is far wider than the enqueue — so the batch-size histogram below checks
+            // it instead of trusting it. A split would fail there loudly rather than quietly
+            // measure a regime this test is not in.
+            repository.stop();
+
+            final Map<String, Long> after = measures(probe);
+            final long committed = after.get(FlowsSchema.qualifiedFlows(DB))
+                    - before.get(FlowsSchema.qualifiedFlows(DB));
+            final long failedRows = metrics.counter(
+                    MetricRegistry.name("persister", "batch", "failedRows")).getCount();
+
+            Assertions.assertThat(metrics.histogram(MetricRegistry.name("persister", "batch", "batchSize")))
+                    .as("the layer must have issued exactly one flush carrying the whole batch;"
+                            + " a split would put the poison row in a flush of its own and the"
+                            + " partial-commit regime would never be entered")
+                    .satisfies(histogram -> {
+                        Assertions.assertThat(histogram.getCount()).isEqualTo(1);
+                        Assertions.assertThat(histogram.getSnapshot().getMax()).isEqualTo(BATCH_SIZE);
+                    });
+
+            // The refusal must be the CHECK and nothing else, for the reason the hazard test above
+            // gives: a transport failure also leaves rows behind and also charges the whole batch.
+            Assertions.assertThat(logEvents.list)
+                    .as("the flusher's ERROR must carry the constraint violation as its cause, or"
+                            + " 'rows survived and six were charged' says nothing about a partial write")
+                    .anySatisfy(event -> {
+                        Assertions.assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+                        Assertions.assertThat(event.getFormattedMessage())
+                                .contains("Failed to persist a batch of " + BATCH_SIZE + " flows");
+                        Assertions.assertThat(event.getThrowableProxy())
+                                .as("the cause is attached")
+                                .isNotNull();
+                        Assertions.assertThat(ThrowableProxyUtil.asString(event.getThrowableProxy()))
+                                .contains(ClickhouseServerErrors.VIOLATED_CONSTRAINT_MESSAGE_PREFIX)
+                                .contains("probe_tenant");
+                    });
+
+            // Exactly, because this number is riptide's own: the layer decides it, not the server.
+            Assertions.assertThat(failedRows)
+                    .as("the counter charges every row of the refused batch")
+                    .isEqualTo(BATCH_SIZE);
+            // By sign, because this number is the server's: the two tests above deliberately decline
+            // to pin the magnitude of the split, and so does this one.
+            Assertions.assertThat(committed)
+                    .as("but the base table kept part of the batch: %s -> %s", before, after)
+                    .isGreaterThan(0)
+                    .isLessThan(BATCH_SIZE);
+            Assertions.assertThat(committed + failedRows)
+                    .as("so %d committed rows plus %d charged rows exceed the %d the batch held —"
+                            + " the over-count the docs describe, observed end to end",
+                            committed, failedRows, BATCH_SIZE)
+                    .isGreaterThan(BATCH_SIZE);
+        } finally {
+            // Idempotent, so the stop() above is not repeated work; this is here for the paths where
+            // an assertion threw before reaching it.
+            repository.stop();
+            flusherLog.detachAppender(logEvents);
+            logEvents.stop();
+            flusherLog.setLevel(originalLevel);
         }
     }
 
