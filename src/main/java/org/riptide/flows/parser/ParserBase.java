@@ -412,10 +412,12 @@ public abstract class ParserBase implements Parser {
 
         // DispatchTask owns the future so that every exit path completes it: UdpListener releases
         // the packet's retained ByteBuf when this future completes, so any path that returns
-        // something pending leaks a direct buffer (see #273). It also marks recordsDispatched only
-        // after the dispatcher returns normally — the Daemon dispatcher swallows FlowException, so
-        // marking unconditionally would count dropped flows as delivered and leave the one gauge an
-        // operator uses to confirm delivery reading healthy while nothing reached ClickHouse.
+        // something pending leaks a direct buffer (see #273). It marks recordsDispatched after the
+        // dispatcher returns — which, with the Daemon dispatcher, is unconditional: that dispatcher
+        // catches FlowException and RuntimeException and does not rethrow, so accept() returns
+        // normally on the failure path and the mark still happens. The meter therefore counts
+        // dropped flows as dispatched, and is not delivery confirmation on its own; pipeline
+        // .dispatchErrors is the counter that separates them. Only an Error skips the mark.
         final var task = new DispatchTask(source, flows);
 
         if (!enqueue(task)) {

@@ -84,12 +84,25 @@ public class Pipeline {
             throw new FlowException("Failed to enrich one or more flows.", e);
         }
 
-        // Push flows to persistence
-            try {
-                this.persister.persist(enrichedFlows);
-            } catch (final IOException e) {
-                LOG.error("Failed to persist flows to {}", this.persister.getName(), e);
-            }
+        // Push flows to persistence.
+        //
+        // persist() declares both FlowException and IOException, and the two used to leave here
+        // differently: a FlowException reaches Daemon's dispatcher, which charges
+        // pipeline.dispatchErrors and names the exporter, while an IOException was logged here and
+        // process() returned normally — so the caller saw a success and nothing counted the records.
+        //
+        // No shipped delegate can currently produce that: ClickhouseRepository converts both of its
+        // failure modes into FlowException, and BatchingFlowRepository throws neither, dropping and
+        // returning instead. This closes the hole at the boundary rather than fixing an outage
+        // anyone has had — the interface permits the divergence, so a third repository, or a change
+        // to either of those two, would reintroduce silent loss. Daemon's handler already expects a
+        // persist-path FlowException; its premise is that a packet's worth of loss must not be
+        // silent.
+        try {
+            this.persister.persist(enrichedFlows);
+        } catch (final IOException e) {
+            throw new FlowException("Failed to persist flows to " + this.persister.getName(), e);
+        }
     }
 
     public void start() {
