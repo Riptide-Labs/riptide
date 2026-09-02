@@ -216,8 +216,15 @@ public class BatchingFlowRepository implements FlowRepository {
                 // Throwable on purpose: this is the only flusher, and a silent death (a metrics
                 // bug, an Error, anything unforeseen) would turn into a permanent 100% drop.
                 // Count whatever was in hand, log, and keep looping.
+                // Charged in full. Whether that is exact depends on where the Throwable came from,
+                // and this catch cannot tell: an Error out of delegate.persist escapes flush()'s
+                // narrower catch with an insert genuinely in flight, so rows may be committed —
+                // while an Error out of the drain or the histogram above never reached the server
+                // at all. The message says "may" for that reason rather than claiming either.
                 this.failedRows.inc(batch.size());
-                log.error("Unexpected error in the batch flusher — continuing", e);
+                log.error("Unexpected error in the batch flusher, continuing. All {} rows are"
+                        + " counted as failed; if the failure came from the insert, some may"
+                        + " already be committed.", batch.size(), e);
             }
         }
     }

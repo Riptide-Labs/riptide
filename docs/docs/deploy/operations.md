@@ -201,17 +201,35 @@ lost silently. Alert on the drop counters; watch the depth gauges for early warn
 | `parsers.<name>.dispatchDrops` | **records** discarded because enrichment/persistence fell behind, or discarded at shutdown |
 | `pipeline.dispatchErrors` | records lost because enrichment or persistence threw |
 | `persister.batch.queueDepth` | rows waiting to be inserted (gauge) |
-| `persister.batch.droppedRows` | rows discarded because ClickHouse could not keep up |
-| `persister.batch.failedRows` | rows in batches whose insert failed |
+| `persister.batch.droppedRows` | rows **the queue never handed to an insert** |
+| `persister.batch.failedRows` | rows **an insert was attempted for, and lost** |
+
+The two `persister.batch.*` loss counters split on whether an insert was ever attempted, which is
+the distinction to reach for when deciding which one you are looking at:
+
+| | `droppedRows` | `failedRows` |
+| --- | --- | --- |
+| when | no insert was attempted for the row | the flusher had the row and did not deliver it |
+| causes | queue full, repository stopping, producer interrupted, offered after the shutdown drain | insert refused, unexpected `Error` in the flusher, flusher interrupted mid-drain, shutdown grace expired |
+| exact? | **yes** — nothing was sent | **no** in two of four cases, see below |
+| what it means | ClickHouse cannot keep up, or riptide is shutting down | ClickHouse rejected the write, or riptide died holding it |
 
 `failedRows` covers four cases, and is an **upper bound** on the loss rather than an exact count of it in two of them.
 A *refused* insert may still have committed a prefix of the batch, yet the whole batch is charged here (see [insert batching](../configuration/clickhouse.md#insert-batching-batch)); the same is true when an unexpected `Error` escapes the flusher, since it may escape with an insert already in flight.
 The other two are certain loss: rows the flusher still held when it was interrupted, and rows left over once the shutdown grace period expires. Neither ever reached the server.
 
 Delivery accounting: `recordsScheduled − dispatchDrops − dispatchErrors` is what reached the
-persister. Note `recordsDispatched` counts only records the pipeline accepted without throwing, so
-it excludes `dispatchErrors`.
+persister. Note `recordsDispatched` does **not** exclude `dispatchErrors`: the dispatcher catches
+the failure and returns normally, so the records are marked dispatched and counted as errors both.
+Do not read that meter as delivery confirmation — subtract, or use the drop counters directly.
 That arithmetic stops at the persister: do **not** extend it to persisted rows by subtracting `failedRows`, because a refused insert counted in full there may have committed part of its batch. Query the table for what landed.
+
+**Is `failedRows` alertable?** Yes, on a sustained rate — but as a signal, not as a loss figure.
+A non-zero rate means ClickHouse is rejecting writes riptide had already accepted, which is worth
+paging on however many rows it turns out to be. Do not put the number in the alert text as flows
+lost: it is an upper bound, and in the refused-insert case some of those rows are in the table.
+It is deliberately outside the readiness contract, like the rest of the ClickHouse path, so it
+will not fail `/readyz` — these metrics are the whole story.
 
 **Two of these count loss that happens before any of the queues.**
 They were added because a lab measurement found the application accounting for only ~4% of a ~25% shortfall under sustained overload, with nothing accounting for the rest:
@@ -363,7 +381,7 @@ At the measured ~11.8k rows/s the queue covers ~3.4 s, well under a probe period
 And where Prometheus scrapes through the Service, "not ready" can remove the pod from the endpoints and take `/metrics` down with it.
 That blinds the one signal that explains the outage, exactly when it fires.
 A ClickHouse outage keeps the collector receiving.
-Probes are for scheduling; saturation is for alerting: watch a sustained `persister.batch.droppedRows` rate and `persister.batch.queueDepth` approaching the queue capacity.
+Probes are for scheduling; saturation is for alerting: watch a sustained `persister.batch.droppedRows` or `persister.batch.failedRows` rate and `persister.batch.queueDepth` approaching the queue capacity.
 
 **Readiness also deliberately tolerates zero configured receivers.**
 The shipped configuration declares none, so failing readiness there would turn a fresh install into a pod that never becomes ready.

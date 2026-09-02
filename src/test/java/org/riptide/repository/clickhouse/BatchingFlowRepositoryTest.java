@@ -189,6 +189,33 @@ class BatchingFlowRepositoryTest {
                 .isZero();
     }
 
+    /**
+     * The flush loop's {@code catch (Throwable)} is the sibling of {@code flush()}'s catch: it
+     * charges the same counter in full, from a point where an insert may already have been in
+     * flight. Its message carried none of the partial-commit caveat until #713, and the sibling one
+     * level down has been pinned since #709 — so without this row the caveat could be dropped from
+     * exactly one of the two with the suite still green, which is the regression #713 reports.
+     */
+    @Test
+    void theFlusherErrorLogAdmitsTheBatchMayBePartlyCommitted() throws Exception {
+        this.delegate.errorsRemaining.set(1);
+        this.repository = repository(batchConfig(2, Duration.ofMillis(600)));
+
+        this.repository.persist(flows(2));
+        this.repository.start();
+        await(Duration.ofSeconds(3), "the flusher survived the Error", () -> failedRows() == 2);
+        this.repository.stop();
+
+        Assertions.assertThat(this.logEvents.list)
+                .extracting(ILoggingEvent::getFormattedMessage)
+                .as("the flush loop's own error line must say the count is not exact")
+                .anySatisfy(message -> Assertions.assertThat(message)
+                        .contains("Unexpected error in the batch flusher")
+                        .contains("All 2 rows are counted as failed")
+                        .contains("may")
+                        .contains("committed"));
+    }
+
     @Test
     void poisonBatchLogRefusesToClaimTheBatchWasDropped() throws Exception {
         // The flusher's ERROR line is the operator's first signal, and two docs pages state as
@@ -505,6 +532,13 @@ class BatchingFlowRepositoryTest {
 
         private final AtomicInteger failuresRemaining = new AtomicInteger();
 
+        /**
+         * Arms an {@link Error} rather than an exception. {@code flush()} catches only
+         * {@code FlowException | IOException | RuntimeException}, so this is how a failure reaches
+         * the flush loop's {@code catch (Throwable)} with an insert genuinely in flight.
+         */
+        private final AtomicInteger errorsRemaining = new AtomicInteger();
+
         private volatile CountDownLatch blockOn;
 
         long count() {
@@ -536,6 +570,9 @@ class BatchingFlowRepositoryTest {
             }
             // Decrement only while positive: a plain getAndDecrement() would also count down on
             // every successful persist, so a later-armed failure would silently disarm.
+            if (this.errorsRemaining.getAndUpdate(remaining -> remaining > 0 ? remaining - 1 : remaining) > 0) {
+                throw new AssertionError("insert died mid-flight");
+            }
             if (this.failuresRemaining.getAndUpdate(remaining -> remaining > 0 ? remaining - 1 : remaining) > 0) {
                 throw new FlowException("poison batch");
             }

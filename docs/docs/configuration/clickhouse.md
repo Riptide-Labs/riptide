@@ -286,8 +286,8 @@ ClickHouse cannot keep up — the collector **drops flows instead of blocking** 
 backpressure the parsers into the network socket, where the loss is invisible); drops are counted
 and logged with a rate limit. Alongside the `droppedRows` counter sit a queue-depth gauge, a
 batch-size histogram, a flush timer (`persister.batch.flush`), and a `failedRows` counter for rows
-the flusher could not deliver: a failed insert, or rows still in its hands when it is interrupted
-or the shutdown grace period expires.
+the flusher could not deliver: a failed insert, an unexpected `Error` inside the flusher, or rows
+still in its hands when it is interrupted or the shutdown grace period expires.
 
 :::warning[Error visibility under batching — watch the logs]
 
@@ -297,7 +297,7 @@ synchronous per-insert error signal (e.g. the `469 VIOLATED_CONSTRAINT` rejectio
 mode) only exists with `batch.enabled=false` (and coalescing off).
 
 The operator-facing signals are the flusher's **`ERROR` log line** (`Failed to persist a batch of N flows, flusher does not retry, some may be committed`) and the **`persister.batch.*` metrics**, scrapeable from the management server's [`/metrics` endpoint](../deploy/operations.md#metrics-endpoint) in Prometheus format.
-Alert on a sustained `persister.batch.droppedRows` rate and on `persister.batch.queueDepth` approaching `queue-capacity`; the [readiness contract](../deploy/operations.md#health-endpoints--probes) deliberately keeps ClickHouse out of `/readyz`, so these metrics are the whole story.
+Alert on a sustained `persister.batch.droppedRows` or `persister.batch.failedRows` rate and on `persister.batch.queueDepth` approaching `queue-capacity` — `failedRows` as a signal rather than a loss figure, since it is an upper bound ([why](../deploy/operations.md#metrics-endpoint)); the [readiness contract](../deploy/operations.md#health-endpoints--probes) deliberately keeps ClickHouse out of `/readyz`, so these metrics are the whole story.
 
 Note also that the pre-existing `logPersisting.persister` timer now measures only the **enqueue**
 latency (the hand-off into the buffer, normally microseconds) rather than insert duration; the
