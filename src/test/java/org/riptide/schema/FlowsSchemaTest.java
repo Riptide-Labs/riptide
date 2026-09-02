@@ -1062,10 +1062,18 @@ class FlowsSchemaTest {
      * <p>{@code ADD COLUMN} without {@code AFTER} appends past the measures, so an upgraded target
      * ends up with a different physical column order than a fresh one. Riptide does not care — a
      * materialized view with {@code TO} matches by name — but {@code INSERT INTO … SELECT} without a
-     * column list is positional, and that is the backfill the ClickHouse guide tells operators to
-     * write. On an upgraded target it lands the rate in {@code bytes}, shifts every measure by one,
-     * and leaves {@code samplingInterval} at its type default: the reserved sentinel, so
-     * {@code WHERE samplingInterval > 0} then hides the corruption it just caused.
+     * column list is positional, and an operator may already have written one. Against a drifted
+     * target the columns after the drift point land to the right of where they belong, one place
+     * per un-positioned append; the drifted column's own value lands far to the left.
+     *
+     * <p>Measured on the pinned 26.7 image, that insert usually fails rather than corrupting:
+     * {@code flowProtocol} is a {@code LowCardinality(String)} between the dimensions and the
+     * {@code UInt64} measures, and a shift across it raises {@code CANNOT_PARSE_TEXT}. It is silent
+     * only where every column crossed is numeric — true of the pre-{@code flowProtocol} shape, and
+     * true again of any future all-numeric dimension. That silent case is what this positioning
+     * exists for. Note it does <em>not</em> leave {@code samplingInterval} at its type default:
+     * positional inserts require exact arity, so the column takes its neighbour's value and
+     * {@code WHERE samplingInterval > 0} still returns the affected rows.
      *
      * <p>The {@code flows} table already guarantees this (see {@code addAdditiveColumns}); the
      * rollups must too.

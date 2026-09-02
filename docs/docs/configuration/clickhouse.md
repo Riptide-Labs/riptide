@@ -395,6 +395,58 @@ deployment does not populate them from historical `flows` rows — they start em
 that moment on. To backfill, `INSERT INTO … SELECT` from `flows` yourself, keeping the same
 grouping the view uses.
 
+**Name the target columns, and order the list to match your `SELECT`.** `INSERT INTO … SELECT`
+written without a column list is **positional**: ClickHouse matches by ordinal, never by name. It
+also requires an exact count — a `SELECT` with the wrong number of expressions is refused with
+`NUMBER_OF_COLUMNS_DOESNT_MATCH`, so a positional insert never leaves a column unset.
+
+Riptide keeps an upgraded rollup in the same physical column order as a freshly created one, adding
+columns with `AFTER` rather than letting them land last, so a positional insert against a
+riptide-managed target is correct. Name the columns anyway: nothing in the statement tells you
+whether that held.
+
+**Once you name them, the target's physical order stops mattering — but the order you write them in
+must match your `SELECT`.** ClickHouse pairs the *n*th name with the *n*th expression, so a list
+pasted in the server's order beside a `SELECT` written in some other order corrupts exactly as a
+positional insert would.
+
+Use the server only to check you have named them **all**. A rollup
+[gains dimensions in place](#rollups-gain-dimensions-in-place), so any list written down on this
+page goes stale the next time one is added:
+
+```sql
+-- the complete set of columns, so nothing is silently left out
+SELECT arrayStringConcat(groupArray(name), ', ') AS columns
+FROM (SELECT name, position FROM system.columns
+      WHERE database = 'riptide' AND table = 'flows_by_application_1m' ORDER BY position);
+
+-- then write both sides in one order, yours
+INSERT INTO riptide.flows_by_application_1m
+    (tenant, organisation, timestamp, zone, application, protocol, /* … */)
+SELECT tenant, organisation, toStartOfMinute(timestamp), zone, application, protocol  /* … */
+FROM riptide.flows
+WHERE …
+GROUP BY …;
+```
+
+Two failures are worth knowing, because they are not the ones you might expect:
+
+- **A shift is usually loud, not silent.** `flowProtocol` is a `LowCardinality(String)` sitting
+  between the dimensions and the `UInt64` measures, so a shift that reaches it fails the insert with
+  `CANNOT_PARSE_TEXT` rather than writing anything. A shift is only silent where every column it
+  crosses is numeric.
+- **A shift does not hide itself.** Each column takes its neighbour's value, so a shifted
+  `samplingInterval` holds some other column's number — not `0`. `WHERE samplingInterval > 0` still
+  returns those rows.
+
+The genuinely silent mistake is the opposite one: **omitting a column from the list.** An omitted
+column takes its type default, so the rows land with `samplingInterval = 0`. They are still
+identifiable — a materialized view cannot produce a row with a rate of `0` *and* a known protocol,
+so that pair is the fingerprint of a hand-written backfill, as
+[sampling-corrected volume](./receivers.md#sampling-corrected-volume-beyond-raw-retention) explains.
+What they escape is `WHERE samplingInterval > 0`, which silently drops them from every corrected
+total. Name every column the query above returns.
+
 :::
 
 ## Query performance
