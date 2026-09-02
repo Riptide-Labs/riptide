@@ -68,7 +68,9 @@ public final class ClickhouseConfig {
          * enabled, insert failures surface as flusher error logs plus the
          * {@code persister.batch.failedRows} counter — not as synchronous exceptions to the
          * caller. The synchronous rejection signal only exists with batching disabled and
-         * coalescing off.
+         * coalescing off. For a refused insert that counter charges the whole batch, so there it
+         * bounds the loss from above rather than measuring it: the server can still have committed
+         * a prefix (see {@link org.riptide.repository.clickhouse.BatchingFlowRepository}).
          *
          * <p>Unset (default) is off while batching is enabled. With batching disabled it falls
          * back to the pre-batching derived default — on exactly in manage mode (single-tenant,

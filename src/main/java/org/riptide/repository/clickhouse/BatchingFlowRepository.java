@@ -38,10 +38,13 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p>Loss model: a full queue drops flows (counted, rate-limited warn) instead of blocking —
  * blocking would backpressure the parser executors into the Netty socket where loss is invisible.
  * Insert failures likewise surface as flusher error logs and the {@code failedRows} counter, not
- * as exceptions to the caller. {@code stop()} rejects new flows and drains everything already
- * accepted within the shutdown grace period, preserving at-least-once for accepted flows. A
- * stopped instance cannot be restarted: {@code start()} after {@code stop()} fails loud, because
- * a half-alive instance that silently drops everything would be worse than a crash.
+ * as exceptions to the caller — and for a refused insert that counter charges the whole batch, so
+ * there it is an upper bound on the loss rather than a tally of it (see {@code flush}).
+ * {@code stop()} rejects new flows and
+ * drains everything already accepted within the shutdown grace period, preserving at-least-once
+ * for accepted flows. A stopped instance cannot be restarted: {@code start()} after
+ * {@code stop()} fails loud, because a half-alive instance that silently drops everything would
+ * be worse than a crash.
  */
 @Slf4j
 public class BatchingFlowRepository implements FlowRepository {
@@ -224,6 +227,17 @@ public class BatchingFlowRepository implements FlowRepository {
      * unreachable server after client-side retries) is logged and counted, and the flusher moves
      * on — one bad batch must not wedge the pipeline. An interrupt during the insert stays
      * visible on the thread (the delegate restores the flag), so the loop above still exits.
+     *
+     * <p>Charging the whole batch to {@code failedRows} makes the counter an upper bound on the
+     * loss for this case, not an exact count of it: a server that refused the insert may still
+     * have committed a prefix, since ClickHouse cuts an insert into blocks and can commit them
+     * separately. Nothing here can tell the two apart, so the log admits the possibility rather
+     * than promising the rows are gone.
+     *
+     * <p>"Flusher does not retry" in that message is about this loop only, and is not a claim
+     * that no attempt was made: the client's own retries are already spent by the time an
+     * exception reaches here. The message is pinned by
+     * {@code BatchingFlowRepositoryTest#poisonBatchLogRefusesToClaimTheBatchWasDropped}.
      */
     private void flush(final List<EnrichedFlow> batch) {
         this.batchSize.update(batch.size());
@@ -231,7 +245,8 @@ public class BatchingFlowRepository implements FlowRepository {
             this.delegate.persist(batch);
         } catch (final FlowException | IOException | RuntimeException e) {
             this.failedRows.inc(batch.size());
-            log.error("Failed to persist a batch of {} flows — dropping the batch", batch.size(), e);
+            log.error("Failed to persist a batch of {} flows, flusher does not retry, some may be committed",
+                    batch.size(), e);
         }
     }
 

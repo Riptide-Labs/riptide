@@ -202,11 +202,16 @@ lost silently. Alert on the drop counters; watch the depth gauges for early warn
 | `pipeline.dispatchErrors` | records lost because enrichment or persistence threw |
 | `persister.batch.queueDepth` | rows waiting to be inserted (gauge) |
 | `persister.batch.droppedRows` | rows discarded because ClickHouse could not keep up |
-| `persister.batch.failedRows` | rows in batches that failed to insert |
+| `persister.batch.failedRows` | rows in batches whose insert failed |
+
+`failedRows` covers four cases, and is an **upper bound** on the loss rather than an exact count of it in two of them.
+A *refused* insert may still have committed a prefix of the batch, yet the whole batch is charged here (see [insert batching](../configuration/clickhouse.md#insert-batching-batch)); the same is true when an unexpected `Error` escapes the flusher, since it may escape with an insert already in flight.
+The other two are certain loss: rows the flusher still held when it was interrupted, and rows left over once the shutdown grace period expires. Neither ever reached the server.
 
 Delivery accounting: `recordsScheduled − dispatchDrops − dispatchErrors` is what reached the
 persister. Note `recordsDispatched` counts only records the pipeline accepted without throwing, so
 it excludes `dispatchErrors`.
+That arithmetic stops at the persister: do **not** extend it to persisted rows by subtracting `failedRows`, because a refused insert counted in full there may have committed part of its batch. Query the table for what landed.
 
 **Two of these count loss that happens before any of the queues.**
 They were added because a lab measurement found the application accounting for only ~4% of a ~25% shortfall under sustained overload, with nothing accounting for the rest:

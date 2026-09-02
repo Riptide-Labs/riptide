@@ -285,8 +285,9 @@ follow ClickHouse's guidance of 10k–100k rows per insert at roughly one insert
 ClickHouse cannot keep up — the collector **drops flows instead of blocking** (blocking would
 backpressure the parsers into the network socket, where the loss is invisible); drops are counted
 and logged with a rate limit. Alongside the `droppedRows` counter sit a queue-depth gauge, a
-batch-size histogram, a flush timer (`persister.batch.flush`), and a `failedRows` counter for
-batches whose insert failed.
+batch-size histogram, a flush timer (`persister.batch.flush`), and a `failedRows` counter for rows
+the flusher could not deliver: a failed insert, or rows still in its hands when it is interrupted
+or the shutdown grace period expires.
 
 :::warning[Error visibility under batching — watch the logs]
 
@@ -295,7 +296,7 @@ logged by the flusher and counted in `persister.batch.failedRows`, and ingestion
 synchronous per-insert error signal (e.g. the `469 VIOLATED_CONSTRAINT` rejection in provisioned
 mode) only exists with `batch.enabled=false` (and coalescing off).
 
-The operator-facing signals are the flusher's **`ERROR` log line** (`Failed to persist a batch of N flows`) and the **`persister.batch.*` metrics**, scrapeable from the management server's [`/metrics` endpoint](../deploy/operations.md#metrics-endpoint) in Prometheus format.
+The operator-facing signals are the flusher's **`ERROR` log line** (`Failed to persist a batch of N flows, flusher does not retry, some may be committed`) and the **`persister.batch.*` metrics**, scrapeable from the management server's [`/metrics` endpoint](../deploy/operations.md#metrics-endpoint) in Prometheus format.
 Alert on a sustained `persister.batch.droppedRows` rate and on `persister.batch.queueDepth` approaching `queue-capacity`; the [readiness contract](../deploy/operations.md#health-endpoints--probes) deliberately keeps ClickHouse out of `/readyz`, so these metrics are the whole story.
 
 Note also that the pre-existing `logPersisting.persister` timer now measures only the **enqueue**
@@ -313,9 +314,12 @@ more data. Lowering `max-rows` limits the blast radius at the cost of throughput
 
 **And "a whole batch" is only true while the whole batch lands in one committed block.** ClickHouse cuts an incoming insert into blocks and may commit them separately. When it does, a refused insert is *not* atomic: the blocks already accepted stay committed, so part of the batch persists while the whole batch is counted as failed, and the rollups are left inconsistent with the base table. Measured on the pinned image by `MultiBlockPoisonProbeIT`, which pins both a server that behaves this way and one that does not.
 
-Note the counter: a refused batch increments `persister.batch.failedRows`, not `persister.batch.droppedRows`. The drop counter is for queue-full and post-shutdown loss and stays at zero for this failure.
+Note the counter: a refused batch increments `persister.batch.failedRows`, not `persister.batch.droppedRows`.
+The drop counter is for queue-full and post-shutdown loss and stays at zero for this failure.
+`failedRows` charges the **whole** batch, so for a refused insert it is an **upper bound** on the loss rather than a count of it: where a prefix did commit, those rows are both persisted and counted failed, and nothing reports the difference.
+riptide cannot tell the two apart, so the flusher's insert-failure line admits the possibility instead of claiming the batch was dropped.
 
-**riptide does not tell you whether your server is affected, and neither does this page.** Two attempts at a startup check that modelled the relevant server settings were each wrong in both directions, and two independent measurements of those settings produced contradictory rules. A two-million-row insert against a completely untouched server committed nothing on refusal, so no simple "raise `max-rows` past N" statement survived contact with the data either. The settings involved are `max_insert_block_size`, `min_insert_block_size_rows` and `min_insert_block_size_bytes`; how they combine is not something we can currently state, and a wrong rule here would either cry wolf or miss the case. See #700.
+**riptide does not tell you whether your server is affected, and neither does this page.** Two attempts at a startup check that modelled the relevant server settings were each wrong in both directions, and two independent measurements of those settings produced contradictory rules. A two-million-row insert against a completely untouched server committed nothing on refusal, so no simple "raise `max-rows` past N" statement survived contact with the data either. The settings involved are `max_insert_block_size`, `min_insert_block_size_rows` and `min_insert_block_size_bytes`; how they combine is not something we can currently state, and a wrong rule here would either cry wolf or miss the case. See [#700](https://github.com/Riptide-Labs/riptide/issues/700).
 
 What is safe to say: no partial write has been produced at stock server settings, so the whole-batch loss model above is the one to plan against unless you have tuned those settings. If you have, the loss model is not known to hold.
 
