@@ -16,6 +16,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
+import org.riptide.classification.ClassificationEngine;
+import org.riptide.classification.ClassificationEngine.Publication;
 import org.riptide.classification.ClassificationRequest;
 import org.riptide.classification.ClassificationRuleProvider;
 import org.riptide.classification.Protocols;
@@ -42,12 +44,18 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiFunction;
 import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.riptide.classification.internal.ClassificationRulesTestSupport.HEADER;
 import static org.riptide.classification.internal.ClassificationRulesTestSupport.rules;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -84,6 +92,17 @@ class ClassificationRuleReloaderTest {
     /** Anything but 200 is answered with this status and no body. */
     private volatile int status = 200;
     private final AtomicInteger requests = new AtomicInteger();
+
+    /** A ruleset that fetches and parses, and whose second rule the engine then rejects. */
+    private static final String ONE_GOOD_ONE_BROKEN =
+            HEADER + "good;;;;;80;;false\n" + "broken;;;;;not-a-port;;false\n";
+
+    /** Run on the reload thread before each rule read; a row that has to order the boot load replaces it. */
+    private volatile Runnable beforeRuleRead = () -> { };
+
+    /** How the wrapper is built; a row that has to order the boot load against the reloader replaces it. */
+    private BiFunction<ClassificationEngine, MetricRegistry, AsyncReloadingClassificationEngine> wrapper =
+            AsyncReloadingClassificationEngine::new;
 
     @TempDir
     Path tempDir;
@@ -211,6 +230,19 @@ class ClassificationRuleReloaderTest {
     }
 
     private void buildStack(final Resource rules, final Duration interval, final Duration timeout) throws Exception {
+        buildEngine(rules, interval, timeout);
+        startReloaderOnly();
+    }
+
+    /**
+     * The stack below the reloader, so a row can order the boot load against the registration itself.
+     * <p>
+     * The engine reads through the same {@link ClassificationRulesSource} the reloader is then given, which is
+     * the production wiring and not an incidental one: the publish log names that source's location, and a
+     * fixture pairing an unrelated provider with a configured source would make that sentence false in the
+     * fixture while it stayed true in production.
+     */
+    private void buildEngine(final Resource rules, final Duration interval, final Duration timeout) throws Exception {
         this.config = new ClassificationConfig();
         this.config.setRules(rules);
         this.config.setReloadInterval(interval);
@@ -221,14 +253,18 @@ class ClassificationRuleReloaderTest {
         this.source = new ClassificationRulesSource(this.config, timeout);
         final CsvImporter importer = new CsvImporter();
         final ClassificationRuleProvider provider = () -> {
+            this.beforeRuleRead.run();
             try (var stream = new ByteArrayInputStream(this.source.read())) {
                 return importer.parse(stream, true);
             } catch (final IOException e) {
                 throw new UncheckedIOException("Cannot load classification rules", e);
             }
         };
-        this.engine = new AsyncReloadingClassificationEngine(
-                new DefaultClassificationEngine(provider, false), this.metrics);
+        this.engine = this.wrapper.apply(new DefaultClassificationEngine(provider, false), this.metrics);
+    }
+
+    /** The reloader over an already-built engine, so a row can publish before the registration happens. */
+    private void startReloaderOnly() {
         this.reloader = new ClassificationRuleReloader(this.config, this.engine, this.source, this.metrics);
         this.reloader.start();
     }
@@ -258,6 +294,293 @@ class ClassificationRuleReloaderTest {
         assertThat(stale()).isZero();
         assertThat(infos()).as("a change that landed is not visible from a counter alone")
                 .anyMatch(message -> message.contains("changed") && message.contains("reloading"));
+    }
+
+    /**
+     * The consumer the listener seam exists for (#685). A ruleset that fetches and parses but whose rules the
+     * engine cannot all preprocess is the case no other signal covers: the fetch succeeded so nothing warns here,
+     * the load succeeded so {@code classification.reload.successes} moves and the stale gauge stays 0, and the
+     * operator's edit is half-live with no line saying which half.
+     *
+     * <p>Asserted on the rejected rule's <em>name</em> and on both counts, not on an empty list: the reloader
+     * reaches these through {@code currentPublication()}, whose default is an empty invalid-rule list, so an
+     * assertion that could pass against a default would not be reading anything.</p>
+     */
+    @Test
+    void aRejectedRuleInAPublishedRulesetIsNamedByTheReloader() throws Exception {
+        startReloader(Duration.ofHours(1));
+
+        this.body = ONE_GOOD_ONE_BROKEN;
+        this.reloader.poll();
+
+        // the listener fires inside the engine's reload(), so a counted success is strictly after the log
+        await("the reload to be counted", () -> successes() >= 2);
+
+        assertThat(warnings())
+                .as("the seam's whole point: which of the operator's rules are classifying nothing")
+                .containsExactly("Classification rules from %s published: 2 rules, of which 1 were rejected "
+                        .formatted(this.source.describe()) + "and classify nothing: broken");
+        assertThat(classification()).as("the accepted half of the ruleset is serving").isEqualTo("good");
+        assertThat(failures()).as("a rejected rule is not a failed reload").isZero();
+        assertThat(stale()).isZero();
+    }
+
+    /**
+     * The clean arm, and the three things in it a constant would satisfy: that a publish with nothing rejected is
+     * reported at all, that the count is read rather than assumed, and that the location is the one
+     * {@link ClassificationRulesSource#describe()} produces.
+     *
+     * <p>That last one is not cosmetic. {@code describe()} is the only place applying the userinfo redaction —
+     * {@code credentialsInTheLocationAreNotLogged} pins that it does — and {@code operations.md} promises tokens
+     * are redacted wherever the location is logged. A line built from the raw resource instead would satisfy an
+     * assertion that only looked for a host.</p>
+     */
+    @Test
+    void aCleanPublishIsReportedWithItsRuleCountAndTheRedactedLocation() throws Exception {
+        // Credentials in the location, deliberately. Against a plain URL, describe() and the resource's own
+        // toString() render identically, so an assertion on the sentence cannot tell which of them built it —
+        // measured: swapping describe() for the raw resource survived that version of this test. Userinfo is
+        // the one case where the two differ, and it is the case the docs make a promise about.
+        this.body = HEADER + "a;;;;;80;;false\n" + "b;;;;;81;;false\n" + "c;;;;;82;;false\n";
+        buildStack(new UrlResource(URI.create("http://ops:s3cr3t@127.0.0.1:"
+                + this.server.getAddress().getPort() + "/rules.csv")), Duration.ofHours(1), Duration.ofSeconds(10));
+        await("the boot load to be counted", () -> successes() == 1);
+
+        // three rules, so a count hard-coded to the one-rule fixture, or reading the rejected count, cannot pass
+        assertThat(publishLines())
+                .contains("Classification rules from %s published: 3 rules, none rejected"
+                        .formatted(this.source.describe()));
+        assertThat(this.source.describe()).as("which is the redacted form").contains("***@");
+        assertThat(publishLines()).as("so the token never reaches the log")
+                .noneMatch(message -> message.contains("s3cr3t"));
+        assertThat(warnings()).as("nothing was rejected, so nothing warns").isEmpty();
+    }
+
+    /**
+     * A wholesale rejection — a reordered column, a changed delimiter — rejects every rule the ruleset has. The
+     * names are capped so one physical log line cannot carry thousands of them at boot and again on every reload;
+     * the count stays exact, because that is the number an operator acts on.
+     */
+    @Test
+    void aWholesaleRejectionNamesTheFirstRulesAndCountsTheRest() throws Exception {
+        startReloader(Duration.ofHours(1));
+
+        final StringBuilder body = new StringBuilder(HEADER);
+        for (int i = 0; i < 25; i++) {
+            body.append("bad-%d;;;;;not-a-port;;false\n".formatted(i));
+        }
+        this.body = body.toString();
+        this.reloader.poll();
+        await("the reload to be counted", () -> successes() >= 2);
+
+        assertThat(warnings()).singleElement().satisfies(message -> {
+            assertThat(message).as("the count is exact").contains("25 rules, of which 25 were rejected");
+            assertThat(message).as("the first names are there to start from").contains("bad-0", "bad-19");
+            assertThat(message).as("and the tail is summarised, not printed").contains("and 5 more")
+                    .doesNotContain("bad-20");
+        });
+    }
+
+    /**
+     * The seam's third defect, closed for the only consumer there is. {@code AsyncReloadingClassificationEngine}'s
+     * constructor submits the boot load, so by the time this bean's {@code @PostConstruct} runs that load has
+     * usually already published — and nothing is replayed to a listener that registered afterwards, by design. A
+     * consumer that only waited for a callback would therefore never learn what is serving, which is precisely the
+     * case where an operator most wants to know: at startup, having just edited the ruleset.
+     *
+     * <p>The ordering is forced rather than hoped for. The boot load is waited out <em>before</em> the reloader
+     * exists, so no callback can possibly fire for that publication and only the pull can report it — asserted on
+     * an empty log first, so the assertion below cannot be satisfied by a line that was already there.</p>
+     */
+    @Test
+    void aPublishThatLandedBeforeTheReloaderRegisteredIsStillReported() throws Exception {
+        this.body = ONE_GOOD_ONE_BROKEN;
+        buildEngine(new UrlResource(rulesUri()), Duration.ZERO, Duration.ofSeconds(10));
+        await("the boot load to publish", () -> successes() == 1);
+        assertThat(warnings()).as("nothing was registered while that load ran, so its callback is gone").isEmpty();
+
+        startReloaderOnly();
+
+        assertThat(warnings())
+                .as("the pull is the only path that could have reported it")
+                .anyMatch(message -> message.contains("rejected") && message.contains("broken"));
+    }
+
+    /**
+     * Registration comes before the pull, and the order is the property rather than an accident of how the two
+     * statements were typed. Reversed, a publish landing between them is reported by <em>neither</em> path: the
+     * pull has already taken its answer, and the fire's listener snapshot was captured before the registration.
+     *
+     * <p>Forced by gating the boot load on the pull having read: the publish therefore lands strictly inside the
+     * gap. In the correct order the listener is in the snapshot when the fire runs and the callback reports it; in
+     * the reversed one nothing is, and the log stays empty.</p>
+     */
+    @Test
+    void aPublishLandingBetweenTheRegistrationAndThePullIsStillReported() throws Exception {
+        this.body = ONE_GOOD_ONE_BROKEN;
+        final CountDownLatch pullHasRead = new CountDownLatch(1);
+        final CountDownLatch published = new CountDownLatch(1);
+        final AtomicBoolean gateUsed = new AtomicBoolean();
+
+        this.beforeRuleRead = () -> awaitLatch(pullHasRead, "the pull to have taken its answer");
+        this.wrapper = (delegate, registry) -> new AsyncReloadingClassificationEngine(delegate, registry) {
+            @Override
+            public Optional<Publication> currentPublication() {
+                // the answer is taken FIRST and returned unchanged, so the publish below lands after this read
+                // — that is what makes it a publish "in the gap" rather than one the pull could have seen
+                final Optional<Publication> answer = super.currentPublication();
+                // one-shot, and the pull is provably the first caller: the boot load cannot publish, and so
+                // cannot reach any callback, until this line releases it
+                if (gateUsed.compareAndSet(false, true)) {
+                    pullHasRead.countDown();
+                    awaitLatch(published, "the boot load to publish");
+                }
+                return answer;
+            }
+        };
+        buildEngine(new UrlResource(rulesUri()), Duration.ZERO, Duration.ofSeconds(10));
+        // ahead of the reloader's listener in the fire order, so it signals that the publish has happened
+        this.engine.addClassificationRulesReloadedListener(rules -> published.countDown());
+
+        startReloaderOnly();
+        await("the boot load to settle", () -> successes() == 1);
+
+        assertThat(warnings())
+                .as("the listener was registered before the gap, so the fire still reached it")
+                .anyMatch(message -> message.contains("rejected") && message.contains("broken"));
+    }
+
+    /**
+     * Exactly once, with the callback provably first. The registration returns only after the boot load has been
+     * counted — which happens after every listener has been delivered — so the callback has reported before the
+     * pull runs at all, and the pull must add nothing.
+     */
+    @Test
+    void aBootPublishTheCallbackReportsFirstIsNotReportedAgainByThePull() throws Exception {
+        this.body = ONE_GOOD_ONE_BROKEN;
+        final CountDownLatch registered = new CountDownLatch(1);
+
+        this.beforeRuleRead = () -> awaitLatch(registered, "the reloader to register");
+        this.wrapper = (delegate, registry) -> new AsyncReloadingClassificationEngine(delegate, registry) {
+            @Override
+            public void addClassificationRulesReloadedListener(final ClassificationRulesReloadedListener listener) {
+                super.addClassificationRulesReloadedListener(listener);
+                registered.countDown();
+                // the counter moves in onReloadSucceeded, strictly after every listener has been delivered,
+                // so this returns with the callback's report already written
+                awaitCondition(() -> successes() == 1, "the boot load to be counted");
+            }
+        };
+        buildEngine(new UrlResource(rulesUri()), Duration.ZERO, Duration.ofSeconds(10));
+
+        startReloaderOnly();
+
+        assertThat(warnings()).as("the callback reported, and the pull that followed added nothing").hasSize(1);
+        assertThat(warnings().getFirst()).contains("broken");
+    }
+
+    /**
+     * Exactly once, with the pull provably first. A listener registered ahead of the reloader's parks the fire
+     * after the publish and before the reloader's own callback, so the pull reports while that callback is
+     * demonstrably still pending — asserted at that moment — and the callback must then add nothing.
+     */
+    @Test
+    void aBootPublishThePullReportsFirstIsNotReportedAgainByTheCallback() throws Exception {
+        this.body = ONE_GOOD_ONE_BROKEN;
+        final CountDownLatch registered = new CountDownLatch(1);
+        final CountDownLatch firing = new CountDownLatch(1);
+        final CountDownLatch fireRelease = new CountDownLatch(1);
+
+        final AtomicBoolean gateArmed = new AtomicBoolean();
+
+        this.beforeRuleRead = () -> awaitLatch(registered, "the reloader to register");
+        this.wrapper = (delegate, registry) -> new AsyncReloadingClassificationEngine(delegate, registry) {
+            @Override
+            public void addClassificationRulesReloadedListener(final ClassificationRulesReloadedListener listener) {
+                super.addClassificationRulesReloadedListener(listener);
+                // only the reloader's registration is gated. Gating the blocker's too would release the boot
+                // load before the reloader had registered, so the fire's snapshot would not contain its
+                // listener and the callback this row is about would never run at all — which is exactly how
+                // an earlier version of this test passed while proving nothing
+                if (!gateArmed.get()) {
+                    return;
+                }
+                registered.countDown();
+                awaitLatch(firing, "the fire to reach the blocker");
+            }
+        };
+        buildEngine(new UrlResource(rulesUri()), Duration.ZERO, Duration.ofSeconds(10));
+        // registered before the reloader's, so it is ahead of it in the fire order and holds the fire there
+        this.engine.addClassificationRulesReloadedListener(rules -> {
+            firing.countDown();
+            awaitLatch(fireRelease, "the test to release the fire");
+        });
+
+        gateArmed.set(true);
+        startReloaderOnly();
+
+        assertThat(warnings()).as("the pull reported while the callback is provably still parked").hasSize(1);
+
+        fireRelease.countDown();
+        await("the boot load to settle", () -> successes() == 1);
+
+        assertThat(warnings()).as("and the callback for that same publication added nothing").hasSize(1);
+        assertThat(warnings().getFirst()).contains("broken");
+    }
+
+    /**
+     * The dedupe is "this same publish", not "a ruleset that compares equal". {@code DefaultRule} is a Lombok
+     * {@code @Data}, so two loads of unchanged bytes produce publications that are {@code equals} — and an
+     * operator who asked for a reload has to see that it happened.
+     */
+    @Test
+    void aReloadRepublishingAnIdenticalRulesetIsReportedAgain() throws Exception {
+        startReloader(Duration.ofHours(1));
+        final int afterBoot = publishLines().size();
+
+        // straight at the engine, because the trigger's content hash would skip unchanged bytes — which is
+        // exactly why the equal-but-not-identical case has to be reachable some other way
+        this.engine.reload();
+        await("the second load to be counted", () -> successes() == 2);
+
+        assertThat(publishLines()).as("the same rules published twice are two publishes")
+                .hasSize(afterBoot + 1);
+    }
+
+    /** A stopped reloader is off the seam: the engine keeps publishing and this stops narrating it. */
+    @Test
+    void aStoppedReloaderReportsNothingMore() throws Exception {
+        startReloader(Duration.ofHours(1));
+        final int afterBoot = publishLines().size();
+
+        this.reloader.stop();
+        this.engine.reload();
+        await("the reload after the stop to be counted", () -> successes() == 2);
+
+        assertThat(publishLines()).as("deregistered, so nothing was written for that publish")
+                .hasSize(afterBoot);
+    }
+
+    /** Waits on a latch, failing the test rather than hanging it, and never swallowing an interrupt. */
+    private static void awaitLatch(final CountDownLatch latch, final String what) {
+        try {
+            if (!latch.await(10, TimeUnit.SECONDS)) {
+                throw new AssertionError("timed out waiting for " + what);
+            }
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("interrupted while waiting for " + what, e);
+        }
+    }
+
+    /** {@link #await} for the gates above, which run where a checked exception cannot be thrown. */
+    private static void awaitCondition(final BooleanSupplier condition, final String what) {
+        try {
+            await(what, condition);
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("interrupted while waiting for " + what, e);
+        }
     }
 
     /** The content hash decides, not the clock: an unchanged source is never rebuilt. */
@@ -695,6 +1018,17 @@ class ClassificationRuleReloaderTest {
 
     private List<String> warnings() {
         return eventsAt(Level.WARN);
+    }
+
+    /**
+     * Every line reporting a publish, at whichever level that publish was reported. Counting these rather than
+     * all INFOs keeps the exactly-once rows from being satisfied by the unrelated startup and change lines.
+     */
+    private List<String> publishLines() {
+        return this.appender.list.stream()
+                .map(ILoggingEvent::getFormattedMessage)
+                .filter(message -> message.contains("published:"))
+                .toList();
     }
 
     private List<String> infos() {

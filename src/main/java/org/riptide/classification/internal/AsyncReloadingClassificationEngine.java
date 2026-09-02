@@ -17,6 +17,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -235,6 +236,19 @@ public class AsyncReloadingClassificationEngine implements ClassificationEngine 
     public synchronized List<Rule> getInvalidRules() {
         waitUntilServiceable();
         return delegate.getInvalidRules();
+    }
+
+    /**
+     * Deliberately neither {@code synchronized} nor guarded by {@link #waitUntilServiceable()}, unlike every other
+     * accessor on this class. A listener's callback runs on the reload thread, <em>inside</em> {@code doReload}, so
+     * on the initial load it reaches this object with {@link #everLoaded} still false and the state still
+     * {@code RELOADING} — and the transition it would be waiting for can only be made by the very thread that is
+     * waiting. Waiting here is therefore a self-deadlock, not a delay, and the monitor would add a second way to
+     * park behind a reload that is already parked on a callback.
+     */
+    @Override
+    public Optional<Publication> currentPublication() {
+        return delegate.currentPublication();
     }
 
     @Override
