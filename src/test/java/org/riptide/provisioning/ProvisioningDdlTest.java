@@ -163,7 +163,7 @@ class ProvisioningDdlTest {
 
     @Test
     void onboardTenantScopesUsersPolicyWithEscapedPassword() {
-        final List<String> sql = ProvisioningDdl.onboardTenant("riptide", "acme", "acme-eu", "p'w", "r'w");
+        final List<String> sql = ProvisioningDdl.onboardTenant("riptide", "acme", "acme-eu", "p'w", "r'w", List.of());
         // The six user/grant statements, the flows policy, then one policy per rollup.
         assertThat(sql).hasSize(7 + FlowsSchema.rollupTableNames().size());
         assertThat(sql.get(0))
@@ -325,19 +325,67 @@ class ProvisioningDdlTest {
 
     @Test
     void rowPoliciesCoverFlowsAndEveryRollupWithOneSharedPredicate() {
-        final List<String> sql = ProvisioningDdl.onboardTenant("riptide", "acme", "org1", "w", "r");
+        final List<String> sql = ProvisioningDdl.onboardTenant("riptide", "acme", "org1", "w", "r", List.of());
         final List<String> policies = sql.stream().filter(s -> s.contains("ROW POLICY")).toList();
         assertThat(policies).hasSize(1 + FlowsSchema.rollupTableNames().size());
         assertThat(policies).allSatisfy(policy -> assertThat(policy)
                 .startsWith("CREATE ROW POLICY OR REPLACE `acme_iso` ON ")
                 .contains("FOR SELECT USING tenant = 'acme'"));
-        // The writer is named on the flows policy (deny-by-default would otherwise starve the
-        // rollup views) but not on the rollups, which it only ever reaches by INSERT.
+        // The writer is named on the flows policy to CONSTRAIN it, not to enable it. A policy is
+        // not deny-by-default for a user it does not name: the pinned image ships
+        // users_without_row_policies_can_read_rows=true, so an unnamed writer holding SELECT on
+        // flows would read every tenant's rows rather than starve. Naming it pins it to its own.
+        // It is absent from the rollup policies because it holds no SELECT there at all, so being
+        // unnamed costs and exposes nothing — it reaches a rollup only by INSERT.
         assertThat(policies.getFirst())
                 .contains("ON `riptide`.flows ")
                 .endsWith("TO `bi_acme@riptide`, `writer_acme@riptide`");
         assertThat(policies.subList(1, policies.size()))
                 .allSatisfy(policy -> assertThat(policy).endsWith("TO `bi_acme@riptide`"));
+    }
+
+    /**
+     * A live pre-rename account keeps its place on the policies this recipe replaces.
+     *
+     * <p>The policy name is unchanged by the rename, so {@code OR REPLACE} rewrites the existing
+     * policy's {@code TO} list. Dropping a still-live legacy account from it leaves that account
+     * named by no policy on the table — which, since the pinned image ships
+     * {@code users_without_row_policies_can_read_rows=true}, is a cross-tenant read and not a blank
+     * dashboard. Proven end to end against a server in
+     * {@code TenantOnboardingIT#onboardKeepsALiveLegacyAccountOnTheRowPoliciesItReplaces}; pinned
+     * here at the statement level, including the split the two policy kinds make.</p>
+     */
+    @Test
+    void aLiveLegacyAccountStaysNamedOnThePoliciesItAlreadyHeld() {
+        final List<String> policies = ProvisioningDdl.onboardTenant("riptide", "acme", "org1", "w", "r",
+                        List.of("writer_acme", "bi_acme")).stream()
+                .filter(s -> s.contains("ROW POLICY")).toList();
+
+        assertThat(policies.getFirst())
+                .as("flows named both legacy accounts before the rename, so both stay")
+                .contains("ON `riptide`.flows ")
+                .endsWith("TO `bi_acme@riptide`, `writer_acme@riptide`, `bi_acme`, `writer_acme`");
+        assertThat(policies.subList(1, policies.size()))
+                .as("a rollup policy named only the reader, and only the reader can read one")
+                .allSatisfy(policy -> assertThat(policy).endsWith("TO `bi_acme@riptide`, `bi_acme`"));
+    }
+
+    /**
+     * Only accounts observed live may be named. {@code CREATE ROW POLICY … TO} a user that does not
+     * exist fails the statement and takes the whole onboard with it, so a legacy account absent from
+     * the probe's result must not appear — this is why the probe runs before the statements are
+     * built rather than after they run.
+     */
+    @Test
+    void aLegacyAccountThatIsNotLiveIsNeverNamed() {
+        final List<String> policies = ProvisioningDdl.onboardTenant("riptide", "acme", "org1", "w", "r",
+                        List.of("bi_acme")).stream()
+                .filter(s -> s.contains("ROW POLICY")).toList();
+
+        assertThat(policies.getFirst()).endsWith("TO `bi_acme@riptide`, `writer_acme@riptide`, `bi_acme`");
+        assertThat(policies)
+                .as("the writer was not live, so nothing may name it")
+                .noneMatch(policy -> policy.endsWith("`writer_acme`") || policy.contains("`writer_acme`,"));
     }
 
     @Test
@@ -347,11 +395,11 @@ class ProvisioningDdlTest {
         final String constraint = ProvisioningDdl.ensureShared("riptide", 1L).stream()
                 .filter(s -> s.contains("tenant_pinned")).findFirst().orElseThrow();
         assertThat(constraint).contains("CHECK tenant = getSetting('SQL_tenant')");
-        final String policy = ProvisioningDdl.onboardTenant("riptide", "acme", "org1", "w", "r").stream()
+        final String policy = ProvisioningDdl.onboardTenant("riptide", "acme", "org1", "w", "r", List.of()).stream()
                 .filter(s -> s.contains("ROW POLICY") && s.contains("`riptide`.flows "))
                 .findFirst().orElseThrow();
         assertThat(policy).contains("USING tenant = 'acme'");
-        assertThat(ProvisioningDdl.onboardTenant("riptide", "acme", "org1", "w", "r"))
+        assertThat(ProvisioningDdl.onboardTenant("riptide", "acme", "org1", "w", "r", List.of()))
                 .anyMatch(s -> s.contains("SETTINGS SQL_tenant = 'acme' CONST"));
     }
 
@@ -397,10 +445,10 @@ class ProvisioningDdlTest {
      */
     @Test
     void rowPolicyNamesStayUnqualifiedBecauseTheirTableAlreadyScopesThem() {
-        assertThat(ProvisioningDdl.onboardTenant("db_a", "acme", "org1", "w", "r"))
+        assertThat(ProvisioningDdl.onboardTenant("db_a", "acme", "org1", "w", "r", List.of()))
                 .filteredOn(s -> s.contains("ROW POLICY"))
                 .allSatisfy(s -> assertThat(s).contains("`acme_iso` ON `db_a`."));
-        assertThat(ProvisioningDdl.onboardTenant("db_b", "acme", "org1", "w", "r"))
+        assertThat(ProvisioningDdl.onboardTenant("db_b", "acme", "org1", "w", "r", List.of()))
                 .filteredOn(s -> s.contains("ROW POLICY"))
                 .allSatisfy(s -> assertThat(s).contains("`acme_iso` ON `db_b`."));
     }

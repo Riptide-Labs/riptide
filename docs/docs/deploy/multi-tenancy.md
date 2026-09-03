@@ -194,15 +194,17 @@ GRANT `flow_writer@riptide` TO `writer_acme@riptide`;
 CREATE USER IF NOT EXISTS `bi_acme@riptide` IDENTIFIED WITH sha256_password BY '…'
   SETTINGS SQL_tenant = 'acme' CONST, SQL_org = 'acme-eu' CONST;
 GRANT `flow_reader@riptide` TO `bi_acme@riptide`;
--- The writer is named on the flows policy alongside the reader: a row policy is deny-by-default
--- for anyone it does not name, and the writer must read flows for the rollup views to push. Its
--- predicate is the same tenant the CHECK barrier already pins, so it grants no extra row.
+-- The writer is named on the flows policy alongside the reader to CONSTRAIN it, not to enable it:
+-- a policy is NOT deny-by-default for a user it does not name (see the note below), so an unnamed
+-- writer would read every tenant's flows. Its predicate is the same tenant the CHECK barrier
+-- already pins, so it grants no extra row and removes every foreign one.
 -- The policy name is NOT qualified: a policy's identity is `name ON db.table`, so it is already
 -- scoped by the table it hangs on.
 CREATE ROW POLICY OR REPLACE acme_iso ON riptide.flows
   FOR SELECT USING tenant = 'acme' TO `bi_acme@riptide`, `writer_acme@riptide`;
--- The rollup policies name the reader only — the writer reaches a rollup by INSERT through its
--- materialized view, which no row policy filters.
+-- The rollup policies name the reader only. The writer holds no SELECT on a rollup target at all,
+-- so being unnamed there exposes nothing; it reaches a rollup by INSERT through its materialized
+-- view, which no row policy filters.
 CREATE ROW POLICY OR REPLACE acme_iso ON riptide.flows_by_application_1m
   FOR SELECT USING tenant = 'acme' TO `bi_acme@riptide`;                    -- and the other three
 ```
@@ -231,27 +233,72 @@ Nothing breaks on upgrade, and nothing is removed for you.
 An instance provisioned under the old naming keeps its unqualified `writer_<tenant>` / `bi_<tenant>` users and its `flow_writer` / `flow_reader` roles, and its collector keeps working.
 
 Re-running `onboard` **adds** the qualified account alongside the old one — it does not rename or drop it, because the tenant's collector is still authenticating as the old one until you paste the new stanza.
+It also **keeps the old account named on the tenant's row policies** for as long as that account exists.
+That is not cosmetic: the policy name is unchanged by the rename, so the run rewrites the *existing* policy's `TO` list, and an account dropped from it would be named by no policy and start reading every tenant's rows (see the warning above).
+Once you retire the old account, the next `onboard` stops naming it.
+
 The run prints a warning naming the leftover account and the `DROP USER` to run:
 
 ```
-warning: the pre-rename account 'writer_acme' still exists on this server. It holds the old
-instance-wide role, so it can still reach every database provisioned before the rename. Once the
-tenant's collector (and any BI datasource) has moved to the '@riptide' account below, drop it:
-DROP USER `writer_acme`
+warning: the pre-rename account 'writer_acme' still exists on this server, and it is instance-wide
+— it is not specific to database 'riptide'. It holds the old instance-wide write role, so it can
+still INSERT into every database provisioned before the rename. This run kept it on this tenant's
+row policies, so it stays filtered to its own rows meanwhile. Retire it only once EVERY database's
+collector and datasource for tenant 'acme' has moved to the qualified account — dropping it sooner
+takes those other databases offline. Then: DROP USER `writer_acme`, and re-run onboard here so the
+policies stop naming it.
 ```
 
 The order that avoids downtime, per tenant:
 
-1. Re-run `onboard` for the tenant. The qualified account is created with the same secret.
-2. Update the collector config to the username from the new stanza, and any Grafana/MCP datasource to the new `bi_<tenant>@<database>`. Restart them.
-3. Drop the old account: ``DROP USER `writer_acme`;`` and ``DROP USER `bi_acme`;``.
+1. Re-run `onboard` for the tenant, **in every database on this server where it is provisioned**. Each gets its own qualified account, created with the same secret.
+2. Update every collector config to the username from that database's new stanza, and every Grafana/MCP datasource to the matching `bi_<tenant>@<database>`. Restart them.
+3. Only now drop the old accounts: ``DROP USER `writer_acme`;`` and ``DROP USER `bi_acme`;``.
+4. Re-run `onboard` once more in each database, so the policies stop naming the accounts you just dropped.
 
+Step 1 must cover every database **before** step 3, because the old accounts carry no database in their name — they are one object shared by all of them.
 Until step 3 the old account still holds the old instance-wide role, so it can still write to every database provisioned before the rename — that is the whole reason to finish.
 
-`offboard` needs no such sequencing: it drops both namings, so it revokes a tenant whether or not that tenant has been migrated.
+:::caution[`offboard` also drops the pre-rename accounts, and that reaches every database]
 
-The orphaned `flow_writer` / `flow_reader` roles are **not** dropped by `offboard`, because they are instance-wide and may still be granted to a tenant you have not migrated.
-Once no user holds them (`SELECT * FROM system.role_grants WHERE granted_role_name IN ('flow_writer', 'flow_reader')` returns nothing), drop them by hand.
+`offboard` drops both namings, so it revokes a tenant whether or not that tenant has been migrated — but the unqualified `writer_<tenant>` / `bi_<tenant>` it drops are keyed on the tenant alone.
+`offboard --database db_b --tenant acme` therefore removes the same credential that an unmigrated `db_a` is still ingesting with.
+This is inherent to the old naming, not new behaviour, and dropping them is still correct: leaving them would report a revocation that did not happen.
+
+If any **other** database on this server still has that tenant on the old naming, it has just lost its credential. Re-onboard it to give it a `@<database>` account of its own.
+Migrating every database first (step 1 above) avoids the situation entirely.
+
+:::
+
+The orphaned `flow_writer` / `flow_reader` roles and the `flow_ingest` quota are **not** dropped by `offboard`, because all three are instance-wide and may still apply to a tenant you have not migrated.
+Once no user holds the roles (`SELECT * FROM system.role_grants WHERE granted_role_name IN ('flow_writer', 'flow_reader')` returns nothing) and no unqualified writer remains for the quota to key, drop all three by hand:
+
+```sql
+DROP ROLE IF EXISTS flow_writer, flow_reader;
+DROP QUOTA IF EXISTS flow_ingest;
+```
+
+:::note[The legacy-account check needs `SHOW USERS`]
+
+`onboard` finds pre-rename accounts by reading `system.users`, and ClickHouse filters that table by access rather than refusing the query — an admin without `SHOW USERS` sees only itself and the run reports "no legacy account" with no error.
+Admins holding `CREATE USER` / `DROP USER` (what this page's privilege table already requires) see these rows.
+If the check fails outright, `onboard` says so on stderr and tells you to inspect `SHOW ROW POLICY <tenant>_iso ON <db>.flows` before trusting the run.
+
+:::
+
+:::warning[A row policy is not deny-by-default for users it does not name]
+
+ClickHouse ships `users_without_row_policies_can_read_rows=true` in its default `config.xml` (line 872 on the pinned 26.7 image).
+A user holding `SELECT` on a table and named by **no** policy on that table therefore reads **every row**, not none.
+Measured on the pinned image, not inferred: with `acme` and `other` rows present, a granted user named by the policy returned only `acme`; a granted user named by no policy returned both.
+
+Two consequences run through this page.
+Naming a principal on a policy *restricts* it — it never grants access the principal would otherwise lack.
+And removing a principal from a policy while it still holds `SELECT` *widens* it to every tenant, which is why `onboard` keeps a live pre-rename account on the policies it rewrites (see the upgrade section below).
+
+If you set this to `false`, the recipe still works; the failure mode simply flips from "reads too much" to "reads nothing".
+
+:::
 
 :::note[Why `OR REPLACE` rather than `IF NOT EXISTS`]
 
@@ -278,6 +325,12 @@ and, through the subcommand, `TenantOnboardingIT`):
   against a shared table holding every tenant. The rollups carry the same policy, so a
   pre-aggregated query is bounded exactly as the raw one is — a rollup is not a way around the
   boundary.
+- **Reads stay in-database** — and this half is the *grant*, not the policy. The reader holds
+  `flow_reader@<database>`, which carries `SELECT` on that database's tables and no other's, so a
+  query against another database is refused with `ACCESS_DENIED`. A policy could not have done
+  this: the other database has no policy naming this reader, and an unnamed user reads everything
+  (see the warning above). Before the roles were qualified, a `bi_*` account held `SELECT` on every
+  provisioned database and read in full any of them where its tenant had never been onboarded.
 - **Cannot write** — the `flow_reader@riptide` role grants no `INSERT` and pins `readonly`, so a
   write is rejected (`ACCESS_DENIED`).
 - **Cannot change schema** — `allow_ddl = 0` rejects any DDL, so a compromised dashboard credential

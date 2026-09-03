@@ -112,19 +112,37 @@ public final class ProvisioningCommand {
             err.println("warning: --ttl-days ignored — the flows table already exists, its retention"
                     + " is unchanged (use ALTER TABLE ... MODIFY TTL to change it)");
         }
+        // Reported, never dropped: a rolling upgrade is still authenticating as this account. The
+        // run has already kept it on this tenant's row policies, so it stays filtered to its own
+        // rows until the operator retires it.
+        result.legacyProbeError().ifPresent(why -> err.println(
+                "warning: could not check whether tenant '" + spec.tenant() + "' still has pre-rename"
+                        + " (database-unqualified) accounts on this server: " + why + ". This run"
+                        + " therefore could not keep such an account on the tenant's row policies,"
+                        + " and a user named by no policy reads every tenant's rows. If this server"
+                        + " was onboarded before the per-database rename, check"
+                        + " `SHOW ROW POLICY " + spec.tenant() + "_iso ON " + database + ".flows`"
+                        + " before trusting this run"));
         for (final String legacy : result.legacyAccounts()) {
-            // Named, not dropped: a rolling upgrade is still authenticating as this account until
-            // the operator pastes the stanza below. It holds the pre-#649 instance-wide
-            // flow_writer/flow_reader role, so until it goes the cross-database write this rename
-            // closes is still open for it.
-            err.println("warning: the pre-rename account '" + legacy + "' still exists on this server."
-                    + " It holds the old instance-wide role, so it can still reach every database"
-                    + " provisioned before the rename. Once the tenant's collector (and any BI"
-                    + " datasource) has moved to the '@" + database + "' account below, drop it:"
-                    + " DROP USER `" + legacy + "`");
+            final boolean writer = legacy.equals(ProvisioningDdl.legacyWriterUser(spec.tenant()));
+            err.println("warning: the pre-rename account '" + legacy + "' still exists on this server,"
+                    + " and it is instance-wide — it is not specific to database '" + database + "'."
+                    + (writer
+                            ? " It holds the old instance-wide write role, so it can still INSERT into"
+                                    + " every database provisioned before the rename."
+                            : " It holds the old instance-wide read role wherever that role was"
+                                    + " granted SELECT, so it can still read those databases.")
+                    + " This run kept it on this tenant's row policies, so it stays filtered to its"
+                    + " own rows meanwhile. Retire it only once EVERY database's collector and"
+                    + " datasource for tenant '" + spec.tenant() + "' has moved to the qualified"
+                    + " account — dropping it sooner takes those other databases offline. Then:"
+                    + " DROP USER `" + legacy + "`, and re-run onboard here so the policies stop"
+                    + " naming it.");
         }
         err.println("Onboarded tenant '" + spec.tenant() + "' (org '" + spec.organisation()
-                + "') into database '" + database + "'. Add this to the tenant's riptide config:");
+                + "') into database '" + database + "'. Add this to the tenant's riptide config"
+                + " (the collector authenticates as '"
+                + ProvisioningDdl.writerUser(spec.tenant(), database) + "'):");
         out.println(result.configStanza());
         return 0;
     }
@@ -143,10 +161,18 @@ public final class ProvisioningCommand {
         // the credential that actually authenticates carries no database in its name.
         err.println("Offboarded tenant '" + ref.tenant() + "' from database '" + ref.database()
                 + "': dropped " + ProvisioningDdl.writerUser(ref.tenant(), ref.database()) + " and "
-                + ProvisioningDdl.readerUser(ref.tenant(), ref.database()) + ", the pre-rename "
-                + String.join(" and ", ProvisioningDdl.legacyUsers(ref.tenant()))
-                + " if they existed, and the tenant's row policies on flows and every rollup."
+                + ProvisioningDdl.readerUser(ref.tenant(), ref.database())
+                + ", and the tenant's row policies on flows and every rollup."
                 + " The database's roles, constraints and quota stay (other tenants hold them).");
+        // The legacy pair is keyed on the tenant alone, so this drop reaches every database on the
+        // server, not just --database. Said plainly, because the line above is otherwise read as
+        // per-database and this is the half that can take an unrelated collector down.
+        err.println("note: also dropped the pre-rename accounts "
+                + String.join(" and ", ProvisioningDdl.legacyUsers(ref.tenant()))
+                + " if they existed. Those carry no database in their name, so they were"
+                + " INSTANCE-WIDE: any OTHER database on this server where tenant '" + ref.tenant()
+                + "' was still on the old naming has just lost its credential and must be"
+                + " re-onboarded to get a '@<database>' account of its own.");
         return 0;
     }
 

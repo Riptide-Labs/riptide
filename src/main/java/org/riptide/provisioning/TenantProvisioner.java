@@ -134,27 +134,49 @@ public final class TenantProvisioner {
                     spec.database(), plan.isPresent() ? refused : Set.copyOf(FlowsSchema.rollupTableNames())));
         }
         statements.addAll(ProvisioningDdl.ensureShared(spec.database(), spec.quotaBytes()));
+        // Probed BEFORE the statements are built, not after they run, and that ordering is the
+        // whole fix: the row policies this run replaces must keep naming any pre-#649 account that
+        // is still live, or the upgrade turns them into cross-tenant readers.
+        final LegacyProbe legacy = probeLegacyAccounts(spec.tenant());
         statements.addAll(ProvisioningDdl.onboardTenant(
-                spec.database(), spec.tenant(), spec.organisation(), writerPassword, readerPassword));
+                spec.database(), spec.tenant(), spec.organisation(), writerPassword, readerPassword,
+                legacy.live()));
         execute(statements);
 
-        return new OnboardResult(configStanza(spec), bootstrap, liveLegacyAccounts(spec.tenant()));
+        return new OnboardResult(configStanza(spec), bootstrap, legacy.live(), legacy.error());
+    }
+
+    /** What the pre-#649 account probe found, or why it could not look. Never both. */
+    private record LegacyProbe(List<String> live, Optional<String> error) {
+
+        static LegacyProbe found(final List<String> live) {
+            return new LegacyProbe(live, Optional.empty());
+        }
+
+        static LegacyProbe failed(final String why) {
+            return new LegacyProbe(List.of(), Optional.of(why));
+        }
     }
 
     /**
      * The database-unqualified accounts for this tenant that are still live (#649).
      *
-     * <p>Reported, never dropped: a rolling upgrade still has the tenant's collector authenticating
-     * as the legacy user until the operator pastes the new stanza, so removing it here would take
-     * ingest down. It matters because that account holds the old instance-wide {@code flow_writer}
-     * role, which carries {@code INSERT} on every database provisioned before the rename — so
-     * leaving it is the cross-database write this change closes, still open.
+     * <p>Load-bearing twice over. They are kept on the row policies for as long as they live — see
+     * {@link ProvisioningDdl#onboardTenant} — and they are reported to the operator, who is the only
+     * one who may drop them: a rolling upgrade still has the tenant's collector authenticating as
+     * the legacy writer until the new stanza is pasted, so removing it here would take ingest down.
      *
-     * <p>Best-effort, the same way {@link #plannedRollupRepair} degrades: an unreadable
-     * {@code system.users} logs and returns nothing rather than failing an onboard that has already
-     * succeeded.
+     * <p>A failure is <em>returned</em>, not swallowed. It used to log and yield an empty list,
+     * which is the same value as "no legacy account" — so the absence of a warning read as a clean
+     * instance while both the open cross-database write and the policy question stayed unanswered.
+     *
+     * <p>One limit it cannot close: ClickHouse filters {@code system.users} by access rather than
+     * refusing the query, so an admin without {@code SHOW USERS} sees only itself and this returns
+     * an under-count with no error. Onboard admins hold {@code CREATE USER}/{@code DROP USER} and so
+     * see these rows in practice; the failure mode is real but out of this method's reach, and is
+     * named in the operator-facing docs.
      */
-    private List<String> liveLegacyAccounts(final String tenant) {
+    private LegacyProbe probeLegacyAccounts(final String tenant) {
         final List<String> legacy = ProvisioningDdl.legacyUsers(tenant);
         final Set<String> live = new LinkedHashSet<>();
         final String in = legacy.stream().map(ProvisioningDdl::literal).collect(Collectors.joining(", "));
@@ -163,17 +185,18 @@ public final class TenantProvisioner {
             users.forEach(record -> live.add(record.getString("n")));
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
-            return List.of();
+            // Given a message of its own: an interrupt used to return the same silent empty list as
+            // success, so a cancelled probe was indistinguishable from a clean instance.
+            log.warn("Interrupted while checking for pre-rename accounts of tenant '{}'.", tenant);
+            return LegacyProbe.failed("interrupted while reading system.users");
         } catch (final Exception e) {
-            log.warn("Could not read system.users to check for pre-#649 accounts of tenant '{}': {}."
-                    + " If this instance was onboarded before the per-database rename, its legacy"
-                    + " writer can still write to every provisioned database — check by hand.",
+            log.warn("Could not read system.users to check for pre-rename accounts of tenant '{}': {}",
                     tenant, e.getMessage());
-            return List.of();
+            return LegacyProbe.failed(e.getMessage());
         }
         // Filtered rather than returned in the server's order, so the warning names the writer
         // first every time.
-        return legacy.stream().filter(live::contains).toList();
+        return LegacyProbe.found(legacy.stream().filter(live::contains).toList());
     }
 
     /**
@@ -232,12 +255,17 @@ public final class TenantProvisioner {
      * The config stanza plus whether this run created the schema — the caller needs the latter to
      * warn when an explicitly requested {@code --ttl-days} was not applied (table pre-existed).
      *
-     * @param legacyAccounts the pre-#649 unqualified accounts for this tenant that are still live,
-     *                       writer first; empty when there are none or the probe could not read
-     *                       {@code system.users}. The caller warns about them — this run does not
-     *                       drop them, because a rolling upgrade is still authenticating as one.
+     * @param legacyAccounts    the pre-#649 unqualified accounts for this tenant that are still
+     *                          live, writer first. This run kept them on the row policies and did
+     *                          not drop them, because a rolling upgrade is still authenticating as
+     *                          one; the caller tells the operator how to finish.
+     * @param legacyProbeError  why the probe could not look, when it could not. Empty on success,
+     *                          <em>including</em> a successful look that found nothing — the caller
+     *                          must be able to tell "no legacy account" from "did not find out",
+     *                          because only the first of those is safe to read as clean.
      */
-    public record OnboardResult(String configStanza, boolean schemaBootstrapped, List<String> legacyAccounts) {
+    public record OnboardResult(String configStanza, boolean schemaBootstrapped,
+                                List<String> legacyAccounts, Optional<String> legacyProbeError) {
         public OnboardResult {
             legacyAccounts = List.copyOf(legacyAccounts);
         }
