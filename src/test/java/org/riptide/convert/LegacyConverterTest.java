@@ -5,7 +5,11 @@
 
 package org.riptide.convert;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.riptide.inventory.InventoryLoader;
 import org.riptide.snmp.SnmpPollConfig;
 import org.riptide.inventory.InventorySnapshot;
@@ -604,6 +608,142 @@ class LegacyConverterTest {
                 .as("the hourly cadence reaches the emitted profile")
                 .contains("refresh-interval: PT1H")
                 .contains("snapshot-expiry: PT2H");
+    }
+
+    /**
+     * A cadence whose snapshots expire before the next walk converts unchanged, and the operator
+     * is told.
+     *
+     * <p>{@code PollingProfile.validate} has always warned about it. The converter used to pair
+     * each key with a partner that could not reach the branch, because with no Spring context the
+     * record went to the same stdout the generated configuration is written to — so the one run
+     * that reads the legacy file and knows this said nothing. {@link org.riptide.CliLogging} moved
+     * CLI logging to stderr, which is what releases it.</p>
+     *
+     * <p>Both halves are asserted: the emitted documents are the ones the pairing produced, so
+     * relaxing it changed what is reported and not what is converted.</p>
+     */
+    @Test
+    void anExpiryShorterThanItsRefreshStillConvertsAndIsNowReported() {
+        final ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(PollingProfile.class);
+        final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+
+        final LegacyConverter.Converted converted;
+        try {
+            converted = convert("""
+                    riptide:
+                      snmp:
+                        poll:
+                          refresh-interval-ms: 900000
+                          snapshot-expiry-ms: 300000
+                      nodes:
+                        core-router:
+                          subnet-address: 10.0.0.1
+                          snmp: {snmp-version: v3, security-name: m}
+                    """);
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+
+        assertThat(converted.mainConfig())
+                .as("the cadence is converted as written, warning or not")
+                .contains("refresh-interval: PT15M")
+                .contains("snapshot-expiry: PT5M");
+        assertThat(appender.list)
+                .as("the warning names the operator's own two durations")
+                .anySatisfy(event -> {
+                    assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                    assertThat(event.getFormattedMessage())
+                            .contains("expires snapshots (PT5M) faster than it refreshes them (PT15M)");
+                });
+    }
+
+    /**
+     * The cadence the emitted profile carries is the pair that is judged, so an expiry shorter
+     * than the refresh the profile will <em>bind</em> is reported too. Only {@code
+     * snapshot-expiry-ms} is written here; the profile takes the record's PT10M default refresh.
+     */
+    @Test
+    void anExpiryShorterThanTheDefaultRefreshIsReported() {
+        final ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(PollingProfile.class);
+        final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+
+        try {
+            convert("""
+                    riptide:
+                      snmp:
+                        poll:
+                          snapshot-expiry-ms: 60000
+                      nodes:
+                        core-router:
+                          subnet-address: 10.0.0.1
+                          snmp: {snmp-version: v3, security-name: m}
+                    """);
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+
+        assertThat(appender.list)
+                .as("an absent refresh-interval is not an absent refresh: the record defaults it")
+                .anySatisfy(event -> assertThat(event.getFormattedMessage())
+                        .contains("expires snapshots (PT1M) faster than it refreshes them (PT10M)"));
+    }
+
+    /**
+     * A cadence both of whose keys are in range says nothing, so the warning above cannot be a
+     * line every conversion prints. The pair here is the ordinary one: expiry longer than
+     * refresh.
+     */
+    @Test
+    void anOrdinaryCadenceReportsNothing() {
+        final ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(PollingProfile.class);
+        final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+
+        try {
+            convert(LEGACY);
+        } finally {
+            logger.detachAppender(appender);
+            appender.stop();
+        }
+
+        assertThat(appender.list)
+                .as("5-minute refresh, 15-minute expiry: nothing to say")
+                .isEmpty();
+    }
+
+    /**
+     * The refusal names the key the operator wrote, even when the other key is the valid one.
+     * Judging the written pair as a whole would report a 5-minute refresh as the value 0.9 will
+     * not accept, and send the operator to fix the setting that is fine.
+     */
+    @Test
+    void anOutOfRangeExpiryIsNamedWhenTheRefreshIsValid() {
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  snmp:
+                    poll:
+                      refresh-interval-ms: 300000
+                      snapshot-expiry-ms: 0
+                  nodes:
+                    core-router:
+                      subnet-address: 10.0.0.1
+                      snmp: {snmp-version: v3, security-name: m}
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("riptide.snmp.poll.snapshot-expiry-ms is 0 ms")
+                .hasMessageContaining("non-positive snapshot-expiry")
+                .hasMessageNotContaining("refresh-interval-ms is 300000");
     }
 
     /** A blank pin is rejected by 0.9, so it must not be emitted; 0.8 accepted the empty string. */

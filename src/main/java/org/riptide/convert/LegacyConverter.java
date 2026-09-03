@@ -219,26 +219,43 @@ public final class LegacyConverter {
      *
      * <p>Validated by building the real record rather than re-checking its rules here, for the
      * reason the node checks above give: a copy of the bounds would drift from the ones that
-     * actually run at startup. Each key is paired with a partner chosen so that
-     * {@code validate}'s expiry-shorter-than-refresh branch cannot be reached — that branch
-     * logs, and this command has no Spring context, so its logger writes to the same stdout the
-     * generated configuration is being written to.</p>
+     * actually run at startup. Each written key is checked on its own, against a partner that
+     * cannot be the field that fails, so a refusal names the key the operator wrote rather than
+     * whichever field {@code validate} happened to reach first.</p>
+     *
+     * <p>The cadence the emitted profile will actually carry is then validated once more, and
+     * that pass is what reports an expiry shorter than its refresh. The report is a log record,
+     * which this command could not afford until {@link org.riptide.CliLogging} moved CLI logging
+     * to stderr: with no Spring context it went to the same stdout the generated configuration is
+     * written to.</p>
      */
     private static void requireConvertibleCadence(final LegacyConfigReader.LegacyConfig legacy,
                                                   final Profiles profiles) {
         if (profiles.emitted.isEmpty()) {
             return;
         }
+        // an absent key is not absent from the profile: it binds the record's own default, so
+        // that is the value the operator's converted cadence really pairs with
+        final PollingProfile defaults = PollingProfile.builtInDefault();
+        final Duration refresh = legacy.refreshIntervalMs() == null
+                ? defaults.refreshInterval() : Duration.ofMillis(legacy.refreshIntervalMs());
+        final Duration expiry = legacy.snapshotExpiryMs() == null
+                ? defaults.snapshotExpiry() : Duration.ofMillis(legacy.snapshotExpiryMs());
         if (legacy.refreshIntervalMs() != null) {
-            final Duration refresh = Duration.ofMillis(legacy.refreshIntervalMs());
-            // paired with itself: equal durations never trip the shorter-than warning
+            // paired with itself: the expiry checks then repeat the refresh's own verdict, which
+            // the earlier refresh checks have already reached
             checkCadence(refresh, refresh, "refresh-interval-ms", legacy.refreshIntervalMs());
         }
         if (legacy.snapshotExpiryMs() != null) {
-            final Duration expiry = Duration.ofMillis(legacy.snapshotExpiryMs());
-            // one millisecond is below any expiry the record accepts, so the pair never warns
+            // one millisecond is at or below every expiry the record accepts, so the refresh
+            // half of this pair cannot be the field that fails
             checkCadence(Duration.ofMillis(1), expiry, "snapshot-expiry-ms", legacy.snapshotExpiryMs());
         }
+        // the pair as emitted, validated for its own sake: this is the call that tells an operator
+        // their snapshots expire faster than a walk can refresh them. It cannot throw — every
+        // written key passed above, and an unwritten one is a default the record already accepts
+        new PollingProfile(refresh, expiry, DEFAULT_TIMEOUT_MS, DEFAULT_RETRIES)
+                .validate("the converted polling cadence");
     }
 
     private static void checkCadence(final Duration refresh, final Duration expiry,
