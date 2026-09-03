@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
 
 /**
@@ -161,7 +162,7 @@ public final class LegacyConverter {
             summary.add("Re-enable a disabled range by enumerating its devices as single addresses, "
                     + "or by moving the segment to v3. Both are in the comment above each entry.");
         }
-        requireConvertibleCadence(legacy, profiles);
+        convertibleCadenceReport(legacy, profiles).ifPresent(summary::add);
         return new Converted(mainConfig(credentials, profiles), inventory(agents, exporters), summary);
     }
 
@@ -219,26 +220,69 @@ public final class LegacyConverter {
      *
      * <p>Validated by building the real record rather than re-checking its rules here, for the
      * reason the node checks above give: a copy of the bounds would drift from the ones that
-     * actually run at startup. Each key is paired with a partner chosen so that
-     * {@code validate}'s expiry-shorter-than-refresh branch cannot be reached — that branch
-     * logs, and this command has no Spring context, so its logger writes to the same stdout the
-     * generated configuration is being written to.</p>
+     * actually run at startup. Each written key is checked on its own, against a partner that
+     * cannot be the field that fails, so a refusal names the key the operator wrote rather than
+     * whichever field {@code validate} happened to reach first.</p>
+     *
+     * <p>Returns the one thing worth reporting that is not an error: an emitted cadence whose
+     * expiry is shorter than its refresh. It comes back as a summary line rather than a log
+     * record, for two reasons that outlive the stdout collision {@link org.riptide.CliLogging}
+     * fixed. {@link PollingProfile#validate}'s warning names the profile, and the only name this
+     * command could give it is one it invented, which appears nowhere in the operator's file. And
+     * with {@code --out-config} and {@code --out-inventory} — the form the upgrade guide
+     * recommends — the summary goes to stdout, so a logged record would split the report across
+     * two streams. The verdict itself still comes from
+     * {@link PollingProfile#expiryShorterThanRefresh}, so there is one copy of the rule.</p>
      */
-    private static void requireConvertibleCadence(final LegacyConfigReader.LegacyConfig legacy,
-                                                  final Profiles profiles) {
+    private static Optional<String> convertibleCadenceReport(final LegacyConfigReader.LegacyConfig legacy,
+                                                             final Profiles profiles) {
         if (profiles.emitted.isEmpty()) {
-            return;
+            return Optional.empty();
         }
+        // an absent key is not absent from the profile: it binds the record's own default, so
+        // that is the value the operator's converted cadence really pairs with
+        final PollingProfile defaults = PollingProfile.builtInDefault();
+        final Duration refresh = legacy.refreshIntervalMs() == null
+                ? defaults.refreshInterval() : Duration.ofMillis(legacy.refreshIntervalMs());
+        final Duration expiry = legacy.snapshotExpiryMs() == null
+                ? defaults.snapshotExpiry() : Duration.ofMillis(legacy.snapshotExpiryMs());
         if (legacy.refreshIntervalMs() != null) {
-            final Duration refresh = Duration.ofMillis(legacy.refreshIntervalMs());
-            // paired with itself: equal durations never trip the shorter-than warning
+            // paired with itself: the expiry checks then repeat the refresh's own verdict, which
+            // the earlier refresh checks have already reached
             checkCadence(refresh, refresh, "refresh-interval-ms", legacy.refreshIntervalMs());
         }
         if (legacy.snapshotExpiryMs() != null) {
-            final Duration expiry = Duration.ofMillis(legacy.snapshotExpiryMs());
-            // one millisecond is below any expiry the record accepts, so the pair never warns
+            // one millisecond is at or below every expiry the record accepts, so the refresh
+            // half of this pair cannot be the field that fails
             checkCadence(Duration.ofMillis(1), expiry, "snapshot-expiry-ms", legacy.snapshotExpiryMs());
         }
+        // the pair as emitted, asked about for its own sake. Not validate(): every written key
+        // passed above and an unwritten one is a default the record already accepts, so there is
+        // nothing left to throw — what is left is the one non-fatal verdict, and it is worth
+        // naming the operator's own keys for
+        if (!new PollingProfile(refresh, expiry, DEFAULT_TIMEOUT_MS, DEFAULT_RETRIES)
+                .expiryShorterThanRefresh()) {
+            return Optional.empty();
+        }
+        return Optional.of(("The converted polling profile expires snapshots (%s) faster than it "
+                + "refreshes them (%s), so a single missed walk blanks enrichment for its exporters. "
+                + "Here %s and %s. Raise the expiry above the refresh interval, or lower the refresh.")
+                .formatted(expiry, refresh,
+                        cadenceSource("snapshot-expiry-ms", legacy.snapshotExpiryMs(), expiry),
+                        cadenceSource("refresh-interval-ms", legacy.refreshIntervalMs(), refresh)));
+    }
+
+    /**
+     * How one half of the emitted cadence got its value, named the way the operator can act on it.
+     *
+     * <p>A defaulted half has to say so: the report quotes a duration that is nowhere in their
+     * file, and telling them to change {@code snapshot-expiry-ms} when they never wrote it sends
+     * them looking for a key that is not there.</p>
+     */
+    private static String cadenceSource(final String key, final Long written, final Duration effective) {
+        return written == null
+                ? "riptide.snmp.poll.%s was not set and binds the 0.9 default (%s)".formatted(key, effective)
+                : "riptide.snmp.poll.%s is %d ms".formatted(key, written);
     }
 
     private static void checkCadence(final Duration refresh, final Duration expiry,

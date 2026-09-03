@@ -28,6 +28,7 @@ import org.yaml.snakeyaml.Yaml;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -604,6 +605,152 @@ class LegacyConverterTest {
                 .as("the hourly cadence reaches the emitted profile")
                 .contains("refresh-interval: PT1H")
                 .contains("snapshot-expiry: PT2H");
+    }
+
+    /** The cadence lines in a conversion's summary — the whole report, so a duplicate is visible. */
+    private static List<String> cadenceReport(final LegacyConverter.Converted converted) {
+        return converted.summary().stream()
+                .filter(line -> line.contains("expires snapshots"))
+                .toList();
+    }
+
+    /**
+     * A cadence whose snapshots expire before the next walk converts unchanged, and the operator
+     * is told — in the summary, naming the keys from their own file.
+     *
+     * <p>{@code PollingProfile.validate} has always warned about this, and the converter used to
+     * pair each key with a partner that could not reach the branch, because with no Spring context
+     * the record went to the same stdout the generated configuration is written to. So the one run
+     * that reads the legacy file and knows said nothing.</p>
+     *
+     * <p>It is reported through the summary rather than that log record for two reasons the
+     * routing fix does not remove: {@code validate}'s message names a profile the converter
+     * invented, which appears nowhere in the operator's file, and on the {@code --out-config}
+     * invocation the upgrade guide recommends the summary goes to stdout, so a logged record would
+     * split the report across two streams.</p>
+     *
+     * <p>Both halves are asserted: the emitted documents are the ones the pairing produced, so
+     * relaxing it changed what is reported and not what is converted.</p>
+     */
+    @Test
+    void anExpiryShorterThanItsRefreshStillConvertsAndIsNowReported() {
+        final LegacyConverter.Converted converted = convert("""
+                riptide:
+                  snmp:
+                    poll:
+                      refresh-interval-ms: 900000
+                      snapshot-expiry-ms: 300000
+                  nodes:
+                    core-router:
+                      subnet-address: 10.0.0.1
+                      snmp: {snmp-version: v3, security-name: m}
+                """);
+
+        assertThat(converted.mainConfig())
+                .as("the cadence is converted as written, report or not")
+                .contains("refresh-interval: PT15M")
+                .contains("snapshot-expiry: PT5M");
+        assertThat(cadenceReport(converted))
+                .as("reported once, not once per validate() call")
+                .hasSize(1);
+        assertThat(cadenceReport(converted).getFirst())
+                .as("the report names the operator's own two keys, not a profile name we invented")
+                .contains("expires snapshots (PT5M) faster than it refreshes them (PT15M)")
+                .contains("riptide.snmp.poll.snapshot-expiry-ms is 300000 ms")
+                .contains("riptide.snmp.poll.refresh-interval-ms is 900000 ms")
+                .doesNotContain("the converted polling cadence");
+    }
+
+    /**
+     * The cadence the emitted profile carries is the pair that is judged, so an expiry shorter
+     * than the refresh the profile will <em>bind</em> is reported too. Only {@code
+     * snapshot-expiry-ms} is written here; the profile takes the record's PT10M default refresh.
+     */
+    @Test
+    void anExpiryShorterThanTheDefaultRefreshIsReported() {
+        final LegacyConverter.Converted converted = convert("""
+                riptide:
+                  snmp:
+                    poll:
+                      snapshot-expiry-ms: 60000
+                  nodes:
+                    core-router:
+                      subnet-address: 10.0.0.1
+                      snmp: {snmp-version: v3, security-name: m}
+                """);
+
+        assertThat(cadenceReport(converted)).hasSize(1);
+        assertThat(cadenceReport(converted).getFirst())
+                .as("an absent refresh-interval is not an absent refresh: the record defaults it")
+                .contains("expires snapshots (PT1M) faster than it refreshes them (PT10M)")
+                .contains("riptide.snmp.poll.refresh-interval-ms was not set and binds the 0.9 default (PT10M)");
+    }
+
+    /**
+     * The symmetric case, and the one a surviving mutation exposed: the refresh is written and the
+     * <em>expiry</em> is defaulted.
+     *
+     * <p>Gating the emitted-pair check on {@code snapshotExpiryMs() != null} — a plausible "judge
+     * only what the operator wrote" refactor — left every other cadence test green, because they
+     * all write that key. A 45-minute refresh against the record's PT30M default expiry converts
+     * into a profile that expires snapshots before the walk that fills them, and the operator has
+     * to be told which value is the default, since it is nowhere in their file.</p>
+     */
+    @Test
+    void aRefreshLongerThanTheDefaultExpiryIsReported() {
+        final LegacyConverter.Converted converted = convert("""
+                riptide:
+                  snmp:
+                    poll:
+                      refresh-interval-ms: 2700000
+                  nodes:
+                    core-router:
+                      subnet-address: 10.0.0.1
+                      snmp: {snmp-version: v3, security-name: m}
+                """);
+
+        assertThat(cadenceReport(converted)).hasSize(1);
+        assertThat(cadenceReport(converted).getFirst())
+                .contains("expires snapshots (PT30M) faster than it refreshes them (PT45M)")
+                .contains("riptide.snmp.poll.refresh-interval-ms is 2700000 ms")
+                .as("the half they never wrote has to be named as a default")
+                .contains("riptide.snmp.poll.snapshot-expiry-ms was not set and binds the 0.9 default (PT30M)");
+    }
+
+    /**
+     * A cadence both of whose keys are in range says nothing, so the report above cannot be a
+     * line every conversion prints. The pair here is the ordinary one: expiry longer than
+     * refresh.
+     */
+    @Test
+    void anOrdinaryCadenceReportsNothing() {
+        assertThat(cadenceReport(convert(LEGACY)))
+                .as("5-minute refresh, 15-minute expiry: nothing to say")
+                .isEmpty();
+    }
+
+    /**
+     * The refusal names the key the operator wrote, even when the other key is the valid one.
+     * Judging the written pair as a whole would report a 5-minute refresh as the value 0.9 will
+     * not accept, and send the operator to fix the setting that is fine.
+     */
+    @Test
+    void anOutOfRangeExpiryIsNamedWhenTheRefreshIsValid() {
+        assertThatThrownBy(() -> convert("""
+                riptide:
+                  snmp:
+                    poll:
+                      refresh-interval-ms: 300000
+                      snapshot-expiry-ms: 0
+                  nodes:
+                    core-router:
+                      subnet-address: 10.0.0.1
+                      snmp: {snmp-version: v3, security-name: m}
+                """))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("riptide.snmp.poll.snapshot-expiry-ms is 0 ms")
+                .hasMessageContaining("non-positive snapshot-expiry")
+                .hasMessageNotContaining("refresh-interval-ms is 300000");
     }
 
     /** A blank pin is rejected by 0.9, so it must not be emitted; 0.8 accepted the empty string. */
