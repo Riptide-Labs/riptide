@@ -225,10 +225,24 @@ the distinction to reach for when deciding which one you are looking at:
 A *refused* insert may still have committed a prefix of the batch, yet the whole batch is charged here (see [insert batching](../configuration/clickhouse.md#insert-batching-batch)); the same is true when an unexpected `Error` escapes the flusher, since it may escape with an insert already in flight.
 The other two are certain loss: rows the flusher still held when it was interrupted, and rows left over once the shutdown grace period expires. Neither ever reached the server.
 
-Delivery accounting: `recordsScheduled − dispatchDrops − dispatchErrors` is what reached the
-persister. Note `recordsDispatched` does **not** exclude `dispatchErrors`: the dispatcher catches
+Delivery accounting: `recordsReceived − dispatchDrops − dispatchErrors` is what reached the
+persister.
+
+Start from `recordsReceived`, **not** `recordsScheduled`. `dispatchDrops` counts two populations
+and only one of them is in `recordsScheduled`: a packet refused by a full queue is charged to
+`dispatchDrops` and returns *before* the scheduled mark, while records abandoned at shutdown were
+scheduled first. Subtracting all of `dispatchDrops` from `recordsScheduled` therefore removes the
+queue-full records twice and understates delivery — by exactly the amount that matters, since the
+queue-full term is the one that grows under the overload these counters exist for. Measured on the
+saturation case in `ParserDispatchTest`: received 9, scheduled 6, dropped 3, actually delivered 6 —
+`received − drops` gives 6, `scheduled − drops` gives 3.
+
+Note `recordsDispatched` does **not** exclude `dispatchErrors`: the dispatcher catches
 the failure and returns normally, so the records are marked dispatched and counted as errors both.
 Do not read that meter as delivery confirmation — subtract, or use the drop counters directly.
+It disagrees downwards too, in two places: an `Error` escaping the dispatcher skips the mark, and
+records abandoned at shutdown were scheduled and never dispatched. `DaemonDispatcherTest` and
+`ParserDispatchTest` pin both directions.
 That arithmetic stops at the persister: do **not** extend it to persisted rows by subtracting `failedRows`, because a refused insert counted in full there may have committed part of its batch. Query the table for what landed.
 
 **Is `failedRows` alertable?** Yes, on a sustained rate — but as a signal, not as a loss figure.
