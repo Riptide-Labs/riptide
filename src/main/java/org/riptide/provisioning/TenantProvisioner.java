@@ -20,6 +20,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import java.util.stream.Collectors;
 
 /**
  * Provisions and de-provisions a tenant against ClickHouse using an admin connection. This is the
@@ -137,7 +138,42 @@ public final class TenantProvisioner {
                 spec.database(), spec.tenant(), spec.organisation(), writerPassword, readerPassword));
         execute(statements);
 
-        return new OnboardResult(configStanza(spec), bootstrap);
+        return new OnboardResult(configStanza(spec), bootstrap, liveLegacyAccounts(spec.tenant()));
+    }
+
+    /**
+     * The database-unqualified accounts for this tenant that are still live (#649).
+     *
+     * <p>Reported, never dropped: a rolling upgrade still has the tenant's collector authenticating
+     * as the legacy user until the operator pastes the new stanza, so removing it here would take
+     * ingest down. It matters because that account holds the old instance-wide {@code flow_writer}
+     * role, which carries {@code INSERT} on every database provisioned before the rename — so
+     * leaving it is the cross-database write this change closes, still open.
+     *
+     * <p>Best-effort, the same way {@link #plannedRollupRepair} degrades: an unreadable
+     * {@code system.users} logs and returns nothing rather than failing an onboard that has already
+     * succeeded.
+     */
+    private List<String> liveLegacyAccounts(final String tenant) {
+        final List<String> legacy = ProvisioningDdl.legacyUsers(tenant);
+        final Set<String> live = new LinkedHashSet<>();
+        final String in = legacy.stream().map(ProvisioningDdl::literal).collect(Collectors.joining(", "));
+        try (var users = this.admin.queryRecords(
+                "SELECT name AS n FROM system.users WHERE name IN (" + in + ")").get()) {
+            users.forEach(record -> live.add(record.getString("n")));
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return List.of();
+        } catch (final Exception e) {
+            log.warn("Could not read system.users to check for pre-#649 accounts of tenant '{}': {}."
+                    + " If this instance was onboarded before the per-database rename, its legacy"
+                    + " writer can still write to every provisioned database — check by hand.",
+                    tenant, e.getMessage());
+            return List.of();
+        }
+        // Filtered rather than returned in the server's order, so the warning names the writer
+        // first every time.
+        return legacy.stream().filter(live::contains).toList();
     }
 
     /**
@@ -195,8 +231,16 @@ public final class TenantProvisioner {
     /**
      * The config stanza plus whether this run created the schema — the caller needs the latter to
      * warn when an explicitly requested {@code --ttl-days} was not applied (table pre-existed).
+     *
+     * @param legacyAccounts the pre-#649 unqualified accounts for this tenant that are still live,
+     *                       writer first; empty when there are none or the probe could not read
+     *                       {@code system.users}. The caller warns about them — this run does not
+     *                       drop them, because a rolling upgrade is still authenticating as one.
      */
-    public record OnboardResult(String configStanza, boolean schemaBootstrapped) {
+    public record OnboardResult(String configStanza, boolean schemaBootstrapped, List<String> legacyAccounts) {
+        public OnboardResult {
+            legacyAccounts = List.copyOf(legacyAccounts);
+        }
     }
 
     /**
@@ -259,7 +303,10 @@ public final class TenantProvisioner {
         }
     }
 
-    /** Drop the tenant's users and row policy; the shared roles/constraints/quota are left intact. */
+    /**
+     * Drop the tenant's users — both the database-qualified accounts and the pre-#649 unqualified
+     * ones — and its row policies. The per-database roles/constraints/quota are left intact.
+     */
     public void offboard(final TenantRef ref) {
         execute(ProvisioningDdl.offboardTenant(ref.database(), ref.tenant()));
     }
@@ -284,7 +331,7 @@ public final class TenantProvisioner {
     private static String configStanza(final TenantSpec spec) {
         // Built by concatenation (not String.format) so the line separators stay literal '\n' — a
         // config stanza the operator pastes, not platform-dependent output.
-        return "riptide.clickhouse.username=writer_" + spec.tenant() + "\n"
+        return "riptide.clickhouse.username=" + ProvisioningDdl.writerUser(spec.tenant(), spec.database()) + "\n"
                 + "riptide.clickhouse.password=" + spec.writerSecret() + "\n"
                 + "riptide.identity.tenant=" + spec.tenant() + "\n"
                 + "riptide.identity.organisation=" + spec.organisation();

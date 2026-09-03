@@ -12,10 +12,16 @@ import java.util.regex.Pattern;
  * constrained to a safe charset so they cannot break out of the generated identifiers or literals
  * (this tool runs with admin credentials — an unvalidated tenant name would be an injection vector).
  *
- * @param tenant         tenant id (hard isolation); becomes part of the {@code writer_}/{@code bi_}
- *                       user names and the row-policy name
+ * @param tenant         tenant id (hard isolation); with {@code database} it composes the
+ *                       {@code writer_<tenant>@<database>} / {@code bi_<tenant>@<database>} user
+ *                       names (#649 — users are instance-wide, so the database has to be in the
+ *                       name). It alone names the row policy, {@code <tenant>_iso}, whose identity
+ *                       is already {@code name ON db.table}. The {@code @} is introduced by
+ *                       {@code ProvisioningDdl.qualified} and never accepted here: the charset below
+ *                       cannot produce it, which is what makes the split point unambiguous
  * @param organisation   organisation id (hard isolation)
- * @param database       ClickHouse database holding the {@code flows} table
+ * @param database       ClickHouse database holding the {@code flows} table; also qualifies the
+ *                       generated user, role and quota names
  * @param writerSecret   secret reference resolving to the writer user's password
  * @param readerSecret   secret reference resolving to the reader (BI) user's password
  * @param quotaBytes     per-writer hourly ingest ceiling for the shared keyed quota

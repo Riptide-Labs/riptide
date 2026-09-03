@@ -13,6 +13,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The provisioning SQL is generated, so its escaping and shape are unit-checked here — the live
@@ -33,14 +34,78 @@ class ProvisioningDdlTest {
         assertThat(ProvisioningDdl.ident("writer_acme")).isEqualTo("`writer_acme`");
     }
 
+    /**
+     * {@code ident} must keep rejecting the delimiter. {@code @} is introduced only by
+     * {@link ProvisioningDdl#qualified}, from components each validated on their own — accepting it
+     * from input would make the split point forgeable and the composition no longer injective.
+     */
+    @Test
+    void identRejectsTheQualifierDelimiter() {
+        assertThatThrownBy(() -> ProvisioningDdl.ident("writer_acme@riptide"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ProvisioningDdl.writerUser("ac@me", "riptide"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ProvisioningDdl.writerUser("acme", "ript'ide"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    /**
+     * The property the {@code @} delimiter exists for (#649): {@code (tenant, database)} maps to a
+     * distinct name for every pair. An inequality between two computed names, deliberately — a test
+     * that spelled out the expected strings would move with the naming instead of pinning it, and
+     * would still pass under a {@code _} delimiter, which is exactly the collision being ruled out.
+     */
+    @Test
+    void qualifyingIsInjectiveOverTheTenantDatabaseSplit() {
+        // The collision the delimiter has to rule out is in the tenant/database join, and it is
+        // narrower than it looks: the pair must differ only in where the split falls. `_` is legal
+        // in both components, so under `<tenant>_<database>` both of these spell
+        // `writer_foo_bar_baz` and the second onboarding would take over the first's account.
+        assertThat(ProvisioningDdl.writerUser("foo", "bar_baz"))
+                .isNotEqualTo(ProvisioningDdl.writerUser("foo_bar", "baz"));
+        assertThat(ProvisioningDdl.readerUser("foo", "bar_baz"))
+                .isNotEqualTo(ProvisioningDdl.readerUser("foo_bar", "baz"));
+
+        // Same tenant, two databases: two accounts, so the second onboarding cannot rotate the
+        // first one's password. (Observed against a server in TenantOnboardingIT.)
+        assertThat(ProvisioningDdl.writerUser("acme", "db_a"))
+                .isNotEqualTo(ProvisioningDdl.writerUser("acme", "db_b"));
+        // ...and a writer and a reader are never the same account either.
+        assertThat(ProvisioningDdl.writerUser("acme", "db_a"))
+                .isNotEqualTo(ProvisioningDdl.readerUser("acme", "db_a"));
+    }
+
     @Test
     void ensureSharedHasRolesConstraintsAndKeyedQuota() {
         final List<String> sql = ProvisioningDdl.ensureShared("riptide", 50_000_000_000L);
-        assertThat(sql).anyMatch(s -> s.contains("CREATE ROLE IF NOT EXISTS flow_writer"));
-        assertThat(sql).anyMatch(s -> s.contains("ALTER ROLE flow_reader SETTINGS readonly = 2, allow_ddl = 0"));
+        assertThat(sql).anyMatch(s -> s.contains("CREATE ROLE IF NOT EXISTS `flow_writer@riptide`"));
+        assertThat(sql).anyMatch(s ->
+                s.contains("ALTER ROLE `flow_reader@riptide` SETTINGS readonly = 2, allow_ddl = 0"));
         assertThat(sql).anyMatch(s -> s.contains("ADD CONSTRAINT IF NOT EXISTS tenant_pinned"));
-        assertThat(sql).anyMatch(s -> s.contains("KEYED BY user_name TO flow_writer"));
+        assertThat(sql).anyMatch(s -> s.contains("KEYED BY user_name TO `flow_writer@riptide`"));
         assertThat(sql).anyMatch(s -> s.contains("MAX written_bytes = 50000000000"));
+    }
+
+    /**
+     * Every instance-wide object carries its database (#649). Users, roles and quotas share one flat
+     * namespace across the server, so an unqualified role is one role for every database on it — and
+     * that is the privilege that let {@code writer_acme} in {@code db_b} insert into {@code db_a}.
+     * Asserted as "no statement names an unqualified one", not as a name list, so a role added later
+     * cannot slip through unqualified.
+     */
+    @Test
+    void everyInstanceWideObjectIsQualifiedByItsDatabase() {
+        final List<String> sql = ProvisioningDdl.ensureShared("db_a", 1L);
+        assertThat(sql)
+                .as("an unqualified role or quota is shared by every database on the instance")
+                .noneMatch(s -> s.contains("`flow_writer`") || s.contains("`flow_reader`")
+                        || s.contains("`flow_ingest`")
+                        || s.contains(" flow_writer") || s.contains(" flow_reader")
+                        || s.contains(" flow_ingest"));
+        assertThat(sql).anyMatch(s -> s.contains("CREATE QUOTA IF NOT EXISTS `flow_ingest@db_a`"));
+        // The bodies are unchanged; only the names moved. A second database gets its own set.
+        assertThat(ProvisioningDdl.ensureShared("db_b", 1L))
+                .noneMatch(s -> s.contains("@db_a`"));
     }
 
     @Test
@@ -102,16 +167,20 @@ class ProvisioningDdlTest {
         // The six user/grant statements, the flows policy, then one policy per rollup.
         assertThat(sql).hasSize(7 + FlowsSchema.rollupTableNames().size());
         assertThat(sql.get(0))
-                .contains("CREATE USER IF NOT EXISTS `writer_acme`")
+                .contains("CREATE USER IF NOT EXISTS `writer_acme@riptide`")
                 .contains("IDENTIFIED WITH sha256_password BY 'p\\'w'")
                 .contains("SQL_tenant = 'acme' CONST, SQL_org = 'acme-eu' CONST");
         // Password reconciled with ALTER USER so a re-run after rotation updates the credential.
-        assertThat(sql.get(1)).isEqualTo("ALTER USER `writer_acme` IDENTIFIED WITH sha256_password BY 'p\\'w'");
-        assertThat(sql.get(2)).isEqualTo("GRANT flow_writer TO `writer_acme`");
-        assertThat(sql.get(4)).isEqualTo("ALTER USER `bi_acme` IDENTIFIED WITH sha256_password BY 'r\\'w'");
+        assertThat(sql.get(1))
+                .isEqualTo("ALTER USER `writer_acme@riptide` IDENTIFIED WITH sha256_password BY 'p\\'w'");
+        assertThat(sql.get(2)).isEqualTo("GRANT `flow_writer@riptide` TO `writer_acme@riptide`");
+        assertThat(sql.get(4))
+                .isEqualTo("ALTER USER `bi_acme@riptide` IDENTIFIED WITH sha256_password BY 'r\\'w'");
+        // The row policy keeps its unqualified name: its identity is `name ON db.table`, so it is
+        // already scoped by the table it hangs on.
         assertThat(sql.get(6))
                 .contains("CREATE ROW POLICY OR REPLACE `acme_iso` ON `riptide`.flows")
-                .contains("USING tenant = 'acme' TO `bi_acme`");
+                .contains("USING tenant = 'acme' TO `bi_acme@riptide`");
     }
 
     @Test
@@ -218,8 +287,8 @@ class ProvisioningDdlTest {
         final List<String> sql = ProvisioningDdl.ensureShared("riptide", 1L);
         for (final String rollup : FlowsSchema.rollupTableNames()) {
             final String table = FlowsSchema.qualifiedRollup("riptide", rollup);
-            assertThat(sql).contains("GRANT INSERT ON " + table + " TO flow_writer");
-            assertThat(sql).contains("GRANT SELECT ON " + table + " TO flow_reader");
+            assertThat(sql).contains("GRANT INSERT ON " + table + " TO `flow_writer@riptide`");
+            assertThat(sql).contains("GRANT SELECT ON " + table + " TO `flow_reader@riptide`");
         }
     }
 
@@ -234,14 +303,15 @@ class ProvisioningDdlTest {
         final List<String> sql = ProvisioningDdl.ensureShared("riptide", 1L);
         for (final String rollup : FlowsSchema.rollupTableNames()) {
             final String mv = FlowsSchema.qualifiedRollupView("riptide", rollup);
-            assertThat(sql).contains("GRANT SHOW TABLES ON " + mv + " TO flow_writer");
-            // SELECT would be a cross-tenant read path. flow_writer is shared by every per-tenant
-            // writer, and a row policy on the rollup target does NOT apply through the view's name:
-            // probed on 26.7, a writer holding SELECT on the _mv read every tenant's rows while
-            // being denied outright on the target the policy is attached to.
+            assertThat(sql).contains("GRANT SHOW TABLES ON " + mv + " TO `flow_writer@riptide`");
+            // SELECT would be a cross-tenant read path. The writer role is per-database now, but it
+            // is still shared by every tenant IN that database, and a row policy on the rollup
+            // target does NOT apply through the view's name: probed on 26.7, a writer holding
+            // SELECT on the _mv read every tenant's rows while being denied outright on the target
+            // the policy is attached to.
             assertThat(sql)
                     .as("SELECT on a rollup view bypasses the target's row policy")
-                    .doesNotContain("GRANT SELECT ON " + mv + " TO flow_writer");
+                    .doesNotContain("GRANT SELECT ON " + mv + " TO `flow_writer@riptide`");
         }
     }
 
@@ -250,7 +320,7 @@ class ProvisioningDdlTest {
         // A materialized view runs as the inserting user: without SELECT on the source table the
         // rollups would silently receive nothing.
         assertThat(ProvisioningDdl.ensureShared("riptide", 1L))
-                .contains("GRANT SELECT ON `riptide`.flows TO flow_writer");
+                .contains("GRANT SELECT ON `riptide`.flows TO `flow_writer@riptide`");
     }
 
     @Test
@@ -265,9 +335,9 @@ class ProvisioningDdlTest {
         // rollup views) but not on the rollups, which it only ever reaches by INSERT.
         assertThat(policies.getFirst())
                 .contains("ON `riptide`.flows ")
-                .endsWith("TO `bi_acme`, `writer_acme`");
+                .endsWith("TO `bi_acme@riptide`, `writer_acme@riptide`");
         assertThat(policies.subList(1, policies.size()))
-                .allSatisfy(policy -> assertThat(policy).endsWith("TO `bi_acme`"));
+                .allSatisfy(policy -> assertThat(policy).endsWith("TO `bi_acme@riptide`"));
     }
 
     @Test
@@ -294,7 +364,44 @@ class ProvisioningDdlTest {
             assertThat(sql).contains("DROP ROW POLICY IF EXISTS `acme_iso` ON "
                     + FlowsSchema.qualifiedRollup("riptide", rollup));
         }
-        assertThat(sql.get(sql.size() - 2)).isEqualTo("DROP USER IF EXISTS `bi_acme`");
-        assertThat(sql.getLast()).isEqualTo("DROP USER IF EXISTS `writer_acme`");
+        assertThat(sql).contains("DROP USER IF EXISTS `bi_acme@riptide`");
+        assertThat(sql).contains("DROP USER IF EXISTS `writer_acme@riptide`");
+    }
+
+    /**
+     * Offboard drops the pre-#649 unqualified accounts too.
+     *
+     * <p>Without this the rename turns an upgrade into a silently failed revocation: on an instance
+     * onboarded before it, the credential that actually authenticates is {@code writer_acme}, and
+     * dropping only {@code writer_acme@riptide} would leave it live while the CLI reported the
+     * tenant revoked. The legacy roles are deliberately left alone — they are instance-wide and may
+     * still be granted to another tenant's legacy user.
+     */
+    @Test
+    void offboardAlsoDropsThePreRenameAccounts() {
+        final List<String> sql = ProvisioningDdl.offboardTenant("riptide", "acme");
+        assertThat(sql).contains("DROP USER IF EXISTS `writer_acme`");
+        assertThat(sql).contains("DROP USER IF EXISTS `bi_acme`");
+        assertThat(sql)
+                .as("the legacy roles may still be granted to another tenant's legacy user")
+                .noneMatch(s -> s.startsWith("DROP ROLE"));
+    }
+
+    /**
+     * The row policies keep their unqualified name, on purpose.
+     *
+     * <p>A policy's identity is {@code name ON db.table} — {@code system.row_policies.name} holds
+     * the full form, and {@code acme_iso ON db_a.flows} / {@code acme_iso ON db_b.flows} coexist as
+     * two objects (verified on 26.7). Qualifying the short name would buy no isolation and cost
+     * every upgraded deployment a migration, so this pins the decision against a later "fix".
+     */
+    @Test
+    void rowPolicyNamesStayUnqualifiedBecauseTheirTableAlreadyScopesThem() {
+        assertThat(ProvisioningDdl.onboardTenant("db_a", "acme", "org1", "w", "r"))
+                .filteredOn(s -> s.contains("ROW POLICY"))
+                .allSatisfy(s -> assertThat(s).contains("`acme_iso` ON `db_a`."));
+        assertThat(ProvisioningDdl.onboardTenant("db_b", "acme", "org1", "w", "r"))
+                .filteredOn(s -> s.contains("ROW POLICY"))
+                .allSatisfy(s -> assertThat(s).contains("`acme_iso` ON `db_b`."));
     }
 }

@@ -10,6 +10,7 @@ import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.riptide.config.ClickhouseConfig;
 import org.riptide.provisioning.ProvisioningCommand;
+import org.riptide.provisioning.ProvisioningDdl;
 import org.riptide.schema.FlowsSchema;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
@@ -38,6 +39,13 @@ import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
  * the full isolation matrix — honest write persists, cross-tenant write is rejected (469,
  * {@code VIOLATED_CONSTRAINT}), the
  * reader sees only its tenant and cannot write/DDL — and {@code offboard} must revoke access.
+ *
+ * <p>Since #649 the isolation matrix also spans <em>databases</em>: the same tenant id onboarded
+ * into two databases on one server must get two independent accounts, and neither may write into
+ * the other's tables ({@link #aTenantOnboardedIntoTwoDatabasesGetsTwoIsolatedAccounts}). The upgrade
+ * from the old unqualified naming is covered by
+ * {@link #offboardRevokesAnInstanceProvisionedUnderTheOldNaming} and
+ * {@link #onboardWarnsAboutALiveLegacyAccountWithoutDroppingIt}.
  *
  * <p>The server needs {@code custom_settings_prefixes: SQL_} for the CHECK barrier the onboarding
  * recipe installs; it is mounted from the classpath, as in {@link TenantWriteBarrierIT}.
@@ -72,7 +80,7 @@ public class TenantOnboardingIT {
                 .hasStackTraceContaining("VIOLATED_CONSTRAINT");
 
         // The reader sees only its own tenant (row policy) and cannot write or DDL (readonly role).
-        try (var reader = rawClient("bi_acme", "rA")) {
+        try (var reader = rawClient(ProvisioningDdl.readerUser("acme", DATABASE), "rA")) {
             final var rows = reader.queryAll(
                     "SELECT tenant FROM " + DATABASE + ".flows WHERE srcPort IN (31001, 31002)");
             Assertions.assertThat(rows).hasSize(1);
@@ -96,7 +104,10 @@ public class TenantOnboardingIT {
                 discard());
         Assertions.assertThat(code).isZero();
         Assertions.assertThat(out.toString(StandardCharsets.UTF_8))
-                .contains("riptide.clickhouse.username=writer_cfg")
+                // The stanza is the operator's only copy of the username, and since #649 that name
+                // carries the database — a stanza still naming `writer_cfg` would hand them a
+                // credential that no longer exists.
+                .contains("riptide.clickhouse.username=writer_cfg@" + DATABASE)
                 .contains("riptide.clickhouse.password=wC")
                 .contains("riptide.identity.tenant=cfg")
                 .contains("riptide.identity.organisation=cfg-eu");
@@ -107,18 +118,19 @@ public class TenantOnboardingIT {
 
     @Test
     void reonboardRotatesTheWriterPassword() throws Exception {
+        final String rotWriter = ProvisioningDdl.writerUser("rot", DATABASE);
         Assertions.assertThat(onboard("rot", "rot-eu", "pw1", "rr1")).isZero();
-        try (var writer = rawClient("writer_rot", "pw1")) {
+        try (var writer = rawClient(rotWriter, "pw1")) {
             Assertions.assertThat(writer.queryAll("SELECT 1 AS c").getFirst().getLong("c")).isEqualTo(1);
         }
 
         // Re-onboard with a rotated writer secret: the new password must take effect...
         Assertions.assertThat(onboard("rot", "rot-eu", "pw2", "rr1")).isZero();
-        try (var writer = rawClient("writer_rot", "pw2")) {
+        try (var writer = rawClient(rotWriter, "pw2")) {
             Assertions.assertThat(writer.queryAll("SELECT 1 AS c").getFirst().getLong("c")).isEqualTo(1);
         }
         // ...and the old one must stop working.
-        try (var stale = rawClient("writer_rot", "pw1")) {
+        try (var stale = rawClient(rotWriter, "pw1")) {
             Assertions.assertThatThrownBy(() -> stale.queryAll("SELECT 1 AS c"))
                     .hasStackTraceContaining("AUTHENTICATION_FAILED");
         }
@@ -141,8 +153,11 @@ public class TenantOnboardingIT {
                 .addEndpoint(endpoint()).setUsername("default").setPassword("").build()) {
             Assertions.assertThat(admin.queryAll("EXISTS DATABASE `ript1de`")
                     .getFirst().getLong("result")).isZero();
+            // A prefix match, not the exact name: the account the aborted run would have created
+            // is `writer_phantom@ript1de`, so pinning the bare name would have stopped catching
+            // the leak the moment #649 qualified it.
             Assertions.assertThat(admin.queryAll(
-                            "SELECT count() AS c FROM system.users WHERE name = 'writer_phantom'")
+                            "SELECT count() AS c FROM system.users WHERE name LIKE 'writer_phantom%'")
                     .getFirst().getLong("c")).isZero();
         }
     }
@@ -169,8 +184,9 @@ public class TenantOnboardingIT {
 
     @Test
     void offboardRevokesAccessOnlyWithYes() throws Exception {
+        final String tempReader = ProvisioningDdl.readerUser("temp", DATABASE);
         Assertions.assertThat(onboard("temp", "temp-eu", "wT", "rT")).isZero();
-        try (var reader = rawClient("bi_temp", "rT")) {
+        try (var reader = rawClient(tempReader, "rT")) {
             Assertions.assertThat(reader.queryAll("SELECT 1 AS c").getFirst().getLong("c")).isEqualTo(1);
         }
 
@@ -178,7 +194,7 @@ public class TenantOnboardingIT {
         Assertions.assertThat(ProvisioningCommand.run(
                 new String[] {"offboard", "--admin-url", endpoint(), "--database", DATABASE, "--tenant", "temp"},
                 discard(), discard())).isEqualTo(2);
-        try (var reader = rawClient("bi_temp", "rT")) {
+        try (var reader = rawClient(tempReader, "rT")) {
             Assertions.assertThat(reader.queryAll("SELECT 1 AS c").getFirst().getLong("c")).isEqualTo(1);
         }
 
@@ -186,10 +202,159 @@ public class TenantOnboardingIT {
         Assertions.assertThat(ProvisioningCommand.run(
                 new String[] {"offboard", "--admin-url", endpoint(), "--database", DATABASE, "--tenant", "temp", "--yes"},
                 discard(), discard())).isZero();
-        try (var reader = rawClient("bi_temp", "rT")) {
+        try (var reader = rawClient(tempReader, "rT")) {
             Assertions.assertThatThrownBy(() -> reader.queryAll("SELECT 1 AS c"))
-                    .hasStackTraceContaining("bi_temp");
+                    .hasStackTraceContaining(ClickhouseServerErrors.AUTHENTICATION_FAILED_MESSAGE_PREFIX)
+                    .hasStackTraceContaining(tempReader);
         }
+    }
+
+    /**
+     * The same tenant id in two databases on one server is two independent tenants (#649).
+     *
+     * <p>Two things used to go wrong at once, and both are asserted here as behaviour rather than as
+     * a name. The users carried no database, so the second onboarding's {@code ALTER USER} rotated
+     * the first one's password out from under a running collector. And the {@code flow_writer} role
+     * carried none either, so every writer on the instance held {@code INSERT} on every provisioned
+     * database's {@code flows} and rollups.</p>
+     *
+     * <p>The refusal has to be {@code ACCESS_DENIED}, not {@code VIOLATED_CONSTRAINT}: the
+     * {@code tenant_pinned} CHECK passes here, because both databases genuinely carry the tenant id
+     * this credential is pinned to. Qualifying only the user names would have left that the sole
+     * barrier, and it does not hold.</p>
+     */
+    @Test
+    void aTenantOnboardedIntoTwoDatabasesGetsTwoIsolatedAccounts() throws Exception {
+        Assertions.assertThat(onboardDual("iso_a", "pwA")).isZero();
+        Assertions.assertThat(onboardDual("iso_b", "pwB")).isZero();
+
+        final String writerA = ProvisioningDdl.writerUser("dual", "iso_a");
+        final String writerB = ProvisioningDdl.writerUser("dual", "iso_b");
+        Assertions.assertThat(writerA).isNotEqualTo(writerB);
+
+        // The second onboarding did not rotate the first one's password.
+        try (var first = rawClientOn("iso_a", writerA, "pwA")) {
+            Assertions.assertThat(first.queryAll("SELECT 1 AS c").getFirst().getLong("c")).isEqualTo(1);
+        }
+
+        try (var second = rawClientOn("iso_b", writerB, "pwB")) {
+            // Its own database still works, so the refusals below are about the boundary and not
+            // about a writer that cannot write at all.
+            second.execute("INSERT INTO " + FlowsSchema.qualifiedFlows("iso_b")
+                    + " (tenant, organisation, timestamp) VALUES ('dual', 'dual-eu', now())").get();
+
+            Assertions.assertThatThrownBy(() -> second.execute("INSERT INTO "
+                            + FlowsSchema.qualifiedFlows("iso_a")
+                            + " (tenant, organisation, timestamp) VALUES ('dual', 'dual-eu', now())").get())
+                    .as("the writer of one database must not reach another database's flows")
+                    .hasStackTraceContaining(ClickhouseServerErrors.ACCESS_DENIED_MESSAGE_PREFIX)
+                    .hasStackTraceContaining("ACCESS_DENIED");
+
+            // And the rollup targets, which no CHECK constraint covers at all: they are fed by
+            // materialized views, so a direct INSERT there is stopped by the grant or by nothing.
+            final String rollup = FlowsSchema.qualifiedRollup("iso_a", FlowsSchema.rollupTableNames().getFirst());
+            Assertions.assertThatThrownBy(() -> second.execute("INSERT INTO " + rollup
+                            + " (tenant, organisation, timestamp) VALUES ('dual', 'dual-eu', now())").get())
+                    .as("nor another database's rollup targets")
+                    .hasStackTraceContaining(ClickhouseServerErrors.ACCESS_DENIED_MESSAGE_PREFIX)
+                    .hasStackTraceContaining("ACCESS_DENIED");
+        }
+
+        // The first database's row is the only one in it: nothing crossed.
+        try (var admin = adminClient()) {
+            Assertions.assertThat(admin.queryAll("SELECT count() AS c FROM " + FlowsSchema.qualifiedFlows("iso_a"))
+                    .getFirst().getLong("c")).isZero();
+            Assertions.assertThat(admin.queryAll("SELECT count() AS c FROM " + FlowsSchema.qualifiedFlows("iso_b"))
+                    .getFirst().getLong("c")).isEqualTo(1);
+        }
+    }
+
+    /**
+     * Offboarding an instance provisioned under the pre-#649 naming really revokes it.
+     *
+     * <p>The rename is what makes this a test rather than a tautology: the credential that
+     * authenticates on such an instance is the unqualified {@code writer_old}, and an
+     * {@code offboard} that dropped only {@code writer_old@upg} would have printed its "offboarded"
+     * line over a credential that still works. The fixture is built by hand precisely because no
+     * current code path can produce that state any more.</p>
+     */
+    @Test
+    void offboardRevokesAnInstanceProvisionedUnderTheOldNaming() throws Exception {
+        try (var admin = adminClient()) {
+            admin.execute(FlowsSchema.createDatabase("upg")).get();
+            admin.execute(FlowsSchema.createFlowsTable("upg")).get();
+            // Exactly what riptide emitted before the rename: instance-wide roles, unqualified users.
+            admin.execute("CREATE ROLE IF NOT EXISTS flow_writer").get();
+            admin.execute("GRANT INSERT ON " + FlowsSchema.qualifiedFlows("upg") + " TO flow_writer").get();
+            admin.execute("CREATE USER writer_old IDENTIFIED WITH sha256_password BY 'legacyW'"
+                    + " SETTINGS SQL_tenant = 'old' CONST, SQL_org = 'old-eu' CONST").get();
+            admin.execute("GRANT flow_writer TO writer_old").get();
+            admin.execute("CREATE USER bi_old IDENTIFIED WITH sha256_password BY 'legacyR'").get();
+
+            try (var legacy = rawClientOn("upg", "writer_old", "legacyW")) {
+                Assertions.assertThat(legacy.queryAll("SELECT 1 AS c").getFirst().getLong("c")).isEqualTo(1);
+            }
+
+            Assertions.assertThat(ProvisioningCommand.run(
+                    new String[] {"offboard", "--admin-url", endpoint(), "--database", "upg",
+                            "--tenant", "old", "--yes"},
+                    discard(), discard())).isZero();
+
+            try (var stale = rawClientOn("upg", "writer_old", "legacyW")) {
+                Assertions.assertThatThrownBy(() -> stale.queryAll("SELECT 1 AS c"))
+                        .as("the credential the operator was told is revoked must stop authenticating")
+                        .hasStackTraceContaining(ClickhouseServerErrors.AUTHENTICATION_FAILED_MESSAGE_PREFIX);
+            }
+            Assertions.assertThat(admin.queryAll("SELECT count() AS c FROM system.users"
+                            + " WHERE name IN ('writer_old', 'bi_old')").getFirst().getLong("c"))
+                    .isZero();
+            // The legacy role stays: it is instance-wide and may still be granted to another
+            // tenant's legacy user, so dropping it here would revoke a tenant nobody offboarded.
+            Assertions.assertThat(admin.queryAll(
+                            "SELECT count() AS c FROM system.roles WHERE name = 'flow_writer'")
+                    .getFirst().getLong("c")).isEqualTo(1);
+        }
+    }
+
+    /**
+     * A live pre-#649 account is reported on a successful onboard, and not dropped.
+     *
+     * <p>Dropping it here would take a rolling upgrade's ingest down: the tenant's collector is
+     * still authenticating as it until the operator pastes the new stanza. Saying nothing would
+     * leave the cross-database write this change closes wide open for that account, discovered by
+     * an operator rather than by CI.</p>
+     */
+    @Test
+    void onboardWarnsAboutALiveLegacyAccountWithoutDroppingIt() throws Exception {
+        try (var admin = adminClient()) {
+            admin.execute("CREATE USER writer_warn IDENTIFIED WITH sha256_password BY 'legacyW'").get();
+
+            final var err = new ByteArrayOutputStream();
+            Assertions.assertThat(ProvisioningCommand.run(
+                    onboardArgs("warn", "warn-eu", "wW", "rW"),
+                    discard(), new PrintStream(err, true, StandardCharsets.UTF_8))).isZero();
+
+            Assertions.assertThat(err.toString(StandardCharsets.UTF_8))
+                    .contains("writer_warn")
+                    .contains("DROP USER");
+
+            // Named, not dropped — it still authenticates.
+            try (var legacy = rawClient("writer_warn", "legacyW")) {
+                Assertions.assertThat(legacy.queryAll("SELECT 1 AS c").getFirst().getLong("c")).isEqualTo(1);
+            }
+        }
+    }
+
+    /** Onboard tenant {@code dual} into {@code database} with its own writer secret. */
+    private static int onboardDual(final String database, final String writerPw) {
+        return ProvisioningCommand.run(new String[] {
+                "onboard", "--admin-url", endpoint(), "--database", database, "--create-schema",
+                "--tenant", "dual", "--org", "dual-eu",
+                "--writer-secret", writerPw, "--reader-secret", "r" + writerPw}, discard(), discard());
+    }
+
+    private static Client adminClient() {
+        return new Client.Builder().addEndpoint(endpoint()).setUsername("default").setPassword("").build();
     }
 
     @Test
@@ -397,7 +562,7 @@ public class TenantOnboardingIT {
     private static ClickhouseRepository writerRepository(final String tenant, final String password) {
         final var config = new ClickhouseConfig();
         config.setEndpoint(endpoint());
-        config.setUsername(SecretRef.of("writer_" + tenant));
+        config.setUsername(SecretRef.of(ProvisioningDdl.writerUser(tenant, DATABASE)));
         config.setPassword(SecretRef.of(password));
         config.setDatabase(DATABASE);
         config.setManageSchema(false);
@@ -407,11 +572,15 @@ public class TenantOnboardingIT {
     }
 
     private static Client rawClient(final String user, final String password) {
+        return rawClientOn(DATABASE, user, password);
+    }
+
+    private static Client rawClientOn(final String database, final String user, final String password) {
         return new Client.Builder()
                 .addEndpoint(endpoint())
                 .setUsername(user)
                 .setPassword(password)
-                .setDefaultDatabase(DATABASE)
+                .setDefaultDatabase(database)
                 .build();
     }
 

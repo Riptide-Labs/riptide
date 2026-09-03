@@ -83,7 +83,7 @@ java -jar riptide.jar onboard \
 
 ```
 # printed to stdout — paste into the tenant's collector config:
-riptide.clickhouse.username=writer_acme
+riptide.clickhouse.username=writer_acme@riptide
 riptide.clickhouse.password=env://ACME_WRITER_PW
 riptide.identity.tenant=acme
 riptide.identity.organisation=acme-eu
@@ -113,8 +113,7 @@ checks `CREATE` privileges even when `IF NOT EXISTS` would no-op).
 `onboard` is safe to re-run: it reconciles the writer/reader **passwords** to the current secret, so
 rotating a secret and re-running updates ClickHouse (the users' `CONST` settings are preserved; the
 row policies are **re-asserted** to match the recipe — a policy `TO` list widened by hand is
-reverted on the next run, so route extra grantees through provisioning, not manual DDL). To remove a tenant: `offboard --admin-url … --tenant acme --yes` (drops its users and
-its row policy from `flows` **and every rollup**; the shared roles/constraints/quota stay).
+reverted on the next run, so route extra grantees through provisioning, not manual DDL). To remove a tenant: `offboard --admin-url … --tenant acme --yes` (drops its users — the `@<database>` accounts **and** the pre-rename unqualified ones — and its row policy from `flows` **and every rollup**; the database's roles/constraints/quota stay, since other tenants hold them).
 
 ### Adding rollups to an existing deployment
 
@@ -149,9 +148,9 @@ If `onboard` reports a rollup as *left as it is*, that rollup is deliberately no
 ### What it provisions
 
 The recipe is **role-based**: the schema, the grants, the reader hardening, the CHECK barrier, and
-the quota are one-time objects, so per-tenant reduces to the scoped users + role grants + one row
-policy per table (`flows` and each rollup, all sharing the tenant-literal predicate). `onboard`
-ensures the one-time objects on first run and adds the per-tenant part:
+the quota are one-time **per-database** objects, so per-tenant reduces to the scoped users + role
+grants + one row policy per table (`flows` and each rollup, all sharing the tenant-literal
+predicate). `onboard` ensures the per-database objects on first run and adds the per-tenant part:
 
 ```sql
 -- Only with --create-schema, and only when the schema is actually missing (a default run emits
@@ -163,47 +162,96 @@ CREATE TABLE IF NOT EXISTS riptide.flows (…);  -- single-node MergeTree, TTL f
 CREATE TABLE IF NOT EXISTS riptide.flows_by_application_1m (…);          -- and three more
 CREATE MATERIALIZED VIEW IF NOT EXISTS riptide.flows_by_application_1m_mv
   TO riptide.flows_by_application_1m AS SELECT … FROM riptide.flows AS f GROUP BY …;
--- Once per cluster (idempotent): roles carry every per-tenant grant and the reader hardening.
-CREATE ROLE IF NOT EXISTS flow_writer;
-GRANT INSERT ON riptide.flows TO flow_writer;
+-- Once per database (idempotent): roles carry every per-tenant grant and the reader hardening.
+-- Users, roles and quotas are instance-wide objects, so their names carry the database.
+CREATE ROLE IF NOT EXISTS `flow_writer@riptide`;
+GRANT INSERT ON riptide.flows TO `flow_writer@riptide`;
 -- The writer also reads flows: a materialized view runs as the inserting user, so pushing a row
 -- into a rollup requires SELECT on the view's source table.
-GRANT SELECT ON riptide.flows TO flow_writer;
-CREATE ROLE IF NOT EXISTS flow_reader;
-GRANT SELECT ON riptide.flows TO flow_reader;
-GRANT SELECT ON system.databases TO flow_reader;
-GRANT SELECT ON system.tables    TO flow_reader;
-GRANT SELECT ON system.columns   TO flow_reader;   -- the catalog a query builder needs
+GRANT SELECT ON riptide.flows TO `flow_writer@riptide`;
+CREATE ROLE IF NOT EXISTS `flow_reader@riptide`;
+GRANT SELECT ON riptide.flows TO `flow_reader@riptide`;
+GRANT SELECT ON system.databases TO `flow_reader@riptide`;
+GRANT SELECT ON system.tables    TO `flow_reader@riptide`;
+GRANT SELECT ON system.columns   TO `flow_reader@riptide`;   -- the catalog a query builder needs
 -- readonly = 2 blocks writes and DDL while tolerating the read-only settings an HTTP client sends
 -- per query; readonly = 1 would reject those and break the connection.
-ALTER ROLE flow_reader SETTINGS readonly = 2, allow_ddl = 0;
+ALTER ROLE `flow_reader@riptide` SETTINGS readonly = 2, allow_ddl = 0;
 -- The write barrier: each row's tenant/org must equal the writer credential's pinned CONST setting.
 ALTER TABLE riptide.flows ADD CONSTRAINT IF NOT EXISTS tenant_pinned CHECK tenant = getSetting('SQL_tenant');
 ALTER TABLE riptide.flows ADD CONSTRAINT IF NOT EXISTS org_pinned    CHECK organisation = getSetting('SQL_org');
 -- One quota keyed by user gives every writer its own bucket (written_bytes — written_rows is not a metric).
-CREATE QUOTA IF NOT EXISTS flow_ingest FOR INTERVAL 1 hour MAX written_bytes = 50000000000
-  KEYED BY user_name TO flow_writer;
+CREATE QUOTA IF NOT EXISTS `flow_ingest@riptide` FOR INTERVAL 1 hour MAX written_bytes = 50000000000
+  KEYED BY user_name TO `flow_writer@riptide`;
 -- Every rollup gets the same treatment as flows, for both roles.
-GRANT INSERT ON riptide.flows_by_application_1m TO flow_writer;   -- and the other three
-GRANT SELECT ON riptide.flows_by_application_1m TO flow_reader;
+GRANT INSERT ON riptide.flows_by_application_1m TO `flow_writer@riptide`;   -- and the other three
+GRANT SELECT ON riptide.flows_by_application_1m TO `flow_reader@riptide`;
 
 -- Per tenant (the residual): two scoped users + role grants + one row policy per table.
-CREATE USER IF NOT EXISTS writer_acme IDENTIFIED WITH sha256_password BY '…'
+CREATE USER IF NOT EXISTS `writer_acme@riptide` IDENTIFIED WITH sha256_password BY '…'
   SETTINGS SQL_tenant = 'acme' CONST, SQL_org = 'acme-eu' CONST;
-GRANT flow_writer TO writer_acme;
-CREATE USER IF NOT EXISTS bi_acme IDENTIFIED WITH sha256_password BY '…'
+GRANT `flow_writer@riptide` TO `writer_acme@riptide`;
+CREATE USER IF NOT EXISTS `bi_acme@riptide` IDENTIFIED WITH sha256_password BY '…'
   SETTINGS SQL_tenant = 'acme' CONST, SQL_org = 'acme-eu' CONST;
-GRANT flow_reader TO bi_acme;
+GRANT `flow_reader@riptide` TO `bi_acme@riptide`;
 -- The writer is named on the flows policy alongside the reader: a row policy is deny-by-default
 -- for anyone it does not name, and the writer must read flows for the rollup views to push. Its
 -- predicate is the same tenant the CHECK barrier already pins, so it grants no extra row.
+-- The policy name is NOT qualified: a policy's identity is `name ON db.table`, so it is already
+-- scoped by the table it hangs on.
 CREATE ROW POLICY OR REPLACE acme_iso ON riptide.flows
-  FOR SELECT USING tenant = 'acme' TO bi_acme, writer_acme;
+  FOR SELECT USING tenant = 'acme' TO `bi_acme@riptide`, `writer_acme@riptide`;
 -- The rollup policies name the reader only — the writer reaches a rollup by INSERT through its
 -- materialized view, which no row policy filters.
 CREATE ROW POLICY OR REPLACE acme_iso ON riptide.flows_by_application_1m
-  FOR SELECT USING tenant = 'acme' TO bi_acme;                    -- and the other three
+  FOR SELECT USING tenant = 'acme' TO `bi_acme@riptide`;                    -- and the other three
 ```
+
+### Object names carry their database
+
+ClickHouse users, roles and quotas live in one flat namespace across the whole server — a database is not a scope for them.
+So every one of those names is composed as `<name>@<database>`, and it is the database that makes the tenant's account unique on the instance.
+
+This matters as soon as one server holds two riptide databases.
+Without the qualifier, onboarding tenant `acme` into a second database rewrote the first `writer_acme`'s password, and one shared `flow_writer` role gave every writer `INSERT` on every provisioned database's `flows` and rollups.
+With it, the second onboarding creates a separate account, and a cross-database write is refused with `ACCESS_DENIED` because the grant simply is not there.
+The `CHECK` barrier cannot substitute for this: `tenant_pinned` passes whenever both databases carry the same tenant id.
+
+`@` is the delimiter because tenant and database names are both restricted to `[A-Za-z0-9_-]+`, which cannot produce it.
+An underscore would be ambiguous — tenant `foo` in database `bar_baz` and tenant `foo_bar` in database `baz` would both spell `writer_foo_bar_baz`, and the second onboarding would take over the first's account.
+Names containing `@` must be backticked in SQL, and they authenticate normally over both HTTP basic auth and the native protocol.
+
+Row policies are the exception, and deliberately so.
+A policy's identity is already `name ON db.table`, so `acme_iso ON db_a.flows` and `acme_iso ON db_b.flows` are two distinct objects.
+Their names are left alone.
+
+### Upgrading a deployment onboarded before the rename
+
+Nothing breaks on upgrade, and nothing is removed for you.
+An instance provisioned under the old naming keeps its unqualified `writer_<tenant>` / `bi_<tenant>` users and its `flow_writer` / `flow_reader` roles, and its collector keeps working.
+
+Re-running `onboard` **adds** the qualified account alongside the old one — it does not rename or drop it, because the tenant's collector is still authenticating as the old one until you paste the new stanza.
+The run prints a warning naming the leftover account and the `DROP USER` to run:
+
+```
+warning: the pre-rename account 'writer_acme' still exists on this server. It holds the old
+instance-wide role, so it can still reach every database provisioned before the rename. Once the
+tenant's collector (and any BI datasource) has moved to the '@riptide' account below, drop it:
+DROP USER `writer_acme`
+```
+
+The order that avoids downtime, per tenant:
+
+1. Re-run `onboard` for the tenant. The qualified account is created with the same secret.
+2. Update the collector config to the username from the new stanza, and any Grafana/MCP datasource to the new `bi_<tenant>@<database>`. Restart them.
+3. Drop the old account: ``DROP USER `writer_acme`;`` and ``DROP USER `bi_acme`;``.
+
+Until step 3 the old account still holds the old instance-wide role, so it can still write to every database provisioned before the rename — that is the whole reason to finish.
+
+`offboard` needs no such sequencing: it drops both namings, so it revokes a tenant whether or not that tenant has been migrated.
+
+The orphaned `flow_writer` / `flow_reader` roles are **not** dropped by `offboard`, because they are instance-wide and may still be granted to a tenant you have not migrated.
+Once no user holds them (`SELECT * FROM system.role_grants WHERE granted_role_name IN ('flow_writer', 'flow_reader')` returns nothing), drop them by hand.
 
 :::note[Why `OR REPLACE` rather than `IF NOT EXISTS`]
 
@@ -226,12 +274,12 @@ stay a per-tenant literal.
 The hardened BI credential is a real boundary, not just a filter (proven by `TenantQueryIsolationIT`
 and, through the subcommand, `TenantOnboardingIT`):
 
-- **Reads stay in-tenant** — the row policy limits `bi_acme` to `tenant = 'acme'` rows, even
+- **Reads stay in-tenant** — the row policy limits `bi_acme@riptide` to `tenant = 'acme'` rows, even
   against a shared table holding every tenant. The rollups carry the same policy, so a
   pre-aggregated query is bounded exactly as the raw one is — a rollup is not a way around the
   boundary.
-- **Cannot write** — the `flow_reader` role grants no `INSERT` and pins `readonly`, so a write is
-  rejected (`ACCESS_DENIED`).
+- **Cannot write** — the `flow_reader@riptide` role grants no `INSERT` and pins `readonly`, so a
+  write is rejected (`ACCESS_DENIED`).
 - **Cannot change schema** — `allow_ddl = 0` rejects any DDL, so a compromised dashboard credential
   cannot alter or drop the table.
 - **Query builder still works** — the `system.databases/tables/columns` grants let Grafana's query
@@ -240,7 +288,7 @@ and, through the subcommand, `TenantOnboardingIT`):
 ## Grafana topology
 
 The isolation boundary in Grafana **OSS** is **one Grafana org (or one Grafana instance) per
-tenant**, each with a datasource that authenticates as that tenant's `bi_*` user. The ClickHouse
+tenant**, each with a datasource that authenticates as that tenant's `bi_<tenant>@<database>` user. The ClickHouse
 row policy does the enforcing; Grafana just holds the right credential.
 
 What is **not** a boundary on OSS:

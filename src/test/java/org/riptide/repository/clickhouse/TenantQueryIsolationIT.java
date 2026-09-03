@@ -27,7 +27,8 @@ import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
  * not just a filter. This proves the {@code onboard_tenant} runbook's reader recipe against a real
  * ClickHouse server, the read-side counterpart to {@link TenantWriteBarrierIT}.
  *
- * <p>An admin provisions a {@code bi_acme} user with {@code readonly = 2}, {@code allow_ddl = 0}, a
+ * <p>An admin provisions a {@code bi_acme@queryiso} user (named as {@code riptide onboard} names it
+ * since #649 — {@code bi_<tenant>@<database>}) with {@code readonly = 2}, {@code allow_ddl = 0}, a
  * {@code SELECT} grant on the flows table plus the catalog tables a query builder needs, and a row
  * policy scoping it to {@code tenant = 'acme'}. The assertions:
  * <ul>
@@ -86,14 +87,14 @@ public class TenantQueryIsolationIT {
         // with catalog access so a query builder (Grafana) can inspect the schema. readonly=2
         // blocks writes and DDL while still tolerating the read-only settings the HTTP client sends
         // per query (readonly=1 would reject those and break the connection).
-        admin.execute("CREATE USER bi_acme IDENTIFIED WITH no_password "
+        admin.execute("CREATE USER `bi_acme@queryiso` IDENTIFIED WITH no_password "
                 + "SETTINGS readonly = 2, allow_ddl = 0").get();
-        admin.execute("GRANT SELECT ON " + DATABASE + ".flows TO bi_acme").get();
-        admin.execute("GRANT SELECT ON system.databases TO bi_acme").get();
-        admin.execute("GRANT SELECT ON system.tables TO bi_acme").get();
-        admin.execute("GRANT SELECT ON system.columns TO bi_acme").get();
+        admin.execute("GRANT SELECT ON " + DATABASE + ".flows TO `bi_acme@queryiso`").get();
+        admin.execute("GRANT SELECT ON system.databases TO `bi_acme@queryiso`").get();
+        admin.execute("GRANT SELECT ON system.tables TO `bi_acme@queryiso`").get();
+        admin.execute("GRANT SELECT ON system.columns TO `bi_acme@queryiso`").get();
         admin.execute("CREATE ROW POLICY acme_bi ON " + DATABASE + ".flows "
-                + "FOR SELECT USING tenant = 'acme' TO bi_acme").get();
+                + "FOR SELECT USING tenant = 'acme' TO `bi_acme@queryiso`").get();
 
         // A probe with an INSERT grant but readonly = 2: proves the readonly layer blocks writes
         // independently of the grant layer, so it is genuinely load-bearing (a stray future write
@@ -178,7 +179,7 @@ public class TenantQueryIsolationIT {
     private static Client biClient() {
         return new Client.Builder()
                 .addEndpoint(endpoint())
-                .setUsername("bi_acme")
+                .setUsername("bi_acme@queryiso")
                 .setPassword("")
                 .setDefaultDatabase(DATABASE)
                 .build();

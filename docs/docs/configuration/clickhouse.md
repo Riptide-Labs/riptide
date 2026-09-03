@@ -38,7 +38,7 @@ valid reference. Per-tenant writer credentials are sourced this way so no plaint
 configuration:
 
 ```properties
-riptide.clickhouse.username=writer_acme
+riptide.clickhouse.username=writer_acme@riptide
 riptide.clickhouse.password=vault://secret/riptide/clickhouse/acme#password
 ```
 
@@ -249,14 +249,16 @@ Riptide tells this apart from a missing grant by asking the server: a trivial qu
 On a deployment whose writer has not been granted `SHOW TABLES` on a view, that probe is refused, so each affected rollup produces one `ACCESS_DENIED` entry in `system.query_log` per start. That is expected, not a fault: the writer is deliberately not granted `SELECT` on a view, because rows read through a view's name are not filtered by a row policy on its target. Granting `SELECT` to silence it would open a read path around the policy. Add the `SHOW TABLES` grant below instead, which removes the probe entirely.
 :::
 
-The usual cause of the "could not be verified" message is grants — specifically a view that exists but is not granted, which riptide now says explicitly. It also covers the case where riptide asked the server and could not make sense of the answer. Riptide's collector connects as the writer, and ClickHouse hides objects a role holds no grant on rather than refusing the query, so a view the writer cannot see reads as zero rows. `riptide onboard` grants `SHOW TABLES` on each `X_mv` to `flow_writer`; a database provisioned before that grant existed, or by hand, needs it added:
+The usual cause of the "could not be verified" message is grants — specifically a view that exists but is not granted, which riptide now says explicitly. It also covers the case where riptide asked the server and could not make sense of the answer. Riptide's collector connects as the writer, and ClickHouse hides objects a role holds no grant on rather than refusing the query, so a view the writer cannot see reads as zero rows. `riptide onboard` grants `SHOW TABLES` on each `X_mv` to the database's write role; a database provisioned before that grant existed, or by hand, needs it added:
 
 ```sql
-GRANT SHOW TABLES ON riptide.flows_by_application_1m_mv TO flow_writer;
+GRANT SHOW TABLES ON riptide.flows_by_application_1m_mv TO `flow_writer@riptide`;
 -- and the same for flows_by_conversation_1m_mv, flows_by_exporter_iface_1m_mv, flows_by_geo_asn_1m_mv
 ```
 
-`SHOW TABLES` and not `SELECT`, deliberately. `flow_writer` is shared by every per-tenant writer, and a row policy attached to a rollup target does **not** apply when the same rows are read through the view's name — granting `SELECT` there would give every tenant's writer a read path around the policy. `SHOW TABLES` makes the view visible in `system.tables` for the shape check and grants no data access.
+The role name carries the database (see [Multi-tenancy](../deploy/multi-tenancy.md#object-names-carry-their-database)). On a deployment onboarded before that, it is the unqualified `flow_writer`.
+
+`SHOW TABLES` and not `SELECT`, deliberately. The write role is shared by every per-tenant writer in its database, and a row policy attached to a rollup target does **not** apply when the same rows are read through the view's name — granting `SELECT` there would give each of those writers a read path around the policy. `SHOW TABLES` makes the view visible in `system.tables` for the shape check and grants no data access.
 
 Re-running `riptide onboard` against an existing database does this for you and is safe: it adds grants and preserves data.
 

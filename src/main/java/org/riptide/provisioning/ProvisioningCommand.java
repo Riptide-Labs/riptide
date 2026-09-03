@@ -112,8 +112,19 @@ public final class ProvisioningCommand {
             err.println("warning: --ttl-days ignored — the flows table already exists, its retention"
                     + " is unchanged (use ALTER TABLE ... MODIFY TTL to change it)");
         }
+        for (final String legacy : result.legacyAccounts()) {
+            // Named, not dropped: a rolling upgrade is still authenticating as this account until
+            // the operator pastes the stanza below. It holds the pre-#649 instance-wide
+            // flow_writer/flow_reader role, so until it goes the cross-database write this rename
+            // closes is still open for it.
+            err.println("warning: the pre-rename account '" + legacy + "' still exists on this server."
+                    + " It holds the old instance-wide role, so it can still reach every database"
+                    + " provisioned before the rename. Once the tenant's collector (and any BI"
+                    + " datasource) has moved to the '@" + database + "' account below, drop it:"
+                    + " DROP USER `" + legacy + "`");
+        }
         err.println("Onboarded tenant '" + spec.tenant() + "' (org '" + spec.organisation()
-                + "'). Add this to the tenant's riptide config:");
+                + "') into database '" + database + "'. Add this to the tenant's riptide config:");
         out.println(result.configStanza());
         return 0;
     }
@@ -122,12 +133,20 @@ public final class ProvisioningCommand {
                                 final PrintStream err) {
         final var ref = new TenantProvisioner.TenantRef(database, parsed.require("tenant"));
         if (!parsed.flags.contains("yes")) {
-            err.println("refusing to offboard '" + ref.tenant()
-                    + "' without --yes (this drops the tenant's writer/reader users and row policy)");
+            err.println("refusing to offboard '" + ref.tenant() + "' from database '" + ref.database()
+                    + "' without --yes (this drops the tenant's writer/reader users and row policies)");
             return 2;
         }
         provisioner.offboard(ref);
-        err.println("Offboarded tenant '" + ref.tenant() + "' (dropped its users and row policy).");
+        // Names the database and the legacy cleanup, because the old line ("dropped its users and
+        // row policy") read as a complete revocation on an instance onboarded before #649 — where
+        // the credential that actually authenticates carries no database in its name.
+        err.println("Offboarded tenant '" + ref.tenant() + "' from database '" + ref.database()
+                + "': dropped " + ProvisioningDdl.writerUser(ref.tenant(), ref.database()) + " and "
+                + ProvisioningDdl.readerUser(ref.tenant(), ref.database()) + ", the pre-rename "
+                + String.join(" and ", ProvisioningDdl.legacyUsers(ref.tenant()))
+                + " if they existed, and the tenant's row policies on flows and every rollup."
+                + " The database's roles, constraints and quota stay (other tenants hold them).");
         return 0;
     }
 
