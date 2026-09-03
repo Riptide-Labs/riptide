@@ -221,7 +221,8 @@ docs-lint-admonitions:
 		echo ""; \
 		echo "$$bad"; \
 		exit 1; \
-	fi
+	fi; \
+	echo "admonition syntax: checked $(words $(ADMONITION_TREES)) tree(s), no v2 titled forms"
 
 .PHONY: docs
 docs: deps-docs docs-lint-admonitions
