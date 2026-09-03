@@ -65,7 +65,9 @@ help:
 	@echo "  lint-actions: Lint the GitHub Actions workflows (actionlint + zizmor)"
 	@echo "  contributors: Regenerate the README contributor badge and table from .all-contributorsrc"
 	@echo "  contributors-check: Fail if the README contributor section is out of sync with .all-contributorsrc"
-	@echo "  docs:         Build the Docusaurus documentation site into docs/build"
+	@echo "  docs:         Build the Docusaurus documentation site into docs/build and lint the rendered pages"
+	@echo "  docs-lint-admonitions: Fail if any built page shows admonition markup as body copy"
+	@echo "  docs-lint-test: Run the rendered-admonition checker's fixture tests"
 	@echo "  docs-serve:   Run the documentation site locally with live reload"
 	@echo "  landing-serve: Serve the landing page locally for preview"
 	@echo "  clean:        Clean the build artifacts"
@@ -187,46 +189,37 @@ contributors-check: contributors
 deps-docs:
 	command -v npm
 
-# A Docusaurus v2 titled admonition (":::warning Some title") is not a directive at all: it renders
-# as literal ":::" body copy on the published page. Nothing else reports it. Docusaurus's own
-# unusedDirectives warning visits directive nodes, and this never becomes one; onBrokenLinks and
-# onBrokenAnchors (#712/#719) have nothing to say about admonition syntax; and in a diff
-# ":::warning Foo" and ":::warning[Foo]" look near-identical. That is how #680 shipped the
-# default-password warning as body copy for an unknown length of time — found by reading built HTML
-# during unrelated work, not by any gate.
+# A Docusaurus admonition that is not spelled exactly right is not a directive at all: it renders
+# as literal ":::" body copy on the published page, and nothing reports it. Docusaurus's own
+# unusedDirectives warning visits directive nodes and this never becomes one; onBrokenLinks and
+# onBrokenAnchors (#712/#719) say nothing about admonition syntax; and in a diff the right and
+# wrong spellings look nearly identical. That is how #680 shipped the default-password warning as
+# body copy, found by reading built HTML during unrelated work rather than by any gate.
 #
-# The trailing [^[{] is load-bearing: it spares the correct ":::type[Title]" form and the
-# "{title=...}" attribute form the plugin also accepts. Requiring whitespace after the type spares a
-# bare ":::note". The ::::?:? covers the three-to-five-colon nesting this repo uses.
+# Checked against the rendered output, not the source. That is this repo's own rule, and here it is
+# also the only thing that scales: nine different misspellings produce the identical symptom, so a
+# source regex has to enumerate them and drifts out of step with the parser the moment one is
+# missed. The first version of this gate did exactly that: it missed four of them and falsely
+# flagged a valid bare ":::note" with a trailing hard break. Checking the symptom needs no such
+# list, and catches a container opened with four colons and closed with three, which no reasonable
+# regex could see at all.
 #
-# Verified against the installed plugin rather than from memory:
-# @docusaurus/mdx-loader/lib/remark/admonitions/index.js gates on directiveLabel === true, which
-# only the bracketed form sets. Confirmed by rendering both forms: the bracketed one produced an
-# admonition container, the v2 one produced literal ":::" in the page text, and the build printed
-# no warning and exited 0.
-#
-# Known limit: this is line-based, so a v2 form quoted inside a fenced code block -- documenting the
-# mistake rather than making it -- would be flagged. Nothing in the tree does that today. If a page
-# ever needs to show the wrong form, indent the fence's content by one space or write the example
-# with a placeholder type, rather than loosening this pattern.
-ADMONITION_TREES := $(wildcard docs/docs docs/src landing)
+# The checker has fixture tests (docs-lint-test) because it matches nothing in a healthy tree, so a
+# green run on its own says as little about a working checker as about a broken one.
 
 .PHONY: docs-lint-admonitions
 docs-lint-admonitions:
-	@bad=$$(grep -rnE '^[[:space:]]*::::?:?[a-zA-Z]+[[:space:]]+[^[{]' $(ADMONITION_TREES) || true); \
-	if [ -n "$$bad" ]; then \
-		echo "error: Docusaurus v2 titled admonitions found. These render as literal ':::' text"; \
-		echo "       on the published page, and the build will NOT warn about them."; \
-		echo "       Write ':::type[Title]' instead of ':::type Title'."; \
-		echo ""; \
-		echo "$$bad"; \
-		exit 1; \
-	fi; \
-	echo "admonition syntax: checked $(words $(ADMONITION_TREES)) tree(s), no v2 titled forms"
+	@python3 docs/lint/check_admonitions.py docs/build || { echo $(FAIL) "admonition syntax"; exit 1; }
+	@echo $(OK) "admonition syntax"
+
+.PHONY: docs-lint-test
+docs-lint-test:
+	python3 -m unittest discover -s docs/lint
 
 .PHONY: docs
-docs: deps-docs docs-lint-admonitions
+docs: deps-docs
 	cd docs && npm ci && npm run build
+	$(MAKE) docs-lint-admonitions
 
 .PHONY: docs-serve
 docs-serve: deps-docs
