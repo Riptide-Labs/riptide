@@ -20,9 +20,11 @@ import org.riptide.pipeline.Source;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.util.List;
+import java.util.concurrent.RejectedExecutionException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 /**
@@ -31,15 +33,17 @@ import static org.mockito.Mockito.when;
  * <p>This exists because imitating it is what went wrong. {@code ParserDispatchTest} asserted that
  * a failed dispatch does not count as dispatched, and passed — but only because <em>its</em> stub
  * dispatcher rethrew. The real one catches, counts, and returns normally, so {@code ParserBase}
- * marks the records dispatched and the property the test named never held in production (#723). A
- * stub shaped like the real thing would have been the same mistake one step further along, so these
- * cases call {@link Daemon#dispatcherFor} over a real {@link Pipeline}.</p>
+ * marks the records dispatched and the property that test named never held in production: five
+ * weeks between #391 adding it and #723 noticing. A stub shaped like the real thing would have been
+ * the same mistake one step further along, so these cases call {@link Daemon#dispatcherFor} over a
+ * real {@link Pipeline}.</p>
  *
- * <p>What they pin is the contract the operations guide documents: {@code recordsDispatched} does
- * not exclude {@code dispatchErrors}, and delivery is
- * {@code recordsScheduled − dispatchDrops − dispatchErrors}. If the dispatcher is ever changed to
- * rethrow, these fail — which is the point, because that change would also make the documented
- * arithmetic wrong and the docs are a sibling nobody would otherwise revisit.</p>
+ * <p>What they pin is the contract {@code docs/docs/deploy/operations.md} documents:
+ * {@code recordsDispatched} does not exclude {@code dispatchErrors}, and delivery is
+ * {@code recordsReceived − dispatchDrops − dispatchErrors}. If the dispatcher is ever changed to
+ * rethrow, or to catch an {@link Error}, these fail — which is the point, because either change
+ * would also make that documented arithmetic wrong, and the guide is a sibling nobody would
+ * otherwise revisit.</p>
  */
 class DaemonDispatcherTest {
 
@@ -96,15 +100,89 @@ class DaemonDispatcherTest {
      * A {@code RuntimeException} is caught too, not only {@link FlowException}. A shut-down SNMP
      * pool throws {@code RejectedExecutionException} and any enricher can NPE; those used to escape
      * into the dispatch task and be logged with no count and no exporter.
+     *
+     * <p>The failure has to be one that reaches the dispatcher <em>unwrapped</em>, and most do not:
+     * {@code Pipeline.process} catches {@code Exception} around enrichment and {@code IOException}
+     * around persistence, turning both into {@link FlowException}. So an {@code IOException}
+     * fixture — the obvious choice, and this test's first one — exercises the {@code FlowException}
+     * arm and says nothing about this one. Narrowing the catch to {@code FlowException} alone left
+     * it green. {@code RejectedExecutionException} from {@code persist} is outside both of those
+     * catches, which is why it is the fixture here.</p>
      */
     @Test
     void aRuntimeExceptionIsCountedTheSameWay() throws Exception {
+        final var dispatcher = Daemon.dispatcherFor(
+                pipelineOver(new ThrowingRepository(new RejectedExecutionException("pool shut down"))),
+                this.metrics);
+
+        assertThatCode(() -> dispatcher.accept(source(), List.of(oneFlow())))
+                .doesNotThrowAnyException();
+        assertThat(dispatchErrors()).isEqualTo(1);
+    }
+
+    /** The {@link FlowException} arm, which is what a persist-path {@code IOException} becomes. */
+    @Test
+    void aWrappedIoFailureIsCountedAsAFlowException() throws Exception {
         final var dispatcher = Daemon.dispatcherFor(
                 pipelineOver(new ThrowingRepository(new IOException("socket closed"))), this.metrics);
 
         assertThatCode(() -> dispatcher.accept(source(), List.of(oneFlow())))
                 .doesNotThrowAnyException();
         assertThat(dispatchErrors()).isEqualTo(1);
+    }
+
+    /**
+     * Every failure is charged, not just the ones that get logged.
+     *
+     * <p>The warning is rate-limited to one per 10s, so on a persistently failing enricher almost
+     * every packet takes the branch where {@code tryAcquire} returns false. Counting inside that
+     * branch would undercount the loss by whatever the failure rate is — and a single-dispatch test
+     * cannot see it, because the limiter always permits the first. Two failures through <em>one</em>
+     * dispatcher is the smallest fixture that can.</p>
+     */
+    @Test
+    void aFailureIsChargedEvenWhenItsWarningIsRateLimited() throws Exception {
+        final var dispatcher = Daemon.dispatcherFor(
+                pipelineOver(new ThrowingRepository(new FlowException("rejected"))), this.metrics);
+        final List<Flow> flows = List.of(oneFlow(), oneFlow());
+
+        dispatcher.accept(source(), flows);
+        dispatcher.accept(source(), flows);
+
+        assertThat(dispatchErrors())
+                .as("the second failure is silent but must still be counted")
+                .isEqualTo(2L * flows.size());
+    }
+
+    /**
+     * An {@link Error} is <em>not</em> caught, and that is load-bearing rather than incidental.
+     *
+     * <p>{@code ParserBase}'s comment says "Only an `Error` skips the mark", and the operations
+     * guide's delivery arithmetic depends on it. But that invariant was asserted only against a
+     * hand-written stub in {@code ParserDispatchTest}: widening this catch to {@code Throwable}
+     * would leave every one of those cases green while silently making {@code recordsDispatched}
+     * count records that a fatal error lost. This is the case that notices.</p>
+     */
+    @Test
+    void anErrorIsNotCaught() throws Exception {
+        final var dispatcher = Daemon.dispatcherFor(
+                pipelineOver(new ThrowingRepository(new DispatchProbeError())), this.metrics);
+
+        assertThatThrownBy(() -> dispatcher.accept(source(), List.of(oneFlow())))
+                .as("an Error must propagate so ParserBase skips the mark")
+                .isInstanceOf(DispatchProbeError.class);
+        assertThat(dispatchErrors())
+                .as("and nothing is charged, since the dispatcher never reached its catch")
+                .isZero();
+    }
+
+    /**
+     * A purpose-named {@link Error}, rather than a synthetic {@code StackOverflowError}: the latter
+     * is a {@code VirtualMachineError} and appears in captured output as something an operator
+     * would triage as real.
+     */
+    private static final class DispatchProbeError extends Error {
+        private static final long serialVersionUID = 1L;
     }
 
     /** A successful dispatch charges nothing, so the counter above is not simply always rising. */
@@ -137,12 +215,18 @@ class DaemonDispatcherTest {
     }
 
     /** Fails every insert with a given exception, so the escape route can be observed. */
-    private record ThrowingRepository(Exception failure) implements FlowRepository {
+    private record ThrowingRepository(Throwable failure) implements FlowRepository {
         @Override
         public void persist(final List<EnrichedFlow> flows) throws FlowException, IOException {
             switch (this.failure) {
                 case IOException io -> throw io;
                 case FlowException flow -> throw flow;
+                // Thrown as itself, not wrapped: a RuntimeException from persist is outside every
+                // catch in Pipeline.process, which is the only way one reaches the dispatcher
+                // unwrapped and therefore the only way that arm can be exercised.
+                case RuntimeException runtime -> throw runtime;
+                case Error error -> throw error;
+                case null -> throw new IllegalStateException("no failure configured");
                 default -> throw new IllegalStateException("unsupported failure", this.failure);
             }
         }

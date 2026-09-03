@@ -210,8 +210,9 @@ public class Daemon implements ApplicationRunner {
      * dropped, and delivery is {@code recordsScheduled − dispatchDrops − dispatchErrors}, exactly
      * as the operations guide says. That is not a defect, but it is the whole reason this factory
      * exists rather than an inline lambda: a test that imitated this shape with a rethrowing stub
-     * asserted the opposite and passed for years (#723). The test now drives this method, so a
-     * change of heart about rethrowing cannot leave the assertion still green.</p>
+     * asserted the opposite and passed from #391 until #723 found it.
+     * {@code DaemonDispatcherTest} now drives this method, so a change of heart about rethrowing
+     * cannot leave the assertion still green.</p>
      *
      * @param metricRegistry also the owner of {@code pipeline.dispatchErrors}; a second call
      *                       against the same registry returns a dispatcher sharing that counter,

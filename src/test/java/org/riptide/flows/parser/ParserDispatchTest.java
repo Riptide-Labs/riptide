@@ -93,6 +93,22 @@ class ParserDispatchTest {
             f.get(10, TimeUnit.SECONDS);
         }
         assertThat(tally.get()).isEqualTo(2 * FLOWS_PER_PACKET);
+
+        // The delivery arithmetic operations.md gives the operator, asserted where dispatchDrops is
+        // actually non-zero — which is the only place it can be wrong. It starts from
+        // recordsReceived, not recordsScheduled: a packet refused by a full queue is charged to
+        // dispatchDrops and returns BEFORE the scheduled mark, so subtracting drops from scheduled
+        // removes those records twice. Measured here: received 9, scheduled 6, dropped 3, delivered
+        // 6 — the guide said 3 until this test was written.
+        assertThat(meter(registry, "udp", "recordsReceived")
+                        - counter(registry, "udp", "dispatchDrops"))
+                .as("received − drops − errors is what actually reached the dispatcher")
+                .isEqualTo(tally.get());
+        assertThat(meter(registry, "udp", "recordsScheduled")
+                        - counter(registry, "udp", "dispatchDrops"))
+                .as("and scheduled − drops is not: kept as the counter-example, since a future"
+                        + " edit to the guide would otherwise have nothing arguing against it")
+                .isNotEqualTo(tally.get());
     }
 
     /**
@@ -206,9 +222,11 @@ class ParserDispatchTest {
                 .as("the same records are counted as errors, which is what makes the meter above"
                         + " an overcount rather than a lie")
                 .isEqualTo(FLOWS_PER_PACKET);
-        assertThat(meter(registry, "boom", "recordsScheduled")
-                        - counter(registry, "boom", "dispatchDrops") - dispatchErrors.getCount())
-                .as("the delivery arithmetic operations.md gives the operator")
+        // Nothing was dropped on this path, so this checks only the dispatchErrors term. The
+        // dispatchDrops term is checked by udpDropsWhenSaturatedAndCountsEveryLostRecord, where it
+        // is non-zero; asserting it here as well would read like coverage it does not have.
+        assertThat(meter(registry, "boom", "recordsReceived") - dispatchErrors.getCount())
+                .as("received − errors is zero delivery when every record failed")
                 .isZero();
     }
 
@@ -239,8 +257,9 @@ class ParserDispatchTest {
 
         assertThat(meter(registry, "fatal", "recordsScheduled")).isEqualTo(FLOWS_PER_PACKET);
         assertThat(meter(registry, "fatal", "recordsDispatched"))
-                .as("the Error skipped the mark, which is the only way these two ever disagree"
-                        + " downwards")
+                .as("the Error skipped the mark. Not the only way these two disagree downwards:"
+                        + " abandon() charges records that were scheduled and never dispatched,"
+                        + " which shutdownAccountsForQueuedWorkItCouldNotDrain exercises")
                 .isZero();
     }
 

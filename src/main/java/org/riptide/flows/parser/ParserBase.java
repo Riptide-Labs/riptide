@@ -418,6 +418,8 @@ public abstract class ParserBase implements Parser {
         // normally on the failure path and the mark still happens. The meter therefore counts
         // dropped flows as dispatched, and is not delivery confirmation on its own; pipeline
         // .dispatchErrors is the counter that separates them. Only an Error skips the mark.
+        // Both halves are pinned by DaemonDispatcherTest (the dispatcher swallows, and does not
+        // catch an Error) and by ParserDispatchTest (the mark, and the delivery arithmetic).
         final var task = new DispatchTask(source, flows);
 
         if (!enqueue(task)) {
