@@ -733,7 +733,7 @@ public class TenantOnboardingIT {
 
     /** Rollup ALTERs recorded in the query log for one database. */
     private static long alterCountOn(final Client admin, final String database) throws Exception {
-        admin.execute("SYSTEM FLUSH LOGS").get();
+        QueryLogWatermark.awaitCurrent(admin);
         try (var records = admin.queryRecords("SELECT count() AS c FROM system.query_log"
                 + " WHERE type = 'QueryFinish' AND query ILIKE '%ALTER TABLE%" + database + ".flows_by%'"
                 + " AND query NOT ILIKE '%system.query_log%'").get()) {
@@ -744,8 +744,14 @@ public class TenantOnboardingIT {
         return 0;
     }
 
-    /** The rollup ALTER statements themselves, so a failure says which one fired. */
+    /**
+     * The rollup ALTER statements themselves, so a failure says which one fired.
+     *
+     * <p>Waits for the log like {@code alterCountOn} does: a message builder reading a staler log
+     * than the count it explains would name fewer statements than were counted.</p>
+     */
     private static String alterTextOn(final Client admin, final String database) throws Exception {
+        QueryLogWatermark.awaitCurrent(admin);
         final var seen = new ArrayList<String>();
         try (var records = admin.queryRecords("SELECT query AS q FROM system.query_log"
                 + " WHERE type = 'QueryFinish' AND query ILIKE '%ALTER TABLE%" + database

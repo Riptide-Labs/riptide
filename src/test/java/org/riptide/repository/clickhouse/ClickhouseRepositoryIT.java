@@ -622,7 +622,7 @@ public class ClickhouseRepositoryIT {
      */
     private static String settingRecordedAsChanged(final String database, final String setting)
             throws Exception {
-        queryClient.execute("SYSTEM FLUSH LOGS").get();
+        QueryLogWatermark.awaitCurrent(queryClient);
         try (var rows = queryClient.queryRecords(
                 "SELECT Settings['" + setting + "'] AS v FROM system.query_log"
                         + " WHERE type = 'QueryFinish' AND query_kind = 'Insert'"
