@@ -731,12 +731,28 @@ public class TenantOnboardingIT {
         }
     }
 
+    /**
+     * The {@code WHERE} that finds a rollup {@code ALTER} for one database in the query log.
+     *
+     * <p>The qualified prefix comes from {@link FlowsSchema#qualifiedRollup}, the function that
+     * emits the statement, and it is spelled once for both readers below. Written out by hand as
+     * {@code %ALTER TABLE%<db>.flows_by%} it matched nothing at all: the emitter quotes the
+     * database, so the text in the log reads {@code ALTER TABLE `noop`.flows_by_… MODIFY QUERY} and
+     * a literal dot after {@code noop} is not in it. Four {@code MODIFY QUERY} statements against
+     * this database were counted as zero — verified by making the re-run emit them.</p>
+     */
+    private static String rollupAlterFilter(final String database) {
+        return " WHERE type = 'QueryFinish'"
+                + " AND query ILIKE '%ALTER TABLE %" + FlowsSchema.qualifiedRollup(database, "flows_by") + "%'"
+                // Excludes the readers themselves, which quote the pattern above verbatim.
+                + " AND query NOT ILIKE '%system.query_log%'";
+    }
+
     /** Rollup ALTERs recorded in the query log for one database. */
     private static long alterCountOn(final Client admin, final String database) throws Exception {
         QueryLogWatermark.awaitCurrent(admin);
         try (var records = admin.queryRecords("SELECT count() AS c FROM system.query_log"
-                + " WHERE type = 'QueryFinish' AND query ILIKE '%ALTER TABLE%" + database + ".flows_by%'"
-                + " AND query NOT ILIKE '%system.query_log%'").get()) {
+                + rollupAlterFilter(database)).get()) {
             for (final var record : records) {
                 return record.getLong("c");
             }
@@ -754,8 +770,7 @@ public class TenantOnboardingIT {
         QueryLogWatermark.awaitCurrent(admin);
         final var seen = new ArrayList<String>();
         try (var records = admin.queryRecords("SELECT query AS q FROM system.query_log"
-                + " WHERE type = 'QueryFinish' AND query ILIKE '%ALTER TABLE%" + database
-                + ".flows_by%' AND query NOT ILIKE '%system.query_log%'"
+                + rollupAlterFilter(database)
                 + " ORDER BY event_time DESC LIMIT 5").get()) {
             records.forEach(record -> seen.add(record.getString("q").replaceAll("\\s+", " ")));
         }
