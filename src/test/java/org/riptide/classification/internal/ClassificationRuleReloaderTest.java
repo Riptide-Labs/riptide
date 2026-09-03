@@ -98,6 +98,38 @@ class ClassificationRuleReloaderTest {
     private volatile int status = 200;
     private final AtomicInteger requests = new AtomicInteger();
 
+    /**
+     * A rules file saved with a UTF-8 BOM still loads, through the production composition.
+     *
+     * <p>This is the half of #725 the issue predicted and put in the wrong file. It reasoned about
+     * inventory YAML, where SnakeYAML strips a BOM on every overload and nothing was ever broken.
+     * The rules file is CSV: commons-csv does not strip one, so the first header becomes
+     * {@code \uFEFFname}, {@code CsvImporter}'s header comparison fails, and its message prints the
+     * expected and actual headers with the difference invisible. At boot that is a startup failure.
+     *
+     * <p>Driven through {@code ClassificationRulesSource.read()} rather than the importer alone,
+     * because that is where the strip has to live: {@code ClassificationRuleReloader} discards the
+     * bytes the watch loop hands it and has the engine re-read through this method, so a fix
+     * applied only in the watch loop would have missed both this path and boot.</p>
+     */
+    @Test
+    void aRulesetSavedWithAByteOrderMarkStillParses() throws Exception {
+        final ClassificationConfig config = new ClassificationConfig();
+        config.setRules(new org.springframework.core.io.ByteArrayResource(
+                ("\uFEFF" + rules("bom-tolerated")).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+
+        final byte[] read = new ClassificationRulesSource(config).read();
+
+        assertThat(read[0]).as("the BOM is gone before any parser sees it")
+                .isNotEqualTo((byte) 0xEF);
+        try (var stream = new ByteArrayInputStream(read)) {
+            assertThat(new CsvImporter().parse(stream, true))
+                    .as("commons-csv does not strip a BOM, so this is the assertion that would fail")
+                    .singleElement()
+                    .satisfies(rule -> assertThat(rule.getName()).isEqualTo("bom-tolerated"));
+        }
+    }
+
     /** A ruleset that fetches and parses, and whose second rule the engine then rejects. */
     private static final String ONE_GOOD_ONE_BROKEN =
             HEADER + "good;;;;;80;;false\n" + "broken;;;;;not-a-port;;false\n";

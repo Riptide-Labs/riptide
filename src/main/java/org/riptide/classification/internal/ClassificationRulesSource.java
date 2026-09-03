@@ -5,6 +5,7 @@
 
 package org.riptide.classification.internal;
 
+import org.riptide.config.ByteOrderMark;
 import org.riptide.config.ClassificationConfig;
 import org.riptide.config.FileWatchTrigger;
 import org.springframework.core.io.Resource;
@@ -109,14 +110,26 @@ public final class ClassificationRulesSource implements FileWatchTrigger.Source 
         return read(this.config.getRules());
     }
 
+    /**
+     * The one read both entry points share: {@link #read()} for boot and the engine's own reload,
+     * {@link #fetch()} for the watch loop. A leading UTF-8 BOM is removed here for that reason —
+     * stripping it in the watch loop would have missed this path entirely, because
+     * {@code ClassificationRuleReloader} discards the bytes it is handed and has the engine re-read
+     * through here (#725).
+     *
+     * <p>Unlike the YAML paths, this one visibly breaks without it: commons-csv does not strip a
+     * BOM, so the first header becomes {@code \uFEFFname}, the header comparison in
+     * {@code CsvImporter} fails, and its message prints the expected and actual headers with the
+     * difference invisible. At boot that is a startup failure.</p>
+     */
     private byte[] read(final Resource resource) throws IOException {
         final URL remote = remoteUrl(resource);
         if (remote == null) {
             try (InputStream in = resource.getInputStream()) {
-                return readBounded(in, null);
+                return ByteOrderMark.strip(readBounded(in, null));
             }
         }
-        return fetchRemote(remote);
+        return ByteOrderMark.strip(fetchRemote(remote));
     }
 
     @Override

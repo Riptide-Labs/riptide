@@ -14,6 +14,8 @@ import org.junit.jupiter.api.io.TempDir;
 import org.riptide.pipeline.ExporterIdentity;
 import org.slf4j.LoggerFactory;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.file.Path;
@@ -34,6 +36,35 @@ class InventoryLoaderTest {
         return new SnmpProfilesConfig(
                 Map.of("corp-v3", TestCredentials.v3()),
                 Map.of("default", PollingProfile.builtInDefault(), "slow", PollingProfile.builtInDefault()));
+    }
+
+    /**
+     * A file written by an editor that prefixes a UTF-8 BOM loads exactly as one without (#725).
+     *
+     * <p>The issue predicted the first key parsing as a BOM-prefixed name and matching nothing.
+     * Measured against the pinned SnakeYAML, it does not: a leading BOM is stripped on the
+     * {@code String} overload as well as the {@code InputStream} one, so this already worked. It is
+     * pinned because {@code load} now removes the BOM itself rather than relying on that, and this
+     * is the assertion that the removal takes no content with it.</p>
+     */
+    @Test
+    void aByteOrderMarkOnTheFrontOfTheFileChangesNothing(@TempDir final Path dir) throws Exception {
+        final String body = """
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                        polling: default
+                """;
+        final Path file = dir.resolve("inventory.yaml");
+        Files.write(file, ("\uFEFF" + body).getBytes(StandardCharsets.UTF_8));
+
+        final var snapshot = InventoryLoader.load(profiles(), file).snapshot();
+
+        assertThat(snapshot.agentView().match(netflow("10.20.5.5", 0)))
+                .as("the BOM must not stop the agents section resolving")
+                .isPresent();
     }
 
     @Test

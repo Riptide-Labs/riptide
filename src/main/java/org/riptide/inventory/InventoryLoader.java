@@ -7,6 +7,7 @@ package org.riptide.inventory;
 
 import inet.ipaddr.IPAddressString;
 import lombok.extern.slf4j.Slf4j;
+import org.riptide.config.ByteOrderMark;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 
@@ -111,7 +112,13 @@ public final class InventoryLoader {
             throw new IllegalStateException(
                     "Inventory file %s is not readable: %s".formatted(file, e.getMessage()), e);
         }
-        return parseWithWarnings(profiles, content, file.toString());
+        // The boot-time twin of FileWatchTrigger.withoutByteOrderMark (#725). No defect is visible
+        // here today: SnakeYAML strips a leading BOM even on the String overload, which is the half
+        // of #725 that turned out to be wrong, and boot has no blankness guard for a BOM-only file
+        // to slip past the way the reload path's did. This exists so the invariant is "no consumer
+        // downstream of a read ever sees U+FEFF" rather than "the parser we happen to use removes
+        // it" — a validator added between here and the parse would otherwise inherit the problem.
+        return parseWithWarnings(profiles, ByteOrderMark.strip(content), file.toString());
     }
 
     /**

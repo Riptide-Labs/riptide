@@ -187,7 +187,10 @@ public final class FileWatchTrigger {
                 return new Fetch.Absent();
             }
             try {
-                return new Fetch.Present(Files.readAllBytes(this.path));
+                // Stripped here, not in poll(): the seed hash and the poll hash are taken at two
+                // different call sites, and normalising at only one made a BOM'd file recommit on
+                // the first poll after every boot (#725).
+                return new Fetch.Present(ByteOrderMark.strip(Files.readAllBytes(this.path)));
             } catch (final NoSuchFileException e) {
                 // vanished between the check and the read: an atomic rm+mv replacement
                 // or a symlink swap, the healthy deploy this class expects
@@ -463,11 +466,8 @@ public final class FileWatchTrigger {
 
     /** Whitespace is ASCII-safe in UTF-8, so blankness is decidable on raw bytes. */
     private static boolean isBlank(final byte[] content) {
-        // A leading UTF-8 BOM is deliberately NOT treated as blank. Doing so closes only the rare
-        // half — a file truncated to nothing but a BOM — while the common half, a BOM followed by
-        // real content, still reaches the parser with U+FEFF on the front. It would also make the
-        // blank WARN say "empty or whitespace-only" about a three-byte file, which is the exact
-        // wild-goose chase InventoryLoader's own comment says that wording exists to prevent.
+        // A BOM never reaches here: every Source strips one on read (ByteOrderMark), so a file
+        // truncated to nothing but a BOM is genuinely empty by the time this runs.
         for (int i = 0; i < content.length; i++) {
             final byte b = content[i];
             // Form feed and vertical tab too: both are whitespace an editor can flush mid-write,
