@@ -23,6 +23,7 @@ import org.riptide.classification.ClassificationRuleProvider;
 import org.riptide.classification.Protocols;
 import org.riptide.classification.internal.csv.CsvImporter;
 import org.riptide.config.ClassificationConfig;
+import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.FileSystemResource;
@@ -232,8 +233,7 @@ class ClassificationRuleReloaderTest {
 
         this.metrics = new MetricRegistry();
         this.logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(ClassificationRuleReloader.class);
-        this.appender = new ListAppender<>();
-        this.appender.start();
+        this.appender = LogCapture.startedAppender();
         this.logger.addAppender(this.appender);
     }
 

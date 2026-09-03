@@ -12,6 +12,7 @@ import com.codahale.metrics.MetricRegistry;
 import inet.ipaddr.IPAddressString;
 import org.junit.jupiter.api.Test;
 import org.riptide.secrets.SecretRef;
+import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetAddress;
@@ -737,8 +738,7 @@ class InterfaceSnapshotPollerTest {
         final var endpoint = endpoint("10.6.0.1");
 
         final var logger = (Logger) LoggerFactory.getLogger(InterfaceSnapshotPoller.class);
-        final var appender = new ListAppender<ILoggingEvent>();
-        appender.start();
+        final var appender = LogCapture.startedAppender();
         logger.addAppender(appender);
         try {
             poller.trackAndResolve(endpoint, 1);
@@ -770,8 +770,7 @@ class InterfaceSnapshotPollerTest {
         final var endpoint = endpoint("10.6.0.2");
 
         final var logger = (Logger) LoggerFactory.getLogger(InterfaceSnapshotPoller.class);
-        final var appender = new ListAppender<ILoggingEvent>();
-        appender.start();
+        final var appender = LogCapture.startedAppender();
         logger.addAppender(appender);
         try {
             poller.trackAndResolve(endpoint, 1);

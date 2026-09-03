@@ -18,6 +18,7 @@ import org.riptide.classification.ClassificationEngine;
 import org.riptide.classification.ClassificationRequest;
 import org.riptide.classification.DefaultRule;
 import org.riptide.classification.Rule;
+import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
@@ -69,8 +70,7 @@ class AsyncReloadingClassificationEngineTest {
                 LoggerFactory.getLogger(AsyncReloadingClassificationEngine.class);
         // the level is deliberately left alone: the two assertions below read WARN and ERROR, which the
         // inherited level already passes, and lowering it here leaked DEBUG into every later test class
-        this.appender = new ListAppender<>();
-        this.appender.start();
+        this.appender = LogCapture.startedAppender();
         this.logger.addAppender(this.appender);
     }
 

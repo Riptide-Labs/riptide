@@ -7,9 +7,7 @@ package org.riptide.repository.clickhouse;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
-import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.classic.spi.ThrowableProxyUtil;
-import ch.qos.logback.core.read.ListAppender;
 import com.clickhouse.client.api.Client;
 import com.codahale.metrics.MetricRegistry;
 import org.assertj.core.api.Assertions;
@@ -21,6 +19,7 @@ import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.schema.FlowsSchema;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
+import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
@@ -432,8 +431,7 @@ public class MultiBlockPoisonProbeIT {
         // ERROR would hide a second record that contradicted the one being read.
         final var flusherLog = (Logger) LoggerFactory.getLogger(BatchingFlowRepository.class);
         final Level originalLevel = flusherLog.getLevel();
-        final var logEvents = new ListAppender<ILoggingEvent>();
-        logEvents.start();
+        final var logEvents = LogCapture.startedAppender();
         flusherLog.setLevel(Level.TRACE);
         flusherLog.addAppender(logEvents);
 

@@ -20,6 +20,7 @@ import org.riptide.flows.parser.session.ExporterSamplingTable;
 import org.riptide.flows.parser.session.SessionAdmissionConfig;
 import org.riptide.pipeline.Pipeline;
 import org.riptide.snmp.ExporterInterfaceTable;
+import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.context.properties.bind.Binder;
@@ -61,8 +62,7 @@ class DaemonStartupLoggingTest {
         // events would simply never be captured. The capture must not depend on configuration this
         // test does not own.
         this.logger.setLevel(Level.INFO);
-        this.appender = new ListAppender<>();
-        this.appender.start();
+        this.appender = LogCapture.startedAppender();
         this.logger.addAppender(this.appender);
     }
 

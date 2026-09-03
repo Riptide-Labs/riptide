@@ -12,6 +12,7 @@ import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.riptide.pipeline.ExporterIdentity;
+import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
@@ -654,8 +655,7 @@ class InventoryLoaderTest {
     @Test
     void emptyEntryWarnsNamingTheRangeButStillMatches() {
         final var logger = (Logger) LoggerFactory.getLogger(InventoryLoader.class);
-        final var appender = new ListAppender<ILoggingEvent>();
-        appender.start();
+        final var appender = LogCapture.startedAppender();
         logger.addAppender(appender);
         try {
             final var snapshot = InventoryLoader.parse(profiles(), """
@@ -685,8 +685,7 @@ class InventoryLoaderTest {
         // a carve-out, a not-polled-but-profiled range, and a parked credentialed
         // range are all intentional shapes: only a body with nothing in it is a typo
         final var logger = (Logger) LoggerFactory.getLogger(InventoryLoader.class);
-        final var appender = new ListAppender<ILoggingEvent>();
-        appender.start();
+        final var appender = LogCapture.startedAppender();
         logger.addAppender(appender);
         try {
             InventoryLoader.parse(profiles(), """

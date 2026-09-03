@@ -22,6 +22,7 @@ import org.riptide.schema.RollupShapeCheck;
 import org.riptide.schema.RollupAvailability;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
+import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
@@ -253,8 +254,7 @@ public class RollupShapeDriftIT {
     /** What {@link ClickhouseRepository} logs while {@code action} runs. Shared with RollupRepairIT. */
     static List<ILoggingEvent> captureRepositoryLog(final Runnable action) {
         final Logger logger = (Logger) LoggerFactory.getLogger(ClickhouseRepository.class);
-        final ListAppender<ILoggingEvent> appender = new ListAppender<>();
-        appender.start();
+        final ListAppender<ILoggingEvent> appender = LogCapture.startedAppender();
         logger.addAppender(appender);
         try {
             action.run();

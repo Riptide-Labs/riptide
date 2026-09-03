@@ -20,13 +20,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
+import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 import org.snmp4j.fluent.TargetBuilder;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
-import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.read.ListAppender;
 import inet.ipaddr.IPAddressString;
 
 public class SnmpTest {
@@ -254,8 +253,7 @@ public class SnmpTest {
         snmpEndpoint.getSnmpDefinition().setTimeout(50);
 
         final var logger = (Logger) LoggerFactory.getLogger(SnmpUtils.class);
-        final var appender = new ListAppender<ILoggingEvent>();
-        appender.start();
+        final var appender = LogCapture.startedAppender();
         logger.addAppender(appender);
         try {
             Assertions.assertThat(SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS).rows()).isEmpty();
@@ -284,8 +282,7 @@ public class SnmpTest {
         snmpEndpoint.getSnmpDefinition().setTimeout(50);
 
         final var logger = (Logger) LoggerFactory.getLogger(SnmpUtils.class);
-        final var appender = new ListAppender<ILoggingEvent>();
-        appender.start();
+        final var appender = LogCapture.startedAppender();
         logger.addAppender(appender);
         try {
             final var walk = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS);

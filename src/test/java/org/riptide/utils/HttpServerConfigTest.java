@@ -7,6 +7,7 @@ package org.riptide.utils;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.riptide.testsupport.LogCapture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -90,8 +91,7 @@ class HttpServerConfigTest {
     private static ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> capture(
             final Class<?> loggerClass) {
         final var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(loggerClass);
-        final var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
-        appender.start();
+        final var appender = LogCapture.startedAppender();
         logger.addAppender(appender);
         return appender;
     }

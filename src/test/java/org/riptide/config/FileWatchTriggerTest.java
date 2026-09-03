@@ -15,6 +15,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
@@ -110,8 +111,7 @@ class FileWatchTriggerTest {
         this.logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(FileWatchTriggerTest.class);
         // the interrupt discipline speaks at DEBUG, so the capture has to be able to hear it
         this.logger.setLevel(Level.DEBUG);
-        this.appender = new ListAppender<>();
-        this.appender.start();
+        this.appender = LogCapture.startedAppender();
         this.logger.addAppender(this.appender);
     }
 
