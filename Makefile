@@ -187,8 +187,44 @@ contributors-check: contributors
 deps-docs:
 	command -v npm
 
+# A Docusaurus v2 titled admonition (":::warning Some title") is not a directive at all: it renders
+# as literal ":::" body copy on the published page. Nothing else reports it. Docusaurus's own
+# unusedDirectives warning visits directive nodes, and this never becomes one; onBrokenLinks and
+# onBrokenAnchors (#712/#719) have nothing to say about admonition syntax; and in a diff
+# ":::warning Foo" and ":::warning[Foo]" look near-identical. That is how #680 shipped the
+# default-password warning as body copy for an unknown length of time — found by reading built HTML
+# during unrelated work, not by any gate.
+#
+# The trailing [^[{] is load-bearing: it spares the correct ":::type[Title]" form and the
+# "{title=...}" attribute form the plugin also accepts. Requiring whitespace after the type spares a
+# bare ":::note". The ::::?:? covers the three-to-five-colon nesting this repo uses.
+#
+# Verified against the installed plugin rather than from memory:
+# @docusaurus/mdx-loader/lib/remark/admonitions/index.js gates on directiveLabel === true, which
+# only the bracketed form sets. Confirmed by rendering both forms: the bracketed one produced an
+# admonition container, the v2 one produced literal ":::" in the page text, and the build printed
+# no warning and exited 0.
+#
+# Known limit: this is line-based, so a v2 form quoted inside a fenced code block -- documenting the
+# mistake rather than making it -- would be flagged. Nothing in the tree does that today. If a page
+# ever needs to show the wrong form, indent the fence's content by one space or write the example
+# with a placeholder type, rather than loosening this pattern.
+ADMONITION_TREES := $(wildcard docs/docs docs/src landing)
+
+.PHONY: docs-lint-admonitions
+docs-lint-admonitions:
+	@bad=$$(grep -rnE '^[[:space:]]*::::?:?[a-zA-Z]+[[:space:]]+[^[{]' $(ADMONITION_TREES) || true); \
+	if [ -n "$$bad" ]; then \
+		echo "error: Docusaurus v2 titled admonitions found. These render as literal ':::' text"; \
+		echo "       on the published page, and the build will NOT warn about them."; \
+		echo "       Write ':::type[Title]' instead of ':::type Title'."; \
+		echo ""; \
+		echo "$$bad"; \
+		exit 1; \
+	fi
+
 .PHONY: docs
-docs: deps-docs
+docs: deps-docs docs-lint-admonitions
 	cd docs && npm ci && npm run build
 
 .PHONY: docs-serve

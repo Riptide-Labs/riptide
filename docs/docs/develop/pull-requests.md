@@ -18,8 +18,18 @@ Every PR must pass, all wired through `make` in CI:
 | Coverage floor | ≥ 65% instruction / ≥ 55% branch (JaCoCo `check`) |
 | CodeQL | security-and-quality analysis (separate check) |
 | e2e | the nl6 flow-ingestion tier, full mode included |
+| Docs | broken links and anchors (`onBrokenLinks`/`onBrokenAnchors: 'throw'`), plus v2-syntax admonitions |
 
-Run the Maven-side gates locally before pushing: `make` (= `mvn verify`).
+Run the Maven-side gates locally before pushing: `make` (= `mvn verify`). The documentation gates
+run under `make docs`.
+
+Two of the documentation gates exist because the failure they catch is silent. A broken anchor
+published without complaint until `onBrokenAnchors` was set to `throw`; and a Docusaurus **v2**
+titled admonition — `:::warning Some title` rather than `:::warning[Some title]` — is not parsed as
+a directive at all, so it renders as literal `:::` body copy with no build error, no build warning,
+and almost no visual difference in a diff. That is how a warning about default passwords shipped as
+ordinary paragraph text. Write `:::type[Title]`; `make docs` refuses the other form and names the
+file and line.
 
 ## Tests are part of the change
 
