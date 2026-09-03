@@ -72,37 +72,7 @@ public class Daemon implements ApplicationRunner {
         final SessionAdmission sessionAdmission = new SessionAdmission(sessionAdmissionConfig, metricRegistry);
 
         this.pipeline = Objects.requireNonNull(pipeline);
-        // A packet's records are dispatched as one batch (see ParserBase#transmit), so a failure
-        // here now costs the whole packet rather than a single flow. That makes swallowing it
-        // quietly unacceptable and rethrowing it worse: the previous RuntimeException travelled up
-        // into the dispatch task, where it was logged as "Error preparing records for dispatch" with
-        // no count and no exporter attribution.
-        //
-        // Count it and name the exporter instead, following the convention BatchingFlowRepository
-        // set: a poison batch must not wedge the pipeline, and loss must never be silent.
-        final Counter dispatchErrors = metricRegistry.counter(MetricRegistry.name("pipeline", "dispatchErrors"));
-        // One warning per 10s, like the parser's drop path: a persistently failing enricher at a few
-        // thousand packets/s would otherwise emit a stack trace per packet, synchronously on the
-        // worker, making logging the bottleneck and filling the disk.
-        final RateLimiter errorWarnLimiter = RateLimiter.create(0.1);
-        final BiConsumer<Source, List<Flow>> dispatcher = (source, flows) -> {
-            try {
-                this.pipeline.process(source, flows);
-            } catch (final FlowException | RuntimeException e) {
-                // RuntimeException too, not just FlowException: a shut-down SNMP pool throws
-                // RejectedExecutionException and any enricher can NPE. Those used to escape into
-                // the dispatch task and be logged as
-                // "Error preparing records for dispatch" with no counter and no exporter — the exact
-                // hole this block exists to close. A packet's worth of loss must not be silent.
-                dispatchErrors.inc(flows.size());
-                if (log.isWarnEnabled() && errorWarnLimiter.tryAcquire()) {
-                    // Deliberately not "enrichment failed": with batching disabled a FlowException
-                    // also arrives from the persist path, and mislabelling it misdirects diagnosis.
-                    log.warn("Dropping {} flows from {}: {}", flows.size(), source.identity(),
-                            e.getMessage(), e);
-                }
-            }
-        };
+        final BiConsumer<Source, List<Flow>> dispatcher = dispatcherFor(pipeline, metricRegistry);
 
         this.listeners = config.getReceivers().entrySet().stream()
                 .map(e -> e.getValue().accept(new ReceiverConfig.Cases<Listener>() {
@@ -221,6 +191,57 @@ public class Daemon implements ApplicationRunner {
                                 .withHost(config.getHost());
                     }
                 })).toList();
+    }
+
+    /**
+     * The dispatcher every parser is handed: it runs the pipeline and turns a failure into a
+     * counted, attributed drop.
+     *
+     * <p>A packet's records are dispatched as one batch (see {@code ParserBase#transmit}), so a
+     * failure here costs the whole packet rather than a single flow. That makes swallowing it
+     * quietly unacceptable and rethrowing it worse: the previous {@code RuntimeException} travelled
+     * up into the dispatch task, where it was logged as "Error preparing records for dispatch" with
+     * no count and no exporter attribution. Count it and name the exporter instead, following the
+     * convention {@code BatchingFlowRepository} set: a poison batch must not wedge the pipeline,
+     * and loss must never be silent.</p>
+     *
+     * <p><b>Because it returns normally on the failure path,</b> {@code ParserBase} marks those
+     * records dispatched — so {@code parsers.*.recordsDispatched} counts records this dispatcher
+     * dropped, and delivery is {@code recordsScheduled − dispatchDrops − dispatchErrors}, exactly
+     * as the operations guide says. That is not a defect, but it is the whole reason this factory
+     * exists rather than an inline lambda: a test that imitated this shape with a rethrowing stub
+     * asserted the opposite and passed for years (#723). The test now drives this method, so a
+     * change of heart about rethrowing cannot leave the assertion still green.</p>
+     *
+     * @param metricRegistry also the owner of {@code pipeline.dispatchErrors}; a second call
+     *                       against the same registry returns a dispatcher sharing that counter,
+     *                       which is what makes the counts comparable across receivers
+     */
+    static BiConsumer<Source, List<Flow>> dispatcherFor(final Pipeline pipeline,
+                                                        final MetricRegistry metricRegistry) {
+        final Counter dispatchErrors = metricRegistry.counter(MetricRegistry.name("pipeline", "dispatchErrors"));
+        // One warning per 10s, like the parser's drop path: a persistently failing enricher at a few
+        // thousand packets/s would otherwise emit a stack trace per packet, synchronously on the
+        // worker, making logging the bottleneck and filling the disk.
+        final RateLimiter errorWarnLimiter = RateLimiter.create(0.1);
+        return (source, flows) -> {
+            try {
+                pipeline.process(source, flows);
+            } catch (final FlowException | RuntimeException e) {
+                // RuntimeException too, not just FlowException: a shut-down SNMP pool throws
+                // RejectedExecutionException and any enricher can NPE. Those used to escape into
+                // the dispatch task and be logged as
+                // "Error preparing records for dispatch" with no counter and no exporter — the exact
+                // hole this block exists to close. A packet's worth of loss must not be silent.
+                dispatchErrors.inc(flows.size());
+                if (log.isWarnEnabled() && errorWarnLimiter.tryAcquire()) {
+                    // Deliberately not "enrichment failed": with batching disabled a FlowException
+                    // also arrives from the persist path, and mislabelling it misdirects diagnosis.
+                    log.warn("Dropping {} flows from {}: {}", flows.size(), source.identity(),
+                            e.getMessage(), e);
+                }
+            }
+        };
     }
 
     // Start-time logging lives here rather than in each Listener: only the call site holds the

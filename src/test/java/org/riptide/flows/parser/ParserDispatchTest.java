@@ -161,18 +161,86 @@ class ParserDispatchTest {
         gate.countDown();
     }
 
+    /**
+     * A dispatch the dispatcher swallowed still marks its records dispatched — which is what
+     * {@code recordsDispatched} has always meant, and is not what this test used to say.
+     *
+     * <p>It asserted the opposite and passed, because its stub rethrew. No production dispatcher
+     * does: {@code Daemon}'s catches {@code FlowException | RuntimeException}, charges
+     * {@code pipeline.dispatchErrors}, and returns normally, so the mark below always ran and the
+     * same records were counted as dispatched <em>and</em> as errors. The test was measuring its
+     * stub (#723).</p>
+     *
+     * <p>The stub here now swallows the way the real one does. That the real one does is pinned by
+     * {@code DaemonDispatcherTest}, which drives {@code Daemon.dispatcherFor} itself rather than an
+     * imitation of it — imitating the shape more carefully would have been the same mistake one
+     * step further along. Together they can tell the difference this one alone could not: change
+     * the dispatcher to rethrow and that test fails; move the mark to reflect delivery and this one
+     * does.</p>
+     *
+     * <p>Delivery is therefore {@code recordsScheduled − dispatchDrops − dispatchErrors}, as
+     * {@code docs/docs/deploy/operations.md} states. Asserted here so the arithmetic an operator is
+     * told to use is checked against the meters rather than only written down.</p>
+     */
     @Test
-    void dispatchFailureDoesNotCountAsDispatched() throws Exception {
+    void aSwallowedDispatchFailureStillMarksItsRecordsDispatched() throws Exception {
         final var registry = new MetricRegistry();
+        // Shaped like Daemon's: count the packet, do not rethrow.
+        final var dispatchErrors = registry.counter(MetricRegistry.name("pipeline", "dispatchErrors"));
         final var parser = start(new StubParser("boom", registry, true, (source, flows) -> {
-            throw new IllegalStateException("enricher exploded");
+            try {
+                throw new IllegalStateException("enricher exploded");
+            } catch (final RuntimeException e) {
+                dispatchErrors.inc(flows.size());
+            }
         }), 1, 4);
 
         parser.dispatch().get(10, TimeUnit.SECONDS);
 
         assertThat(meter(registry, "boom", "recordsScheduled")).isEqualTo(FLOWS_PER_PACKET);
         assertThat(meter(registry, "boom", "recordsDispatched"))
-                .as("a failed dispatch must not read as delivered")
+                .as("the dispatcher returned, so these are marked dispatched despite being lost —"
+                        + " do not read this meter as delivery confirmation")
+                .isEqualTo(FLOWS_PER_PACKET);
+        assertThat(dispatchErrors.getCount())
+                .as("the same records are counted as errors, which is what makes the meter above"
+                        + " an overcount rather than a lie")
+                .isEqualTo(FLOWS_PER_PACKET);
+        assertThat(meter(registry, "boom", "recordsScheduled")
+                        - counter(registry, "boom", "dispatchDrops") - dispatchErrors.getCount())
+                .as("the delivery arithmetic operations.md gives the operator")
+                .isZero();
+    }
+
+    /**
+     * The one path that really does skip the mark: an {@link Error}, which {@code Daemon}'s
+     * dispatcher does not catch and nothing else is expected to. It is the only case in which
+     * {@code recordsDispatched} undercounts rather than overcounts, and it is what the old
+     * assertion above was accidentally describing.
+     *
+     * <p>The future still completes <em>normally</em>. {@code transmit} returns
+     * {@code future.exceptionally(...)}, which logs "Error preparing records for dispatch." and
+     * substitutes a null result — deliberately, because {@code UdpListener} releases the packet's
+     * retained direct {@code ByteBuf} when this future completes, and a path that left it
+     * exceptional would still have to be completed by someone. So the caller cannot tell this from
+     * a clean dispatch, and the meters are the only place the difference shows: scheduled counts
+     * the packet, dispatched does not.</p>
+     */
+    @Test
+    void anErrorEscapingTheDispatcherSkipsTheMarkButStillCompletesTheFuture() throws Exception {
+        final var registry = new MetricRegistry();
+        final var parser = start(new StubParser("fatal", registry, true, (source, flows) -> {
+            throw new StackOverflowError("not a dispatcher's to catch");
+        }), 1, 4);
+
+        assertThat(parser.dispatch().get(10, TimeUnit.SECONDS))
+                .as("completed, not left pending: the listener frees the packet's buffer on this")
+                .isNull();
+
+        assertThat(meter(registry, "fatal", "recordsScheduled")).isEqualTo(FLOWS_PER_PACKET);
+        assertThat(meter(registry, "fatal", "recordsDispatched"))
+                .as("the Error skipped the mark, which is the only way these two ever disagree"
+                        + " downwards")
                 .isZero();
     }
 
