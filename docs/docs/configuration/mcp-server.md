@@ -53,7 +53,7 @@ riptide.mcp.max-result-rows=50
 # Read-only ClickHouse identity for MCP queries (SecretRef supported).
 # Required in provisioned deployments — see "ClickHouse Credentials" below.
 # Unset falls back to riptide.clickhouse.username / password.
-riptide.mcp.clickhouse.username=bi_acme
+riptide.mcp.clickhouse.username=bi_acme@riptide
 riptide.mcp.clickhouse.password=vault://secret/riptide/clickhouse#bi_acme
 
 # Optional Authentication (SecretRef supported)
@@ -71,16 +71,19 @@ MCP only ever reads.
 In a provisioned (multi-tenant) deployment, point it at the tenant reader rather than the ingest writer:
 
 ```properties
-riptide.mcp.clickhouse.username=bi_acme
+riptide.mcp.clickhouse.username=bi_acme@riptide
 riptide.mcp.clickhouse.password=vault://secret/riptide/clickhouse#bi_acme
 ```
 
-The `bi_<tenant>` user holds the `flow_reader` role, which `riptide onboard` already grants SELECT on `flows` and on every rollup, and which carries the `readonly = 2` / `allow_ddl = 0` hardening.
+The `bi_<tenant>@<database>` user holds the `flow_reader@<database>` role, which `riptide onboard` already grants SELECT on `flows` and on every rollup, and which carries the `readonly = 2` / `allow_ddl = 0` hardening.
+The username carries the database because ClickHouse users are instance-wide — see [Object names carry their database](../deploy/multi-tenancy.md#object-names-carry-their-database).
+On a deployment onboarded before that rename the account is the unqualified `bi_<tenant>`, and stays so until you re-run `onboard` and migrate; use whichever name that server actually has.
+This is a plain properties field, so write the `@` literally — only URL-embedded credentials need `%40`.
 It is also already named on every tenant row policy, so no re-provisioning is needed to enable MCP.
 
 Leaving this unset reuses `riptide.clickhouse.username` / `password`.
 That is correct for single-tenant manage mode, where the same user reads and writes.
-In provisioned mode it means querying as `writer_<tenant>`, which holds only INSERT on the rollups: rollup-routed tools (any query spanning 60 minutes or more) then fail with `ACCESS_DENIED`.
+In provisioned mode it means querying as `writer_<tenant>@<database>`, which holds only INSERT on the rollups: rollup-routed tools (any query spanning 60 minutes or more) then fail with `ACCESS_DENIED`.
 Granting the writer SELECT on the rollups instead would hand the ingest credential a tenant-wide read surface it does not otherwise have; use the reader.
 
 ---

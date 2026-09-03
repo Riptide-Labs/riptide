@@ -60,4 +60,33 @@ final class ClickhouseServerErrors {
     /** The same anchoring for {@link #SETTING_CONSTRAINT_VIOLATION}, and for the same reason. */
     static final String SETTING_CONSTRAINT_VIOLATION_MESSAGE_PREFIX =
             "Code: " + SETTING_CONSTRAINT_VIOLATION + ".";
+
+    /**
+     * A statement the credential holds no grant for.
+     *
+     * <p>Observed on the pinned image: {@code Code: 497. DB::Exception: writer_dual@iso_b: Not
+     * enough privileges. To execute this query, it's necessary to have the grant INSERT ON
+     * iso_a.flows. (ACCESS_DENIED)}</p>
+     *
+     * <p>This is the code the per-database roles buy (#649): a cross-database write is refused as a
+     * missing privilege, before any row is evaluated — not by a {@link #VIOLATED_CONSTRAINT} that
+     * happens to match, which it would not when both databases carry the same tenant id.</p>
+     */
+    static final int ACCESS_DENIED = 497;
+
+    /** The same anchoring for {@link #ACCESS_DENIED}, and for the same reason. */
+    static final String ACCESS_DENIED_MESSAGE_PREFIX = "Code: " + ACCESS_DENIED + ".";
+
+    /**
+     * A credential that does not exist, or whose password does not match.
+     *
+     * <p>Observed on the pinned image: {@code Code: 516. DB::Exception: writer_old: Authentication
+     * failed: password is incorrect, or there is no user with such name. (AUTHENTICATION_FAILED)}
+     * — the two causes are deliberately not distinguished by the server, so an assertion on this
+     * code says the credential does not work, not why.</p>
+     */
+    static final int AUTHENTICATION_FAILED = 516;
+
+    /** The same anchoring for {@link #AUTHENTICATION_FAILED}, and for the same reason. */
+    static final String AUTHENTICATION_FAILED_MESSAGE_PREFIX = "Code: " + AUTHENTICATION_FAILED + ".";
 }

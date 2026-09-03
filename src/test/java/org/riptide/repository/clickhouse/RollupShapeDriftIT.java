@@ -60,6 +60,13 @@ public class RollupShapeDriftIT {
     private static final String DATABASE = "drift";
     private static final SecretResolvers RESOLVERS = SecretResolvers.defaults();
 
+    /**
+     * The write role {@code ensureShared} creates for {@link #DATABASE}. Asked for rather than
+     * spelled out: the name is qualified by database since #649, and a literal here would be a
+     * second place remembering that rule.
+     */
+    private static final String WRITER_ROLE = "`" + ProvisioningDdl.writerRole(DATABASE) + "`";
+
     @Container
     private static final GenericContainer<?> CLICKHOUSE = new GenericContainer<>(ContainerImages.clickhouse())
             .withEnv("CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT", "1")
@@ -73,7 +80,7 @@ public class RollupShapeDriftIT {
 
     private static final String PROBE_DATABASE = "grants_probe";
 
-    /** The rollup target the probe user may write, exactly as {@code flow_writer} holds it. */
+    /** The rollup target the probe user may write, exactly as the database's write role holds it. */
     private static final String PROBE_TARGET = PROBE_DATABASE + ".target";
 
     /** A materialized view that exists, and which {@link #PROBE_USER} holds no grant on. */
@@ -154,7 +161,7 @@ public class RollupShapeDriftIT {
             admin.execute(ddl).get();
         }
         admin.execute("CREATE USER IF NOT EXISTS writer IDENTIFIED WITH plaintext_password BY 'pw'").get();
-        admin.execute("GRANT flow_writer TO writer").get();
+        admin.execute("GRANT " + WRITER_ROLE + " TO writer").get();
 
         provisionProbe();
     }
@@ -295,7 +302,7 @@ public class RollupShapeDriftIT {
                 + " AS " + FlowsSchema.rollupSelects(DATABASE).get(rollup)
                         .replace("sumIf(f.packets, f.direction = 'EGRESS') AS packetsOut",
                                 "sum(f.packets) AS packetsOut")).get();
-        admin.execute("GRANT SHOW TABLES ON " + mv + " TO flow_writer").get();
+        admin.execute("GRANT SHOW TABLES ON " + mv + " TO " + WRITER_ROLE).get();
         try {
             RollupAvailability.recordDrifted(List.of());
 
@@ -340,7 +347,7 @@ public class RollupShapeDriftIT {
             admin.execute("DROP VIEW IF EXISTS " + mv).get();
             admin.execute(FlowsSchema.createRollupViews(DATABASE).stream()
                     .filter(ddl -> ddl.contains(rollup + "_mv")).findFirst().orElseThrow()).get();
-            admin.execute("GRANT SHOW TABLES ON " + mv + " TO flow_writer").get();
+            admin.execute("GRANT SHOW TABLES ON " + mv + " TO " + WRITER_ROLE).get();
             RollupAvailability.recordDrifted(List.of());
         }
     }
@@ -384,7 +391,7 @@ public class RollupShapeDriftIT {
     void aViewTheWriterCannotSeeIsReportedAsUnverifiableAndStillUsed() throws Exception {
         final String rollup = FlowsSchema.ROLLUP_BY_CONVERSATION;
         final String mv = FlowsSchema.qualifiedRollupView(DATABASE, rollup);
-        admin.execute("REVOKE SHOW TABLES ON " + mv + " FROM flow_writer").get();
+        admin.execute("REVOKE SHOW TABLES ON " + mv + " FROM " + WRITER_ROLE).get();
         try {
             RollupAvailability.recordDrifted(List.of());
 
@@ -403,7 +410,7 @@ public class RollupShapeDriftIT {
                     .as("a rollup that could not be checked is not thereby known to be wrong")
                     .isTrue();
         } finally {
-            admin.execute("GRANT SHOW TABLES ON " + mv + " TO flow_writer").get();
+            admin.execute("GRANT SHOW TABLES ON " + mv + " TO " + WRITER_ROLE).get();
             RollupAvailability.recordDrifted(List.of());
         }
     }
@@ -456,7 +463,7 @@ public class RollupShapeDriftIT {
             // name (ProvisioningDdl), and whether a grant survives DROP VIEW is not asserted
             // anywhere. Without this the class is order-dependent — a later test would see this
             // rollup as ungranted.
-            admin.execute("GRANT SHOW TABLES ON " + mv + " TO flow_writer").get();
+            admin.execute("GRANT SHOW TABLES ON " + mv + " TO " + WRITER_ROLE).get();
             RollupAvailability.recordDrifted(List.of());
         }
     }
@@ -494,8 +501,8 @@ public class RollupShapeDriftIT {
                     .filter(ddl -> ddl.contains(rollup + " ")).findFirst().orElseThrow()).get();
             admin.execute(FlowsSchema.createRollupViews(DATABASE).stream()
                     .filter(ddl -> ddl.contains(rollup + "_mv")).findFirst().orElseThrow()).get();
-            admin.execute("GRANT INSERT ON " + target + " TO flow_writer").get();
-            admin.execute("GRANT SHOW TABLES ON " + mv + " TO flow_writer").get();
+            admin.execute("GRANT INSERT ON " + target + " TO " + WRITER_ROLE).get();
+            admin.execute("GRANT SHOW TABLES ON " + mv + " TO " + WRITER_ROLE).get();
             RollupAvailability.recordDrifted(List.of());
         }
     }
@@ -503,10 +510,11 @@ public class RollupShapeDriftIT {
     /**
      * The writer must not be able to read rollup data through the view's name.
      *
-     * <p>A row policy on a rollup target does not apply through its materialized view, and
-     * {@code flow_writer} is shared by every per-tenant writer — so a {@code SELECT} grant on the
-     * {@code _mv} would be a cross-tenant read path around the policy. This is what forced the
-     * grant to {@code SHOW TABLES}.</p>
+     * <p>A row policy on a rollup target does not apply through its materialized view, and the
+     * write role is shared by every per-tenant writer in its database — so a {@code SELECT} grant on
+     * the {@code _mv} would be a cross-tenant read path around the policy. Qualifying the role per
+     * database (#649) narrows who shares it; it does not close this, which is why the grant is still
+     * {@code SHOW TABLES}.</p>
      */
     @Test
     void theWriterCanSeeTheViewButNotReadThroughIt() throws Exception {
@@ -550,7 +558,7 @@ public class RollupShapeDriftIT {
             admin.execute("ALTER TABLE " + target + " ADD COLUMN IF NOT EXISTS packetsOut UInt64").get();
             admin.execute(FlowsSchema.createRollupViews(DATABASE).stream()
                     .filter(ddl -> ddl.contains(rollup + "_mv")).findFirst().orElseThrow()).get();
-            admin.execute("GRANT SHOW TABLES ON " + mv + " TO flow_writer").get();
+            admin.execute("GRANT SHOW TABLES ON " + mv + " TO " + WRITER_ROLE).get();
             RollupAvailability.recordDrifted(List.of());
         }
     }

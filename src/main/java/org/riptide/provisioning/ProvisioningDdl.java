@@ -8,6 +8,7 @@ package org.riptide.provisioning;
 import org.riptide.schema.FlowsSchema;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -16,13 +17,21 @@ import java.util.Set;
  * The ClickHouse SQL for role-based tenant provisioning. Pure string builders — no I/O — so the
  * whole recipe is one auditable place and lifts cleanly into a future {@code riptide-admin} module.
  *
- * <p>The model puts every identical-per-tenant part into one-time objects ({@link #ensureShared})
- * — the {@code flow_writer}/{@code flow_reader} roles carrying the grants and the reader hardening,
- * and a single quota keyed by user — so {@link #onboardTenant} reduces to the scoped users, two
- * role grants, and the row policies. The {@code flows} schema itself is a separate, opt-in recipe
- * ({@link #bootstrapSchema}, {@code onboard --create-schema}), as are the 1-minute rollups
- * ({@link #bootstrapRollups}). All statements are idempotent ({@code IF NOT EXISTS} /
- * {@code OR REPLACE} / {@code ALTER ROLE SETTINGS}), verified on ClickHouse 25.3.
+ * <p>The model puts every identical-per-database part into per-database objects
+ * ({@link #ensureShared}) — the {@code flow_writer@<db>}/{@code flow_reader@<db>} roles carrying the
+ * grants and the reader hardening, and one quota keyed by user — so {@link #onboardTenant} reduces
+ * to the scoped users, two role grants, and the row policies. The {@code flows} schema itself is a
+ * separate, opt-in recipe ({@link #bootstrapSchema}, {@code onboard --create-schema}), as are the
+ * 1-minute rollups ({@link #bootstrapRollups}). All statements are idempotent
+ * ({@code IF NOT EXISTS} / {@code OR REPLACE} / {@code ALTER ROLE SETTINGS}), verified on the
+ * pinned image — ClickHouse 26.7 ({@code .github/e2e-images/clickhouse.Dockerfile}), the version
+ * every claim in this file was measured against.
+ *
+ * <p><b>Every instance-wide object is qualified by its database</b> (#649). Users, roles and the
+ * quota live in one flat, instance-wide namespace, so provisioning the same tenant id into two
+ * databases on one server used to collide: the second onboarding rotated the first one's password,
+ * and one shared {@code flow_writer} handed every writer {@code INSERT} on every provisioned
+ * database. {@link #qualified} composes those names, and it is the only place that rule exists.
  *
  * <p>The rollups are provisioned as first-class tables: every grant and every row policy that
  * covers {@code flows} covers each rollup target too. Both are driven off
@@ -137,41 +146,145 @@ public final class ProvisioningDdl {
         return List.copyOf(statements);
     }
 
-    /** One-time shared objects: the two roles, the reader hardening, the CHECK barrier, the quota. */
+    /** Prefix of the per-tenant ingest writer's account name. */
+    private static final String WRITER_PREFIX = "writer_";
+
+    /** Prefix of the per-tenant BI reader's account name. */
+    private static final String READER_PREFIX = "bi_";
+
+    /**
+     * The one place the qualified-name rule lives: {@code <name>@<database>}.
+     *
+     * <p>{@code @} is the delimiter because {@link TenantSpec} constrains every variable component
+     * to {@code [A-Za-z0-9_-]+}, which cannot produce it — so the split point is unambiguous and the
+     * composition is injective. {@code _} would not be: {@code (tenant=foo, database=bar_baz)} and
+     * {@code (tenant=foo_bar, database=baz)} both spell {@code writer_foo_bar_baz}, so the second
+     * onboarding would take over the first's account. (That exact pair is the one
+     * {@code ProvisioningDdlTest.qualifyingIsInjectiveOverTheTenantDatabaseSplit} asserts, and it
+     * had to be that pair: a pair differing anywhere but the split point stays distinct under
+     * {@code _} too, and pins nothing.) {@code :} was rejected because it is the separator in HTTP
+     * basic auth. Verified on the pinned image (26.7): a user
+     * named this way is created, listed in {@code system.users} under that exact name, and
+     * authenticates over both HTTP basic auth and the native protocol.
+     *
+     * <p>Not {@link #ident}: that validates through {@link TenantSpec#requireSafe}, which rejects
+     * {@code @} — deliberately, since {@code @} must only ever be introduced here and never accepted
+     * from input. Both components are validated separately instead, which is what makes that
+     * guarantee real rather than a convention the callers happen to keep.
+     */
+    static String qualified(final String name, final String database) {
+        TenantSpec.requireSafe("name", name);
+        TenantSpec.requireSafe("database", database);
+        return name + "@" + database;
+    }
+
+    /** As {@link #qualified}, for the objects whose name also carries a tenant. */
+    private static String qualified(final String prefix, final String tenant, final String database) {
+        TenantSpec.requireSafe("tenant", tenant);
+        return qualified(prefix + tenant, database);
+    }
+
+    /**
+     * The per-tenant ingest writer's account name. Public because the config stanza an operator
+     * pastes is the only copy of this name they get, and it must not be re-derived there.
+     */
+    public static String writerUser(final String tenant, final String database) {
+        return qualified(WRITER_PREFIX, tenant, database);
+    }
+
+    /** The per-tenant BI reader's account name. */
+    public static String readerUser(final String tenant, final String database) {
+        return qualified(READER_PREFIX, tenant, database);
+    }
+
+    /** The pre-#649 ingest writer's account name, carrying no database. */
+    static String legacyWriterUser(final String tenant) {
+        TenantSpec.requireSafe("tenant", tenant);
+        return WRITER_PREFIX + tenant;
+    }
+
+    /** The pre-#649 BI reader's account name, carrying no database. */
+    static String legacyReaderUser(final String tenant) {
+        TenantSpec.requireSafe("tenant", tenant);
+        return READER_PREFIX + tenant;
+    }
+
+    /**
+     * The database-unqualified account names this rename replaced, writer first, still live on any
+     * instance onboarded before #649. Kept as a named pair rather than spelled out at each site so
+     * {@code offboard} (which drops them), {@code onboard} (which keeps them on the row policies
+     * while they live, and warns) cannot drift apart.
+     */
+    static List<String> legacyUsers(final String tenant) {
+        return List.of(legacyWriterUser(tenant), legacyReaderUser(tenant));
+    }
+
+    /**
+     * The role carrying this database's write grants. Public for the same reason
+     * {@link #writerUser} is: a caller that spelled the name out by hand would be a second place
+     * remembering the rule, and the one that drifts is the one nothing runs.
+     */
+    public static String writerRole(final String database) {
+        return qualified("flow_writer", database);
+    }
+
+    /** The role carrying this database's read grants and the reader hardening. */
+    public static String readerRole(final String database) {
+        return qualified("flow_reader", database);
+    }
+
+    /** Backtick-quote a name this class composed. */
+    private static String quote(final String name) {
+        return "`" + name + "`";
+    }
+
+    /**
+     * One-time per-database objects: the two roles, the reader hardening, the CHECK barrier, the
+     * quota.
+     *
+     * <p>The roles and the quota are qualified by database (#649) — this is what makes a
+     * cross-database write a privilege-level refusal ({@code ACCESS_DENIED}) rather than a predicate
+     * that happens to match. A single shared {@code flow_writer} would not: {@code tenant_pinned}
+     * passes whenever both databases carry the same tenant id, and the rollup policies are
+     * {@code FOR SELECT} and constrain no insert at all.
+     */
     public static List<String> ensureShared(final String database, final long quotaBytes) {
         final String flows = FlowsSchema.qualifiedFlows(database);
+        final String writerRole = quote(writerRole(database));
+        final String readerRole = quote(readerRole(database));
+        final String quota = quote(qualified("flow_ingest", database));
         final List<String> statements = new ArrayList<>();
         // Additive schema upgrades first (same precondition as the GRANTs below: the table
         // exists). Emitted on every run so re-running onboard upgrades a pre-existing table in
         // place; IF NOT EXISTS makes them no-ops everywhere else.
         statements.addAll(FlowsSchema.addAdditiveColumns(database));
         statements.addAll(List.of(
-                "CREATE ROLE IF NOT EXISTS flow_writer",
-                "GRANT INSERT ON " + flows + " TO flow_writer",
+                "CREATE ROLE IF NOT EXISTS " + writerRole,
+                "GRANT INSERT ON " + flows + " TO " + writerRole,
                 // The writer also reads flows: a materialized view runs as the inserting user, so
                 // pushing a row into a rollup target requires SELECT on the view's source table.
-                "GRANT SELECT ON " + flows + " TO flow_writer",
-                "CREATE ROLE IF NOT EXISTS flow_reader",
-                "GRANT SELECT ON " + flows + " TO flow_reader",
-                "GRANT SELECT ON system.databases TO flow_reader",
-                "GRANT SELECT ON system.tables TO flow_reader",
-                "GRANT SELECT ON system.columns TO flow_reader",
+                "GRANT SELECT ON " + flows + " TO " + writerRole,
+                "CREATE ROLE IF NOT EXISTS " + readerRole,
+                "GRANT SELECT ON " + flows + " TO " + readerRole,
+                "GRANT SELECT ON system.databases TO " + readerRole,
+                "GRANT SELECT ON system.tables TO " + readerRole,
+                "GRANT SELECT ON system.columns TO " + readerRole,
                 // readonly = 2 blocks writes and DDL while tolerating the read-only settings an HTTP
                 // client sends per query (readonly = 1 would reject those and break the connection).
-                "ALTER ROLE flow_reader SETTINGS readonly = 2, allow_ddl = 0",
+                "ALTER ROLE " + readerRole + " SETTINGS readonly = 2, allow_ddl = 0",
                 "ALTER TABLE " + flows
                         + " ADD CONSTRAINT IF NOT EXISTS tenant_pinned CHECK tenant = getSetting('SQL_tenant')",
                 "ALTER TABLE " + flows
                         + " ADD CONSTRAINT IF NOT EXISTS org_pinned CHECK organisation = getSetting('SQL_org')",
-                "CREATE QUOTA IF NOT EXISTS flow_ingest FOR INTERVAL 1 hour MAX written_bytes = "
-                        + quotaBytes + " KEYED BY user_name TO flow_writer"));
+                "CREATE QUOTA IF NOT EXISTS " + quota + " FOR INTERVAL 1 hour MAX written_bytes = "
+                        + quotaBytes + " KEYED BY user_name TO " + writerRole));
         // The rollups get the same treatment as flows: the writer inserts (via the materialized
         // views), the reader selects. Driven off rollupTableNames() so a new rollup cannot be
         // added to the schema without inheriting its grants.
         for (final String rollup : FlowsSchema.rollupTableNames()) {
             final String table = FlowsSchema.qualifiedRollup(database, rollup);
-            statements.add("GRANT INSERT ON " + table + " TO flow_writer");
-            statements.add("GRANT SELECT ON " + table + " TO flow_reader");
+            statements.add("GRANT INSERT ON " + table + " TO " + writerRole);
+            statements.add("GRANT SELECT ON " + table + " TO " + readerRole);
             // The writer must SEE the view's definition, to verify at startup that the rollup still
             // has the shape this version intends (#470). Without a grant ClickHouse filters the
             // view out of system.tables silently — indistinguishable from a view that does not
@@ -181,10 +294,11 @@ public final class ProvisioningDdl {
             // apply when the same rows are read through its materialized view's name: probed on
             // 26.7, a writer holding SELECT on the _mv read every tenant's rows while the same user
             // was denied outright on the target table the policy is attached to. SELECT here would
-            // hand every per-tenant writer a cross-tenant read path around the policy. SHOW TABLES
-            // gives the visibility the check needs and no data access at all.
+            // hand every per-tenant writer of THIS database a cross-tenant read path around the
+            // policy — the role is per-database now, but it is still shared by every tenant in it.
+            // SHOW TABLES gives the visibility the check needs and no data access at all.
             statements.add("GRANT SHOW TABLES ON " + FlowsSchema.qualifiedRollupView(database, rollup)
-                    + " TO flow_writer");
+                    + " TO " + writerRole);
         }
         return List.copyOf(statements);
     }
@@ -196,37 +310,94 @@ public final class ProvisioningDdl {
      * {@code CREATE … IF NOT EXISTS} would silently keep the old password). {@code ALTER USER}
      * preserves the user's {@code CONST} settings and its row-policy membership.
      *
-     * <p>The writer is on the {@code flows} policy alongside the reader. A row policy on a table is
-     * deny-by-default for anyone it does not name, and the writer must read {@code flows} for the
-     * rollup views to push — omitting it would leave the materialized views silently pushing
-     * nothing. Its predicate is the same {@code tenant = '…'} the {@code tenant_pinned} constraint
-     * enforces on insert, so the policy grants the writer no row it could not already write.
+     * <p>The writer is on the {@code flows} policy alongside the reader, and the reason is
+     * <em>containment</em>, not access. A row policy is <b>not</b> deny-by-default for a user it
+     * does not name: the pinned image ships
+     * {@code users_without_row_policies_can_read_rows=true} (its {@code config.xml}), so a user
+     * holding {@code SELECT} and named by no policy on that table reads <em>every</em> row —
+     * measured on 26.7, not inferred. An unnamed writer would therefore read its neighbours' flows
+     * rather than starve. Naming it constrains it to the same {@code tenant = '…'} the
+     * {@code tenant_pinned} constraint already enforces on insert, so the policy grants the writer
+     * no row it could not already write, and takes away every row it should never have read.
      *
-     * <p>The rollup policies name the reader only: the writer reaches a rollup by {@code INSERT}
-     * through its materialized view, which no row policy filters.
+     * <p>The rollup policies name the reader only. That is safe for the same reason stated
+     * differently: the writer holds no {@code SELECT} on a rollup target at all (see
+     * {@link #ensureShared}), so being unnamed there costs it nothing and exposes nothing. It
+     * reaches a rollup by {@code INSERT} through its materialized view, which no row policy filters.
+     *
+     * @param liveLegacyAccounts the pre-#649 unqualified accounts for this tenant that still exist
+     *                           on this server. They keep their place on the policies for as long as
+     *                           they live (#649 follow-up): the policy name is unchanged by the
+     *                           rename, so {@code OR REPLACE} rewrites the <em>existing</em> policy's
+     *                           {@code TO} list, and dropping them from it would leave them named by
+     *                           no policy — which, per the setting above, is a cross-tenant read
+     *                           rather than a blank dashboard. Naming a user that does not exist
+     *                           fails the statement, so only accounts observed live may be passed.
+     *                           Self-healing: once the operator drops them, the next run stops
+     *                           naming them.
      */
     public static List<String> onboardTenant(final String database, final String tenant, final String organisation,
-                                             final String writerPassword, final String readerPassword) {
+                                             final String writerPassword, final String readerPassword,
+                                             final Collection<String> liveLegacyAccounts) {
         final String flows = FlowsSchema.qualifiedFlows(database);
-        final String writer = ident("writer_" + tenant);
-        final String reader = ident("bi_" + tenant);
+        final String writer = quote(writerUser(tenant, database));
+        final String reader = quote(readerUser(tenant, database));
+        // Not qualified, and deliberately so: a row policy's identity is `name ON db.table`, so
+        // `acme_iso ON db_a.flows` and `acme_iso ON db_b.flows` are already two distinct objects
+        // (verified — system.row_policies.name holds the full form, and both are listed). Renaming
+        // would buy no isolation and cost every upgraded deployment a migration.
         final String policy = ident(tenant + "_iso");
+        final List<String> flowsGrantees = flowsPolicyGrantees(tenant, database, liveLegacyAccounts);
+        final List<String> rollupGrantees = rollupPolicyGrantees(tenant, database, liveLegacyAccounts);
         final String pinned = " SETTINGS SQL_tenant = " + literal(tenant) + " CONST, SQL_org = "
                 + literal(organisation) + " CONST";
         final List<String> statements = new ArrayList<>(List.of(
                 "CREATE USER IF NOT EXISTS " + writer + " IDENTIFIED WITH sha256_password BY "
                         + literal(writerPassword) + pinned,
                 "ALTER USER " + writer + " IDENTIFIED WITH sha256_password BY " + literal(writerPassword),
-                "GRANT flow_writer TO " + writer,
+                "GRANT " + quote(writerRole(database)) + " TO " + writer,
                 "CREATE USER IF NOT EXISTS " + reader + " IDENTIFIED WITH sha256_password BY "
                         + literal(readerPassword) + pinned,
                 "ALTER USER " + reader + " IDENTIFIED WITH sha256_password BY " + literal(readerPassword),
-                "GRANT flow_reader TO " + reader,
-                rowPolicy(policy, flows, tenant, reader + ", " + writer)));
+                "GRANT " + quote(readerRole(database)) + " TO " + reader,
+                rowPolicy(policy, flows, tenant, String.join(", ", flowsGrantees))));
         for (final String rollup : FlowsSchema.rollupTableNames()) {
-            statements.add(rowPolicy(policy, FlowsSchema.qualifiedRollup(database, rollup), tenant, reader));
+            statements.add(rowPolicy(policy, FlowsSchema.qualifiedRollup(database, rollup), tenant,
+                    String.join(", ", rollupGrantees)));
         }
         return List.copyOf(statements);
+    }
+
+    /**
+     * Who this tenant's {@code flows} policy names: the qualified pair, plus any pre-#649 account
+     * still live. Mirrors the qualified accounts exactly — the legacy writer joins {@code flows}
+     * because the legacy writer, like the new one, holds {@code SELECT} there.
+     */
+    private static List<String> flowsPolicyGrantees(final String tenant, final String database,
+            final Collection<String> liveLegacyAccounts) {
+        final List<String> grantees = new ArrayList<>(List.of(
+                quote(readerUser(tenant, database)), quote(writerUser(tenant, database))));
+        addIfLive(grantees, legacyReaderUser(tenant), liveLegacyAccounts);
+        addIfLive(grantees, legacyWriterUser(tenant), liveLegacyAccounts);
+        return grantees;
+    }
+
+    /**
+     * Who a rollup policy names: the readers only, for the reason in {@link #onboardTenant} — no
+     * writer, new or legacy, holds {@code SELECT} on a rollup target.
+     */
+    private static List<String> rollupPolicyGrantees(final String tenant, final String database,
+            final Collection<String> liveLegacyAccounts) {
+        final List<String> grantees = new ArrayList<>(List.of(quote(readerUser(tenant, database))));
+        addIfLive(grantees, legacyReaderUser(tenant), liveLegacyAccounts);
+        return grantees;
+    }
+
+    private static void addIfLive(final List<String> grantees, final String legacy,
+            final Collection<String> liveLegacyAccounts) {
+        if (liveLegacyAccounts.contains(legacy)) {
+            grantees.add(ident(legacy));
+        }
     }
 
     /**
@@ -241,8 +412,25 @@ public final class ProvisioningDdl {
 
     /**
      * Per-tenant teardown: drop the policy from {@code flows} and from every rollup, then the two
-     * users; shared objects stay. A policy left behind on a rollup would keep denying rows there
-     * after the tenant is gone.
+     * users; the per-database roles, constraints and quota stay. A policy left behind on a rollup
+     * would keep denying rows there after the tenant is gone.
+     *
+     * <p>Both namings are dropped. An instance onboarded before #649 holds this tenant's credential
+     * under the unqualified {@code writer_<t>}/{@code bi_<t>}, and dropping only the qualified names
+     * there would report a revocation that did not happen — the operator's whole reason for running
+     * {@code offboard}. {@code IF EXISTS} makes each pair a no-op on the instance that lacks it.
+     *
+     * <p><b>The legacy drop is instance-wide, and this method cannot make it otherwise.</b> The
+     * legacy names are keyed on the tenant alone, so offboarding {@code acme} from {@code db_b}
+     * drops the same {@code writer_acme} that an unmigrated {@code db_a} is still ingesting with.
+     * That is inherent to the naming this change replaced — the credential genuinely is one object
+     * — and dropping it is still right, because leaving it would be the false revocation above. The
+     * caller must say so: {@code ProvisioningCommand.offboard} names the consequence, and
+     * {@code multi-tenancy.md} tells the operator to re-onboard any other database of this tenant
+     * that was still on the old naming.
+     *
+     * <p>The legacy {@code flow_writer}/{@code flow_reader} roles are deliberately <em>not</em>
+     * dropped: they are instance-wide and may still be granted to another tenant's legacy user.
      */
     public static List<String> offboardTenant(final String database, final String tenant) {
         final String policy = ident(tenant + "_iso");
@@ -252,8 +440,11 @@ public final class ProvisioningDdl {
             statements.add("DROP ROW POLICY IF EXISTS " + policy + " ON "
                     + FlowsSchema.qualifiedRollup(database, rollup));
         }
-        statements.add("DROP USER IF EXISTS " + ident("bi_" + tenant));
-        statements.add("DROP USER IF EXISTS " + ident("writer_" + tenant));
+        statements.add("DROP USER IF EXISTS " + quote(readerUser(tenant, database)));
+        statements.add("DROP USER IF EXISTS " + quote(writerUser(tenant, database)));
+        for (final String legacy : legacyUsers(tenant)) {
+            statements.add("DROP USER IF EXISTS " + ident(legacy));
+        }
         return List.copyOf(statements);
     }
 

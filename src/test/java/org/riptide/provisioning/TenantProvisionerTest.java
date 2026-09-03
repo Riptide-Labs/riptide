@@ -18,26 +18,26 @@ class TenantProvisionerTest {
 
     @Test
     void redactsPlainPassword() {
-        final String sql = "CREATE USER `writer_acme` IDENTIFIED WITH sha256_password BY 's3cr3t' SETTINGS x = 1";
+        final String sql = "CREATE USER `writer_acme@riptide` IDENTIFIED WITH sha256_password BY 's3cr3t' SETTINGS x = 1";
         assertThat(TenantProvisioner.redact(sql))
-                .isEqualTo("CREATE USER `writer_acme` IDENTIFIED WITH sha256_password BY '***' SETTINGS x = 1")
+                .isEqualTo("CREATE USER `writer_acme@riptide` IDENTIFIED WITH sha256_password BY '***' SETTINGS x = 1")
                 .doesNotContain("s3cr3t");
     }
 
     @Test
     void redactsPasswordContainingEscapedQuote() {
         // literal("a'b") -> 'a\'b' ; the escaped quote must not end the redaction early.
-        final String sql = "ALTER USER `writer_acme` IDENTIFIED WITH sha256_password BY 'a\\'b'";
+        final String sql = "ALTER USER `writer_acme@riptide` IDENTIFIED WITH sha256_password BY 'a\\'b'";
         assertThat(TenantProvisioner.redact(sql))
-                .isEqualTo("ALTER USER `writer_acme` IDENTIFIED WITH sha256_password BY '***'")
+                .isEqualTo("ALTER USER `writer_acme@riptide` IDENTIFIED WITH sha256_password BY '***'")
                 .doesNotContain("a\\'b").doesNotContain("b'");
     }
 
     @Test
     void redactsPasswordContainingNewline() {
-        final String sql = "ALTER USER `writer_acme` IDENTIFIED WITH sha256_password BY 'pre\npost'";
+        final String sql = "ALTER USER `writer_acme@riptide` IDENTIFIED WITH sha256_password BY 'pre\npost'";
         assertThat(TenantProvisioner.redact(sql))
-                .isEqualTo("ALTER USER `writer_acme` IDENTIFIED WITH sha256_password BY '***'")
+                .isEqualTo("ALTER USER `writer_acme@riptide` IDENTIFIED WITH sha256_password BY '***'")
                 .doesNotContain("post");
     }
 }

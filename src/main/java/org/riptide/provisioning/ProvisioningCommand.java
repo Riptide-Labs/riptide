@@ -112,8 +112,29 @@ public final class ProvisioningCommand {
             err.println("warning: --ttl-days ignored — the flows table already exists, its retention"
                     + " is unchanged (use ALTER TABLE ... MODIFY TTL to change it)");
         }
+        // Reported, never dropped: a rolling upgrade is still authenticating as this account. The
+        // run has already kept it on this tenant's row policies, so it stays filtered to its own
+        // rows until the operator retires it.
+        for (final String legacy : result.legacyAccounts()) {
+            final boolean writer = legacy.equals(ProvisioningDdl.legacyWriterUser(spec.tenant()));
+            err.println("warning: the pre-rename account '" + legacy + "' still exists on this server,"
+                    + " and it is instance-wide — it is not specific to database '" + database + "'."
+                    + (writer
+                            ? " It holds the old instance-wide write role, so it can still INSERT into"
+                                    + " every database provisioned before the rename."
+                            : " It holds the old instance-wide read role wherever that role was"
+                                    + " granted SELECT, so it can still read those databases.")
+                    + " This run kept it on this tenant's row policies, so it stays filtered to its"
+                    + " own rows meanwhile. Retire it only once EVERY database's collector and"
+                    + " datasource for tenant '" + spec.tenant() + "' has moved to the qualified"
+                    + " account — dropping it sooner takes those other databases offline. Then:"
+                    + " DROP USER `" + legacy + "`, and re-run onboard here so the policies stop"
+                    + " naming it.");
+        }
         err.println("Onboarded tenant '" + spec.tenant() + "' (org '" + spec.organisation()
-                + "'). Add this to the tenant's riptide config:");
+                + "') into database '" + database + "'. Add this to the tenant's riptide config"
+                + " (the collector authenticates as '"
+                + ProvisioningDdl.writerUser(spec.tenant(), database) + "'):");
         out.println(result.configStanza());
         return 0;
     }
@@ -122,12 +143,42 @@ public final class ProvisioningCommand {
                                 final PrintStream err) {
         final var ref = new TenantProvisioner.TenantRef(database, parsed.require("tenant"));
         if (!parsed.flags.contains("yes")) {
-            err.println("refusing to offboard '" + ref.tenant()
-                    + "' without --yes (this drops the tenant's writer/reader users and row policy)");
+            err.println("refusing to offboard '" + ref.tenant() + "' from database '" + ref.database()
+                    + "' without --yes (this drops the tenant's writer/reader users and row policies)");
             return 2;
         }
-        provisioner.offboard(ref);
-        err.println("Offboarded tenant '" + ref.tenant() + "' (dropped its users and row policy).");
+        final var result = provisioner.offboard(ref);
+        // Names the database, because the old line ("dropped its users and row policy") read as a
+        // complete revocation on an instance onboarded before #649 — where the credential that
+        // actually authenticates carries no database in its name.
+        err.println("Offboarded tenant '" + ref.tenant() + "' from database '" + ref.database()
+                + "': dropped " + ProvisioningDdl.writerUser(ref.tenant(), ref.database()) + " and "
+                + ProvisioningDdl.readerUser(ref.tenant(), ref.database())
+                + ", and the tenant's row policies on flows and every rollup."
+                + " The database's roles, constraints and quota are left in place: they are shared"
+                + " by every tenant in this database, so offboard never removes them. If this was"
+                + " the last tenant here, drop them by hand.");
+        // Only what was actually dropped, and only when we know. The pre-rename pair is keyed on
+        // the tenant alone, so this reaches every database on the server — but printing it
+        // unconditionally, hedged "if they existed", raises that alarm on every post-rename
+        // deployment about credentials that never existed.
+        result.legacyDropped().ifPresentOrElse(
+                dropped -> {
+                    if (!dropped.isEmpty()) {
+                        err.println("note: also dropped the pre-rename account"
+                                + (dropped.size() == 1 ? " " : "s ") + String.join(" and ", dropped)
+                                + ". Those carry no database in their name, so they were"
+                                + " INSTANCE-WIDE: any OTHER database on this server where tenant '"
+                                + ref.tenant() + "' was still on the old naming has just lost its"
+                                + " credential and must be re-onboarded to get a '@<database>'"
+                                + " account of its own.");
+                    }
+                },
+                () -> err.println("note: could not check whether tenant '" + ref.tenant() + "' also"
+                        + " had pre-rename (database-unqualified) accounts — reading system.users"
+                        + " needs GRANT SHOW USERS ON *.*. Any that existed have now been dropped,"
+                        + " and because they carry no database in their name that reaches every"
+                        + " database on this server. Verify no other database was relying on them."));
         return 0;
     }
 
@@ -176,6 +227,10 @@ public final class ProvisioningCommand {
                   riptide offboard --admin-url URL [--admin-user U] [--admin-password REF] \\
                                    --tenant T [--database DB] --yes
                 secret REF: plain literal, env://VAR, or file:///path[#key]
+                --database: the database holding the flows table (default: riptide). It also
+                            qualifies the generated account names — the stanza names
+                            writer_<tenant>@<database>, and the reader is bi_<tenant>@<database>,
+                            because ClickHouse users and roles are instance-wide.
                 --create-schema: bootstrap the database, flows table, and 1-minute rollup
                                  tables/views if absent (needs CREATE privileges) — also the way
                                  to add the rollups to a pre-rollup deployment; without it, a

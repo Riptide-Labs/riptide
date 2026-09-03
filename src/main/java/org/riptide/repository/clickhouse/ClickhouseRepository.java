@@ -763,7 +763,8 @@ public class ClickhouseRepository implements FlowRepository {
      * be made: {@code ProvisioningDdl} withholds SELECT on each {@code _mv} on purpose, because a
      * row policy on the target does not apply to rows read through the view's name, so the grant
      * would hand every tenant's writer a read path around the policy. That reasoning is on the
-     * ClickHouse configuration page, under the grants it lists for {@code flow_writer}.
+     * ClickHouse configuration page, under the grants it lists for the database's write role
+     * ({@code flow_writer@<database>} since #649).
      * The probe works precisely because it is denied — a dropped view answers
      * UNKNOWN_TABLE while an existing one answers ACCESS_DENIED, which is the whole discrimination.
      *

@@ -71,7 +71,7 @@ public class McpProperties {
     /**
      * The read-only ClickHouse identity for MCP queries, kept separate from the ingest credentials
      * in {@code riptide.clickhouse}. Provisioned deployments must point this at the tenant reader
-     * ({@code bi_<tenant>}): it holds {@code flow_reader}, which already carries SELECT on
+     * ({@code bi_<tenant>@<database>}): it holds {@code flow_reader@<database>}, which already carries SELECT on
      * {@code flows} and every rollup plus the {@code readonly = 2} / {@code allow_ddl = 0}
      * hardening, and is already named on every row policy. Pointing MCP at the ingest writer
      * instead would mean widening the writer's grants and its row-policy membership to cover the

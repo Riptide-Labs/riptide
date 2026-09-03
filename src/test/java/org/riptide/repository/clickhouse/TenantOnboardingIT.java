@@ -10,6 +10,7 @@ import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.riptide.config.ClickhouseConfig;
 import org.riptide.provisioning.ProvisioningCommand;
+import org.riptide.provisioning.ProvisioningDdl;
 import org.riptide.schema.FlowsSchema;
 import org.riptide.secrets.SecretRef;
 import org.riptide.secrets.SecretResolvers;
@@ -38,6 +39,14 @@ import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
  * the full isolation matrix — honest write persists, cross-tenant write is rejected (469,
  * {@code VIOLATED_CONSTRAINT}), the
  * reader sees only its tenant and cannot write/DDL — and {@code offboard} must revoke access.
+ *
+ * <p>Since #649 the isolation matrix also spans <em>databases</em>: the same tenant id onboarded
+ * into two databases on one server must get two independent accounts, and neither may write into
+ * the other's tables ({@link #aTenantOnboardedIntoTwoDatabasesGetsTwoIsolatedAccounts}). The upgrade
+ * from the old unqualified naming is covered by
+ * {@link #offboardRevokesAnInstanceProvisionedUnderTheOldNaming},
+ * {@link #onboardWarnsAboutALiveLegacyAccountWithoutDroppingIt} and — the one that fails if the
+ * upgrade leaks — {@link #onboardKeepsALiveLegacyAccountOnTheRowPoliciesItReplaces}.
  *
  * <p>The server needs {@code custom_settings_prefixes: SQL_} for the CHECK barrier the onboarding
  * recipe installs; it is mounted from the classpath, as in {@link TenantWriteBarrierIT}.
@@ -72,7 +81,7 @@ public class TenantOnboardingIT {
                 .hasStackTraceContaining("VIOLATED_CONSTRAINT");
 
         // The reader sees only its own tenant (row policy) and cannot write or DDL (readonly role).
-        try (var reader = rawClient("bi_acme", "rA")) {
+        try (var reader = rawClient(ProvisioningDdl.readerUser("acme", DATABASE), "rA")) {
             final var rows = reader.queryAll(
                     "SELECT tenant FROM " + DATABASE + ".flows WHERE srcPort IN (31001, 31002)");
             Assertions.assertThat(rows).hasSize(1);
@@ -96,7 +105,10 @@ public class TenantOnboardingIT {
                 discard());
         Assertions.assertThat(code).isZero();
         Assertions.assertThat(out.toString(StandardCharsets.UTF_8))
-                .contains("riptide.clickhouse.username=writer_cfg")
+                // The stanza is the operator's only copy of the username, and since #649 that name
+                // carries the database — a stanza still naming `writer_cfg` would hand them a
+                // credential that no longer exists.
+                .contains("riptide.clickhouse.username=writer_cfg@" + DATABASE)
                 .contains("riptide.clickhouse.password=wC")
                 .contains("riptide.identity.tenant=cfg")
                 .contains("riptide.identity.organisation=cfg-eu");
@@ -107,18 +119,19 @@ public class TenantOnboardingIT {
 
     @Test
     void reonboardRotatesTheWriterPassword() throws Exception {
+        final String rotWriter = ProvisioningDdl.writerUser("rot", DATABASE);
         Assertions.assertThat(onboard("rot", "rot-eu", "pw1", "rr1")).isZero();
-        try (var writer = rawClient("writer_rot", "pw1")) {
+        try (var writer = rawClient(rotWriter, "pw1")) {
             Assertions.assertThat(writer.queryAll("SELECT 1 AS c").getFirst().getLong("c")).isEqualTo(1);
         }
 
         // Re-onboard with a rotated writer secret: the new password must take effect...
         Assertions.assertThat(onboard("rot", "rot-eu", "pw2", "rr1")).isZero();
-        try (var writer = rawClient("writer_rot", "pw2")) {
+        try (var writer = rawClient(rotWriter, "pw2")) {
             Assertions.assertThat(writer.queryAll("SELECT 1 AS c").getFirst().getLong("c")).isEqualTo(1);
         }
         // ...and the old one must stop working.
-        try (var stale = rawClient("writer_rot", "pw1")) {
+        try (var stale = rawClient(rotWriter, "pw1")) {
             Assertions.assertThatThrownBy(() -> stale.queryAll("SELECT 1 AS c"))
                     .hasStackTraceContaining("AUTHENTICATION_FAILED");
         }
@@ -141,8 +154,16 @@ public class TenantOnboardingIT {
                 .addEndpoint(endpoint()).setUsername("default").setPassword("").build()) {
             Assertions.assertThat(admin.queryAll("EXISTS DATABASE `ript1de`")
                     .getFirst().getLong("result")).isZero();
+            // A prefix match, not the exact name: the account the aborted run would have created
+            // is `writer_phantom@ript1de`, so pinning the bare name would have stopped catching
+            // the leak the moment #649 qualified it.
+            //
+            // startsWith and NOT LIKE: in ClickHouse LIKE, `_` is a single-character wildcard, so
+            // 'writer_phantom%' also matches writerXphantom… — a laxer pattern than the comment
+            // above claims, and laxer here means the assertion could pass on the wrong rows.
             Assertions.assertThat(admin.queryAll(
-                            "SELECT count() AS c FROM system.users WHERE name = 'writer_phantom'")
+                            "SELECT count() AS c FROM system.users"
+                                    + " WHERE startsWith(name, 'writer_phantom')")
                     .getFirst().getLong("c")).isZero();
         }
     }
@@ -169,8 +190,9 @@ public class TenantOnboardingIT {
 
     @Test
     void offboardRevokesAccessOnlyWithYes() throws Exception {
+        final String tempReader = ProvisioningDdl.readerUser("temp", DATABASE);
         Assertions.assertThat(onboard("temp", "temp-eu", "wT", "rT")).isZero();
-        try (var reader = rawClient("bi_temp", "rT")) {
+        try (var reader = rawClient(tempReader, "rT")) {
             Assertions.assertThat(reader.queryAll("SELECT 1 AS c").getFirst().getLong("c")).isEqualTo(1);
         }
 
@@ -178,7 +200,7 @@ public class TenantOnboardingIT {
         Assertions.assertThat(ProvisioningCommand.run(
                 new String[] {"offboard", "--admin-url", endpoint(), "--database", DATABASE, "--tenant", "temp"},
                 discard(), discard())).isEqualTo(2);
-        try (var reader = rawClient("bi_temp", "rT")) {
+        try (var reader = rawClient(tempReader, "rT")) {
             Assertions.assertThat(reader.queryAll("SELECT 1 AS c").getFirst().getLong("c")).isEqualTo(1);
         }
 
@@ -186,10 +208,395 @@ public class TenantOnboardingIT {
         Assertions.assertThat(ProvisioningCommand.run(
                 new String[] {"offboard", "--admin-url", endpoint(), "--database", DATABASE, "--tenant", "temp", "--yes"},
                 discard(), discard())).isZero();
-        try (var reader = rawClient("bi_temp", "rT")) {
+        try (var reader = rawClient(tempReader, "rT")) {
             Assertions.assertThatThrownBy(() -> reader.queryAll("SELECT 1 AS c"))
-                    .hasStackTraceContaining("bi_temp");
+                    .hasStackTraceContaining(ClickhouseServerErrors.AUTHENTICATION_FAILED_MESSAGE_PREFIX)
+                    .hasStackTraceContaining(tempReader);
         }
+    }
+
+    /**
+     * The same tenant id in two databases on one server is two independent tenants (#649).
+     *
+     * <p>Two things used to go wrong at once, and both are asserted here as behaviour rather than as
+     * a name. The users carried no database, so the second onboarding's {@code ALTER USER} rotated
+     * the first one's password out from under a running collector. And the {@code flow_writer} role
+     * carried none either, so every writer on the instance held {@code INSERT} on every provisioned
+     * database's {@code flows} and rollups.</p>
+     *
+     * <p>The refusal has to be {@code ACCESS_DENIED}, not {@code VIOLATED_CONSTRAINT}: the
+     * {@code tenant_pinned} CHECK passes here, because both databases genuinely carry the tenant id
+     * this credential is pinned to. Qualifying only the user names would have left that the sole
+     * barrier, and it does not hold.</p>
+     *
+     * <p>The reads are asserted too, and they are not mere symmetry. #649 argued reads were already
+     * contained "because a row policy is deny-by-default for anyone it does not name" — that premise
+     * is false on the pinned image, which ships
+     * {@code users_without_row_policies_can_read_rows=true}, so a user holding {@code SELECT} and
+     * named by no policy reads every row. Under the old shared {@code flow_reader} a tenant's BI
+     * account held {@code SELECT} on every provisioned database's {@code flows}, and in a database
+     * where that tenant had never been onboarded no policy named it — so it read the lot. The
+     * per-database <em>role</em> is what closes that, by withholding {@code SELECT} entirely, and
+     * nothing asserted it until here.</p>
+     */
+    @Test
+    void aTenantOnboardedIntoTwoDatabasesGetsTwoIsolatedAccounts() throws Exception {
+        Assertions.assertThat(onboardDual("iso_a", "pwA")).isZero();
+        Assertions.assertThat(onboardDual("iso_b", "pwB")).isZero();
+
+        final String writerA = ProvisioningDdl.writerUser("dual", "iso_a");
+        final String writerB = ProvisioningDdl.writerUser("dual", "iso_b");
+        Assertions.assertThat(writerA).isNotEqualTo(writerB);
+
+        // The second onboarding did not rotate the first one's password.
+        try (var first = rawClientOn("iso_a", writerA, "pwA")) {
+            Assertions.assertThat(first.queryAll("SELECT 1 AS c").getFirst().getLong("c")).isEqualTo(1);
+        }
+
+        try (var second = rawClientOn("iso_b", writerB, "pwB")) {
+            // Its own database still works, so the refusals below are about the boundary and not
+            // about a writer that cannot write at all.
+            second.execute("INSERT INTO " + FlowsSchema.qualifiedFlows("iso_b")
+                    + " (tenant, organisation, timestamp) VALUES ('dual', 'dual-eu', now())").get();
+
+            Assertions.assertThatThrownBy(() -> second.execute("INSERT INTO "
+                            + FlowsSchema.qualifiedFlows("iso_a")
+                            + " (tenant, organisation, timestamp) VALUES ('dual', 'dual-eu', now())").get())
+                    .as("the writer of one database must not reach another database's flows")
+                    .hasStackTraceContaining(ClickhouseServerErrors.ACCESS_DENIED_MESSAGE_PREFIX)
+                    .hasStackTraceContaining("ACCESS_DENIED");
+
+            // And the rollup targets, which no CHECK constraint covers at all: they are fed by
+            // materialized views, so a direct INSERT there is stopped by the grant or by nothing.
+            final String rollup = FlowsSchema.qualifiedRollup("iso_a", FlowsSchema.rollupTableNames().getFirst());
+            Assertions.assertThatThrownBy(() -> second.execute("INSERT INTO " + rollup
+                            + " (tenant, organisation, timestamp) VALUES ('dual', 'dual-eu', now())").get())
+                    .as("nor another database's rollup targets")
+                    .hasStackTraceContaining(ClickhouseServerErrors.ACCESS_DENIED_MESSAGE_PREFIX)
+                    .hasStackTraceContaining("ACCESS_DENIED");
+        }
+
+        // The read half. A row policy would not have stopped this: iso_a has no policy naming the
+        // iso_b reader, and an unnamed user reads everything. Only the absence of the SELECT grant
+        // does, which is what making the reader role per-database bought.
+        final String readerB = ProvisioningDdl.readerUser("dual", "iso_b");
+        try (var second = rawClientOn("iso_b", readerB, "rpwB")) {
+            Assertions.assertThat(second.queryAll(
+                            "SELECT count() AS c FROM " + FlowsSchema.qualifiedFlows("iso_b"))
+                    .getFirst().getLong("c"))
+                    .as("its own database still reads, so the refusals below are about the boundary")
+                    .isEqualTo(1);
+
+            Assertions.assertThatThrownBy(() -> second.queryAll(
+                            "SELECT count() AS c FROM " + FlowsSchema.qualifiedFlows("iso_a")))
+                    .as("the reader of one database must not read another database's flows")
+                    .hasStackTraceContaining(ClickhouseServerErrors.ACCESS_DENIED_MESSAGE_PREFIX)
+                    .hasStackTraceContaining("ACCESS_DENIED");
+
+            final String rollupA = FlowsSchema.qualifiedRollup("iso_a", FlowsSchema.rollupTableNames().getFirst());
+            Assertions.assertThatThrownBy(() -> second.queryAll("SELECT count() AS c FROM " + rollupA))
+                    .as("nor another database's rollup targets")
+                    .hasStackTraceContaining(ClickhouseServerErrors.ACCESS_DENIED_MESSAGE_PREFIX)
+                    .hasStackTraceContaining("ACCESS_DENIED");
+        }
+
+        // The first database's row is the only one in it: nothing crossed.
+        try (var admin = adminClient()) {
+            Assertions.assertThat(admin.queryAll("SELECT count() AS c FROM " + FlowsSchema.qualifiedFlows("iso_a"))
+                    .getFirst().getLong("c")).isZero();
+            Assertions.assertThat(admin.queryAll("SELECT count() AS c FROM " + FlowsSchema.qualifiedFlows("iso_b"))
+                    .getFirst().getLong("c")).isEqualTo(1);
+        }
+    }
+
+    /**
+     * Offboarding an instance provisioned under the pre-#649 naming really revokes it.
+     *
+     * <p>The rename is what makes this a test rather than a tautology: the credential that
+     * authenticates on such an instance is the unqualified {@code writer_old}, and an
+     * {@code offboard} that dropped only {@code writer_old@upg} would have printed its "offboarded"
+     * line over a credential that still works. The fixture is built by hand precisely because no
+     * current code path can produce that state any more.</p>
+     */
+    @Test
+    void offboardRevokesAnInstanceProvisionedUnderTheOldNaming() throws Exception {
+        try (var admin = adminClient()) {
+            admin.execute(FlowsSchema.createDatabase("upg")).get();
+            admin.execute(FlowsSchema.createFlowsTable("upg")).get();
+            // Exactly what riptide emitted before the rename: instance-wide roles, unqualified users.
+            admin.execute("CREATE ROLE IF NOT EXISTS flow_writer").get();
+            admin.execute("GRANT INSERT ON " + FlowsSchema.qualifiedFlows("upg") + " TO flow_writer").get();
+            admin.execute("CREATE USER writer_old IDENTIFIED WITH sha256_password BY 'legacyW'"
+                    + " SETTINGS SQL_tenant = 'old' CONST, SQL_org = 'old-eu' CONST").get();
+            admin.execute("GRANT flow_writer TO writer_old").get();
+            admin.execute("CREATE USER bi_old IDENTIFIED WITH sha256_password BY 'legacyR'").get();
+
+            try (var legacy = rawClientOn("upg", "writer_old", "legacyW")) {
+                Assertions.assertThat(legacy.queryAll("SELECT 1 AS c").getFirst().getLong("c")).isEqualTo(1);
+            }
+
+            Assertions.assertThat(ProvisioningCommand.run(
+                    new String[] {"offboard", "--admin-url", endpoint(), "--database", "upg",
+                            "--tenant", "old", "--yes"},
+                    discard(), discard())).isZero();
+
+            try (var stale = rawClientOn("upg", "writer_old", "legacyW")) {
+                Assertions.assertThatThrownBy(() -> stale.queryAll("SELECT 1 AS c"))
+                        .as("the credential the operator was told is revoked must stop authenticating")
+                        .hasStackTraceContaining(ClickhouseServerErrors.AUTHENTICATION_FAILED_MESSAGE_PREFIX);
+            }
+            Assertions.assertThat(admin.queryAll("SELECT count() AS c FROM system.users"
+                            + " WHERE name IN ('writer_old', 'bi_old')").getFirst().getLong("c"))
+                    .isZero();
+            // The legacy role stays: it is instance-wide and may still be granted to another
+            // tenant's legacy user, so dropping it here would revoke a tenant nobody offboarded.
+            Assertions.assertThat(admin.queryAll(
+                            "SELECT count() AS c FROM system.roles WHERE name = 'flow_writer'")
+                    .getFirst().getLong("c")).isEqualTo(1);
+        }
+    }
+
+    /**
+     * A live pre-#649 account is reported on a successful onboard, and not dropped.
+     *
+     * <p>Dropping it here would take a rolling upgrade's ingest down: the tenant's collector is
+     * still authenticating as it until the operator pastes the new stanza. Saying nothing would
+     * leave the cross-database write this change closes wide open for that account, discovered by
+     * an operator rather than by CI.</p>
+     */
+    @Test
+    void onboardWarnsAboutALiveLegacyAccountWithoutDroppingIt() throws Exception {
+        try (var admin = adminClient()) {
+            admin.execute("CREATE USER writer_warn IDENTIFIED WITH sha256_password BY 'legacyW'").get();
+
+            final var err = new ByteArrayOutputStream();
+            Assertions.assertThat(ProvisioningCommand.run(
+                    onboardArgs("warn", "warn-eu", "wW", "rW"),
+                    discard(), new PrintStream(err, true, StandardCharsets.UTF_8))).isZero();
+
+            final String warned = err.toString(StandardCharsets.UTF_8);
+            // Anchored on the backticked exact name in the DROP the operator is told to run.
+            // A bare contains("writer_warn") passed for the wrong reason: it is a prefix of the
+            // NEW account writer_warn@onb, so any line naming the account this run just created
+            // satisfied it, and the probe was effectively unpinned.
+            Assertions.assertThat(warned).contains("DROP USER `writer_warn`");
+            Assertions.assertThat(warned.replace("writer_warn@" + DATABASE, ""))
+                    .as("the warning must name the unqualified account, not merely the new one")
+                    .contains("writer_warn");
+
+            // Named, not dropped — it still authenticates.
+            try (var legacy = rawClient("writer_warn", "legacyW")) {
+                Assertions.assertThat(legacy.queryAll("SELECT 1 AS c").getFirst().getLong("c")).isEqualTo(1);
+            }
+        }
+    }
+
+    /**
+     * The other half of the probe: a tenant with no pre-rename account gets no such warning.
+     *
+     * <p>Without this the positive case above is satisfied by a probe that reports every tenant as
+     * legacy, so nothing pins that the probe actually looks. Deleting the body of
+     * {@code probeLegacyAccounts} and returning {@code legacyUsers(tenant)} unconditionally must
+     * fail this.</p>
+     */
+    @Test
+    void aTenantWithNoPreRenameAccountIsNotWarnedAbout() {
+        final var err = new ByteArrayOutputStream();
+        Assertions.assertThat(ProvisioningCommand.run(
+                onboardArgs("clean", "clean-eu", "wCl", "rCl"),
+                discard(), new PrintStream(err, true, StandardCharsets.UTF_8))).isZero();
+
+        Assertions.assertThat(err.toString(StandardCharsets.UTF_8))
+                .as("a clean instance must not be told to drop anything")
+                .doesNotContain("DROP USER")
+                .doesNotContain("pre-rename");
+    }
+
+    /**
+     * Upgrading a pre-rename database must not turn its live legacy accounts into cross-tenant
+     * readers.
+     *
+     * <p>This is the failure the documented upgrade order introduced. The row-policy <em>name</em>
+     * is unchanged by the rename, so step 1 ("re-run onboard") issues
+     * {@code CREATE ROW POLICY OR REPLACE <t>_iso ON <db>.flows … TO <qualified pair>} against the
+     * <em>existing</em> policy and rewrites its {@code TO} list — un-naming the still-live
+     * {@code bi_<t>}. On the pinned image that is not a blank dashboard: the shipped
+     * {@code users_without_row_policies_can_read_rows=true} means a user holding {@code SELECT} and
+     * named by no policy on that table reads every row. So the tenant's own BI credential would
+     * start returning its neighbours' traffic, caused by the procedure this change documents.</p>
+     *
+     * <p>Built by hand because no current code path can produce a pre-rename instance. Two tenants'
+     * rows are seeded so "sees only its own" is a claim that can fail — with one tenant in the
+     * table the assertion would pass against a policy that had stopped filtering entirely.</p>
+     */
+    @Test
+    void onboardKeepsALiveLegacyAccountOnTheRowPoliciesItReplaces() throws Exception {
+        final String flows = FlowsSchema.qualifiedFlows("leak");
+        try (var admin = adminClient()) {
+            admin.execute(FlowsSchema.createDatabase("leak")).get();
+            admin.execute(FlowsSchema.createFlowsTable("leak")).get();
+            // Exactly what riptide emitted before the rename: instance-wide role, unqualified
+            // users, and the policy under the same name this version still uses.
+            admin.execute("CREATE ROLE IF NOT EXISTS flow_reader").get();
+            admin.execute("GRANT SELECT ON " + flows + " TO flow_reader").get();
+            admin.execute("CREATE USER bi_lgc IDENTIFIED WITH sha256_password BY 'legacyR'").get();
+            admin.execute("GRANT flow_reader TO bi_lgc").get();
+            admin.execute("CREATE USER writer_lgc IDENTIFIED WITH sha256_password BY 'legacyW'"
+                    + " SETTINGS SQL_tenant = 'lgc' CONST, SQL_org = 'lgc-eu' CONST").get();
+            admin.execute("CREATE ROW POLICY lgc_iso ON " + flows
+                    + " FOR SELECT USING tenant = 'lgc' TO bi_lgc, writer_lgc").get();
+            // Seeded before onboard: the CHECK barrier does not exist yet, and the admin has no
+            // SQL_tenant setting for it to compare against once it does.
+            admin.execute("INSERT INTO " + flows + " (tenant, organisation, timestamp) VALUES"
+                    + " ('lgc', 'lgc-eu', now()), ('rival', 'rival-eu', now())").get();
+
+            try (var legacy = rawClientOn("leak", "bi_lgc", "legacyR")) {
+                Assertions.assertThat(tenantsSeenBy(legacy, "leak"))
+                        .as("before the upgrade the legacy reader is filtered to its own tenant")
+                        .containsExactly("lgc");
+            }
+
+            Assertions.assertThat(ProvisioningCommand.run(onboardArgsFor("leak", "lgc", true),
+                    discard(), discard())).isZero();
+
+            try (var legacy = rawClientOn("leak", "bi_lgc", "legacyR")) {
+                Assertions.assertThat(tenantsSeenBy(legacy, "leak"))
+                        .as("and after it, still — an onboard that drops a live legacy account from"
+                                + " the policy it replaces hands that account every tenant's rows")
+                        .containsExactly("lgc");
+            }
+
+            // Self-healing, and asserted rather than argued: once the operator retires the legacy
+            // account, the next run stops naming it, leaving the policy on the qualified pair only.
+            admin.execute("DROP USER bi_lgc").get();
+            admin.execute("DROP USER writer_lgc").get();
+            Assertions.assertThat(ProvisioningCommand.run(onboardArgsFor("leak", "lgc", false),
+                    discard(), discard())).isZero();
+            Assertions.assertThat(policyGranteesOn(admin, "leak", "lgc"))
+                    .as("a retired account must not linger in the recipe")
+                    .doesNotContain("bi_lgc", "writer_lgc")
+                    .contains(ProvisioningDdl.readerUser("lgc", "leak"));
+        }
+    }
+
+    /**
+     * An admin that cannot answer the legacy question must abort, not guess.
+     *
+     * <p>{@code system.users} is <em>refused</em> to an admin holding only the privileges the
+     * multi-tenancy runbook lists — {@code Code: 497 … SELECT ON system.users (ACCESS_DENIED)},
+     * measured on the pinned image — and so are {@code system.row_policies} and
+     * {@code SHOW CREATE ROW POLICY}, so there is no cheaper way to learn what the policy names.
+     * Degrading to "found nothing" would rewrite {@code <tenant>_iso} with the qualified pair alone,
+     * un-name the still-live legacy reader, and hand it every tenant's rows while exiting 0 — the
+     * exact defect the legacy-account handling exists to close, on the admin configuration the docs
+     * recommend.</p>
+     *
+     * <p>The admin here is built to that documented minimum <em>deliberately</em>, including the
+     * catalog grants, so the run reaches the probe rather than failing earlier for an unrelated
+     * reason. The one privilege withheld is {@code SHOW USERS}.</p>
+     */
+    @Test
+    void onboardAbortsWhenItCannotCheckForPreRenameAccounts() throws Exception {
+        final String flows = FlowsSchema.qualifiedFlows("noshow");
+        try (var admin = adminClient()) {
+            // Table and rows first: the onboard below installs the tenant_pinned CHECK, and this
+            // admin has no SQL_tenant for it to compare against. Seeding after it is UNKNOWN_SETTING.
+            admin.execute(FlowsSchema.createDatabase("noshow")).get();
+            admin.execute(FlowsSchema.createFlowsTable("noshow")).get();
+            admin.execute("INSERT INTO " + flows + " (tenant, organisation, timestamp) VALUES"
+                    + " ('nsh', 'nsh-eu', now()), ('rival', 'rival-eu', now())").get();
+
+            // The pre-rename shape for the tenant under test, so a rewrite would really leak.
+            admin.execute("CREATE ROLE IF NOT EXISTS flow_reader").get();
+            admin.execute("GRANT SELECT ON " + flows + " TO flow_reader").get();
+            admin.execute("CREATE USER bi_nsh IDENTIFIED WITH sha256_password BY 'legacyR'").get();
+            admin.execute("GRANT flow_reader TO bi_nsh").get();
+            admin.execute("CREATE ROW POLICY nsh_iso ON " + flows
+                    + " FOR SELECT USING tenant = 'nsh' TO bi_nsh").get();
+
+            // A full onboard of an unrelated tenant, so the rollups and constraints exist and the
+            // run under test reaches the legacy probe instead of the schema pre-flight.
+            Assertions.assertThat(ProvisioningCommand.run(onboardArgsFor("noshow", "nsx", true),
+                    discard(), discard())).isZero();
+
+            // Exactly the runbook's default-mode minimum — and no SHOW USERS.
+            admin.execute("CREATE USER noshow_admin IDENTIFIED WITH sha256_password BY 'na'").get();
+            admin.execute("GRANT CREATE USER, CREATE ROLE, CREATE QUOTA, CREATE ROW POLICY"
+                    + " ON *.* TO noshow_admin").get();
+            admin.execute("GRANT ALTER USER, ALTER ROLE, DROP USER, DROP ROW POLICY"
+                    + " ON *.* TO noshow_admin").get();
+            admin.execute("GRANT ALTER TABLE ON noshow.* TO noshow_admin").get();
+            admin.execute("GRANT INSERT, SELECT ON noshow.* TO noshow_admin WITH GRANT OPTION").get();
+            for (final String catalog : List.of("databases", "tables", "columns")) {
+                admin.execute("GRANT SELECT ON system." + catalog
+                        + " TO noshow_admin WITH GRANT OPTION").get();
+            }
+            // ROLE ADMIN so this admin could actually finish the run: granting a role it did not
+            // itself create needs it, and the roles here were created by the onboard above. Without
+            // it the run dies later on GRANT `flow_writer@noshow`, which would let this test pass
+            // for a reason that has nothing to do with the legacy probe. Deliberately granted, and
+            // it does NOT unlock system.users — measured: the refusal below survives it, which is
+            // the whole point. An admin that can complete every other part of onboard is still
+            // unable to answer the legacy question.
+            admin.execute("GRANT ROLE ADMIN ON *.* TO noshow_admin").get();
+
+            final var err = new ByteArrayOutputStream();
+            final int code = ProvisioningCommand.run(new String[] {
+                    "onboard", "--admin-url", endpoint(), "--admin-user", "noshow_admin",
+                    "--admin-password", "na", "--database", "noshow", "--tenant", "nsh",
+                    "--org", "nsh-eu", "--writer-secret", "wN", "--reader-secret", "rN"},
+                    discard(), new PrintStream(err, true, StandardCharsets.UTF_8));
+
+            Assertions.assertThat(code).as("a run that cannot check must not report success").isEqualTo(1);
+            Assertions.assertThat(err.toString(StandardCharsets.UTF_8))
+                    .contains("GRANT SHOW USERS ON *.*")
+                    .contains("nothing has been changed");
+
+            // And it really changed nothing: the policy still names the legacy reader, which is
+            // still filtered to its own tenant with another tenant's rows sitting in the table.
+            Assertions.assertThat(policyGranteesOn(admin, "noshow", "nsh")).containsExactly("bi_nsh");
+            try (var legacy = rawClientOn("noshow", "bi_nsh", "legacyR")) {
+                Assertions.assertThat(tenantsSeenBy(legacy, "noshow")).containsExactly("nsh");
+            }
+            Assertions.assertThat(admin.queryAll("SELECT count() AS c FROM system.users"
+                            + " WHERE name = 'writer_nsh@noshow'").getFirst().getLong("c"))
+                    .as("no account was created either — the abort is before any statement runs")
+                    .isZero();
+        }
+    }
+
+    /** The distinct tenant values a credential can actually see in {@code <database>.flows}. */
+    private static List<String> tenantsSeenBy(final Client client, final String database) throws Exception {
+        final var seen = new ArrayList<String>();
+        try (var records = client.queryRecords("SELECT DISTINCT tenant AS t FROM "
+                + FlowsSchema.qualifiedFlows(database) + " ORDER BY t").get()) {
+            records.forEach(record -> seen.add(record.getString("t")));
+        }
+        return seen;
+    }
+
+    /** Who the tenant's {@code flows} row policy names, as the server records it. */
+    private static List<String> policyGranteesOn(final Client admin, final String database,
+            final String tenant) throws Exception {
+        final var names = new ArrayList<String>();
+        try (var records = admin.queryRecords("SELECT arrayJoin(apply_to_list) AS n"
+                + " FROM system.row_policies WHERE database = '" + database + "'"
+                + " AND table = 'flows' AND short_name = '" + tenant + "_iso'").get()) {
+            records.forEach(record -> names.add(record.getString("n")));
+        }
+        return names;
+    }
+
+    /** Onboard tenant {@code dual} into {@code database} with its own writer secret. */
+    private static int onboardDual(final String database, final String writerPw) {
+        return ProvisioningCommand.run(new String[] {
+                "onboard", "--admin-url", endpoint(), "--database", database, "--create-schema",
+                "--tenant", "dual", "--org", "dual-eu",
+                "--writer-secret", writerPw, "--reader-secret", "r" + writerPw}, discard(), discard());
+    }
+
+    private static Client adminClient() {
+        return new Client.Builder().addEndpoint(endpoint()).setUsername("default").setPassword("").build();
     }
 
     @Test
@@ -397,7 +804,7 @@ public class TenantOnboardingIT {
     private static ClickhouseRepository writerRepository(final String tenant, final String password) {
         final var config = new ClickhouseConfig();
         config.setEndpoint(endpoint());
-        config.setUsername(SecretRef.of("writer_" + tenant));
+        config.setUsername(SecretRef.of(ProvisioningDdl.writerUser(tenant, DATABASE)));
         config.setPassword(SecretRef.of(password));
         config.setDatabase(DATABASE);
         config.setManageSchema(false);
@@ -407,11 +814,15 @@ public class TenantOnboardingIT {
     }
 
     private static Client rawClient(final String user, final String password) {
+        return rawClientOn(DATABASE, user, password);
+    }
+
+    private static Client rawClientOn(final String database, final String user, final String password) {
         return new Client.Builder()
                 .addEndpoint(endpoint())
                 .setUsername(user)
                 .setPassword(password)
-                .setDefaultDatabase(DATABASE)
+                .setDefaultDatabase(database)
                 .build();
     }
 

@@ -89,21 +89,26 @@ public class TenantWriteBarrierIT {
                 + "ADD CONSTRAINT org_pinned CHECK organisation = getSetting('SQL_org')").get();
 
         // Per-(tenant, org) writers: their SQL_tenant/SQL_org are pinned CONST (unchangeable).
-        admin.execute("CREATE USER writer_acme IDENTIFIED WITH no_password "
+        // Named as `riptide onboard` names them since #649 — writer_<tenant>@<database> — because
+        // this fixture's whole claim is that it mirrors the provisioned shape, and because a
+        // credential carrying '@' has to authenticate over HTTP basic auth for that shape to work
+        // at all. The collector reaches the server through ClickhouseRepository here, so that is
+        // asserted on the real path rather than argued.
+        admin.execute("CREATE USER `writer_acme@barrier` IDENTIFIED WITH no_password "
                 + "SETTINGS SQL_tenant = 'acme' CONST, SQL_org = 'acme-eu' CONST").get();
-        admin.execute("GRANT INSERT ON " + DATABASE + ".flows TO writer_acme").get();
+        admin.execute("GRANT INSERT ON " + DATABASE + ".flows TO `writer_acme@barrier`").get();
         // Writers also read flows (materialized views run as the inserting user), so they need
         // SELECT and their own row policy — mirroring what onboard provisions.
-        admin.execute("GRANT SELECT ON " + DATABASE + ".flows TO writer_acme").get();
+        admin.execute("GRANT SELECT ON " + DATABASE + ".flows TO `writer_acme@barrier`").get();
         admin.execute("CREATE ROW POLICY acme_write ON " + DATABASE + ".flows "
-                + "FOR SELECT USING tenant = 'acme' TO writer_acme").get();
+                + "FOR SELECT USING tenant = 'acme' TO `writer_acme@barrier`").get();
 
-        admin.execute("CREATE USER writer_other IDENTIFIED WITH no_password "
+        admin.execute("CREATE USER `writer_other@barrier` IDENTIFIED WITH no_password "
                 + "SETTINGS SQL_tenant = 'other' CONST, SQL_org = 'other-eu' CONST").get();
-        admin.execute("GRANT INSERT ON " + DATABASE + ".flows TO writer_other").get();
-        admin.execute("GRANT SELECT ON " + DATABASE + ".flows TO writer_other").get();
+        admin.execute("GRANT INSERT ON " + DATABASE + ".flows TO `writer_other@barrier`").get();
+        admin.execute("GRANT SELECT ON " + DATABASE + ".flows TO `writer_other@barrier`").get();
         admin.execute("CREATE ROW POLICY other_write ON " + DATABASE + ".flows "
-                + "FOR SELECT USING tenant = 'other' TO writer_other").get();
+                + "FOR SELECT USING tenant = 'other' TO `writer_other@barrier`").get();
 
         // Readonly reader for tenant acme, isolated to its own rows by a row policy.
         admin.execute("CREATE USER reader_acme IDENTIFIED WITH no_password").get();
@@ -114,7 +119,7 @@ public class TenantWriteBarrierIT {
 
     @Test
     void honestWritePersists() throws Exception {
-        final var writer = writerRepository("writer_acme");
+        final var writer = writerRepository("writer_acme@barrier");
         writer.persist(List.of(
                 flow("acme", "acme-eu", 21001),
                 flow("acme", "acme-eu", 21002)));
@@ -127,7 +132,7 @@ public class TenantWriteBarrierIT {
 
     @Test
     void crossTenantWriteRejectedWith469() throws Exception {
-        final var writer = writerRepository("writer_acme");
+        final var writer = writerRepository("writer_acme@barrier");
 
         // The collector's config lies (tenant=evil) but its credential's CONST setting is 'acme':
         // ClickHouse rejects the row. This is the compromised-collector attack.
@@ -166,7 +171,7 @@ public class TenantWriteBarrierIT {
     void constSettingOverrideRejectedWith452() {
         final var writerClient = new Client.Builder()
                 .addEndpoint("http://" + CLICKHOUSE.getHost() + ":" + CLICKHOUSE.getMappedPort(8123))
-                .setUsername("writer_acme")
+                .setUsername("writer_acme@barrier")
                 .setPassword("")
                 .setDefaultDatabase(DATABASE)
                 .build();
@@ -183,8 +188,8 @@ public class TenantWriteBarrierIT {
     @Test
     void readerSeesOnlyItsTenant() throws Exception {
         // Two pinned writers land one row each; the reader must see only the acme row.
-        writerRepository("writer_acme").persist(List.of(flow("acme", "acme-eu", 26001)));
-        writerRepository("writer_other").persist(List.of(flow("other", "other-eu", 26002)));
+        writerRepository("writer_acme@barrier").persist(List.of(flow("acme", "acme-eu", 26001)));
+        writerRepository("writer_other@barrier").persist(List.of(flow("other", "other-eu", 26002)));
 
         // Admin sees both.
         final long adminCount = admin.queryAll(
