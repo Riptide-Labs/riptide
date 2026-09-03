@@ -241,7 +241,8 @@ class FileWatchTriggerTest {
      * reach the commit path: the blank test knew only space, LF, CR and TAB, so a file of them was
      * handed to the owner and the resulting parse error was counted as a reload failure.
      *
-     * <p>A leading UTF-8 BOM is deliberately not covered — see {@code isBlank}, and #725.</p>
+     * <p>A leading UTF-8 BOM is covered by {@link #aFileTruncatedToNothingButAByteOrderMarkIsBlank}
+     * (#725), which strips it before this test's whitespace ever reaches the blank check.</p>
      */
     @Test
     void formFeedAndVerticalTabCountAsBlank() throws IOException {
@@ -253,6 +254,68 @@ class FileWatchTriggerTest {
         assertThat(this.cycle.commits).as("whitespace must never reach the commit path").isEmpty();
         assertThat(this.failures.getCount()).as("and must not be counted as a failure").isZero();
         assertThat(warnings()).containsExactly("the-file-is-blank");
+    }
+
+    /**
+     * A file truncated to nothing but a UTF-8 BOM is blank, and must not reach the commit path.
+     *
+     * <p>#725 predicted a parse error counted as a reload failure. Measured, it is worse and
+     * quieter: three bytes that are not whitespace pass the blank test, and the parser then reads a
+     * lone BOM as an empty document rather than failing, because SnakeYAML strips it even on the
+     * {@code String} overload. So the owner is handed a valid, <em>empty</em> configuration and
+     * commits it, and a file an editor produced by truncating silently replaces the running
+     * inventory with nothing. The same truncation without a BOM is refused by the blank guard.</p>
+     *
+     * <p>Stripping on read is what makes the blank message honest as well as correct: once the BOM
+     * is gone the file genuinely is empty, so the operator is not told "empty or whitespace-only"
+     * about a three-byte file, which is the wild-goose chase {@code InventoryLoader}'s own comment
+     * exists to prevent.</p>
+     */
+    @Test
+    void aFileTruncatedToNothingButAByteOrderMarkIsBlank() throws IOException {
+        start(false);
+        Files.write(this.file, new byte[] {(byte) 0xEF, (byte) 0xBB, (byte) 0xBF});
+
+        this.trigger.poll();
+
+        assertThat(this.cycle.commits)
+                .as("a BOM-only file must not commit an empty configuration over a working one")
+                .isEmpty();
+        assertThat(this.failures.getCount()).as("and is not a failure either").isZero();
+        assertThat(warnings()).containsExactly("the-file-is-blank");
+    }
+
+    /**
+     * A BOM in front of real content does not change what the owner is handed.
+     *
+     * <p>The other half of #725, which predicted the first key parsing as a BOM-prefixed name and
+     * matching nothing. It does not: SnakeYAML strips a leading BOM on the {@code String} overload
+     * too, so this already worked. Pinned anyway, because the fix now removes those bytes before
+     * the parser sees them, and this is the assertion that says the removal stops there rather than
+     * taking a byte of content with it.</p>
+     */
+    @Test
+    void aByteOrderMarkBeforeRealContentIsStrippedAndTheRestIsUntouched() throws IOException {
+        start(false);
+        final String body = "riptide: yes\n";
+        final byte[] bodyBytes = body.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        final byte[] both = new byte[3 + bodyBytes.length];
+        both[0] = (byte) 0xEF;
+        both[1] = (byte) 0xBB;
+        both[2] = (byte) 0xBF;
+        System.arraycopy(bodyBytes, 0, both, 3, bodyBytes.length);
+        Files.write(this.file, both);
+
+        this.trigger.poll();
+
+        assertThat(this.cycle.commits).hasSize(1);
+        assertThat(this.cycle.commits.getFirst())
+                .as("the content behind the BOM reaches the owner byte for byte")
+                .isEqualTo(body);
+        assertThat(this.cycle.commits.getFirst().charAt(0))
+                .as("and no U+FEFF survives on the front of it")
+                .isEqualTo('r');
+        assertThat(warnings()).isEmpty();
     }
 
     /**
