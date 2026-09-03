@@ -77,9 +77,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * <p>The class-level timeout is not decoration: the hung-server and dribbling-server rows
  * fail by hanging, and 60s is sized for rows that otherwise finish in fractions of a
  * second. It does not fit every row: {@link #anIntervalAgainstTheBundledClasspathRulesetPollsHarmlessly}
- * builds the real bundled decision tree, costs tens of seconds doing it, and so carries
- * its own 5-minute method-level bound, sized in the comment directly above it. The 60s
- * governs the body of every other row, and no bound at all covers setUp or tearDown.</p>
+ * builds the real bundled decision tree, which costs tens of seconds under the coverage agent
+ * this suite runs with and about 1.5s without it, and so carries its own 5-minute method-level
+ * bound, sized in the comment directly above it. The 60s governs the body of every other row,
+ * and no bound at all covers setUp or tearDown.</p>
  */
 @Timeout(60)
 class ClassificationRuleReloaderTest {
@@ -925,12 +926,22 @@ class ClassificationRuleReloaderTest {
     // a second: the hung-server and dribbling-server rows are 0.33s each. This row loads the
     // real bundled ruleset, and building the decision tree from it is nearly its whole cost.
     //
-    // That cost is load-sensitive rather than fixed. Completed runs of this row have landed
-    // anywhere between roughly 25s and 55s on identical code, because every unit class shares
-    // one surefire JVM (this repo sets no forkCount, reuseForks or parallel), so unrelated
-    // tests change what this row costs without changing the row. The individual runs and
-    // their venues are recorded on #706 rather than copied here, where they would rot.
-    // 5 minutes is more than 5x the slowest completion seen.
+    // Almost all of that cost is the coverage agent, not the build. Measured standalone on the
+    // project classpath, Tree.of over this ruleset takes 1.4-1.7s and produces a 15,530-leaf
+    // tree. The same harness under the JaCoCo agent produces the same tree in 33.9-50.9s.
+    // jacoco:prepare-agent attaches to every surefire JVM, so this row pays the instrumented
+    // price and a booting collector does not. A recursive loop that matches every candidate
+    // threshold against every rule is close to the worst case for per-instruction
+    // instrumentation, which is why the factor is roughly 20-40x rather than a few percent.
+    // Quote the range, not a midpoint: the five runs this bound was raised for were terminated
+    // AT 60s on a ~1.5s build, so the loaded-machine end of that spread is above 40x, and it is
+    // the end that caused the flake.
+    //
+    // That also explains the spread: completed runs have landed anywhere between roughly 25s
+    // and 55s on identical code, and CI is consistently faster than a developer machine. It is
+    // agent overhead varying with load, not the row. The individual runs are recorded on #706
+    // rather than copied here, where they would rot. 5 minutes is more than 5x the slowest
+    // completion seen, all of them instrumented.
     //
     // The five failures that prompted this are not measurements of the row. Each was
     // terminated at the 60s bound, so together they put a floor under the cost and leave the
@@ -942,10 +953,20 @@ class ClassificationRuleReloaderTest {
     //
     // #706 is the alarm this silences, not the flake itself: the row is still nearly the
     // whole cost of the class and still slows under load, the bound simply no longer fires.
-    // #707 is that cost. This annotation should come off once the cost actually drops, which
-    // is not the same as #707 closing, since one route canvassed there makes classify()
-    // non-blocking and leaves the build just as slow. Removing it means editing two places,
-    // here and the class javadoc, which also names this bound.
+    //
+    // The exit condition is the instrumented cost, which is not what #707 tracks. #707 is the
+    // residue that survived measuring this: an uncached, superlinear build that a boot pays
+    // about 1.5s for. Closing it would not shorten this row unless the fix is a cache or a
+    // faster build — and one route canvassed there, making classify() non-blocking, leaves the
+    // build exactly as slow.
+    //
+    // The condition for removing this annotation is stated in instrumented terms, because that
+    // is what the bound has to survive: when this row lands under ~30s with margin on a loaded
+    // machine, the class's 60s fits it again. An uninstrumented threshold cannot express it —
+    // 25x of 1.5s already fits under 60s today, so any bar written that way is satisfied on
+    // arrival and gates nothing. A cache, a cheaper build, or a suite that no longer runs under
+    // the agent all get there. Removing it means editing two places, here and the class
+    // javadoc, which also names this bound.
     //
     // What this bound does not cover:
     // - CI, where this has never failed. Runners complete the whole class faster than this
@@ -961,7 +982,8 @@ class ClassificationRuleReloaderTest {
     //   bound, because every assertion below reads counters and warnings, never a clock. A
     //   duration ceiling was considered, and timePoll() above makes one cheap, but the spread
     //   is wide enough that a non-flaky ceiling would sit near half the bound and catch
-    //   little the bound would not. That gap belongs to #707.
+    //   little the bound would not. And a ceiling here would measure the agent, not the build,
+    //   so it could not detect the regression #707 is about even if it were tight.
     @Test
     @Timeout(value = 5, unit = TimeUnit.MINUTES)
     void anIntervalAgainstTheBundledClasspathRulesetPollsHarmlessly() throws Exception {
