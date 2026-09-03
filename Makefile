@@ -65,7 +65,9 @@ help:
 	@echo "  lint-actions: Lint the GitHub Actions workflows (actionlint + zizmor)"
 	@echo "  contributors: Regenerate the README contributor badge and table from .all-contributorsrc"
 	@echo "  contributors-check: Fail if the README contributor section is out of sync with .all-contributorsrc"
-	@echo "  docs:         Build the Docusaurus documentation site into docs/build"
+	@echo "  docs:         Build the Docusaurus documentation site into docs/build and lint the rendered pages"
+	@echo "  docs-lint-admonitions: Fail if any built page shows admonition markup as body copy"
+	@echo "  docs-lint-test: Run the rendered-admonition checker's fixture tests"
 	@echo "  docs-serve:   Run the documentation site locally with live reload"
 	@echo "  landing-serve: Serve the landing page locally for preview"
 	@echo "  clean:        Clean the build artifacts"
@@ -187,9 +189,37 @@ contributors-check: contributors
 deps-docs:
 	command -v npm
 
+# A Docusaurus admonition that is not spelled exactly right is not a directive at all: it renders
+# as literal ":::" body copy on the published page, and nothing reports it. Docusaurus's own
+# unusedDirectives warning visits directive nodes and this never becomes one; onBrokenLinks and
+# onBrokenAnchors (#712/#719) say nothing about admonition syntax; and in a diff the right and
+# wrong spellings look nearly identical. That is how #680 shipped the default-password warning as
+# body copy, found by reading built HTML during unrelated work rather than by any gate.
+#
+# Checked against the rendered output, not the source. That is this repo's own rule, and here it is
+# also the only thing that scales: nine different misspellings produce the identical symptom, so a
+# source regex has to enumerate them and drifts out of step with the parser the moment one is
+# missed. The first version of this gate did exactly that: it missed four of them and falsely
+# flagged a valid bare ":::note" with a trailing hard break. Checking the symptom needs no such
+# list, and catches a container opened with four colons and closed with three, which no reasonable
+# regex could see at all.
+#
+# The checker has fixture tests (docs-lint-test) because it matches nothing in a healthy tree, so a
+# green run on its own says as little about a working checker as about a broken one.
+
+.PHONY: docs-lint-admonitions
+docs-lint-admonitions:
+	@python3 docs/lint/check_admonitions.py docs/build || { echo $(FAIL) "admonition syntax"; exit 1; }
+	@echo $(OK) "admonition syntax"
+
+.PHONY: docs-lint-test
+docs-lint-test:
+	python3 -m unittest discover -s docs/lint
+
 .PHONY: docs
 docs: deps-docs
 	cd docs && npm ci && npm run build
+	$(MAKE) docs-lint-admonitions
 
 .PHONY: docs-serve
 docs-serve: deps-docs

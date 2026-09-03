@@ -41,6 +41,12 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: docs/package-lock.json
+      # Before the build, because these are the positive controls for the gate the
+      # build then runs. The gate matches nothing in a healthy tree, so without
+      # them a broken checker and a working one produce identical CI output.
+      - name: Admonition checker fixture tests
+        run: |
+          make docs-lint-test
       - name: Build documentation
         run: |
           make docs

@@ -18,8 +18,21 @@ Every PR must pass, all wired through `make` in CI:
 | Coverage floor | ≥ 65% instruction / ≥ 55% branch (JaCoCo `check`) |
 | CodeQL | security-and-quality analysis (separate check) |
 | e2e | the nl6 flow-ingestion tier, full mode included |
+| Docs | broken links, broken anchors, and admonition markup left as body copy |
 
 Run the Maven-side gates locally before pushing: `make` (= `mvn verify`).
+The documentation gates run under `make docs`, and only on PRs that touch `docs/`, `landing/`, `Makefile` or the docs workflow.
+
+The documentation gates exist because the failures they catch are silent.
+A broken anchor published without complaint until `onBrokenAnchors` was set to `throw`.
+An admonition whose syntax is not exactly right is not parsed as a directive at all, so it renders as literal `:::` body copy: no build error, no build warning, and almost no visual difference in a diff.
+That is how a warning about default passwords shipped as ordinary paragraph text.
+
+Write `:::type[Title]`.
+No space before the bracket, nothing after it, and close the container with as many colons as opened it.
+`make docs` checks the built HTML rather than the source, so it catches every way of getting this wrong, including a container opened with four colons and closed with three.
+It names the page and quotes the text.
+Prose that needs to *show* a wrong spelling can do so inside a code span, which the checker ignores.
 
 ## Tests are part of the change
 
