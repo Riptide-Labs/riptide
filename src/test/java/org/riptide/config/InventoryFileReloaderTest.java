@@ -18,6 +18,7 @@ import org.riptide.inventory.SnmpProfilesConfig;
 import org.riptide.snmp.InterfaceSnapshotPoller;
 import org.riptide.snmp.SnmpPollConfig;
 import org.riptide.pipeline.ExporterIdentity;
+import org.riptide.testsupport.LogCapture;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -349,8 +350,7 @@ class InventoryFileReloaderTest {
                 """);
         final var logger = (ch.qos.logback.classic.Logger)
                 org.slf4j.LoggerFactory.getLogger(InventoryFileReloader.class);
-        final var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
-        appender.start();
+        final var appender = LogCapture.startedAppender();
         logger.addAppender(appender);
         try {
             this.reloader.poll();
@@ -893,8 +893,7 @@ class InventoryFileReloaderTest {
     private static ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> capture(
             final Class<?> loggerClass) {
         final var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(loggerClass);
-        final var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
-        appender.start();
+        final var appender = LogCapture.startedAppender();
         logger.addAppender(appender);
         return appender;
     }

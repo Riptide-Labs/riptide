@@ -19,6 +19,7 @@ import org.riptide.classification.ClassificationRuleProvider;
 import org.riptide.classification.DefaultRule;
 import org.riptide.classification.ProtocolType;
 import org.riptide.classification.Rule;
+import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
@@ -50,8 +51,7 @@ public class DefaultClassificationEngineTest {
     @BeforeEach
     void captureLogs() {
         this.logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(DefaultClassificationEngine.class);
-        this.appender = new ListAppender<>();
-        this.appender.start();
+        this.appender = LogCapture.startedAppender();
         this.logger.addAppender(this.appender);
     }
 

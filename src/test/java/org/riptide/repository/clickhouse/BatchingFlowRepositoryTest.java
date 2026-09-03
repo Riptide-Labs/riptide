@@ -19,6 +19,7 @@ import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
 import org.riptide.repository.FlowRepository;
 import org.riptide.repository.TestRepository;
+import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
@@ -59,8 +60,7 @@ class BatchingFlowRepositoryTest {
         // positive branch asserts the level explicitly, so widening the capture cannot make the
         // test vacuous. Pinned rather than inherited so ambient test logging cannot narrow it.
         this.repositoryLog.setLevel(Level.TRACE);
-        this.logEvents = new ListAppender<>();
-        this.logEvents.start();
+        this.logEvents = LogCapture.startedAppender();
         this.repositoryLog.addAppender(this.logEvents);
     }
 
@@ -225,9 +225,10 @@ class BatchingFlowRepositoryTest {
         // "dropping the batch" claim with every test still green.
         attemptOnePoisonedBatchOfTwo();
 
-        // Asserted only after stop() has joined the flusher. ListAppender.list is a plain
-        // ArrayList written by the flusher thread, so reading it while that thread is alive is a
-        // data race, and AssertJ walks it more than once below.
+        // Asserted only after stop() has joined the flusher. The capture itself is safe to read
+        // under a live producer since #735 — LogCapture hands out a CopyOnWriteArrayList — but the
+        // negative assertion below is over *everything* the flusher said, and a flusher still
+        // running has not finished saying it.
         this.repository.stop();
 
         Assertions.assertThat(this.logEvents.list)

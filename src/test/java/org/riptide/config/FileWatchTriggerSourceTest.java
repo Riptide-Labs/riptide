@@ -14,6 +14,7 @@ import com.codahale.metrics.MetricRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
@@ -102,8 +103,7 @@ class FileWatchTriggerSourceTest {
     void setUp() {
         this.logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(FileWatchTriggerSourceTest.class);
         this.logger.setLevel(Level.DEBUG);
-        this.appender = new ListAppender<>();
-        this.appender.start();
+        this.appender = LogCapture.startedAppender();
         this.logger.addAppender(this.appender);
     }
 

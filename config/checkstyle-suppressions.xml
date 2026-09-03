@@ -4,4 +4,8 @@
         "https://checkstyle.org/dtds/suppressions_1_2_xpath_experimental.dtd">
 <suppressions>
     <suppress files="org.riptide.RiptideApplication\.java" checks="HideUtilityClassConstructor" />
+
+    <!-- The one place allowed to construct a ListAppender; the IllegalInstantiation rule that bans
+         it everywhere else exists so #735 cannot come back through a 25th call site. -->
+    <suppress files="[\\/]LogCapture\.java$" checks="IllegalInstantiation"/>
 </suppressions>

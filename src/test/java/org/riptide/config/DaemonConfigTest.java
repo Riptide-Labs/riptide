@@ -7,9 +7,8 @@ package org.riptide.config;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
-import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
+import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
@@ -37,8 +36,7 @@ class DaemonConfigTest {
     @Test
     void deprecatedLocationKeyBindsToZoneWithWarning() {
         final var logger = (Logger) LoggerFactory.getLogger(DaemonConfig.class);
-        final var appender = new ListAppender<ILoggingEvent>();
-        appender.start();
+        final var appender = LogCapture.startedAppender();
         logger.addAppender(appender);
         try {
             final var config = bind(Map.of("riptide.location", "legacy-dc"));

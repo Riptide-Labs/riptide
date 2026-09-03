@@ -8,6 +8,7 @@ package org.riptide.inventory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.riptide.secrets.SecretRef;
+import org.riptide.testsupport.LogCapture;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -194,8 +195,7 @@ class InventoryPublicationGuardTest {
 
         final var logger = (ch.qos.logback.classic.Logger)
                 org.slf4j.LoggerFactory.getLogger(InventoryLoader.class);
-        final var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
-        appender.start();
+        final var appender = LogCapture.startedAppender();
         logger.addAppender(appender);
         try {
             assertThat(inventory.rebuildAndSwap(PROFILES, file)).isNull();

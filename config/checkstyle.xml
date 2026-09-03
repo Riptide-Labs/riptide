@@ -56,7 +56,14 @@
         <!-- Checks for common coding problems -->
         <module name="EmptyStatement"/>
         <module name="EqualsHashCode"/>
-        <module name="IllegalInstantiation"/>
+        <!-- ListAppender: constructing one directly reintroduces #735. Logback captures into a
+             plain ArrayList, so streaming the capture while a background thread logs throws
+             ConcurrentModificationException out of the reader. org.riptide.testsupport.LogCapture
+             swaps in a concurrent list; every test goes through it. Suppressed for LogCapture
+             itself, which is the one place allowed to call the constructor. -->
+        <module name="IllegalInstantiation">
+            <property name="classes" value="ch.qos.logback.core.read.ListAppender"/>
+        </module>
         <module name="InnerAssignment"/>
         <module name="SimplifyBooleanExpression"/>
         <module name="SimplifyBooleanReturn"/>

@@ -12,6 +12,7 @@ import org.mockito.Mockito;
 import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventorySnapshot;
 import org.riptide.snmp.InterfaceSnapshotPoller;
+import org.riptide.testsupport.LogCapture;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -172,8 +173,7 @@ class ConfigReloadRefreshOrderingTest {
     private static ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> captureReloaderLog() {
         final var logger = (ch.qos.logback.classic.Logger)
                 org.slf4j.LoggerFactory.getLogger(ConfigFileReloader.class);
-        final var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
-        appender.start();
+        final var appender = LogCapture.startedAppender();
         logger.addAppender(appender);
         return appender;
     }

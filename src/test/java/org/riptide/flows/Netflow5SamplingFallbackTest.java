@@ -23,6 +23,7 @@ import org.riptide.flows.parser.session.SessionAdmissionConfig;
 import org.riptide.pipeline.Pipeline;
 import org.riptide.pipeline.Source;
 import org.riptide.snmp.ExporterInterfaceTable;
+import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.context.properties.bind.Binder;
@@ -73,8 +74,7 @@ class Netflow5SamplingFallbackTest {
         this.originalLevel = this.logger.getLevel();
         // The bound port is only discoverable from this line, so the level must not be inherited.
         this.logger.setLevel(Level.INFO);
-        this.appender = new ListAppender<>();
-        this.appender.start();
+        this.appender = LogCapture.startedAppender();
         this.logger.addAppender(this.appender);
     }
 

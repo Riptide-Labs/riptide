@@ -13,6 +13,7 @@ import org.riptide.flows.parser.ie.values.UnsignedValue;
 import org.riptide.pipeline.ExporterIdentity;
 import org.riptide.snmp.ExporterInterfaceTable;
 import org.riptide.snmp.IfInfo;
+import org.riptide.testsupport.LogCapture;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -852,8 +853,7 @@ public class ConfigFileReloaderTest {
     private static ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> captureReloaderLog() {
         final var logger = (ch.qos.logback.classic.Logger)
                 org.slf4j.LoggerFactory.getLogger(ConfigFileReloader.class);
-        final var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
-        appender.start();
+        final var appender = LogCapture.startedAppender();
         logger.addAppender(appender);
         return appender;
     }
@@ -973,8 +973,7 @@ public class ConfigFileReloaderTest {
     public void anyLegacyNodesTreeRejectsTheCandidate() throws Exception {
         final var logger = (ch.qos.logback.classic.Logger)
                 org.slf4j.LoggerFactory.getLogger(ConfigFileReloader.class);
-        final var appender = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
-        appender.start();
+        final var appender = LogCapture.startedAppender();
         logger.addAppender(appender);
         final var captured = appender.list;
         try {
