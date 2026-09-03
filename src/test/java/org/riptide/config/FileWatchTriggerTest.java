@@ -241,8 +241,9 @@ class FileWatchTriggerTest {
      * reach the commit path: the blank test knew only space, LF, CR and TAB, so a file of them was
      * handed to the owner and the resulting parse error was counted as a reload failure.
      *
-     * <p>A leading UTF-8 BOM is covered by {@link #aFileTruncatedToNothingButAByteOrderMarkIsBlank}
-     * (#725), which strips it before this test's whitespace ever reaches the blank check.</p>
+     * <p>A BOM is not whitespace and is not handled here. Every {@code Source} removes one on read
+     * ({@code ByteOrderMark}), so a file truncated to nothing but a BOM reaches this check already
+     * empty — see {@link #aFileTruncatedToNothingButAByteOrderMarkIsBlank} (#725).</p>
      */
     @Test
     void formFeedAndVerticalTabCountAsBlank() throws IOException {
@@ -268,7 +269,7 @@ class FileWatchTriggerTest {
      *
      * <p>Stripping on read is what makes the blank message honest as well as correct: once the BOM
      * is gone the file genuinely is empty, so the operator is not told "empty or whitespace-only"
-     * about a three-byte file, which is the wild-goose chase {@code InventoryLoader}'s own comment
+     * about a three-byte file, which is the wild-goose chase {@code InventoryFileReloader}'s own comment
      * exists to prevent.</p>
      */
     @Test
@@ -283,6 +284,34 @@ class FileWatchTriggerTest {
                 .isEmpty();
         assertThat(this.failures.getCount()).as("and is not a failure either").isZero();
         assertThat(warnings()).containsExactly("the-file-is-blank");
+    }
+
+    /**
+     * A seeded trigger over a file that already carries a BOM commits nothing on its first poll.
+     *
+     * <p>The gap in the first version of this fix, and the reason the strip moved into the source.
+     * {@code seedHashesFromCurrentContent} and {@code poll} digest at two different call sites, so
+     * stripping in only the second made the seed {@code SHA-256(BOM+body)} and the first poll
+     * {@code SHA-256(body)}. They differed, the unchanged-content short-circuit did not fire, and
+     * the owner re-committed content that was already serving — once per restart, for exactly the
+     * files this change is about, which is the spurious recommit seeding exists to prevent.</p>
+     */
+    @Test
+    void aSeededTriggerOverABomFileCommitsNothingOnItsFirstPoll() throws IOException {
+        final byte[] body = "seeded: content\n".getBytes(StandardCharsets.UTF_8);
+        final byte[] both = new byte[3 + body.length];
+        both[0] = (byte) 0xEF;
+        both[1] = (byte) 0xBB;
+        both[2] = (byte) 0xBF;
+        System.arraycopy(body, 0, both, 3, body.length);
+        Files.write(this.file, both);
+
+        start(true);
+        this.trigger.poll();
+
+        assertThat(this.cycle.commits)
+                .as("the seed and the poll must hash the same bytes, or a BOM file recommits at boot")
+                .isEmpty();
     }
 
     /**

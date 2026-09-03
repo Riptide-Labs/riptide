@@ -56,7 +56,10 @@ Semantics:
 - **A missing, empty or whitespace-only file skips the cycle** — deletion is
   indistinguishable from an atomic replacement in progress, and a shell `>` redirect
   truncates before writing, so the running config is kept and nothing is counted as a
-  failure. Both the config file and the inventory file behave this way. The skip warns
+  failure. A file holding nothing but a UTF-8 byte-order mark counts as empty here: the
+  mark is removed when the file is read, so an editor that truncates a file it had
+  BOM-prefixed skips like any other truncation instead of committing an empty
+  configuration. Both the config file and the inventory file behave this way. The skip warns
   once per episode, not once per poll. Removing the file layer for real requires a
   restart.
 - **A skipped cycle leaves the gauges where they were** — a skip decides nothing about

@@ -7,6 +7,7 @@ package org.riptide.inventory;
 
 import inet.ipaddr.IPAddressString;
 import lombok.extern.slf4j.Slf4j;
+import org.riptide.config.ByteOrderMark;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 
@@ -117,12 +118,7 @@ public final class InventoryLoader {
         // to slip past the way the reload path's did. This exists so the invariant is "no consumer
         // downstream of a read ever sees U+FEFF" rather than "the parser we happen to use removes
         // it" — a validator added between here and the parse would otherwise inherit the problem.
-        return parseWithWarnings(profiles, withoutByteOrderMark(content), file.toString());
-    }
-
-    /** Drop a leading U+FEFF. Chars, not bytes: this path has already decoded. */
-    private static String withoutByteOrderMark(final String content) {
-        return content.startsWith("\uFEFF") ? content.substring(1) : content;
+        return parseWithWarnings(profiles, ByteOrderMark.strip(content), file.toString());
     }
 
     /**

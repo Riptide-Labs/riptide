@@ -17,7 +17,6 @@ import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -188,7 +187,10 @@ public final class FileWatchTrigger {
                 return new Fetch.Absent();
             }
             try {
-                return new Fetch.Present(Files.readAllBytes(this.path));
+                // Stripped here, not in poll(): the seed hash and the poll hash are taken at two
+                // different call sites, and normalising at only one made a BOM'd file recommit on
+                // the first poll after every boot (#725).
+                return new Fetch.Present(ByteOrderMark.strip(Files.readAllBytes(this.path)));
             } catch (final NoSuchFileException e) {
                 // vanished between the check and the read: an atomic rm+mv replacement
                 // or a symlink swap, the healthy deploy this class expects
@@ -389,9 +391,7 @@ public final class FileWatchTrigger {
                 runIdle();
                 return;
             }
-            // Once, on read, before anything looks at these bytes: the blank test, the hash, and
-            // the owner's parser all see the file as if the editor had never written a BOM.
-            final byte[] content = withoutByteOrderMark(present.content());
+            final byte[] content = present.content();
             if (isBlank(content)) {
                 // a shell '>' redirect truncates before writing, and editors flush
                 // whitespace-only intermediate states: indistinguishable from an
@@ -464,42 +464,10 @@ public final class FileWatchTrigger {
         }
     }
 
-    /** The UTF-8 encoding of U+FEFF, which is what a Windows editor puts on the front of a file. */
-    private static final byte[] UTF8_BOM = {(byte) 0xEF, (byte) 0xBB, (byte) 0xBF};
-
-    /**
-     * Drop a leading UTF-8 BOM, so nothing downstream has to know about one (#725).
-     *
-     * <p>Stripped here rather than treated as blank in {@link #isBlank}, which is where the fix was
-     * first attempted and then removed. Blankness is the wrong place for two reasons. It would make
-     * the blank WARN say "empty or whitespace-only" about a three-byte file, the wild-goose chase
-     * {@code InventoryLoader}'s own comment exists to prevent; and it closes only the case where the
-     * BOM is the whole file, leaving the bytes in front of real content for every parser downstream
-     * to cope with individually.</p>
-     *
-     * <p>What the omission actually cost was quieter than #725 predicted. A BOM-only file is three
-     * bytes that are not whitespace, so it passed the blank test, and a lone BOM parses as an
-     * <em>empty document</em> rather than failing. The owner was handed a valid, empty configuration
-     * and committed it: a file an editor produced by truncating replaced the running inventory with
-     * nothing, while the same truncation without a BOM was correctly refused. Stripping first makes
-     * that file genuinely empty, so the existing guard catches it and the message is honest.</p>
-     */
-    private static byte[] withoutByteOrderMark(final byte[] content) {
-        if (content.length < UTF8_BOM.length) {
-            return content;
-        }
-        for (int i = 0; i < UTF8_BOM.length; i++) {
-            if (content[i] != UTF8_BOM[i]) {
-                return content;
-            }
-        }
-        return Arrays.copyOfRange(content, UTF8_BOM.length, content.length);
-    }
-
     /** Whitespace is ASCII-safe in UTF-8, so blankness is decidable on raw bytes. */
     private static boolean isBlank(final byte[] content) {
-        // A BOM never reaches here: withoutByteOrderMark strips it on read, so a file truncated to
-        // one is genuinely empty by the time this runs.
+        // A BOM never reaches here: every Source strips one on read (ByteOrderMark), so a file
+        // truncated to nothing but a BOM is genuinely empty by the time this runs.
         for (int i = 0; i < content.length; i++) {
             final byte b = content[i];
             // Form feed and vertical tab too: both are whitespace an editor can flush mid-write,
