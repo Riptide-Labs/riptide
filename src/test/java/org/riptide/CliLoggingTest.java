@@ -115,6 +115,27 @@ class CliLoggingTest {
     }
 
     /**
+     * The other half of the level, and the half that was missing: an INFO record <em>is</em>
+     * routed.
+     *
+     * <p>{@link #debugRecordsAreNotRouted} only pins that the level sits above DEBUG, so it is
+     * satisfied by WARN or ERROR just as well as by INFO — a mutation to {@code Level.WARN}
+     * survived the suite until this test existed. INFO is the level the comment on
+     * {@code root.setLevel} argues for, so it is the level that has to be asserted.</p>
+     */
+    @Test
+    void infoRecordsAreRouted() {
+        final ByteArrayOutputStream routed = new ByteArrayOutputStream();
+
+        CliLogging.routeTo(routed);
+        LoggerFactory.getLogger(CliLoggingTest.class).info("something an operator should read");
+
+        assertThat(routed.toString(StandardCharsets.UTF_8))
+                .as("INFO is the level a Spring-started run logs at, so a CLI must not sit above it")
+                .contains("something an operator should read");
+    }
+
+    /**
      * The fourth row: a CLI must not fail because logging could not be reconfigured, so a binding
      * that is not Logback is left alone rather than cast.
      */

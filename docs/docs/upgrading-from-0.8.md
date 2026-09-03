@@ -53,6 +53,18 @@ The failure is deliberate: nothing reads that tree any more, and a collector tha
 4. Start 0.9.
    The converter's output always passes 0.9 validation; if it cannot represent something, it refuses with an error naming the node rather than emitting a file that will not boot.
 
+:::note[Where the converter writes what]
+
+The generated documents and the report go to different places, so a redirect never picks up prose.
+
+With `--out-config` and `--out-inventory`, as every invocation above uses, each document is written to its path and the **summary goes to stdout**. Without them both documents go to stdout — that is the `riptide convert nodes.yaml > new.yaml` form — and the summary moves to **stderr** so the redirected file stays loadable.
+
+Diagnostics always go to stderr, separately from either. That was not always true: these subcommands run with no Spring context, so logging used to fall back to stdout, where a single record could land inside the file you redirected ([#727](https://github.com/Riptide-Labs/riptide/issues/727)).
+
+One report worth reading rather than skimming: if the cadence you are converting expires snapshots faster than it refreshes them, the summary says so and names both keys, including which one it took from the 0.9 default when you did not set it. It is not an error — the conversion is faithful and 0.9 will start — but a single missed walk blanks enrichment for that profile's exporters.
+
+:::
+
 :::note[The converter reads nested YAML]
 It wants the shape Spring writes as a tree — `riptide:` containing `nodes:`, containing the node name — not flat dotted property names, and not a `.properties` file. If your 0.8 configuration is flat, re-indent the `riptide.nodes` tree into a small YAML file and convert that; the rest of your configuration does not need to come with it, since only `riptide.nodes` and `riptide.snmp.poll` are read.
 

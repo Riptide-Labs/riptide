@@ -5,6 +5,8 @@
 
 package org.riptide.convert;
 
+import lombok.extern.slf4j.Slf4j;
+
 import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.file.Files;
@@ -19,6 +21,7 @@ import java.nio.file.Path;
  * converter has no business reaching Vault and a resolved value would be a cleartext
  * community written into a file the operator is about to commit.</p>
  */
+@Slf4j
 public final class ConvertCommand {
 
     private ConvertCommand() {
@@ -29,12 +32,14 @@ public final class ConvertCommand {
         return "convert".equals(arg);
     }
 
-    public static int run(final String[] args) {
-        return run(args, System.out, System.err);
-    }
-
     /**
-     * As {@link #run(String[])} but with explicit streams.
+     * Runs the conversion against explicit streams.
+     *
+     * <p>There is deliberately no {@code run(String[])} convenience overload binding
+     * {@code System.out}/{@code System.err} here. It would be the one entry into this subcommand
+     * that skips {@link org.riptide.CliLogging}, and skipping it is #727: with no Spring context
+     * Logback falls back to stdout, the stream the generated configuration is written to. The
+     * process entry point routes logging and then calls this.</p>
      *
      * <p>The emitted configuration goes to {@code out} and the summary to {@code err}, so
      * {@code riptide convert nodes.yaml > new.yaml} produces a usable file while the operator
@@ -94,6 +99,13 @@ public final class ConvertCommand {
             usage(err);
             return 2;
         }
+
+        // The first record this command emits, and deliberately a record rather than a println.
+        // It is the canary for the whole of #727: the generated configuration goes to stdout, so
+        // if CLI logging is ever not routed before this point, this line lands inside the file the
+        // operator redirected — which is exactly the failure, made observable on the happy path
+        // instead of waiting for some future warning to expose it.
+        log.info("Converting {}", input);
 
         final String content;
         try {

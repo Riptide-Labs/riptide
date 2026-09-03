@@ -37,9 +37,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>Two properties beyond "a record was routed", because a weaker test survives the same edit.
  * The routing has to happen <em>before</em> the subcommand runs, which is asserted by where the
- * conversion's own warning lands relative to the summary that conversion writes afterwards; and it
- * has to cover the provisioning dispatch, not only {@code convert}, because sharing one call site
- * is the thing that keeps a future split from reintroducing half a fix.</p>
+ * conversion's own first record lands relative to the summary that conversion writes afterwards;
+ * and it has to cover the provisioning dispatch, not only {@code convert}, because sharing one
+ * call site is the thing that keeps a future split from reintroducing half a fix.</p>
+ *
+ * <p>One gap these cannot close: every test here supplies its own two streams, so none of them
+ * observes which <em>real</em> streams {@code main} binds. Rebinding the diagnostic stream to
+ * {@code System.out} reintroduces #727 verbatim and leaves all of them green. That is
+ * {@link CliEntryPointTest}'s job, and it needs a subprocess to do it.</p>
  */
 class RiptideApplicationTest {
 
@@ -110,8 +115,14 @@ class RiptideApplicationTest {
         final String reported = diagnostics.toString(StandardCharsets.UTF_8);
         assertThat(reported)
                 .as("the record the conversion emitted went to the diagnostic stream")
-                .contains("expires snapshots (PT5M) faster than it refreshes them (PT15M)");
-        assertThat(reported.indexOf("expires snapshots"))
+                .contains("Converting ")
+                .contains(legacy.toString());
+        // The ordering property, and it needs a record emitted DURING the dispatch to be
+        // observable at all. ConvertCommand logs the input file before it reads it, and the
+        // summary is printed after the documents, so routing installed after the dispatch
+        // produces no "Converting" line here at all — the record would go to the real stdout the
+        // fallback appender cached, which this test cannot see and must not.
+        assertThat(reported.indexOf("Converting "))
                 .as("routed before the conversion ran, not after it finished")
                 .isLessThan(reported.indexOf("Converted 1 node(s)"));
     }

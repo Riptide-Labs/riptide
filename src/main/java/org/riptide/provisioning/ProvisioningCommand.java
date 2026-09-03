@@ -38,12 +38,15 @@ public final class ProvisioningCommand {
         return "onboard".equals(arg) || "offboard".equals(arg);
     }
 
-    /** Run the subcommand named by {@code args[0]}. Returns a process exit code. */
-    public static int run(final String[] args) {
-        return run(args, System.out, System.err);
-    }
-
-    /** As {@link #run(String[])} but with explicit streams — the config stanza goes to {@code out}. */
+    /**
+     * Run the subcommand named by {@code args[0]} against explicit streams; the config stanza goes
+     * to {@code out}. Returns a process exit code.
+     *
+     * <p>No {@code run(String[])} overload binding {@code System.out}/{@code System.err}, for the
+     * reason {@link org.riptide.convert.ConvertCommand#run} gives: it would be the one entry that
+     * skips {@link org.riptide.CliLogging}, and this subcommand runs with no Spring context, so
+     * Logback would fall back to stdout — where the stanza the operator pastes is written.</p>
+     */
     public static int run(final String[] args, final PrintStream out, final PrintStream err) {
         final Args parsed;
         try {

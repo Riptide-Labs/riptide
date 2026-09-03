@@ -104,7 +104,16 @@ public record PollingProfile(@DefaultValue(DEFAULT_REFRESH_INTERVAL) Duration re
         }
     }
 
-    boolean expiryShorterThanRefresh() {
+    /**
+     * Whether this profile bounds staleness tighter than its refresh can deliver.
+     *
+     * <p>Public because {@code riptide convert} asks the same question about the cadence it is
+     * about to emit, and answers it in its own summary rather than through {@link #validate}'s log
+     * record — a converter that reported this by logging would name a profile it invented, and on
+     * the invocation the upgrade guide recommends the record would land on a different stream from
+     * the rest of the report. One predicate, two callers, so the rule cannot drift.</p>
+     */
+    public boolean expiryShorterThanRefresh() {
         return this.snapshotExpiry.compareTo(this.refreshInterval) < 0;
     }
 }

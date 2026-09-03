@@ -40,7 +40,17 @@ import java.util.List;
  */
 public final class CliLogging {
 
-    /** Matches the console pattern a Spring-started run prints, so a CLI line reads the same. */
+    /**
+     * Logback's own fallback pattern, kept deliberately.
+     *
+     * <p>It is <em>not</em> the pattern a Spring-started run prints. Spring Boot's
+     * {@code CONSOLE_LOG_PATTERN} carries an ISO-8601 timestamp, the PID, a colour-escaped level
+     * and a 39-character logger, and none of that helps a one-shot CLI: the PID of a process the
+     * operator just ran is noise, and the colour escapes end up in whatever they piped stderr to.
+     * What matters here is that the record leaves stdout, not that it matches the daemon's
+     * formatting — so this keeps the format the CLI already emitted before the routing existed,
+     * and only the destination changes.</p>
+     */
     private static final String PATTERN = "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} -- %msg%n";
 
     private CliLogging() {
@@ -83,7 +93,12 @@ public final class CliLogging {
         replaced.forEach(root::detachAppender);
         root.addAppender(appender);
         // the fallback configuration roots at DEBUG; logback-spring.xml roots at INFO, and a
-        // subcommand printing every library's debug line would bury its own summary
+        // subcommand printing every library's debug line would bury its own summary.
+        //
+        // This one line does more than move records: a DEBUG record that used to reach stdout is
+        // now dropped, not relocated. That is the intended trade — the alternative is a CLI whose
+        // stderr is unreadable — but it is a filtering change riding along with a routing fix, so
+        // it is named here rather than left for a reader to infer from the level.
         root.setLevel(Level.INFO);
     }
 }

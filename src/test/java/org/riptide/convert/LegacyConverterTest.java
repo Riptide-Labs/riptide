@@ -5,11 +5,7 @@
 
 package org.riptide.convert;
 
-import ch.qos.logback.classic.Level;
-import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
-import org.slf4j.LoggerFactory;
 import org.riptide.inventory.InventoryLoader;
 import org.riptide.snmp.SnmpPollConfig;
 import org.riptide.inventory.InventorySnapshot;
@@ -32,6 +28,7 @@ import org.yaml.snakeyaml.Yaml;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -610,56 +607,58 @@ class LegacyConverterTest {
                 .contains("snapshot-expiry: PT2H");
     }
 
+    /** The cadence lines in a conversion's summary — the whole report, so a duplicate is visible. */
+    private static List<String> cadenceReport(final LegacyConverter.Converted converted) {
+        return converted.summary().stream()
+                .filter(line -> line.contains("expires snapshots"))
+                .toList();
+    }
+
     /**
      * A cadence whose snapshots expire before the next walk converts unchanged, and the operator
-     * is told.
+     * is told — in the summary, naming the keys from their own file.
      *
-     * <p>{@code PollingProfile.validate} has always warned about it. The converter used to pair
-     * each key with a partner that could not reach the branch, because with no Spring context the
-     * record went to the same stdout the generated configuration is written to — so the one run
-     * that reads the legacy file and knows this said nothing. {@link org.riptide.CliLogging} moved
-     * CLI logging to stderr, which is what releases it.</p>
+     * <p>{@code PollingProfile.validate} has always warned about this, and the converter used to
+     * pair each key with a partner that could not reach the branch, because with no Spring context
+     * the record went to the same stdout the generated configuration is written to. So the one run
+     * that reads the legacy file and knows said nothing.</p>
+     *
+     * <p>It is reported through the summary rather than that log record for two reasons the
+     * routing fix does not remove: {@code validate}'s message names a profile the converter
+     * invented, which appears nowhere in the operator's file, and on the {@code --out-config}
+     * invocation the upgrade guide recommends the summary goes to stdout, so a logged record would
+     * split the report across two streams.</p>
      *
      * <p>Both halves are asserted: the emitted documents are the ones the pairing produced, so
      * relaxing it changed what is reported and not what is converted.</p>
      */
     @Test
     void anExpiryShorterThanItsRefreshStillConvertsAndIsNowReported() {
-        final ch.qos.logback.classic.Logger logger =
-                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(PollingProfile.class);
-        final ListAppender<ILoggingEvent> appender = new ListAppender<>();
-        appender.start();
-        logger.addAppender(appender);
-
-        final LegacyConverter.Converted converted;
-        try {
-            converted = convert("""
-                    riptide:
-                      snmp:
-                        poll:
-                          refresh-interval-ms: 900000
-                          snapshot-expiry-ms: 300000
-                      nodes:
-                        core-router:
-                          subnet-address: 10.0.0.1
-                          snmp: {snmp-version: v3, security-name: m}
-                    """);
-        } finally {
-            logger.detachAppender(appender);
-            appender.stop();
-        }
+        final LegacyConverter.Converted converted = convert("""
+                riptide:
+                  snmp:
+                    poll:
+                      refresh-interval-ms: 900000
+                      snapshot-expiry-ms: 300000
+                  nodes:
+                    core-router:
+                      subnet-address: 10.0.0.1
+                      snmp: {snmp-version: v3, security-name: m}
+                """);
 
         assertThat(converted.mainConfig())
-                .as("the cadence is converted as written, warning or not")
+                .as("the cadence is converted as written, report or not")
                 .contains("refresh-interval: PT15M")
                 .contains("snapshot-expiry: PT5M");
-        assertThat(appender.list)
-                .as("the warning names the operator's own two durations")
-                .anySatisfy(event -> {
-                    assertThat(event.getLevel()).isEqualTo(Level.WARN);
-                    assertThat(event.getFormattedMessage())
-                            .contains("expires snapshots (PT5M) faster than it refreshes them (PT15M)");
-                });
+        assertThat(cadenceReport(converted))
+                .as("reported once, not once per validate() call")
+                .hasSize(1);
+        assertThat(cadenceReport(converted).getFirst())
+                .as("the report names the operator's own two keys, not a profile name we invented")
+                .contains("expires snapshots (PT5M) faster than it refreshes them (PT15M)")
+                .contains("riptide.snmp.poll.snapshot-expiry-ms is 300000 ms")
+                .contains("riptide.snmp.poll.refresh-interval-ms is 900000 ms")
+                .doesNotContain("the converted polling cadence");
     }
 
     /**
@@ -669,55 +668,63 @@ class LegacyConverterTest {
      */
     @Test
     void anExpiryShorterThanTheDefaultRefreshIsReported() {
-        final ch.qos.logback.classic.Logger logger =
-                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(PollingProfile.class);
-        final ListAppender<ILoggingEvent> appender = new ListAppender<>();
-        appender.start();
-        logger.addAppender(appender);
+        final LegacyConverter.Converted converted = convert("""
+                riptide:
+                  snmp:
+                    poll:
+                      snapshot-expiry-ms: 60000
+                  nodes:
+                    core-router:
+                      subnet-address: 10.0.0.1
+                      snmp: {snmp-version: v3, security-name: m}
+                """);
 
-        try {
-            convert("""
-                    riptide:
-                      snmp:
-                        poll:
-                          snapshot-expiry-ms: 60000
-                      nodes:
-                        core-router:
-                          subnet-address: 10.0.0.1
-                          snmp: {snmp-version: v3, security-name: m}
-                    """);
-        } finally {
-            logger.detachAppender(appender);
-            appender.stop();
-        }
-
-        assertThat(appender.list)
+        assertThat(cadenceReport(converted)).hasSize(1);
+        assertThat(cadenceReport(converted).getFirst())
                 .as("an absent refresh-interval is not an absent refresh: the record defaults it")
-                .anySatisfy(event -> assertThat(event.getFormattedMessage())
-                        .contains("expires snapshots (PT1M) faster than it refreshes them (PT10M)"));
+                .contains("expires snapshots (PT1M) faster than it refreshes them (PT10M)")
+                .contains("riptide.snmp.poll.refresh-interval-ms was not set and binds the 0.9 default (PT10M)");
     }
 
     /**
-     * A cadence both of whose keys are in range says nothing, so the warning above cannot be a
+     * The symmetric case, and the one a surviving mutation exposed: the refresh is written and the
+     * <em>expiry</em> is defaulted.
+     *
+     * <p>Gating the emitted-pair check on {@code snapshotExpiryMs() != null} — a plausible "judge
+     * only what the operator wrote" refactor — left every other cadence test green, because they
+     * all write that key. A 45-minute refresh against the record's PT30M default expiry converts
+     * into a profile that expires snapshots before the walk that fills them, and the operator has
+     * to be told which value is the default, since it is nowhere in their file.</p>
+     */
+    @Test
+    void aRefreshLongerThanTheDefaultExpiryIsReported() {
+        final LegacyConverter.Converted converted = convert("""
+                riptide:
+                  snmp:
+                    poll:
+                      refresh-interval-ms: 2700000
+                  nodes:
+                    core-router:
+                      subnet-address: 10.0.0.1
+                      snmp: {snmp-version: v3, security-name: m}
+                """);
+
+        assertThat(cadenceReport(converted)).hasSize(1);
+        assertThat(cadenceReport(converted).getFirst())
+                .contains("expires snapshots (PT30M) faster than it refreshes them (PT45M)")
+                .contains("riptide.snmp.poll.refresh-interval-ms is 2700000 ms")
+                .as("the half they never wrote has to be named as a default")
+                .contains("riptide.snmp.poll.snapshot-expiry-ms was not set and binds the 0.9 default (PT30M)");
+    }
+
+    /**
+     * A cadence both of whose keys are in range says nothing, so the report above cannot be a
      * line every conversion prints. The pair here is the ordinary one: expiry longer than
      * refresh.
      */
     @Test
     void anOrdinaryCadenceReportsNothing() {
-        final ch.qos.logback.classic.Logger logger =
-                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(PollingProfile.class);
-        final ListAppender<ILoggingEvent> appender = new ListAppender<>();
-        appender.start();
-        logger.addAppender(appender);
-
-        try {
-            convert(LEGACY);
-        } finally {
-            logger.detachAppender(appender);
-            appender.stop();
-        }
-
-        assertThat(appender.list)
+        assertThat(cadenceReport(convert(LEGACY)))
                 .as("5-minute refresh, 15-minute expiry: nothing to say")
                 .isEmpty();
     }
