@@ -531,6 +531,14 @@ public class TenantOnboardingIT {
                 admin.execute("GRANT SELECT ON system." + catalog
                         + " TO noshow_admin WITH GRANT OPTION").get();
             }
+            // ROLE ADMIN so this admin could actually finish the run: granting a role it did not
+            // itself create needs it, and the roles here were created by the onboard above. Without
+            // it the run dies later on GRANT `flow_writer@noshow`, which would let this test pass
+            // for a reason that has nothing to do with the legacy probe. Deliberately granted, and
+            // it does NOT unlock system.users — measured: the refusal below survives it, which is
+            // the whole point. An admin that can complete every other part of onboard is still
+            // unable to answer the legacy question.
+            admin.execute("GRANT ROLE ADMIN ON *.* TO noshow_admin").get();
 
             final var err = new ByteArrayOutputStream();
             final int code = ProvisioningCommand.run(new String[] {
