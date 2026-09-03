@@ -24,10 +24,11 @@ import java.util.stream.Collectors;
 
 /**
  * Provisions and de-provisions a tenant against ClickHouse using an admin connection. This is the
- * whole admin-side of multi-tenancy: it ensures the one-time role/constraint/quota objects, then
- * creates (or drops) the per-tenant scoped users and row policy. It depends only on a ClickHouse
- * {@link Client} and {@link SecretResolvers}, so it carries no Spring coupling and lifts cleanly
- * into a future {@code riptide-admin} module.
+ * whole admin-side of multi-tenancy: it ensures the per-database role/constraint/quota objects
+ * (qualified {@code @<database>} since #649 — see {@link ProvisioningDdl}), then creates (or drops)
+ * the per-tenant scoped users and row policy. It depends only on a ClickHouse {@link Client} and
+ * {@link SecretResolvers}, so it carries no Spring coupling and lifts cleanly into a future
+ * {@code riptide-admin} module.
  *
  * <p>The caller owns the admin {@link Client} (built from admin credentials supplied explicitly at
  * invocation — never the collector's scoped credential) and its lifecycle.
@@ -51,9 +52,15 @@ public final class TenantProvisioner {
      * <em>before any statement runs</em>. If they are missing, the run fails unless
      * {@code createSchema} is set —
      * a typo'd database name must fail loudly, not silently provision a phantom database with the
-     * shared roles granted on it. The bootstrap statements are only <em>emitted</em> when actually
-     * creating: ClickHouse checks the {@code CREATE} privileges even when {@code IF NOT EXISTS}
-     * would no-op, and a least-privilege admin re-run (e.g. password rotation) must keep working.
+     * per-database roles granted on it. The bootstrap statements are only <em>emitted</em> when
+     * actually creating: ClickHouse checks the {@code CREATE} privileges even when
+     * {@code IF NOT EXISTS} would no-op, so a re-run (e.g. a password rotation) by an admin holding
+     * no {@code CREATE} keeps working.
+     *
+     * <p>A second pre-flight, also before any statement runs, asks which pre-#649 accounts this
+     * tenant still has ({@link #readLiveLegacyAccounts}) — they must stay named on the row policies
+     * this run re-issues. That read needs {@code SHOW USERS}, and the run is refused outright if it
+     * cannot be answered; see that method for why proceeding is worse than failing.
      */
     public OnboardResult onboard(final TenantSpec spec, final boolean createSchema, final int ttlDays) {
         final String writerPassword = resolve(spec.writerSecret());
@@ -136,26 +143,15 @@ public final class TenantProvisioner {
         statements.addAll(ProvisioningDdl.ensureShared(spec.database(), spec.quotaBytes()));
         // Probed BEFORE the statements are built, not after they run, and that ordering is the
         // whole fix: the row policies this run replaces must keep naming any pre-#649 account that
-        // is still live, or the upgrade turns them into cross-tenant readers.
-        final LegacyProbe legacy = probeLegacyAccounts(spec.tenant());
+        // is still live, or the upgrade turns them into cross-tenant readers. It throws rather than
+        // degrading, and this is the point at which that is still free — nothing has executed.
+        final List<String> legacyAccounts = readLiveLegacyAccounts(spec.tenant());
         statements.addAll(ProvisioningDdl.onboardTenant(
                 spec.database(), spec.tenant(), spec.organisation(), writerPassword, readerPassword,
-                legacy.live()));
+                legacyAccounts));
         execute(statements);
 
-        return new OnboardResult(configStanza(spec), bootstrap, legacy.live(), legacy.error());
-    }
-
-    /** What the pre-#649 account probe found, or why it could not look. Never both. */
-    private record LegacyProbe(List<String> live, Optional<String> error) {
-
-        static LegacyProbe found(final List<String> live) {
-            return new LegacyProbe(live, Optional.empty());
-        }
-
-        static LegacyProbe failed(final String why) {
-            return new LegacyProbe(List.of(), Optional.of(why));
-        }
+        return new OnboardResult(configStanza(spec), bootstrap, legacyAccounts);
     }
 
     /**
@@ -166,17 +162,23 @@ public final class TenantProvisioner {
      * one who may drop them: a rolling upgrade still has the tenant's collector authenticating as
      * the legacy writer until the new stanza is pasted, so removing it here would take ingest down.
      *
-     * <p>A failure is <em>returned</em>, not swallowed. It used to log and yield an empty list,
-     * which is the same value as "no legacy account" — so the absence of a warning read as a clean
-     * instance while both the open cross-database write and the policy question stayed unanswered.
+     * <p><b>Failure throws.</b> ClickHouse <em>refuses</em> this query rather than filtering it: an
+     * admin holding only the privileges {@code multi-tenancy.md} lists gets
+     * {@code Code: 497 … it's necessary to have the grant SELECT ON system.users (ACCESS_DENIED)},
+     * measured on the pinned image. Degrading to "found nothing" there is indistinguishable from a
+     * clean instance, and the consequence is not a missing warning: this run would rewrite
+     * {@code <tenant>_iso} naming only the qualified pair, leaving a still-live pre-rename account
+     * named by no policy — which, on a server with the shipped
+     * {@code users_without_row_policies_can_read_rows} default, reads every tenant's rows. So the
+     * whole run is refused instead, which is safe precisely because this runs before
+     * {@code execute}: nothing has been changed when it throws.
      *
-     * <p>One limit it cannot close: ClickHouse filters {@code system.users} by access rather than
-     * refusing the query, so an admin without {@code SHOW USERS} sees only itself and this returns
-     * an under-count with no error. Onboard admins hold {@code CREATE USER}/{@code DROP USER} and so
-     * see these rows in practice; the failure mode is real but out of this method's reach, and is
-     * named in the operator-facing docs.
+     * <p>Reading the existing policy instead would not avoid the grant — {@code system.row_policies}
+     * and {@code SHOW CREATE ROW POLICY} are refused to the same admin, also measured.
+     *
+     * @throws ProvisioningException if the catalog cannot be read; the message names the exact grant
      */
-    private LegacyProbe probeLegacyAccounts(final String tenant) {
+    private List<String> readLiveLegacyAccounts(final String tenant) {
         final List<String> legacy = ProvisioningDdl.legacyUsers(tenant);
         final Set<String> live = new LinkedHashSet<>();
         final String in = legacy.stream().map(ProvisioningDdl::literal).collect(Collectors.joining(", "));
@@ -185,18 +187,30 @@ public final class TenantProvisioner {
             users.forEach(record -> live.add(record.getString("n")));
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
-            // Given a message of its own: an interrupt used to return the same silent empty list as
-            // success, so a cancelled probe was indistinguishable from a clean instance.
-            log.warn("Interrupted while checking for pre-rename accounts of tenant '{}'.", tenant);
-            return LegacyProbe.failed("interrupted while reading system.users");
+            throw new ProvisioningException(legacyProbeFailure(tenant, "interrupted"), e);
         } catch (final Exception e) {
-            log.warn("Could not read system.users to check for pre-rename accounts of tenant '{}': {}",
-                    tenant, e.getMessage());
-            return LegacyProbe.failed(e.getMessage());
+            throw new ProvisioningException(legacyProbeFailure(tenant, describe(e)), e);
         }
         // Filtered rather than returned in the server's order, so the warning names the writer
         // first every time.
-        return LegacyProbe.found(legacy.stream().filter(live::contains).toList());
+        return legacy.stream().filter(live::contains).toList();
+    }
+
+    /** The one wording for a refused legacy probe, so the abort and the offboard note agree. */
+    private static String legacyProbeFailure(final String tenant, final String cause) {
+        return "could not check whether tenant '" + tenant + "' still has pre-rename"
+                + " (database-unqualified) accounts on this server: " + cause
+                + ". Refusing to continue — nothing has been changed. This run would re-issue the"
+                + " row policy '" + tenant + "_iso', and an account dropped from its TO list while"
+                + " it still holds SELECT is left governed by no policy at all, which on a server"
+                + " with the shipped users_without_row_policies_can_read_rows default reads EVERY"
+                + " tenant's rows. Grant the admin the privilege that answers the question and"
+                + " re-run: GRANT SHOW USERS ON *.* TO <your --admin-user>";
+    }
+
+    /** {@code getMessage()} is null for several client exceptions, and null formats badly. */
+    private static String describe(final Throwable e) {
+        return e.getMessage() == null ? e.toString() : e.getMessage();
     }
 
     /**
@@ -255,17 +269,15 @@ public final class TenantProvisioner {
      * The config stanza plus whether this run created the schema — the caller needs the latter to
      * warn when an explicitly requested {@code --ttl-days} was not applied (table pre-existed).
      *
-     * @param legacyAccounts    the pre-#649 unqualified accounts for this tenant that are still
-     *                          live, writer first. This run kept them on the row policies and did
-     *                          not drop them, because a rolling upgrade is still authenticating as
-     *                          one; the caller tells the operator how to finish.
-     * @param legacyProbeError  why the probe could not look, when it could not. Empty on success,
-     *                          <em>including</em> a successful look that found nothing — the caller
-     *                          must be able to tell "no legacy account" from "did not find out",
-     *                          because only the first of those is safe to read as clean.
+     * @param legacyAccounts the pre-#649 unqualified accounts for this tenant that are still live,
+     *                       writer first. This run kept them on the row policies and did not drop
+     *                       them, because a rolling upgrade is still authenticating as one; the
+     *                       caller tells the operator how to finish. Empty means the probe looked
+     *                       and found none — it never means "could not tell", because a probe that
+     *                       cannot tell throws before this record is built.
      */
     public record OnboardResult(String configStanza, boolean schemaBootstrapped,
-                                List<String> legacyAccounts, Optional<String> legacyProbeError) {
+                                List<String> legacyAccounts) {
         public OnboardResult {
             legacyAccounts = List.copyOf(legacyAccounts);
         }
@@ -334,9 +346,36 @@ public final class TenantProvisioner {
     /**
      * Drop the tenant's users — both the database-qualified accounts and the pre-#649 unqualified
      * ones — and its row policies. The per-database roles/constraints/quota are left intact.
+     *
+     * <p>The pre-rename pair is looked up <em>before</em> the drop so the caller can name what it
+     * actually removed. That matters because those names carry no database: dropping them reaches
+     * every database on the server, and an operator told "also dropped … if they existed" learns
+     * neither whether anything was dropped nor whether another database just lost its credential.
+     * Unlike {@code onboard}'s probe this one only shapes a message, so a refusal degrades to
+     * {@link Optional#empty()} ("could not tell") rather than failing the teardown.
      */
-    public void offboard(final TenantRef ref) {
+    public OffboardResult offboard(final TenantRef ref) {
+        Optional<List<String>> legacy;
+        try {
+            legacy = Optional.of(readLiveLegacyAccounts(ref.tenant()));
+        } catch (final ProvisioningException e) {
+            log.warn("Could not determine which pre-rename accounts of tenant '{}' this offboard"
+                    + " removes: {}", ref.tenant(), describe(e));
+            legacy = Optional.empty();
+        }
         execute(ProvisioningDdl.offboardTenant(ref.database(), ref.tenant()));
+        return new OffboardResult(legacy);
+    }
+
+    /**
+     * What a teardown removed beyond the database-qualified pair.
+     *
+     * @param legacyDropped the pre-#649 unqualified accounts that existed and were therefore
+     *                      dropped. Empty list means the probe looked and found none, so there is
+     *                      nothing to warn about; {@link Optional#empty()} means it could not look,
+     *                      which is a different statement and must not be reported as "none".
+     */
+    public record OffboardResult(Optional<List<String>> legacyDropped) {
     }
 
     private void execute(final List<String> statements) {

@@ -42,6 +42,8 @@ riptide.clickhouse.username=writer_acme@riptide
 riptide.clickhouse.password=vault://secret/riptide/clickhouse/acme#password
 ```
 
+The username carries the database because ClickHouse users are instance-wide — `riptide onboard` prints the exact value to paste. On a deployment onboarded before that rename it is the unqualified `writer_acme`; see [Object names carry their database](../deploy/multi-tenancy.md#object-names-carry-their-database). This field is not a URL, so the `@` is written literally; embed the same name in a URL and it must be `%40`.
+
 ## Schema ownership
 
 `riptide.clickhouse.manage-schema` (boolean, default `true`) selects who owns the schema:

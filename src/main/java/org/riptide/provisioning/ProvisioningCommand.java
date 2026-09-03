@@ -115,14 +115,6 @@ public final class ProvisioningCommand {
         // Reported, never dropped: a rolling upgrade is still authenticating as this account. The
         // run has already kept it on this tenant's row policies, so it stays filtered to its own
         // rows until the operator retires it.
-        result.legacyProbeError().ifPresent(why -> err.println(
-                "warning: could not check whether tenant '" + spec.tenant() + "' still has pre-rename"
-                        + " (database-unqualified) accounts on this server: " + why + ". This run"
-                        + " therefore could not keep such an account on the tenant's row policies,"
-                        + " and a user named by no policy reads every tenant's rows. If this server"
-                        + " was onboarded before the per-database rename, check"
-                        + " `SHOW ROW POLICY " + spec.tenant() + "_iso ON " + database + ".flows`"
-                        + " before trusting this run"));
         for (final String legacy : result.legacyAccounts()) {
             final boolean writer = legacy.equals(ProvisioningDdl.legacyWriterUser(spec.tenant()));
             err.println("warning: the pre-rename account '" + legacy + "' still exists on this server,"
@@ -155,24 +147,38 @@ public final class ProvisioningCommand {
                     + "' without --yes (this drops the tenant's writer/reader users and row policies)");
             return 2;
         }
-        provisioner.offboard(ref);
-        // Names the database and the legacy cleanup, because the old line ("dropped its users and
-        // row policy") read as a complete revocation on an instance onboarded before #649 — where
-        // the credential that actually authenticates carries no database in its name.
+        final var result = provisioner.offboard(ref);
+        // Names the database, because the old line ("dropped its users and row policy") read as a
+        // complete revocation on an instance onboarded before #649 — where the credential that
+        // actually authenticates carries no database in its name.
         err.println("Offboarded tenant '" + ref.tenant() + "' from database '" + ref.database()
                 + "': dropped " + ProvisioningDdl.writerUser(ref.tenant(), ref.database()) + " and "
                 + ProvisioningDdl.readerUser(ref.tenant(), ref.database())
                 + ", and the tenant's row policies on flows and every rollup."
-                + " The database's roles, constraints and quota stay (other tenants hold them).");
-        // The legacy pair is keyed on the tenant alone, so this drop reaches every database on the
-        // server, not just --database. Said plainly, because the line above is otherwise read as
-        // per-database and this is the half that can take an unrelated collector down.
-        err.println("note: also dropped the pre-rename accounts "
-                + String.join(" and ", ProvisioningDdl.legacyUsers(ref.tenant()))
-                + " if they existed. Those carry no database in their name, so they were"
-                + " INSTANCE-WIDE: any OTHER database on this server where tenant '" + ref.tenant()
-                + "' was still on the old naming has just lost its credential and must be"
-                + " re-onboarded to get a '@<database>' account of its own.");
+                + " The database's roles, constraints and quota are left in place: they are shared"
+                + " by every tenant in this database, so offboard never removes them. If this was"
+                + " the last tenant here, drop them by hand.");
+        // Only what was actually dropped, and only when we know. The pre-rename pair is keyed on
+        // the tenant alone, so this reaches every database on the server — but printing it
+        // unconditionally, hedged "if they existed", raises that alarm on every post-rename
+        // deployment about credentials that never existed.
+        result.legacyDropped().ifPresentOrElse(
+                dropped -> {
+                    if (!dropped.isEmpty()) {
+                        err.println("note: also dropped the pre-rename account"
+                                + (dropped.size() == 1 ? " " : "s ") + String.join(" and ", dropped)
+                                + ". Those carry no database in their name, so they were"
+                                + " INSTANCE-WIDE: any OTHER database on this server where tenant '"
+                                + ref.tenant() + "' was still on the old naming has just lost its"
+                                + " credential and must be re-onboarded to get a '@<database>'"
+                                + " account of its own.");
+                    }
+                },
+                () -> err.println("note: could not check whether tenant '" + ref.tenant() + "' also"
+                        + " had pre-rename (database-unqualified) accounts — reading system.users"
+                        + " needs GRANT SHOW USERS ON *.*. Any that existed have now been dropped,"
+                        + " and because they carry no database in their name that reaches every"
+                        + " database on this server. Verify no other database was relying on them."));
         return 0;
     }
 
@@ -221,6 +227,10 @@ public final class ProvisioningCommand {
                   riptide offboard --admin-url URL [--admin-user U] [--admin-password REF] \\
                                    --tenant T [--database DB] --yes
                 secret REF: plain literal, env://VAR, or file:///path[#key]
+                --database: the database holding the flows table (default: riptide). It also
+                            qualifies the generated account names — the stanza names
+                            writer_<tenant>@<database>, and the reader is bi_<tenant>@<database>,
+                            because ClickHouse users and roles are instance-wide.
                 --create-schema: bootstrap the database, flows table, and 1-minute rollup
                                  tables/views if absent (needs CREATE privileges) — also the way
                                  to add the rollups to a pre-rollup deployment; without it, a

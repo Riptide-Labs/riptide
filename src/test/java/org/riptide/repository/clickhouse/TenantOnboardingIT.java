@@ -479,6 +479,84 @@ public class TenantOnboardingIT {
         }
     }
 
+    /**
+     * An admin that cannot answer the legacy question must abort, not guess.
+     *
+     * <p>{@code system.users} is <em>refused</em> to an admin holding only the privileges the
+     * multi-tenancy runbook lists — {@code Code: 497 … SELECT ON system.users (ACCESS_DENIED)},
+     * measured on the pinned image — and so are {@code system.row_policies} and
+     * {@code SHOW CREATE ROW POLICY}, so there is no cheaper way to learn what the policy names.
+     * Degrading to "found nothing" would rewrite {@code <tenant>_iso} with the qualified pair alone,
+     * un-name the still-live legacy reader, and hand it every tenant's rows while exiting 0 — the
+     * exact defect the legacy-account handling exists to close, on the admin configuration the docs
+     * recommend.</p>
+     *
+     * <p>The admin here is built to that documented minimum <em>deliberately</em>, including the
+     * catalog grants, so the run reaches the probe rather than failing earlier for an unrelated
+     * reason. The one privilege withheld is {@code SHOW USERS}.</p>
+     */
+    @Test
+    void onboardAbortsWhenItCannotCheckForPreRenameAccounts() throws Exception {
+        final String flows = FlowsSchema.qualifiedFlows("noshow");
+        try (var admin = adminClient()) {
+            // Table and rows first: the onboard below installs the tenant_pinned CHECK, and this
+            // admin has no SQL_tenant for it to compare against. Seeding after it is UNKNOWN_SETTING.
+            admin.execute(FlowsSchema.createDatabase("noshow")).get();
+            admin.execute(FlowsSchema.createFlowsTable("noshow")).get();
+            admin.execute("INSERT INTO " + flows + " (tenant, organisation, timestamp) VALUES"
+                    + " ('nsh', 'nsh-eu', now()), ('rival', 'rival-eu', now())").get();
+
+            // The pre-rename shape for the tenant under test, so a rewrite would really leak.
+            admin.execute("CREATE ROLE IF NOT EXISTS flow_reader").get();
+            admin.execute("GRANT SELECT ON " + flows + " TO flow_reader").get();
+            admin.execute("CREATE USER bi_nsh IDENTIFIED WITH sha256_password BY 'legacyR'").get();
+            admin.execute("GRANT flow_reader TO bi_nsh").get();
+            admin.execute("CREATE ROW POLICY nsh_iso ON " + flows
+                    + " FOR SELECT USING tenant = 'nsh' TO bi_nsh").get();
+
+            // A full onboard of an unrelated tenant, so the rollups and constraints exist and the
+            // run under test reaches the legacy probe instead of the schema pre-flight.
+            Assertions.assertThat(ProvisioningCommand.run(onboardArgsFor("noshow", "nsx", true),
+                    discard(), discard())).isZero();
+
+            // Exactly the runbook's default-mode minimum — and no SHOW USERS.
+            admin.execute("CREATE USER noshow_admin IDENTIFIED WITH sha256_password BY 'na'").get();
+            admin.execute("GRANT CREATE USER, CREATE ROLE, CREATE QUOTA, CREATE ROW POLICY"
+                    + " ON *.* TO noshow_admin").get();
+            admin.execute("GRANT ALTER USER, ALTER ROLE, DROP USER, DROP ROW POLICY"
+                    + " ON *.* TO noshow_admin").get();
+            admin.execute("GRANT ALTER TABLE ON noshow.* TO noshow_admin").get();
+            admin.execute("GRANT INSERT, SELECT ON noshow.* TO noshow_admin WITH GRANT OPTION").get();
+            for (final String catalog : List.of("databases", "tables", "columns")) {
+                admin.execute("GRANT SELECT ON system." + catalog
+                        + " TO noshow_admin WITH GRANT OPTION").get();
+            }
+
+            final var err = new ByteArrayOutputStream();
+            final int code = ProvisioningCommand.run(new String[] {
+                    "onboard", "--admin-url", endpoint(), "--admin-user", "noshow_admin",
+                    "--admin-password", "na", "--database", "noshow", "--tenant", "nsh",
+                    "--org", "nsh-eu", "--writer-secret", "wN", "--reader-secret", "rN"},
+                    discard(), new PrintStream(err, true, StandardCharsets.UTF_8));
+
+            Assertions.assertThat(code).as("a run that cannot check must not report success").isEqualTo(1);
+            Assertions.assertThat(err.toString(StandardCharsets.UTF_8))
+                    .contains("GRANT SHOW USERS ON *.*")
+                    .contains("nothing has been changed");
+
+            // And it really changed nothing: the policy still names the legacy reader, which is
+            // still filtered to its own tenant with another tenant's rows sitting in the table.
+            Assertions.assertThat(policyGranteesOn(admin, "noshow", "nsh")).containsExactly("bi_nsh");
+            try (var legacy = rawClientOn("noshow", "bi_nsh", "legacyR")) {
+                Assertions.assertThat(tenantsSeenBy(legacy, "noshow")).containsExactly("nsh");
+            }
+            Assertions.assertThat(admin.queryAll("SELECT count() AS c FROM system.users"
+                            + " WHERE name = 'writer_nsh@noshow'").getFirst().getLong("c"))
+                    .as("no account was created either — the abort is before any statement runs")
+                    .isZero();
+        }
+    }
+
     /** The distinct tenant values a credential can actually see in {@code <database>.flows}. */
     private static List<String> tenantsSeenBy(final Client client, final String database) throws Exception {
         final var seen = new ArrayList<String>();

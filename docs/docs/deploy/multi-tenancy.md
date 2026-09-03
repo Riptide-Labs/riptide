@@ -107,13 +107,16 @@ checks `CREATE` privileges even when `IF NOT EXISTS` would no-op).
 
 | mode | minimum privileges for the admin credential |
 |---|---|
-| default (schema exists) | `CREATE USER`/`CREATE ROLE`/`CREATE QUOTA`/`CREATE ROW POLICY`, `ALTER USER`/`ALTER ROLE`, `DROP USER`/`DROP ROW POLICY` (offboard), `ALTER TABLE` on `<db>.flows`, and `INSERT`, `SELECT` on `<db>.flows` plus `SELECT` on `system.databases/tables/columns` **with grant option** (they are granted onward to the roles) |
+| default (schema exists) | `CREATE USER`/`CREATE ROLE`/`CREATE QUOTA`/`CREATE ROW POLICY`, `ALTER USER`/`ALTER ROLE`, `DROP USER`/`DROP ROW POLICY` (offboard), `ALTER TABLE` on `<db>.flows`, `INSERT`, `SELECT` on `<db>.flows` plus `SELECT` on `system.databases/tables/columns` **with grant option** (they are granted onward to the roles), and **`SHOW USERS ON *.*`** |
 | `--create-schema` | the above, plus `CREATE DATABASE ON <db>.*`, `CREATE TABLE ON <db>.*` (the `flows` table and the rollup targets) and `CREATE VIEW ON <db>.*` (the rollups' materialized views) |
 
 `onboard` is safe to re-run: it reconciles the writer/reader **passwords** to the current secret, so
 rotating a secret and re-running updates ClickHouse (the users' `CONST` settings are preserved; the
 row policies are **re-asserted** to match the recipe — a policy `TO` list widened by hand is
-reverted on the next run, so route extra grantees through provisioning, not manual DDL). To remove a tenant: `offboard --admin-url … --tenant acme --yes` (drops its users — the `@<database>` accounts **and** the pre-rename unqualified ones — and its row policy from `flows` **and every rollup**; the database's roles/constraints/quota stay, since other tenants hold them).
+reverted on the next run, so route extra grantees through provisioning, not manual DDL. Reverting
+is not a neutral act: a grantee removed from a policy while it still holds `SELECT` is left governed
+by no policy and reads *every* tenant's rows, so a hand-added grantee is silently widened rather
+than trimmed). To remove a tenant: `offboard --admin-url … --tenant acme --yes` (drops its users — the `@<database>` accounts **and** the pre-rename unqualified ones — and its row policy from `flows` **and every rollup**; the database's roles/constraints/quota are left in place, shared as they are by every tenant in that database — if you removed the last one, drop them by hand).
 
 ### Adding rollups to an existing deployment
 
@@ -223,6 +226,21 @@ The `CHECK` barrier cannot substitute for this: `tenant_pinned` passes whenever 
 An underscore would be ambiguous — tenant `foo` in database `bar_baz` and tenant `foo_bar` in database `baz` would both spell `writer_foo_bar_baz`, and the second onboarding would take over the first's account.
 Names containing `@` must be backticked in SQL, and they authenticate normally over both HTTP basic auth and the native protocol.
 
+:::caution[Percent-encode the `@` in any URL that embeds the username]
+
+Riptide's own `riptide.clickhouse.username` is a plain field and takes the name verbatim — no encoding.
+But anywhere the username is embedded *inside a URL* — a JDBC URL's userinfo, `http://user:pass@host:8123/`, Grafana's ClickHouse datasource when configured by URL, `clickhouse-client --url` — the `@` terminates the userinfo component and the connection fails with an opaque host-resolution or authentication error.
+Write it as `%40`:
+
+```
+http://writer_acme%40riptide:secret@clickhouse:8123/
+jdbc:clickhouse://clickhouse:8123/riptide?user=writer_acme%40riptide
+```
+
+`clickhouse-client --user 'writer_acme@riptide'` and Grafana's separate *Username* field need no encoding, because neither parses the value as part of a URL.
+
+:::
+
 Row policies are the exception, and deliberately so.
 A policy's identity is already `name ON db.table`, so `acme_iso ON db_a.flows` and `acme_iso ON db_b.flows` are two distinct objects.
 Their names are left alone.
@@ -234,7 +252,7 @@ An instance provisioned under the old naming keeps its unqualified `writer_<tena
 
 Re-running `onboard` **adds** the qualified account alongside the old one — it does not rename or drop it, because the tenant's collector is still authenticating as the old one until you paste the new stanza.
 It also **keeps the old account named on the tenant's row policies** for as long as that account exists.
-That is not cosmetic: the policy name is unchanged by the rename, so the run rewrites the *existing* policy's `TO` list, and an account dropped from it would be named by no policy and start reading every tenant's rows (see the warning above).
+That is not cosmetic: the policy name is unchanged by the rename, so the run rewrites the *existing* policy's `TO` list, and an account dropped from it would be named by no policy and start reading every tenant's rows (see [A row policy is not deny-by-default](#what-it-provisions), further down this page).
 Once you retire the old account, the next `onboard` stops naming it.
 
 The run prints a warning naming the leftover account and the `DROP USER` to run:
@@ -278,23 +296,36 @@ DROP ROLE IF EXISTS flow_writer, flow_reader;
 DROP QUOTA IF EXISTS flow_ingest;
 ```
 
-:::note[The legacy-account check needs `SHOW USERS`]
+:::caution[The legacy-account check needs `SHOW USERS`, and `onboard` refuses to run without it]
 
-`onboard` finds pre-rename accounts by reading `system.users`, and ClickHouse filters that table by access rather than refusing the query — an admin without `SHOW USERS` sees only itself and the run reports "no legacy account" with no error.
-Admins holding `CREATE USER` / `DROP USER` (what this page's privilege table already requires) see these rows.
-If the check fails outright, `onboard` says so on stderr and tells you to inspect `SHOW ROW POLICY <tenant>_iso ON <db>.flows` before trusting the run.
+`onboard` finds pre-rename accounts by reading `system.users`, and ClickHouse **refuses** that query outright to an admin that lacks the privilege — it does not filter the rows away:
+
+```
+Code: 497. DB::Exception: min_admin: Not enough privileges. To execute this query,
+it's necessary to have the grant SELECT ON system.users. (ACCESS_DENIED)
+```
+
+`CREATE USER` / `DROP USER` do **not** imply it. Grant it explicitly:
+
+```sql
+GRANT SHOW USERS ON *.* TO <your admin user>;
+```
+
+Without it the run **aborts before executing anything** and tells you this. That is deliberate, and it is not merely a missing warning: `onboard` re-issues `<tenant>_iso`, and an admin that cannot see whether a pre-rename account exists cannot keep it on the policy — so continuing would leave that account governed by no policy, reading every tenant's rows, and exit `0`. Failing costs a re-run; succeeding wrongly costs a cross-tenant leak.
+
+Reading the existing policy instead does not avoid the grant: `system.row_policies` and `SHOW CREATE ROW POLICY` are refused to the same admin.
 
 :::
 
 :::warning[A row policy is not deny-by-default for users it does not name]
 
-ClickHouse ships `users_without_row_policies_can_read_rows=true` in its default `config.xml` (line 872 on the pinned 26.7 image).
+ClickHouse ships `users_without_row_policies_can_read_rows` set to `true` in its default `config.xml`, and has done since the setting was introduced; grep that name rather than a line number, which moves between releases.
 A user holding `SELECT` on a table and named by **no** policy on that table therefore reads **every row**, not none.
 Measured on the pinned image, not inferred: with `acme` and `other` rows present, a granted user named by the policy returned only `acme`; a granted user named by no policy returned both.
 
 Two consequences run through this page.
 Naming a principal on a policy *restricts* it — it never grants access the principal would otherwise lack.
-And removing a principal from a policy while it still holds `SELECT` *widens* it to every tenant, which is why `onboard` keeps a live pre-rename account on the policies it rewrites (see the upgrade section below).
+And removing a principal from a policy while it still holds `SELECT` *widens* it to every tenant, which is why `onboard` keeps a live pre-rename account on the policies it rewrites (see [Upgrading a deployment onboarded before the rename](#upgrading-a-deployment-onboarded-before-the-rename), earlier on this page).
 
 If you set this to `false`, the recipe still works; the failure mode simply flips from "reads too much" to "reads nothing".
 

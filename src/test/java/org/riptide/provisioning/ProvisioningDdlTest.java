@@ -90,22 +90,53 @@ class ProvisioningDdlTest {
      * Every instance-wide object carries its database (#649). Users, roles and quotas share one flat
      * namespace across the server, so an unqualified role is one role for every database on it — and
      * that is the privilege that let {@code writer_acme} in {@code db_b} insert into {@code db_a}.
-     * Asserted as "no statement names an unqualified one", not as a name list, so a role added later
-     * cannot slip through unqualified.
+     *
+     * <p>Read out of the statements rather than compared against a list of the three names this
+     * version happens to create: a blocklist of {@code flow_writer}/{@code flow_reader}/
+     * {@code flow_ingest} is silent on the next object added, which is precisely the case worth
+     * catching. A later {@code CREATE ROLE flow_admin} fails the first assertion, and a
+     * {@code GRANT … TO flow_admin} the second, without either being named here.</p>
      */
     @Test
     void everyInstanceWideObjectIsQualifiedByItsDatabase() {
-        final List<String> sql = ProvisioningDdl.ensureShared("db_a", 1L);
-        assertThat(sql)
-                .as("an unqualified role or quota is shared by every database on the instance")
-                .noneMatch(s -> s.contains("`flow_writer`") || s.contains("`flow_reader`")
-                        || s.contains("`flow_ingest`")
-                        || s.contains(" flow_writer") || s.contains(" flow_reader")
-                        || s.contains(" flow_ingest"));
-        assertThat(sql).anyMatch(s -> s.contains("CREATE QUOTA IF NOT EXISTS `flow_ingest@db_a`"));
-        // The bodies are unchanged; only the names moved. A second database gets its own set.
-        assertThat(ProvisioningDdl.ensureShared("db_b", 1L))
-                .noneMatch(s -> s.contains("@db_a`"));
+        for (final String database : List.of("db_a", "db_b")) {
+            final List<String> sql = ProvisioningDdl.ensureShared(database, 1L);
+
+            assertThat(declaredObjectsIn(sql))
+                    .as("every role and quota %s declares must carry its database", database)
+                    .isNotEmpty()
+                    .allSatisfy(name -> assertThat(name).endsWith("@" + database + "`"));
+
+            assertThat(granteesIn(sql))
+                    .as("and every grant must land on one of that database's own roles")
+                    .containsExactlyInAnyOrder(
+                            "`" + ProvisioningDdl.writerRole(database) + "`",
+                            "`" + ProvisioningDdl.readerRole(database) + "`");
+        }
+    }
+
+    /** The roles and quotas {@code ensureShared} creates or alters, as it spells them. */
+    private static Set<String> declaredObjectsIn(final List<String> sql) {
+        final var pattern = java.util.regex.Pattern.compile(
+                "^(?:CREATE ROLE IF NOT EXISTS|ALTER ROLE|CREATE QUOTA IF NOT EXISTS) (`[^`]+`)");
+        return sql.stream()
+                .map(pattern::matcher)
+                .filter(java.util.regex.Matcher::find)
+                .map(matcher -> matcher.group(1))
+                .collect(Collectors.toCollection(java.util.LinkedHashSet::new));
+    }
+
+    /** Every principal a statement grants to, from its trailing {@code TO} list. */
+    private static Set<String> granteesIn(final List<String> sql) {
+        final var pattern = java.util.regex.Pattern.compile(" TO (`[^`]+`(?:, `[^`]+`)*)$");
+        final var grantees = new java.util.LinkedHashSet<String>();
+        for (final String statement : sql) {
+            final var matcher = pattern.matcher(statement);
+            if (matcher.find()) {
+                grantees.addAll(List.of(matcher.group(1).split(", ")));
+            }
+        }
+        return grantees;
     }
 
     @Test

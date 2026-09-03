@@ -77,6 +77,8 @@ riptide.mcp.clickhouse.password=vault://secret/riptide/clickhouse#bi_acme
 
 The `bi_<tenant>@<database>` user holds the `flow_reader@<database>` role, which `riptide onboard` already grants SELECT on `flows` and on every rollup, and which carries the `readonly = 2` / `allow_ddl = 0` hardening.
 The username carries the database because ClickHouse users are instance-wide — see [Object names carry their database](../deploy/multi-tenancy.md#object-names-carry-their-database).
+On a deployment onboarded before that rename the account is the unqualified `bi_<tenant>`, and stays so until you re-run `onboard` and migrate; use whichever name that server actually has.
+This is a plain properties field, so write the `@` literally — only URL-embedded credentials need `%40`.
 It is also already named on every tenant row policy, so no re-provisioning is needed to enable MCP.
 
 Leaving this unset reuses `riptide.clickhouse.username` / `password`.
