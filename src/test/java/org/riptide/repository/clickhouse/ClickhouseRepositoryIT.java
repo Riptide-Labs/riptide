@@ -7,6 +7,7 @@ package org.riptide.repository.clickhouse;
 
 import com.clickhouse.client.api.Client;
 import com.clickhouse.client.api.query.QuerySettings;
+import com.clickhouse.data.ClickHouseColumn;
 import com.codahale.metrics.MetricRegistry;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
@@ -200,6 +201,17 @@ public class ClickhouseRepositoryIT {
      * compares names <em>and</em> types against the server's own catalog, in {@code position}
      * order.</p>
      *
+     * <p>The oracle is {@code DESCRIBE TABLE}, deliberately not a second copy of production's own
+     * {@code system.columns … ORDER BY position} query. An expectation built from the same query
+     * cannot disagree with it about order, so it would pin nothing that matters here.</p>
+     *
+     * <p><b>What this does not cover.</b> Deleting {@code ORDER BY position} from the read leaves
+     * this green — measured, not assumed: ClickHouse returns one table's rows in position order
+     * without being asked, so no test on a real server can distinguish the clause from its absence.
+     * Replacing it with another order does fail here ({@code ORDER BY name}, measured), which is the
+     * property that matters: the schema's order is the server's, whatever the read is later
+     * rewritten to do.</p>
+     *
      * <p>The last three assertions pin the two constructor traps this fix had to get right. The
      * 4-argument {@code TableSchema} constructor takes {@code (tableName, query, databaseName,
      * columns)}, not the natural database-first order, so a reversed pair leaves
@@ -216,9 +228,7 @@ public class ClickhouseRepositoryIT {
         // all is already the #692 regression check.
         repository.start();
 
-        final var reported = queryClient.queryAll(
-                        "SELECT name, type FROM system.columns WHERE database = '" + database
-                                + "' AND table = 'flows' ORDER BY position").stream()
+        final var reported = queryClient.queryAll("DESCRIBE TABLE " + database + ".flows").stream()
                 .map(row -> row.getString("name") + " " + row.getString("type"))
                 .toList();
         Assertions.assertThat(reported)
@@ -233,6 +243,125 @@ public class ClickhouseRepositoryIT {
         Assertions.assertThat(schema.getTableName()).isEqualTo("flows");
         Assertions.assertThat(schema.getDatabaseName()).isEqualTo(database);
         Assertions.assertThat(schema.getQuery()).isNull();
+    }
+
+    /**
+     * A catalog read that fails does not tell the operator to provision a table that exists.
+     *
+     * <p>An absent table is zero rows, so the not-found message above is unreachable from a failed
+     * read: what reaches that branch is a bad credential, an unreachable server, a database that
+     * does not exist or a revoked read. Reporting those as "flows table not found … provision the
+     * schema" is the same misdiagnosis #692 itself was, one layer down — a present table reported as
+     * absent — so the cause is named instead. The provisioning pointer stays, because an
+     * unprovisioned database reaches here too.</p>
+     */
+    @Test
+    void aFailedCatalogReadNamesItsCauseRatherThanBlamingTheSchema() {
+        final var config = configFor("riptide", false);
+        config.setPassword(SecretRef.of("not-the-password"));
+
+        Assertions.assertThatThrownBy(
+                        new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS)::start)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("could not read the columns of the flows table")
+                .hasMessageContaining("Authentication failed")
+                .as("the flows table in this database is present and correct")
+                .hasMessageNotContaining("flows table not found");
+    }
+
+    /**
+     * A start reads the column list from {@code system.columns}, and describes nothing (#692).
+     *
+     * <p>The assertion nothing else makes. Every other test here reaches the schema by calling
+     * {@code checkSchema()} itself, so none of them observes what {@code start()} actually handed
+     * {@code register} — a build that kept {@code checkSchema()} and passed
+     * {@code client.getTableSchema("flows")} to {@code register} instead would leave the whole class
+     * green and be broken on 26.8 again. Asked of the server's own record of what ran, because that
+     * is the only place the answer exists.</p>
+     *
+     * <p>{@code query_kind = 'Describe'} rather than a match on the statement text: the client
+     * issues {@code DESCRIBE TABLE flows FORMAT TSKV} today, and a later client that spells it
+     * differently is the same defect and must fail the same way.</p>
+     */
+    @Test
+    void aStartReadsTheColumnListFromSystemColumnsAndDescribesNothing() throws Exception {
+        final var database = "schema_read_probe";
+        queryClient.execute("CREATE DATABASE IF NOT EXISTS " + database).get();
+        QueryLogWatermark.awaitCurrent(queryClient);
+
+        new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(),
+                configFor(database, true), RESOLVERS).start();
+
+        QueryLogWatermark.awaitCurrent(queryClient);
+        Assertions.assertThat(queriesLoggedFor(database,
+                        "query LIKE '%system.columns%' AND query LIKE '%table = ''flows''%'"))
+                .as("the start must have read the flows column list from system.columns")
+                .isNotEmpty();
+        Assertions.assertThat(queriesLoggedFor(database, "query_kind = 'Describe'"))
+                .as("nothing on the start path may DESCRIBE: that is the parser #692 is about")
+                .isEmpty();
+    }
+
+    /** Every {@code QueryFinish} entry this database logged that matches {@code predicate}. */
+    private static List<String> queriesLoggedFor(final String database, final String predicate)
+            throws Exception {
+        return queryClient.queryAll("SELECT query FROM system.query_log"
+                        + " WHERE type = 'QueryFinish' AND current_database = '" + database + "'"
+                        + " AND " + predicate).stream()
+                .map(row -> row.getString("query"))
+                .toList();
+    }
+
+    /**
+     * An operator table carrying a computed column still registers and still inserts (#692).
+     *
+     * <p>The reason {@link ClickhouseRepository#checkSchema()} reads {@code default_kind} rather than
+     * just names and types. The client's insert path skips a column whose default kind is anything
+     * but {@code DEFAULT} and demands a serializer for every other one, so a schema that reports no
+     * defaults presents this {@code MATERIALIZED} column as insertable and every insert fails with
+     * "No serializer found for column 'exporterSite'" — a collector that starts, validates clean and
+     * then drops every batch. Measured before the fix on both 26.7 and 26.8; the client's own
+     * {@code DESCRIBE} path, which riptide used before #692, wrote the row.</p>
+     *
+     * <p>The {@code DEFAULT} on {@code zone} covers the other half: any default at all switches the
+     * insert's wire format from {@code RowBinary} to {@code RowBinaryWithDefaults}, so the row that
+     * lands has to be checked, not just the fact that the insert returned. Riptide supplies a zone,
+     * so the default must <em>not</em> win.</p>
+     *
+     * <p>Validate mode, because that is the mode this is about: manage mode creates the table from
+     * {@code FlowsSchema}, which declares no computed column, so an operator's schema is the only
+     * way one gets there.</p>
+     */
+    @Test
+    void anOperatorTableWithComputedColumnsStillRegistersAndInserts() throws Exception {
+        final var database = "operator_columns";
+        queryClient.execute("CREATE DATABASE IF NOT EXISTS " + database).get();
+        new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(),
+                configFor(database, true), RESOLVERS).start();
+        queryClient.execute("ALTER TABLE " + database + ".flows"
+                + " ADD COLUMN exporterSite String MATERIALIZED concat(zone, '-site')").get();
+        queryClient.execute("ALTER TABLE " + database + ".flows"
+                + " MODIFY COLUMN zone LowCardinality(String) DEFAULT 'unset'").get();
+
+        final var repository = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(),
+                configFor(database, false), RESOLVERS);
+        repository.start();
+        repository.persist(List.of(testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 60001, 443, 17L)));
+
+        final var row = queryClient.queryAll("SELECT zone, exporterSite, bytes FROM " + database
+                + ".flows WHERE srcPort = 60001").getFirst();
+        Assertions.assertThat(row.getString("zone"))
+                .as("riptide supplied a zone, so the column's DEFAULT must not have been used")
+                .isEqualTo("default");
+        Assertions.assertThat(row.getString("exporterSite")).isEqualTo("default-site");
+        Assertions.assertThat(row.getLong("bytes")).isEqualTo(17L);
+
+        // And the mechanism, so a failure here says which half broke: the computed column is in the
+        // schema, marked as the server marks it, which is what makes the client skip it.
+        final var computed = repository.checkSchema().getColumnByName("exporterSite");
+        Assertions.assertThat(computed.hasDefault()).isTrue();
+        Assertions.assertThat(computed.getDefaultValue())
+                .isEqualTo(ClickHouseColumn.DefaultValue.MATERIALIZED);
     }
 
     @Test

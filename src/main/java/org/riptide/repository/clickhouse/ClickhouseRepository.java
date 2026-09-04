@@ -7,6 +7,7 @@ package org.riptide.repository.clickhouse;
 
 import com.clickhouse.client.api.Client;
 import com.clickhouse.client.api.ServerException;
+import com.clickhouse.client.api.query.GenericRecord;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.mapstruct.BeanMapping;
@@ -776,7 +777,7 @@ public class ClickhouseRepository implements FlowRepository {
      */
     private RollupShapeCheck.ViewProbe probeView(final String view) throws InterruptedException {
         return outcomeOfProbe(view, () -> {
-            awaitBounded(this.client.queryRecords(PROBE_STATEMENT + view), PROBE_TIMEOUT, view);
+            awaitBounded(this.client.queryRecords(PROBE_STATEMENT + view), STARTUP_READ_TIMEOUT, view);
         });
     }
 
@@ -857,14 +858,20 @@ public class ClickhouseRepository implements FlowRepository {
     }
 
     /**
-     * How long one probe may block.
+     * How long one server read on the startup path may block.
      *
      * <p>Bounded because this runs on the startup path. {@code get()} without a timeout waits
      * forever on a server that accepts the connection and never answers, once per invisible rollup,
      * and ingestion never begins — an outage caused by a rollup-only concern, which is the outcome
      * every guard on this path exists to prevent.</p>
      *
-     * <p>Per probe, not in aggregate. Four invisible views against a server that accepts the
+     * <p>Two readers share it: the rollup probe above, and the {@code system.columns} read
+     * {@link #checkSchema()} builds the table schema from. The schema read is the harsher case — it
+     * is not optional and has nothing to fall back to, so an unbounded one wedges the collector
+     * before ingestion with no message at all. One bound rather than two, because both are the same
+     * statement about the same hazard.</p>
+     *
+     * <p>Per read, not in aggregate. Four invisible views against a server that accepts the
      * connection and never answers therefore add four times this before ingestion begins. That is
      * accepted rather than bounded: a total budget would be new untested control flow on the
      * startup path, and the case needs every view invisible AND a server that connects but never
@@ -874,7 +881,7 @@ public class ClickhouseRepository implements FlowRepository {
      * would truncate to {@code get(0, SECONDS)}, and every probe would time out immediately and
      * report INCONCLUSIVE with nothing saying why.</p>
      */
-    private static final Duration PROBE_TIMEOUT = Duration.ofSeconds(10);
+    private static final Duration STARTUP_READ_TIMEOUT = Duration.ofSeconds(10);
 
     /**
      * The probe outcome for a thrown failure.
@@ -1036,7 +1043,18 @@ public class ClickhouseRepository implements FlowRepository {
             throw new IllegalStateException("Interrupted while reading the schema of the flows table"
                     + " in database '" + this.config.getDatabase() + "'.", e);
         } catch (final Exception e) {
-            throw new IllegalStateException(flowsTableNotFound(), e);
+            // NOT the not-found message. An absent table is zero rows (see below), so what reaches
+            // here is a wrong password, an unreachable server, a database that does not exist, a
+            // revoked read on system.columns or a type this client cannot parse — and telling that
+            // operator to provision a table would be the same misdiagnosis #692 itself was. The
+            // cause is named first; the provisioning pointer stays, because an unprovisioned
+            // database reaches here too.
+            throw new IllegalStateException(
+                    "could not read the columns of the flows table in database '"
+                            + this.config.getDatabase() + "' from system.columns: " + e.getMessage()
+                            + " — if the database has not been provisioned, provision the schema (see"
+                            + " the ClickHouse deployment docs) or set"
+                            + " riptide.clickhouse.manage-schema=true to let riptide create it.", e);
         }
 
         final Set<String> present = columns.stream()
@@ -1089,20 +1107,70 @@ public class ClickhouseRepository implements FlowRepository {
      *
      * <p>{@code system.columns} is filtered by access rather than refused, so a narrowly-granted
      * writer sees exactly the table it was granted and an absent table is indistinguishable from
-     * zero rows — which is what the caller's not-found message is for. {@code position} is the
-     * table's declared column order, and preserving it keeps the registered POJO's schema in the
-     * same order the server reports.</p>
+     * zero rows — which is what the caller's not-found message is for. That is not the flippable
+     * server default it looks like: {@code select_from_system_db_requires_grant} exempts
+     * {@code columns}, {@code tables} and {@code databases} precisely because they filter by access,
+     * measured on both 26.7 and 26.8 — with the setting on, an ungranted user is refused
+     * {@code system.parts} with {@code ACCESS_DENIED} and still reads its own table's rows here. So
+     * the writer role {@code ProvisioningDdl} builds needs no {@code system} grant for this read,
+     * and it is not given one.</p>
+     *
+     * <p><b>The default metadata is not decoration.</b> The client's insert path skips a column
+     * whose default kind is anything other than {@code DEFAULT} and demands a serializer for every
+     * other one, so a schema that reports no defaults makes an operator's {@code MATERIALIZED} or
+     * {@code ALIAS} column look insertable and every insert fails with "No serializer found for
+     * column". Measured on 26.7 against a table carrying one: the client's own {@code DESCRIBE}
+     * path wrote the row, and a metadata-free schema built here did not. Carrying {@code
+     * default_kind} reproduces what the client used to see. It also drives the insert's wire format
+     * — any default at all selects {@code RowBinaryWithDefaults} over {@code RowBinary} — which is
+     * why the kind is read from the server rather than assumed.</p>
+     *
+     * <p>What this does <em>not</em> buy: a plain {@code DEFAULT} column riptide's POJO has no field
+     * for still fails the insert, because the client skips only the non-{@code DEFAULT} kinds. That
+     * was equally true of the client's own schema (measured, same fixture), so it is a limit riptide
+     * has always had rather than one introduced here.</p>
+     *
+     * <p>{@code position} is the table's declared column order. ClickHouse returns a single table's
+     * rows in that order anyway, so the clause states the requirement rather than repairing
+     * anything — it is what stops a future rewrite from ordering by name and shifting every value
+     * one column over.</p>
      */
     private List<ClickHouseColumn> readFlowsColumns() throws Exception {
         final List<ClickHouseColumn> columns = new ArrayList<>();
-        try (var records = this.client.queryRecords(
-                "SELECT name, type FROM system.columns WHERE database = "
-                        + quote(this.config.getDatabase())
-                        + " AND table = 'flows' ORDER BY position").get()) {
-            records.forEach(record -> columns.add(
-                    ClickHouseColumn.of(record.getString("name"), record.getString("type"))));
+        final var pending = this.client.queryRecords(
+                "SELECT name, type, default_kind, default_expression FROM system.columns"
+                        + " WHERE database = " + quote(this.config.getDatabase())
+                        + " AND table = 'flows' ORDER BY position");
+        try (var records = pending.get(STARTUP_READ_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
+            records.forEach(record -> columns.add(column(record)));
+        } catch (final TimeoutException | InterruptedException e) {
+            // Both abandon the query, so both cancel it — the same rule awaitBounded follows.
+            pending.cancel(true);
+            throw e;
         }
         return columns;
+    }
+
+    /**
+     * One catalog row as a column, defaults included.
+     *
+     * <p>Mirrors what the client's own {@code TableSchemaParser} does with {@code DESCRIBE}'s
+     * {@code default_type} and {@code default_expression} columns: an empty kind means no default,
+     * and any other value names one of {@link ClickHouseColumn.DefaultValue}'s members. The
+     * expression is carried with it because a column that has a default has one <em>of</em>
+     * something, and dropping it would leave the schema disagreeing with the server about a column
+     * it does describe.</p>
+     */
+    private static ClickHouseColumn column(final GenericRecord record) {
+        final ClickHouseColumn column =
+                ClickHouseColumn.of(record.getString("name"), record.getString("type"));
+        final String kind = record.getString("default_kind");
+        if (!kind.isEmpty()) {
+            column.setHasDefault(true);
+            column.setDefaultValue(ClickHouseColumn.DefaultValue.valueOf(kind));
+            column.setDefaultExpression(record.getString("default_expression"));
+        }
+        return column;
     }
 
     @Mapper(nullValueCheckStrategy = NullValueCheckStrategy.ALWAYS,
