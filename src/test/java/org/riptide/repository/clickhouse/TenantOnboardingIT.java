@@ -26,6 +26,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
 
@@ -722,21 +723,88 @@ public class TenantOnboardingIT {
             Assertions.assertThat(ProvisioningCommand.run(noopOnboardArgs(true), discard(), discard())).isZero();
 
             final long before = alterCountOn(admin, "noop");
+            // Read after the baseline count, so the failure message can only name statements the
+            // difference below actually counted. Unbounded, it reported the create-schema run's own
+            // ALTERs as though the re-run had issued them.
+            final var since = serverTimeOn(admin);
             Assertions.assertThat(ProvisioningCommand.run(noopOnboardArgs(false), discard(), discard())).isZero();
 
             Assertions.assertThat(alterCountOn(admin, "noop") - before)
                     .as("a re-run against an already-correct database must issue no rollup ALTER;"
-                            + " saw: %s", alterTextOn(admin, "noop"))
+                            + " saw: %s", alterTextOn(admin, "noop", since))
                     .isZero();
         }
     }
 
+    /**
+     * The filter above matches a rollup {@code ALTER} the schema really emits (#737).
+     *
+     * <p>The positive control for {@link #reRunningOnboardAgainstACurrentDatabaseIssuesNoRollupAlter},
+     * whose assertion is a difference of two counts drawn from one filter: a filter matching nothing
+     * reads {@code 0 - 0} and passes forever, and a dead filter is otherwise indistinguishable from
+     * a clean run. That is not hypothetical. The hand-spelled
+     * {@code %ALTER TABLE%<db>.flows_by%} shipped here matched nothing — the emitter quotes the
+     * database, so the logged text reads {@code ALTER TABLE `noop`.flows_by_…} with no literal dot
+     * after the name — and four {@code MODIFY QUERY} statements were counted as zero for as long as
+     * it did.</p>
+     *
+     * <p>The statement comes from {@link FlowsSchema#modifyRollupViews}, one of the two functions
+     * that write these ALTERs, rather than being typed out here: a filter checked against SQL
+     * written by the same hand that wrote the filter checks nothing.</p>
+     */
+    @Test
+    void theRollupAlterFilterMatchesAnAlterTheSchemaEmits() throws Exception {
+        try (var admin = new Client.Builder()
+                .addEndpoint(endpoint()).setUsername("default").setPassword("").build()) {
+            admin.execute(FlowsSchema.createDatabase("alterprobe")).get();
+            admin.execute(FlowsSchema.createFlowsTable("alterprobe")).get();
+            Assertions.assertThat(ProvisioningCommand.run(
+                    onboardArgsFor("alterprobe", "alt", true), discard(), discard())).isZero();
+
+            final long before = alterCountOn(admin, "alterprobe");
+            final var modify = FlowsSchema.modifyRollupViews("alterprobe").values().iterator().next();
+            admin.execute(modify).get();
+
+            Assertions.assertThat(alterCountOn(admin, "alterprobe") - before)
+                    .as("the filter must see the statement FlowsSchema emits: %s", modify)
+                    .isOne();
+        }
+    }
+
+    /**
+     * The {@code WHERE} that finds a rollup {@code ALTER} for one database in the query log.
+     *
+     * <p>Built from {@link FlowsSchema#rollupTableNames} and {@link FlowsSchema#qualifiedRollup},
+     * one alternative per rollup, so a renamed or added rollup cannot leave the filter matching
+     * less than the schema emits. Neither of those writes the statement — {@code alterRollupTargets}
+     * and {@link FlowsSchema#modifyRollupViews} do — but between them they build the
+     * {@code `db`.<name>} prefix both of those put after {@code ALTER TABLE}, which is the part
+     * worth matching on.</p>
+     *
+     * <p>A prefix, deliberately. The target's ALTER names {@code `db`.flows_by_geo_asn_1m} and its
+     * view's names {@code `db`.flows_by_geo_asn_1m_mv}, so one pattern per rollup catches the
+     * {@code ADD COLUMN} on the target and the {@code MODIFY QUERY} on the view alike.</p>
+     *
+     * <p>An earlier spelling hard-coded the shared {@code flows_by} prefix. Every rollup happens to
+     * carry it and nothing requires that, so one rename would have returned this filter to matching
+     * nothing — which is the defect it was written to fix. Pinned by
+     * {@link #theRollupAlterFilterMatchesAnAlterTheSchemaEmits}.</p>
+     */
+    private static String rollupAlterFilter(final String database) {
+        final var alternatives = FlowsSchema.rollupTableNames().stream()
+                .map(rollup -> "query ILIKE '%ALTER TABLE %"
+                        + FlowsSchema.qualifiedRollup(database, rollup) + "%'")
+                .collect(Collectors.joining(" OR "));
+        return " WHERE type = 'QueryFinish' AND (" + alternatives + ")"
+                // Excludes the readers themselves, which quote the patterns above verbatim.
+                + " AND query NOT ILIKE '%system.query_log%'";
+    }
+
     /** Rollup ALTERs recorded in the query log for one database. */
     private static long alterCountOn(final Client admin, final String database) throws Exception {
-        admin.execute("SYSTEM FLUSH LOGS").get();
+        QueryLogWatermark.awaitCurrent(admin);
         try (var records = admin.queryRecords("SELECT count() AS c FROM system.query_log"
-                + " WHERE type = 'QueryFinish' AND query ILIKE '%ALTER TABLE%" + database + ".flows_by%'"
-                + " AND query NOT ILIKE '%system.query_log%'").get()) {
+                + rollupAlterFilter(database)).get()) {
             for (final var record : records) {
                 return record.getLong("c");
             }
@@ -744,13 +812,33 @@ public class TenantOnboardingIT {
         return 0;
     }
 
-    /** The rollup ALTER statements themselves, so a failure says which one fired. */
-    private static String alterTextOn(final Client admin, final String database) throws Exception {
+    /** The server's own clock, so a window over {@code event_time_microseconds} is in its timezone. */
+    private static String serverTimeOn(final Client admin) throws Exception {
+        return admin.queryAll("SELECT toString(now64(6)) AS t").getFirst().getString("t");
+    }
+
+    /**
+     * The rollup ALTER statements themselves, so a failure says which one fired.
+     *
+     * <p>Bounded to the same window as the count it explains. The count is a difference across
+     * {@code since}; reading absolutely, this named ALTERs from before it, including the
+     * create-schema run's own — a failure message describing statements the assertion did not
+     * count. It was unreachable only while the filter matched nothing.</p>
+     *
+     * <p>{@code event_time_microseconds}, not {@code event_time}: one run's ALTERs all land in the
+     * same second, so a second-resolution sort picks an arbitrary subset of them. The limit is
+     * derived rather than guessed at five, because a worst-case re-run emits a target ALTER and a
+     * view ALTER for every rollup.</p>
+     */
+    private static String alterTextOn(final Client admin, final String database, final String since)
+            throws Exception {
+        QueryLogWatermark.awaitCurrent(admin);
         final var seen = new ArrayList<String>();
         try (var records = admin.queryRecords("SELECT query AS q FROM system.query_log"
-                + " WHERE type = 'QueryFinish' AND query ILIKE '%ALTER TABLE%" + database
-                + ".flows_by%' AND query NOT ILIKE '%system.query_log%'"
-                + " ORDER BY event_time DESC LIMIT 5").get()) {
+                + rollupAlterFilter(database)
+                + " AND event_time_microseconds >= toDateTime64('" + since + "', 6)"
+                + " ORDER BY event_time_microseconds DESC"
+                + " LIMIT " + 2 * FlowsSchema.rollupTableNames().size()).get()) {
             records.forEach(record -> seen.add(record.getString("q").replaceAll("\\s+", " ")));
         }
         return String.join(" | ", seen);

@@ -6,6 +6,7 @@
 package org.riptide.repository.clickhouse;
 
 import com.clickhouse.client.api.Client;
+import com.clickhouse.client.api.query.QuerySettings;
 import com.codahale.metrics.MetricRegistry;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
@@ -31,6 +32,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * First real-ClickHouse test of the repository: schema creation on a fresh
@@ -602,6 +604,38 @@ public class ClickhouseRepositoryIT {
                 .build();
     }
 
+    /**
+     * {@link QueryLogWatermark#awaitCurrent} makes an already-finished query visible (#737).
+     *
+     * <p>The helper is the whole of the #737 fix and every site that uses it would keep passing on
+     * most runs if its body went back to the bare {@code SYSTEM FLUSH LOGS} it replaced, because
+     * the race it closes is low-rate. So the contract is pinned here rather than the timing: a
+     * query that finished before the call must be readable after it. A body that flushes nothing
+     * fails this outright — {@code query_log} buffers for seconds on its own.</p>
+     *
+     * <p>The probe runs on a second connection on purpose. That is the shape all three call sites
+     * have — the work is done by {@code ProvisioningCommand}'s or {@code ClickhouseRepository}'s own
+     * client, never by the one the sentinel is issued on — and it is the case the class javadoc
+     * names as assumed rather than proven.</p>
+     */
+    @Test
+    void awaitCurrentMakesAFinishedQueryVisible() throws Exception {
+        final var probeId = "riptide-watermark-probe-" + UUID.randomUUID();
+        try (var other = new Client.Builder()
+                .addEndpoint("http://" + CLICKHOUSE.getHost() + ":" + CLICKHOUSE.getMappedPort(8123))
+                .setUsername("riptide").setPassword("riptide").build()) {
+            other.queryAll("SELECT 1 AS probe", new QuerySettings().setQueryId(probeId));
+        }
+
+        QueryLogWatermark.awaitCurrent(queryClient);
+
+        Assertions.assertThat(queryClient.queryAll("SELECT count() AS c FROM system.query_log"
+                        + " WHERE type = 'QueryFinish' AND query_id = '" + probeId + "'")
+                .getFirst().getLong("c"))
+                .as("a query that finished before awaitCurrent must be readable in the log after it")
+                .isOne();
+    }
+
     // ---- #664: what the connection actually resolves ------------------------------------------
 
     /**
@@ -622,7 +656,7 @@ public class ClickhouseRepositoryIT {
      */
     private static String settingRecordedAsChanged(final String database, final String setting)
             throws Exception {
-        queryClient.execute("SYSTEM FLUSH LOGS").get();
+        QueryLogWatermark.awaitCurrent(queryClient);
         try (var rows = queryClient.queryRecords(
                 "SELECT Settings['" + setting + "'] AS v FROM system.query_log"
                         + " WHERE type = 'QueryFinish' AND query_kind = 'Insert'"
