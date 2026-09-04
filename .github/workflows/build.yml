@@ -45,6 +45,13 @@ jobs:
       - name: SBOM assertion fixture tests
         run: |
           make sbom-assert-test
+      # The release lineage check only ever runs on a tag, and it matches nothing
+      # in a healthy tree — so without these its first real execution would be
+      # the release it is supposed to protect, and a broken checker would look
+      # exactly like a clean release.
+      - name: Release lineage checker fixture tests
+        run: |
+          make release-lineage-test
       - name: Build with tests
         run: |
           make
