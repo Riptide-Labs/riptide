@@ -53,7 +53,12 @@ public class DefaultClassificationEngine implements ClassificationEngine {
      * Where a built tree is remembered, so the same ruleset is not built twice in one JVM (#707).
      * Defaults to the process-wide instance, which is what makes the hit cross engines: the two
      * bundled-ruleset builds a full test suite pays for are in different classes with different
-     * engines, and production boots one engine that reloads the same rules over its lifetime.
+     * engines.
+     * <p>
+     * This buys a test suite and CI time, and close to nothing in production: a boot builds once,
+     * and every reload after it arrives because the rules <em>changed</em>, which is a different
+     * key and a guaranteed miss. {@link DecisionTreeCache} states the trade, including what the
+     * shared instance retains for the life of the process.
      */
     private final DecisionTreeCache treeCache;
 
@@ -100,6 +105,14 @@ public class DefaultClassificationEngine implements ClassificationEngine {
         final var cached = this.treeCache.get(rules);
         final Tree tree;
         if (cached.isPresent()) {
+            // The interrupt check Tree.of would have made, made here too. It is the only one on
+            // this path, and without it a hit changes this method's contract: a reload on an
+            // interrupted thread would publish and return where it used to throw, and
+            // AsyncReloadingClassificationEngine would count a shutdown-time reload as a success
+            // instead of leaving its counters alone.
+            if (Thread.interrupted()) {
+                throw new InterruptedException();
+            }
             tree = cached.get();
         } else {
             tree = Tree.of(preprocessedRules);

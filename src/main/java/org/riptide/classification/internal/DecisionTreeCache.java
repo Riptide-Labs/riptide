@@ -16,27 +16,54 @@ import java.util.Optional;
  * Remembers the decision tree a rule list built, so a ruleset already built in this JVM is not
  * built again (#707).
  *
- * <p>The build is near-quadratic in rule count — measured on the bundled 6,248-rule ruleset:
- * 1.67&nbsp;s uninstrumented, ~30&nbsp;s under the coverage agent — and it is a pure function of
- * its input, so the second build of the same rules is pure waste. This removes the repeats only;
- * a cold boot still pays for the first one.
+ * <h2>This is a build-time optimisation, not a production fix</h2>
  *
- * <p>Three properties are load-bearing, not incidental:
+ * <p>Say so plainly, because the code invites the opposite reading. A production boot builds the
+ * tree exactly <em>once</em>: {@link org.riptide.configuration.RiptideConfiguration} constructs the
+ * engine with {@code initialize=false} and the single initial load is done for it. Every later
+ * reload arrives through {@link ClassificationRuleReloader}'s {@code onContent} branch, which fires
+ * only when the fetched bytes changed — changed bytes mean different rules, a different key, and
+ * therefore a guaranteed <em>miss</em>. The only production hit available is an exact revert,
+ * A&nbsp;-&gt;&nbsp;B&nbsp;-&gt;&nbsp;A, with the A entry not yet evicted.
  *
- * <ul>
- *   <li><b>The key is the rules themselves, never a digest.</b> {@link org.riptide.classification.DefaultRule}
- *       is the only implementation of {@link Rule} and is a Lombok {@code @Data} class, so list
- *       equality is field-complete and order-sensitive. A hash key would trade a silent wrong
- *       tree — a misclassification nobody sees — for a few bytes.
- *   <li><b>The bound is a count of rules, not a count of entries.</b> {@link #MAX_RETAINED_RULES}
- *       is what this retains, stated exactly; an entry cap would bound the number of trees while
- *       leaving their size, and therefore the footprint, an assumption.
- *   <li><b>Small builds cannot evict a large one.</b> That follows from bounding on rules: the 31
- *       one- and two-rule trees a full test suite builds between its two bundled-ruleset builds
- *       consume ~50 of the budget, so the entry the cache exists for is still there for the
- *       second. A least-recently-used entry cap would have to be sized above that interleaving to
- *       survive it, which is a tuning number pretending to be a design.
- * </ul>
+ * <p>What production pays is unconditional: {@link #SHARED} is a permanent process-wide heap root.
+ * Measured, not modelled — four bundled trees built and held, forced GC, heap delta — one tree for
+ * the bundled 6,248-rule ruleset retains <b>2.8&nbsp;MB</b>, so {@link #MAX_RETAINED_RULES} is
+ * about <b>11&nbsp;MB</b> worst case. That is the whole trade, and it is a test-suite one: 11 MB of
+ * permanently retained heap for one fewer 30-second tree build per CI run. A full {@code mvn test}
+ * built the bundled ruleset twice, at 26&nbsp;s and 35&nbsp;s under the coverage agent; it now
+ * builds it once.
+ *
+ * <h2>Why the key is sound</h2>
+ *
+ * <p>The key is the rule list itself, never a digest — a hash key would trade a silent wrong tree,
+ * which is a misclassification nobody sees, for a few bytes.
+ *
+ * <p>That rests on the lists that reach it having value equality, and the reason is narrower than
+ * "{@code DefaultRule} is the only {@link Rule}", which is false: {@link Rule#reversedRule()}
+ * returns an anonymous implementation with identity equality. It cannot reach a key today, because
+ * reversal happens on the <em>preprocessed</em> rules inside {@code DefaultClassificationEngine} and
+ * the key is the raw provider list. So what actually holds is: every list keyed here comes from a
+ * {@link org.riptide.classification.ClassificationRuleProvider} returning {@code DefaultRule}s,
+ * which are Lombok {@code @Data} and therefore field-complete and order-sensitive in equality.
+ *
+ * <p>If that ever stopped holding, the failure is benign rather than silent: a {@code Rule} with
+ * identity equality never matches a stored key, so the cache misses forever and rebuilds. It cannot
+ * produce a tree built from different rules.
+ *
+ * <h2>What the bound is, and what it does not promise</h2>
+ *
+ * <p>The bound is a count of retained rules rather than of entries, so the footprint is stated
+ * rather than assumed: an entry cap bounds the number of trees and leaves their size unknown.
+ *
+ * <p>It also keeps a test suite's small builds from evicting the entry the cache exists for — but
+ * that is a property of today's sizes, not a guarantee. Measured on the pre-cache suite log: the 31
+ * builds that land between the two bundled builds are rulesets of 1, 2, 3 and 25 rules, summing
+ * <b>64</b> against a 25,000 budget. Thirty-one interleaved 800-rule builds would evict a bundled
+ * entry at this budget, and nothing here would report it — the cache would simply stop paying and
+ * still look implemented. The mechanical detector is the build count in a suite log, not this class.
+ *
+ * <h2>Sharing and locking</h2>
  *
  * <p>The trees handed out are shared between callers and must therefore stay immutable. They are:
  * every field reachable from a built {@link Tree} is final. The two mutable classes in the
@@ -44,23 +71,28 @@ import java.util.Optional;
  * {@code classifiers(request)} — are allocated per request and never reach a field of the tree.
  *
  * <p>Thread-safe. No lock is held across a build: {@link #get} and {@link #put} each lock, and the
- * build happens between them on the caller's thread. Two threads racing on the same new ruleset
- * may therefore both build it, which is correct and no worse than today — whereas a monitor held
- * for the length of a build would be a new startup stall.
+ * build happens between them on the caller's thread. Two threads racing on the same new ruleset may
+ * therefore both build it, which is correct and no worse than before — whereas a monitor held for
+ * the length of a build would be a new startup stall.
  */
 final class DecisionTreeCache {
 
     /**
      * The retained bound, in rules, counted over the keys of every entry held.
      *
-     * <p>Four times the bundled ruleset's 6,248, which is room for a few distinct rulesets of
-     * today's size plus everything small a suite interleaves. Stated in rules because that is the
-     * quantity this can count exactly; the bytes one rule's share of a tree costs are not measured
-     * here, so no byte figure is claimed.
+     * <p>Four times the bundled ruleset's 6,248, which at the measured 2.8&nbsp;MB per bundled tree
+     * is about 11&nbsp;MB. Stated in rules because that is the quantity this can count exactly.
      */
     static final int MAX_RETAINED_RULES = 25_000;
 
-    /** The process-wide instance, so a ruleset built by one engine is not rebuilt by the next. */
+    /**
+     * The process-wide instance, and therefore a permanent heap root for the life of the JVM.
+     *
+     * <p>Static because the win is a cross-class one: the two bundled builds a full test suite pays
+     * for are in different classes with different engines, so an instance field on the engine would
+     * hit nothing. In production it retains one ruleset that will not be asked for again — see the
+     * class javadoc for why a production reload is a guaranteed miss.
+     */
     private static final DecisionTreeCache SHARED = new DecisionTreeCache();
 
     static DecisionTreeCache shared() {
@@ -87,22 +119,30 @@ final class DecisionTreeCache {
     }
 
     /**
-     * The key for a rule list: a defensive immutable copy, so a provider that reuses its list
-     * cannot mutate a key already in the map.
+     * @return the tree these exact rules, in this exact order, already built
      */
-    private static List<Rule> key(final List<Rule> rules) {
-        return List.copyOf(rules);
-    }
-
-    /** @return the tree these exact rules, in this exact order, already built */
     synchronized Optional<Tree> get(final List<Rule> rules) {
-        final var entry = this.entries.get(key(rules));
+        // The caller's list is used as the lookup key with no copy: List.equals and List.hashCode
+        // are specified across implementations, so any equal list finds the entry. The copy in
+        // put() is a storage concern, not a key-identity one, and doing it here would allocate a
+        // 6,248-element array on every reload to answer a question that does not need one.
+        final var entry = this.entries.get(rules);
         return entry == null ? Optional.empty() : Optional.of(entry.tree());
     }
 
     /** Remembers {@code tree} as what {@code rules} builds, evicting older entries to stay in budget. */
     synchronized void put(final List<Rule> rules, final Tree tree) {
-        final var stored = key(rules);
+        if (rules.size() > this.maxRetainedRules) {
+            // Refused before it is charged, not evicted after. Charging it first would put the map
+            // over budget by more than this entry's own size, and eviction walks from the
+            // least-recently-used end — so one oversized ruleset would drop every entry that was
+            // earning its keep and then itself, leaving the cache empty. The caller still has the
+            // tree it just built; only the next build of this ruleset pays again.
+            return;
+        }
+        // Snapshot, so a provider that reuses and refills its list cannot mutate a key already in
+        // the map — which would leave the entry unreachable and its budget charged forever.
+        final var stored = List.copyOf(rules);
         final var previous = this.entries.put(stored, new Entry(tree, stored.size()));
         if (previous == null) {
             this.retainedRules += stored.size();
@@ -110,12 +150,7 @@ final class DecisionTreeCache {
         evictDownToBudget();
     }
 
-    /**
-     * Drops least-recently-used entries until the retained rule count fits the budget.
-     *
-     * <p>A single ruleset larger than the whole budget evicts itself here and is simply not
-     * retained. The caller still gets the tree it just built; only the next build of it pays again.
-     */
+    /** Drops least-recently-used entries until the retained rule count fits the budget. */
     private void evictDownToBudget() {
         final var iterator = this.entries.entrySet().iterator();
         while (this.retainedRules > this.maxRetainedRules && iterator.hasNext()) {

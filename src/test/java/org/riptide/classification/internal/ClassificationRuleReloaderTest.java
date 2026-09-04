@@ -958,7 +958,12 @@ class ClassificationRuleReloaderTest {
      */
     // Bounded here rather than by the class's 60s, which fits rows finishing in fractions of
     // a second: the hung-server and dribbling-server rows are 0.33s each. This row loads the
-    // real bundled ruleset, and building the decision tree from it is nearly its whole cost.
+    // real bundled ruleset, and building the decision tree from it is nearly its whole cost —
+    // when it is this row that builds it. Since #707 that depends on execution order, and the
+    // gap is the whole point of the bound: measured twice, independently, this class takes 27.57s
+    // and 28.05s run on its own, where this row builds the tree, against 1.45s and 1.36s when
+    // another class in the same JVM built it first and this row is handed it. The bound has to fit
+    // the first pair, which is the one a developer running this class alone gets.
     //
     // Almost all of that cost is the coverage agent, not the build. Measured standalone on the
     // project classpath, Tree.of over this ruleset takes 1.4-1.7s and produces a 15,530-leaf

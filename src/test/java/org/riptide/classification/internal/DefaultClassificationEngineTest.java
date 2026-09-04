@@ -413,7 +413,7 @@ public class DefaultClassificationEngineTest {
      * a second engine over the same rules getting the same object is a build that did not happen.
      * The 5-minute bound is for the case where this row is the one that builds — the same
      * instrumented cost, and the same reasoning, as the bundled row in
-     * {@code ClassificationRuleReloaderTest}.
+     * {@link ClassificationRuleReloaderTest}.
      */
     @Test
     @Timeout(value = 5, unit = TimeUnit.MINUTES)
@@ -454,8 +454,15 @@ public class DefaultClassificationEngineTest {
         final var cache = new DecisionTreeCache();
         final var engine = new DefaultClassificationEngine(ONE_RULE, false, cache);
 
-        Thread.currentThread().interrupt();
-        assertThatThrownBy(engine::reload).isInstanceOf(InterruptedException.class);
+        try {
+            Thread.currentThread().interrupt();
+            assertThatThrownBy(engine::reload).isInstanceOf(InterruptedException.class);
+        } finally {
+            // Tree.of clears the flag on its way out, so this is normally already false. It is not
+            // if the assertion above failed first, and this fork runs every remaining test on this
+            // same thread — an interrupt flag left set here would fail them somewhere else entirely.
+            Thread.interrupted();
+        }
 
         assertThat(cache.get(ONE_RULE.getRules()))
                 .as("a build that did not finish leaves nothing behind").isEmpty();
@@ -467,9 +474,83 @@ public class DefaultClassificationEngineTest {
     }
 
     /**
+     * A hit skips {@code Tree.of}, and {@code Tree.of} holds the only interrupt check on this path.
+     * Without one of its own the cache silently changes {@code reload()}'s contract: a reload on an
+     * interrupted thread would publish, fan out to listeners and return normally where it used to
+     * throw. That is not cosmetic — {@code AsyncReloadingClassificationEngine} treats
+     * {@code InterruptedException} as "a shutdown, not a failure" and moves no counter, so a
+     * shutdown-time reload that hit would instead be counted on
+     * {@code classification.reload.successes}.
+     */
+    @Test
+    @Timeout(10)
+    void aReloadServedFromTheCacheStillHonoursAnInterrupt() throws InterruptedException {
+        final var cache = new DecisionTreeCache();
+        final var engine = new DefaultClassificationEngine(ONE_RULE, true, cache);
+        assertThat(cache.get(ONE_RULE.getRules())).as("so the next reload is a hit").isPresent();
+
+        final var publishes = new AtomicInteger();
+        engine.addClassificationRulesReloadedListener(rules -> publishes.incrementAndGet());
+
+        try {
+            Thread.currentThread().interrupt();
+            assertThatThrownBy(engine::reload)
+                    .as("a hit must not quietly complete a reload the build path would have refused")
+                    .isInstanceOf(InterruptedException.class);
+        } finally {
+            Thread.interrupted();
+        }
+
+        assertThat(publishes)
+                .as("and it must not publish on the way out, or the reload counts as a success")
+                .hasValue(0);
+    }
+
+    /**
+     * The strings this change is measured by are a contract, and nothing else enforces them. The
+     * headline number is {@code grep -c "rules    : 6248"} over a suite log: a build must emit
+     * exactly one such line and a hit none, or the count silently starts answering a different
+     * question — in either direction, and while staying green.
+     */
+    @Test
+    @Timeout(10)
+    void aBuildLogsTheCountedLineAndAHitDoesNot() throws InterruptedException {
+        final var cache = new DecisionTreeCache();
+
+        new DefaultClassificationEngine(ONE_RULE, true, cache);
+
+        assertThat(countedBuildLines()).as("a build is counted exactly once").hasSize(1);
+        this.appender.list.clear();
+
+        new DefaultClassificationEngine(ONE_RULE, true, cache);
+
+        assertThat(countedBuildLines()).as("a hit must not look like a build to grep -c").isEmpty();
+        assertThat(logged()).as("but it must still be visible as a reuse")
+                .anySatisfy(message -> assertThat(message)
+                        .contains("reused the cached flow classification decision tree"));
+    }
+
+    private List<String> logged() {
+        return this.appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
+    }
+
+    /** What {@code grep -c "rules    : "} would count in a suite log — four spaces, as in the grep. */
+    private List<String> countedBuildLines() {
+        return logged().stream()
+                .flatMap(String::lines)
+                .filter(line -> line.contains("rules    : "))
+                .toList();
+    }
+
+    /**
      * Two engines started on the same unseen ruleset at once. Both may build it — no lock is held
-     * across a build, deliberately — and the property that matters is that neither is left with
-     * something half-published.
+     * across a build, deliberately — and the property that matters here is that each caller ends up
+     * with a usable tree.
+     *
+     * <p>This row does not test the cache's thread safety, and should not be read as doing so: both
+     * threads miss, and a miss neither relinks the access order nor evicts, so nothing contends.
+     * The contending pair is
+     * {@link DecisionTreeCacheTest#concurrentHitsAndEvictingPutsDoNotCorruptTheCache}.
      */
     @Test
     @Timeout(30)
