@@ -163,6 +163,78 @@ public class ClickhouseRepositoryIT {
                 .hasMessageContaining("provision");
     }
 
+    /**
+     * A flows table missing a column riptide inserts is named, not discovered at the first insert.
+     *
+     * <p>Kept alongside the absent-table test because the two share one read: since #692 both the
+     * not-found message and this one are derived from a {@code system.columns} query rather than
+     * from the client's schema endpoint, and a query that silently returned nothing would pass the
+     * absent-table test while turning every real table into "not found". Here the table exists and
+     * all but one column comes back, which only a working read can produce.</p>
+     */
+    @Test
+    void validateModeNamesTheColumnAStaleTableIsMissing() throws Exception {
+        final var database = "validate_stale";
+        queryClient.execute("CREATE DATABASE IF NOT EXISTS " + database).get();
+        new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, true), RESOLVERS).start();
+
+        // tcpFlags is neither in the sorting key nor additive, so dropping it is both permitted and
+        // reported as the stale-schema failure rather than the onboard-re-run one.
+        queryClient.execute("ALTER TABLE " + database + ".flows DROP COLUMN tcpFlags").get();
+
+        final var validating = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), configFor(database, false), RESOLVERS);
+        Assertions.assertThatThrownBy(validating::start)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("is missing expected column(s) [tcpFlags]")
+                .hasMessageContaining("stale or mis-provisioned");
+    }
+
+    /**
+     * The schema handed to {@code register} is the one the server reports, column for column (#692).
+     *
+     * <p>Riptide builds it from {@code system.columns} because the client's own
+     * {@code getTableSchema} cannot be used: on ClickHouse 26.8 its TSKV parser fails with
+     * "Non-null columnName and columnType are required" and the collector never starts. Building a
+     * schema by hand is the part that can go wrong quietly — a scrambled column list still
+     * registers and still inserts, writing each value into its neighbour's column — so this
+     * compares names <em>and</em> types against the server's own catalog, in {@code position}
+     * order.</p>
+     *
+     * <p>The last three assertions pin the two constructor traps this fix had to get right. The
+     * 4-argument {@code TableSchema} constructor takes {@code (tableName, query, databaseName,
+     * columns)}, not the natural database-first order, so a reversed pair leaves
+     * {@code getTableName()} holding the database name; and {@code register} rejects a schema
+     * carrying both a query and a table name, where {@code ""} still counts as a query.</p>
+     */
+    @Test
+    void theSchemaHandedToRegisterMirrorsWhatTheServerReports() throws Exception {
+        final var database = "schema_mirror";
+        queryClient.execute("CREATE DATABASE IF NOT EXISTS " + database).get();
+        final var repository = new ClickhouseRepository(
+                new ClickhouseRepository$FlowMapperImpl(), configFor(database, true), RESOLVERS);
+        // start() is what registers the POJO with this schema, so reaching the assertions below at
+        // all is already the #692 regression check.
+        repository.start();
+
+        final var reported = queryClient.queryAll(
+                        "SELECT name, type FROM system.columns WHERE database = '" + database
+                                + "' AND table = 'flows' ORDER BY position").stream()
+                .map(row -> row.getString("name") + " " + row.getString("type"))
+                .toList();
+        Assertions.assertThat(reported)
+                .as("the catalog read this test compares against must itself return the table")
+                .isNotEmpty();
+
+        final var schema = repository.checkSchema();
+        Assertions.assertThat(schema.getColumns().stream()
+                        .map(column -> column.getColumnName() + " " + column.getOriginalTypeName())
+                        .toList())
+                .containsExactlyElementsOf(reported);
+        Assertions.assertThat(schema.getTableName()).isEqualTo("flows");
+        Assertions.assertThat(schema.getDatabaseName()).isEqualTo(database);
+        Assertions.assertThat(schema.getQuery()).isNull();
+    }
+
     @Test
     void rollupsConserveTotalsAndKeepUndirectedTrafficVisible() throws Exception {
         final var repo = new ClickhouseRepository(

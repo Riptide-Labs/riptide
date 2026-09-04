@@ -34,6 +34,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -1010,31 +1011,41 @@ public class ClickhouseRepository implements FlowRepository {
 
     /**
      * Verify the {@code flows} table is present and carries every column riptide inserts, throwing
-     * an actionable {@link IllegalStateException} otherwise. Reads the table's own schema (not the
-     * {@code system} database), so it works for a narrowly-granted writer that can describe its
-     * table but not the server catalog.
+     * an actionable {@link IllegalStateException} otherwise.
+     *
+     * <p>The columns come from {@link #readFlowsColumns()} rather than from the client's
+     * {@code getTableSchema}, which cannot be used at all on ClickHouse 26.8: its response goes
+     * through the client's own TSKV parser, which fails there with "Non-null columnName and
+     * columnType are required" and stopped the collector from starting (#692). Building the schema
+     * here keeps that parser out of the startup path on every server version.</p>
+     *
+     * <p>Package-private so {@code ClickhouseRepositoryIT} can compare the schema this hands to
+     * {@code register} against the server's own catalog: a hand-built schema is only right if its
+     * columns, their types and their order are what the server reports, and nothing else in the
+     * start path exposes it.</p>
      *
      * @return the table schema, reused for POJO registration
      */
-    private TableSchema checkSchema() {
-        final TableSchema schema;
+    TableSchema checkSchema() {
+        final List<ClickHouseColumn> columns;
         try {
-            schema = this.client.getTableSchema("flows");
-        } catch (final RuntimeException e) {
-            throw new IllegalStateException(
-                    "flows table not found in database '" + this.config.getDatabase()
-                            + "' — provision the schema (see the ClickHouse deployment docs) or set "
-                            + "riptide.clickhouse.manage-schema=true to let riptide create it.", e);
+            columns = readFlowsColumns();
+        } catch (final InterruptedException e) {
+            // Startup is being torn down; say so rather than blaming the schema.
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while reading the schema of the flows table"
+                    + " in database '" + this.config.getDatabase() + "'.", e);
+        } catch (final Exception e) {
+            throw new IllegalStateException(flowsTableNotFound(), e);
         }
 
-        final Set<String> present = schema.getColumns().stream()
+        final Set<String> present = columns.stream()
                 .map(ClickHouseColumn::getColumnName)
                 .collect(Collectors.toSet());
         if (present.isEmpty()) {
-            throw new IllegalStateException(
-                    "flows table not found in database '" + this.config.getDatabase()
-                            + "' — provision the schema (see the ClickHouse deployment docs) or set "
-                            + "riptide.clickhouse.manage-schema=true to let riptide create it.");
+            // An absent table is zero rows, not an error: this is the branch an operator who never
+            // provisioned the schema reaches, and the message is their diagnosis.
+            throw new IllegalStateException(flowsTableNotFound());
         }
 
         final var missing = REQUIRED_COLUMNS.stream()
@@ -1058,7 +1069,40 @@ public class ClickhouseRepository implements FlowRepository {
                             + "migration: drop and re-provision the flows table (see the ClickHouse "
                             + "deployment docs).");
         }
-        return schema;
+
+        // The argument order is (tableName, query, databaseName, columns) — NOT the natural
+        // (database, table, …); reversed, getTableName() returns the database. The query MUST be
+        // null: register rejects a schema carrying both a query and a table name, and "" still
+        // trips that guard.
+        return new TableSchema("flows", null, this.config.getDatabase(), columns);
+    }
+
+    /** The one message an operator whose flows table is not there gets, from either branch above. */
+    private String flowsTableNotFound() {
+        return "flows table not found in database '" + this.config.getDatabase()
+                + "' — provision the schema (see the ClickHouse deployment docs) or set "
+                + "riptide.clickhouse.manage-schema=true to let riptide create it.";
+    }
+
+    /**
+     * The {@code flows} table's columns, in the table's own column order.
+     *
+     * <p>{@code system.columns} is filtered by access rather than refused, so a narrowly-granted
+     * writer sees exactly the table it was granted and an absent table is indistinguishable from
+     * zero rows — which is what the caller's not-found message is for. {@code position} is the
+     * table's declared column order, and preserving it keeps the registered POJO's schema in the
+     * same order the server reports.</p>
+     */
+    private List<ClickHouseColumn> readFlowsColumns() throws Exception {
+        final List<ClickHouseColumn> columns = new ArrayList<>();
+        try (var records = this.client.queryRecords(
+                "SELECT name, type FROM system.columns WHERE database = "
+                        + quote(this.config.getDatabase())
+                        + " AND table = 'flows' ORDER BY position").get()) {
+            records.forEach(record -> columns.add(
+                    ClickHouseColumn.of(record.getString("name"), record.getString("type"))));
+        }
+        return columns;
     }
 
     @Mapper(nullValueCheckStrategy = NullValueCheckStrategy.ALWAYS,

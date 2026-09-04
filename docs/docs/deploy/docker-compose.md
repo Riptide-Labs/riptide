@@ -78,6 +78,7 @@ This starts, from `ghcr.io/riptide-labs/riptide:latest`:
 | grafana | [`:3000`](http://localhost:3000) | dashboards, and Explore for ad-hoc queries (ClickHouse datasource provisioned) |
 
 ClickHouse and Grafana are pinned by digest to the versions riptide is tested against, and Dependabot keeps them current.
+Pointing riptide at a ClickHouse you run yourself instead? See [Server versions](../configuration/clickhouse.md#server-versions) for what has been measured.
 Riptide's own image tracks `:latest`, so `docker compose pull` still moves the collector forward on its own.
 
 Grafana ships provisioned dashboards backed by the `flows` table and the

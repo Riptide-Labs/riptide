@@ -22,6 +22,23 @@ riptide.clickhouse.batch.shutdown-grace-period=5s
 #riptide.clickhouse.async-inserts=   # unset: derived — off under batching, see below
 ```
 
+## Server versions
+
+Riptide is tested against **ClickHouse 26.7 and 26.8**.
+
+26.7 is the version the [compose stack](../deploy/docker-compose.md) pins by digest and the version every integration test runs against, so it is the one continuously exercised.
+26.8 is not in CI. It was verified by hand: startup in both schema modes, the column check, POJO registration and a read-back insert, for a full-access user and for a writer granted nothing but `SELECT, INSERT` on its own table.
+Nothing else has been measured. Other versions are not known to be broken, they are simply untested, and this page states what is tested rather than a range nobody has probed.
+
+:::note[Earlier Riptide releases cannot start against 26.8]
+
+An earlier Riptide fails with `flows table not found in database '…'` while the table is there.
+The cause is in the ClickHouse Java client, whose schema endpoint response is parsed by a TSKV parser that 26.8 makes throw `Non-null columnName and columnType are required`.
+Riptide now reads the column list from `system.columns`, which both server versions answer identically, so that parser is no longer in the startup path.
+Upgrade Riptide; there is no server-side workaround and no newer client to move to.
+
+:::
+
 ## Credentials
 
 `riptide.clickhouse.username` and `riptide.clickhouse.password` are **secret references**,
@@ -81,10 +98,11 @@ what ClickHouse accepts under backtick quoting; rename such a database or use va
   table admin-side).
 
 In both modes, startup verifies the `flows` table is present and carries every column riptide
-inserts (including the `tenant`/`organisation`/`zone`/`system` identity columns) by reading the
-table's own schema — so the check works even for a narrowly-granted writer without server-catalog
-access, and a stale or mis-provisioned schema fails fast rather than surfacing later as an opaque
-insert error.
+inserts (including the `tenant`/`organisation`/`zone`/`system` identity columns) by reading
+`system.columns`, so a stale or mis-provisioned schema fails fast rather than surfacing later as an
+opaque insert error. A narrowly-granted writer still passes the check: ClickHouse filters
+`system.columns` by access rather than refusing the query, so a user granted nothing but
+`SELECT, INSERT ON <database>.flows` sees exactly that table's columns and nothing else.
 
 :::warning
 
