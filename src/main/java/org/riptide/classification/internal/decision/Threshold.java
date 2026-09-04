@@ -43,6 +43,15 @@ public abstract class Threshold<T extends Comparable<T>> {
     }
 
     /**
+     * Holds how many rules of a collection fall into each bucket when it is matched against a threshold.
+     * <p>
+     * These are exactly the sizes of the four {@link Matches} collections, arrived at without building them.
+     * As with {@link Matches}, a rule may be counted in more than one bucket.
+     */
+    public record Counts(int lt, int eq, int gt, int na) {
+    }
+
+    /**
      * Indicates the order of a classification request relative to a threshold.
      */
     public enum Order {
@@ -119,6 +128,39 @@ public abstract class Threshold<T extends Comparable<T>> {
             }
         }
         return new Matches(optimize(lt), optimize(eq), optimize(gt), optimize(na));
+    }
+
+    /**
+     * Counts how many rules of the given set fall into each of the buckets that
+     * {@link #match(Collection, Bounds)} would fill, without building the collections.
+     * <p>
+     * Tree construction scores every candidate threshold but reads only the bucket sizes; the collections
+     * themselves are consumed for the winning candidate alone. Both methods reach their per-rule verdict
+     * through the same {@link #match(PreprocessedRule, Bounds)} call, so the counts cannot drift from the
+     * sizes of the collections {@code match} returns for the same rule set and bounds.
+     * {@code ThresholdCountsTest} pins that agreement.
+     */
+    public Counts count(Collection<PreprocessedRule> ruleSet, Bounds bounds) {
+        var lt = 0;
+        var eq = 0;
+        var gt = 0;
+        var na = 0;
+        for (var rule : ruleSet) {
+            var cr = match(rule, bounds);
+            if (cr.lt) {
+                lt++;
+            }
+            if (cr.eq) {
+                eq++;
+            }
+            if (cr.gt) {
+                gt++;
+            }
+            if (cr.na) {
+                na++;
+            }
+        }
+        return new Counts(lt, eq, gt, na);
     }
 
     private static <T> List<T> optimize(List<T> list) {

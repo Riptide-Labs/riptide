@@ -55,11 +55,15 @@ public abstract class Tree {
         }
 
         // Determine a threshold that results in the "optimum" split.
+        // Scoring reads bucket sizes only, so candidates are counted rather than matched; the collections
+        // are built once, below, for the winner. The pipeline's shape decides which candidate wins - min()
+        // keeps the earliest of equal elements - so source, distinct, parallel, filter and comparator
+        // must stay exactly as they are.
         var entry = thresholds(rules)
                 .distinct()
                 .parallel()
                 .filter(t -> t.canRestrict(bounds))
-                .map(t -> Map.entry(t, t.match(rules, bounds)))
+                .map(t -> Map.entry(t, t.count(rules, bounds)))
                 .filter(e -> maximumSize(e) < ruleSetSize)
                 // different ordering criteria could be used here
                 // (for example the summed sizes of the collections that result if the rule set is matched by a threshold was also tested)
@@ -68,13 +72,16 @@ public abstract class Tree {
                 .orElse(null);
 
         if (entry != null) {
+            // the recursion consumes the collections themselves, and it depends on the shapes optimize()
+            // gives empty and singleton buckets - so they come from match(), for the winner alone
+            Threshold.Matches matches = entry.getKey().match(rules, bounds);
             log.trace("Node - depth: " + depth + "; rules: " + ruleSetSize + "; threshold: " + entry.getKey() + "; maximum child size: " + maximumSize(entry)
-                    + "; lt: " + entry.getValue().lt.size()
-                    + "; eq: " + entry.getValue().eq.size() + "; gt: " + entry.getValue().gt.size() + "; na: " + entry.getValue().na.size());
-            var lt = of(entry.getValue().lt, entry.getKey().lt(bounds), depth + 1);
-            var eq = of(entry.getValue().eq, entry.getKey().eq(bounds), depth + 1);
-            var gt = of(entry.getValue().gt, entry.getKey().gt(bounds), depth + 1);
-            var na = of(entry.getValue().na, bounds, depth + 1);
+                    + "; lt: " + entry.getValue().lt()
+                    + "; eq: " + entry.getValue().eq() + "; gt: " + entry.getValue().gt() + "; na: " + entry.getValue().na());
+            var lt = of(matches.lt, entry.getKey().lt(bounds), depth + 1);
+            var eq = of(matches.eq, entry.getKey().eq(bounds), depth + 1);
+            var gt = of(matches.gt, entry.getKey().gt(bounds), depth + 1);
+            var na = of(matches.na, bounds, depth + 1);
 
             return node(entry.getKey(), lt, eq, gt, na);
         } else {
@@ -84,19 +91,19 @@ public abstract class Tree {
 
     }
 
-    private static ToLongFunction<Map.Entry<Threshold, Threshold.Matches>> equallyPartitionedCriteria(int ruleSetSize) {
+    private static ToLongFunction<Map.Entry<Threshold, Threshold.Counts>> equallyPartitionedCriteria(int ruleSetSize) {
         // calculates a criteria corresponding to the variance of collection sizes assuming an equal partitioning a rule set
         var mean = (long) ruleSetSize / 4;
         ToLongFunction<Integer> f = i -> (i - mean) * (i - mean);
         return entry -> {
             var m = entry.getValue();
-            return f.applyAsLong(m.lt.size()) + f.applyAsLong(m.eq.size()) + f.applyAsLong(m.gt.size()) + f.applyAsLong(m.na.size());
+            return f.applyAsLong(m.lt()) + f.applyAsLong(m.eq()) + f.applyAsLong(m.gt()) + f.applyAsLong(m.na());
         };
     }
 
-    private static int maximumSize(Map.Entry<Threshold, Threshold.Matches> entry) {
+    private static int maximumSize(Map.Entry<Threshold, Threshold.Counts> entry) {
         var m = entry.getValue();
-        return Math.max(Math.max(Math.max(m.lt.size(), m.eq.size()), m.gt.size()), m.na.size());
+        return Math.max(Math.max(Math.max(m.lt(), m.eq()), m.gt()), m.na());
     }
 
     private static Stream<Threshold> thresholds(Collection<PreprocessedRule> ruleSet) {

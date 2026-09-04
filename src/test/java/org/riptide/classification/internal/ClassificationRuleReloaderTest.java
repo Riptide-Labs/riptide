@@ -966,10 +966,12 @@ class ClassificationRuleReloaderTest {
     // the first pair, which is the one a developer running this class alone gets.
     //
     // Almost all of that cost is the coverage agent, not the build. Measured standalone on the
-    // project classpath, Tree.of over this ruleset takes 1.4-1.7s and produces a 15,530-leaf
-    // tree. The same harness under the JaCoCo agent produces the same tree in 33.9-50.9s.
+    // project classpath, Tree.of over this ruleset took 1.4-1.7s and produced a 15,530-leaf
+    // tree; #746 lowered the build to roughly 1.05s and left the tree identical, so the leaf
+    // count still holds and the timing is the part that moved. The same harness under the
+    // JaCoCo agent produces the same tree in 33.9-50.9s.
     // jacoco:prepare-agent attaches to every surefire JVM, so this row pays the instrumented
-    // price and a booting collector does not. A recursive loop that matches every candidate
+    // price and a booting collector does not. A recursive loop that scores every candidate
     // threshold against every rule is close to the worst case for per-instruction
     // instrumentation, which is why the factor is roughly 20-40x rather than a few percent.
     // Quote the range, not a midpoint: the five runs this bound was raised for were terminated
