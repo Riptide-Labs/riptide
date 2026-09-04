@@ -29,7 +29,20 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Full history, because the lineage check below needs origin/main and
+          # the tag's merge base with it. fetch-depth: 0 selects the refspec
+          # +refs/heads/*:refs/remotes/origin/*, which is what populates
+          # origin/main on a tag event; the default shallow clone has neither.
+          fetch-depth: 0
           persist-credentials: false
+      # The tag push is what releases, and nothing else checks that the tagged
+      # code was ever reviewed: `make release` commits with `-am`, so an operator
+      # with unrelated edits in the tree publishes them without noticing. First
+      # step after checkout, before anything is built, signed, pushed or
+      # published, so a refusal costs nothing and leaks nothing.
+      - name: Verify the tag carries only code that went through main
+        run: |
+          make release-lineage
       - name: Set up JDK 25 for x64
         uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:

@@ -31,6 +31,17 @@ exist yet. It then:
 3. sets `pom.xml` to the next snapshot version
 4. commits that
 
+**The release commit must contain the version bump and nothing else.**
+Step 2 above is `git commit --signoff -am`, which sweeps *every* modified tracked file in your tree into that commit.
+`release.yml` refuses to build a tag whose history adds anything but `pom.xml` on top of `main`, and the refusal names the offending paths.
+It runs first, before anything is built or published, so a refusal costs you nothing but a re-cut.
+Check it yourself before you push:
+
+```bash
+git fetch origin main
+make release-lineage
+```
+
 Nothing has left your machine at this point. Add `PUSH_RELEASE=true` to push the
 commits and the tag in the same step, or push them yourself once you are happy:
 
@@ -51,7 +62,8 @@ off `main`. An abandoned attempt (PR closed without merging) leaves a stale
 ## What the pipeline produces
 
 The workflow triggers on tags matching `v*.*.*` and refuses to run if the tag
-disagrees with the version in `pom.xml`, or if that version is a `SNAPSHOT`.
+carries anything but the version bump on top of `main`, if the tag disagrees
+with the version in `pom.xml`, or if that version is a `SNAPSHOT`.
 
 | Artifact | Where it lands |
 |---|---|
@@ -146,9 +158,9 @@ cosign verify ghcr.io/riptide-labs/riptide:X.Y.Z …   # signature is real
 partway, fix forward with a new patch version rather than re-pushing the tag —
 the release is already partly public.
 
-The one exception is the notes check, which runs before anything is built or published. It fails in
-seconds and leaves nothing behind, so write the file, delete the tag and re-tag rather than burning
-a version:
+The one exception is the lineage check, which runs before anything is built or published. It fails in
+seconds and leaves nothing behind, so take the offending paths out of the release commit, delete the
+tag and re-tag rather than burning a version:
 
 ```bash
 git push origin --delete vX.Y.Z && git tag -d vX.Y.Z

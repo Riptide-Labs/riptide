@@ -311,6 +311,13 @@ nix-hash: deps-nix
 	rm -f nix/package.nix.bak nix/package.nix.bak2; \
 	echo "mvnHash = $$got"
 
+# Run by release.yml on the tag before anything is built. Runnable on the
+# release branch before you push the tag, too — `git fetch` first, it reads
+# origin/main.
+.PHONY: release-lineage
+release-lineage:
+	@.github/scripts/check-release-lineage.sh
+
 .PHONY: release
 release:
 	@mkdir -p target
