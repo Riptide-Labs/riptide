@@ -33,15 +33,22 @@ exist yet. It then:
 
 **The release commit must contain the version bump and nothing else.**
 Step 2 above is `git commit --signoff -am`, which sweeps *every* modified tracked file in your tree into that commit.
-`release.yml` refuses to build a tag whose history adds anything but `pom.xml` on top of `main`, and, within `pom.xml`, anything but the project `<version>` line.
+`release.yml` refuses to build a tag whose history adds anything but `pom.xml` on top of `main`, and, within `pom.xml`, anything but a single project `<version>` line.
 That second half is not pedantry: a dependency, plugin or repository added in an unreviewed commit would be compiled into the release and signed with it, and neither the SNAPSHOT check nor the tag-versus-version check would notice.
 The refusal names the offending paths or pom lines.
-It runs first, before anything is built or published, so a refusal costs you nothing but a re-cut.
-Check it yourself before you push:
+It runs before anything is built or published, so a refusal costs you nothing but a re-cut.
+
+**What that check is and is not.** It catches mistakes: a stray edit swept in by `commit -am`, a release cut from a base that never merged, an unreviewed dependency.
+It is not a defence against someone who controls what the tag contains, because the workflow file and the script are themselves read from the tagged commit and a tag can remove them.
+Tag and branch protection is the control for that.
+
+Check it yourself before you push.
+`make release` leaves your `HEAD` on the next-snapshot commit, one past the tagged one, so the target defaults to the newest tag rather than `HEAD`:
 
 ```bash
 git fetch origin main
-make release-lineage
+make release-lineage                        # newest tag
+make release-lineage LINEAGE_REF=v1.0.0     # or name it
 ```
 
 Nothing has left your machine at this point. Add `PUSH_RELEASE=true` to push the
@@ -160,9 +167,9 @@ cosign verify ghcr.io/riptide-labs/riptide:X.Y.Z …   # signature is real
 partway, fix forward with a new patch version rather than re-pushing the tag —
 the release is already partly public.
 
-The one exception is the lineage check, which runs before anything is built or published. It fails in
-seconds and leaves nothing behind, so take the offending paths out of the release commit, delete the
-tag and re-tag rather than burning a version:
+The exceptions are the checks that run before anything is built or published: the lineage check, and the
+SNAPSHOT and tag-versus-version checks. They fail in seconds and leave nothing behind, so fix the release
+commit, delete the tag and re-tag rather than burning a version:
 
 ```bash
 git push origin --delete vX.Y.Z && git tag -d vX.Y.Z

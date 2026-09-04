@@ -35,14 +35,6 @@ jobs:
           # origin/main on a tag event; the default shallow clone has neither.
           fetch-depth: 0
           persist-credentials: false
-      # The tag push is what releases, and nothing else checks that the tagged
-      # code was ever reviewed: `make release` commits with `-am`, so an operator
-      # with unrelated edits in the tree publishes them without noticing. First
-      # step after checkout, before anything is built, signed, pushed or
-      # published, so a refusal costs nothing and leaks nothing.
-      - name: Verify the tag carries only code that went through main
-        run: |
-          make release-lineage
       - name: Set up JDK 25 for x64
         uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
         with:
@@ -50,6 +42,22 @@ jobs:
           distribution: 'temurin'
           architecture: x64
           cache: maven
+      # The tag push is what releases, and `make release` commits with `-am`, so
+      # an operator with unrelated edits in the tree publishes them without
+      # noticing. This catches that, and a release cut from a base that never
+      # merged, and an unreviewed dependency added to pom.xml.
+      #
+      # It is not a defence against an author who controls the tag's contents:
+      # this workflow file, the Makefile target and the script are all read from
+      # the tagged commit, so a tag can delete or no-op the check. Tag and branch
+      # protection is the control for that, not this step.
+      #
+      # Runs before every build, sign, publish and push step, so a refusal costs
+      # nothing and leaks nothing. It sits after the JDK setup only because the
+      # Makefile resolves java/javac/mvn at parse time on any target.
+      - name: Verify the tag carries only code that went through main
+        run: |
+          make release-lineage LINEAGE_REF="${GITHUB_REF_NAME}"
       - name: Check if you accidentally want to release a SNAPSHOT version
         run: |
           POM_VERSION="$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)"

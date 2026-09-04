@@ -54,6 +54,8 @@ help:
 	@echo "  compose-smoke: Bring up the shipped compose stack and assert its ClickHouse and Grafana wiring (requires Docker)"
 	@echo "  sbom-assert:  Assert license facts in a release SBOM; SBOM=<path to .spdx.json>"
 	@echo "  sbom-assert-test: Run the SBOM assertion script's fixture tests"
+	@echo "  release-lineage: Check a release tag adds only the version bump on top of main; LINEAGE_REF=<ref>"
+	@echo "  release-lineage-test: Run the release lineage checker's fixture tests"
 	@echo "  nix:          Build the flake package from source (requires Nix)"
 	@echo "  nix-check:    Run the flake checks incl. the NixOS module eval (requires Nix)"
 	@echo "  nix-hash:     Regenerate nix/package.nix's mvnHash after a pom change (requires Nix)"
@@ -311,12 +313,23 @@ nix-hash: deps-nix
 	rm -f nix/package.nix.bak nix/package.nix.bak2; \
 	echo "mvnHash = $$got"
 
-# Run by release.yml on the tag before anything is built. Runnable on the
-# release branch before you push the tag, too — `git fetch` first, it reads
-# origin/main.
+# Run by release.yml on the tag before anything is built, and runnable yourself
+# before you push it — `git fetch` first, it reads origin/main. It defaults to
+# the newest tag rather than HEAD because `make release` leaves HEAD on the
+# *next snapshot* commit, one past the tagged one; checking HEAD there would
+# verify the wrong commit. Override with `make release-lineage LINEAGE_REF=v1.2.3`.
+LINEAGE_REF          = $(shell git describe --tags --abbrev=0 2>/dev/null || echo HEAD)
+
 .PHONY: release-lineage
 release-lineage:
-	@.github/scripts/check-release-lineage.sh
+	@.github/scripts/check-release-lineage.sh "$(LINEAGE_REF)"
+
+# The checker matches nothing in a healthy tree, so a green run on its own says
+# as little about a working checker as about a broken one. Wired into build.yml,
+# because otherwise its first real execution is the release it is guarding.
+.PHONY: release-lineage-test
+release-lineage-test:
+	@.github/scripts/check-release-lineage-test.sh
 
 .PHONY: release
 release:
