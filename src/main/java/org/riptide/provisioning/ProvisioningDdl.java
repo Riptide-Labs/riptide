@@ -325,8 +325,9 @@ public final class ProvisioningDdl {
     /**
      * Take back the pre-#649 roles' grants on <em>one</em> database (#734) — the exact mirror of the
      * {@code GRANT}s {@link #ensureShared} emits, over the same
-     * {@link FlowsSchema#rollupTableNames()}, so a rollup added to the schema is revoked here without
-     * a second edit (the #737 lesson: a hand-spelled table list silently matches nothing).
+     * {@link FlowsSchema#rollupTableNames()} — every target and every {@code _mv} view — so a rollup
+     * added to the schema is revoked here without a second edit (the #737 lesson: a hand-spelled table
+     * list silently matches nothing).
      *
      * <p>Why this exists: #649 qualified every new object by its database but left the old instance-
      * wide {@code flow_writer}/{@code flow_reader} holding {@code INSERT}/{@code SELECT} on the
@@ -359,32 +360,54 @@ public final class ProvisioningDdl {
     }
 
     /**
+     * Every privilege {@link #ensureShared} grants on a table of this database, and therefore every
+     * one the revoke must name.
+     *
+     * <p>{@code SHOW TABLES} is here because {@code ensureShared} grants it on each rollup's
+     * materialized view, and leaving it would falsify both halves of the claim this command makes:
+     * it would not be the mirror, and the database would not be closed. Not pedantry — the comment on
+     * that grant records why the view is withheld from {@code SELECT} at all: a writer holding
+     * {@code SELECT} on a {@code _mv} read every tenant's rows while denied on the target its policy
+     * hangs on. The revoke names all three privileges on every table, which is a superset of what any
+     * one table was granted; {@code REVOKE} of a privilege not held is a silent no-op (measured), and
+     * a superset is the right side to err on for a hand-added grant.
+     */
+    static final List<String> LEGACY_PRIVILEGES = List.of("INSERT", "SELECT", "SHOW TABLES");
+
+    /**
      * The qualified tables {@link #revokeLegacyGrants} names, in the order it names them — also what
      * the caller reports as revoked, so the report cannot claim a table the statements missed.
+     *
+     * <p>Each rollup's materialized view is named alongside its target, for the reason
+     * {@link #LEGACY_PRIVILEGES} gives.
      */
     public static List<String> legacyGrantTables(final String database) {
-        final List<String> tables = new ArrayList<>();
-        tables.add(FlowsSchema.qualifiedFlows(database));
-        for (final String rollup : FlowsSchema.rollupTableNames()) {
-            tables.add(FlowsSchema.qualifiedRollup(database, rollup));
-        }
-        return List.copyOf(tables);
+        return legacyGrantTableNames().stream()
+                .map(name -> FlowsSchema.qualifiedTable(database, name))
+                .toList();
     }
 
     /**
-     * The same table set unqualified, for the {@code system.grants}/{@code system.row_policies}
-     * filters — those catalogs hold the bare name in their {@code table} column, so a qualified,
-     * backtick-quoted name would match nothing there and the probe would read as "found nothing".
+     * The table set unqualified, and the one place it is enumerated: {@code flows}, every rollup
+     * target, and every rollup view. {@link #legacyGrantTables} qualifies exactly this list, so the
+     * statements and the {@code system.grants}/{@code system.row_policies} filters cannot disagree
+     * about which tables are in scope — those catalogs hold the bare name in their {@code table}
+     * column, so a qualified, backtick-quoted name would match nothing there and the probe would read
+     * as "found nothing".
      */
     static List<String> legacyGrantTableNames() {
         final List<String> names = new ArrayList<>();
         names.add(FlowsSchema.FLOWS);
-        names.addAll(FlowsSchema.rollupTableNames());
+        for (final String rollup : FlowsSchema.rollupTableNames()) {
+            names.add(rollup);
+            names.add(FlowsSchema.rollupViewName(rollup));
+        }
         return List.copyOf(names);
     }
 
     private static String revoke(final String table, final String role) {
-        return "REVOKE INSERT, SELECT ON " + table + " FROM " + ident(role);
+        return "REVOKE " + String.join(", ", LEGACY_PRIVILEGES) + " ON " + table + " FROM "
+                + ident(role);
     }
 
     /**

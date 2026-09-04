@@ -97,14 +97,23 @@ public final class FlowsSchema {
                 .replace(FLOWS_TOKEN, qualifiedFlows(database));
     }
 
-    /** The qualified {@code `<db>`.flows} name — the one home for its construction. */
+    /**
+     * The qualified {@code `<db>`.<name>} form — the one home for its construction, so a caller
+     * holding a bare name from {@link #FLOWS} or {@link #rollupTableNames()} can qualify it without
+     * composing the dot itself.
+     */
+    public static String qualifiedTable(final String database, final String name) {
+        return ident(database) + "." + name;
+    }
+
+    /** The qualified {@code `<db>`.flows} name. */
     public static String qualifiedFlows(final String database) {
-        return ident(database) + "." + FLOWS;
+        return qualifiedTable(database, FLOWS);
     }
 
     /** The qualified {@code `<db>`.<rollup>} target-table name. */
     public static String qualifiedRollup(final String database, final String table) {
-        return ident(database) + "." + table;
+        return qualifiedTable(database, table);
     }
 
     /**

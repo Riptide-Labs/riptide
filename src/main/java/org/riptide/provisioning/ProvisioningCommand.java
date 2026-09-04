@@ -80,7 +80,7 @@ public final class ProvisioningCommand {
                 return switch (parsed.subcommand) {
                     case "onboard" -> onboard(parsed, database, provisioner, out, err);
                     case "offboard" -> offboard(parsed, database, provisioner, err);
-                    case REVOKE_LEGACY -> revokeLegacy(database, provisioner, err);
+                    case REVOKE_LEGACY -> revokeLegacy(parsed, database, provisioner, err);
                     default -> {
                         usage(err);
                         yield 2;
@@ -191,28 +191,50 @@ public final class ProvisioningCommand {
     }
 
     /**
-     * Report what the revoke took back, or that there was nothing to take. The refusals — a legacy
-     * account still serving this database, and either catalog read being refused — arrive as
-     * {@link TenantProvisioner.ProvisioningException} and take the exit-1 path in {@link #run},
-     * because both mean the same thing to the operator: nothing was changed, here is why.
+     * Report what the revoke took back, or that there was nothing to take. Every refusal — a
+     * pre-rename grantee still serving this database, a missing database, a grant wider than this can
+     * take back, a database with no policies to reason from, and either catalog read being refused —
+     * arrives as {@link TenantProvisioner.ProvisioningException} and takes the exit-1 path in
+     * {@link #run}, because they all mean the same thing to the operator: nothing was revoked, here
+     * is why.
+     *
+     * <p>{@code --yes} is required for the same reason {@code offboard} requires it, and the safety
+     * check is not a substitute: the check can only refuse over states it can see, and it took two
+     * rounds to find the two it silently could not (a database with no policies, and a policy applying
+     * to all). {@code --dry-run} prints the statements and runs none, which is the only way an
+     * operator sees the SQL — and it needs no {@code --yes}, since it changes nothing.
      */
-    private static int revokeLegacy(final String database, final TenantProvisioner provisioner,
-                                    final PrintStream err) {
-        final var result = provisioner.revokeLegacyGrants(database);
+    private static int revokeLegacy(final Args parsed, final String database,
+                                    final TenantProvisioner provisioner, final PrintStream err) {
+        final boolean dryRun = parsed.flags.contains("dry-run");
+        if (!dryRun && !parsed.flags.contains("yes")) {
+            err.println("refusing to revoke the pre-rename roles' grants on database '" + database
+                    + "' without --yes (this takes INSERT/SELECT away from the instance-wide"
+                    + " flow_writer/flow_reader on that database; --database defaults to 'riptide')."
+                    + " Run with --dry-run first to see the exact statements.");
+            return 2;
+        }
+        final var result = provisioner.revokeLegacyGrants(database, dryRun);
         if (result.roles().isEmpty()) {
-            err.println("Nothing to revoke: the pre-rename roles hold no INSERT or SELECT reaching"
-                    + " database '" + database + "'. Either this was already run here, or the server"
-                    + " was provisioned after the rename.");
+            err.println("Nothing to revoke: the pre-rename roles hold no INSERT, SELECT or SHOW TABLES"
+                    + " reaching database '" + database + "'. Either this was already run here, or the"
+                    + " server was provisioned after the rename. (The database and its flows table do"
+                    + " exist — that is checked first, so this is not a mistyped --database.)");
             return 0;
         }
-        err.println("Revoked INSERT, SELECT from the pre-rename "
-                + (result.roles().size() == 1 ? "role " : "roles ")
+        err.println((dryRun ? "Would revoke " : "Revoked ") + String.join(", ", ProvisioningDdl.LEGACY_PRIVILEGES)
+                + " from the pre-rename " + (result.roles().size() == 1 ? "role " : "roles ")
                 + String.join(" and ", result.roles()) + " on " + String.join(", ", result.tables())
-                + ". A pre-rename account can no longer reach database '" + database + "'."
-                + " The roles themselves are left in place: they carry no database in their name, so"
-                + " dropping one would revoke every database still on the old naming. Run this in each"
-                + " database as you finish migrating it; once no database needs them and no user holds"
-                + " them, drop them by hand.");
+                + "."
+                + (dryRun
+                        ? " Nothing has been changed — re-run with --yes to apply:"
+                        : " A pre-rename account can no longer reach database '" + database + "'."
+                                + " The roles themselves are left in place: they carry no database in"
+                                + " their name, so dropping one would revoke every database still on"
+                                + " the old naming. Run this in each database as you finish migrating"
+                                + " it; once no database needs them and no user holds them, drop them"
+                                + " by hand. The statements that ran:"));
+        result.statements().forEach(err::println);
         return 0;
     }
 
@@ -261,7 +283,7 @@ public final class ProvisioningCommand {
                   riptide offboard --admin-url URL [--admin-user U] [--admin-password REF] \\
                                    --tenant T [--database DB] --yes
                   riptide revoke-legacy --admin-url URL [--admin-user U] [--admin-password REF] \\
-                                   [--database DB]
+                                   [--database DB] (--yes | --dry-run)
                 secret REF: plain literal, env://VAR, or file:///path[#key]
                 --database: the database holding the flows table (default: riptide). It also
                             qualifies the generated account names — the stanza names
@@ -271,19 +293,23 @@ public final class ProvisioningCommand {
                                  tables/views if absent (needs CREATE privileges) — also the way
                                  to add the rollups to a pre-rollup deployment; without it, a
                                  missing schema fails before provisioning
-                revoke-legacy: take back the pre-rename flow_writer/flow_reader roles' INSERT and
-                               SELECT on ONE migrated database, so a legacy account belonging to an
-                               unmigrated tenant elsewhere on the server can no longer reach it. It
-                               refuses while any database-unqualified account is still named by a
-                               row policy there, and refuses rather than guessing when it cannot
-                               read system.grants or system.row_policies. The roles are never
-                               dropped: they are instance-wide.""");
+                revoke-legacy: take back the pre-rename flow_writer/flow_reader roles' INSERT,
+                               SELECT and SHOW TABLES on ONE migrated database, so a legacy account
+                               belonging to an unmigrated tenant elsewhere on the server can no
+                               longer reach it. Needs --yes, or --dry-run to print the statements
+                               and change nothing. The roles are never dropped: they are
+                               instance-wide. It refuses, revoking nothing, when the database or its
+                               flows table is absent, when a database-unqualified grantee is still
+                               named by a row policy there, when a policy applies to ALL, when the
+                               database has no row policies to reason from, when a legacy role holds
+                               a grant wider than these tables, or when system.grants /
+                               system.row_policies cannot be read.""");
     }
 
     /** Minimal {@code --key value} / {@code --flag} parser. {@code args[0]} is the subcommand. */
     private record Args(String subcommand, Map<String, String> options, Set<String> flags) {
 
-        private static final Set<String> KNOWN_FLAGS = Set.of("yes", "create-schema");
+        private static final Set<String> KNOWN_FLAGS = Set.of("yes", "create-schema", "dry-run");
 
         static Args parse(final String[] args) {
             if (args.length == 0 || !matches(args[0])) {

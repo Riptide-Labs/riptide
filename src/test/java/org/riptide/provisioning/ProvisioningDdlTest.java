@@ -346,6 +346,84 @@ class ProvisioningDdlTest {
         }
     }
 
+    /**
+     * The revoke is the mirror of {@link ProvisioningDdl#ensureShared}, and this is what makes that
+     * word checkable: every table {@code ensureShared} grants a privilege on in this database must be
+     * named by the revoke. Asserted against the generated {@code GRANT}s rather than a list typed out
+     * here, because a mirror checked against a hand-written table list is a mirror of the list.
+     */
+    @Test
+    void revokeLegacyGrantsNamesEveryTableEnsureSharedGrantsOn() {
+        final Set<String> granted = ProvisioningDdl.ensureShared("riptide", 1L).stream()
+                .filter(sql -> sql.startsWith("GRANT ") && sql.contains("`riptide`."))
+                .map(sql -> sql.replaceAll(".* ON (`riptide`\\.\\S+) TO .*", "$1"))
+                .collect(Collectors.toSet());
+        assertThat(granted).as("the GRANTs this mirrors must have been found").isNotEmpty();
+
+        final List<String> revoked = ProvisioningDdl.revokeLegacyGrants(
+                "riptide", ProvisioningDdl.legacyRoles());
+        for (final String table : granted) {
+            assertThat(revoked)
+                    .as("ensureShared grants on %s, so the revoke must name it", table)
+                    .contains("REVOKE INSERT, SELECT, SHOW TABLES ON " + table + " FROM `flow_writer`");
+        }
+    }
+
+    /**
+     * The rollup views are named too. Kept as its own assertion because it is the one that was
+     * missing: {@code ensureShared} grants {@code SHOW TABLES} on each {@code _mv}, and a revoke
+     * covering only the targets left the pre-rename role holding it while claiming to be the mirror
+     * and to have closed the database.
+     */
+    @Test
+    void revokeLegacyGrantsCoversTheRollupViewsNotJustTheTargets() {
+        final List<String> sql = ProvisioningDdl.revokeLegacyGrants("riptide", List.of("flow_writer"));
+        for (final String rollup : FlowsSchema.rollupTableNames()) {
+            assertThat(sql).contains("REVOKE INSERT, SELECT, SHOW TABLES ON "
+                    + FlowsSchema.qualifiedRollupView("riptide", rollup) + " FROM `flow_writer`");
+        }
+    }
+
+    /**
+     * Only the roles the caller observed are named. {@code REVOKE} from a role that does not exist is
+     * {@code UNKNOWN_ROLE} on 26.7, which would abort the run — so emitting for both unconditionally
+     * would break every server that only ever had one of them.
+     */
+    @Test
+    void revokeLegacyGrantsNamesOnlyTheObservedRoles() {
+        final List<String> readerOnly = ProvisioningDdl.revokeLegacyGrants("riptide", List.of("flow_reader"));
+        assertThat(readerOnly).isNotEmpty();
+        assertThat(readerOnly).allSatisfy(sql -> assertThat(sql).endsWith("FROM `flow_reader`"));
+
+        assertThat(ProvisioningDdl.revokeLegacyGrants("riptide", List.of())).isEmpty();
+        // A name the catalog might return but this class did not compose is ignored rather than
+        // spliced into SQL.
+        assertThat(ProvisioningDdl.revokeLegacyGrants("riptide", List.of("flow_writer`; DROP"))).isEmpty();
+    }
+
+    /** The writer is always named first, so a two-role report reads the same way every run. */
+    @Test
+    void revokeLegacyGrantsNamesTheWriterBeforeTheReader() {
+        final List<String> sql = ProvisioningDdl.revokeLegacyGrants(
+                "riptide", List.of("flow_reader", "flow_writer"));
+        assertThat(sql.getFirst()).endsWith("FROM `flow_writer`");
+        assertThat(sql.getLast()).endsWith("FROM `flow_reader`");
+    }
+
+    /**
+     * The probes filter {@code system.grants}/{@code system.row_policies} on the bare name those
+     * catalogs store, and the statements name the qualified form. One list, qualified, or the probe
+     * silently looks at a different set of tables than the revoke touches.
+     */
+    @Test
+    void theProbeTableNamesAreTheStatementTablesUnqualified() {
+        assertThat(ProvisioningDdl.legacyGrantTableNames())
+                .containsExactlyElementsOf(ProvisioningDdl.legacyGrantTables("riptide").stream()
+                        .map(table -> table.substring("`riptide`.".length()))
+                        .toList());
+        assertThat(ProvisioningDdl.legacyGrantTableNames()).contains(FlowsSchema.FLOWS);
+    }
+
     @Test
     void writerGetsSelectOnFlowsSoTheRollupViewsCanPush() {
         // A materialized view runs as the inserting user: without SELECT on the source table the
