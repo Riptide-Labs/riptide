@@ -162,7 +162,8 @@ public final class ProvisioningCommand {
         err.println("Offboarded tenant '" + ref.tenant() + "' from database '" + ref.database()
                 + "': dropped " + ProvisioningDdl.writerUser(ref.tenant(), ref.database()) + " and "
                 + ProvisioningDdl.readerUser(ref.tenant(), ref.database())
-                + ", and the tenant's row policies on flows and every rollup."
+                + ", and the tenant's row policies on flows, the dead-letter table and every"
+                + " rollup."
                 + " The database's roles, constraints and quota are left in place: they are shared"
                 + " by every tenant in this database, so offboard never removes them. If this was"
                 + " the last tenant here, drop them by hand.");
@@ -289,10 +290,11 @@ public final class ProvisioningCommand {
                             qualifies the generated account names — the stanza names
                             writer_<tenant>@<database>, and the reader is bi_<tenant>@<database>,
                             because ClickHouse users and roles are instance-wide.
-                --create-schema: bootstrap the database, flows table, and 1-minute rollup
-                                 tables/views if absent (needs CREATE privileges) — also the way
-                                 to add the rollups to a pre-rollup deployment; without it, a
-                                 missing schema fails before provisioning
+                --create-schema: bootstrap the database, flows table, dead-letter table and
+                                 1-minute rollup tables/views if absent (needs CREATE privileges) —
+                                 also the way to add the rollups, or the dead-letter table, to a
+                                 deployment provisioned before they existed; without it, a missing
+                                 schema fails before provisioning
                 revoke-legacy: take back the pre-rename flow_writer/flow_reader roles' INSERT,
                                SELECT and SHOW TABLES on ONE migrated database, so a legacy account
                                belonging to an unmigrated tenant elsewhere on the server can no

@@ -140,6 +140,30 @@ public final class TenantProvisioner {
             statements.addAll(ProvisioningDdl.bootstrapRollupViews(
                     spec.database(), plan.isPresent() ? refused : Set.copyOf(FlowsSchema.rollupTableNames())));
         }
+        // The dead-letter table, gated on its own absence the way the rollups are on theirs (#548).
+        //
+        // The gate exists because the SERVER WILL NOT COMPLAIN. Measured on the pinned image
+        // (26.7.3.19): GRANT, CREATE ROW POLICY and REVOKE naming a table that does not exist all
+        // succeed silently — nothing is recorded and nothing is raised. So without this check the
+        // run would grant on nothing, police nothing, print the config stanza and exit 0, and the
+        // operator would learn the table was missing only from deadLetterFailedRows on some later
+        // refused batch. Do NOT weaken this to a warning on the theory that the GRANT would fail
+        // anyway; it does not, and that was checked rather than assumed.
+        //
+        // Short-circuited on bootstrap for the reason the rollup gate is: a database being created
+        // right now cannot already have it.
+        if (bootstrap || !deadLetterExists(spec.database())) {
+            if (!createSchema) {
+                throw new ProvisioningException(
+                        "database '" + spec.database() + "' is missing the dead-letter table"
+                                + " (" + FlowsSchema.DEAD_LETTER + ") — re-run with --create-schema to"
+                                + " add it. This creates one table and nothing else; the flows table,"
+                                + " its data and the rollups are untouched. Without it a refused"
+                                + " insert drops every row of its batch, which is what riptide did"
+                                + " before this table existed", null);
+            }
+            statements.addAll(ProvisioningDdl.bootstrapDeadLetter(spec.database(), ttlDays));
+        }
         statements.addAll(ProvisioningDdl.ensureShared(spec.database(), spec.quotaBytes()));
         // Probed BEFORE the statements are built, not after they run, and that ordering is the
         // whole fix: the row policies this run replaces must keep naming any pre-#649 account that
@@ -643,6 +667,18 @@ public final class TenantProvisioner {
         final FlowsSchema.RepairPlan plan = FlowsSchema.planViewRepair(database, live, refused);
         plan.refused().forEach((rollup, why) -> log.warn("Rollup {} left as it is: {}.", rollup, why));
         return new LinkedHashSet<>(plan.repair());
+    }
+
+    /**
+     * Whether the dead-letter table is present (#548).
+     *
+     * <p>Asked separately from {@link #rollupsExist}, not folded into it, because the two failures
+     * want different sentences: a missing rollup costs long-range query speed, a missing dead-letter
+     * table costs the rows a refused insert would otherwise have kept. An operator reading a demand
+     * for {@code --create-schema} needs to know which one they are about to fix.</p>
+     */
+    private boolean deadLetterExists(final String database) {
+        return exists("EXISTS TABLE " + FlowsSchema.qualifiedDeadLetter(database));
     }
 
     /**

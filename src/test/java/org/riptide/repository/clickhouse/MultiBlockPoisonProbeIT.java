@@ -45,9 +45,12 @@ import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
  * <p>{@link PoisonBatchProbeIT} answers PQ-5 for a six-row batch against a stock server, which is
  * the regime where a partial write is impossible by construction. {@code ClickhouseRepository}
  * states the risk as: a refused insert is atomic on the buffered path but "can leave whole blocks
- * committed on a direct one once a batch exceeds {@code max_insert_block_size}". #548 has to choose
+ * committed on a direct one once a batch exceeds {@code max_insert_block_size}". #548 chose
  * between bisecting a poisoned batch and dead-lettering it on exactly this fact, because a bisect
- * re-inserts a half and double-counts whatever the original left behind.</p>
+ * re-inserts a half and double-counts whatever the original left behind. <b>It chose
+ * dead-lettering</b>, and this measurement is the reason: a partial write is real here, so no
+ * re-insert can be shown to be safe. See {@code FlowRepository#deadLetter} and {@code DeadLetterIT};
+ * this class stays a probe and implements none of it.</p>
  *
  * <p><b>What is settled: a refused insert is not always atomic.</b> With the parse size lowered and
  * row-squashing pinned to it, a six-row batch whose fifth row violates a CHECK leaves the earlier

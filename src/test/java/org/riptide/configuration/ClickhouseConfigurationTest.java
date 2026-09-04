@@ -41,4 +41,40 @@ class ClickhouseConfigurationTest {
 
         Assertions.assertThat(repository).isInstanceOf(ClickhouseRepository.class);
     }
+
+    /**
+     * <b>Turning batching off turns dead-lettering off with it (#548), deliberately.</b>
+     *
+     * <p>{@code BatchingFlowRepository.flush} is the only caller of
+     * {@code FlowRepository.deadLetter} in the whole repository, so with {@code batch.enabled=false}
+     * a refused insert is not dead-lettered at all: the {@code FlowException} travels up through
+     * {@code FlowPersister} and {@code Pipeline} to {@code Daemon.dispatcherFor}, which charges
+     * {@code pipeline.dispatchErrors} and drops the records. None of {@code persister.batch.*}
+     * exists on that path — the raw repository is not even handed a {@code MetricRegistry}.</p>
+     *
+     * <p>That is a limit rather than a defect. The un-batched path exists precisely so the rejection
+     * reaches the caller synchronously ({@code ClickhouseConfig.BatchConfig}), which is the signal
+     * dead-lettering replaces when batching swallows it; and it inserts one {@code persist} call at a
+     * time, so a poison row costs that call rather than up to {@code max-rows} flows — the loss this
+     * feature exists to bound. Wiring a second dead-letter path through the pipeline would add
+     * counters and control flow to the mode chosen for having neither.</p>
+     *
+     * <p>This test is the pin. Without it the exclusion rests on nobody having wired a call, and the
+     * docs that state the limit — {@code operations.md} and {@code clickhouse.md} — would be the only
+     * record of a decision. If a future change does dead-letter here, this test fails and says so.</p>
+     */
+    @Test
+    void theUnbatchedPathDoesNotDeadLetterAndThatIsTheDecision() {
+        final var config = new ClickhouseConfig();
+        config.getBatch().setEnabled(false);
+
+        final var repository = new ClickhouseConfiguration().clickhouseRepository(
+                new ClickhouseRepository$FlowMapperImpl(), config, SecretResolvers.defaults(),
+                new MetricRegistry());
+
+        Assertions.assertThat(repository)
+                .as("BatchingFlowRepository is the only thing that ever calls deadLetter, so its"
+                        + " absence from the chain IS the absence of dead-lettering")
+                .isNotInstanceOf(BatchingFlowRepository.class);
+    }
 }

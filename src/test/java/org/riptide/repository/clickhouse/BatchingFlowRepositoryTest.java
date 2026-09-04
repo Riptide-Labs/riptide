@@ -25,6 +25,7 @@ import org.slf4j.LoggerFactory;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -187,6 +188,84 @@ class BatchingFlowRepositoryTest {
         Assertions.assertThat(droppedRows())
                 .as("a refused insert is a failure, not a drop")
                 .isZero();
+    }
+
+    /**
+     * A refused batch is kept, row for row, and counted apart from the rows it lost (#548).
+     *
+     * <p>Both halves matter. {@code failedRows} must still charge the batch — those rows are not in
+     * {@code flows} and a dead letter does not change that — and {@code deadLetteredRows} must move
+     * by exactly the same amount, because it is the difference between the two that tells an operator
+     * how much is actually gone.</p>
+     */
+    @Test
+    void aRefusedBatchIsKeptInTheDeadLetterStoreAndCountedSeparately() throws Exception {
+        this.delegate.deadLettered = new CopyOnWriteArrayList<>();
+        attemptOnePoisonedBatchOfTwo();
+        this.repository.stop();
+
+        Assertions.assertThat(this.delegate.deadLettered)
+                .as("every row of the refused batch is kept, not just the poison one")
+                .hasSize(2);
+        Assertions.assertThat(deadLetteredRows())
+                .as("the rows kept are counted, or an operator cannot tell a rescue from a loss")
+                .isEqualTo(2);
+        Assertions.assertThat(failedRows())
+                .as("a dead-lettered row still did not reach flows, so failedRows still charges it")
+                .isEqualTo(2);
+        Assertions.assertThat(deadLetterFailedRows()).isZero();
+        Assertions.assertThat(droppedRows())
+                .as("a refused insert is a failure, not a drop")
+                .isZero();
+    }
+
+    /**
+     * A dead-letter write that fails degrades to exactly the pre-#548 behaviour.
+     *
+     * <p>This is the un-migrated deployment: a {@code flows_dead_letter} table that is not there
+     * yet. The rows are counted, the cause is logged, and — the part that must never regress — the
+     * flusher keeps running, so one absent table cannot cost every later batch.</p>
+     */
+    @Test
+    void aFailedDeadLetterDegradesToTodaysBehaviourWithoutWedgingTheFlusher() throws Exception {
+        this.delegate.deadLettered = new CopyOnWriteArrayList<>();
+        this.delegate.deadLetterFails = true;
+        attemptOnePoisonedBatchOfTwo();
+
+        this.repository.persist(flows(2));
+        await(Duration.ofSeconds(3), "flush after the failed dead letter", () -> this.delegate.count() == 2);
+        this.repository.stop();
+
+        Assertions.assertThat(this.delegate.deadLettered).isEmpty();
+        Assertions.assertThat(deadLetteredRows()).isZero();
+        Assertions.assertThat(deadLetterFailedRows())
+                .as("the rows that could not be kept are counted apart from the ones that were")
+                .isEqualTo(2);
+        Assertions.assertThat(failedRows())
+                .as("exactly today's behaviour: the batch is charged in full, once")
+                .isEqualTo(2);
+        Assertions.assertThat(this.logEvents.list)
+                .extracting(ILoggingEvent::getFormattedMessage)
+                .as("the failure is reported once, naming the batch size")
+                .filteredOn(message -> message.contains("Could not keep the 2 flows"))
+                .hasSize(1);
+    }
+
+    /**
+     * A delegate with no dead-letter store at all is not a special case — it degrades the same way.
+     *
+     * <p>The default {@code FlowRepository.deadLetter} throws, so "this repository cannot" and "the
+     * table is not there" reach the flusher identically. Without this row, that equivalence would
+     * rest on reading the interface rather than on anything running.</p>
+     */
+    @Test
+    void aDelegateWithNoDeadLetterStoreIsCountedTheSameWay() throws Exception {
+        attemptOnePoisonedBatchOfTwo();
+        this.repository.stop();
+
+        Assertions.assertThat(deadLetteredRows()).isZero();
+        Assertions.assertThat(deadLetterFailedRows()).isEqualTo(2);
+        Assertions.assertThat(failedRows()).isEqualTo(2);
     }
 
     /**
@@ -467,6 +546,16 @@ class BatchingFlowRepositoryTest {
         return this.metricRegistry.counter(MetricRegistry.name("persister", "batch", "failedRows")).getCount();
     }
 
+    private long deadLetteredRows() {
+        return this.metricRegistry.counter(
+                MetricRegistry.name("persister", "batch", "deadLetteredRows")).getCount();
+    }
+
+    private long deadLetterFailedRows() {
+        return this.metricRegistry.counter(
+                MetricRegistry.name("persister", "batch", "deadLetterFailedRows")).getCount();
+    }
+
     private static ClickhouseConfig.BatchConfig batchConfig(final int maxRows, final Duration maxLatency) {
         final var config = new ClickhouseConfig.BatchConfig();
         config.setMaxRows(maxRows);
@@ -534,6 +623,18 @@ class BatchingFlowRepositoryTest {
         private final AtomicInteger failuresRemaining = new AtomicInteger();
 
         /**
+         * The dead letters this delegate accepted, or null while it has no dead-letter store at all.
+         *
+         * <p>Null is the default because that is what {@code FlowRepository}'s own default method
+         * models — a repository with nowhere to put a refused batch — and it is the state every test
+         * written before #548 runs in.</p>
+         */
+        private volatile List<EnrichedFlow> deadLettered;
+
+        /** Set to refuse the dead-letter write, which is the un-migrated deployment's state. */
+        private volatile boolean deadLetterFails;
+
+        /**
          * Arms an {@link Error} rather than an exception. {@code flush()} catches only
          * {@code FlowException | IOException | RuntimeException}, so this is how a failure reaches
          * the flush loop's {@code catch (Throwable)} with an insert genuinely in flight.
@@ -578,6 +679,14 @@ class BatchingFlowRepositoryTest {
                 throw new FlowException("poison batch");
             }
             this.store.persist(flows);
+        }
+
+        @Override
+        public void deadLetter(final List<EnrichedFlow> flows, final Throwable cause) throws FlowException {
+            if (this.deadLetterFails || this.deadLettered == null) {
+                throw new FlowException("no dead-letter store");
+            }
+            this.deadLettered.addAll(flows);
         }
 
         @Override

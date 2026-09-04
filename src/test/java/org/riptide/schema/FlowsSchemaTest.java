@@ -429,6 +429,61 @@ class FlowsSchemaTest {
                 .contains("ifNull(f.application, '') AS application");
     }
 
+    /**
+     * The dead-letter table's shape, and the two things it must NOT be (#548).
+     *
+     * <p>It must not be a rollup — nothing aggregates into it, it has no {@code _mv}, and joining
+     * {@link FlowsSchema#rollupTableNames()} would silently enrol it in the shape check, the repair
+     * planner and the {@code SHOW TABLES} grant on a view it does not have. And it must not mirror
+     * the {@code flows} columns: its whole job is to accept a row {@code flows} refused, and roughly
+     * thirty re-declared column definitions would drift from the table they copied, silently.</p>
+     */
+    @Test
+    void theDeadLetterTableIsQualifiedIdempotentAndNeitherARollupNorACopyOfFlows() {
+        assertThat(FlowsSchema.rollupTableNames())
+                .as("nothing aggregates into the dead-letter table, so it is not a rollup")
+                .doesNotContain(FlowsSchema.DEAD_LETTER);
+        assertThat(FlowsSchema.qualifiedDeadLetter("acme_prod"))
+                .isEqualTo("`acme_prod`.flows_dead_letter");
+
+        // Stripped, because the shared DDL text blocks in FlowsSchema carry a four-space indent —
+        // the same one createFlowsTable's output has. This asserts the statement, not the layout.
+        final String ddl = FlowsSchema.createDeadLetterTable("acme_prod");
+        assertThat(ddl.strip())
+                .startsWith("CREATE TABLE IF NOT EXISTS `acme_prod`.flows_dead_letter");
+        // The four columns, and only those: tenant to police by, when, why, and the flow itself.
+        assertThat(ddl)
+                .contains("tenant String")
+                .contains("failedAt DateTime64(3, 'UTC')")
+                .contains("error String")
+                .contains("payload String");
+        // A representative sample of what it must NOT have mirrored. srcAddr and bytes are columns
+        // every flow carries, so their absence is what says the payload is the payload.
+        assertThat(ddl).doesNotContain("srcAddr", "bytes", "flowProtocol");
+        assertThat(ddl)
+                .as("its entire job is to accept rows a CHECK refused")
+                .doesNotContain("CONSTRAINT", "CHECK");
+        // Ordered so a tenant's dead letters are contiguous and a batch is one time range within
+        // them, which is what makes "select the batch back out" a range scan rather than a table
+        // scan.
+        assertThat(ddl)
+                .contains("ORDER BY (tenant, failedAt)")
+                .contains("PRIMARY KEY (tenant, failedAt)");
+    }
+
+    /** Same retention as the raw rows it was cut from, and the operator's --ttl-days reaches it. */
+    @Test
+    void theDeadLetterTtlIsParameterizedAndDefaultsToTheRawTables() {
+        assertThat(FlowsSchema.createDeadLetterTable("riptide", 90))
+                .contains("TTL toDateTime(failedAt) + INTERVAL 90 DAY");
+        assertThat(FlowsSchema.createDeadLetterTable("riptide"))
+                .contains("TTL toDateTime(failedAt) + INTERVAL " + FlowsSchema.DEFAULT_TTL_DAYS + " DAY");
+        assertThat(FlowsSchema.createFlowsTable("riptide"))
+                .as("a dead letter holds the raw rows, so outliving them would be a retention policy"
+                        + " nobody asked for")
+                .contains("INTERVAL " + FlowsSchema.DEFAULT_TTL_DAYS + " DAY");
+    }
+
     @Test
     void rollupDdlIsQualifiedIdempotentAndOrderedTargetsBeforeViews() {
         assertThat(FlowsSchema.rollupTableNames()).containsExactly(

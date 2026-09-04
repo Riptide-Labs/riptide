@@ -109,7 +109,7 @@ checks `CREATE` privileges even when `IF NOT EXISTS` would no-op).
 |---|---|
 | default (schema exists) | `CREATE USER`/`CREATE ROLE`/`CREATE QUOTA`/`CREATE ROW POLICY`, `ALTER USER`/`ALTER ROLE`, `DROP USER`/`DROP ROW POLICY` (offboard), `ALTER TABLE` on `<db>.flows`, `INSERT`, `SELECT` on `<db>.flows` plus `SELECT` on `system.databases/tables/columns` **with grant option** (they are granted onward to the roles), and **`SHOW USERS ON *.*`** (see the caution below) |
 | re-running against a database another admin provisioned | the above, plus **`ROLE ADMIN`** — granting a role it did not itself create requires it, and the per-database roles were created by whichever admin ran the first `onboard` there |
-| `--create-schema` | the above, plus `CREATE DATABASE ON <db>.*`, `CREATE TABLE ON <db>.*` (the `flows` table and the rollup targets) and `CREATE VIEW ON <db>.*` (the rollups' materialized views) |
+| `--create-schema` | the above, plus `CREATE DATABASE ON <db>.*`, `CREATE TABLE ON <db>.*` (the `flows` table, the dead-letter table and the rollup targets) and `CREATE VIEW ON <db>.*` (the rollups' materialized views) |
 | `revoke-legacy` (standalone — it needs none of the rows above) | `INSERT`, `SELECT` on `<db>.*` **with grant option** (revoking a role's privilege needs it; `ROLE ADMIN` does not), plus `SELECT` on `system.grants` and `system.row_policies` — see [Revoking the pre-rename roles](#revoking-the-pre-rename-roles-on-a-migrated-database) |
 
 `onboard` is safe to re-run: it reconciles the writer/reader **passwords** to the current secret, so
@@ -118,7 +118,7 @@ row policies are **re-asserted** to match the recipe — a policy `TO` list wide
 reverted on the next run, so route extra grantees through provisioning, not manual DDL. Reverting
 is not a neutral act: a grantee removed from a policy while it still holds `SELECT` is left governed
 by no policy and reads *every* tenant's rows, so a hand-added grantee is silently widened rather
-than trimmed). To remove a tenant: `offboard --admin-url … --tenant acme --yes` (drops its users — the `@<database>` accounts **and** the pre-rename unqualified ones — and its row policy from `flows` **and every rollup**; the database's roles/constraints/quota are left in place, shared as they are by every tenant in that database — if you removed the last one, drop them by hand).
+than trimmed). To remove a tenant: `offboard --admin-url … --tenant acme --yes` (drops its users — the `@<database>` accounts **and** the pre-rename unqualified ones — and its row policy from `flows`, `flows_dead_letter` **and every rollup**; the database's roles/constraints/quota are left in place, shared as they are by every tenant in that database — if you removed the last one, drop them by hand).
 
 ### Adding rollups to an existing deployment
 
@@ -150,18 +150,46 @@ If `onboard` reports a rollup as *left as it is*, that rollup is deliberately no
 
 `onboard` reads each rollup's live sorting key first and applies the same rule the collector does, so a change that would *shrink* a key is refused rather than applied. That guard is not optional: ClickHouse itself accepts such a shrink on an upgraded table, because the primary key was frozen at the narrower shape, so nothing below riptide would stop a rollup's grain changing in place.
 
+### Adding the dead-letter table to an existing deployment
+
+The same shape, for the same reason. A database provisioned before `flows_dead_letter` existed
+passes every other check while lacking it, so `onboard` checks for it separately and refuses to run
+without `--create-schema`:
+
+```
+database 'riptide' is missing the dead-letter table (flows_dead_letter) — re-run with
+--create-schema to add it. …
+```
+
+Re-running with the flag adds one table and nothing else — the `flows` table, its data and the
+rollups are untouched. The refusal happens **before any statement runs**, so a run that stops here
+has changed nothing.
+
+It is a refusal rather than a warning because **ClickHouse will not tell you**. Measured on the
+pinned image: `GRANT`, `CREATE ROW POLICY` and `REVOKE` naming a table that does not exist all
+succeed silently. An ungated run would therefore grant on nothing, police nothing, print the config
+stanza and exit 0 — and you would find out from `deadLetterFailedRows` on some later refused batch.
+
+Until it is added, the collector keeps ingesting and a refused batch costs exactly what it cost
+before: every row counted in `persister.batch.failedRows` and nothing kept. See
+[dead letters](operations.md#dead-letters).
+
 ### What it provisions
 
 The recipe is **role-based**: the schema, the grants, the reader hardening, the CHECK barrier, and
 the quota are one-time **per-database** objects, so per-tenant reduces to the scoped users + role
-grants + one row policy per table (`flows` and each rollup, all sharing the tenant-literal
-predicate). `onboard` ensures the per-database objects on first run and adds the per-tenant part:
+grants + one row policy per table (`flows`, `flows_dead_letter` and each rollup, all sharing the
+tenant-literal predicate) — plus, for `flows_dead_letter` alone, the `SELECT` itself, which is
+granted per user rather than to the shared reader role. `onboard` ensures the per-database objects on first run and adds the per-tenant part:
 
 ```sql
 -- Only with --create-schema, and only when the schema is actually missing (a default run emits
 -- no CREATE statement, so it needs no CREATE privileges). IF NOT EXISTS never replaces a table.
 CREATE DATABASE IF NOT EXISTS riptide;
 CREATE TABLE IF NOT EXISTS riptide.flows (…);  -- single-node MergeTree, TTL from --ttl-days (default 30)
+-- The dead-letter table, added when it is absent even on a database that already has flows: it
+-- keeps the rows a refused insert would otherwise drop. Same TTL as the raw table.
+CREATE TABLE IF NOT EXISTS riptide.flows_dead_letter (tenant, failedAt, error, payload);
 -- The 1-minute rollups: targets first, then the materialized views that feed them (a view cannot
 -- be created before its TO table). TTL is 365 days — the aggregates outlive the raw rows.
 CREATE TABLE IF NOT EXISTS riptide.flows_by_application_1m (…);          -- and three more
@@ -188,6 +216,10 @@ ALTER TABLE riptide.flows ADD CONSTRAINT IF NOT EXISTS org_pinned    CHECK organ
 -- One quota keyed by user gives every writer its own bucket (written_bytes — written_rows is not a metric).
 CREATE QUOTA IF NOT EXISTS `flow_ingest@riptide` FOR INTERVAL 1 hour MAX written_bytes = 50000000000
   KEYED BY user_name TO `flow_writer@riptide`;
+-- The dead-letter table: the writer files a refused batch there. No CHECK constraint is ever added
+-- to it — its job is to accept the rows one refused. NOTE the asymmetry with every other table
+-- here: the INSERT is role-wide, the SELECT is NOT. See the per-tenant block below.
+GRANT INSERT ON riptide.flows_dead_letter TO `flow_writer@riptide`;
 -- Every rollup gets the same treatment as flows, for both roles.
 GRANT INSERT ON riptide.flows_by_application_1m TO `flow_writer@riptide`;   -- and the other three
 GRANT SELECT ON riptide.flows_by_application_1m TO `flow_reader@riptide`;
@@ -207,6 +239,17 @@ GRANT `flow_reader@riptide` TO `bi_acme@riptide`;
 -- scoped by the table it hangs on.
 CREATE ROW POLICY OR REPLACE acme_iso ON riptide.flows
   FOR SELECT USING tenant = 'acme' TO `bi_acme@riptide`, `writer_acme@riptide`;
+-- The dead-letter table holds raw flow rows, so it is policed exactly like flows. Reader-only for
+-- the same reason the rollups are: the writer holds no SELECT there.
+CREATE ROW POLICY OR REPLACE acme_iso ON riptide.flows_dead_letter
+  FOR SELECT USING tenant = 'acme' TO `bi_acme@riptide`;
+-- And the read itself, per USER and immediately after the policy that constrains it — the one grant
+-- in this whole recipe that is not role-wide. A role grant would arrive for every tenant at once
+-- while these policies arrive one onboard run at a time, so re-onboarding a single tenant of a
+-- multi-tenant database would let every OTHER tenant read its dead letters: a user holding SELECT
+-- with no policy on a table reads every row of it (see the note below). Per user they cannot
+-- separate. A tenant that has not been re-onboarded holds no grant and needs no policy.
+GRANT SELECT ON riptide.flows_dead_letter TO `bi_acme@riptide`;
 -- The rollup policies name the reader only. The writer holds no SELECT on a rollup target at all,
 -- so being unnamed there exposes nothing; it reaches a rollup by INSERT through its materialized
 -- view, which no row policy filters.
@@ -310,7 +353,9 @@ java -jar riptide.jar revoke-legacy \
 Then replace `--dry-run` with `--yes` to apply it. `--yes` is required, for the reason `offboard` requires it: this takes privileges away from a live server, and `--database` defaults to `riptide`.
 
 Per-database is what makes it safe. `REVOKE … ON db_a.flows FROM flow_writer` leaves the same account still writing to an unmigrated `db_b` through the same role, so closing one database never takes another's ingest down.
-The revoke names that database's `flows`, every rollup target and every rollup materialized view — the mirror of what `onboard` grants there — and nothing else.
+The revoke names that database's `flows`, its `flows_dead_letter`, every rollup target and every rollup materialized view — the mirror of what `onboard` grants there — and nothing else.
+The dead-letter table is in that list even though the pre-rename roles predate it: the mirror is defined against what `onboard` grants today, and a `SELECT` hand-granted on it to the instance-wide `flow_reader` would reopen exactly the cross-database read this command closes.
+On a database that has not been re-onboarded yet the table is simply absent, and a `REVOKE` naming an absent table is a measured no-op on the pinned image — so the extra statement is harmless there.
 It takes back `INSERT`, `SELECT` and `SHOW TABLES`; the `_mv` views carry only the last of those, and it matters, because a `SELECT` on a rollup view reads around the row policy attached to its target.
 The **roles are not dropped** — they carry no database in their name, so dropping one would revoke every database still on the old naming.
 
@@ -423,7 +468,14 @@ and, through the subcommand, `TenantOnboardingIT`):
 - **Reads stay in-tenant** — the row policy limits `bi_acme@riptide` to `tenant = 'acme'` rows, even
   against a shared table holding every tenant. The rollups carry the same policy, so a
   pre-aggregated query is bounded exactly as the raw one is — a rollup is not a way around the
-  boundary.
+  boundary, and neither is `flows_dead_letter` (`TenantOnboardingIT.deadLettersAreIsolatedByTenantLikeFlows`).
+  That table is guarded twice over: its `SELECT` is granted per user alongside the policy, so a
+  tenant onboarded before the table existed cannot read it *at all* until it is re-onboarded
+  (`aTenantOnboardedBeforeTheDeadLetterTableExistedIsRefusedOnIt`), rather than reading everything
+  through a role grant no policy of its own covers.
+  One asymmetry is worth knowing: the dead-letter table deliberately carries no `CHECK`, so a writer
+  whose config lies about its tenant has the write refused and the dead letter it files is visible to
+  the tenant it named. The write is still refused; what changes is that the attempt leaves evidence.
 - **Reads stay in-database** — and this half is the *grant*, not the policy. The reader holds
   `flow_reader@<database>`, which carries `SELECT` on that database's tables and no other's, so a
   query against another database is refused with `ACCESS_DENIED`. A policy could not have done

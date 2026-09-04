@@ -97,6 +97,78 @@ public class TenantOnboardingIT {
         }
     }
 
+    /**
+     * A dead letter is isolated by tenant exactly as a {@code flows} row is (#548).
+     *
+     * <p>Here rather than in {@code DeadLetterIT} because only this fixture has what the claim needs:
+     * the shipped {@code tenant_pinned}/{@code org_pinned} barrier, the per-tenant readers, and the
+     * row policies {@code onboard} actually creates. A synthetic constraint on an unprovisioned
+     * database could show rows landing; it could not show them being <em>filtered</em>.
+     *
+     * <p><b>The refusal is engineered on {@code org_pinned}, not {@code tenant_pinned}</b>, and the
+     * difference is the whole test. A writer lying about its <em>tenant</em> produces a dead letter
+     * carrying the tenant it lied about — so acme's writer would file a letter under {@code other},
+     * and the isolation assertion would pass while pairing every row with the wrong owner. Lying
+     * about the <em>organisation</em> is refused by the same barrier and leaves {@code tenant}
+     * truthful, which is the row this policy is supposed to hand back.
+     *
+     * <p>That first case is a real consequence rather than a gap, and it follows from the design:
+     * the dead-letter table deliberately carries no {@code CHECK} (it exists to hold what one
+     * refused), so a writer can file a letter under a tenant that is not its own and that tenant's
+     * reader will see it. Keeping the evidence of a refused cross-tenant write is the point; the
+     * barrier on {@code flows} is untouched and still refuses the write itself, which
+     * {@link #onboardedTenantWritesHonestlyAndIsIsolated} pins.
+     *
+     * <p>{@code deadLetter} is called directly rather than through {@code BatchingFlowRepository}.
+     * The flusher's catch clause, its counters and its fallback are pinned against a real server in
+     * {@code DeadLetterIT}; what is unproven anywhere else is that the policy {@code onboard} writes
+     * filters this table, and routing through a background thread would only add a wait to it.
+     */
+    @Test
+    void deadLettersAreIsolatedByTenantLikeFlows() throws Exception {
+        Assertions.assertThat(onboard("dlA", "dlA-eu", "wDA", "rDA")).isZero();
+        Assertions.assertThat(onboard("dlB", "dlB-eu", "wDB", "rDB")).isZero();
+
+        fileADeadLetter("dlA", "wDA", 32001);
+        fileADeadLetter("dlB", "wDB", 32002);
+
+        try (var reader = rawClient(ProvisioningDdl.readerUser("dlA", DATABASE), "rDA")) {
+            final var rows = reader.queryAll("SELECT tenant, JSONExtractInt(payload, 'srcPort') AS p FROM "
+                    + FlowsSchema.qualifiedDeadLetter(DATABASE) + " WHERE p IN (32001, 32002)");
+            Assertions.assertThat(rows)
+                    .as("the dead-letter table holds raw flow data, so an unpoliced copy of it is the"
+                            + " cross-tenant read leak #649, #732 and #734 each shipped a fix for")
+                    .hasSize(1);
+            Assertions.assertThat(rows.getFirst().getString("tenant")).isEqualTo("dlA");
+
+            // The reader is a reader here too: the dead-letter table is not a write path back in.
+            Assertions.assertThatThrownBy(() -> reader.execute("INSERT INTO "
+                            + FlowsSchema.qualifiedDeadLetter(DATABASE)
+                            + " (tenant) VALUES ('dlA')").get())
+                    .hasStackTraceContaining("ACCESS_DENIED");
+        }
+    }
+
+    /**
+     * Get one flow of {@code tenant} refused by the barrier and kept as a dead letter.
+     *
+     * <p>The organisation is wrong and the tenant is right, so {@code org_pinned} fires while the
+     * row that reaches the dead-letter table still names its real owner — see the caller for why
+     * that distinction carries the test.</p>
+     */
+    private static void fileADeadLetter(final String tenant, final String password, final int srcPort)
+            throws Exception {
+        final var writer = writerRepository(tenant, password);
+        final var batch = List.of(flow(tenant, "not-the-pinned-org", srcPort));
+        final Throwable refusal = Assertions.catchThrowable(() -> writer.persist(batch));
+        Assertions.assertThat(refusal)
+                .as("the barrier must refuse this, or the dead letter below is filed for a batch that"
+                        + " actually landed and the test proves nothing")
+                .isNotNull();
+        Assertions.assertThat(refusal).hasStackTraceContaining("VIOLATED_CONSTRAINT");
+        writer.deadLetter(batch, refusal);
+    }
+
     @Test
     void onboardEmitsConfigStanzaAndIsIdempotent() {
         final var out = new ByteArrayOutputStream();
@@ -187,6 +259,209 @@ public class TenantOnboardingIT {
                         "--writer-secret", "wB", "--reader-secret", "rB"},
                 discard(), discard());
         Assertions.assertThat(code).isZero();
+    }
+
+    /**
+     * A database provisioned before the dead-letter table existed is told what it is missing, and
+     * nothing is changed until the operator says so (#548).
+     *
+     * <p>The retrofit is gated exactly the way the rollups' was, but <b>not</b> because the server
+     * would otherwise refuse anything. Measured on the pinned image: {@code GRANT},
+     * {@code CREATE ROW POLICY} and {@code REVOKE} naming a table that does not exist all succeed
+     * silently. So an ungated run would grant on nothing, police nothing, print the config stanza
+     * and exit 0 — and the operator would find out from {@code deadLetterFailedRows} on some later
+     * refused batch. The gate turns a silent no-op into a refusal that names the remedy, which is
+     * the whole of its value.</p>
+     *
+     * <p>The database is assembled from riptide's own pre-#548 DDL rather than by dropping the table
+     * afterwards, so it is the shape a real upgraded deployment has rather than one this test
+     * invented.</p>
+     */
+    @Test
+    void onboardRefusesADatabaseWithoutTheDeadLetterTableUntilCreateSchemaIsGiven() throws Exception {
+        try (var admin = rawClientOn("default", "default", "")) {
+            admin.execute(FlowsSchema.createDatabase("predl")).get();
+            admin.execute(FlowsSchema.createFlowsTable("predl")).get();
+            for (final String ddl : FlowsSchema.createRollupTables("predl")) {
+                admin.execute(ddl).get();
+            }
+            for (final String ddl : FlowsSchema.createRollupViews("predl")) {
+                admin.execute(ddl).get();
+            }
+            Assertions.assertThat(exists(admin, FlowsSchema.qualifiedDeadLetter("predl")))
+                    .as("the fixture must start WITHOUT the table, or the refusal below is untested")
+                    .isFalse();
+
+            final var err = new ByteArrayOutputStream();
+            Assertions.assertThat(ProvisioningCommand.run(onboardArgsFor("predl", "predl", false),
+                    discard(), new PrintStream(err, true, StandardCharsets.UTF_8))).isEqualTo(1);
+            Assertions.assertThat(err.toString(StandardCharsets.UTF_8))
+                    .contains(FlowsSchema.DEAD_LETTER)
+                    .contains("--create-schema");
+            Assertions.assertThat(admin.queryAll("SELECT count() AS c FROM system.users WHERE name = '"
+                            + ProvisioningDdl.writerUser("predl", "predl") + "'")
+                            .getFirst().getLong("c"))
+                    .as("the refusal happens before any statement runs, so nothing is half-done")
+                    .isZero();
+
+            // And with the flag, the same run adds it and provisions the tenant.
+            Assertions.assertThat(ProvisioningCommand.run(onboardArgsFor("predl", "predl", true),
+                    discard(), discard())).isZero();
+            Assertions.assertThat(exists(admin, FlowsSchema.qualifiedDeadLetter("predl"))).isTrue();
+        }
+    }
+
+    /**
+     * A tenant onboarded before the dead-letter table existed cannot read it (#548).
+     *
+     * <p><b>This is the leak the per-user read grant closes</b>, and it is the #649/#732/#734 class
+     * again. {@code ensureShared} runs once per database and {@code onboardTenant} once per tenant,
+     * so a role-wide {@code SELECT} on this table would arrive for <em>every</em> tenant the moment
+     * the first one was re-onboarded, while the row policies arrived one run at a time. A user
+     * holding {@code SELECT} with no policy on a table reads every row of it — the pinned image ships
+     * {@code users_without_row_policies_can_read_rows=true}, which
+     * {@link #onboardedTenantWritesHonestlyAndIsIsolated} and {@code ProvisioningDdlTest} both record
+     * — so the not-yet-re-onboarded tenant would have read the re-onboarded one's raw flow payloads.
+     *
+     * <p>The fixture is that tenant: a reader holding the shared {@code flow_reader@<db>} role and
+     * nothing else, which is exactly what {@code onboard} left behind before this change. It must
+     * read {@code flows} (or the refusal below is about a broken account rather than a boundary) and
+     * be refused on {@code flows_dead_letter}.
+     */
+    @Test
+    void aTenantOnboardedBeforeTheDeadLetterTableExistedIsRefusedOnIt() throws Exception {
+        Assertions.assertThat(ProvisioningCommand.run(onboardArgsFor("dlgate", "dlgate", true),
+                discard(), discard())).isZero();
+
+        try (var admin = adminClient()) {
+            // The tenant that has not been re-onboarded: it holds the shared reader role — hence
+            // SELECT on flows and every rollup — and no dead-letter policy or grant of its own.
+            admin.execute("CREATE USER IF NOT EXISTS `bi_earlier@dlgate` IDENTIFIED WITH"
+                    + " sha256_password BY 'earlier'").get();
+            admin.execute("GRANT `flow_reader@dlgate` TO `bi_earlier@dlgate`").get();
+        }
+
+        try (var earlier = rawClientOn("dlgate", "bi_earlier@dlgate", "earlier")) {
+            Assertions.assertThat(earlier.queryAll(
+                            "SELECT count() AS c FROM " + FlowsSchema.qualifiedFlows("dlgate"))
+                    .getFirst().getLong("c"))
+                    .as("the shared role still reads flows, so the refusal below is a boundary and"
+                            + " not an account that cannot read anything")
+                    .isZero();
+
+            Assertions.assertThatThrownBy(() -> earlier.queryAll("SELECT count() AS c FROM "
+                            + FlowsSchema.qualifiedDeadLetter("dlgate")))
+                    .as("a tenant with no policy on the dead-letter table must not be able to read"
+                            + " it at all — with the policy absent, SELECT would return every"
+                            + " tenant's raw flow payloads")
+                    .hasStackTraceContaining(ClickhouseServerErrors.ACCESS_DENIED_MESSAGE_PREFIX)
+                    .hasStackTraceContaining("ACCESS_DENIED");
+        }
+
+        // And the tenant that WAS onboarded reads it, so the grant is withheld rather than missing.
+        try (var reader = rawClientOn("dlgate", ProvisioningDdl.readerUser("dlgate", "dlgate"), "rdlgate")) {
+            Assertions.assertThat(reader.queryAll("SELECT count() AS c FROM "
+                    + FlowsSchema.qualifiedDeadLetter("dlgate")).getFirst().getLong("c")).isZero();
+        }
+    }
+
+    /**
+     * {@code --ttl-days} reaches the dead-letter table, read back off the server (#548).
+     *
+     * <p>Every other TTL assertion in this repo is a string comparison against generated DDL, so
+     * changing {@code bootstrapDeadLetter(database, ttlDays)} to the single-argument overload — which
+     * exists, and is what the collector's manage path calls — left every test green while an operator
+     * onboarding with {@code --ttl-days 90} silently got 30-day dead letters. The retention is read
+     * from {@code system.tables} here for that reason: this is the first test in the repo that asks a
+     * server what TTL it actually has.
+     *
+     * <p>{@code flows} is asserted alongside it, and was equally unpinned end-to-end.
+     */
+    @Test
+    void onboardTtlDaysReachesTheDeadLetterTableAndNotOnlyFlows() throws Exception {
+        Assertions.assertThat(ProvisioningCommand.run(new String[] {
+                "onboard", "--admin-url", endpoint(), "--database", "ttl90", "--create-schema",
+                "--ttl-days", "90", "--tenant", "ttl", "--org", "ttl-eu",
+                "--writer-secret", "wttl", "--reader-secret", "rttl"}, discard(), discard())).isZero();
+
+        try (var admin = adminClient()) {
+            // toIntervalDay(90), not "INTERVAL 90 DAY": the server re-serialises the DDL it stored,
+            // so this asserts what the table HAS rather than what riptide wrote. Asserting the
+            // source syntax here fails against a table whose TTL is perfectly correct — which is the
+            // whole reason this test reads the catalog instead of the generated string.
+            Assertions.assertThat(createTableQuery(admin, "ttl90", FlowsSchema.DEAD_LETTER))
+                    .as("an operator's --ttl-days must reach the dead-letter table, or its retention"
+                            + " silently disagrees with the rows it was cut from")
+                    .contains("toIntervalDay(90)");
+            Assertions.assertThat(createTableQuery(admin, "ttl90", FlowsSchema.FLOWS))
+                    .as("and flows, which was equally unpinned end to end")
+                    .contains("toIntervalDay(90)");
+        }
+    }
+
+    /**
+     * {@code revoke-legacy} and {@code offboard} both name the dead-letter table, and both must be
+     * no-ops on a database that predates it (#548).
+     *
+     * <p><b>This is the measurement, not an inference.</b> Both commands emit statements against
+     * {@code <db>.flows_dead_letter} unconditionally and neither has a {@code --create-schema} gate.
+     * If any of them errored on an absent table, {@code revoke-legacy} would abort <em>after</em>
+     * {@code flows} was already revoked and report the database HALF-REVOKED — on the one command
+     * whose entire job is closing a security exposure. {@code GRANT}, {@code CREATE ROW POLICY} and
+     * {@code REVOKE} were measured directly against the pinned image; {@code DROP ROW POLICY IF
+     * EXISTS} was not, and this is where it is.
+     *
+     * <p>The fixture is the pre-#548 shape with just enough for {@code revoke-legacy} to get past its
+     * own pre-flight refusals: a legacy role holding a per-table grant, and a row policy whose only
+     * grantee is database-qualified (an unqualified one means the database is not migrated and the
+     * command refuses, which is a different test). The rollup targets are absent too, so this covers
+     * every table in the mirror that such a database lacks.
+     */
+    @Test
+    void revokeLegacyAndOffboardAreNoOpsAgainstADatabaseThatPredatesTheDeadLetterTable() throws Exception {
+        try (var admin = adminClient()) {
+            admin.execute(FlowsSchema.createDatabase("predl2")).get();
+            admin.execute(FlowsSchema.createFlowsTable("predl2")).get();
+            admin.execute("CREATE ROLE IF NOT EXISTS flow_reader").get();
+            admin.execute("GRANT SELECT ON " + FlowsSchema.qualifiedFlows("predl2") + " TO flow_reader").get();
+            admin.execute("CREATE USER IF NOT EXISTS `bi_pdr@predl2` IDENTIFIED WITH sha256_password"
+                    + " BY 'pdr'").get();
+            admin.execute("CREATE ROW POLICY OR REPLACE pdr_iso ON " + FlowsSchema.qualifiedFlows("predl2")
+                    + " FOR SELECT USING tenant = 'pdr' TO `bi_pdr@predl2`").get();
+            Assertions.assertThat(exists(admin, FlowsSchema.qualifiedDeadLetter("predl2")))
+                    .as("the fixture must LACK the table, or neither command is tested against one")
+                    .isFalse();
+
+            final var out = new ByteArrayOutputStream();
+            Assertions.assertThat(ProvisioningCommand.run(revokeLegacyArgs("predl2"),
+                            discard(), new PrintStream(out, true, StandardCharsets.UTF_8)))
+                    .as("a REVOKE naming a table that does not exist must not abort the run after"
+                            + " flows was already revoked — that would report HALF-REVOKED")
+                    .isZero();
+            Assertions.assertThat(out.toString(StandardCharsets.UTF_8)).contains("Revoked");
+            Assertions.assertThat(admin.queryAll("SELECT count() AS c FROM system.grants"
+                            + " WHERE role_name = 'flow_reader' AND database = 'predl2'")
+                    .getFirst().getLong("c"))
+                    .as("and it must actually have revoked the grant it could reach")
+                    .isZero();
+
+            // offboard's DROP ROW POLICY IF EXISTS names the same absent table, with no gate at all.
+            Assertions.assertThat(ProvisioningCommand.run(new String[] {
+                    "offboard", "--admin-url", endpoint(), "--database", "predl2",
+                    "--tenant", "pdr", "--yes"}, discard(), discard())).isZero();
+            Assertions.assertThat(admin.queryAll("SELECT count() AS c FROM system.row_policies"
+                            + " WHERE database = 'predl2'").getFirst().getLong("c"))
+                    .as("the policy it could reach is gone, so the run did its job rather than"
+                            + " exiting early on the absent table")
+                    .isZero();
+        }
+    }
+
+    /** A table's stored DDL, which is where a TTL that was actually applied can be read. */
+    private static String createTableQuery(final Client admin, final String database,
+            final String table) {
+        return admin.queryAll("SELECT create_table_query AS q FROM system.tables WHERE database = '"
+                + database + "' AND name = '" + table + "'").getFirst().getString("q");
     }
 
     @Test
@@ -297,6 +572,16 @@ public class TenantOnboardingIT {
             final String rollupA = FlowsSchema.qualifiedRollup("iso_a", FlowsSchema.rollupTableNames().getFirst());
             Assertions.assertThatThrownBy(() -> second.queryAll("SELECT count() AS c FROM " + rollupA))
                     .as("nor another database's rollup targets")
+                    .hasStackTraceContaining(ClickhouseServerErrors.ACCESS_DENIED_MESSAGE_PREFIX)
+                    .hasStackTraceContaining("ACCESS_DENIED");
+
+            // Nor its dead letters (#548), which hold whole raw flows rather than an aggregate and
+            // are therefore the worst of the three to leak across a database boundary. This list is
+            // the repo's record of what a cross-database reader must be refused, and it read one
+            // short the day that table was added.
+            Assertions.assertThatThrownBy(() -> second.queryAll("SELECT count() AS c FROM "
+                            + FlowsSchema.qualifiedDeadLetter("iso_a")))
+                    .as("nor another database's dead letters")
                     .hasStackTraceContaining(ClickhouseServerErrors.ACCESS_DENIED_MESSAGE_PREFIX)
                     .hasStackTraceContaining("ACCESS_DENIED");
         }

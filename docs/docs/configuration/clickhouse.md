@@ -76,8 +76,10 @@ what ClickHouse accepts under backtick quoting; rename such a database or use va
   manual DDL — the configured user needs `CREATE` rights), the `flows` table with
   `CREATE TABLE IF NOT EXISTS` (an existing table is not replaced, so its data survives), and
   the `samples` view with `CREATE OR REPLACE VIEW` (a view holds no data, so it is always
-  refreshed and can never go stale), and the [1-minute rollups](#rollups) with
-  `CREATE TABLE IF NOT EXISTS` / `CREATE MATERIALIZED VIEW IF NOT EXISTS`. A fresh install is
+  refreshed and can never go stale), the [1-minute rollups](#rollups) with
+  `CREATE TABLE IF NOT EXISTS` / `CREATE MATERIALIZED VIEW IF NOT EXISTS`, and the
+  [`flows_dead_letter` table](../deploy/operations.md#dead-letters) with
+  `CREATE TABLE IF NOT EXISTS`. A fresh install is
   created; a restart keeps the data — so **flow data now survives a Riptide restart**.
 
   :::warning[Hand-created `samples` views need re-creating]
@@ -91,11 +93,14 @@ what ClickHouse accepts under backtick quoting; rename such a database or use va
   :::
 - **`false` (provisioned / multi-tenant)** — the collector creates nothing. It validates that the
   `flows` table exists and carries every column it inserts and **fails startup with a clear,
-  provisioning-pointing error** if it does not. Use this when an admin owns the schema and
+  provisioning-pointing error** if it does not. It does *not* demand
+  `flows_dead_letter`: a deployment provisioned before that table existed keeps collecting, and a
+  refused batch simply costs what it always cost until the table arrives with a re-onboard. Use this when an admin owns the schema and
   RBAC and each riptide process is a narrowly-scoped writer that only uses the table. On a fresh
   single-node server the admin-side
   [`onboard --create-schema`](../deploy/multi-tenancy.md#what-it-provisions) bootstraps the database,
-  the `flows` table and the [rollups](#rollups) as part of provisioning; without the flag, `onboard`
+  the `flows` table, the dead-letter table and the [rollups](#rollups) as part of provisioning;
+  without the flag, `onboard`
   requires the schema to exist and fails loudly if it does not (replicated clusters pre-create the
   table admin-side).
 
@@ -321,7 +326,9 @@ backpressure the parsers into the network socket, where the loss is invisible); 
 and logged with a rate limit. Alongside the `droppedRows` counter sit a queue-depth gauge, a
 batch-size histogram, a flush timer (`persister.batch.flush`), and a `failedRows` counter for rows
 the flusher could not deliver: a failed insert, an unexpected `Error` inside the flusher, or rows
-still in its hands when it is interrupted or the shutdown grace period expires.
+still in its hands when it is interrupted or the shutdown grace period expires. A refused insert
+additionally moves `deadLetteredRows` or `deadLetterFailedRows` — see
+[dead letters](../deploy/operations.md#dead-letters).
 
 :::warning[Error visibility under batching — watch the logs]
 
@@ -339,17 +346,23 @@ insert duration lives in `persister.batch.flush`. Relevant when metrics do becom
 
 :::
 
-**A poison row now costs a whole batch.** Because rows are inserted together, a single row the
-server rejects fails the entire insert: up to `max-rows` flows are dropped instead of the one bad
-flow the per-record path would have lost. The flusher logs the batch size with the error and
-moves on (one bad batch never wedges ingestion), but a persistent source of rejected rows — a
-mis-tenanted collector against the multi-tenant CHECK barrier, say — now costs proportionally
-more data. Lowering `max-rows` limits the blast radius at the cost of throughput.
+**A poison row costs a whole batch — but the batch is kept.** (This whole section is about the batched path; with `batch.enabled=false` there is no batch and no dead letter — see the warning above, and [dead letters](../deploy/operations.md#dead-letters).) Because rows are inserted together, a
+single row the server rejects fails the entire insert: up to `max-rows` flows fail instead of the one
+bad flow the per-record path would have lost. The flusher logs the batch size with the error, writes
+every row of the batch to [`flows_dead_letter`](../deploy/operations.md#dead-letters) and
+moves on (one bad batch never wedges ingestion). The rows are therefore inspectable and replayable by
+hand rather than gone — but they are still not in `flows`, and a persistent source of rejected rows —
+a mis-tenanted collector against the multi-tenant CHECK barrier, say — still costs proportionally
+more live data. Lowering `max-rows` limits the blast radius at the cost of throughput. If the
+dead-letter write fails as well (a deployment provisioned before that table existed, or a server that
+has gone away), the rows are counted under `deadLetterFailedRows` and the outcome is the older
+behaviour exactly.
 
 **And "a whole batch" is only true while the whole batch lands in one committed block.** ClickHouse cuts an incoming insert into blocks and may commit them separately. When it does, a refused insert is *not* atomic: the blocks already accepted stay committed, so part of the batch persists while the whole batch is counted as failed, and the rollups are left inconsistent with the base table. Measured on the pinned image by `MultiBlockPoisonProbeIT`, which pins both a server that behaves this way and one that does not.
 
 Note the counter: a refused batch increments `persister.batch.failedRows`, not `persister.batch.droppedRows`.
 The drop counter is for queue-full and post-shutdown loss and stays at zero for this failure.
+It increments `persister.batch.deadLetteredRows` as well, and that is a second statement rather than a correction: those rows are kept in `flows_dead_letter`, and they are still not in `flows`.
 `failedRows` charges the **whole** batch, so for a refused insert it is an **upper bound** on the loss rather than a count of it: where a prefix did commit, those rows are both persisted and counted failed, and nothing reports the difference.
 riptide cannot tell the two apart, so the flusher's insert-failure line admits the possibility instead of claiming the batch was dropped.
 
@@ -411,6 +424,9 @@ aggregates outlive the flows they came from, so long-range queries keep working 
 rows expire. Retention is set at creation time (`TTL timestamp + INTERVAL <n> DAY`) — in
 provisioned mode via `onboard --ttl-days`, which applies to the raw table; adjust a rollup's TTL
 with `ALTER TABLE … MODIFY TTL` if you need something different.
+`flows_dead_letter` keeps the same 30 days as the raw table (and takes the same `--ttl-days` when a
+run creates it): it holds the rows a refused insert was cut from, so outliving them would be a
+retention policy nobody asked for.
 
 :::warning[Raw retention above 365 days inverts the invariant]
 

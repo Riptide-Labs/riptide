@@ -213,6 +213,8 @@ lost silently. Alert on the drop counters; watch the depth gauges for early warn
 | `persister.batch.queueDepth` | rows waiting to be inserted (gauge) |
 | `persister.batch.droppedRows` | rows **the queue never handed to an insert** |
 | `persister.batch.failedRows` | rows **an insert was attempted for, and lost** |
+| `persister.batch.deadLetteredRows` | rows of a refused batch **kept in `flows_dead_letter`** instead of being dropped |
+| `persister.batch.deadLetterFailedRows` | rows of a refused batch that **could not be kept** either |
 
 The two `persister.batch.*` loss counters split on whether an insert was ever attempted, which is
 the distinction to reach for when deciding which one you are looking at:
@@ -227,6 +229,44 @@ the distinction to reach for when deciding which one you are looking at:
 `failedRows` covers four cases, and is an **upper bound** on the loss rather than an exact count of it in two of them.
 A *refused* insert may still have committed a prefix of the batch, yet the whole batch is charged here (see [insert batching](../configuration/clickhouse.md#insert-batching-batch)); the same is true when an unexpected `Error` escapes the flusher, since it may escape with an insert already in flight.
 The other two are certain loss: rows the flusher still held when it was interrupted, and rows left over once the shutdown grace period expires. Neither ever reached the server.
+
+### Dead letters
+
+A **refused** insert — the first of those four cases — no longer discards its rows, **as long as batching is on** (`riptide.clickhouse.batch.enabled`, the default).
+With batching off there is no flusher, no batch and no dead letter: the rejection reaches the caller synchronously, which is the signal batching removes and dead-lettering replaces, and the records are counted in `pipeline.dispatchErrors` instead. That path also inserts one call at a time, so a poison row costs that call rather than up to `max-rows` flows.
+The flusher writes every row of the batch to `flows_dead_letter` and counts them under `deadLetteredRows`; if that write fails too, the rows are counted under `deadLetterFailedRows` and the behaviour is exactly what it was before the table existed.
+`failedRows` still charges the whole batch either way, because a dead-lettered row is still not in `flows`.
+
+So on a refused batch, `failedRows − deadLetteredRows` is what riptide no longer has anywhere.
+`deadLetterFailedRows` moving at all is itself worth looking at: the commonest cause is a deployment provisioned before this table existed, which is fixed by re-running `riptide onboard --create-schema` (see [multi-tenancy](multi-tenancy.md#adding-the-dead-letter-table-to-an-existing-deployment)).
+**Restart the collector after adding the table.** Once the server has answered that the table is not there, riptide stops asking — an un-migrated deployment would otherwise spend a round trip per refused batch to be told the same thing — and it reports that once, naming the remedy. Like the rollups, the posture is decided while the process runs and re-read at startup.
+The other three `failedRows` cases are **not** dead-lettered, deliberately — none of them is a batch a reachable server refused, and each is explained where it is counted.
+
+**A dead letter is replayed by an operator, deliberately, and never by riptide.**
+There is no automatic re-insert and there is no flag to turn one on.
+The reason is the rollups: they are `SummingMergeTree` targets fed by materialized views on `flows`, and their retention deliberately outlives the raw table's, so a row re-inserted into `flows` is *summed* into aggregates that survive the raw rows needed to diagnose the inflation.
+A refused insert is also not always atomic, so riptide cannot tell which rows of the batch the server already kept.
+Read the dead letters, decide, and insert what you mean to insert:
+
+```sql
+-- What was refused, and why
+SELECT tenant, failedAt, error, count() AS rows
+FROM riptide.flows_dead_letter
+GROUP BY tenant, failedAt, error
+ORDER BY failedAt DESC;
+
+-- One batch's rows, as JSON
+SELECT payload FROM riptide.flows_dead_letter WHERE failedAt = '...' AND tenant = '...';
+```
+
+**It does not rescue a batch lost to a severed transport.**
+The dead-letter write goes to the same server over the same client, so when the connection is the problem it fails too and the rows are counted under `deadLetterFailedRows`.
+What it addresses is the server that is reachable and refuses the batch — a poison row, a constraint violation, a quota.
+
+`flows_dead_letter` carries the same tenant row policy as `flows`, so a tenant reads only its own dead letters.
+It carries **no** `CHECK` constraint, which is the point: its job is to accept rows `flows` refused, and the commonest refusal is that constraint firing.
+One consequence follows and is worth knowing: a writer whose config lies about its tenant has its write refused, and the dead letter it files is then visible to the tenant it named.
+The write itself is still refused; what changes is that the attempt leaves evidence.
 
 Delivery accounting: `recordsReceived − dispatchDrops − dispatchErrors` is what reached the
 persister.
@@ -246,12 +286,14 @@ Do not read that meter as delivery confirmation — subtract, or use the drop co
 It disagrees downwards too, in two places: an `Error` escaping the dispatcher skips the mark, and
 records abandoned at shutdown were scheduled and never dispatched. `DaemonDispatcherTest` and
 `ParserDispatchTest` pin both directions.
-That arithmetic stops at the persister: do **not** extend it to persisted rows by subtracting `failedRows`, because a refused insert counted in full there may have committed part of its batch. Query the table for what landed.
+That arithmetic stops at the persister: do **not** extend it to persisted rows by subtracting `failedRows`, because a refused insert counted in full there may have committed part of its batch. Query the table for what landed. Nor does adding `deadLetteredRows` back repair it: a dead-lettered row is in `flows_dead_letter`, not in `flows`, and the prefix the server may have committed is counted in both.
 
 **Is `failedRows` alertable?** Yes, on a sustained rate — but as a signal, not as a loss figure.
 A non-zero rate means ClickHouse is rejecting writes riptide had already accepted, which is worth
 paging on however many rows it turns out to be. Do not put the number in the alert text as flows
 lost: it is an upper bound, and in the refused-insert case some of those rows are in the table.
+Since dead-lettering, a refused batch's rows are also in `flows_dead_letter` — so quote
+`deadLetterFailedRows` if the alert needs a number that is closer to "gone".
 It is deliberately outside the readiness contract, like the rest of the ClickHouse path, so it
 will not fail `/readyz` — these metrics are the whole story.
 
@@ -405,7 +447,7 @@ At the measured ~11.8k rows/s the queue covers ~3.4 s, well under a probe period
 And where Prometheus scrapes through the Service, "not ready" can remove the pod from the endpoints and take `/metrics` down with it.
 That blinds the one signal that explains the outage, exactly when it fires.
 A ClickHouse outage keeps the collector receiving.
-Probes are for scheduling; saturation is for alerting: watch a sustained `persister.batch.droppedRows` or `persister.batch.failedRows` rate and `persister.batch.queueDepth` approaching the queue capacity.
+Probes are for scheduling; saturation is for alerting: watch a sustained `persister.batch.droppedRows` or `persister.batch.failedRows` rate and `persister.batch.queueDepth` approaching the queue capacity. A non-zero `persister.batch.deadLetterFailedRows` rate is a separate signal: the refused rows are not being kept anywhere.
 
 **Readiness also deliberately tolerates zero configured receivers.**
 The shipped configuration declares none, so failing readiness there would turn a fresh install into a pod that never becomes ready.
