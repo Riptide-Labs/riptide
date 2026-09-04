@@ -22,6 +22,25 @@ riptide.clickhouse.batch.shutdown-grace-period=5s
 #riptide.clickhouse.async-inserts=   # unset: derived — off under batching, see below
 ```
 
+## Server versions
+
+Riptide is tested against **ClickHouse 26.7 and 26.8**.
+
+26.7 is the version the [compose stack](../deploy/docker-compose.md) pins by digest and the version every integration test runs against, so it is the one continuously exercised.
+26.8 is not in CI. It was verified by hand, in two runs.
+A full-access user in manage mode: schema creation, the column check, POJO registration and a read-back insert.
+Then a writer granted nothing but `SELECT, INSERT` on its own `flows` table, in validate mode: the column check, registration and a read-back insert against the table the first run created. That user cannot run manage mode at all, since manage mode creates the database and the table.
+Nothing else has been measured. Other versions are not known to be broken, they are simply untested, and this page states what is tested rather than a range nobody has probed.
+
+:::note[Earlier Riptide releases cannot start against 26.8]
+
+An earlier Riptide fails with `flows table not found in database '…'` while the table is there.
+The cause is in the ClickHouse Java client, whose schema endpoint response is parsed by a TSKV parser that 26.8 makes throw `Non-null columnName and columnType are required`.
+Riptide now reads the column list from `system.columns`, which both server versions answer identically, so that parser is no longer in the startup path.
+Upgrade Riptide; there is no server-side workaround and no newer client to move to.
+
+:::
+
 ## Credentials
 
 `riptide.clickhouse.username` and `riptide.clickhouse.password` are **secret references**,
@@ -81,10 +100,21 @@ what ClickHouse accepts under backtick quoting; rename such a database or use va
   table admin-side).
 
 In both modes, startup verifies the `flows` table is present and carries every column riptide
-inserts (including the `tenant`/`organisation`/`zone`/`system` identity columns) by reading the
-table's own schema — so the check works even for a narrowly-granted writer without server-catalog
-access, and a stale or mis-provisioned schema fails fast rather than surfacing later as an opaque
-insert error.
+inserts (including the `tenant`/`organisation`/`zone`/`system` identity columns) by reading
+`system.columns`, so a stale or mis-provisioned schema fails fast rather than surfacing later as an
+opaque insert error. A narrowly-granted writer still passes the check, and needs no grant on
+`system` to do so: ClickHouse filters `system.columns` by access rather than refusing the query, so
+a user granted nothing but `SELECT, INSERT ON <database>.flows` sees exactly that table's columns
+and nothing else. `columns` is one of the catalog tables the server keeps readable even when
+`select_from_system_db_requires_grant` is turned on, measured on 26.7 and 26.8: with that setting
+on, the same user is refused `system.parts` with `ACCESS_DENIED` and still reads its own table's
+columns.
+
+A table an operator provisioned may carry columns riptide does not insert. `MATERIALIZED` and
+`ALIAS` columns are fine, and the server keeps computing them. A plain `DEFAULT` column that
+riptide has no value for is not: the insert fails with `No serializer found for column '…'`. That
+limit is the ClickHouse client's, not riptide's schema check, and it predates the `system.columns`
+read.
 
 :::warning
 

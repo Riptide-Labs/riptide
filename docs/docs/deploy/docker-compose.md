@@ -77,7 +77,9 @@ This starts, from `ghcr.io/riptide-labs/riptide:latest`:
 | clickhouse | `127.0.0.1:8123`, `127.0.0.1:9000` | flow storage (loopback only, see above) |
 | grafana | [`:3000`](http://localhost:3000) | dashboards, and Explore for ad-hoc queries (ClickHouse datasource provisioned) |
 
-ClickHouse and Grafana are pinned by digest to the versions riptide is tested against, and Dependabot keeps them current.
+ClickHouse and Grafana are pinned by digest, and Dependabot keeps them current.
+The ClickHouse pin is 26.7, the version riptide's integration tests run against; 26.8 is tested too but not pinned here.
+Pointing riptide at a ClickHouse you run yourself instead? See [Server versions](../configuration/clickhouse.md#server-versions) for what has been measured.
 Riptide's own image tracks `:latest`, so `docker compose pull` still moves the collector forward on its own.
 
 Grafana ships provisioned dashboards backed by the `flows` table and the
