@@ -17,7 +17,8 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * The {@code onboard}/{@code offboard} subcommands. Runs with no Spring context: it builds an admin
+ * The {@code onboard}/{@code offboard}/{@code revoke-legacy} subcommands. Runs with no Spring
+ * context: it builds an admin
  * ClickHouse {@link Client} from explicit arguments and resolves secrets through
  * {@link SecretResolvers#defaults()} ({@code plain}/{@code env}/{@code file}), so the running
  * collector never instantiates any provisioning code. Admin credentials come from the invocation,
@@ -33,9 +34,12 @@ public final class ProvisioningCommand {
     private ProvisioningCommand() {
     }
 
+    /** The subcommand that revokes the pre-#649 roles' grants on one database (#734). */
+    static final String REVOKE_LEGACY = "revoke-legacy";
+
     /** True if {@code arg} names a provisioning subcommand. */
     public static boolean matches(final String arg) {
-        return "onboard".equals(arg) || "offboard".equals(arg);
+        return "onboard".equals(arg) || "offboard".equals(arg) || REVOKE_LEGACY.equals(arg);
     }
 
     /**
@@ -76,6 +80,7 @@ public final class ProvisioningCommand {
                 return switch (parsed.subcommand) {
                     case "onboard" -> onboard(parsed, database, provisioner, out, err);
                     case "offboard" -> offboard(parsed, database, provisioner, err);
+                    case REVOKE_LEGACY -> revokeLegacy(database, provisioner, err);
                     default -> {
                         usage(err);
                         yield 2;
@@ -185,6 +190,32 @@ public final class ProvisioningCommand {
         return 0;
     }
 
+    /**
+     * Report what the revoke took back, or that there was nothing to take. The refusals — a legacy
+     * account still serving this database, and either catalog read being refused — arrive as
+     * {@link TenantProvisioner.ProvisioningException} and take the exit-1 path in {@link #run},
+     * because both mean the same thing to the operator: nothing was changed, here is why.
+     */
+    private static int revokeLegacy(final String database, final TenantProvisioner provisioner,
+                                    final PrintStream err) {
+        final var result = provisioner.revokeLegacyGrants(database);
+        if (result.roles().isEmpty()) {
+            err.println("Nothing to revoke: the pre-rename roles hold no INSERT or SELECT reaching"
+                    + " database '" + database + "'. Either this was already run here, or the server"
+                    + " was provisioned after the rename.");
+            return 0;
+        }
+        err.println("Revoked INSERT, SELECT from the pre-rename "
+                + (result.roles().size() == 1 ? "role " : "roles ")
+                + String.join(" and ", result.roles()) + " on " + String.join(", ", result.tables())
+                + ". A pre-rename account can no longer reach database '" + database + "'."
+                + " The roles themselves are left in place: they carry no database in their name, so"
+                + " dropping one would revoke every database still on the old naming. Run this in each"
+                + " database as you finish migrating it; once no database needs them and no user holds"
+                + " them, drop them by hand.");
+        return 0;
+    }
+
     static long parseQuotaBytes(final String value) {
         if (value == null) {
             return DEFAULT_QUOTA_BYTES;
@@ -229,6 +260,8 @@ public final class ProvisioningCommand {
                                    [--create-schema [--ttl-days N]]
                   riptide offboard --admin-url URL [--admin-user U] [--admin-password REF] \\
                                    --tenant T [--database DB] --yes
+                  riptide revoke-legacy --admin-url URL [--admin-user U] [--admin-password REF] \\
+                                   [--database DB]
                 secret REF: plain literal, env://VAR, or file:///path[#key]
                 --database: the database holding the flows table (default: riptide). It also
                             qualifies the generated account names — the stanza names
@@ -237,7 +270,14 @@ public final class ProvisioningCommand {
                 --create-schema: bootstrap the database, flows table, and 1-minute rollup
                                  tables/views if absent (needs CREATE privileges) — also the way
                                  to add the rollups to a pre-rollup deployment; without it, a
-                                 missing schema fails before provisioning""");
+                                 missing schema fails before provisioning
+                revoke-legacy: take back the pre-rename flow_writer/flow_reader roles' INSERT and
+                               SELECT on ONE migrated database, so a legacy account belonging to an
+                               unmigrated tenant elsewhere on the server can no longer reach it. It
+                               refuses while any database-unqualified account is still named by a
+                               row policy there, and refuses rather than guessing when it cannot
+                               read system.grants or system.row_policies. The roles are never
+                               dropped: they are instance-wide.""");
     }
 
     /** Minimal {@code --key value} / {@code --flag} parser. {@code args[0]} is the subcommand. */
@@ -247,7 +287,8 @@ public final class ProvisioningCommand {
 
         static Args parse(final String[] args) {
             if (args.length == 0 || !matches(args[0])) {
-                throw new IllegalArgumentException("expected 'onboard' or 'offboard'");
+                throw new IllegalArgumentException("expected 'onboard', 'offboard' or '"
+                        + REVOKE_LEGACY + "'");
             }
             final var options = new HashMap<String, String>();
             final var flags = new HashSet<String>();

@@ -566,6 +566,252 @@ public class TenantOnboardingIT {
         }
     }
 
+    /**
+     * {@code revoke-legacy} closes a migrated database to the pre-rename roles, and only that one.
+     *
+     * <p>The exposure (#734): #732 qualified every new object by its database but left the
+     * instance-wide {@code flow_writer} holding {@code INSERT} on the databases it already covered.
+     * So {@code mig} can be fully migrated — its tenant re-onboarded, its own legacy accounts gone —
+     * and {@code writer_unmig}, the legacy credential of a tenant living in {@code unmig}, still
+     * writes into it. Asserted as behaviour before the revoke, or the refusal afterwards would prove
+     * nothing about what changed.</p>
+     *
+     * <p>The unmigrated database is the other half and is not symmetry: a command that dropped the
+     * role, or revoked instance-wide, would close {@code mig} exactly as well while taking
+     * {@code unmig}'s ingest down. That is the failure this command's per-database scope exists to
+     * avoid, so it is asserted with a write that must still succeed.</p>
+     */
+    @Test
+    void revokeLegacyClosesAMigratedDatabaseAndLeavesAnUnmigratedOneAlone() throws Exception {
+        try (var admin = adminClient()) {
+            // A database of the tenant that has NOT migrated: it still ingests through the legacy
+            // role, and must keep doing so.
+            admin.execute(FlowsSchema.createDatabase("unmig")).get();
+            admin.execute(FlowsSchema.createFlowsTable("unmig")).get();
+            admin.execute("CREATE ROLE IF NOT EXISTS flow_writer").get();
+            admin.execute("GRANT INSERT, SELECT ON " + FlowsSchema.qualifiedFlows("unmig")
+                    + " TO flow_writer").get();
+            admin.execute("CREATE USER writer_unmig IDENTIFIED WITH sha256_password BY 'legacyW'"
+                    + " SETTINGS SQL_tenant = 'unmig' CONST, SQL_org = 'unmig-eu' CONST").get();
+            admin.execute("GRANT flow_writer TO writer_unmig").get();
+
+            // The database that HAS migrated: onboarded under the current naming, and additionally
+            // carrying the grant the pre-rename recipe left on it.
+            Assertions.assertThat(ProvisioningCommand.run(onboardArgsFor("mig", "mgt", true),
+                    discard(), discard())).isZero();
+            for (final String table : ProvisioningDdl.legacyGrantTables("mig")) {
+                admin.execute("GRANT INSERT, SELECT ON " + table + " TO flow_writer").get();
+            }
+
+            try (var legacy = rawClientOn("mig", "writer_unmig", "legacyW")) {
+                legacy.execute("INSERT INTO " + FlowsSchema.qualifiedFlows("mig")
+                        + " (tenant, organisation, timestamp) VALUES ('unmig', 'unmig-eu', now())").get();
+            }
+
+            final var err = new ByteArrayOutputStream();
+            Assertions.assertThat(ProvisioningCommand.run(
+                    revokeLegacyArgs("mig"), discard(),
+                    new PrintStream(err, true, StandardCharsets.UTF_8))).isZero();
+            Assertions.assertThat(err.toString(StandardCharsets.UTF_8))
+                    .contains("flow_writer")
+                    .contains(FlowsSchema.qualifiedFlows("mig"))
+                    .contains(FlowsSchema.qualifiedRollup("mig", FlowsSchema.rollupTableNames().getFirst()));
+
+            try (var legacy = rawClientOn("mig", "writer_unmig", "legacyW")) {
+                Assertions.assertThatThrownBy(() -> legacy.execute("INSERT INTO "
+                                + FlowsSchema.qualifiedFlows("mig")
+                                + " (tenant, organisation, timestamp) VALUES ('unmig', 'unmig-eu', now())").get())
+                        .as("the legacy account of an unmigrated tenant must no longer reach a"
+                                + " migrated database")
+                        .hasStackTraceContaining(ClickhouseServerErrors.ACCESS_DENIED_MESSAGE_PREFIX)
+                        .hasStackTraceContaining("ACCESS_DENIED");
+                // The rollup targets too: no CHECK constraint covers them, so a direct INSERT there
+                // is stopped by the grant or by nothing.
+                Assertions.assertThatThrownBy(() -> legacy.execute("INSERT INTO "
+                                + FlowsSchema.qualifiedRollup("mig", FlowsSchema.rollupTableNames().getFirst())
+                                + " (tenant, organisation, timestamp) VALUES ('unmig', 'unmig-eu', now())").get())
+                        .as("nor the migrated database's rollup targets")
+                        .hasStackTraceContaining("ACCESS_DENIED");
+            }
+
+            // ...while the database nobody migrated keeps working through the very same role.
+            try (var legacy = rawClientOn("unmig", "writer_unmig", "legacyW")) {
+                legacy.execute("INSERT INTO " + FlowsSchema.qualifiedFlows("unmig")
+                        + " (tenant, organisation, timestamp) VALUES ('unmig', 'unmig-eu', now())").get();
+            }
+
+            // A second run is a no-op and says so, rather than reporting a revocation again.
+            final var second = new ByteArrayOutputStream();
+            Assertions.assertThat(ProvisioningCommand.run(
+                    revokeLegacyArgs("mig"), discard(),
+                    new PrintStream(second, true, StandardCharsets.UTF_8))).isZero();
+            Assertions.assertThat(second.toString(StandardCharsets.UTF_8))
+                    .as("a re-run must not claim to have revoked anything")
+                    .contains("Nothing to revoke")
+                    .doesNotContain("Revoked");
+        }
+    }
+
+    /**
+     * A database a pre-rename account still serves is refused, and nothing is revoked.
+     *
+     * <p>The refusal is the whole safety argument, so it is asserted the only way that can fail: the
+     * legacy reader still reads afterwards. An assertion on the exit code alone would pass against a
+     * command that refused <em>and</em> revoked.</p>
+     *
+     * <p>The fixture is the documented mid-migration state — the legacy account exists, so
+     * {@code onboard} keeps it named on the policies it re-issues, which is exactly the signal the
+     * check reads.</p>
+     */
+    @Test
+    void revokeLegacyRefusesWhileAPreRenameAccountStillServesTheDatabase() throws Exception {
+        final String flows = FlowsSchema.qualifiedFlows("served");
+        try (var admin = adminClient()) {
+            admin.execute(FlowsSchema.createDatabase("served")).get();
+            admin.execute(FlowsSchema.createFlowsTable("served")).get();
+            admin.execute("CREATE ROLE IF NOT EXISTS flow_reader").get();
+            admin.execute("GRANT SELECT ON " + flows + " TO flow_reader").get();
+            admin.execute("CREATE USER bi_srv IDENTIFIED WITH sha256_password BY 'legacyR'").get();
+            admin.execute("GRANT flow_reader TO bi_srv").get();
+            // Two tenants, so "sees only its own" below is a claim that can fail: against one row
+            // the assertion would pass over a policy that had stopped filtering entirely.
+            admin.execute("INSERT INTO " + flows + " (tenant, organisation, timestamp) VALUES"
+                    + " ('srv', 'srv-eu', now()), ('rival', 'rival-eu', now())").get();
+            // onboard names the still-live bi_srv on the policies it re-issues — the state the check
+            // reads. Run after the seed: it installs the CHECK barrier this admin cannot satisfy.
+            Assertions.assertThat(ProvisioningCommand.run(onboardArgsFor("served", "srv", true),
+                    discard(), discard())).isZero();
+
+            final var err = new ByteArrayOutputStream();
+            Assertions.assertThat(ProvisioningCommand.run(
+                    revokeLegacyArgs("served"), discard(),
+                    new PrintStream(err, true, StandardCharsets.UTF_8)))
+                    .as("a database a pre-rename account still serves must not be revoked")
+                    .isEqualTo(1);
+            final String refused = err.toString(StandardCharsets.UTF_8);
+            Assertions.assertThat(refused).contains("Nothing has been revoked");
+            // Anchored on the name with every qualified spelling of it removed first. A bare
+            // contains("bi_srv") passed for the wrong reason: it is a prefix of the migrated
+            // account bi_srv@served, so a check that had kept the QUALIFIED accounts as blockers —
+            // the exact inverse of the rule — still satisfied it, and the refusal was unpinned.
+            Assertions.assertThat(refused
+                            .replace(ProvisioningDdl.readerUser("srv", "served"), "")
+                            .replace(ProvisioningDdl.writerUser("srv", "served"), ""))
+                    .as("the refusal must name the database-unqualified account, not a migrated one")
+                    .contains("bi_srv");
+
+            try (var legacy = rawClientOn("served", "bi_srv", "legacyR")) {
+                Assertions.assertThat(tenantsSeenBy(legacy, "served"))
+                        .as("and it must still work — a refusal that revoked anyway is the failure"
+                                + " this command exists to avoid")
+                        .containsExactly("srv");
+            }
+        }
+    }
+
+    /**
+     * An admin that cannot read either catalog must refuse, naming the grant that answers it.
+     *
+     * <p>Both reads are covered, because they degrade differently and both silently. A blind
+     * {@code system.grants} reads as "nothing to revoke" — a false all-clear over a database the
+     * legacy roles still reach. A blind {@code system.row_policies} reads as "nobody is served here",
+     * which revokes a credential a running collector is still ingesting with. Neither is
+     * distinguishable from the good answer, because ClickHouse <em>refuses</em> both queries rather
+     * than filtering their rows away (measured on the pinned image, and NOT the behaviour of
+     * {@code system.columns}, which #743 measured as exempt from grant checks).</p>
+     *
+     * <p>The admin is built to the runbook's documented minimum deliberately, plus everything the
+     * revoke itself needs, so the run reaches the probe rather than failing earlier for an unrelated
+     * reason. The privileges under test are added one at a time between the two runs.</p>
+     */
+    @Test
+    void revokeLegacyRefusesWhenItCannotReadTheCatalog() throws Exception {
+        try (var admin = adminClient()) {
+            Assertions.assertThat(ProvisioningCommand.run(onboardArgsFor("blind", "bld", true),
+                    discard(), discard())).isZero();
+            admin.execute("CREATE ROLE IF NOT EXISTS flow_writer").get();
+            for (final String table : ProvisioningDdl.legacyGrantTables("blind")) {
+                admin.execute("GRANT INSERT, SELECT ON " + table + " TO flow_writer").get();
+            }
+            admin.execute("CREATE USER writer_blind IDENTIFIED WITH sha256_password BY 'legacyW'"
+                    + " SETTINGS SQL_tenant = 'bld', SQL_org = 'bld-eu'").get();
+            admin.execute("GRANT flow_writer TO writer_blind").get();
+
+            // The runbook's default-mode minimum. GRANT OPTION on the database is what lets it
+            // revoke at all (measured: ROLE ADMIN is not required for that), so the run below fails
+            // on the catalog read and on nothing else.
+            admin.execute("CREATE USER blind_admin IDENTIFIED WITH sha256_password BY 'ba'").get();
+            admin.execute("GRANT INSERT, SELECT ON blind.* TO blind_admin WITH GRANT OPTION").get();
+            for (final String catalog : List.of("databases", "tables", "columns")) {
+                admin.execute("GRANT SELECT ON system." + catalog + " TO blind_admin").get();
+            }
+
+            final var noGrants = new ByteArrayOutputStream();
+            Assertions.assertThat(ProvisioningCommand.run(
+                    revokeLegacyArgs("blind", "blind_admin", "ba"), discard(),
+                    new PrintStream(noGrants, true, StandardCharsets.UTF_8)))
+                    .as("a run that cannot see the grants must not report success")
+                    .isEqualTo(1);
+            Assertions.assertThat(noGrants.toString(StandardCharsets.UTF_8))
+                    .contains("GRANT SELECT ON system.grants")
+                    .contains("nothing has been changed");
+
+            // Now it can see the grants but not who is served: the dangerous half.
+            admin.execute("GRANT SELECT ON system.grants TO blind_admin").get();
+            final var noPolicies = new ByteArrayOutputStream();
+            Assertions.assertThat(ProvisioningCommand.run(
+                    revokeLegacyArgs("blind", "blind_admin", "ba"), discard(),
+                    new PrintStream(noPolicies, true, StandardCharsets.UTF_8)))
+                    .as("a run that cannot see who is still served must not guess")
+                    .isEqualTo(1);
+            Assertions.assertThat(noPolicies.toString(StandardCharsets.UTF_8))
+                    .contains("GRANT SELECT ON system.row_policies")
+                    .contains("nothing has been changed");
+
+            // Neither run revoked anything: the legacy account still reaches the database.
+            try (var legacy = rawClientOn("blind", "writer_blind", "legacyW")) {
+                legacy.execute("INSERT INTO " + FlowsSchema.qualifiedFlows("blind")
+                        + " (tenant, organisation, timestamp) VALUES ('bld', 'bld-eu', now())").get();
+            }
+
+            // With both grants the same admin completes the run, which is what makes the two
+            // refusals above about the catalog reads and not about some other missing privilege.
+            admin.execute("GRANT SELECT ON system.row_policies TO blind_admin").get();
+            Assertions.assertThat(ProvisioningCommand.run(
+                    revokeLegacyArgs("blind", "blind_admin", "ba"), discard(), discard())).isZero();
+            try (var legacy = rawClientOn("blind", "writer_blind", "legacyW")) {
+                Assertions.assertThatThrownBy(() -> legacy.execute("INSERT INTO "
+                                + FlowsSchema.qualifiedFlows("blind")
+                                + " (tenant, organisation, timestamp) VALUES ('bld', 'bld-eu', now())").get())
+                        .hasStackTraceContaining("ACCESS_DENIED");
+            }
+        }
+    }
+
+    /** A database the pre-rename roles never reached has nothing to revoke, and exits 0 saying so. */
+    @Test
+    void revokeLegacyOnADatabaseTheOldRolesNeverReachedSaysThereIsNothingToDo() throws Exception {
+        try (var admin = adminClient()) {
+            admin.execute(FlowsSchema.createDatabase("postrn")).get();
+            admin.execute(FlowsSchema.createFlowsTable("postrn")).get();
+        }
+        final var err = new ByteArrayOutputStream();
+        Assertions.assertThat(ProvisioningCommand.run(
+                revokeLegacyArgs("postrn"), discard(),
+                new PrintStream(err, true, StandardCharsets.UTF_8))).isZero();
+        Assertions.assertThat(err.toString(StandardCharsets.UTF_8)).contains("Nothing to revoke");
+    }
+
+    private static String[] revokeLegacyArgs(final String database) {
+        return new String[] {"revoke-legacy", "--admin-url", endpoint(), "--database", database};
+    }
+
+    private static String[] revokeLegacyArgs(final String database, final String adminUser,
+            final String adminPassword) {
+        return new String[] {"revoke-legacy", "--admin-url", endpoint(), "--database", database,
+                "--admin-user", adminUser, "--admin-password", adminPassword};
+    }
+
     /** The distinct tenant values a credential can actually see in {@code <database>.flows}. */
     private static List<String> tenantsSeenBy(final Client client, final String database) throws Exception {
         final var seen = new ArrayList<String>();

@@ -214,6 +214,176 @@ public final class TenantProvisioner {
     }
 
     /**
+     * Take back the pre-#649 roles' grants on one database (#734), refusing unless that database has
+     * no legacy account left serving it.
+     *
+     * <p>#649 qualified every new object by its database but left the instance-wide
+     * {@code flow_writer}/{@code flow_reader} holding {@code INSERT}/{@code SELECT} on the databases
+     * they already covered — so a fully migrated database is still reachable by a legacy account
+     * belonging to some <em>other</em>, unmigrated tenant. This closes that, one database at a time,
+     * which is what keeps it safe: the revoke names only this database's tables, and the same account
+     * keeps working against an unmigrated one through the same role.
+     *
+     * <p><b>Both catalog reads fail closed</b>, and that is the whole safety argument rather than a
+     * nicety. ClickHouse <em>refuses</em> {@code system.grants} and {@code system.row_policies} to an
+     * admin without the privilege instead of filtering the rows away (measured on the pinned 26.7:
+     * {@code Code: 497 … SELECT for at least one column on system.row_policies}), so a probe that
+     * degraded to "found nothing" would be indistinguishable from a clean answer. On the first read
+     * that reports the exposure as already closed; on the second it revokes a credential a live
+     * collector is still ingesting with. Both refuse instead, and both refuse before any statement
+     * runs.
+     *
+     * @return what was revoked; empty roles mean there was nothing to revoke — never "could not
+     *         tell", because a read that cannot tell throws
+     * @throws ProvisioningException if a legacy account still serves this database (naming it), or if
+     *         either catalog read is refused (naming the exact grant to add)
+     */
+    public RevokeLegacyResult revokeLegacyGrants(final String database) {
+        TenantSpec.requireSafe("database", database);
+        final List<String> holders = legacyRolesGrantedOn(database);
+        if (holders.isEmpty()) {
+            // Deliberately before the row-policy read: with nothing to revoke there is no decision to
+            // make safe, and demanding a second catalog privilege to say "nothing to do" would fail
+            // the one run that is provably harmless.
+            return new RevokeLegacyResult(List.of(), List.of());
+        }
+        final List<String> blockers = legacyAccountsServing(database);
+        if (!blockers.isEmpty()) {
+            throw new ProvisioningException(stillServedFailure(database, blockers), null);
+        }
+        execute(ProvisioningDdl.revokeLegacyGrants(database, holders));
+        return new RevokeLegacyResult(holders, ProvisioningDdl.legacyGrantTables(database));
+    }
+
+    /**
+     * Which pre-#649 roles actually hold an {@code INSERT}/{@code SELECT} that reaches this
+     * database's {@code flows} or a rollup target.
+     *
+     * <p>Answers two questions with one read: whether there is anything to revoke at all (a server
+     * provisioned after the rename, or a second run over an already-revoked database, finds nothing
+     * and is reported as such), and which roles may be named in a {@code REVOKE} — one naming a role
+     * that does not exist fails with {@code UNKNOWN_ROLE}.
+     *
+     * <p>{@code is_partial_revoke = 0} because a row in {@code system.grants} is not always a grant:
+     * revoking per-table against a database-wide grant records the exception as a row of its own
+     * (measured), and counting those would make every re-run claim there is something left to take
+     * back. A grant broader than the tables below — {@code ON <db>.*}, or {@code ON *.*} — is counted,
+     * because a per-table {@code REVOKE} does carve this database's tables out of it (also measured)
+     * and reporting "nothing to revoke" over one would be the false all-clear this command exists to
+     * prevent.
+     *
+     * @throws ProvisioningException if the catalog cannot be read; the message names the exact grant
+     */
+    private List<String> legacyRolesGrantedOn(final String database) {
+        final Set<String> held = new LinkedHashSet<>();
+        final String roles = ProvisioningDdl.legacyRoles().stream()
+                .map(ProvisioningDdl::literal).collect(Collectors.joining(", "));
+        try (var grants = this.admin.queryRecords(
+                "SELECT DISTINCT role_name AS r FROM system.grants"
+                        + " WHERE role_name IN (" + roles + ")"
+                        + " AND is_partial_revoke = 0"
+                        + " AND access_type IN ('INSERT', 'SELECT')"
+                        + " AND (database IS NULL OR (database = " + ProvisioningDdl.literal(database)
+                        + " AND (table IS NULL OR table IN (" + tableNames() + "))))").get()) {
+            grants.forEach(record -> held.add(record.getString("r")));
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ProvisioningException(grantProbeFailure(database, "interrupted"), e);
+        } catch (final Exception e) {
+            throw new ProvisioningException(grantProbeFailure(database, describe(e)), e);
+        }
+        // Filtered through our own list rather than returned in the server's order, so no string read
+        // from the catalog reaches a REVOKE and the writer is always named first.
+        return ProvisioningDdl.legacyRoles().stream().filter(held::contains).toList();
+    }
+
+    /**
+     * The database-unqualified accounts still named by a row policy on this database's tables — the
+     * accounts that would lose access the moment the legacy roles are revoked here.
+     *
+     * <p>This is the question that can actually be answered per database. "Does any legacy user exist
+     * on this server" cannot: the legacy names carry no database, so a legacy account of a tenant
+     * living entirely in another database would block a revoke that has nothing to do with it — and
+     * that account is precisely the exposure this command closes. {@code onboard} keeps every live
+     * legacy account named on the policies of the database it is run against, and stops naming one
+     * the operator has retired, so an unqualified name here means that account is still depended on
+     * <em>here</em>.
+     *
+     * <p>Any name without {@code @} counts, not just {@code writer_*}/{@code bi_*}: the qualified
+     * naming is the only thing that makes an account this-database-only, so anything else is either a
+     * pre-rename account or a hand-added grantee, and both are reasons to stop and let a human look.
+     *
+     * @throws ProvisioningException if the catalog cannot be read; the message names the exact grant
+     */
+    private List<String> legacyAccountsServing(final String database) {
+        final Set<String> named = new LinkedHashSet<>();
+        try (var policies = this.admin.queryRecords(
+                "SELECT DISTINCT arrayJoin(apply_to_list) AS n FROM system.row_policies"
+                        + " WHERE database = " + ProvisioningDdl.literal(database)
+                        + " AND table IN (" + tableNames() + ") ORDER BY n").get()) {
+            policies.forEach(record -> named.add(record.getString("n")));
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ProvisioningException(policyProbeFailure(database, "interrupted"), e);
+        } catch (final Exception e) {
+            throw new ProvisioningException(policyProbeFailure(database, describe(e)), e);
+        }
+        return named.stream().filter(name -> !name.contains("@")).toList();
+    }
+
+    /** The tables both probes filter on, as a SQL literal list. */
+    private static String tableNames() {
+        return ProvisioningDdl.legacyGrantTableNames().stream()
+                .map(ProvisioningDdl::literal).collect(Collectors.joining(", "));
+    }
+
+    private static String grantProbeFailure(final String database, final String cause) {
+        return "could not read which grants the pre-rename roles hold on database '" + database
+                + "': " + cause + ". Refusing to continue — nothing has been changed. ClickHouse"
+                + " refuses this query outright rather than returning no rows, so continuing would"
+                + " report 'nothing to revoke' on a database the pre-rename roles still reach."
+                + " Grant the admin the privilege that answers the question and re-run:"
+                + " GRANT SELECT ON system.grants TO <your --admin-user>";
+    }
+
+    private static String policyProbeFailure(final String database, final String cause) {
+        return "could not check whether a pre-rename account still serves database '" + database
+                + "': " + cause + ". Refusing to continue — nothing has been changed. The check reads"
+                + " the row policies on that database's flows and rollup tables, and ClickHouse"
+                + " refuses that query rather than filtering it — so 'no policy names a pre-rename"
+                + " account' and 'I could not see the policies' are indistinguishable, and revoking on"
+                + " the second takes a running collector's ingest away. Grant the admin the privilege"
+                + " that answers the question and re-run:"
+                + " GRANT SELECT ON system.row_policies TO <your --admin-user>";
+    }
+
+    private static String stillServedFailure(final String database, final List<String> blockers) {
+        return "refusing to revoke the pre-rename roles' grants on database '" + database + "':"
+                + " its row policies still name the database-unqualified account"
+                + (blockers.size() == 1 ? " " : "s ") + String.join(", ", blockers)
+                + ", so that database is not migrated yet and revoking now would take away access"
+                + " still in use. Nothing has been revoked. Finish the migration for the tenants"
+                + " behind those accounts — re-run onboard here, move their collector and datasource"
+                + " to the '@" + database + "' account, DROP the old account, then re-run onboard once"
+                + " more so the policies stop naming it — and run this again.";
+    }
+
+    /**
+     * What a revoke took back.
+     *
+     * @param roles  the pre-#649 roles that held a grant on this database and were revoked, writer
+     *               first. Empty means the probe looked and found nothing to revoke; it never means
+     *               "could not tell", because a probe that cannot tell throws.
+     * @param tables the qualified tables the revoke named, empty when {@code roles} is
+     */
+    public record RevokeLegacyResult(List<String> roles, List<String> tables) {
+        public RevokeLegacyResult {
+            roles = List.copyOf(roles);
+            tables = List.copyOf(tables);
+        }
+    }
+
+    /**
      * The rollups {@code onboard} may repair in place, and a report of any it must not.
      *
      * <p>Uses {@link FlowsSchema#planRollupRepair}, the same decision the collector makes, so the
