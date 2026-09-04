@@ -65,6 +65,16 @@ public abstract class Threshold<T extends Comparable<T>> {
      * Bundles the information how a rule matches a threshold. More than one flag may be {@code true}.
      * Package-private (not private) because the protected {@code match} implementations in the
      * nested subclasses reference it in their signatures.
+     * <p>
+     * A {@code Match} is allocated per rule per candidate threshold at every node, which makes it look
+     * like the obvious next thing to optimize after #746: the three construction sites below all pass
+     * {@code na = false}, so there are only eight distinct values and they could be interned in a table
+     * the way {@link Match#NA} already is. That was built and measured, and it did not pay. Best of 3,
+     * JIT warmed, no coverage agent, fifteen interleaved pairs on one machine: allocating won 12 of the
+     * 15, median 1023ms against 1049ms interned. The tree was identical either way. Why the shared table
+     * is no faster was not established — disabling escape analysis slowed both variants by a similar
+     * amount, so it does not show the allocation being eliminated — but the outcome is measured and the
+     * work is not worth redoing without a different idea about the mechanism.
      */
     static final class Match {
         final boolean lt, eq, gt, na;
