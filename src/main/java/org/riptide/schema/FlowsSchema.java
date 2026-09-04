@@ -43,6 +43,11 @@ import java.util.stream.Stream;
  * onboard} does not create it (in provisioned mode the reader role is not granted {@code SELECT} on
  * it, so it would be inert).
  *
+ * <p>Alongside the raw table sits the <strong>dead-letter table</strong> (#548), which keeps the rows
+ * a refused insert would otherwise have dropped. It is not a rollup and nothing aggregates into it,
+ * so it is absent from {@link #rollupTableNames()} and every site that must create, grant or
+ * row-policy it names it explicitly.
+ *
  * <p>Alongside the raw table sit the <strong>1-minute rollups</strong>: {@code SummingMergeTree}
  * targets fed by materialized views on {@code flows}. They are emitted as ordinary tables plus
  * {@code …_mv} views so the provisioning path can create, grant, and row-policy them exactly like
@@ -67,6 +72,17 @@ public final class FlowsSchema {
      */
     public static final String FLOWS = "flows";
 
+    /**
+     * The unqualified name of the dead-letter table: the rows an insert into {@link #FLOWS} was
+     * refused, kept instead of dropped (#548).
+     *
+     * <p>Public for the reason {@link #FLOWS} is — the provisioning catalogs filter
+     * {@code system.*} by the bare name, and a second place spelling the literal is the drift #737
+     * was filed for. It is deliberately <em>not</em> in {@link #rollupTableNames()}: this is not a
+     * rollup, nothing aggregates into it, and every site that must touch it names it explicitly.</p>
+     */
+    public static final String DEAD_LETTER = "flows_dead_letter";
+
     /** Same charset as the provisioning boundary ({@code TenantSpec}): no quotes, backticks, spaces. */
     private static final Pattern SAFE_NAME = Pattern.compile("[A-Za-z0-9_-]+");
 
@@ -90,6 +106,25 @@ public final class FlowsSchema {
                 .replace(TTL_DAYS_TOKEN, Integer.toString(ttlDays));
     }
 
+    /** As {@link #createDeadLetterTable(String, int)} with the collector's default retention. */
+    public static String createDeadLetterTable(final String database) {
+        return createDeadLetterTable(database, DEFAULT_TTL_DAYS);
+    }
+
+    /**
+     * {@code CREATE TABLE IF NOT EXISTS `<db>`.flows_dead_letter (…)} — the rows a refused insert
+     * would otherwise have dropped (#548).
+     *
+     * <p>Same retention as {@link #createFlowsTable} by default, and for the same reason: it holds
+     * raw flow data, so keeping it longer than the rows it was cut from would be a retention policy
+     * nobody asked for. {@code onboard --ttl-days} passes the operator's value through here too.</p>
+     */
+    public static String createDeadLetterTable(final String database, final int ttlDays) {
+        return DEAD_LETTER_TABLE
+                .replace(DEAD_LETTER_TOKEN, qualifiedDeadLetter(database))
+                .replace(TTL_DAYS_TOKEN, Integer.toString(ttlDays));
+    }
+
     /** {@code CREATE OR REPLACE VIEW `<db>`.samples AS … FROM `<db>`.flows} — collector-only. */
     public static String createSamplesView(final String database) {
         return SAMPLES_VIEW
@@ -109,6 +144,11 @@ public final class FlowsSchema {
     /** The qualified {@code `<db>`.flows} name. */
     public static String qualifiedFlows(final String database) {
         return qualifiedTable(database, FLOWS);
+    }
+
+    /** The qualified {@code `<db>`.flows_dead_letter} name. */
+    public static String qualifiedDeadLetter(final String database) {
+        return qualifiedTable(database, DEAD_LETTER);
     }
 
     /** The qualified {@code `<db>`.<rollup>} target-table name. */
@@ -1248,7 +1288,56 @@ public final class FlowsSchema {
     // String.format) avoids treating the multi-line DDL as a format string.
     private static final String FLOWS_TOKEN = "@@flows@@";
     private static final String SAMPLES_TOKEN = "@@samples@@";
+    private static final String DEAD_LETTER_TOKEN = "@@deadLetter@@";
     private static final String TTL_DAYS_TOKEN = "@@ttlDays@@";
+
+    /**
+     * The dead-letter table (#548): what a batch {@code flows} refused carried, one row per flow.
+     *
+     * <p><b>It deliberately mirrors none of the {@code flows} columns.</b> Its entire job is to
+     * accept rows {@code flows} would not, so re-declaring that table's types — and, more to the
+     * point, letting a provisioned deployment's {@code tenant_pinned}/{@code org_pinned}
+     * {@code CHECK}s be re-applied to it — would refuse the same rows a second time. Four columns
+     * instead: the identity the row policy filters on, when the insert was refused, what the server
+     * said, and the flow itself as JSON ({@code DeadLetterPayload}, which owns that format and is
+     * the only thing that reads it back).</p>
+     *
+     * <p>{@code tenant} is a real column rather than something extracted from the payload because a
+     * row policy filters rows by a predicate over columns: {@code USING tenant = '…'} is what makes
+     * this table isolated the way {@code flows} is, and #649, #732 and #734 each shipped a fix for
+     * the defect class a table without that policy belongs to.</p>
+     *
+     * <p>One row per flow, not per batch: {@code BatchingFlowRepository} drains one queue across
+     * every exporter, so a batch can span tenants and a per-batch row could carry no single correct
+     * {@code tenant} — which is to say it could not be policed at all.</p>
+     */
+    @Language("ClickHouse")
+    private static final String DEAD_LETTER_TABLE = """
+        CREATE TABLE IF NOT EXISTS @@deadLetter@@ (
+            -- The refused flow's own tenant, so this table is row-policied exactly like flows.
+            tenant String,
+
+            -- When the flusher gave up on the batch this row came from. Shared by every row of one
+            -- batch, which is what lets an operator select a batch back out again.
+            failedAt DateTime64(3, 'UTC'),
+
+            -- What the server (or the client) said, verbatim. Not LowCardinality: a server error
+            -- carries the offending row index and values, so it is high-cardinality by nature.
+            error String,
+
+            -- The whole flow as JSON. Written and read by DeadLetterPayload; nothing here parses it,
+            -- and a dead letter is replayed by an operator deliberately, never by riptide.
+            payload String
+        ) ENGINE = MergeTree()
+        -- Declared, not derived, for the reason spelled out at rollupTable(): a later
+        -- MODIFY ORDER BY appends to the sorting key alone, and a derived primary key would leave
+        -- upgraded and fresh installs disagreeing (#470, #571).
+        PRIMARY KEY (tenant, failedAt)
+        ORDER BY (tenant, failedAt)
+        PARTITION BY toYYYYMMDD(failedAt)
+        TTL toDateTime(failedAt) + INTERVAL @@ttlDays@@ DAY
+        SETTINGS index_granularity = 8192;
+    """;
 
     @Language("ClickHouse")
     private static final String FLOWS_TABLE = """

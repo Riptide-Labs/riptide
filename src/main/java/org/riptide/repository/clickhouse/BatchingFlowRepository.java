@@ -39,7 +39,12 @@ import java.util.concurrent.atomic.AtomicLong;
  * blocking would backpressure the parser executors into the Netty socket where loss is invisible.
  * Insert failures likewise surface as flusher error logs and the {@code failedRows} counter, not
  * as exceptions to the caller — and for a refused insert that counter charges the whole batch, so
- * there it is an upper bound on the loss rather than a tally of it (see {@code flush}).
+ * there it is an upper bound on the loss rather than a tally of it (see {@code flush}). A refused
+ * batch is additionally <em>dead-lettered</em> (#548): its rows are written to
+ * {@code flows_dead_letter} so an operator can inspect and replay them deliberately, counted by
+ * {@code deadLetteredRows}, and a dead-letter write that itself fails degrades to exactly the
+ * behaviour above under {@code deadLetterFailedRows}. Riptide never replays a dead letter into
+ * {@code flows} itself — see {@code FlowRepository#deadLetter} for why.
  * {@code stop()} rejects new flows and
  * drains everything already accepted within the shutdown grace period, preserving at-least-once
  * for accepted flows. A stopped instance cannot be restarted: {@code start()} after
@@ -85,6 +90,22 @@ public class BatchingFlowRepository implements FlowRepository {
     private final String queueDepthGauge;
     private final Counter droppedRows;
     private final Counter failedRows;
+
+    /**
+     * Rows a refused insert would have dropped and that were kept in the dead-letter table instead
+     * (#548). A subset of {@code failedRows}, never a replacement for it: those rows are still not
+     * in {@code flows}.
+     */
+    private final Counter deadLetteredRows;
+
+    /**
+     * Rows that could not even be dead-lettered — the un-migrated deployment whose dead-letter table
+     * does not exist, or a server that has gone away entirely. Counted apart from
+     * {@link #deadLetteredRows} so the difference between "kept" and "gone" is visible on a
+     * dashboard rather than only in the log.
+     */
+    private final Counter deadLetterFailedRows;
+
     private final Histogram batchSize;
     private final Timer flushTimer;
 
@@ -103,6 +124,10 @@ public class BatchingFlowRepository implements FlowRepository {
 
         this.droppedRows = metricRegistry.counter(MetricRegistry.name("persister", "batch", "droppedRows"));
         this.failedRows = metricRegistry.counter(MetricRegistry.name("persister", "batch", "failedRows"));
+        this.deadLetteredRows =
+                metricRegistry.counter(MetricRegistry.name("persister", "batch", "deadLetteredRows"));
+        this.deadLetterFailedRows =
+                metricRegistry.counter(MetricRegistry.name("persister", "batch", "deadLetterFailedRows"));
         this.batchSize = metricRegistry.histogram(MetricRegistry.name("persister", "batch", "batchSize"));
         this.flushTimer = metricRegistry.timer(MetricRegistry.name("persister", "batch", "flush"));
 
@@ -201,6 +226,12 @@ public class BatchingFlowRepository implements FlowRepository {
                         // flushing. These rows already left the queue, so stop()'s leftover
                         // sweep cannot see them: count them here or they vanish from every
                         // counter.
+                        //
+                        // Not dead-lettered, deliberately (#548). The dead-letter write goes to the
+                        // same server over the same client and on the same already-interrupted
+                        // thread, so it would fail immediately; and these rows were never offered to
+                        // ClickHouse, so nothing refused them — there is no refusal to preserve, only
+                        // a shutdown that ran out of time.
                         Thread.currentThread().interrupt();
                         if (!batch.isEmpty()) {
                             this.failedRows.inc(batch.size());
@@ -221,6 +252,13 @@ public class BatchingFlowRepository implements FlowRepository {
                 // narrower catch with an insert genuinely in flight, so rows may be committed —
                 // while an Error out of the drain or the histogram above never reached the server
                 // at all. The message says "may" for that reason rather than claiming either.
+                //
+                // And not dead-lettered either (#548), for the same uncertainty one step further
+                // out: this arm is reached by an Error or by anything unforeseen, so it cannot say
+                // that `batch` is a complete batch a server refused — it may be a half-drained list,
+                // or the failure may be the metrics registry rather than the insert. Calling the
+                // delegate again from the arm that exists because the last call went wrong in an
+                // unclassifiable way is what would turn one bad batch into a wedged flusher.
                 this.failedRows.inc(batch.size());
                 log.error("Unexpected error in the batch flusher, continuing. All {} rows are"
                         + " counted as failed; if the failure came from the insert, some may"
@@ -245,6 +283,11 @@ public class BatchingFlowRepository implements FlowRepository {
      * that no attempt was made: the client's own retries are already spent by the time an
      * exception reaches here. The message is pinned by
      * {@code BatchingFlowRepositoryTest#poisonBatchLogRefusesToClaimTheBatchWasDropped}.
+     *
+     * <p>The rows are then handed to {@link #deadLetterOrCount}, which keeps them for an operator (#548).
+     * That is a second, independent statement and not a correction of the one above: the batch still
+     * did not reach {@code flows}, {@code failedRows} still charges it in full, and whether the
+     * server committed a prefix is exactly as unknown as before.
      */
     private void flush(final List<EnrichedFlow> batch) {
         this.batchSize.update(batch.size());
@@ -254,6 +297,49 @@ public class BatchingFlowRepository implements FlowRepository {
             this.failedRows.inc(batch.size());
             log.error("Failed to persist a batch of {} flows, flusher does not retry, some may be committed",
                     batch.size(), e);
+            deadLetterOrCount(batch, e);
+        }
+    }
+
+    /**
+     * Keep the rows a refused insert would have dropped, and never throw doing it (#548).
+     *
+     * <p>{@code failedRows} is charged either way, by the caller, before this runs: it counts what
+     * did not reach {@code flows}, and a dead-lettered row did not. {@link #deadLetteredRows} is the
+     * second, separate statement — how many of those were kept — and
+     * {@link #deadLetterFailedRows} is how many were not. An operator alerting on loss reads
+     * {@code failedRows - deadLetteredRows}, and the difference is only visible because the two are
+     * counted apart.
+     *
+     * <p><b>The fallback is exactly today's behaviour</b>: counted, logged once with the cause, and
+     * the flusher carries on. That is what makes an un-migrated deployment — one whose dead-letter
+     * table does not exist yet — degraded rather than broken.
+     *
+     * <p>{@code Throwable} on purpose, for the reason the flush loop catches one: this runs inside
+     * the recovery path of a batch that has already failed, and a second failure here must not
+     * escape into a loop whose only other option is to charge the same rows again. An interrupt is
+     * re-flagged rather than swallowed, so a shutdown drain still converges.
+     *
+     * <p>Nothing here retries, re-inserts, or splits the batch — see
+     * {@code FlowRepository#deadLetter} for why re-inserting into {@code flows} is the one thing
+     * this design may never do.
+     */
+    private void deadLetterOrCount(final List<EnrichedFlow> batch, final Throwable cause) {
+        try {
+            this.delegate.deadLetter(batch, cause);
+            this.deadLetteredRows.inc(batch.size());
+            log.warn("Kept all {} flows of the refused batch in the dead-letter table for an operator"
+                    + " to inspect; riptide never replays them into flows by itself", batch.size());
+        } catch (final Throwable e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            this.deadLetterFailedRows.inc(batch.size());
+            // Deliberately says only what it knows. The rows did not reach the dead-letter table;
+            // whether the server kept part of the original batch is exactly as unknowable as it was
+            // one line above, and this message must not resolve it either way.
+            log.error("Could not keep the {} flows of a refused batch in the dead-letter table;"
+                    + " they are counted as failed and nothing else was written", batch.size(), e);
         }
     }
 
@@ -335,6 +421,10 @@ public class BatchingFlowRepository implements FlowRepository {
                 return;
             }
             if (graceExpired) {
+                // Not dead-lettered (#548): the grace budget is spent precisely because the delegate
+                // is not answering, so a second blocking write to the same server is the hang this
+                // branch exists to refuse. These rows were never offered either, so — as in the
+                // interrupt arm above — there is no refusal to keep.
                 this.failedRows.inc(chunk.size());
                 log.error("Dropping {} leftover flows: the shutdown grace period is exhausted",
                         chunk.size());

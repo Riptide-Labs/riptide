@@ -195,8 +195,9 @@ class ProvisioningDdlTest {
     @Test
     void onboardTenantScopesUsersPolicyWithEscapedPassword() {
         final List<String> sql = ProvisioningDdl.onboardTenant("riptide", "acme", "acme-eu", "p'w", "r'w", List.of());
-        // The six user/grant statements, the flows policy, then one policy per rollup.
-        assertThat(sql).hasSize(7 + FlowsSchema.rollupTableNames().size());
+        // The six user/grant statements, the flows policy, the dead-letter policy, then one policy
+        // per rollup.
+        assertThat(sql).hasSize(8 + FlowsSchema.rollupTableNames().size());
         assertThat(sql.get(0))
                 .contains("CREATE USER IF NOT EXISTS `writer_acme@riptide`")
                 .contains("IDENTIFIED WITH sha256_password BY 'p\\'w'")
@@ -212,6 +213,12 @@ class ProvisioningDdlTest {
         assertThat(sql.get(6))
                 .contains("CREATE ROW POLICY OR REPLACE `acme_iso` ON `riptide`.flows")
                 .contains("USING tenant = 'acme' TO `bi_acme@riptide`");
+        // The dead-letter table is policed by the same policy, immediately after flows and before
+        // the rollups (#548). It holds raw flow data, so a copy of it without the policy is the
+        // cross-tenant read leak #649, #732 and #734 each shipped a fix for.
+        assertThat(sql.get(7))
+                .isEqualTo("CREATE ROW POLICY OR REPLACE `acme_iso` ON `riptide`.flows_dead_letter"
+                        + " FOR SELECT USING tenant = 'acme' TO `bi_acme@riptide`");
     }
 
     @Test
@@ -432,11 +439,86 @@ class ProvisioningDdlTest {
                 .contains("GRANT SELECT ON `riptide`.flows TO `flow_writer@riptide`");
     }
 
+    /**
+     * The dead-letter table gets the writer's INSERT, the reader's SELECT, and no CHECK (#548).
+     *
+     * <p>All three are load-bearing. Without the INSERT the flusher cannot keep a refused batch at
+     * all; without the reader's SELECT an operator cannot inspect one; and a {@code CHECK} would
+     * refuse the very rows the table exists to accept — the commonest reason a batch is refused
+     * <em>is</em> the {@code tenant_pinned} barrier firing, so re-applying it here would turn the
+     * whole feature into a slower drop.</p>
+     */
+    @Test
+    void theDeadLetterTableIsGrantedBothWaysAndConstrainedNeither() {
+        final List<String> sql = ProvisioningDdl.ensureShared("riptide", 1L);
+
+        assertThat(sql).contains(
+                "GRANT INSERT ON `riptide`.flows_dead_letter TO `flow_writer@riptide`",
+                "GRANT SELECT ON `riptide`.flows_dead_letter TO `flow_reader@riptide`");
+        assertThat(sql)
+                .as("the writer needs no read path there, and every one withheld is one the row"
+                        + " policy does not have to cover")
+                .noneMatch(s -> s.contains("GRANT SELECT ON `riptide`.flows_dead_letter TO `flow_writer"));
+        assertThat(sql)
+                .as("a CHECK on the dead-letter table would refuse the rows it exists to keep")
+                .noneMatch(s -> s.contains("CONSTRAINT") && s.contains("flows_dead_letter"));
+    }
+
+    /** The bootstrap emits the table and nothing that would constrain it. */
+    @Test
+    void bootstrapDeadLetterCreatesOneQualifiedIdempotentTableWithTheGivenTtl() {
+        final List<String> sql = ProvisioningDdl.bootstrapDeadLetter("riptide", 7);
+
+        assertThat(sql).hasSize(1);
+        assertThat(sql.getFirst())
+                .contains("CREATE TABLE IF NOT EXISTS `riptide`.flows_dead_letter")
+                .contains("tenant String")
+                .contains("INTERVAL 7 DAY")
+                .doesNotContain("CONSTRAINT");
+    }
+
+    /**
+     * Offboarding drops the dead-letter policy too.
+     *
+     * <p>Of the three policy kinds this is the one that most needs dropping: the dead-letter table
+     * holds raw flow rows, and a policy left behind would go on filtering them for a tenant that no
+     * longer exists.</p>
+     */
+    @Test
+    void offboardDropsThePolicyFromTheDeadLetterTable() {
+        assertThat(ProvisioningDdl.offboardTenant("riptide", "acme"))
+                .contains("DROP ROW POLICY IF EXISTS `acme_iso` ON `riptide`.flows_dead_letter");
+    }
+
+    /**
+     * The dead-letter table is in the revoke mirror, and this pins the decision rather than the
+     * count.
+     *
+     * <p>The pre-#649 roles predate the table, so nothing riptide wrote could have granted them
+     * anything on it — the reason it looks like it does not belong. It does: an operator who
+     * hand-grants {@code SELECT} on it to the instance-wide {@code flow_reader} reopens exactly the
+     * cross-database read #734 closed, and {@code revoke-legacy} would otherwise report the database
+     * shut while that path stayed open. {@code revokeLegacyGrantsNamesEveryTableEnsureSharedGrantsOn}
+     * above enforces the same thing from the other direction; this one says why in one place a
+     * reader will find.</p>
+     */
+    @Test
+    void theRevokeMirrorNamesTheDeadLetterTable() {
+        assertThat(ProvisioningDdl.legacyGrantTableNames()).contains("flows_dead_letter");
+        assertThat(ProvisioningDdl.revokeLegacyGrants("riptide", List.of("flow_reader")))
+                .contains("REVOKE INSERT, SELECT, SHOW TABLES ON `riptide`.flows_dead_letter"
+                        + " FROM `flow_reader`");
+    }
+
     @Test
     void rowPoliciesCoverFlowsAndEveryRollupWithOneSharedPredicate() {
         final List<String> sql = ProvisioningDdl.onboardTenant("riptide", "acme", "org1", "w", "r", List.of());
         final List<String> policies = sql.stream().filter(s -> s.contains("ROW POLICY")).toList();
-        assertThat(policies).hasSize(1 + FlowsSchema.rollupTableNames().size());
+        // flows, the dead-letter table (#548), and one per rollup.
+        assertThat(policies).hasSize(2 + FlowsSchema.rollupTableNames().size());
+        assertThat(policies)
+                .as("the dead-letter table holds raw flow data, so it is policed like flows")
+                .anyMatch(policy -> policy.contains("ON `riptide`.flows_dead_letter "));
         assertThat(policies).allSatisfy(policy -> assertThat(policy)
                 .startsWith("CREATE ROW POLICY OR REPLACE `acme_iso` ON ")
                 .contains("FOR SELECT USING tenant = 'acme'"));

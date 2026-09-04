@@ -22,7 +22,8 @@ import java.util.Set;
  * grants and the reader hardening, and one quota keyed by user — so {@link #onboardTenant} reduces
  * to the scoped users, two role grants, and the row policies. The {@code flows} schema itself is a
  * separate, opt-in recipe ({@link #bootstrapSchema}, {@code onboard --create-schema}), as are the
- * 1-minute rollups ({@link #bootstrapRollups}). All statements are idempotent
+ * 1-minute rollups ({@link #bootstrapRollups}) and the dead-letter table
+ * ({@link #bootstrapDeadLetter}). All statements are idempotent
  * ({@code IF NOT EXISTS} / {@code OR REPLACE} / {@code ALTER ROLE SETTINGS}), verified on the
  * pinned image — ClickHouse 26.7 ({@code .github/e2e-images/clickhouse.Dockerfile}), the version
  * every claim in this file was measured against.
@@ -38,6 +39,13 @@ import java.util.Set;
  * {@link FlowsSchema#rollupTableNames()}, so a rollup added to the schema is picked up here without
  * a second edit — the failure mode being guarded against is a new rollup silently missing its
  * tenant isolation.
+ *
+ * <p>The dead-letter table (#548) is provisioned the same way and named explicitly at each site,
+ * because it is not a rollup: nothing aggregates into it and it has no {@code _mv}. It carries the
+ * writer's {@code INSERT}, the reader's {@code SELECT}, and the tenant row policy — it holds raw
+ * flow data, so a copy without the policy would be the cross-tenant read leak this file's history is
+ * mostly about. What it does <em>not</em> carry is the {@code CHECK} barrier; see
+ * {@link #bootstrapDeadLetter} for why that is the design and what follows from it.
  *
  * <p>Tenant/org names are validated ({@link TenantSpec}) to a safe charset; generated identifiers
  * are backtick-quoted and string literals are escaped, so neither can break out of the statement.
@@ -59,6 +67,29 @@ public final class ProvisioningDdl {
         return List.of(
                 FlowsSchema.createDatabase(database),
                 FlowsSchema.createFlowsTable(database, ttlDays));
+    }
+
+    /**
+     * The opt-in dead-letter bootstrap: the one table that keeps the rows a refused insert would
+     * have dropped (#548).
+     *
+     * <p>Separate from {@link #bootstrapSchema} for the reason {@link #bootstrapRollups} is separate:
+     * that recipe runs only when {@code flows} itself is absent, so a database provisioned before
+     * this table existed would never receive it. Its caller gates it on the table's own absence, the
+     * way the rollups are gated on theirs.</p>
+     *
+     * <p><b>No {@code ALTER TABLE … ADD CONSTRAINT} follows it, and none ever may.</b>
+     * {@link #ensureShared} pins {@code tenant}/{@code organisation} on {@code flows} against the
+     * writer's {@code CONST} settings, and the commonest reason a batch is refused is that barrier
+     * firing — so re-applying it here would refuse the very rows this table exists to keep. That is
+     * a consequence worth stating rather than an oversight: a writer can therefore file a dead letter
+     * carrying a tenant that is not its own, which is exactly what a cross-tenant write attempt
+     * produces, and that row is then visible to <em>that</em> tenant's reader. Keeping the evidence
+     * of a refused write is the point; the barrier on {@code flows} is untouched and still refuses
+     * the write itself.</p>
+     */
+    public static List<String> bootstrapDeadLetter(final String database, final int ttlDays) {
+        return List.of(FlowsSchema.createDeadLetterTable(database, ttlDays));
     }
 
     /**
@@ -300,6 +331,18 @@ public final class ProvisioningDdl {
         // The rollups get the same treatment as flows: the writer inserts (via the materialized
         // views), the reader selects. Driven off rollupTableNames() so a new rollup cannot be
         // added to the schema without inheriting its grants.
+        // The dead-letter table (#548). The writer INSERTs into it — that is what keeps a refused
+        // batch — and the reader SELECTs, because inspecting a dead letter is the operator's whole
+        // reason for having one. The writer is given no SELECT, for the same reason it has none on a
+        // rollup target: it has no use for one, and every read path withheld is one the row policy
+        // does not have to cover.
+        //
+        // Named explicitly rather than swept up by rollupTableNames(): this is not a rollup, nothing
+        // aggregates into it, and putting it in that list to save two lines would hand it a
+        // materialized view's worth of machinery — a _mv SHOW TABLES grant, a shape check, a repair
+        // planner — for a table none of it applies to.
+        statements.add("GRANT INSERT ON " + FlowsSchema.qualifiedDeadLetter(database) + " TO " + writerRole);
+        statements.add("GRANT SELECT ON " + FlowsSchema.qualifiedDeadLetter(database) + " TO " + readerRole);
         for (final String rollup : FlowsSchema.rollupTableNames()) {
             final String table = FlowsSchema.qualifiedRollup(database, rollup);
             statements.add("GRANT INSERT ON " + table + " TO " + writerRole);
@@ -388,16 +431,50 @@ public final class ProvisioningDdl {
     }
 
     /**
-     * The table set unqualified, and the one place it is enumerated: {@code flows}, every rollup
-     * target, and every rollup view. {@link #legacyGrantTables} qualifies exactly this list, so the
-     * statements and the {@code system.grants}/{@code system.row_policies} filters cannot disagree
-     * about which tables are in scope — those catalogs hold the bare name in their {@code table}
-     * column, so a qualified, backtick-quoted name would match nothing there and the probe would read
-     * as "found nothing".
+     * The table set unqualified, and the one place it is enumerated: {@code flows}, the dead-letter
+     * table, every rollup target, and every rollup view. {@link #legacyGrantTables} qualifies exactly
+     * this list, so the statements and the {@code system.grants}/{@code system.row_policies} filters
+     * cannot disagree about which tables are in scope — those catalogs hold the bare name in their
+     * {@code table} column, so a qualified, backtick-quoted name would match nothing there and the
+     * probe would read as "found nothing".
+     *
+     * <p><b>{@code flows_dead_letter} IS in this list, deliberately (#548)</b>, and the case against
+     * it is worth answering because it is nearly right: the pre-#649 roles predate the table, so
+     * nothing riptide ever wrote could have granted them anything on it. Three reasons it belongs
+     * anyway.
+     *
+     * <ul>
+     *   <li><b>This list defines the mirror, and the mirror is defined against
+     *       {@link #ensureShared}, not against history.</b> {@code ensureShared} now grants
+     *       {@code INSERT}/{@code SELECT} on this table, and {@code revoke-legacy}'s whole claim is
+     *       that it names every table {@code onboard} grants on. Leaving it out would make the claim
+     *       false the day it was written — which is precisely the property the #734 review turned
+     *       on, and {@code ProvisioningDdlTest.revokeLegacyGrantsNamesEveryTableEnsureSharedGrantsOn}
+     *       derives the expected set from {@code ensureShared} rather than from a list, so it fails
+     *       rather than letting the omission through.</li>
+     *   <li><b>"They cannot hold a grant on it" is a claim about riptide, not about the server.</b>
+     *       An operator who hand-grants {@code SELECT ON <db>.flows_dead_letter} to the instance-wide
+     *       {@code flow_reader} — an easy thing to do while wiring up a dashboard — reopens exactly
+     *       the cross-database read #734 closed, and an excluded table would have {@code
+     *       revoke-legacy} report the database shut while that path stayed open. {@link
+     *       #LEGACY_PRIVILEGES} already errs on the superset side for the same reason.</li>
+     *   <li><b>The probe half needs it as much as the revoke half.</b>
+     *       {@code TenantProvisioner.tableNames()} filters {@code system.row_policies} through this
+     *       list, and {@code onboardTenant} now creates a {@code <tenant>_iso} policy on this table.
+     *       Excluding it would leave the "is a pre-rename grantee still served here" check reading
+     *       one policy fewer than the database has.</li>
+     * </ul>
+     *
+     * <p>A {@code REVOKE} naming a privilege no role holds is a silent no-op on 26.7 (measured, see
+     * {@link #revokeLegacyGrants}), and so is one naming a table that does not exist — measured on
+     * the same image, where {@code GRANT}, {@code CREATE ROW POLICY} and {@code REVOKE} against an
+     * absent table all succeed and record nothing. So the inclusion is safe on a database that has
+     * not been re-onboarded yet, and costs one statement per legacy role and nothing else.</p>
      */
     static List<String> legacyGrantTableNames() {
         final List<String> names = new ArrayList<>();
         names.add(FlowsSchema.FLOWS);
+        names.add(FlowsSchema.DEAD_LETTER);
         for (final String rollup : FlowsSchema.rollupTableNames()) {
             names.add(rollup);
             names.add(FlowsSchema.rollupViewName(rollup));
@@ -455,7 +532,7 @@ public final class ProvisioningDdl {
         // would buy no isolation and cost every upgraded deployment a migration.
         final String policy = ident(tenant + "_iso");
         final List<String> flowsGrantees = flowsPolicyGrantees(tenant, database, liveLegacyAccounts);
-        final List<String> rollupGrantees = rollupPolicyGrantees(tenant, database, liveLegacyAccounts);
+        final List<String> readerOnlyGrantees = readerOnlyPolicyGrantees(tenant, database, liveLegacyAccounts);
         final String pinned = " SETTINGS SQL_tenant = " + literal(tenant) + " CONST, SQL_org = "
                 + literal(organisation) + " CONST";
         final List<String> statements = new ArrayList<>(List.of(
@@ -468,9 +545,15 @@ public final class ProvisioningDdl {
                 "ALTER USER " + reader + " IDENTIFIED WITH sha256_password BY " + literal(readerPassword),
                 "GRANT " + quote(readerRole(database)) + " TO " + reader,
                 rowPolicy(policy, flows, tenant, String.join(", ", flowsGrantees))));
+        // The dead-letter table holds real flow data, so it is policed exactly like flows (#548) —
+        // a table without this is the cross-tenant read leak #649, #732 and #734 each shipped a fix
+        // for. Reader-only grantees, like the rollups and for the same reason: ensureShared gives the
+        // writer INSERT and no SELECT there, so naming it would constrain nothing it can reach.
+        statements.add(rowPolicy(policy, FlowsSchema.qualifiedDeadLetter(database), tenant,
+                String.join(", ", readerOnlyGrantees)));
         for (final String rollup : FlowsSchema.rollupTableNames()) {
             statements.add(rowPolicy(policy, FlowsSchema.qualifiedRollup(database, rollup), tenant,
-                    String.join(", ", rollupGrantees)));
+                    String.join(", ", readerOnlyGrantees)));
         }
         return List.copyOf(statements);
     }
@@ -490,10 +573,10 @@ public final class ProvisioningDdl {
     }
 
     /**
-     * Who a rollup policy names: the readers only, for the reason in {@link #onboardTenant} — no
-     * writer, new or legacy, holds {@code SELECT} on a rollup target.
+     * Who a reader-only policy names, for the reason in {@link #onboardTenant} — no writer, new or
+     * legacy, holds {@code SELECT} on a rollup target or on the dead-letter table.
      */
-    private static List<String> rollupPolicyGrantees(final String tenant, final String database,
+    private static List<String> readerOnlyPolicyGrantees(final String tenant, final String database,
             final Collection<String> liveLegacyAccounts) {
         final List<String> grantees = new ArrayList<>(List.of(quote(readerUser(tenant, database))));
         addIfLive(grantees, legacyReaderUser(tenant), liveLegacyAccounts);
@@ -543,6 +626,11 @@ public final class ProvisioningDdl {
         final String policy = ident(tenant + "_iso");
         final List<String> statements = new ArrayList<>();
         statements.add("DROP ROW POLICY IF EXISTS " + policy + " ON " + FlowsSchema.qualifiedFlows(database));
+        // The dead-letter table too (#548). A policy left behind on it would keep denying rows there
+        // after the tenant is gone, which is the same defect the rollup drops below exist for — and
+        // this one holds raw flow data, so it is the policy an offboard most needs to have removed.
+        statements.add("DROP ROW POLICY IF EXISTS " + policy + " ON "
+                + FlowsSchema.qualifiedDeadLetter(database));
         for (final String rollup : FlowsSchema.rollupTableNames()) {
             statements.add("DROP ROW POLICY IF EXISTS " + policy + " ON "
                     + FlowsSchema.qualifiedRollup(database, rollup));

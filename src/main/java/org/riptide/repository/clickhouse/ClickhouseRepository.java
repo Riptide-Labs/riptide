@@ -19,12 +19,14 @@ import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
 import com.clickhouse.client.api.metadata.TableSchema;
 import com.clickhouse.data.ClickHouseColumn;
+import com.clickhouse.data.ClickHouseFormat;
 import org.riptide.repository.FlowRepository;
 import org.riptide.schema.FlowsSchema;
 import org.riptide.schema.RollupAvailability;
 import org.riptide.schema.RollupShapeCheck;
 import org.riptide.secrets.SecretResolvers;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.Inet4Address;
 import java.net.Inet6Address;
@@ -150,6 +152,40 @@ public class ClickhouseRepository implements FlowRepository {
         }
     }
 
+    /**
+     * Keep a refused batch in {@code flows_dead_letter}, one row per flow (#548).
+     *
+     * <p><b>Nothing of the insert path is reused, and that is the point.</b> {@link #persist} maps
+     * each flow to a {@code ClickhouseFlow} and inserts it into {@code flows} through the schema
+     * {@code register} pinned — so it would re-apply the very shape, and on a provisioned deployment
+     * the very {@code tenant_pinned}/{@code org_pinned} {@code CHECK}s, that refused the batch. This
+     * writes {@code JSONEachRow} into a four-column table that carries no constraint at all.
+     *
+     * <p><b>Streamed, not a {@code VALUES} statement.</b> A flusher batch is up to
+     * {@code riptide.clickhouse.batch.max-rows} rows (10,000 by default), and rendering those into
+     * one statement would cross the server's {@code max_query_size} (256 KiB by default) and be
+     * refused for a reason that has nothing to do with the rows.
+     *
+     * <p>Failure is the caller's to absorb: a deployment provisioned before this table existed does
+     * not have it, and {@link #checkSchema()} is deliberately not extended to demand it — an absent
+     * dead-letter table is a degraded mode, not a reason to refuse to collect.
+     */
+    @Override
+    public void deadLetter(final List<EnrichedFlow> flows, final Throwable cause)
+            throws FlowException, IOException {
+        final byte[] rows = DeadLetterPayload.jsonEachRow(flows, Instant.now(), cause);
+        try (var body = new ByteArrayInputStream(rows)) {
+            this.client.insert(FlowsSchema.DEAD_LETTER, body, ClickHouseFormat.JSONEachRow).get();
+        } catch (final InterruptedException e) {
+            // Same discipline as persist(): the batching flusher swallows what this throws and
+            // relies on the interrupt flag to observe a shutdown drain.
+            Thread.currentThread().interrupt();
+            throw new FlowException(e);
+        } catch (final ExecutionException e) {
+            throw new FlowException(e);
+        }
+    }
+
     @Override
     @SneakyThrows
     public void start() {
@@ -161,6 +197,12 @@ public class ClickhouseRepository implements FlowRepository {
             // always refreshed (OR REPLACE) so it never goes stale.
             ensureDatabase();
             this.client.execute(FlowsSchema.createFlowsTable(this.config.getDatabase())).get();
+            // The dead-letter table alongside it (#548). Created here and NOT demanded by
+            // checkSchema() below: manage mode creates it, but a deployment provisioned before it
+            // existed will not have it until it is re-onboarded, and refusing to collect over a
+            // table that only matters after an insert has already failed would trade the
+            // irreplaceable thing for the replaceable one.
+            this.client.execute(FlowsSchema.createDeadLetterTable(this.config.getDatabase())).get();
             this.client.execute(FlowsSchema.createSamplesView(this.config.getDatabase())).get();
             // Additive upgrades manage mode owns: a pre-existing table that IF NOT EXISTS no-oped
             // over gains the additive columns in place (no data loss); on a fresh table these no-op.

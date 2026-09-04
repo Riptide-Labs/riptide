@@ -47,7 +47,7 @@ import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
  * What one rejected row does to the batch around it, and how that failure differs from a lost
  * transport (#548).
  *
- * <p>#548 must choose between bisecting a poisoned batch and dead-lettering it, and both rest on
+ * <p>#548 had to choose between bisecting a poisoned batch and dead-lettering it, and both rested on
  * facts nobody had measured: whether a refused insert can leave a partial write — in which case
  * re-inserting a bisected half double-counts (PQ-5) — and whether a rejected row is distinguishable
  * from a dropped connection, which {@code BatchingFlowRepository.flush} treats identically
@@ -56,6 +56,13 @@ import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
  * <p>Both questions are asked through {@code ClickhouseRepository.persist}, not raw SQL: the
  * question is what riptide's own path does, and a probe issuing its own INSERT would measure a path
  * production never takes.</p>
+ *
+ * <p><b>The choice was dead-lettering</b>, on PQ-5's second half rather than its first: a refused
+ * batch leaves nothing behind <em>here</em>, but {@code MultiBlockPoisonProbeIT} shows a partial
+ * write is real in at least one server tuning and nobody can say which. So a re-inserted half can
+ * double-count, and the rollups sum it into aggregates that outlive the raw rows. See
+ * {@code FlowRepository#deadLetter} and {@code DeadLetterIT}. This class stays a probe: it measures
+ * the failure, not the answer.</p>
  *
  * <p><b>What this is not.</b> A regression test against the server pinned in
  * {@code .github/e2e-images/clickhouse.Dockerfile}, not a proof. It says the batch behaves this way
@@ -436,7 +443,10 @@ public class PoisonBatchProbeIT {
                     .doesNotHaveAnyElementsOfTypes(
                             ConnectionInitiationException.class, DataTransferException.class);
 
-            // The offending row is named, so #548 may need neither a bisect nor a dead-letter. The
+            // The offending row is named. That did NOT end up deciding #548 — dropping the named
+            // row and re-inserting the rest is still a re-insert, and a re-insert is what the
+            // rollups make unsafe — but a legible refusal is what puts a usable `error` on every
+            // dead letter. The
             // trailing period is part of the pin, not decoration: "row 5" alone is a prefix of
             // "row 50", so an unanchored match would accept a message naming a different row.
             Assertions.assertThat(server.getMessage())
