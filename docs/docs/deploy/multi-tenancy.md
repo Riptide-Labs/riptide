@@ -110,6 +110,7 @@ checks `CREATE` privileges even when `IF NOT EXISTS` would no-op).
 | default (schema exists) | `CREATE USER`/`CREATE ROLE`/`CREATE QUOTA`/`CREATE ROW POLICY`, `ALTER USER`/`ALTER ROLE`, `DROP USER`/`DROP ROW POLICY` (offboard), `ALTER TABLE` on `<db>.flows`, `INSERT`, `SELECT` on `<db>.flows` plus `SELECT` on `system.databases/tables/columns` **with grant option** (they are granted onward to the roles), and **`SHOW USERS ON *.*`** (see the caution below) |
 | re-running against a database another admin provisioned | the above, plus **`ROLE ADMIN`** — granting a role it did not itself create requires it, and the per-database roles were created by whichever admin ran the first `onboard` there |
 | `--create-schema` | the above, plus `CREATE DATABASE ON <db>.*`, `CREATE TABLE ON <db>.*` (the `flows` table and the rollup targets) and `CREATE VIEW ON <db>.*` (the rollups' materialized views) |
+| `revoke-legacy` (standalone — it needs none of the rows above) | `INSERT`, `SELECT` on `<db>.*` **with grant option** (revoking a role's privilege needs it; `ROLE ADMIN` does not), plus `SELECT` on `system.grants` and `system.row_policies` — see [Revoking the pre-rename roles](#revoking-the-pre-rename-roles-on-a-migrated-database) |
 
 `onboard` is safe to re-run: it reconciles the writer/reader **passwords** to the current secret, so
 rotating a secret and re-running updates ClickHouse (the users' `CONST` settings are preserved; the
@@ -274,6 +275,7 @@ The order that avoids downtime, per tenant:
 2. Update every collector config to the username from that database's new stanza, and every Grafana/MCP datasource to the matching `bi_<tenant>@<database>`. Restart them.
 3. Only now drop the old accounts: ``DROP USER `writer_acme`;`` and ``DROP USER `bi_acme`;``.
 4. Re-run `onboard` once more in each database, so the policies stop naming the accounts you just dropped.
+5. Once a database has no pre-rename account left serving it, run [`revoke-legacy`](#revoking-the-pre-rename-roles-on-a-migrated-database) there. Steps 1–4 migrate a *tenant*; only this closes the *database* to the old roles, which other tenants may still be using elsewhere on the server.
 
 Step 1 must cover every database **before** step 3, because the old accounts carry no database in their name — they are one object shared by all of them.
 Until step 3 the old account still holds the old instance-wide role, so it can still write to every database provisioned before the rename — that is the whole reason to finish.
@@ -289,13 +291,78 @@ Migrating every database first (step 1 above) avoids the situation entirely.
 
 :::
 
-The orphaned `flow_writer` / `flow_reader` roles and the `flow_ingest` quota are **not** dropped by `offboard`, because all three are instance-wide and may still apply to a tenant you have not migrated.
-Once no user holds the roles (`SELECT * FROM system.role_grants WHERE granted_role_name IN ('flow_writer', 'flow_reader')` returns nothing) and no unqualified writer remains for the quota to key, drop all three by hand:
+### Revoking the pre-rename roles on a migrated database
+
+Step 4 above finishes the migration *for a tenant*. It does not close the database, and that gap is worth stating plainly: the pre-rename `flow_writer` / `flow_reader` roles are instance-wide, and re-onboarding never took away the `INSERT` / `SELECT` they already hold on the databases they covered.
+So `db_a` can be fully migrated — every tenant re-onboarded, every legacy account of those tenants dropped — while a legacy account belonging to some **other**, unmigrated tenant still reaches it.
+Measured on the pinned image: that account inserts into the migrated database's `flows`.
+
+`revoke-legacy` takes those grants back, one database at a time:
+
+Start with `--dry-run`, which runs every check and prints the exact statements without executing one:
+
+```bash
+java -jar riptide.jar revoke-legacy \
+  --admin-url https://clickhouse:8443 --admin-user admin --admin-password env://CH_ADMIN_PW \
+  --database db_a --dry-run
+```
+
+Then replace `--dry-run` with `--yes` to apply it. `--yes` is required, for the reason `offboard` requires it: this takes privileges away from a live server, and `--database` defaults to `riptide`.
+
+Per-database is what makes it safe. `REVOKE … ON db_a.flows FROM flow_writer` leaves the same account still writing to an unmigrated `db_b` through the same role, so closing one database never takes another's ingest down.
+The revoke names that database's `flows`, every rollup target and every rollup materialized view — the mirror of what `onboard` grants there — and nothing else.
+It takes back `INSERT`, `SELECT` and `SHOW TABLES`; the `_mv` views carry only the last of those, and it matters, because a `SELECT` on a rollup view reads around the row policy attached to its target.
+The **roles are not dropped** — they carry no database in their name, so dropping one would revoke every database still on the old naming.
+
+Run it in each database as you finish migrating it. A second run on the same database is a no-op and says so.
+
+#### When it refuses
+
+It changes nothing in any of these cases. Every one of them is a state where the checks would otherwise have found nothing and read that as a clean answer:
+
+- **The database or its `flows` table does not exist.** A typo'd `--database` matches no grant and no policy, so without this it would report an all-clear over an exposure it never looked at.
+- **A pre-rename grantee still serves this database.** The check reads the row policies on `db_a`'s tables: `onboard` keeps every live pre-rename account named there and stops naming one you have retired, so a name carrying no `@db_a` means that grantee still depends on this database. Finish steps 1–4 for its tenant and run again. Note it may be a **role** rather than a user — ClickHouse puts both in a policy's grantee list — so check which before removing anything.
+- **The database has no row policies at all.** Zero policies is not "nobody is served", it is "nothing to reason from", and it is equally what a hand-provisioned database looks like — one whose collector may still be authenticating as a pre-rename account. Run `onboard` for each of its tenants first; that is what creates the policies this check reads.
+- **A policy applies to `ALL`.** Such a policy stores an *empty* grantee list, so the check would see no names and conclude nobody is served on a database where everyone is. Re-issue it naming its grantees explicitly, as `onboard` does.
+- **A pre-rename role holds a grant wider than these tables** (`ON db_a.*`, or `ON *.*`). Running would leave the role holding everything else in the database while reporting it closed, and no re-run would ever be the promised no-op. Revoke the wider grant by hand, then re-run.
+- **It cannot read the catalog.** ClickHouse *refuses* `system.grants` and `system.row_policies` to an admin without the privilege rather than filtering the rows away, so "nothing found" and "nothing to find" are the same answer. Guessing either way is a real failure — one leaves the exposure open while reporting it closed, the other revokes a credential a running collector is still using — so the run aborts and names the grant to add.
+
+One failure it cannot pre-empt: if a `REVOKE` fails part-way through, the database is left **half-revoked** and the message says so rather than claiming nothing changed. Re-running finishes the job — the statements are idempotent. The usual cause is the one privilege no catalog read can check, `GRANT OPTION`.
+
+#### Dropping the roles
+
+Once no database needs the roles any more **and no user holds them**, drop them and the orphaned quota by hand. Checking that second condition needs its own grant, because `system.role_grants` is refused — not filtered — to an admin without it:
 
 ```sql
+GRANT SELECT ON system.role_grants TO <your admin user>;   -- otherwise the query below is refused
+SELECT * FROM system.role_grants WHERE granted_role_name IN ('flow_writer', 'flow_reader');
+-- only when that returns nothing:
 DROP ROLE IF EXISTS flow_writer, flow_reader;
 DROP QUOTA IF EXISTS flow_ingest;
 ```
+
+Without the grant an under-privileged operator sees an empty result and concludes it is safe to drop roles another tenant still holds. That blindness is why the per-database `revoke-legacy` above exists: it closes each database as you migrate it, so the instance-wide drop is a tidy-up rather than the only defence.
+
+:::caution[`revoke-legacy`'s privileges, in full]
+
+It needs **only these** — not `CREATE USER`/`CREATE ROLE`/`CREATE ROW POLICY`, and not `SHOW USERS`, none of which it uses:
+
+```sql
+GRANT INSERT, SELECT ON db_a.* TO <your admin user> WITH GRANT OPTION;
+GRANT SELECT ON system.grants       TO <your admin user>;
+GRANT SELECT ON system.row_policies TO <your admin user>;
+```
+
+`GRANT OPTION` is what lets an admin revoke a role's privilege at all — `ROLE ADMIN` is *not* required for that, and it is also the one requirement neither catalog read can detect, so omitting it fails on the first `REVOKE` rather than up front.
+`SHOW USERS` covers neither read, and neither `SHOW ROLES` nor `SHOW ROW POLICIES` covers `system.grants`.
+The refusal names the missing one:
+
+```
+Code: 497. DB::Exception: min_admin: Not enough privileges. To execute this query,
+it's necessary to have the grant SELECT for at least one column on system.grants. (ACCESS_DENIED)
+```
+
+:::
 
 :::caution[The legacy-account check needs `SHOW USERS`, and `onboard` refuses to run without it]
 

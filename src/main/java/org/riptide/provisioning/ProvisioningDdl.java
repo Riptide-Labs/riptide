@@ -219,18 +219,37 @@ public final class ProvisioningDdl {
         return List.of(legacyWriterUser(tenant), legacyReaderUser(tenant));
     }
 
+    /** Base name of the write role; the database is appended by {@link #qualified} since #649. */
+    private static final String WRITER_ROLE = "flow_writer";
+
+    /** Base name of the read role. */
+    private static final String READER_ROLE = "flow_reader";
+
     /**
      * The role carrying this database's write grants. Public for the same reason
      * {@link #writerUser} is: a caller that spelled the name out by hand would be a second place
      * remembering the rule, and the one that drifts is the one nothing runs.
      */
     public static String writerRole(final String database) {
-        return qualified("flow_writer", database);
+        return qualified(WRITER_ROLE, database);
     }
 
     /** The role carrying this database's read grants and the reader hardening. */
     public static String readerRole(final String database) {
-        return qualified("flow_reader", database);
+        return qualified(READER_ROLE, database);
+    }
+
+    /**
+     * The pre-#649 role names, writer first, carrying no database.
+     *
+     * <p>They are instance-wide: an upgraded server still has them holding {@code INSERT}/
+     * {@code SELECT} on every database provisioned before the rename, which is what
+     * {@link #revokeLegacyGrants} takes back one database at a time. Kept as a named pair for the
+     * reason {@link #legacyUsers} is — the probe that reads them and the statements that revoke them
+     * must not drift apart.
+     */
+    static List<String> legacyRoles() {
+        return List.of(WRITER_ROLE, READER_ROLE);
     }
 
     /** Backtick-quote a name this class composed. */
@@ -301,6 +320,94 @@ public final class ProvisioningDdl {
                     + " TO " + writerRole);
         }
         return List.copyOf(statements);
+    }
+
+    /**
+     * Take back the pre-#649 roles' grants on <em>one</em> database (#734) — the exact mirror of the
+     * {@code GRANT}s {@link #ensureShared} emits, over the same
+     * {@link FlowsSchema#rollupTableNames()} — every target and every {@code _mv} view — so a rollup
+     * added to the schema is revoked here without a second edit (the #737 lesson: a hand-spelled table
+     * list silently matches nothing).
+     *
+     * <p>Why this exists: #649 qualified every new object by its database but left the old instance-
+     * wide {@code flow_writer}/{@code flow_reader} holding {@code INSERT}/{@code SELECT} on the
+     * databases they already covered. A database can therefore be fully migrated and a legacy account
+     * belonging to some <em>other</em>, unmigrated tenant still reaches it — measured on 26.7.
+     *
+     * <p><b>Per-database, and that is what makes it safe.</b> {@code REVOKE … ON db_a.flows FROM
+     * flow_writer} leaves the same account still writing to an unmigrated {@code db_b} through the
+     * same role (measured). The roles themselves are deliberately <em>not</em> dropped, for the same
+     * reason {@link #offboardTenant} spares them: they are instance-wide, and dropping one would
+     * revoke a tenant nobody offboarded.
+     *
+     * <p>{@code REVOKE} of a privilege the role does not hold is a silent no-op on 26.7, so emitting
+     * the full mirror is correct even for a role that only ever held half of it; {@code REVOKE} from
+     * a role that does not <em>exist</em> is {@code UNKNOWN_ROLE}, which is why the caller passes the
+     * roles it observed rather than this emitting for both unconditionally.
+     *
+     * @param roles the legacy roles observed to hold a grant on this database. Filtered against
+     *              {@link #legacyRoles()} so only a name this class composed reaches the statement.
+     */
+    public static List<String> revokeLegacyGrants(final String database, final Collection<String> roles) {
+        final List<String> statements = new ArrayList<>();
+        for (final String role : legacyRoles()) {
+            if (!roles.contains(role)) {
+                continue;
+            }
+            legacyGrantTables(database).forEach(table -> statements.add(revoke(table, role)));
+        }
+        return List.copyOf(statements);
+    }
+
+    /**
+     * Every privilege {@link #ensureShared} grants on a table of this database, and therefore every
+     * one the revoke must name.
+     *
+     * <p>{@code SHOW TABLES} is here because {@code ensureShared} grants it on each rollup's
+     * materialized view, and leaving it would falsify both halves of the claim this command makes:
+     * it would not be the mirror, and the database would not be closed. Not pedantry — the comment on
+     * that grant records why the view is withheld from {@code SELECT} at all: a writer holding
+     * {@code SELECT} on a {@code _mv} read every tenant's rows while denied on the target its policy
+     * hangs on. The revoke names all three privileges on every table, which is a superset of what any
+     * one table was granted; {@code REVOKE} of a privilege not held is a silent no-op (measured), and
+     * a superset is the right side to err on for a hand-added grant.
+     */
+    static final List<String> LEGACY_PRIVILEGES = List.of("INSERT", "SELECT", "SHOW TABLES");
+
+    /**
+     * The qualified tables {@link #revokeLegacyGrants} names, in the order it names them — also what
+     * the caller reports as revoked, so the report cannot claim a table the statements missed.
+     *
+     * <p>Each rollup's materialized view is named alongside its target, for the reason
+     * {@link #LEGACY_PRIVILEGES} gives.
+     */
+    public static List<String> legacyGrantTables(final String database) {
+        return legacyGrantTableNames().stream()
+                .map(name -> FlowsSchema.qualifiedTable(database, name))
+                .toList();
+    }
+
+    /**
+     * The table set unqualified, and the one place it is enumerated: {@code flows}, every rollup
+     * target, and every rollup view. {@link #legacyGrantTables} qualifies exactly this list, so the
+     * statements and the {@code system.grants}/{@code system.row_policies} filters cannot disagree
+     * about which tables are in scope — those catalogs hold the bare name in their {@code table}
+     * column, so a qualified, backtick-quoted name would match nothing there and the probe would read
+     * as "found nothing".
+     */
+    static List<String> legacyGrantTableNames() {
+        final List<String> names = new ArrayList<>();
+        names.add(FlowsSchema.FLOWS);
+        for (final String rollup : FlowsSchema.rollupTableNames()) {
+            names.add(rollup);
+            names.add(FlowsSchema.rollupViewName(rollup));
+        }
+        return List.copyOf(names);
+    }
+
+    private static String revoke(final String table, final String role) {
+        return "REVOKE " + String.join(", ", LEGACY_PRIVILEGES) + " ON " + table + " FROM "
+                + ident(role);
     }
 
     /**

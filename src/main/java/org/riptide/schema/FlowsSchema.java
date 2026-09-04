@@ -60,6 +60,13 @@ public final class FlowsSchema {
      */
     public static final int DEFAULT_ROLLUP_TTL_DAYS = 365;
 
+    /**
+     * The unqualified name of the raw table. Public because a catalog query filters
+     * {@code system.*} by the bare name, where {@link #qualifiedFlows} would not fit — and a second
+     * place spelling the literal is the drift this repo has been bitten by (#737).
+     */
+    public static final String FLOWS = "flows";
+
     /** Same charset as the provisioning boundary ({@code TenantSpec}): no quotes, backticks, spaces. */
     private static final Pattern SAFE_NAME = Pattern.compile("[A-Za-z0-9_-]+");
 
@@ -90,14 +97,23 @@ public final class FlowsSchema {
                 .replace(FLOWS_TOKEN, qualifiedFlows(database));
     }
 
-    /** The qualified {@code `<db>`.flows} name — the one home for its construction. */
+    /**
+     * The qualified {@code `<db>`.<name>} form — the one home for its construction, so a caller
+     * holding a bare name from {@link #FLOWS} or {@link #rollupTableNames()} can qualify it without
+     * composing the dot itself.
+     */
+    public static String qualifiedTable(final String database, final String name) {
+        return ident(database) + "." + name;
+    }
+
+    /** The qualified {@code `<db>`.flows} name. */
     public static String qualifiedFlows(final String database) {
-        return ident(database) + ".flows";
+        return qualifiedTable(database, FLOWS);
     }
 
     /** The qualified {@code `<db>`.<rollup>} target-table name. */
     public static String qualifiedRollup(final String database, final String table) {
-        return ident(database) + "." + table;
+        return qualifiedTable(database, table);
     }
 
     /**

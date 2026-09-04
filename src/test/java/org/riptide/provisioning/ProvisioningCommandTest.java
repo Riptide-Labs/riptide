@@ -24,7 +24,27 @@ class ProvisioningCommandTest {
     void matchesOnlyKnownSubcommands() {
         assertThat(ProvisioningCommand.matches("onboard")).isTrue();
         assertThat(ProvisioningCommand.matches("offboard")).isTrue();
+        // This predicate is the routing decision, not a formality: RiptideApplication uses it to
+        // send the argv away from Spring and into the context-free path. A subcommand missing here
+        // boots the collector instead of running.
+        assertThat(ProvisioningCommand.matches("revoke-legacy")).isTrue();
         assertThat(ProvisioningCommand.matches("collect")).isFalse();
+        assertThat(ProvisioningCommand.matches("revoke")).isFalse();
+    }
+
+    @Test
+    void revokeLegacyWithoutYesOrDryRunRefusesBeforeConnecting() {
+        // The endpoint points at a closed port, so the run can only exit 2 by refusing before it
+        // sends a query — a guard that fired after the first catalog read would surface as a
+        // connection error instead.
+        final var err = new ByteArrayOutputStream();
+        final int code = ProvisioningCommand.run(
+                new String[] {"revoke-legacy", "--admin-url", "http://127.0.0.1:1", "--database", "d"},
+                discard(), new PrintStream(err, true, StandardCharsets.UTF_8));
+        assertThat(code).isEqualTo(2);
+        assertThat(err.toString(StandardCharsets.UTF_8))
+                .contains("without --yes")
+                .contains("--dry-run");
     }
 
     @Test
