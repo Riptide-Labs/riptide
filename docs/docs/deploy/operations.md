@@ -232,12 +232,14 @@ The other two are certain loss: rows the flusher still held when it was interrup
 
 ### Dead letters
 
-A **refused** insert — the first of those four cases — no longer discards its rows.
+A **refused** insert — the first of those four cases — no longer discards its rows, **as long as batching is on** (`riptide.clickhouse.batch.enabled`, the default).
+With batching off there is no flusher, no batch and no dead letter: the rejection reaches the caller synchronously, which is the signal batching removes and dead-lettering replaces, and the records are counted in `pipeline.dispatchErrors` instead. That path also inserts one call at a time, so a poison row costs that call rather than up to `max-rows` flows.
 The flusher writes every row of the batch to `flows_dead_letter` and counts them under `deadLetteredRows`; if that write fails too, the rows are counted under `deadLetterFailedRows` and the behaviour is exactly what it was before the table existed.
 `failedRows` still charges the whole batch either way, because a dead-lettered row is still not in `flows`.
 
 So on a refused batch, `failedRows − deadLetteredRows` is what riptide no longer has anywhere.
-`deadLetterFailedRows` moving at all is itself worth looking at: the commonest cause is a deployment provisioned before this table existed, which is fixed by re-running `riptide onboard --create-schema` (see [multi-tenancy](multi-tenancy.md#what-it-provisions)).
+`deadLetterFailedRows` moving at all is itself worth looking at: the commonest cause is a deployment provisioned before this table existed, which is fixed by re-running `riptide onboard --create-schema` (see [multi-tenancy](multi-tenancy.md#adding-the-dead-letter-table-to-an-existing-deployment)).
+**Restart the collector after adding the table.** Once the server has answered that the table is not there, riptide stops asking — an un-migrated deployment would otherwise spend a round trip per refused batch to be told the same thing — and it reports that once, naming the remedy. Like the rollups, the posture is decided while the process runs and re-read at startup.
 The other three `failedRows` cases are **not** dead-lettered, deliberately — none of them is a batch a reachable server refused, and each is explained where it is counted.
 
 **A dead letter is replayed by an operator, deliberately, and never by riptide.**

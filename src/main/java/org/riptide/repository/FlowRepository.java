@@ -49,6 +49,11 @@ public interface FlowRepository {
      * once, carry on. A caller must therefore treat a failure here as degraded rather than fatal —
      * see {@code BatchingFlowRepository.flush}.
      *
+     * <p><b>Only {@code BatchingFlowRepository.flush} calls this</b>, so it is reached only while
+     * {@code riptide.clickhouse.batch.enabled} is on (the default). That is deliberate — the
+     * un-batched path keeps the synchronous rejection this exists to replace — and it is pinned by
+     * {@code ClickhouseConfigurationTest.theUnbatchedPathDoesNotDeadLetterAndThatIsTheDecision}.
+     *
      * @param flows the whole refused batch, one dead letter per flow so each carries its own tenant
      * @param cause what {@link #persist} threw, stored with the rows as the operator's only record
      *              of why the server would not take them

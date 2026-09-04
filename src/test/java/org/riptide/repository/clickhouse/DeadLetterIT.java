@@ -102,6 +102,11 @@ public class DeadLetterIT {
     private ListAppender<ILoggingEvent> logEvents;
     private Level originalLevel;
 
+    /** The repository's own log, which is where the latched "table is not present" warning goes. */
+    private Logger repositoryLog;
+    private ListAppender<ILoggingEvent> repositoryLogEvents;
+    private Level repositoryOriginalLevel;
+
     /**
      * Both databases, and the synthetic barrier on each.
      *
@@ -146,6 +151,13 @@ public class DeadLetterIT {
                 this.logEvents.stop();
             }
             this.flusherLog.setLevel(this.originalLevel);
+        }
+        if (this.repositoryLog != null) {
+            if (this.repositoryLogEvents != null) {
+                this.repositoryLog.detachAppender(this.repositoryLogEvents);
+                this.repositoryLogEvents.stop();
+            }
+            this.repositoryLog.setLevel(this.repositoryOriginalLevel);
         }
     }
 
@@ -243,35 +255,83 @@ public class DeadLetterIT {
         captureFlusherLog();
         final var registry = new MetricRegistry();
         final List<EnrichedFlow> batch = poisonedBatch(3, 1);
-
-        flushThrough(UNMIGRATED_DB, registry, batch, () -> counter(registry, "deadLetterFailedRows") > 0);
-
-        Assertions.assertThat(counter(registry, "failedRows"))
-                .as("exactly today's behaviour: the batch is charged in full")
-                .isEqualTo(batch.size());
-        Assertions.assertThat(counter(registry, "deadLetterFailedRows")).isEqualTo(batch.size());
-        Assertions.assertThat(counter(registry, "deadLetteredRows")).isZero();
-        Assertions.assertThat(this.logEvents.list)
-                .extracting(ILoggingEvent::getFormattedMessage)
-                .as("the cause is logged once, naming the batch — not once per row")
-                .filteredOn(message -> message.contains("Could not keep the " + batch.size() + " flows"))
-                .hasSize(1);
-        // And ingest is unaffected: a healthy batch through the same repository still lands.
         final long before = count(FlowsSchema.qualifiedFlows(UNMIGRATED_DB));
-        flushThrough(UNMIGRATED_DB, new MetricRegistry(), List.of(flow(GOOD_TENANT, "org", 23001)),
-                () -> countQuietly(FlowsSchema.qualifiedFlows(UNMIGRATED_DB)) == before + 1);
+
+        try (var flusher = startedFlusher(UNMIGRATED_DB, registry)) {
+            flusher.offer(batch, () -> counter(registry, "deadLetterFailedRows") > 0);
+
+            Assertions.assertThat(counter(registry, "failedRows"))
+                    .as("exactly today's behaviour: the batch is charged in full")
+                    .isEqualTo(batch.size());
+            Assertions.assertThat(counter(registry, "deadLetterFailedRows")).isEqualTo(batch.size());
+            Assertions.assertThat(counter(registry, "deadLetteredRows")).isZero();
+            Assertions.assertThat(this.logEvents.list)
+                    .extracting(ILoggingEvent::getFormattedMessage)
+                    .as("the cause is logged once, naming the batch — not once per row")
+                    .filteredOn(message -> message.contains("Could not keep the " + batch.size() + " flows"))
+                    .hasSize(1);
+
+            // A SECOND refused batch degrades identically — and is not re-asked of the server.
+            // The absence is latched after the first UNKNOWN_TABLE, so an un-migrated deployment
+            // does not spend a round trip per refused batch being told what it was told last time.
+            // The latch is observable here as the repository reporting it exactly once.
+            flusher.offer(poisonedBatch(2, 1), () -> counter(registry, "deadLetterFailedRows") > 3);
+            Assertions.assertThat(counter(registry, "deadLetterFailedRows"))
+                    .as("the second refused batch still degrades, so the latch skips the round trip"
+                            + " and not the accounting")
+                    .isEqualTo(batch.size() + 2);
+            Assertions.assertThat(this.repositoryLogEvents.list)
+                    .extracting(ILoggingEvent::getFormattedMessage)
+                    .filteredOn(message -> message.contains("is not present in database"))
+                    .as("reported once, not once per refused batch, for the whole life of the process")
+                    .hasSize(1);
+
+            // THE SAME flusher, still running. Building a second repository here would have proved
+            // only that the database still accepts writes — which no failure in this test could have
+            // stopped — instead of that the flusher survived the failed dead-letter write.
+            flusher.offer(List.of(flow(GOOD_TENANT, "org", 23001)),
+                    () -> countQuietly(FlowsSchema.qualifiedFlows(UNMIGRATED_DB)) == before + 1);
+        }
         Assertions.assertThat(count(FlowsSchema.qualifiedFlows(UNMIGRATED_DB))).isEqualTo(before + 1);
+    }
+
+    /**
+     * The flusher keeps running after a dead-letter write that <em>succeeded</em>, too.
+     *
+     * <p>Its sibling above covers the failure arm. This one covers the success arm, which no test at
+     * either tier reached: the flusher returns from {@code deadLetterOrCount} through a different
+     * path, and "the batch was kept" would be a poor thing to be true of the last batch a collector
+     * ever flushed.</p>
+     */
+    @Test
+    void theFlusherKeepsRunningAfterADeadLetterThatSucceeded() throws Exception {
+        final var registry = new MetricRegistry();
+        final List<EnrichedFlow> poisoned = poisonedBatch(2, 1);
+        final long healthyBefore = count(FlowsSchema.qualifiedFlows(POISON_DB));
+
+        try (var flusher = startedFlusher(POISON_DB, registry)) {
+            flusher.offer(poisoned, () -> counter(registry, "deadLetteredRows") >= poisoned.size());
+            flusher.offer(List.of(flow(GOOD_TENANT, "org", 26001)),
+                    () -> countQuietly(FlowsSchema.qualifiedFlows(POISON_DB)) == healthyBefore + 1);
+        }
+
+        Assertions.assertThat(counter(registry, "deadLetteredRows")).isEqualTo(poisoned.size());
+        Assertions.assertThat(count(FlowsSchema.qualifiedFlows(POISON_DB)))
+                .as("the batch after a successful dead letter still lands")
+                .isEqualTo(healthyBefore + 1);
     }
 
     /** A batch the server accepts writes nothing to the dead-letter table. */
     @Test
-    void asuccessfulInsertLeavesTheDeadLetterTableAlone() throws Exception {
+    void aSuccessfulInsertLeavesTheDeadLetterTableAlone() throws Exception {
         final long deadBefore = count(FlowsSchema.qualifiedDeadLetter(POISON_DB));
         final var registry = new MetricRegistry();
         final long flowsBefore = count(FlowsSchema.qualifiedFlows(POISON_DB));
 
-        flushThrough(POISON_DB, registry, List.of(flow(GOOD_TENANT, "org", 24001)),
-                () -> countQuietly(FlowsSchema.qualifiedFlows(POISON_DB)) == flowsBefore + 1);
+        try (var flusher = startedFlusher(POISON_DB, registry)) {
+            flusher.offer(List.of(flow(GOOD_TENANT, "org", 24001)),
+                    () -> countQuietly(FlowsSchema.qualifiedFlows(POISON_DB)) == flowsBefore + 1);
+        }
 
         Assertions.assertThat(count(FlowsSchema.qualifiedDeadLetter(POISON_DB)))
                 .as("nothing failed, so nothing is kept — otherwise the table would fill with"
@@ -295,28 +355,50 @@ public class DeadLetterIT {
      */
     private void flushThrough(final String database, final MetricRegistry registry,
             final List<EnrichedFlow> batch) throws Exception {
-        flushThrough(database, registry, batch, () -> counter(registry, "deadLetteredRows") >= batch.size());
+        try (var flusher = startedFlusher(database, registry)) {
+            flusher.offer(batch, () -> counter(registry, "deadLetteredRows") >= batch.size());
+        }
     }
 
-    private void flushThrough(final String database, final MetricRegistry registry,
-            final List<EnrichedFlow> batch, final BooleanSupplier done) throws Exception {
+    /**
+     * A started {@code BatchingFlowRepository} that can be handed more than one batch.
+     *
+     * <p>Held across batches on purpose. The no-wedge property is about <em>this</em> flusher
+     * surviving, and a helper that built a fresh repository per batch would re-test that the
+     * database still accepts writes — which nothing in these tests could have broken — while saying
+     * nothing about the thread that had just failed.</p>
+     *
+     * <p>{@code maxLatency} rather than {@code maxRows} is what triggers each flush, since the
+     * batches differ in size; it is short enough that a batch drains promptly and long enough that
+     * two offers made in sequence are not merged into one.</p>
+     */
+    private Flusher startedFlusher(final String database, final MetricRegistry registry) {
         final var config = new ClickhouseConfig.BatchConfig();
-        config.setMaxRows(batch.size());
+        config.setMaxRows(10_000);
         config.setMaxLatency(Duration.ofMillis(200));
         config.setQueueCapacity(1_000);
         config.setShutdownGracePeriod(Duration.ofSeconds(2));
         final var repository = new BatchingFlowRepository(repositoryOn(database, false), config, registry);
-        try {
-            repository.persist(batch);
-            repository.start();
-            await("the flusher finished with the batch", done);
-        } finally {
-            repository.stop();
+        repository.start();
+        return new Flusher(repository);
+    }
+
+    /** One live flusher, offering batches to it and waiting for each to be done. */
+    private record Flusher(BatchingFlowRepository repository) implements AutoCloseable {
+
+        void offer(final List<EnrichedFlow> batch, final BooleanSupplier done) throws Exception {
+            this.repository.persist(batch);
+            await("the flusher finished with a batch of " + batch.size(), done);
+            // The queue is server-side and this config sends async_insert=0, but a measurement that
+            // depended on that staying true would read a buffered insert as an absent one — the same
+            // guard PoisonBatchProbeIT and ClickhouseRepositoryIT make.
+            admin.execute("SYSTEM FLUSH ASYNC INSERT QUEUE").get();
         }
-        // The queue is server-side and this config sends async_insert=0, but a measurement that
-        // depended on that staying true would read a buffered insert as an absent one — the same
-        // guard PoisonBatchProbeIT and ClickhouseRepositoryIT make.
-        admin.execute("SYSTEM FLUSH ASYNC INSERT QUEUE").get();
+
+        @Override
+        public void close() {
+            this.repository.stop();
+        }
     }
 
     /** A batch of {@code size} flows with the poison row at {@code position} (1-based). */
@@ -417,6 +499,12 @@ public class DeadLetterIT {
         this.flusherLog.setLevel(Level.TRACE);
         this.logEvents = LogCapture.startedAppender();
         this.flusherLog.addAppender(this.logEvents);
+
+        this.repositoryLog = (Logger) LoggerFactory.getLogger(ClickhouseRepository.class);
+        this.repositoryOriginalLevel = this.repositoryLog.getLevel();
+        this.repositoryLog.setLevel(Level.TRACE);
+        this.repositoryLogEvents = LogCapture.startedAppender();
+        this.repositoryLog.addAppender(this.repositoryLogEvents);
     }
 
     /**

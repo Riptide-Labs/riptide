@@ -18,6 +18,7 @@ import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonPOJOBuilder;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.google.common.net.InetAddresses;
+import lombok.extern.slf4j.Slf4j;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.pipeline.EnrichedFlow;
 
@@ -78,6 +79,7 @@ import java.util.stream.Collectors;
  * derived getters with no field behind them — be written without being demanded back. It also means
  * a payload written by a newer riptide is readable by an older one, minus what it does not know.
  */
+@Slf4j
 public final class DeadLetterPayload {
 
     private DeadLetterPayload() {
@@ -112,15 +114,28 @@ public final class DeadLetterPayload {
      */
     public static byte[] jsonEachRow(final List<EnrichedFlow> flows, final Instant failedAt,
             final Throwable cause) throws IOException {
+        return jsonEachRow(flows, failedAt, cause, DeadLetterPayload::serialise);
+    }
+
+    /**
+     * As above, with the per-flow serialiser injected.
+     *
+     * <p>A seam, and the only way to reach {@link #payloadOrPlaceholder}'s failure arm: every field
+     * of an {@link EnrichedFlow} is serialisable by construction, so no fixture can produce the flow
+     * this arm exists for. Testing it through the real path would mean asserting the behaviour is
+     * unreachable, which is the opposite of what is wanted.</p>
+     */
+    static byte[] jsonEachRow(final List<EnrichedFlow> flows, final Instant failedAt,
+            final Throwable cause, final PayloadWriter writer) throws IOException {
         final String when = FAILED_AT.format(failedAt.atOffset(ZoneOffset.UTC));
-        final String error = cause == null ? "" : cause.toString();
+        final String error = describe(cause);
         final var body = new ByteArrayOutputStream();
         for (final EnrichedFlow flow : flows) {
             final Map<String, String> row = new LinkedHashMap<>();
             row.put("tenant", flow.getTenant() == null ? "" : flow.getTenant());
             row.put("failedAt", when);
             row.put("error", error);
-            row.put("payload", serialise(flow));
+            row.put("payload", payloadOrPlaceholder(flow, writer));
             // Written through the mapper, so every value — the payload's own JSON included — is
             // escaped by the thing that produced it rather than by a second, hand-rolled rule.
             body.write(MAPPER.writeValueAsBytes(row));
@@ -128,6 +143,113 @@ public final class DeadLetterPayload {
         }
         return body.toByteArray();
     }
+
+    /** One flow's payload; see {@link #jsonEachRow(List, Instant, Throwable, PayloadWriter)}. */
+    @FunctionalInterface
+    interface PayloadWriter {
+        String write(EnrichedFlow flow) throws IOException;
+    }
+
+    /**
+     * One flow's payload, or a placeholder recording why there is not one.
+     *
+     * <p><b>One bad row must cost one row.</b> Serialising happens inside the loop, so a flow the
+     * codec cannot write would otherwise abort the whole batch's dead-letter insert and drop all
+     * 10,000 rows — on precisely the pathological input this feature exists for. The placeholder
+     * keeps that row's {@code tenant}, {@code failedAt} and {@code error} readable and says what
+     * happened to its payload, which is strictly more than dropping the batch would have left.</p>
+     *
+     * <p>The placeholder is itself JSON, so an operator's {@code JSONExtract} over the column does
+     * not fail on it; a reader looking for real flows filters on
+     * {@code riptideDeadLetterPayloadError}.</p>
+     */
+    private static String payloadOrPlaceholder(final EnrichedFlow flow, final PayloadWriter writer) {
+        try {
+            return writer.write(flow);
+        } catch (final IOException | RuntimeException e) {
+            log.error("Could not serialise a flow for the dead-letter payload; keeping the row with a"
+                    + " placeholder instead of losing the batch", e);
+            try {
+                return MAPPER.writeValueAsString(Map.of(PAYLOAD_ERROR_KEY, describe(e)));
+            } catch (final IOException impossible) {
+                // A map of two Strings has no serialiser this mapper lacks. The constant is here so
+                // that "impossible" cannot become "the batch was lost after all".
+                return "{\"" + PAYLOAD_ERROR_KEY + "\":\"unserialisable\"}";
+            }
+        }
+    }
+
+    /** The key a placeholder payload carries, so an operator can filter the real flows from it. */
+    static final String PAYLOAD_ERROR_KEY = "riptideDeadLetterPayloadError";
+
+    /**
+     * What the {@code error} column stores for a refusal: the cause, with the offending row's own
+     * values taken out and the length capped.
+     *
+     * <p><b>The redaction is a tenant boundary, not tidiness.</b> The column is written once per
+     * batch and copied onto every row, while the row policy filters on {@code tenant} — so a
+     * batch-scoped column cannot be filtered per tenant at all. ClickHouse's refusal ends
+     * {@code Column values: tenant = 'evil'}, quoting the offending row, and a batch drains one queue
+     * across every exporter: without this, tenant A's reader would read a stored, TTL'd string
+     * describing tenant B's refused row. The rest of the message — the constraint name, the row
+     * index, the error code — names no value and is what makes a dead letter diagnosable, so it
+     * stays.</p>
+     *
+     * <p>What survives redaction and is still shared: that <em>some</em> row of a shared batch was
+     * refused, at which index, and by which constraint. That is a fact about riptide's batching
+     * rather than about another tenant's traffic, and removing it would leave the column useless.</p>
+     *
+     * <p>The cap is the second half. A server message is unbounded, and this string is copied onto
+     * every row of a batch that can hold {@code max-rows} (10,000 by default) — on the path where
+     * something has already gone wrong.</p>
+     */
+    static String describe(final Throwable cause) {
+        if (cause == null) {
+            return "";
+        }
+        return truncate(redactColumnValues(cause.toString()));
+    }
+
+    /**
+     * Cut the {@code Column values: …} clause out, keeping what follows it.
+     *
+     * <p>The tail matters: ClickHouse puts the error code after that clause
+     * ({@code . (VIOLATED_CONSTRAINT)}), and that code is the most useful token in the whole message.
+     * Truncating at the marker would throw it away, so the clause is spliced out rather than the
+     * message cut short. A message with no such clause is returned unchanged.</p>
+     */
+    private static String redactColumnValues(final String message) {
+        final int marker = message.indexOf(COLUMN_VALUES);
+        if (marker < 0) {
+            return message;
+        }
+        final String head = message.substring(0, marker) + COLUMN_VALUES + " " + REDACTED;
+        // ". (" is where ClickHouse ends the clause and begins the error code. Searched from the
+        // marker, so an earlier one — the Expression clause has parentheses of its own — cannot
+        // splice the wrong span.
+        final int tail = message.indexOf(". (", marker);
+        return tail < 0 ? head : head + message.substring(tail);
+    }
+
+    private static String truncate(final String message) {
+        return message.length() <= MAX_ERROR_CHARS
+                ? message
+                : message.substring(0, MAX_ERROR_CHARS) + TRUNCATED;
+    }
+
+    /** The clause ClickHouse appends naming the offending row's own column values. */
+    private static final String COLUMN_VALUES = "Column values:";
+
+    /** What replaces it. Spelled out rather than blank so a reader knows something was removed. */
+    private static final String REDACTED = "<removed by riptide: another tenant may read this row>";
+
+    private static final String TRUNCATED = "… <truncated by riptide>";
+
+    /**
+     * The cap on the stored {@code error}. Generous enough for a ClickHouse refusal with its
+     * expression and error code intact, and finite against a message that is not.
+     */
+    static final int MAX_ERROR_CHARS = 2_000;
 
     /**
      * {@code DateTime64(3, 'UTC')} as {@code date_time_input_format = 'basic'} reads it.

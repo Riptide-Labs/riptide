@@ -328,21 +328,19 @@ public final class ProvisioningDdl {
                         + " ADD CONSTRAINT IF NOT EXISTS org_pinned CHECK organisation = getSetting('SQL_org')",
                 "CREATE QUOTA IF NOT EXISTS " + quota + " FOR INTERVAL 1 hour MAX written_bytes = "
                         + quotaBytes + " KEYED BY user_name TO " + writerRole));
-        // The rollups get the same treatment as flows: the writer inserts (via the materialized
-        // views), the reader selects. Driven off rollupTableNames() so a new rollup cannot be
-        // added to the schema without inheriting its grants.
-        // The dead-letter table (#548). The writer INSERTs into it — that is what keeps a refused
-        // batch — and the reader SELECTs, because inspecting a dead letter is the operator's whole
-        // reason for having one. The writer is given no SELECT, for the same reason it has none on a
-        // rollup target: it has no use for one, and every read path withheld is one the row policy
-        // does not have to cover.
+        // The dead-letter table's INSERT (#548), and ONLY its insert. The writer files a refused
+        // batch there; nothing role-wide may read it, for the reason spelled out at
+        // deadLetterReadGrant() — the read is per-user and travels with the row policy that
+        // constrains it.
         //
         // Named explicitly rather than swept up by rollupTableNames(): this is not a rollup, nothing
-        // aggregates into it, and putting it in that list to save two lines would hand it a
+        // aggregates into it, and putting it in that list to save a line would hand it a
         // materialized view's worth of machinery — a _mv SHOW TABLES grant, a shape check, a repair
         // planner — for a table none of it applies to.
         statements.add("GRANT INSERT ON " + FlowsSchema.qualifiedDeadLetter(database) + " TO " + writerRole);
-        statements.add("GRANT SELECT ON " + FlowsSchema.qualifiedDeadLetter(database) + " TO " + readerRole);
+        // The rollups get the same treatment as flows: the writer inserts (via the materialized
+        // views), the reader selects. Driven off rollupTableNames() so a new rollup cannot be
+        // added to the schema without inheriting its grants.
         for (final String rollup : FlowsSchema.rollupTableNames()) {
             final String table = FlowsSchema.qualifiedRollup(database, rollup);
             statements.add("GRANT INSERT ON " + table + " TO " + writerRole);
@@ -551,6 +549,8 @@ public final class ProvisioningDdl {
         // writer INSERT and no SELECT there, so naming it would constrain nothing it can reach.
         statements.add(rowPolicy(policy, FlowsSchema.qualifiedDeadLetter(database), tenant,
                 String.join(", ", readerOnlyGrantees)));
+        // The SELECT, per user and AFTER the policy that constrains it. See deadLetterReadGrant().
+        statements.addAll(deadLetterReadGrant(database, tenant, liveLegacyAccounts));
         for (final String rollup : FlowsSchema.rollupTableNames()) {
             statements.add(rowPolicy(policy, FlowsSchema.qualifiedRollup(database, rollup), tenant,
                     String.join(", ", readerOnlyGrantees)));
@@ -588,6 +588,46 @@ public final class ProvisioningDdl {
         if (liveLegacyAccounts.contains(legacy)) {
             grantees.add(ident(legacy));
         }
+    }
+
+    /**
+     * The dead-letter table's {@code SELECT}, granted to <em>this tenant's readers</em> rather than to
+     * the shared {@code flow_reader@<db>} role — and that is a security property, not a style choice.
+     *
+     * <p><b>The role-wide grant this replaces was a cross-tenant read leak</b>, the same class #649,
+     * #732 and #734 each shipped a fix for. The table is new, so its row policies arrive one
+     * {@code onboard} run at a time, while a role grant arrives for <em>everybody at once</em>. On a
+     * database holding tenants A and B, re-onboarding only A created the table, gave the shared reader
+     * role {@code SELECT} on it, and created {@code A_iso} alone — and a user holding {@code SELECT}
+     * with no policy on a table reads <b>every</b> row of it, because the pinned image ships
+     * {@code users_without_row_policies_can_read_rows=true}. B's reader would have read A's raw flow
+     * payloads. That is not a hazard that had to exist: the grant and the policy simply have to
+     * arrive together.</p>
+     *
+     * <p>Per user, they cannot separate. A tenant that has not been re-onboarded holds no grant and
+     * needs no policy; one that has, gets both in this method's own statement list, the {@code GRANT}
+     * <em>after</em> the {@code CREATE ROW POLICY} so there is no instant in between. Coverage needs
+     * no catalog read, no enumeration of other tenants and no fail-closed branch — which is the point,
+     * because each of those is somewhere a later edit could reintroduce the gap.</p>
+     *
+     * <p>{@code flows} and the rollups keep their role-wide {@code SELECT} and are not affected: their
+     * policies have existed for every tenant since that tenant was onboarded, so the coverage those
+     * grants assume has always held. This table is the one whose policies lag its grant.</p>
+     *
+     * <p>{@code offboard} needs no counterpart: it drops the users, and a dropped user takes its
+     * grants with it.</p>
+     */
+    private static List<String> deadLetterReadGrant(final String database, final String tenant,
+            final Collection<String> liveLegacyAccounts) {
+        final String table = FlowsSchema.qualifiedDeadLetter(database);
+        final List<String> statements = new ArrayList<>();
+        // The same grantees the policy just named, so the set that can read is by construction the
+        // set that is filtered. A live pre-#649 reader is included for as long as it lives, exactly
+        // as it is on the policy — otherwise the upgrade would leave it reading through no policy.
+        for (final String grantee : readerOnlyPolicyGrantees(tenant, database, liveLegacyAccounts)) {
+            statements.add("GRANT SELECT ON " + table + " TO " + grantee);
+        }
+        return statements;
     }
 
     /**

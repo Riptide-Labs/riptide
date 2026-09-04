@@ -346,7 +346,7 @@ insert duration lives in `persister.batch.flush`. Relevant when metrics do becom
 
 :::
 
-**A poison row costs a whole batch — but the batch is kept.** Because rows are inserted together, a
+**A poison row costs a whole batch — but the batch is kept.** (This whole section is about the batched path; with `batch.enabled=false` there is no batch and no dead letter — see the warning above, and [dead letters](../deploy/operations.md#dead-letters).) Because rows are inserted together, a
 single row the server rejects fails the entire insert: up to `max-rows` flows fail instead of the one
 bad flow the per-record path would have lost. The flusher logs the batch size with the error, writes
 every row of the batch to [`flows_dead_letter`](../deploy/operations.md#dead-letters) and

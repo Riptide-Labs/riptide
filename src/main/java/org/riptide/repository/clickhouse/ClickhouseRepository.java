@@ -7,6 +7,7 @@ package org.riptide.repository.clickhouse;
 
 import com.clickhouse.client.api.Client;
 import com.clickhouse.client.api.ServerException;
+import com.clickhouse.client.api.insert.InsertSettings;
 import com.clickhouse.client.api.query.GenericRecord;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
@@ -173,16 +174,102 @@ public class ClickhouseRepository implements FlowRepository {
     @Override
     public void deadLetter(final List<EnrichedFlow> flows, final Throwable cause)
             throws FlowException, IOException {
+        if (this.deadLetterTableAbsent) {
+            // Measured once and remembered: see the field. Costs no round trip, which is the point.
+            throw new FlowException("the dead-letter table " + FlowsSchema.DEAD_LETTER + " in database"
+                    + " '" + this.config.getDatabase() + "' was not there on an earlier attempt;"
+                    + " re-run 'riptide onboard --create-schema' and restart the collector");
+        }
         final byte[] rows = DeadLetterPayload.jsonEachRow(flows, Instant.now(), cause);
         try (var body = new ByteArrayInputStream(rows)) {
-            this.client.insert(FlowsSchema.DEAD_LETTER, body, ClickHouseFormat.JSONEachRow).get();
+            final var pending = this.client.insert(
+                    FlowsSchema.DEAD_LETTER, body, ClickHouseFormat.JSONEachRow, DEAD_LETTER_SETTINGS);
+            try {
+                pending.get(DEAD_LETTER_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            } catch (final TimeoutException | InterruptedException e) {
+                // Both abandon the insert, so both cancel it — the same rule awaitBounded follows.
+                pending.cancel(true);
+                throw e;
+            }
         } catch (final InterruptedException e) {
             // Same discipline as persist(): the batching flusher swallows what this throws and
             // relies on the interrupt flag to observe a shutdown drain.
             Thread.currentThread().interrupt();
             throw new FlowException(e);
-        } catch (final ExecutionException e) {
+        } catch (final TimeoutException e) {
+            throw new FlowException("the dead-letter insert did not answer within "
+                    + DEAD_LETTER_TIMEOUT, e);
+        } catch (final Exception e) {
+            // Deliberately wider than persist()'s ExecutionException arm, and measured rather than
+            // assumed: against a missing table this client raises a BARE ServerException (code 60,
+            // UNKNOWN_TABLE) rather than completing the future exceptionally, so an
+            // ExecutionException-only catch left the latch below unreachable and let an unwrapped
+            // RuntimeException escape a method whose contract is FlowException. Both are fixed here
+            // by catching what actually arrives.
+            rememberIfTheTableIsNotThere(e);
             throw new FlowException(e);
+        }
+    }
+
+    /**
+     * Settings this one insert overrides, whatever {@code riptide.clickhouse.async-inserts} says.
+     *
+     * <p>Under the opt-in coalesced path the client sends {@code wait_for_async_insert=0}, which
+     * acknowledges on buffer append. Inherited here, the dead-letter insert would report success
+     * before the server had accepted anything — so {@code deadLetteredRows} would count rows that may
+     * never land, and the flusher's "Kept all N flows" line would be a claim nothing checked. The
+     * whole value of a dead letter is that it is <em>there</em>, so this insert waits.</p>
+     *
+     * <p>Costs nothing on the default path, which already sends {@code async_insert=0}.</p>
+     */
+    private static final InsertSettings DEAD_LETTER_SETTINGS = new InsertSettings()
+                    .serverSetting("async_insert", "0")
+                    .serverSetting("wait_for_async_insert", "1");
+
+    /**
+     * How long the dead-letter insert may block the flusher.
+     *
+     * <p>Bounded because this runs on the flush loop, and {@code stop()} gives that loop a grace
+     * period it is expected to respect. An unbounded {@code get()} against a server that accepts the
+     * connection and never answers would hold the flusher past the grace period — and
+     * {@code sweep()} can reach this once more per refused chunk after the grace was thought to be
+     * spent, so the exposure is per chunk rather than once. Generous against a large batch on a busy
+     * server, finite against one that has stopped answering.</p>
+     */
+    private static final Duration DEAD_LETTER_TIMEOUT = Duration.ofSeconds(30);
+
+    /**
+     * Set once the server has said the dead-letter table is not there.
+     *
+     * <p>An un-migrated deployment refuses every dead-letter insert for the same reason, forever, and
+     * a refused batch is already the slow path — so re-asking costs a round trip per failed batch to
+     * be told what riptide was told last time. Latched on {@code UNKNOWN_TABLE} alone, never on a
+     * transport failure or a quota: those are transient and must not disable the feature.</p>
+     *
+     * <p><b>It is not cleared when the table appears.</b> Adding it takes an {@code onboard} run, and
+     * a collector's schema posture is decided at startup everywhere else in this class (see
+     * {@code verifyRollupShapes}); the message says to restart, and {@code multi-tenancy.md} says so
+     * too. Volatile rather than atomic: two flusher threads do not exist, and a racing double-write
+     * writes the same {@code true}.</p>
+     */
+    private volatile boolean deadLetterTableAbsent;
+
+    /** Latch {@link #deadLetterTableAbsent} if — and only if — the server said UNKNOWN_TABLE. */
+    private void rememberIfTheTableIsNotThere(final Throwable thrown) {
+        final Set<Throwable> seen = new LinkedHashSet<>();
+        for (Throwable cause = thrown; cause != null && seen.add(cause); cause = cause.getCause()) {
+            if (cause instanceof ServerException server
+                    && server.getCode() == ServerException.ErrorCodes.TABLE_NOT_FOUND.getCode()) {
+                if (!this.deadLetterTableAbsent) {
+                    log.warn("The dead-letter table {} is not present in database '{}', so refused"
+                            + " batches cannot be kept. Run 'riptide onboard --create-schema' and"
+                            + " restart the collector. This is reported once; later refused batches"
+                            + " are counted without asking the server again.",
+                            FlowsSchema.DEAD_LETTER, this.config.getDatabase());
+                }
+                this.deadLetterTableAbsent = true;
+                return;
+            }
         }
     }
 

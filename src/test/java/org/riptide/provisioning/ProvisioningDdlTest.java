@@ -195,9 +195,9 @@ class ProvisioningDdlTest {
     @Test
     void onboardTenantScopesUsersPolicyWithEscapedPassword() {
         final List<String> sql = ProvisioningDdl.onboardTenant("riptide", "acme", "acme-eu", "p'w", "r'w", List.of());
-        // The six user/grant statements, the flows policy, the dead-letter policy, then one policy
-        // per rollup.
-        assertThat(sql).hasSize(8 + FlowsSchema.rollupTableNames().size());
+        // The six user/grant statements, the flows policy, the dead-letter policy and the
+        // dead-letter SELECT that travels with it, then one policy per rollup.
+        assertThat(sql).hasSize(9 + FlowsSchema.rollupTableNames().size());
         assertThat(sql.get(0))
                 .contains("CREATE USER IF NOT EXISTS `writer_acme@riptide`")
                 .contains("IDENTIFIED WITH sha256_password BY 'p\\'w'")
@@ -219,6 +219,9 @@ class ProvisioningDdlTest {
         assertThat(sql.get(7))
                 .isEqualTo("CREATE ROW POLICY OR REPLACE `acme_iso` ON `riptide`.flows_dead_letter"
                         + " FOR SELECT USING tenant = 'acme' TO `bi_acme@riptide`");
+        // And the SELECT immediately AFTER it, never before: see theDeadLetterReadGrantIsPerTenant.
+        assertThat(sql.get(8))
+                .isEqualTo("GRANT SELECT ON `riptide`.flows_dead_letter TO `bi_acme@riptide`");
     }
 
     @Test
@@ -449,12 +452,10 @@ class ProvisioningDdlTest {
      * whole feature into a slower drop.</p>
      */
     @Test
-    void theDeadLetterTableIsGrantedBothWaysAndConstrainedNeither() {
+    void theDeadLetterTableTakesTheWritersInsertAndNoRoleWideRead() {
         final List<String> sql = ProvisioningDdl.ensureShared("riptide", 1L);
 
-        assertThat(sql).contains(
-                "GRANT INSERT ON `riptide`.flows_dead_letter TO `flow_writer@riptide`",
-                "GRANT SELECT ON `riptide`.flows_dead_letter TO `flow_reader@riptide`");
+        assertThat(sql).contains("GRANT INSERT ON `riptide`.flows_dead_letter TO `flow_writer@riptide`");
         assertThat(sql)
                 .as("the writer needs no read path there, and every one withheld is one the row"
                         + " policy does not have to cover")
@@ -462,6 +463,66 @@ class ProvisioningDdlTest {
         assertThat(sql)
                 .as("a CHECK on the dead-letter table would refuse the rows it exists to keep")
                 .noneMatch(s -> s.contains("CONSTRAINT") && s.contains("flows_dead_letter"));
+    }
+
+    /**
+     * <b>No role-wide {@code SELECT} on the dead-letter table, ever.</b> This is the #649/#732/#734
+     * leak class and the reason the read grant is per user.
+     *
+     * <p>{@code ensureShared} runs once per database; {@code onboardTenant} runs once per tenant. A
+     * role-wide grant therefore arrives for every tenant at once while the row policies arrive one
+     * run at a time — so on a database holding A and B, re-onboarding only A would let B's reader
+     * read A's raw flow payloads, because a user holding {@code SELECT} with no policy on a table
+     * reads every row of it ({@code users_without_row_policies_can_read_rows=true} on the pinned
+     * image, as {@code onboardTenant}'s own javadoc records). Per user, the grant cannot outrun the
+     * policy.</p>
+     */
+    @Test
+    void theDeadLetterReadGrantIsPerTenantAndNeverRoleWide() {
+        assertThat(ProvisioningDdl.ensureShared("riptide", 1L))
+                .as("a role-wide read arrives for every tenant at once, while the policies that"
+                        + " constrain it arrive one onboard run at a time")
+                .noneMatch(s -> s.contains("GRANT SELECT ON `riptide`.flows_dead_letter TO `flow_reader"));
+
+        final List<String> sql =
+                ProvisioningDdl.onboardTenant("riptide", "acme", "org1", "w", "r", List.of());
+        final int policy = indexOfContaining(sql, "ROW POLICY OR REPLACE `acme_iso` ON `riptide`.flows_dead_letter");
+        final int grant = sql.indexOf("GRANT SELECT ON `riptide`.flows_dead_letter TO `bi_acme@riptide`");
+        assertThat(grant).as("the tenant's own reader is granted the read").isNotNegative();
+        assertThat(policy)
+                .as("and the policy is created FIRST, so there is no instant in which the grant is"
+                        + " held without it")
+                .isLessThan(grant);
+    }
+
+    /**
+     * A live pre-#649 reader is granted the read too, for exactly as long as it is named on the
+     * policy.
+     *
+     * <p>The two must not diverge in either direction: granted and unpoliced is the cross-tenant
+     * read above, while policed and ungranted is a dashboard that silently stops working mid-upgrade.
+     * Both sets come from the same helper, so this pins that they still do.</p>
+     */
+    @Test
+    void aLiveLegacyReaderIsGrantedTheDeadLetterReadItIsPolicedFor() {
+        final List<String> sql = ProvisioningDdl.onboardTenant("riptide", "acme", "org1", "w", "r",
+                List.of("writer_acme", "bi_acme"));
+
+        assertThat(sql).contains(
+                "GRANT SELECT ON `riptide`.flows_dead_letter TO `bi_acme@riptide`",
+                "GRANT SELECT ON `riptide`.flows_dead_letter TO `bi_acme`");
+        assertThat(sql)
+                .as("the legacy WRITER holds no SELECT there and is on no policy for it either")
+                .noneMatch(s -> s.equals("GRANT SELECT ON `riptide`.flows_dead_letter TO `writer_acme`"));
+    }
+
+    private static int indexOfContaining(final List<String> statements, final String needle) {
+        for (int i = 0; i < statements.size(); i++) {
+            if (statements.get(i).contains(needle)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /** The bootstrap emits the table and nothing that would constrain it. */

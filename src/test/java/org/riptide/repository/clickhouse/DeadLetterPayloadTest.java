@@ -15,11 +15,13 @@ import org.riptide.pipeline.EnrichedFlow;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.net.InetAddress;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.TimeZone;
 
 /**
  * The dead-letter payload's one contract: what goes in comes back out (#548).
@@ -158,6 +160,139 @@ class DeadLetterPayloadTest {
         final JsonNode row = new ObjectMapper().readTree(body.lines().findFirst().orElseThrow());
         Assertions.assertThat(row.get("tenant").asText()).isEmpty();
         Assertions.assertThat(row.get("error").asText()).isEmpty();
+    }
+
+    /**
+     * A refused batch's {@code error} keeps the diagnosis and loses the offending row's values.
+     *
+     * <p>This is a tenant boundary, not tidiness. The column is written once per batch and copied
+     * onto every row, while the row policy filters on {@code tenant} — so nothing can filter a
+     * batch-scoped column per tenant. A batch drains one queue across every exporter, so without the
+     * redaction tenant A's reader would read a stored, TTL'd string quoting tenant B's refused row.
+     * The message below is the shape the pinned server actually produces.</p>
+     */
+    @Test
+    void theStoredErrorLosesTheOffendingRowsValuesAndKeepsTheDiagnosis() {
+        final String refusal = "Code: 469. DB::Exception: Constraint `tenant_pinned` for table"
+                + " riptide.flows is violated at row 1. Expression: (tenant = getSetting('SQL_tenant'))."
+                + " Column values: tenant = 'globex-secret'. (VIOLATED_CONSTRAINT) (version 26.7.3.19)";
+
+        final String stored = DeadLetterPayload.describe(new IllegalStateException(refusal));
+
+        Assertions.assertThat(stored)
+                .as("another tenant reads this row, so no value of the refused row may survive in it")
+                .doesNotContain("globex-secret");
+        Assertions.assertThat(stored)
+                .as("and what is left must still diagnose the refusal, or the column is useless")
+                .contains("VIOLATED_CONSTRAINT")
+                .contains("tenant_pinned")
+                .contains("violated at row 1")
+                .contains("removed by riptide");
+        // The error code sits AFTER the redacted clause, so a redaction that truncated instead of
+        // splicing would throw away the most useful token in the message. That is why the tail is
+        // asserted above and pinned by position here.
+        Assertions.assertThat(stored.indexOf("removed by riptide"))
+                .isLessThan(stored.indexOf("VIOLATED_CONSTRAINT"));
+    }
+
+    /** A message with no such clause is stored as it is. */
+    @Test
+    void anErrorCarryingNoRowValuesIsStoredUnchanged() {
+        final String plain = "java.net.SocketException: Connection reset";
+        Assertions.assertThat(DeadLetterPayload.describe(new IllegalStateException(plain)))
+                .contains(plain)
+                .doesNotContain("removed by riptide");
+    }
+
+    /**
+     * A runaway message is capped.
+     *
+     * <p>It is copied onto every row of a batch that can hold {@code max-rows} — 10,000 by default —
+     * on the path where something has already gone wrong.</p>
+     */
+    @Test
+    void aRunawayErrorMessageIsCapped() {
+        final String huge = "x".repeat(DeadLetterPayload.MAX_ERROR_CHARS * 3);
+
+        final String stored = DeadLetterPayload.describe(new IllegalStateException(huge));
+
+        Assertions.assertThat(stored.length())
+                .isLessThanOrEqualTo(DeadLetterPayload.MAX_ERROR_CHARS + 64);
+        Assertions.assertThat(stored).endsWith("<truncated by riptide>");
+    }
+
+    /**
+     * One flow the codec cannot write costs one row, not the batch.
+     *
+     * <p>Serialising happens inside the loop, so an exception there would otherwise abort the whole
+     * dead-letter insert and drop all 10,000 rows — on precisely the pathological input this feature
+     * exists for. Driven through the package-private seam because every field of an
+     * {@link EnrichedFlow} is serialisable by construction: no fixture can produce this flow, and a
+     * test that could not reach the arm would be asserting that it is unreachable.</p>
+     */
+    @Test
+    void oneUnserialisableFlowCostsOneRowRatherThanTheWholeBatch() throws Exception {
+        final EnrichedFlow good = fullyPopulatedBuilder().tenant("acme").build();
+        final EnrichedFlow bad = fullyPopulatedBuilder().tenant("globex").srcPort(20002).build();
+
+        final String body = new String(DeadLetterPayload.jsonEachRow(
+                List.of(good, bad, good), Instant.EPOCH, new IllegalStateException("refused"),
+                flow -> {
+                    // Selected by a value the fixture varies, not by identity: Error Prone refuses
+                    // the reference comparison, and equals() here would be no clearer.
+                    if ("globex".equals(flow.getTenant())) {
+                        throw new IOException("no serialiser for this flow");
+                    }
+                    return DeadLetterPayload.serialise(flow);
+                }), StandardCharsets.UTF_8);
+
+        final List<String> lines = body.lines().toList();
+        Assertions.assertThat(lines)
+                .as("the batch must still produce a row per flow, or one bad row loses all of them")
+                .hasSize(3);
+        final ObjectMapper mapper = new ObjectMapper();
+        // The two good rows are intact...
+        Assertions.assertThat(DeadLetterPayload.deserialise(
+                        mapper.readTree(lines.get(0)).get("payload").asText()))
+                .isEqualTo(good);
+        // ...and the bad one keeps its identity and says what happened to its payload.
+        final JsonNode failed = mapper.readTree(lines.get(1));
+        Assertions.assertThat(failed.get("tenant").asText()).isEqualTo("globex");
+        Assertions.assertThat(mapper.readTree(failed.get("payload").asText())
+                        .get(DeadLetterPayload.PAYLOAD_ERROR_KEY).asText())
+                .as("the placeholder is JSON, so an operator's JSONExtract does not fail on it")
+                .contains("no serialiser for this flow");
+    }
+
+    /**
+     * {@code failedAt} is UTC whatever the host's zone is — the #276 defect class.
+     *
+     * <p>The column is {@code DateTime64(3, 'UTC')} and the renderer uses {@code ZoneOffset.UTC}, so
+     * on a UTC machine a regression to {@code ZoneId.systemDefault()} is invisible: CI runs UTC and
+     * the IT only bounds the value from below. Setting a non-UTC default here is what makes that
+     * mutation fail, the same technique {@code TimestampTimezoneIT} uses deliberately.</p>
+     */
+    @Test
+    void failedAtIsRenderedInUtcWhateverTheHostZoneIs() throws Exception {
+        final TimeZone original = TimeZone.getDefault();
+        try {
+            // UTC-6 at this instant, so a systemDefault() renderer would write 04:11 and an
+            // hour-agnostic assertion could not tell the difference.
+            TimeZone.setDefault(TimeZone.getTimeZone("America/Chicago"));
+
+            final String body = new String(DeadLetterPayload.jsonEachRow(
+                    List.of(EnrichedFlow.builder().tenant("acme").build()),
+                    Instant.parse("2026-09-04T10:11:12.345Z"), null), StandardCharsets.UTF_8);
+
+            Assertions.assertThat(new ObjectMapper()
+                            .readTree(body.lines().findFirst().orElseThrow())
+                            .get("failedAt").asText())
+                    .as("the column is DateTime64(3, 'UTC'); a host-zone rendering would store an"
+                            + " instant six hours off with nothing on any surface saying so")
+                    .isEqualTo("2026-09-04 10:11:12.345");
+        } finally {
+            TimeZone.setDefault(original);
+        }
     }
 
     /**

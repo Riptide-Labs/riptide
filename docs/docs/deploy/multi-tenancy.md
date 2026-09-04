@@ -179,7 +179,8 @@ before: every row counted in `persister.batch.failedRows` and nothing kept. See
 The recipe is **role-based**: the schema, the grants, the reader hardening, the CHECK barrier, and
 the quota are one-time **per-database** objects, so per-tenant reduces to the scoped users + role
 grants + one row policy per table (`flows`, `flows_dead_letter` and each rollup, all sharing the
-tenant-literal predicate). `onboard` ensures the per-database objects on first run and adds the per-tenant part:
+tenant-literal predicate) — plus, for `flows_dead_letter` alone, the `SELECT` itself, which is
+granted per user rather than to the shared reader role. `onboard` ensures the per-database objects on first run and adds the per-tenant part:
 
 ```sql
 -- Only with --create-schema, and only when the schema is actually missing (a default run emits
@@ -215,10 +216,10 @@ ALTER TABLE riptide.flows ADD CONSTRAINT IF NOT EXISTS org_pinned    CHECK organ
 -- One quota keyed by user gives every writer its own bucket (written_bytes — written_rows is not a metric).
 CREATE QUOTA IF NOT EXISTS `flow_ingest@riptide` FOR INTERVAL 1 hour MAX written_bytes = 50000000000
   KEYED BY user_name TO `flow_writer@riptide`;
--- The dead-letter table: the writer files a refused batch there, the reader inspects it. No
--- CHECK constraint is ever added to it — its job is to accept the rows one refused.
+-- The dead-letter table: the writer files a refused batch there. No CHECK constraint is ever added
+-- to it — its job is to accept the rows one refused. NOTE the asymmetry with every other table
+-- here: the INSERT is role-wide, the SELECT is NOT. See the per-tenant block below.
 GRANT INSERT ON riptide.flows_dead_letter TO `flow_writer@riptide`;
-GRANT SELECT ON riptide.flows_dead_letter TO `flow_reader@riptide`;
 -- Every rollup gets the same treatment as flows, for both roles.
 GRANT INSERT ON riptide.flows_by_application_1m TO `flow_writer@riptide`;   -- and the other three
 GRANT SELECT ON riptide.flows_by_application_1m TO `flow_reader@riptide`;
@@ -242,6 +243,13 @@ CREATE ROW POLICY OR REPLACE acme_iso ON riptide.flows
 -- the same reason the rollups are: the writer holds no SELECT there.
 CREATE ROW POLICY OR REPLACE acme_iso ON riptide.flows_dead_letter
   FOR SELECT USING tenant = 'acme' TO `bi_acme@riptide`;
+-- And the read itself, per USER and immediately after the policy that constrains it — the one grant
+-- in this whole recipe that is not role-wide. A role grant would arrive for every tenant at once
+-- while these policies arrive one onboard run at a time, so re-onboarding a single tenant of a
+-- multi-tenant database would let every OTHER tenant read its dead letters: a user holding SELECT
+-- with no policy on a table reads every row of it (see the note below). Per user they cannot
+-- separate. A tenant that has not been re-onboarded holds no grant and needs no policy.
+GRANT SELECT ON riptide.flows_dead_letter TO `bi_acme@riptide`;
 -- The rollup policies name the reader only. The writer holds no SELECT on a rollup target at all,
 -- so being unnamed there exposes nothing; it reaches a rollup by INSERT through its materialized
 -- view, which no row policy filters.
@@ -461,6 +469,10 @@ and, through the subcommand, `TenantOnboardingIT`):
   against a shared table holding every tenant. The rollups carry the same policy, so a
   pre-aggregated query is bounded exactly as the raw one is — a rollup is not a way around the
   boundary, and neither is `flows_dead_letter` (`TenantOnboardingIT.deadLettersAreIsolatedByTenantLikeFlows`).
+  That table is guarded twice over: its `SELECT` is granted per user alongside the policy, so a
+  tenant onboarded before the table existed cannot read it *at all* until it is re-onboarded
+  (`aTenantOnboardedBeforeTheDeadLetterTableExistedIsRefusedOnIt`), rather than reading everything
+  through a role grant no policy of its own covers.
   One asymmetry is worth knowing: the dead-letter table deliberately carries no `CHECK`, so a writer
   whose config lies about its tenant has the write refused and the dead letter it files is visible to
   the tenant it named. The write is still refused; what changes is that the attempt leaves evidence.
