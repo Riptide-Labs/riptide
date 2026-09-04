@@ -33,7 +33,9 @@ exist yet. It then:
 
 **The release commit must contain the version bump and nothing else.**
 Step 2 above is `git commit --signoff -am`, which sweeps *every* modified tracked file in your tree into that commit.
-`release.yml` refuses to build a tag whose history adds anything but `pom.xml` on top of `main`, and the refusal names the offending paths.
+`release.yml` refuses to build a tag whose history adds anything but `pom.xml` on top of `main`, and, within `pom.xml`, anything but the project `<version>` line.
+That second half is not pedantry: a dependency, plugin or repository added in an unreviewed commit would be compiled into the release and signed with it, and neither the SNAPSHOT check nor the tag-versus-version check would notice.
+The refusal names the offending paths or pom lines.
 It runs first, before anything is built or published, so a refusal costs you nothing but a re-cut.
 Check it yourself before you push:
 
