@@ -19,12 +19,19 @@ import org.riptide.classification.ClassificationRuleProvider;
 import org.riptide.classification.DefaultRule;
 import org.riptide.classification.ProtocolType;
 import org.riptide.classification.Rule;
+import org.riptide.classification.internal.csv.CsvImporter;
 import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -392,6 +399,102 @@ public class DefaultClassificationEngineTest {
             assertThat(publication.invalidRules()).as("and which of them classify nothing")
                     .extracting(Rule::getName).containsExactly("broken");
         });
+    }
+
+    /**
+     * The reuse #707 is about, against the ruleset that makes it worth having. The bundled tree
+     * costs about 1.5s to build and tens of seconds under the coverage agent, and a full suite
+     * built it twice.
+     *
+     * <p>Deliberately runs against the process-wide cache rather than a private one. A private
+     * cache would force a build here, which would put a <em>third</em> bundled build into the
+     * suite and break the very count this change is measured by. Identity is the assertion that
+     * survives either way: whether this row builds the tree or is served one another class built,
+     * a second engine over the same rules getting the same object is a build that did not happen.
+     * The 5-minute bound is for the case where this row is the one that builds — the same
+     * instrumented cost, and the same reasoning, as the bundled row in
+     * {@code ClassificationRuleReloaderTest}.
+     */
+    @Test
+    @Timeout(value = 5, unit = TimeUnit.MINUTES)
+    void aSecondEngineOverTheSameRulesServesTheSameTree() throws InterruptedException {
+        final ClassificationRuleProvider bundled = () -> {
+            try (var stream = DefaultClassificationEngineTest.class.getResourceAsStream("/classification-rules.csv")) {
+                return new CsvImporter().parse(stream, true);
+            } catch (final IOException e) {
+                throw new UncheckedIOException("cannot read the bundled ruleset", e);
+            }
+        };
+        assertThat(bundled.getRules()).as("the ruleset whose build cost this is about").hasSizeGreaterThan(6000);
+
+        final var first = new DefaultClassificationEngine(bundled);
+        final var second = new DefaultClassificationEngine(bundled);
+
+        assertThat(second.getTree())
+                .as("the same rules, so the same tree object and no second build")
+                .isSameAs(first.getTree());
+
+        final var sample = List.of(
+                ClassificationRequest.builder().withProtocol(ProtocolType.UDP).withDstPort(123).build(),
+                ClassificationRequest.builder().withProtocol(ProtocolType.TCP).withDstPort(80).build(),
+                ClassificationRequest.builder().withProtocol(ProtocolType.TCP).withDstPort(22).build(),
+                ClassificationRequest.builder().withProtocol(ProtocolType.TCP).withSrcPort(443).build());
+        assertThat(sample).allSatisfy(request ->
+                assertThat(second.classify(request)).as("%s", request).isEqualTo(first.classify(request)));
+        assertThat(first.classify(sample.get(0))).as("and the sample is really classifying").isEqualTo("ntp");
+    }
+
+    /**
+     * A build that threw published nothing, so it must have cached nothing either — otherwise the
+     * next reload of those rules is served whatever a half-finished build left behind.
+     */
+    @Test
+    @Timeout(10)
+    void anInterruptedBuildIsNotCached() throws InterruptedException {
+        final var cache = new DecisionTreeCache();
+        final var engine = new DefaultClassificationEngine(ONE_RULE, false, cache);
+
+        Thread.currentThread().interrupt();
+        assertThatThrownBy(engine::reload).isInstanceOf(InterruptedException.class);
+
+        assertThat(cache.get(ONE_RULE.getRules()))
+                .as("a build that did not finish leaves nothing behind").isEmpty();
+
+        engine.reload();
+
+        assertThat(cache.get(ONE_RULE.getRules())).as("and the next reload builds it").isPresent();
+        assertThat(engine.classify(ClassificationRequest.builder().withDstPort(80).build())).isEqualTo("rule1");
+    }
+
+    /**
+     * Two engines started on the same unseen ruleset at once. Both may build it — no lock is held
+     * across a build, deliberately — and the property that matters is that neither is left with
+     * something half-published.
+     */
+    @Test
+    @Timeout(30)
+    void twoThreadsRacingOnTheSameNewRulesetBothGetACorrectTree() throws Exception {
+        final var cache = new DecisionTreeCache();
+        final var ready = new CountDownLatch(2);
+        final var go = new CountDownLatch(1);
+        final var pool = Executors.newFixedThreadPool(2);
+        try {
+            final Callable<DefaultClassificationEngine> build = () -> {
+                ready.countDown();
+                go.await();
+                return new DefaultClassificationEngine(ONE_RULE, true, cache);
+            };
+            final var first = pool.submit(build);
+            final var second = pool.submit(build);
+            ready.await();
+            go.countDown();
+
+            final var request = ClassificationRequest.builder().withDstPort(80).build();
+            assertThat(first.get().classify(request)).isEqualTo("rule1");
+            assertThat(second.get().classify(request)).isEqualTo("rule1");
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     private List<ILoggingEvent> errors() {
