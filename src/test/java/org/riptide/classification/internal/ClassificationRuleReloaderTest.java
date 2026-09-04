@@ -78,10 +78,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * <p>The class-level timeout is not decoration: the hung-server and dribbling-server rows
  * fail by hanging, and 60s is sized for rows that otherwise finish in fractions of a
  * second. It does not fit every row: {@link #anIntervalAgainstTheBundledClasspathRulesetPollsHarmlessly}
- * builds the real bundled decision tree, which costs tens of seconds under the coverage agent
+ * needs the real bundled decision tree, which costs tens of seconds under the coverage agent
  * this suite runs with and about 1.5s without it, and so carries its own 5-minute method-level
- * bound, sized in the comment directly above it. The 60s governs the body of every other row,
- * and no bound at all covers setUp or tearDown.</p>
+ * bound, sized in the comment directly above it. Since #707 that row is handed an already-built
+ * tree when another class in the same JVM built it first, but it builds one itself when this
+ * class is run alone — which is the case the bound has to fit. The 60s governs the body of every
+ * other row, and no bound at all covers setUp or tearDown.</p>
  */
 @Timeout(60)
 class ClassificationRuleReloaderTest {
@@ -956,7 +958,12 @@ class ClassificationRuleReloaderTest {
      */
     // Bounded here rather than by the class's 60s, which fits rows finishing in fractions of
     // a second: the hung-server and dribbling-server rows are 0.33s each. This row loads the
-    // real bundled ruleset, and building the decision tree from it is nearly its whole cost.
+    // real bundled ruleset, and building the decision tree from it is nearly its whole cost —
+    // when it is this row that builds it. Since #707 that depends on execution order, and the
+    // gap is the whole point of the bound: measured twice, independently, this class takes 27.57s
+    // and 28.05s run on its own, where this row builds the tree, against 1.45s and 1.36s when
+    // another class in the same JVM built it first and this row is handed it. The bound has to fit
+    // the first pair, which is the one a developer running this class alone gets.
     //
     // Almost all of that cost is the coverage agent, not the build. Measured standalone on the
     // project classpath, Tree.of over this ruleset takes 1.4-1.7s and produces a 15,530-leaf
@@ -986,19 +993,24 @@ class ClassificationRuleReloaderTest {
     // #706 is the alarm this silences, not the flake itself: the row is still nearly the
     // whole cost of the class and still slows under load, the bound simply no longer fires.
     //
-    // The exit condition is the instrumented cost, which is not what #707 tracks. #707 is the
+    // The exit condition is the instrumented cost, which is not what #707 tracked. #707 was the
     // residue that survived measuring this: an uncached, superlinear build that a boot pays
-    // about 1.5s for. Closing it would not shorten this row unless the fix is a cache or a
-    // faster build — and one route canvassed there, making classify() non-blocking, leaves the
-    // build exactly as slow.
+    // about 1.5s for. Its cache has landed, and it removed the repeat — a full suite builds this
+    // ruleset once now instead of twice, and whichever class reaches it second is handed the
+    // first one's tree. It did not remove the build. Whoever reaches it first still pays in
+    // full, and this row is first whenever the class is run on its own, which is precisely when
+    // the bound has to hold. So the annotation stays; what changed is that the cost is paid once
+    // per JVM rather than twice. The other route canvassed on #707, making classify()
+    // non-blocking, would have left the build exactly as slow.
     //
     // The condition for removing this annotation is stated in instrumented terms, because that
     // is what the bound has to survive: when this row lands under ~30s with margin on a loaded
     // machine, the class's 60s fits it again. An uninstrumented threshold cannot express it —
     // 25x of 1.5s already fits under 60s today, so any bar written that way is satisfied on
-    // arrival and gates nothing. A cache, a cheaper build, or a suite that no longer runs under
-    // the agent all get there. Removing it means editing two places, here and the class
-    // javadoc, which also names this bound.
+    // arrival and gates nothing. What is left that gets there is a cheaper build or a suite that
+    // no longer runs under the agent; the cache is spent, because it cannot make a first build
+    // faster. Removing this means editing two places, here and the class javadoc, which also
+    // names this bound.
     //
     // What this bound does not cover:
     // - CI, where this has never failed. Runners complete the whole class faster than this

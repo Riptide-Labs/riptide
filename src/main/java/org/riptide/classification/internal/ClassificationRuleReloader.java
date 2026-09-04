@@ -162,8 +162,11 @@ public class ClassificationRuleReloader {
             return;
         }
         // seeded, unlike the config reloader: the engine has already published the rules
-        // this source held at boot, so an unseeded first cycle would rebuild the decision
-        // tree from bytes that are already serving
+        // this source held at boot, so an unseeded first cycle would reload the engine from
+        // bytes that are already serving — a pointless publish, a pointless listener fan-out
+        // and a second fetch. Since #707 that cycle would hit the decision-tree cache rather
+        // than rebuild, so the cost it avoids is no longer a tree build; the reason to seed is
+        // that the work is redundant, not that it is expensive
         this.trigger = new FileWatchTrigger(log, this.source, interval, "ClassificationRuleReloader",
                 messages(this.source.describe()), this.metrics, "classification",
                 this.reloadFailures, true, new FileWatchTrigger.Cycle() {
