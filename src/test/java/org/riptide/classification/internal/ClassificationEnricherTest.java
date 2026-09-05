@@ -35,7 +35,7 @@ public class ClassificationEnricherTest {
      * An IP protocol number {@code Protocols} does not map, so {@code Protocols.getProtocol(Integer)}
      * answers null for it. This is the only way a null protocol arises from the wire:
      * {@code Flow.getProtocol()} is a primitive {@code int} and both the v9 and IPFIX builders default
-     * an absent protocol to 0, which is HOPOPT and mapped. 143-252 are unmapped in the table; the row
+     * an absent protocol to 0, which is HOPOPT and mapped. 148-252 are unmapped in the table; the row
      * below asserts this one still is.
      */
     private static final int UNMAPPED_PROTOCOL = 200;
