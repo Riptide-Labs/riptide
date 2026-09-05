@@ -24,8 +24,19 @@ class IpMatcher implements Matcher {
         this.valueExtractor = Objects.requireNonNull(valueExtractor);
     }
 
+    /**
+     * A request with no address in this direction matches no rule that names one.
+     * <p>
+     * Same semantics as {@code Threshold.Address.compare}, which answers {@code Order.NA} for an absent
+     * address and lets the decision tree route on it. The extractor yields an {@code IpAddr}, so this
+     * takes {@code IpValue.isInRange(IpAddr)} and not the {@code String} overload with its
+     * {@code Objects.requireNonNull}; without the guard the null reached {@code IpRange.contains}, where
+     * comparing against it unboxes the other address. See {@code ProtocolMatcher.matches} for the
+     * reachable form of the same defect.
+     */
     @Override
     public boolean matches(ClassificationRequest request) {
-        return value.isInRange(valueExtractor.apply(request));
+        final IpAddr address = valueExtractor.apply(request);
+        return address != null && value.isInRange(address);
     }
 }

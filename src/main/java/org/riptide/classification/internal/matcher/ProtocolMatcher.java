@@ -23,8 +23,18 @@ public class ProtocolMatcher implements Matcher {
         this(ProtocolValue.of(protocols));
     }
 
+    /**
+     * A request with no protocol matches no rule that names one.
+     * <p>
+     * A protocol number riptide does not map arrives here as a null protocol, because
+     * {@code Protocols.getProtocol(Integer)} answers null for it exactly as it does for a flow with no
+     * protocol at all. That is a designed state, not a broken request: {@code Threshold.Protocol.compare}
+     * answers {@code Order.NA} for it and the decision tree routes on that. This leaf follows the same
+     * semantics rather than dereferencing.
+     */
     @Override
     public boolean matches(final ClassificationRequest request) {
-        return protocols.contains(request.getProtocol().getDecimal());
+        final var protocol = request.getProtocol();
+        return protocol != null && protocols.contains(protocol.getDecimal());
     }
 }

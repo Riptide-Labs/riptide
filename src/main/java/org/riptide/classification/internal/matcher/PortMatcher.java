@@ -23,8 +23,17 @@ class PortMatcher implements Matcher {
         this.valueExtractor = Objects.requireNonNull(valueExtractor);
     }
 
+    /**
+     * A request with no port in this direction matches no rule that names one.
+     * <p>
+     * Same semantics as {@code Threshold.Port.compare}, which answers {@code Order.NA} for an absent
+     * port and lets the decision tree route on it. Without the guard the extracted {@code Integer}
+     * auto-unboxes into {@code PortValue.matches(int)}; see {@code ProtocolMatcher.matches} for the
+     * reachable form of the same defect.
+     */
     @Override
     public boolean matches(ClassificationRequest request) {
-        return this.value.matches(valueExtractor.apply(request));
+        final Integer port = valueExtractor.apply(request);
+        return port != null && this.value.matches(port);
     }
 }

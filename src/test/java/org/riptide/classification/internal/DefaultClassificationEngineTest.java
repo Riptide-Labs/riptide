@@ -130,6 +130,65 @@ public class DefaultClassificationEngineTest {
                 .build())).isEqualTo("XXX2");
     }
 
+    /**
+     * A rule that names an aspect must answer "no" for a flow that lacks it, rather than throw. See
+     * #750: {@code Protocols.getProtocol(Integer)} answers null for every protocol number riptide does
+     * not map, so "no protocol" arrives off the wire; {@code Threshold.Protocol.compare} already routes
+     * that as {@code Order.NA} and only the leaf matchers disagreed, by dereferencing it.
+     *
+     * <p>Each engine here holds a single rule <em>on purpose</em>. {@code Tree.of} makes a leaf as soon
+     * as one rule is left, so the rule's own condition is never turned into a threshold and the leaf
+     * matcher is what decides. Split the rule into two and the tree routes the request down an "na"
+     * child that the rule is not in, the matcher never runs, and the row stops testing the leaf — which
+     * is exactly why the ports and addresses below are latent against the bundled ruleset while the
+     * protocol defect is live there ({@code ClassificationEnricherTest}).
+     */
+    @Test
+    void aRuleNamingAProtocolDoesNotMatchARequestWithoutOne() throws InterruptedException {
+        final var engine = new DefaultClassificationEngine(() -> List.of(
+                DefaultRule.builder().withName("tcp").withPosition(1).withProtocol("TCP").build()));
+
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withSrcPort(54321).withDstPort(80).build())).isNull();
+
+        // the control: a request that carries its protocol still reaches the rule that names it
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withProtocol(ProtocolType.TCP).withSrcPort(54321).withDstPort(80).build())).isEqualTo("tcp");
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withProtocol(ProtocolType.UDP).withSrcPort(54321).withDstPort(80).build())).isNull();
+    }
+
+    /** The same property for ports, where a null {@code Integer} used to auto-unbox in the leaf. */
+    @Test
+    void aRuleNamingAPortDoesNotMatchARequestWithoutOne() throws InterruptedException {
+        final var engine = new DefaultClassificationEngine(() -> List.of(
+                DefaultRule.builder().withName("http").withPosition(1).withDstPort(80).build()));
+
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withProtocol(ProtocolType.TCP).withSrcPort(54321).build())).isNull();
+
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withProtocol(ProtocolType.TCP).withSrcPort(54321).withDstPort(80).build())).isEqualTo("http");
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withProtocol(ProtocolType.TCP).withSrcPort(54321).withDstPort(443).build())).isNull();
+    }
+
+    /** The same property for addresses. */
+    @Test
+    void aRuleNamingAnAddressDoesNotMatchARequestWithoutOne() throws InterruptedException {
+        final var engine = new DefaultClassificationEngine(() -> List.of(
+                DefaultRule.builder().withName("local").withPosition(1).withDstAddress("192.168.2.1").build()));
+
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withProtocol(ProtocolType.TCP).withSrcAddress("192.168.2.1").withDstPort(80).build())).isNull();
+
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withProtocol(ProtocolType.TCP).withDstAddress("192.168.2.1").withDstPort(80).build()))
+                .isEqualTo("local");
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withProtocol(ProtocolType.TCP).withDstAddress("192.168.2.2").withDstPort(80).build())).isNull();
+    }
+
     @Test
     void verifyAllPortsToEnsureEngineIsProperlyInitialized() throws InterruptedException {
         final var classificationEngine = new DefaultClassificationEngine(List::of);
