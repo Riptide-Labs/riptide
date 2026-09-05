@@ -44,11 +44,54 @@ jobs:
           echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum --check
           tar -xzf actionlint.tar.gz actionlint
           sudo install -m 0755 actionlint /usr/local/bin/actionlint
+      # zizmor's version is pinned in .github/requirements.txt, not in this
+      # step's `env:`. Dependabot watches manifests, not `run:` steps, so a pin
+      # kept here is a pin nothing updates — which is how this one came to name
+      # a release zizmor's maintainers had withdrawn (#747). Any future
+      # Python-packaged tool goes in that file for the same reason.
+      #
+      # `pip -r`, not `pipx install`, so the install is the thing Dependabot
+      # edits and so a withdrawal is something this step can see at all: pip
+      # reports the yank reason, pipx swallows it. The venv sidesteps PEP 668
+      # rather than relying on the runner image's `break-system-packages`
+      # default.
+      #
+      # Unlike actionlint above, zizmor gets no integrity check. A hash pin
+      # means `--require-hashes` over the whole transitive closure, which is a
+      # larger change with its own upkeep. The asymmetry is known and left as
+      # is; do not read the two steps as equally protected.
       - name: Install zizmor
-        env:
-          ZIZMOR_VERSION: 1.27.0
         run: |
-          pipx install "zizmor==${ZIZMOR_VERSION}"
+          set -euo pipefail
+          : "${RUNNER_TEMP:?RUNNER_TEMP must be set}"
+          venv="${RUNNER_TEMP}/lint-tools"
+          log="${RUNNER_TEMP}/zizmor-install.log"
+          python3 -m venv "${venv}"
+          "${venv}/bin/pip" install --disable-pip-version-check \
+            --requirement .github/requirements.txt 2>&1 | tee "${log}"
+          # Refuse a withdrawn release, do not merely report it. pip installs a
+          # yanked version whenever it is pinned exactly — which is what a pin
+          # file always does — and still exits 0, so a withdrawal reaches nobody
+          # unless a human happens to read the log. That is precisely how the
+          # 1.27.0 pin survived (#747). The tradeoff is deliberate: a yank
+          # upstream turns this job red until someone bumps the pin.
+          if grep -q "yanked version" "${log}"; then
+            echo "::error::.github/requirements.txt pins a release its maintainers withdrew; bump the pin." >&2
+            grep -i "yank" "${log}" >&2
+            exit 1
+          fi
+          # Compare, do not just print. An install that quietly produced some
+          # other version would otherwise pass for the bump. The manifest is the
+          # single source of truth for the version that belongs here.
+          pinned="$(sed -n 's/^zizmor==//p' .github/requirements.txt)"
+          : "${pinned:?no exact zizmor== pin found in .github/requirements.txt}"
+          installed="$("${venv}/bin/zizmor" --version | awk '{print $2}')"
+          if [ "${installed}" != "${pinned}" ]; then
+            echo "::error::zizmor ${installed} installed, but .github/requirements.txt pins ${pinned}" >&2
+            exit 1
+          fi
+          echo "zizmor ${installed} matches the pin in .github/requirements.txt"
+          echo "${venv}/bin" >> "${GITHUB_PATH}"
       - name: Lint workflows
         run: |
           make lint-actions

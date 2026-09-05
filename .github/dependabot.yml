@@ -17,6 +17,20 @@ updates:
       prefix: "ci"
     schedule:
       interval: "weekly"
+  # pip, for the Python-packaged tools the workflows install. Their versions used
+  # to sit in a `run:` step's `env:`, where no ecosystem could see them, and the
+  # zizmor pin quietly went on naming a release its maintainers had withdrawn
+  # (#747). .github/requirements.txt is the manifest this watches; new tool pins
+  # belong there rather than in a workflow.
+  - package-ecosystem: "pip" # zizmor, installed by the lint-actions workflow
+    directory: "/.github"
+    target-branch: "main"
+    labels:
+      - "dependency update"
+    commit-message:
+      prefix: "ci"
+    schedule:
+      interval: "weekly"
   - package-ecosystem: "docker" # keeps the digest-pinned base image of the main Dockerfile current
     directory: "/"
     target-branch: "main"

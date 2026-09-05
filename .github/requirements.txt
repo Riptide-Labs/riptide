@@ -1,0 +1,13 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Python-packaged tools the workflows install. The versions live here rather
+# than in a workflow's `env:` because Dependabot watches manifests, not `run:`
+# steps — a pin inside a step is a pin nothing updates. That is how the zizmor
+# pin came to sit on a release its maintainers had withdrawn, until a human
+# happened to look (#747). Put the next Python tool pin in this file.
+#
+# Consumers: `.github/workflows/lint-actions.yml` installs from it, and the
+# "pip" ecosystem in `.github/dependabot.yml` (directory `/.github`) keeps it
+# current.
+zizmor==1.30.0
