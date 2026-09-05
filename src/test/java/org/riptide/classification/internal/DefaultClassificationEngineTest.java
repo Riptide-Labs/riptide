@@ -130,6 +130,100 @@ public class DefaultClassificationEngineTest {
                 .build())).isEqualTo("XXX2");
     }
 
+    /**
+     * A rule that names an aspect must answer "no" for a flow that lacks it, rather than throw. See
+     * #750: {@code Protocols.getProtocol(Integer)} answers null for every protocol number riptide does
+     * not map, so "no protocol" arrives off the wire; {@code Threshold.Protocol.compare} already routes
+     * that as {@code Order.NA} and only the leaf matchers disagreed, by dereferencing it.
+     *
+     * <p>Each engine here holds a single rule <em>on purpose</em>. {@code Tree.of} makes a leaf as soon
+     * as one rule is left, so the rule's own condition is never turned into a threshold and the leaf
+     * matcher is what decides. Add rules and the tree may instead route the request down an "na" child
+     * that the rule is not in, in which case the matcher never runs and the row stops testing the leaf.
+     *
+     * <p>That is a fact about which tree a ruleset happens to build, not a property of the tree, and it
+     * cuts both ways: because a leaf can sit on a path carrying no threshold for the aspect it matches,
+     * no ruleset is structurally safe from any of these three. Against the bundled ruleset the protocol
+     * one is measured live ({@code ClassificationEnricherTest}) and a probe with no ports was measured
+     * to classify without reaching a port matcher. The port and address cases are latent there on that
+     * evidence, which is a measurement of one ruleset and not a guarantee about the next one.
+     */
+    @Test
+    void aRuleNamingAProtocolDoesNotMatchARequestWithoutOne() throws InterruptedException {
+        final var engine = new DefaultClassificationEngine(() -> List.of(
+                DefaultRule.builder().withName("tcp").withPosition(1).withProtocol("TCP").build()));
+
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withSrcPort(54321).withDstPort(80).build())).isNull();
+
+        // the control: a request that carries its protocol still reaches the rule that names it
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withProtocol(ProtocolType.TCP).withSrcPort(54321).withDstPort(80).build())).isEqualTo("tcp");
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withProtocol(ProtocolType.UDP).withSrcPort(54321).withDstPort(80).build())).isNull();
+    }
+
+    /** The same property for ports, where a null {@code Integer} used to auto-unbox in the leaf. */
+    @Test
+    void aRuleNamingAPortDoesNotMatchARequestWithoutOne() throws InterruptedException {
+        final var engine = new DefaultClassificationEngine(() -> List.of(
+                DefaultRule.builder().withName("http").withPosition(1).withDstPort(80).build()));
+
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withProtocol(ProtocolType.TCP).withSrcPort(54321).build())).isNull();
+
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withProtocol(ProtocolType.TCP).withSrcPort(54321).withDstPort(80).build())).isEqualTo("http");
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withProtocol(ProtocolType.TCP).withSrcPort(54321).withDstPort(443).build())).isNull();
+    }
+
+    /**
+     * The conjunction, which is where "no match" and "match anything" give different operator-visible
+     * answers. The rows above each leave {@code Classifier.classify} one matcher to run, so a leaf that
+     * answered {@code true} for an absent aspect would show up as a name where there should be none.
+     * Here the rule names two aspects and the request carries one of them, so the surviving matcher
+     * agrees and only the absent one can decide. A rule for TCP port 80 must not claim a flow on port 80
+     * whose protocol is unmapped.
+     */
+    @Test
+    void aRuleNamingTwoAspectsDoesNotMatchARequestMissingOneOfThem() throws InterruptedException {
+        final var engine = new DefaultClassificationEngine(() -> List.of(
+                DefaultRule.builder().withName("tcp-http").withPosition(1)
+                        .withProtocol("TCP").withDstPort(80).build()));
+
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withSrcPort(54321).withDstPort(80).build()))
+                .as("the port half matches; the absent protocol must still deny the rule")
+                .isNull();
+
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withProtocol(ProtocolType.TCP).withSrcPort(54321).build()))
+                .as("the protocol half matches; the absent port must still deny the rule")
+                .isNull();
+
+        // the control: both aspects present and agreeing still classifies
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withProtocol(ProtocolType.TCP).withSrcPort(54321).withDstPort(80).build()))
+                .isEqualTo("tcp-http");
+    }
+
+    /** The same property for addresses. */
+    @Test
+    void aRuleNamingAnAddressDoesNotMatchARequestWithoutOne() throws InterruptedException {
+        final var engine = new DefaultClassificationEngine(() -> List.of(
+                DefaultRule.builder().withName("local").withPosition(1).withDstAddress("192.168.2.1").build()));
+
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withProtocol(ProtocolType.TCP).withSrcAddress("192.168.2.1").withDstPort(80).build())).isNull();
+
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withProtocol(ProtocolType.TCP).withDstAddress("192.168.2.1").withDstPort(80).build()))
+                .isEqualTo("local");
+        assertThat(engine.classify(ClassificationRequest.builder()
+                .withProtocol(ProtocolType.TCP).withDstAddress("192.168.2.2").withDstPort(80).build())).isNull();
+    }
+
     @Test
     void verifyAllPortsToEnsureEngineIsProperlyInitialized() throws InterruptedException {
         final var classificationEngine = new DefaultClassificationEngine(List::of);

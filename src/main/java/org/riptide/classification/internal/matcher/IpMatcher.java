@@ -24,8 +24,22 @@ class IpMatcher implements Matcher {
         this.valueExtractor = Objects.requireNonNull(valueExtractor);
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * The extractor yields an {@link IpAddr}, so this takes {@link IpValue#isInRange(IpAddr)} and never
+     * the {@code String} overload with its {@code Objects.requireNonNull}. Without the guard the null
+     * reached {@code IpRange.contains}, which calls {@code begin.compareTo(addr)}; {@code compareTo}
+     * casts its argument and reads that argument's primitive field, so it is a plain null dereference of
+     * the address passed in. The same holds for {@code Ip6Addr}.
+     * <p>
+     * No bundled rule names an address, so nothing reaches this with a null there. It is still on the
+     * live path: a v9 or IPFIX template need not carry an address at all, which is why
+     * {@link IpAddr#of(java.net.InetAddress)} answers null rather than throwing.
+     */
     @Override
     public boolean matches(ClassificationRequest request) {
-        return value.isInRange(valueExtractor.apply(request));
+        final IpAddr address = valueExtractor.apply(request);
+        return address != null && value.isInRange(address);
     }
 }
