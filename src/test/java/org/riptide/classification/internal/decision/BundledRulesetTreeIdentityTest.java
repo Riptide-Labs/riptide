@@ -215,10 +215,12 @@ public class BundledRulesetTreeIdentityTest {
         //
         // The matching shape for protocols - a request with no protocol at all, which would reach the
         // na children of the protocol thresholds serving the eleven protocol-less bundled rules - is
-        // deliberately absent. It cannot be swept: classifying a request whose protocol is null throws
-        // NPE out of ProtocolMatcher.matches, which dereferences getProtocol() unguarded. That is a
-        // production defect rather than a limit of this test, it is not #746's, and a row here that
-        // asserted the current behaviour would be pinning the crash.
+        // still deliberately absent, but no longer because it cannot be classified. It used to throw
+        // NPE out of ProtocolMatcher.matches, which dereferenced getProtocol() unguarded; #750 fixed
+        // that, and the answer is pinned by ClassificationEnricherTest and by the leaf rows in
+        // AbsentAspectIsNoMatchTest. It stays out of the sweep because adding requests moves
+        // SAMPLE_SIZE, CLASSIFIED and ANSWER_DIGEST, and holding those three still across changes to
+        // tree construction is the whole job of this class.
         for (final var name : PROTOCOLS) {
             final Protocol protocol = Protocols.getProtocol(name);
             for (final var port : probedPorts) {
