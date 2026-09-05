@@ -31,8 +31,13 @@ import java.util.Optional;
  * the bundled 6,248-rule ruleset retains <b>2.8&nbsp;MB</b>, so {@link #MAX_RETAINED_RULES} is
  * about <b>11&nbsp;MB</b> worst case. That is the whole trade, and it is a test-suite one: 11 MB of
  * permanently retained heap for one fewer 30-second tree build per CI run. A full {@code mvn test}
- * built the bundled ruleset twice, at 26&nbsp;s and 35&nbsp;s under the coverage agent; it now
- * builds it once.
+ * built the bundled ruleset twice, at 26&nbsp;s and 35&nbsp;s under the coverage agent; it builds it
+ * once as long as every class that wants the bundled tree takes it from an engine.
+ *
+ * <p>A test that calls {@code Tree.of} itself silently restores the second build — silently, because
+ * the build counter is a log line {@code DefaultClassificationEngine} emits and {@code Tree.of} does
+ * not, so a bypassing build costs the 30 seconds without moving the count. That has happened once
+ * already, in {@code BundledRulesetTreeIdentityTest}, which now takes its tree from an engine.
  *
  * <h2>Why the key is sound</h2>
  *

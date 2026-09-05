@@ -15,6 +15,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.function.IntToLongFunction;
 import java.util.function.ToLongFunction;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -56,9 +57,12 @@ public abstract class Tree {
 
         // Determine a threshold that results in the "optimum" split.
         // Scoring reads bucket sizes only, so candidates are counted rather than matched; the collections
-        // are built once, below, for the winner. The pipeline's shape decides which candidate wins - min()
-        // keeps the earliest of equal elements - so source, distinct, parallel, filter and comparator
-        // must stay exactly as they are.
+        // are built once, below, for the winner.
+        // Encounter order decides which candidate wins, because min() keeps the earliest of several
+        // equal elements. So the source and the order of distinct/filter/map matter and must not be
+        // rearranged or re-sourced. (parallel() is not part of that: it sets a mode on the whole
+        // pipeline wherever it appears, and min() on an ordered stream is order-preserving regardless.
+        // Measured: identical Info across parallelism levels 1, 2, 3, 7 and 15.)
         var entry = thresholds(rules)
                 .distinct()
                 .parallel()
@@ -72,8 +76,8 @@ public abstract class Tree {
                 .orElse(null);
 
         if (entry != null) {
-            // the recursion consumes the collections themselves, and it depends on the shapes optimize()
-            // gives empty and singleton buckets - so they come from match(), for the winner alone
+            // the recursion consumes the collections themselves, so they come from match(), for the
+            // winner alone - counting cannot produce them
             Threshold.Matches matches = entry.getKey().match(rules, bounds);
             log.trace("Node - depth: " + depth + "; rules: " + ruleSetSize + "; threshold: " + entry.getKey() + "; maximum child size: " + maximumSize(entry)
                     + "; lt: " + entry.getValue().lt()
@@ -94,7 +98,10 @@ public abstract class Tree {
     private static ToLongFunction<Map.Entry<Threshold, Threshold.Counts>> equallyPartitionedCriteria(int ruleSetSize) {
         // calculates a criteria corresponding to the variance of collection sizes assuming an equal partitioning a rule set
         var mean = (long) ruleSetSize / 4;
-        ToLongFunction<Integer> f = i -> (i - mean) * (i - mean);
+        // IntToLongFunction, not ToLongFunction<Integer>: the counts are ints, and at bundled sizes they
+        // are outside the Integer cache, so a boxed signature allocates four boxes per candidate per node
+        // - which is the cost this change is removing
+        IntToLongFunction f = i -> (i - mean) * (i - mean);
         return entry -> {
             var m = entry.getValue();
             return f.applyAsLong(m.lt()) + f.applyAsLong(m.eq()) + f.applyAsLong(m.gt()) + f.applyAsLong(m.na());

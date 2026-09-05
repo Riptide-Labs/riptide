@@ -88,15 +88,54 @@ public class ThresholdCountsTest {
 
     /**
      * The bounds a threshold is scored under during tree construction are never only {@link Bounds#ANY}:
-     * the recursion restricts one axis at every level. Deriving them from other candidates reproduces
-     * exactly the shapes {@code Tree.of} passes down.
+     * the recursion restricts one axis at each level, and over several levels it restricts the same axis
+     * more than once and several axes at once.
+     *
+     * <p>Restricting {@code ANY} once, which is all a single {@code lt}/{@code eq}/{@code gt} does,
+     * therefore does not reproduce the shapes {@code Tree.of} passes down — it only ever produces
+     * {@link Bound.Lt}, {@link Bound.Eq} and {@link Bound.Gt}. {@link Bound.In} needs a second
+     * restriction on the same axis and is reached in every real build, so it is built here explicitly,
+     * and a control below asserts one is actually present rather than trusting this comment.
      */
-    private static List<Bounds> boundsFrom(final Threshold threshold) {
+    private static List<Bounds> boundsFrom(final Threshold threshold, final List<Threshold> candidates) {
         final var bounds = new ArrayList<Bounds>();
-        bounds.add(threshold.lt(Bounds.ANY));
+        final var lt = threshold.lt(Bounds.ANY);
+        final var gt = threshold.gt(Bounds.ANY);
+        bounds.add(lt);
         bounds.add(threshold.eq(Bounds.ANY));
-        bounds.add(threshold.gt(Bounds.ANY));
+        bounds.add(gt);
+
+        for (final var other : candidates) {
+            // value equality, not identity: the candidate list is deduped by equals, so this skips
+            // exactly the one entry that is this threshold
+            if (other.equals(threshold)) {
+                continue;
+            }
+            if (other.getClass() == threshold.getClass()) {
+                // same axis: a second restriction is what turns Lt or Gt into In. Which direction is
+                // legal depends on the two values' order, so both are offered to canRestrict.
+                if (other.canRestrict(gt)) {
+                    bounds.add(other.lt(gt));
+                }
+                if (other.canRestrict(lt)) {
+                    bounds.add(other.gt(lt));
+                }
+            } else if (other.canRestrict(lt)) {
+                // a different axis restricted at the same time, the other shape the recursion
+                // produces and a one-axis-at-a-time fixture never does
+                bounds.add(other.eq(lt));
+            }
+        }
         return bounds;
+    }
+
+    /** Whether any of the five axes of these bounds is an {@link Bound.In}. */
+    private static boolean hasIn(final Bounds bounds) {
+        return bounds.protocol instanceof Bound.In
+                || bounds.srcPort instanceof Bound.In
+                || bounds.dstPort instanceof Bound.In
+                || bounds.srcAddr instanceof Bound.In
+                || bounds.dstAddr instanceof Bound.In;
     }
 
     @Test
@@ -114,9 +153,16 @@ public class ThresholdCountsTest {
         allBounds.add(Bounds.ANY);
         for (final var candidate : candidates) {
             if (candidate.canRestrict(Bounds.ANY)) {
-                allBounds.addAll(boundsFrom(candidate));
+                allBounds.addAll(boundsFrom(candidate, candidates));
             }
         }
+
+        // the control on the fixture: without an In, this test would be claiming coverage of a bound
+        // shape it never built, which is what the previous version of it did
+        assertThat(allBounds).as("the bounds the agreement is checked under")
+                .anyMatch(ThresholdCountsTest::hasIn);
+        assertThat(allBounds).as("and Eq, Lt and Gt, so In is not the only restricted shape")
+                .anyMatch(b -> b.protocol instanceof Bound.Eq || b.dstPort instanceof Bound.Eq);
 
         var nonEmptyBuckets = 0;
         for (final var threshold : candidates) {
