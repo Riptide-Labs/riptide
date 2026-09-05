@@ -21,7 +21,24 @@ import java.util.stream.Stream;
  */
 public class PreprocessedRule {
 
+    /**
+     * @throws IllegalArgumentException if the rule carries an exporter filter. Nothing matches on
+     *     that field — this method derives the five value fields below and drops it, so
+     *     {@code Classifier.of} builds no matcher for it — which meant a rule naming one exporter
+     *     was evaluated as though it had named none, and applied to every exporter (#759). It is
+     *     refused here rather than at import because this is the seam every rule crosses whatever
+     *     provided it, and because {@code DefaultClassificationEngine.reload} turns a throw from
+     *     here into one rejected rule that the reloader names in a WARN while the rest of the
+     *     ruleset keeps serving. That is the posture the operator docs already promise for a rule
+     *     the engine cannot use; aborting the whole ruleset would break it, and would fail the
+     *     boot outright, since the rules are loaded eagerly at startup.
+     */
     public static PreprocessedRule of(final Rule rule) {
+        if (rule.hasExporterFilterDefinition()) {
+            throw new IllegalArgumentException(
+                    "exporterFilter is not implemented: no matcher evaluates it, so this rule would be applied to"
+                            + " every exporter rather than the one it names. Leave the column empty. See issue 759.");
+        }
         return new PreprocessedRule(rule,
                 rule.hasProtocolDefinition() ? ProtocolValue.of(rule.getProtocol()) : null,
                 rule.hasSrcPortDefinition() ? PortValue.of(rule.getSrcPort()) : null,
