@@ -23,8 +23,16 @@ class PortMatcher implements Matcher {
         this.valueExtractor = Objects.requireNonNull(valueExtractor);
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Without the guard the extracted {@code Integer} auto-unboxes into {@link PortValue#matches(int)}.
+     * No bundled rule was measured to reach this with a null, but the ruleset is operator-supplied and
+     * {@link ProtocolMatcher#matches(ClassificationRequest)} is the same defect where it is reachable.
+     */
     @Override
     public boolean matches(ClassificationRequest request) {
-        return this.value.matches(valueExtractor.apply(request));
+        final Integer port = valueExtractor.apply(request);
+        return port != null && this.value.matches(port);
     }
 }

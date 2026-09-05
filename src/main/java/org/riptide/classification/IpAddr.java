@@ -26,7 +26,26 @@ public abstract class IpAddr implements Comparable<IpAddr> {
         }
     }
 
+    /**
+     * Converts an address, answering {@code null} for an absent one.
+     * <p>
+     * Absent is ordinary input on the flow path rather than an error. A NetFlow v9 or IPFIX template
+     * need not carry an address field at all, and both builders answer {@code null} when it is missing;
+     * {@code LocalityEnricher}, {@code GeoIpEnricher} and {@code RoutingEnricher} each test that same
+     * field for null before reading it. {@code ClassificationEnricher} hands whatever it gets straight
+     * to this method, and every consumer downstream of it already treats a null address as "this flow
+     * has no address": {@link ClassificationRequest} holds one, and
+     * {@code IpMatcher} answers "no match" for it.
+     * <p>
+     * The guard lives here rather than at the three call sites because the {@link #of(String)} overload
+     * above already answers {@code null} for an absent address. The two overloads disagreeing on the
+     * same question is what made this throw, so they are made to agree rather than having each caller
+     * remember which one it is holding.
+     */
     public static IpAddr of(InetAddress addr) {
+        if (addr == null) {
+            return null;
+        }
         var bytes = addr.getAddress();
         if (bytes.length == 4) {
             return new Ip4Addr(

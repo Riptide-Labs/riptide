@@ -23,8 +23,18 @@ public class ProtocolMatcher implements Matcher {
         this(ProtocolValue.of(protocols));
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * This is the only one of the three leaf matchers reachable with the ruleset riptide ships. A null
+     * protocol reaches it whenever a flow carries an IP protocol number riptide does not map:
+     * {@code Protocols.getProtocol(Integer)} answers null for those. It is the only way a null protocol
+     * arises from the wire, because {@code Flow.getProtocol()} is a primitive that both the v9 and IPFIX
+     * builders default to 0, which is HOPOPT and mapped. 143-252 are unmapped in {@code Protocols}.
+     */
     @Override
     public boolean matches(final ClassificationRequest request) {
-        return protocols.contains(request.getProtocol().getDecimal());
+        final var protocol = request.getProtocol();
+        return protocol != null && protocols.contains(protocol.getDecimal());
     }
 }
