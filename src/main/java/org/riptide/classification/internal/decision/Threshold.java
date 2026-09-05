@@ -29,7 +29,7 @@ public abstract class Threshold<T extends Comparable<T>> {
     /**
      * Holds the result of matching a collection of classification rules against a threshold.
      * <p>
-     * Rules may be include in zero, one, or more collections.
+     * Rules may be included in zero, one, or more collections.
      */
     public static class Matches {
         public final List<PreprocessedRule> lt, eq, gt, na;
@@ -40,6 +40,15 @@ public abstract class Threshold<T extends Comparable<T>> {
             this.gt = gt;
             this.na = na;
         }
+    }
+
+    /**
+     * Holds how many rules of a collection fall into each bucket when it is matched against a threshold.
+     * <p>
+     * These are exactly the sizes of the four {@link Matches} collections, arrived at without building them.
+     * As with {@link Matches}, a rule may be counted in more than one bucket.
+     */
+    record Counts(int lt, int eq, int gt, int na) {
     }
 
     /**
@@ -56,6 +65,17 @@ public abstract class Threshold<T extends Comparable<T>> {
      * Bundles the information how a rule matches a threshold. More than one flag may be {@code true}.
      * Package-private (not private) because the protected {@code match} implementations in the
      * nested subclasses reference it in their signatures.
+     * <p>
+     * A {@code Match} is allocated per rule per candidate threshold at every node, which makes it look
+     * like the obvious next thing to optimize after #746: the three per-rule {@code match} sites all
+     * pass {@code na = false} — the fourth construction is {@link Match#NA} itself — so there are only
+     * eight distinct values reachable from them, and they could be interned in a table the way
+     * {@code NA} already is. That was built and measured, and it did not pay. Best of 3,
+     * JIT warmed, no coverage agent, fifteen interleaved pairs on one machine: allocating won 12 of the
+     * 15, median 1023ms against 1049ms interned. The tree was identical either way. Why the shared table
+     * is no faster was not established — disabling escape analysis slowed both variants by a similar
+     * amount, so it does not show the allocation being eliminated — but the outcome is measured and the
+     * work is not worth redoing without a different idea about the mechanism.
      */
     static final class Match {
         final boolean lt, eq, gt, na;
@@ -119,6 +139,47 @@ public abstract class Threshold<T extends Comparable<T>> {
             }
         }
         return new Matches(optimize(lt), optimize(eq), optimize(gt), optimize(na));
+    }
+
+    /**
+     * Counts how many rules of the given set fall into each of the buckets that
+     * {@link #match(Collection, Bounds)} would fill, without building the collections.
+     * <p>
+     * Tree construction scores every candidate threshold but reads only the bucket sizes; the collections
+     * themselves are consumed for the winning candidate alone. {@code ThresholdCountsTest} pins that the
+     * two agree, and {@code TreeScoringDoesNotBuildListsTest} pins that scoring really takes this route.
+     * <p>
+     * Sharing {@link #match(PreprocessedRule, Bounds)} with the list-building method is not by itself
+     * what makes the split safe. {@code Tree.of} calls this for every candidate and then calls
+     * {@code match} again for the winner, so what identity actually rests on is that
+     * {@code match(PreprocessedRule, Bounds)} is <em>deterministic across two separate invocations</em>
+     * — a shared call site says nothing about calling it twice. It is: all three implementations read
+     * only final fields of the rule and the immutable {@link Bounds}, and none of them memoises. A
+     * future implementation that cached, or that read anything mutable, would break tree identity while
+     * leaving the "same call" reasoning looking sound, so it is the determinism that has to be preserved
+     * here, not the sharing.
+     */
+    Counts count(Collection<PreprocessedRule> ruleSet, Bounds bounds) {
+        var lt = 0;
+        var eq = 0;
+        var gt = 0;
+        var na = 0;
+        for (var rule : ruleSet) {
+            var cr = match(rule, bounds);
+            if (cr.lt) {
+                lt++;
+            }
+            if (cr.eq) {
+                eq++;
+            }
+            if (cr.gt) {
+                gt++;
+            }
+            if (cr.na) {
+                na++;
+            }
+        }
+        return new Counts(lt, eq, gt, na);
     }
 
     private static <T> List<T> optimize(List<T> list) {

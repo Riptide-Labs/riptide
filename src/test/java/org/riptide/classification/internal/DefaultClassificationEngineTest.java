@@ -403,8 +403,8 @@ public class DefaultClassificationEngineTest {
 
     /**
      * The reuse #707 is about, against the ruleset that makes it worth having. The bundled tree
-     * costs about 1.5s to build and tens of seconds under the coverage agent, and a full suite
-     * built it twice.
+     * costs about 1.0s to build since #746 — 1.2s before it — and tens of seconds under the coverage
+     * agent, and a full suite built it twice before the cache landed.
      *
      * <p>Deliberately runs against the process-wide cache rather than a private one. A private
      * cache would force a build here, which would put a <em>third</em> bundled build into the

@@ -966,12 +966,20 @@ class ClassificationRuleReloaderTest {
     // the first pair, which is the one a developer running this class alone gets.
     //
     // Almost all of that cost is the coverage agent, not the build. Measured standalone on the
-    // project classpath, Tree.of over this ruleset takes 1.4-1.7s and produces a 15,530-leaf
-    // tree. The same harness under the JaCoCo agent produces the same tree in 33.9-50.9s.
+    // project classpath, Tree.of over this ruleset took 1.4-1.7s and produced a 15,530-leaf tree.
+    // #746 left the tree identical - all twelve root Info fields unchanged - and lowered the build
+    // by about 14%: interleaved best-of-3 pairs on one machine, no agent, gave a median of 1186ms
+    // before and 1023ms after. Quote that pair rather than either number on its own; the 1.4-1.7s
+    // above was taken on different hardware, so subtracting across the two overstates the change.
+    // The same harness under the JaCoCo agent produced the same tree in 33.9-50.9s - measured
+    // before #746 and not re-taken, so treat it as a pre-#746 figure. It is also the figure most
+    // likely to have moved, because instrumentation charges per instruction and #746 removed
+    // instructions.
     // jacoco:prepare-agent attaches to every surefire JVM, so this row pays the instrumented
-    // price and a booting collector does not. A recursive loop that matches every candidate
+    // price and a booting collector does not. A recursive loop that scores every candidate
     // threshold against every rule is close to the worst case for per-instruction
-    // instrumentation, which is why the factor is roughly 20-40x rather than a few percent.
+    // instrumentation, which is why the factor was roughly 20-40x rather than a few percent
+    // against the pre-#746 build.
     // Quote the range, not a midpoint: the five runs this bound was raised for were terminated
     // AT 60s on a ~1.5s build, so the loaded-machine end of that spread is above 40x, and it is
     // the end that caused the flake.
@@ -995,7 +1003,8 @@ class ClassificationRuleReloaderTest {
     //
     // The exit condition is the instrumented cost, which is not what #707 tracked. #707 was the
     // residue that survived measuring this: an uncached, superlinear build that a boot pays
-    // about 1.5s for. Its cache has landed, and it removed the repeat — a full suite builds this
+    // about 1.0s for since #746, and paid about 1.2s for before it. Its cache has landed, and it
+    // removed the repeat — a full suite builds this
     // ruleset once now instead of twice, and whichever class reaches it second is handed the
     // first one's tree. It did not remove the build. Whoever reaches it first still pays in
     // full, and this row is first whenever the class is run on its own, which is precisely when
@@ -1006,8 +1015,9 @@ class ClassificationRuleReloaderTest {
     // The condition for removing this annotation is stated in instrumented terms, because that
     // is what the bound has to survive: when this row lands under ~30s with margin on a loaded
     // machine, the class's 60s fits it again. An uninstrumented threshold cannot express it —
-    // 25x of 1.5s already fits under 60s today, so any bar written that way is satisfied on
-    // arrival and gates nothing. What is left that gets there is a cheaper build or a suite that
+    // 25x of the ~1.0s uninstrumented build already fits under 60s today, so any bar written that
+    // way is satisfied on arrival and gates nothing. What is left that gets there is a cheaper
+    // build or a suite that
     // no longer runs under the agent; the cache is spent, because it cannot make a first build
     // faster. Removing this means editing two places, here and the class javadoc, which also
     // names this bound.
