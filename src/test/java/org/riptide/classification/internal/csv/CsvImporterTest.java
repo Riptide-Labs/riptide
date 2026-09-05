@@ -63,6 +63,62 @@ public class CsvImporterTest {
     }
 
     /**
+     * #759 is rejected by {@code PreprocessedRule.of}, <b>not</b> here. The importer's job is to
+     * read the column faithfully; refusing the whole file for one cell would discard every other
+     * rule in it and, because {@code RiptideConfiguration} loads the rules eagerly, fail the boot.
+     * So the importer parses the value through, and the engine turns it into one rejected rule.
+     *
+     * <p>Whitespace is part of the value: {@code Strings.emptyToNull} does not trim, and
+     * {@code CSVFormat.RFC4180} leaves {@code ignoreSurroundingSpaces} false, so a whitespace-only
+     * cell is a <em>defined</em> value rather than an absent one. Both of those have to hold, which
+     * is why the parsed value is asserted rather than just its definedness.</p>
+     */
+    @Test
+    void verifyExporterFilterIsParsedThroughForTheEngineToReject() throws IOException {
+        assertThat(parse(HEADER + "acme;tcp;;;;80;10.0.0.0/8;true\n"))
+                .singleElement()
+                .satisfies(rule -> {
+                    assertThat(rule.getExporterFilter()).isEqualTo("10.0.0.0/8");
+                    assertThat(rule.hasExporterFilterDefinition()).isTrue();
+                });
+
+        assertThat(parse(HEADER + "acme;tcp;;;;80;   ;true\n"))
+                .singleElement()
+                .satisfies(rule -> {
+                    assertThat(rule.getExporterFilter())
+                            .as("neither emptyToNull nor RFC4180 trims, so whitespace is a value")
+                            .isEqualTo("   ");
+                    assertThat(rule.hasExporterFilterDefinition()).isTrue();
+                });
+    }
+
+    /** The shape every bundled row uses: an empty cell is absent, and must keep parsing. */
+    @Test
+    void verifyEmptyExporterFilterStillParses() throws IOException {
+        final var rules = parse(HEADER + "ntp;udp;;;;123;;true\n");
+        assertThat(rules).singleElement().satisfies(rule -> {
+            assertThat(rule.getExporterFilter()).isNull();
+            assertThat(rule.hasExporterFilterDefinition()).isFalse();
+        });
+    }
+
+    /**
+     * Every bundled row leaves the column empty, so the engine rejects none of them. Pinned
+     * directly: compatibility with the shipped file otherwise rides on unrelated tests happening
+     * to parse it, and a future bundled row carrying a value would surface as some other test's
+     * confusing failure rather than as this one.
+     */
+    @Test
+    void verifyNoBundledRuleCarriesAnExporterFilter() throws IOException {
+        final List<Rule> rules;
+        try (var stream = CsvImporterTest.class.getResourceAsStream("/classification-rules.csv")) {
+            rules = new CsvImporter().parse(stream, true);
+        }
+        assertThat(rules).hasSizeGreaterThan(6000);
+        assertThat(rules).filteredOn(Rule::hasExporterFilterDefinition).isEmpty();
+    }
+
+    /**
      * Regression: a client ephemeral port that collides with another rule's registered port
      * (e.g. an https connection whose client side happens to be 8881, galaxy4d's port) matches
      * two omnidirectional rules with the same aspect count. The earlier CSV row must win — in
