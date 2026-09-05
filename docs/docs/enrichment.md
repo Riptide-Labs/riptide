@@ -165,6 +165,37 @@ matching row wins, in both directions of an omnidirectional rule. In a custom ru
 put specific rules (address + port) above broad ones (port-only), or the broad row will
 shadow them.
 
+### Writing a rule
+
+The header is fixed and every column must be present, in this order:
+
+```csv
+name;protocol;srcAddress;srcPort;dstAddress;dstPort;exporterFilter;omnidirectional
+ssh;tcp;;;;22;;true
+dns;tcp,udp;;;;53;;true
+mgmt;;10.0.0.0/8;;;;;false
+```
+
+Two rules about the condition columns, because getting either wrong used to fail quietly:
+
+- **An empty column means "any".** That is the only way to say it — there is no wildcard.
+  A column that is filled in but names nothing Riptide can resolve gets the whole rule
+  **rejected**: it classifies nothing, and the reload log names it. That covers a typo
+  (`tpc`), a stray `,`, a `*`, and a protocol written as a number.
+- **Name protocols by keyword, not by number** — `tcp`, not `6`. The keywords are IANA's,
+  with two Riptide still accepts under the older name: **55 is `MOBILE`** (IANA renamed it
+  `Min-IPv4`) and **84 accepts `TTP` as well as `IPTM`**. One bad keyword refuses the whole
+  rule, so `tcp,tpc` is refused rather than quietly narrowed to `tcp`.
+
+`exporterFilter` must be left **empty**. The column is part of the required header and
+cannot be removed, but nothing evaluates a value in it, so a rule carrying one is rejected
+rather than silently applied to every exporter. Per-exporter scoping does not exist today.
+
+Watch the log after changing a ruleset: a rejected rule is **not** a failed reload, so the
+rest of the ruleset keeps serving and no metric moves. The WARN naming the rule is the only
+signal, and the ERROR beside it names the column and the offending value. See
+[Operations](deploy/operations.md) for the reload semantics in full.
+
 The rules resource is parsed once while the context starts — an unreadable or unparseable resource fails the boot there — and then loaded into the engine's decision tree on a background thread.
 Nothing re-reads the resource afterwards unless you ask for it:
 

@@ -53,6 +53,18 @@ public class IpValue implements RuleValue<IpAddr, IpValue> {
                 ranges.add(IpRange.of(eachValue.getValue()));
             }
         }
+        if (ranges.isEmpty()) {
+            // The same shape #763 fixed for protocol. The isNullOrEmpty guard above does not cover
+            // it: "," is neither null nor empty, but splitBy trims and drops empty segments, so it
+            // yields no ranges. An empty range list makes shrink() answer null, which makes
+            // Classifier.of's addMatcher build no IpMatcher — so the address condition is dropped
+            // and the rule matches every address. Measured: a rule with dstAddress="," classified
+            // 1.2.3.4.
+            throw new IllegalArgumentException(
+                    ("address is set to '%s' but names no address at all. Leave the column empty to mean any"
+                            + " address; as written the rule would be applied to every address.")
+                            .formatted(input.getValue()));
+        }
         return new IpValue(ranges);
     }
 

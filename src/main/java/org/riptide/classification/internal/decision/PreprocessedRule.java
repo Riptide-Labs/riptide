@@ -22,7 +22,18 @@ import java.util.stream.Stream;
 public class PreprocessedRule {
 
     /**
-     * @throws IllegalArgumentException if the rule carries an exporter filter. Nothing matches on
+     * Derives a rule's five value fields, refusing a rule that cannot be honoured as written.
+     *
+     * <p>This is the seam every rule crosses whatever provided it, so it is where a rule is
+     * refused. There are two reasons, and the value parsers below add the second:</p>
+     * <ul>
+     *   <li>the rule carries an exporter filter, which nothing matches on (#759);</li>
+     *   <li>a condition column names something unresolvable &mdash; an unknown protocol keyword, or
+     *       a protocol, port or address column that is non-empty but names nothing. Those throw
+     *       from {@code ProtocolValue.of}, {@code PortValue.of} and {@code IpValue.of} (#763).</li>
+     * </ul>
+     *
+     * @throws IllegalArgumentException in either case. Nothing matches on
      *     that field — this method derives the five value fields below and drops it, so
      *     {@code Classifier.of} builds no matcher for it — which meant a rule naming one exporter
      *     was evaluated as though it had named none, and applied to every exporter (#759). It is

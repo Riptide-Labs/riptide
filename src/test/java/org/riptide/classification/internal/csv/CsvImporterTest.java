@@ -10,6 +10,7 @@ import org.riptide.classification.ClassificationRequest;
 import org.riptide.classification.ProtocolType;
 import org.riptide.classification.Rule;
 import org.riptide.classification.internal.DefaultClassificationEngine;
+import org.riptide.classification.internal.decision.PreprocessedRule;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -17,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 public class CsvImporterTest {
@@ -116,6 +118,29 @@ public class CsvImporterTest {
         }
         assertThat(rules).hasSizeGreaterThan(6000);
         assertThat(rules).filteredOn(Rule::hasExporterFilterDefinition).isEmpty();
+    }
+
+    /**
+     * #763: every condition column in the shipped ruleset must resolve, or the engine refuses that
+     * rule at boot. Pinned over the real file for the same reason as the row above: otherwise the
+     * claim "nothing shipped is refused" rides on a check nobody re-runs.
+     *
+     * <p>Without this, a bundled row naming an unresolvable keyword surfaces as a
+     * {@code BundledRulesetTreeIdentityTest} fingerprint failure — that test counts rules it parsed,
+     * not rules the engine accepted, so its counts stay green while the tree changes, and its own
+     * javadoc then sends the maintainer hunting a tree-construction regression that is not there.</p>
+     */
+    @Test
+    void verifyEveryBundledRuleResolvesItsConditionColumns() throws IOException {
+        final List<Rule> rules;
+        try (var stream = CsvImporterTest.class.getResourceAsStream("/classification-rules.csv")) {
+            rules = new CsvImporter().parse(stream, true);
+        }
+        assertThat(rules).hasSizeGreaterThan(6000);
+
+        assertThat(rules).allSatisfy(rule -> assertThatCode(() -> PreprocessedRule.of(rule))
+                .as("rule '%s' (row %s) would be refused at boot", rule.getName(), rule.getPosition())
+                .doesNotThrowAnyException());
     }
 
     /**
