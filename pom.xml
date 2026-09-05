@@ -34,11 +34,11 @@
         <jakarta-xml-bind-api.version>4.0.5</jakarta-xml-bind-api.version>
         <java.version>25</java.version>
         <jetbrains-annotations.version>26.1.0</jetbrains-annotations.version>
-        <lombok.version>1.18.46</lombok.version>
+        <lombok.version>1.18.48</lombok.version>
         <mapstruct.version>1.6.3</mapstruct.version>
         <maxmind-db.version>4.1.0</maxmind-db.version>
         <maven-checkstyle-plugin.version>3.6.0</maven-checkstyle-plugin.version>
-        <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
+        <maven-compiler-plugin.version>3.16.0</maven-compiler-plugin.version>
         <versions-maven-plugin.version>2.21.0</versions-maven-plugin.version>
         <!-- Overrides Spring Boot's managed netty.version (4.2.15.Final), which governs every
              io.netty:netty-* module and otherwise leaves them a patch behind netty-all. 4.2.16.Final
