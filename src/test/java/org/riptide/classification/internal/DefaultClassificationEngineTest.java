@@ -163,6 +163,50 @@ public class DefaultClassificationEngineTest {
                 .withProtocol(ProtocolType.UDP).withSrcPort(54321).withDstPort(80).build())).isNull();
     }
 
+    /**
+     * #759: a rule carrying an {@code exporterFilter} names an aspect nothing evaluates. Before this,
+     * {@code PreprocessedRule.of} silently dropped the field and {@code Classifier.of} built no matcher
+     * for it, so the rule was applied to <em>every</em> exporter — the third wrong answer to the question
+     * #757 settled: not a crash, not "no match", but the condition dropped entirely.
+     *
+     * <p>It is rejected as one rule, not as a failed load. That posture is what
+     * {@code docs/docs/deploy/operations.md} promises an operator for a rule the engine cannot use, and
+     * it is the reason the check lives here rather than in {@code CsvImporter}: every provider crosses
+     * this seam, including {@link ClassificationRuleProvider#forList}, which no importer guard reaches.</p>
+     */
+    @Test
+    void aRuleCarryingAnExporterFilterIsRejectedWhileTheRestKeepsServing() throws InterruptedException {
+        final var engine = new DefaultClassificationEngine(() -> List.of(
+                DefaultRule.builder().withName("http").withPosition(1).withDstPort(80).build(),
+                DefaultRule.builder().withName("scoped").withPosition(2).withDstPort(443)
+                        .withExporterFilter("10.0.0.0/8").build()));
+
+        assertThat(engine.getInvalidRules())
+                .as("the rule the engine cannot use is rejected, and only that one")
+                .extracting(Rule::getName)
+                .containsExactly("scoped");
+
+        // the rest of the ruleset serves — this is the half a whole-ruleset refusal would destroy
+        assertThat(engine.classify(ClassificationRequest.builder().withDstPort(80).build())).isEqualTo("http");
+
+        // and the rejected rule classifies nothing, rather than claiming every exporter's port 443
+        assertThat(engine.classify(ClassificationRequest.builder().withDstPort(443).build())).isNull();
+
+        // the operator's signal: the ERROR names the rule and says why, so "not implemented" is not
+        // left to live only in a stack trace. Asserted on the rendered message, not the format string.
+        assertThat(this.appender.list)
+                .extracting(ILoggingEvent::getFormattedMessage)
+                .filteredOn(m -> m.contains("scoped"))
+                .as("the rejection must name the rule and the field, not just report a bad rule")
+                .anySatisfy(m -> assertThat(m).contains("not valid"));
+        assertThat(this.appender.list)
+                .filteredOn(e -> e.getLevel() == Level.ERROR)
+                .anySatisfy(e -> assertThat(e.getThrowableProxy().getMessage())
+                        .contains("exporterFilter")
+                        .contains("not implemented")
+                        .contains("every exporter"));
+    }
+
     /** The same property for ports, where a null {@code Integer} used to auto-unbox in the leaf. */
     @Test
     void aRuleNamingAPortDoesNotMatchARequestWithoutOne() throws InterruptedException {

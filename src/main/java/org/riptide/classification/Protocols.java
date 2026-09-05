@@ -75,6 +75,14 @@ public final class Protocols {
         protocols.add(new Protocol(52, "I-NLSP", "Integrated Net Layer Security  TUBA"));
         protocols.add(new Protocol(53, "SWIPE", "IP with Encryption (deprecated)"));
         protocols.add(new Protocol(54, "NARP", "NBMA Address Resolution Protocol"));
+        // IANA renamed this keyword to "Min-IPv4". Kept as MOBILE deliberately, because dropping a
+        // keyword this table carries makes rules naming it match MORE, not less: ProtocolValue.of
+        // filters the unresolvable keyword out, leaving an empty protocol set; shrink() answers
+        // null for that; and Classifier.of's addMatcher then builds no ProtocolMatcher at all, so
+        // the protocol condition is dropped and the rule matches every protocol. Measured, not
+        // reasoned: a sole rule naming "Min-IPv4" classifies both TCP/80 and UDP/443. That is the
+        // same silent widening #759 was about. Pinned by ProtocolsTest so a later reconciliation
+        // does not "correct" it. The underlying drop is filed as #763. (#758)
         protocols.add(new Protocol(55, "MOBILE", "IP Mobility"));
         protocols.add(new Protocol(56, "TLSP", "Transport Layer Security Protocol"));
         protocols.add(new Protocol(57, "SKIP", "SKIP"));
@@ -104,6 +112,13 @@ public final class Protocols {
         protocols.add(new Protocol(81, "VMTP", "VMTP"));
         protocols.add(new Protocol(82, "SECURE-VMTP", "SECURE-VMTP"));
         protocols.add(new Protocol(83, "VINES", "VINES"));
+        // The one decimal listed twice. IANA carries only IPTM; footnote [1] on its registry entry
+        // records that 84 was assigned to TTP in error and later reassigned (the footnote text is
+        // not in the CSV export, so it is quoted here rather than left as a pointer). The TTP row
+        // is kept for the same reason as 55 above — dropping a keyword makes a rule naming it
+        // match every protocol, not none. Both rows carry 84 and ProtocolMatcher compares
+        // decimals, so classification is unaffected; only getProtocols() double-counts, and the
+        // decimal map resolves to IPTM by insertion order. Pinned by ProtocolsTest. (#758)
         protocols.add(new Protocol(84, "TTP", "Transaction Transport Protocol"));
         protocols.add(new Protocol(84, "IPTM", "Internet Protocol Traffic Manager"));
         protocols.add(new Protocol(85, "NSFNET-IGP", "NSFNET-IGP"));
@@ -164,6 +179,12 @@ public final class Protocols {
         protocols.add(new Protocol(140, "Shim6", "Shim6 Protocol"));
         protocols.add(new Protocol(141, "WESP", "Wrapped Encapsulating Security Payload"));
         protocols.add(new Protocol(142, "ROHC", "Robust Header Compression"));
+        protocols.add(new Protocol(143, "Ethernet", "Ethernet"));
+        protocols.add(new Protocol(144, "AGGFRAG", "AGGFRAG encapsulation payload for ESP"));
+        protocols.add(new Protocol(145, "NSH", "Network Service Header"));
+        protocols.add(new Protocol(146, "Homa", "Homa"));
+        protocols.add(new Protocol(147, "BIT-EMU", "Bit-stream Emulation"));
+        // 148-252 are Unassigned at IANA, so the gap below is the registry's, not an omission.
         protocols.add(new Protocol(253, "", "Use for experimentation and testing"));
         protocols.add(new Protocol(254, "", "Use for experimentation and testing"));
         protocols.add(new Protocol(255, "Reserved", ""));
