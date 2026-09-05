@@ -44,11 +44,30 @@ jobs:
           echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum --check
           tar -xzf actionlint.tar.gz actionlint
           sudo install -m 0755 actionlint /usr/local/bin/actionlint
+      # zizmor's version is pinned in .github/requirements.txt, not in this
+      # step's `env:`. Dependabot watches manifests, not `run:` steps, so a pin
+      # kept here is a pin nothing updates — which is how this one came to name
+      # a release zizmor's maintainers had withdrawn (#747). Any future
+      # Python-packaged tool goes in that file for the same reason.
+      #
+      # `pip -r`, not `pipx install`, so the install is the thing Dependabot
+      # edits and so a withdrawn pin is visible: pip prints the yank reason,
+      # pipx swallows it. The venv sidesteps PEP 668 rather than relying on the
+      # runner image's `break-system-packages` default.
+      #
+      # Unlike actionlint above, zizmor gets no integrity check. A hash pin
+      # means `--require-hashes` over the whole transitive closure, which is a
+      # larger change with its own upkeep. The asymmetry is known and left as
+      # is; do not read the two steps as equally protected.
       - name: Install zizmor
-        env:
-          ZIZMOR_VERSION: 1.27.0
         run: |
-          pipx install "zizmor==${ZIZMOR_VERSION}"
+          python3 -m venv "${RUNNER_TEMP}/lint-tools"
+          "${RUNNER_TEMP}/lint-tools/bin/pip" install --disable-pip-version-check \
+            --requirement .github/requirements.txt
+          # Print what actually got installed, so a stale or broken install
+          # cannot pass for the pinned version in the log.
+          "${RUNNER_TEMP}/lint-tools/bin/zizmor" --version
+          echo "${RUNNER_TEMP}/lint-tools/bin" >> "${GITHUB_PATH}"
       - name: Lint workflows
         run: |
           make lint-actions
