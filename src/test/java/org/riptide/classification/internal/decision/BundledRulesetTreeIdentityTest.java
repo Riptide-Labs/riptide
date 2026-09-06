@@ -242,6 +242,13 @@ public class BundledRulesetTreeIdentityTest {
      * The shape pin. This is the row that catches a changed tree: measured against two perturbations of
      * the winner selection — a counting path that disagreed with the list path on one bucket, and a
      * tie broken the other way — this failed on both and the answer row below failed on neither.
+     *
+     * <p><b>A third perturbation it does not catch</b>, measured for #768: deleting {@code .parallel()}
+     * from the candidate scoring in {@code Tree.of}. The same tree comes out, so every field above is
+     * unchanged and this row stays green while the build gets several times slower. That is a cost
+     * regression, not a shape one, and nothing here is capable of seeing it — which is why
+     * {@code TreeBuildWorkCounterTest} exists. Keep the two claims separate: this pins what the build
+     * produces, that one pins what it spends.
      */
     @Test
     @Timeout(value = 5, unit = TimeUnit.MINUTES)
