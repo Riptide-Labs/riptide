@@ -146,6 +146,11 @@ bench: deps-jar
 # lighter on forks than JMH's own default of 5. Check `uptime` before trusting any result.
 #
 # dependency:build-classpath is what lets JMH run from the test classpath without a shade/uber jar.
+#
+# The default target matches every benchmark, and TreeBuildBenchmark is not one of the ~20us/op
+# decode benchmarks the paragraph above is written for: it builds a classification decision tree at
+# four ruleset sizes, single-shot, and takes ~13 min at these settings (measured; the x4 row is
+# ~11 min of it). Pass BENCH_TARGET to skip it, or to run only it.
 BENCH_TARGET ?= .*Benchmark
 BENCH_OPTS   ?= -wi 3 -i 10 -f 2
 .PHONY: bench-jmh
