@@ -5,11 +5,15 @@
 
 package org.riptide.classification;
 
-import lombok.Builder;
 import lombok.Data;
 
 @Data
-@Builder(builderClassName = "Builder", setterPrefix = "with")
+// Fully qualified, and the import dropped: lombok 1.18.48 makes builderClassName = "Builder" an
+// error when the annotation is imported, because the generated nested Builder shadows the
+// lombok.Builder the annotation refers to (projectlombok#3857). Qualifying is the fix lombok's own
+// error message offers first, and it keeps ClassificationRequest.Builder — renaming the builder
+// would change a type this codebase and its tests name directly.
+@lombok.Builder(builderClassName = "Builder", setterPrefix = "with")
 public class ClassificationRequest {
     private final String zone;
     private final Protocol protocol;
