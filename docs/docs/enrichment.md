@@ -187,6 +187,8 @@ Two rules about the condition columns, because getting either wrong used to fail
   `Min-IPv4`) and **84 accepts `TTP` as well as `IPTM`**. One bad keyword refuses the whole
   rule, so `tcp,tpc` is refused rather than quietly narrowed to `tcp`.
 
+There is a **supported ruleset size**, because the decision-tree build a start or a reload pays grows faster than the ruleset does; the number and the measurement behind it are in [Supported ruleset size](deploy/operations.md#supported-ruleset-size).
+
 `exporterFilter` must be left **empty**. The column is part of the required header and
 cannot be removed, but nothing evaluates a value in it, so a rule carrying one is rejected
 rather than silently applied to every exporter. Per-exporter scoping does not exist today.
@@ -199,6 +201,7 @@ names the column and the offending value. See
 [Operations](deploy/operations.md) for the reload semantics and the full metric list.
 
 The rules resource is parsed once while the context starts — an unreadable or unparseable resource fails the boot there — and then loaded into the engine's decision tree on a background thread.
+Classification waits for that first load: until it publishes, a flow being classified blocks. Later reloads do not block anything, because the rules already in memory keep serving.
 Nothing re-reads the resource afterwards unless you ask for it:
 
 ```properties
