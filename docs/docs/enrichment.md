@@ -191,10 +191,12 @@ Two rules about the condition columns, because getting either wrong used to fail
 cannot be removed, but nothing evaluates a value in it, so a rule carrying one is rejected
 rather than silently applied to every exporter. Per-exporter scoping does not exist today.
 
-Watch the log after changing a ruleset: a rejected rule is **not** a failed reload, so the
-rest of the ruleset keeps serving and no metric moves. The WARN naming the rule is the only
-signal, and the ERROR beside it names the column and the offending value. See
-[Operations](deploy/operations.md) for the reload semantics in full.
+A rejected rule is **not** a failed reload: the rest of the ruleset keeps serving, and the
+reload counters and staleness gauge all read healthy. Alert on
+`classification_rules_rejected > 0`, which is the series that says part of your edit is
+classifying nothing; then read the log, where the WARN names the rule and the ERROR beside it
+names the column and the offending value. See
+[Operations](deploy/operations.md) for the reload semantics and the full metric list.
 
 The rules resource is parsed once while the context starts — an unreadable or unparseable resource fails the boot there — and then loaded into the engine's decision tree on a background thread.
 Nothing re-reads the resource afterwards unless you ask for it:
