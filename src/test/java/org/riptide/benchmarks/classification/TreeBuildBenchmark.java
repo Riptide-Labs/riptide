@@ -31,8 +31,10 @@ import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.LongAdder;
 
 /**
  * Measures what one {@code Tree.of} build costs, at the shipped ruleset size and at synthesised
@@ -123,6 +125,12 @@ public class TreeBuildBenchmark {
      */
     private Tree.Info shape;
 
+    /**
+     * Per-rule verdicts the build spent (#768) — deterministic, so unlike the times beside it this
+     * yields an exponent that owes nothing to the machine, the core count or the JIT.
+     */
+    private long verdicts;
+
     @Setup(Level.Trial)
     public void synthesise() {
         final var bundled = bundled();
@@ -134,6 +142,7 @@ public class TreeBuildBenchmark {
             throw new IllegalArgumentException(unknownRuleset(ruleset));
         }
         shape = null;
+        verdicts = 0;
         System.out.printf("# ruleset %s: %d rules, %d preprocessed, %d distinct dstPort values%n",
                 ruleset, rules.size(), preprocessedCount(rules), distinctDstPorts(rules).size());
     }
@@ -149,11 +158,20 @@ public class TreeBuildBenchmark {
         if (shape == null) {
             return;
         }
-        System.out.printf("# ruleset %s tree: nodes=%d leaves=%d maxDepth=%d avgDepth=%.2f"
+        System.out.printf(Locale.ROOT,
+                "# ruleset %s tree: nodes=%d leaves=%d maxDepth=%d avgDepth=%.2f"
                         + " maxComp=%d avgComp=%.2f%n",
                 ruleset, shape.nodes, shape.leaves, shape.maxDepth,
                 (double) shape.sumDepth / shape.leaves, shape.maxComp,
                 (double) shape.sumComp / shape.leaves);
+        // The deterministic half of this benchmark (#768). Unlike the score beside it, this number owes
+        // nothing to the machine, the core count or the JIT, so the ratio between two sizes is an
+        // exponent anyone can reproduce exactly. Locale.ROOT because these numbers are transcribed into
+        // docs/docs/deploy/operations.md and compared across machines; a default-locale run groups them
+        // with '.' in half of Europe, which reads as a decimal point next to the %.2f line above.
+        System.out.printf(Locale.ROOT,
+                "# ruleset %s work: %,d per-rule verdicts for %,d preprocessed rules%n",
+                ruleset, verdicts, preprocessedCount(rules));
     }
 
     private static int multipleOf(final String ruleset) {
@@ -185,9 +203,11 @@ public class TreeBuildBenchmark {
 
     @Benchmark
     public void buildTree(final Blackhole blackhole) throws InterruptedException {
-        final var tree = Tree.of(preprocessed);
+        final var work = new LongAdder();
+        final var tree = Tree.of(preprocessed, work);
         if (shape == null) {
             shape = tree.info;
+            verdicts = work.sum();
         }
         blackhole.consume(tree);
     }
