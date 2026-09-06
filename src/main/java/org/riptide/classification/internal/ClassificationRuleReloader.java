@@ -48,7 +48,9 @@ import java.util.stream.Collectors;
  * ({@link org.riptide.classification.ClassificationEngine#addClassificationRulesReloadedListener}),
  * not from the counters: a ruleset whose rules the engine could not all use is a
  * <em>success</em> — it publishes, the counter moves and the gauge stays 0 — so nothing in
- * this metric family says that half the operator's edit is classifying nothing. See
+ * <em>this</em> metric family says that half the operator's edit is classifying nothing. The
+ * {@code classification.rules.rejected} gauge does, registered by the engine rather than here
+ * (#765); this log line remains the only place that says <em>which</em> rules and why. See
  * {@link #logPublication}.
  *
  * <p><b>Registering is not enough</b>: the engine's constructor submits the boot load before

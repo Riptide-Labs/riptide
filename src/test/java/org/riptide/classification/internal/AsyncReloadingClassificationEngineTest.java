@@ -56,6 +56,8 @@ class AsyncReloadingClassificationEngineTest {
     private static final String STALE_GAUGE = MetricRegistry.name("classification", "reload", "stale");
     private static final String FAILURE_COUNTER = MetricRegistry.name("classification", "reload", "failures");
     private static final String SUCCESS_COUNTER = MetricRegistry.name("classification", "reload", "successes");
+    private static final String REJECTED_GAUGE = MetricRegistry.name("classification", "rules", "rejected");
+    private static final String PUBLISHED_GAUGE = MetricRegistry.name("classification", "rules", "published");
 
     private final MetricRegistry metrics = new MetricRegistry();
     private final ControllableEngine delegate = new ControllableEngine();
@@ -186,6 +188,64 @@ class AsyncReloadingClassificationEngineTest {
         assertThat(this.engine.classify(request())).isEqualTo("rules-2");
         assertThat(successes()).isEqualTo(2);
         assertThat(failures()).isZero();
+    }
+
+    /**
+     * #765: a partly-rejected ruleset had no metric, only a WARN. #759 and #763 both convert a
+     * silently-wrong rule into a rejected one on the argument that a rejection is visible — and a
+     * rejected rule is deliberately <b>not</b> a failed reload, so every other metric reads healthy
+     * while part of the operator's edit classifies nothing.
+     */
+    @Test
+    void theRuleGaugesReportWhatTheCurrentPublicationCarries() throws Exception {
+        // Against the real engine, not the fake, and with counts that differ: the fake publishes one
+        // rule and one rejected rule, so both gauges would read 1 and swapping the two measures --
+        // adjacent lines differing only by a method name, the likeliest defect here -- would not be
+        // detectable. Three rules of which one is rejected makes 3 and 1 tell each other apart, and
+        // keeps invalidRules a subset of rules, which is what Publication documents.
+        final var real = new DefaultClassificationEngine(() -> List.of(
+                DefaultRule.builder().withName("good").withPosition(1).withDstPort(80).build(),
+                DefaultRule.builder().withName("also-good").withPosition(2).withDstPort(443).build(),
+                DefaultRule.builder().withName("broken").withPosition(3).withDstPort("not-a-port").build()), false);
+        this.engine = new AsyncReloadingClassificationEngine(
+                new TimingClassificationEngine(this.metrics, real), this.metrics);
+        await("the boot load to publish", () -> successes() == 1);
+
+        assertThat(rejected())
+                .as("one rule the engine could not use; this is the alertable series")
+                .isEqualTo(1);
+        assertThat(published())
+                .as("all three, rejected included, so 1 rejected is readable as 1-of-3")
+                .isEqualTo(3);
+    }
+
+    /**
+     * The distinction the {@code Optional} on {@code currentPublication()} exists for, carried into
+     * the gauges: "no ruleset has ever been published" must not read as "nothing was rejected".
+     *
+     * <p>This is not a hypothetical startup window. When the <em>initial</em> load fails there is no
+     * publication at all and the collector classifies nothing, which is precisely when a gauge
+     * reading {@code 0 rejected} would claim a clean ruleset. {@code -1} is the sentinel; alert on
+     * {@code > 0}.</p>
+     */
+    @Test
+    void theRuleGaugesReadMinusOneWhenNothingHasEverBeenPublished() throws Exception {
+        this.delegate.onReload = () -> {
+            throw new IllegalStateException("rules file is unreadable");
+        };
+        this.engine = new AsyncReloadingClassificationEngine(this.delegate, this.metrics);
+        await("the failed first load to settle", () -> failures() == 1);
+
+        assertThat(rejected())
+                .as("nothing published: 0 here would claim a ruleset that loaded cleanly")
+                .isEqualTo(-1);
+        assertThat(published()).isEqualTo(-1);
+
+        // the gauges must be readable in this state at all — reading them through the blocking
+        // accessor would park a metrics scrape here, since getInvalidRules() throws/waits instead
+        assertThatThrownBy(this.engine::getInvalidRules)
+                .as("the accessor a gauge must NOT use")
+                .isInstanceOf(RuntimeException.class);
     }
 
     @Test
@@ -608,9 +668,21 @@ class AsyncReloadingClassificationEngineTest {
      * {@code int} to {@code int} rather than an {@code Object} to a boxed one.
      */
     private int stale() {
-        final Gauge<?> gauge = this.metrics.getGauges().get(STALE_GAUGE);
-        assertThat(gauge).as("the stale gauge is registered").isNotNull();
-        assertThat(gauge.getValue()).as("the stale gauge reads as an Integer").isInstanceOf(Integer.class);
+        return gauge(STALE_GAUGE);
+    }
+
+    private int rejected() {
+        return gauge(REJECTED_GAUGE);
+    }
+
+    private int published() {
+        return gauge(PUBLISHED_GAUGE);
+    }
+
+    private int gauge(final String name) {
+        final Gauge<?> gauge = this.metrics.getGauges().get(name);
+        assertThat(gauge).as("the %s gauge is registered", name).isNotNull();
+        assertThat(gauge.getValue()).as("the %s gauge reads as an Integer", name).isInstanceOf(Integer.class);
         return (Integer) gauge.getValue();
     }
 

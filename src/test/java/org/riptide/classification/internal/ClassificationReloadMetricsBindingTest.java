@@ -38,4 +38,20 @@ class ClassificationReloadMetricsBindingTest {
                 .as("the startup load succeeded, so nothing is stale")
                 .isEqualTo(0);
     }
+
+    /**
+     * #765: the rule gauges are the series the docs now tell operators to alert on, so they are
+     * subject to this class's whole argument — a unit test against a hand-made registry cannot tell
+     * the exported bean from a fresh one, and against a fresh one the prescribed alert has no series.
+     *
+     * <p>The values are deliberately not asserted here. The boot load publishes asynchronously, so
+     * both gauges legitimately read {@code -1} until it lands; what this row pins is that the names
+     * reach the exported registry at all. The values are pinned in
+     * {@code AsyncReloadingClassificationEngineTest}.</p>
+     */
+    @Test
+    void theEngineRegistersTheRuleGaugesInTheExportedRegistry() {
+        assertThat(this.metrics.getGauges().keySet())
+                .contains("classification.rules.rejected", "classification.rules.published");
+    }
 }

@@ -24,6 +24,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.function.ToIntFunction;
 
 /**
  * A classification engine that does reloads asynchronously.
@@ -98,8 +99,9 @@ public class AsyncReloadingClassificationEngine implements ClassificationEngine 
      *     {@link ClassificationEngine} contract, so a new delegate has to provide it deliberately.
      *     {@link DefaultClassificationEngine} does (one {@code AtomicReference} set on success), and
      *     {@link TimingClassificationEngine} passes it through.
-     * @param metrics registry for {@code classification.reload.{successes,failures,stale}}; must be the registry the
-     *     process exports, or the reported failure is invisible
+     * @param metrics registry for {@code classification.reload.{successes,failures,stale}} and
+     *     {@code classification.rules.{rejected,published}}; must be the registry the process exports, or the
+     *     reported failure is invisible and the alert the docs prescribe has no series
      */
     public AsyncReloadingClassificationEngine(ClassificationEngine delegate, MetricRegistry metrics) {
         this.delegate = Objects.requireNonNull(delegate);
@@ -116,9 +118,43 @@ public class AsyncReloadingClassificationEngine implements ClassificationEngine 
         final String staleName = MetricRegistry.name("classification", "reload", "stale");
         metrics.remove(staleName);
         metrics.register(staleName, (Gauge<Integer>) () -> this.stale ? 1 : 0);
+        // #765: a rejected rule is deliberately NOT a failed reload — the rest of the ruleset serves,
+        // successes moves and stale stays 0 — so without these two, every metric reads healthy while
+        // part of an operator's edit classifies nothing. That WARN was the only signal, and a log line
+        // is not something you can alert on. Alert on rejected > 0.
+        //
+        // Read through currentPublication(), never getInvalidRules(): a gauge is evaluated by whatever
+        // scrapes the metrics, and getInvalidRules() waits for the initial load to settle, so it would
+        // park a scrape behind a reload — or throw outright when no load has ever succeeded.
+        // currentPublication() is a single reference read that never blocks and never throws.
+        //
+        // -1, not 0, when nothing has been published: that is the distinction the Optional on
+        // currentPublication() exists for. On a failed INITIAL load there is no publication at all and
+        // the collector classifies nothing, which is exactly when a 0 here would claim a ruleset that
+        // loaded cleanly. Registered unconditionally, like stale above and unlike the file reloaders'
+        // gauges, because a rejected rule is reported at boot whether or not a schedule is configured.
+        registerRuleGauge(metrics, "rejected", publication -> publication.invalidRules().size());
+        registerRuleGauge(metrics, "published", publication -> publication.rules().size());
         // trigger reload
         // -> blocks classification requests until the first load settles
         reload();
+    }
+
+    /**
+     * Registers one {@code classification.rules.*} gauge, reading the current publication and
+     * answering {@code -1} when there is none. Remove-then-register for the same reason as the stale
+     * gauge above: Dropwizard's get-or-create would hand a restarted bean the old instance's lambda,
+     * which would then read a dead delegate forever.
+     *
+     * @param measure what to count on a publication that exists; never called when there is none
+     */
+    private void registerRuleGauge(final MetricRegistry metrics,
+                                   final String name,
+                                   final ToIntFunction<Publication> measure) {
+        final String metricName = MetricRegistry.name("classification", "rules", name);
+        metrics.remove(metricName);
+        metrics.register(metricName, (Gauge<Integer>) () ->
+                currentPublication().map(measure::applyAsInt).orElse(-1));
     }
 
     @PreDestroy
