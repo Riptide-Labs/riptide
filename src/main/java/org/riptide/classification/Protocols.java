@@ -75,14 +75,13 @@ public final class Protocols {
         protocols.add(new Protocol(52, "I-NLSP", "Integrated Net Layer Security  TUBA"));
         protocols.add(new Protocol(53, "SWIPE", "IP with Encryption (deprecated)"));
         protocols.add(new Protocol(54, "NARP", "NBMA Address Resolution Protocol"));
-        // IANA renamed this keyword to "Min-IPv4". Kept as MOBILE deliberately, because dropping a
-        // keyword this table carries makes rules naming it match MORE, not less: ProtocolValue.of
-        // filters the unresolvable keyword out, leaving an empty protocol set; shrink() answers
-        // null for that; and Classifier.of's addMatcher then builds no ProtocolMatcher at all, so
-        // the protocol condition is dropped and the rule matches every protocol. Measured, not
-        // reasoned: a sole rule naming "Min-IPv4" classifies both TCP/80 and UDP/443. That is the
-        // same silent widening #759 was about. Pinned by ProtocolsTest so a later reconciliation
-        // does not "correct" it. The underlying drop is filed as #763. (#758)
+        // IANA renamed this keyword to "Min-IPv4". Kept as MOBILE for compatibility: the keyword is
+        // what an operator rule names, so renaming it stops every rule naming "mobile" from
+        // working. Since #763 that failure is at least loud — ProtocolValue.of refuses a rule whose
+        // keyword does not resolve, and the reloader names it in a WARN — where it used to be
+        // silent widening, the rule matching every protocol. So this is now a "do not break
+        // working operator rulesets" decision rather than a safety one. Pinned by ProtocolsTest so
+        // a later reconciliation does not "correct" it without weighing that. (#758)
         protocols.add(new Protocol(55, "MOBILE", "IP Mobility"));
         protocols.add(new Protocol(56, "TLSP", "Transport Layer Security Protocol"));
         protocols.add(new Protocol(57, "SKIP", "SKIP"));
@@ -115,8 +114,8 @@ public final class Protocols {
         // The one decimal listed twice. IANA carries only IPTM; footnote [1] on its registry entry
         // records that 84 was assigned to TTP in error and later reassigned (the footnote text is
         // not in the CSV export, so it is quoted here rather than left as a pointer). The TTP row
-        // is kept for the same reason as 55 above — dropping a keyword makes a rule naming it
-        // match every protocol, not none. Both rows carry 84 and ProtocolMatcher compares
+        // is kept for the same reason as 55 above — dropping a keyword breaks every operator rule
+        // naming it, loudly since #763. Both rows carry 84 and ProtocolMatcher compares
         // decimals, so classification is unaffected; only getProtocols() double-counts, and the
         // decimal map resolves to IPTM by insertion order. Pinned by ProtocolsTest. (#758)
         protocols.add(new Protocol(84, "TTP", "Transaction Transport Protocol"));

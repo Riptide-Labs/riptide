@@ -75,10 +75,12 @@ public final class CsvImporter {
                 .withPosition(rules.size())
                 .build();
 
-            // A rule carrying an exporterFilter is rejected, but not here: PreprocessedRule.of
-            // refuses it, so it arrives as one rejected rule the engine names and skips rather
-            // than a ruleset that will not load (#759). Rejecting at import would abort the whole
-            // file for one cell, and — since RiptideConfiguration loads eagerly — fail the boot.
+            // The importer reads columns; it does not judge their contents. A rule carrying an
+            // exporterFilter (#759), or naming a protocol/port/address that resolves to nothing
+            // (#763), is rejected in preprocessing instead — PreprocessedRule.of and the value
+            // parsers it calls — so it arrives as one rejected rule the engine names and skips,
+            // rather than a ruleset that will not load. Rejecting here would abort the whole file
+            // for one cell, and — since RiptideConfiguration loads eagerly — fail the boot.
             rules.add(rule);
         }
 
