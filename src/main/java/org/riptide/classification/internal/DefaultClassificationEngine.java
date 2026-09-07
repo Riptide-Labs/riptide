@@ -148,7 +148,9 @@ public class DefaultClassificationEngine implements ClassificationEngine {
             log.info(sb.toString());
         }
 
-        final var publication = new Publication(rules, invalid);
+        // the preprocessed size travels with the publication because nothing downstream can recompute it:
+        // the reversal depends on each rule's conditions, and by here the list itself is out of scope (#769)
+        final var publication = new Publication(rules, invalid, preprocessedRules.size());
         treeAndPublication.set(new TreeAndPublication(tree, publication));
 
         fireClassificationReloadedListeners(publication.rules());

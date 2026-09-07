@@ -48,11 +48,19 @@ public interface ClassificationEngine {
      *
      * @param rules every rule in the published ruleset, rejected ones included, in evaluation order
      * @param invalidRules the rules in {@link #rules()} that could not be preprocessed and were ignored
+     * @param preprocessedCount how many preprocessed rules the tree was built from, reversals included.
+     *     Not derivable from {@link #rules()}: an omnidirectional rule carrying a port or address condition
+     *     is built in both directions and counts twice, so the shipped ruleset's 6,248 rows become 12,496.
+     *     This is the number the build's cost actually scales with, which is why the size bound in
+     *     {@code docs/docs/deploy/operations.md} is really about it rather than about rows (#769).
      */
-    record Publication(List<Rule> rules, List<Rule> invalidRules) {
+    record Publication(List<Rule> rules, List<Rule> invalidRules, int preprocessedCount) {
         public Publication {
             rules = List.copyOf(rules);
             invalidRules = List.copyOf(invalidRules);
+            if (preprocessedCount < 0) {
+                throw new IllegalArgumentException("preprocessedCount must not be negative: " + preprocessedCount);
+            }
         }
     }
 

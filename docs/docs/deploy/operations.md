@@ -156,6 +156,7 @@ Either way the WARN names the rule; the ERROR beside it names the column and the
 | `classification.reload.dead` | 1 if the poll schedule stopped and will never run again, including after a deliberate shutdown. Registered once an interval is configured, and kept after a stop. |
 | `classification.rules.rejected` | Rules in the serving ruleset that classify nothing, because the engine could not use them. **Alert on `> 0`.** `-1` means no ruleset has ever been published — see below. |
 | `classification.rules.published` | Rules in the serving ruleset, rejected ones included, so the count above is readable as a proportion. `-1` on the same condition. |
+| `classification.rules.preprocessed` | The same ruleset counted the way the tree build works on it, with reversed rules included, so it is roughly double the row count for an omnidirectional ruleset. **This is the number the size bound is about** — see [Supported ruleset size](#supported-ruleset-size). `-1` on the same condition. |
 
 **Why the rule gauges read `-1` and not `0`.** `-1` is "no ruleset has ever been published", which is not the same as "nothing was rejected" — a `0` in that state would claim a ruleset that loaded cleanly. Read `classification.reload.stale` alongside to tell the two cases apart:
 
@@ -184,11 +185,15 @@ What a failure does depends on whether any rules ever loaded:
 
 Shutdown counts nothing here either: a reload interrupted or refused during an orderly stop moves no counter and latches no gauge.
 
-Dots become underscores at `/metrics` (see [Metrics endpoint](#metrics-endpoint)), so the series to alert on are `classification_reload_stale`, `classification_reload_dead` and `classification_rules_rejected` — the dotted names above are the registry's, not PromQL's.
+Dots become underscores at `/metrics` (see [Metrics endpoint](#metrics-endpoint)), so the series to alert on are `classification_reload_stale`, `classification_reload_dead`, `classification_rules_rejected` and `classification_rules_preprocessed` — the dotted names above are the registry's, not PromQL's.
 
 ### Supported ruleset size
 
-**Riptide supports classification rulesets of up to 12,500 rules** — the largest size the tree build has actually been run at (12,496 rules), rounded up. Nothing enforces it. A larger ruleset still loads and still builds; what the bound says is that past this point no measurement backs the cost, and the growth below is steep enough that guessing is a bad idea.
+**Riptide supports classification rulesets of up to 12,500 rules** — the largest size the tree build has actually been run at (12,496 rules), rounded up. Nothing refuses a larger one: it still loads and still builds, and every rule in it still classifies. What the bound says is that past this point no measurement backs the cost, and the growth below is steep enough that guessing is a bad idea.
+
+**You are told when you cross it.** Every publish that exceeds the bound logs a WARN naming both counts and what it costs you, and `classification.rules.preprocessed` carries the same number for alerting. Crossing it is a decision, not a fault, so nothing fails and no gauge latches — but it is no longer something you have to read this page to discover.
+
+**The trigger is the preprocessed count, not the row count**, because that is what the build works on — and the two differ by up to a factor of two, which the next paragraph explains. So the 12,500 above is the bound for a ruleset shaped like the shipped one, where every rule is omnidirectional; read against **25,000 preprocessed rules** it covers both shapes. A ruleset of 20,000 rules that are *not* omnidirectional preprocesses to 20,000 and does not warn; 12,600 omnidirectional ones preprocess to 25,200 and do. Alert on `classification_rules_preprocessed > 25000` if you want the condition rather than the log line.
 
 **Expect a build of four to five seconds at the bound.** That is bracketed rather than measured outright, because the only ruleset that size is a synthetic one: building it took 4.43 s, and extending the growth curve from the real shipped ruleset predicts 4.8 s. The two agree, which is as much confidence as there is to be had without a real ruleset of that size to build.
 

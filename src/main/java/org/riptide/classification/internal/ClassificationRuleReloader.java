@@ -85,10 +85,34 @@ public class ClassificationRuleReloader {
     /** How many rejected rules the publish WARN names before it summarises the rest. */
     private static final int MAX_REJECTED_RULES_NAMED = 20;
 
+    /**
+     * The documented supported ruleset size, and the consumer #769 says it never had.
+     *
+     * <p><b>These two numbers are published.</b> {@code docs/docs/deploy/operations.md} ("Supported ruleset
+     * size") states a bound of 12,500 rules and explains it is really about roughly 25,000 preprocessed
+     * rules, because an omnidirectional rule carrying a port or address condition is built in both
+     * directions. {@code ClassificationRuleReloaderTest} pins both against that page; change one and the
+     * other has to move in the same commit.
+     *
+     * <p><b>Why the preprocessed count is the trigger and the row count is not.</b> Build cost scales with
+     * what {@code Tree.of} actually walks, which is the preprocessed list. Every shipped rule is
+     * omnidirectional, so 6,248 rows become 12,496 — but a purely one-directional ruleset reaches the same
+     * cost at roughly twice the row count, and warning it at 12,500 rows would be a false alarm about a
+     * ruleset comfortably inside the measured range. The row count is still named in the message, because
+     * it is the number the operator typed and the preprocessed one is not.
+     *
+     * <p>Nothing is refused. The docs say the bound is not enforced, and refusing here would turn an
+     * upgrade into an outage for anyone already past it.
+     */
+    private static final int SUPPORTED_RULES = 12_500;
+    private static final int SUPPORTED_PREPROCESSED_RULES = 25_000;
+
     private final ClassificationConfig config;
     private final AsyncReloadingClassificationEngine engine;
     private final ClassificationRulesSource source;
     private final MetricRegistry metrics;
+    private final int supportedRules;
+    private final int supportedPreprocessedRules;
 
     /**
      * The engine's own counter, deliberately: a fetch failure and a load failure are
@@ -104,10 +128,29 @@ public class ClassificationRuleReloader {
                                       final AsyncReloadingClassificationEngine engine,
                                       final ClassificationRulesSource source,
                                       final MetricRegistry metrics) {
+        this(config, engine, source, metrics, SUPPORTED_RULES, SUPPORTED_PREPROCESSED_RULES);
+    }
+
+    /**
+     * Takes the size bound rather than reading the constants, so a test can cross it with a handful of rules.
+     *
+     * <p>The alternative was a ruleset of 25,000 preprocessed rules in the unit suite, which is a multi-second
+     * {@code Tree.of} build — the cost #707 removed and #768 exists to keep watching. With the bound injected,
+     * the warning is exercised through the real publish path rather than by calling a predicate directly, which
+     * is what stops the test passing against a version where nothing is wired to it.
+     */
+    ClassificationRuleReloader(final ClassificationConfig config,
+                               final AsyncReloadingClassificationEngine engine,
+                               final ClassificationRulesSource source,
+                               final MetricRegistry metrics,
+                               final int supportedRules,
+                               final int supportedPreprocessedRules) {
         this.config = Objects.requireNonNull(config);
         this.engine = Objects.requireNonNull(engine);
         this.source = Objects.requireNonNull(source);
         this.metrics = Objects.requireNonNull(metrics);
+        this.supportedRules = supportedRules;
+        this.supportedPreprocessedRules = supportedPreprocessedRules;
         // already registered by the engine; counter() returns that same instance
         this.reloadFailures = metrics.counter(MetricRegistry.name("classification", "reload", "failures"));
     }
@@ -260,6 +303,44 @@ public class ClassificationRuleReloader {
                     this.source.describe(), publication.rules().size(), rejected.size(),
                     describeRejected(rejected));
         }
+        warnIfPastSupportedSize(publication);
+    }
+
+    /**
+     * Tells an operator their ruleset crossed the documented bound (#769), which nothing did before.
+     *
+     * <p>Separate from the publish line above rather than folded into it, because the two answer different
+     * questions and a reader filtering for one should not have to parse the other. This one is also the only
+     * line here that is not about the reload at all: the ruleset was accepted, every rule classifies, and
+     * the cost is paid at build time.
+     *
+     * <p><b>The two counts are not the same set</b>, which is why the message says so rather than presenting
+     * one as a parenthetical on the other. A rejected rule is in {@code rules()} and never reaches the
+     * preprocessed list: {@code PreprocessedRule.of} throws and {@code DefaultClassificationEngine} puts it
+     * in {@code invalid} instead. So a ruleset with many rejections has a preprocessed count *below* its row
+     * count, and a message reading "40,000 rules (25,100 including reversed)" would claim a superset while
+     * showing the smaller number.
+     *
+     * <p><b>Why WARN and not an error.</b> The docs say the bound is not enforced and this keeps that promise.
+     * Refusing would turn an upgrade into an outage for an operator already past it, and the ruleset is not
+     * wrong — it is unmeasured. What it costs them is startup: until the initial load publishes, every thread
+     * calling into classification blocks in {@code AsyncReloadingClassificationEngine.waitUntilServiceable},
+     * so an oversized ruleset is a boot during which the collector answers nothing.
+     */
+    private void warnIfPastSupportedSize(final ClassificationEngine.Publication publication) {
+        final int rules = publication.rules().size();
+        final int preprocessed = publication.preprocessedCount();
+        if (preprocessed <= this.supportedPreprocessedRules) {
+            return;
+        }
+        log.warn("Classification ruleset from {} is past the supported size. The build works on {} preprocessed"
+                        + " rules, reversals included and rejected rules excluded, against a supported {}."
+                        + " That is {} rules as written, against a documented {}. It still loads and every rule"
+                        + " still classifies, but past this size no measurement backs the build time, and at"
+                        + " startup the first build blocks classification until it finishes. See the operator"
+                        + " documentation, 'Supported ruleset size'.",
+                this.source.describe(), preprocessed, this.supportedPreprocessedRules,
+                rules, this.supportedRules);
     }
 
     /**

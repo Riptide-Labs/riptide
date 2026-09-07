@@ -774,8 +774,11 @@ class AsyncReloadingClassificationEngineTest {
             }
             // one field read, nothing to wait for down here, and derived from the same field the two
             // accessors above answer from
+            // preprocessed 2 against 1 rule, deliberately not equal: an omnidirectional rule is built in
+            // both directions, and equal numbers here would let the published and preprocessed gauges be
+            // wired to each other's measure without any test noticing (#769)
             return Optional.of(new Publication(
-                    List.of(DefaultRule.builder().withName(this.serving).build()), getInvalidRules()));
+                    List.of(DefaultRule.builder().withName(this.serving).build()), getInvalidRules(), 2));
         }
 
         @Override

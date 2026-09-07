@@ -100,8 +100,8 @@ public class AsyncReloadingClassificationEngine implements ClassificationEngine 
      *     {@link DefaultClassificationEngine} does (one {@code AtomicReference} set on success), and
      *     {@link TimingClassificationEngine} passes it through.
      * @param metrics registry for {@code classification.reload.{successes,failures,stale}} and
-     *     {@code classification.rules.{rejected,published}}; must be the registry the process exports, or the
-     *     reported failure is invisible and the alert the docs prescribe has no series
+     *     {@code classification.rules.{rejected,published,preprocessed}}; must be the registry the process
+     *     exports, or the reported failure is invisible and the alert the docs prescribe has no series
      */
     public AsyncReloadingClassificationEngine(ClassificationEngine delegate, MetricRegistry metrics) {
         this.delegate = Objects.requireNonNull(delegate);
@@ -135,6 +135,12 @@ public class AsyncReloadingClassificationEngine implements ClassificationEngine 
         // gauges, because a rejected rule is reported at boot whether or not a schedule is configured.
         registerRuleGauge(metrics, "rejected", publication -> publication.invalidRules().size());
         registerRuleGauge(metrics, "published", publication -> publication.rules().size());
+        // #769: the size bound is about this number, not about the one beside it. An omnidirectional rule
+        // carrying a port or address condition is built in both directions, so a ruleset's build cost is set
+        // by the preprocessed count and two rulesets with equal row counts can differ twofold. The WARN in
+        // ClassificationRuleReloader is the other half; this is the half an operator can alert on, which is
+        // the argument #765 rested on and the reason a log line alone was not enough there either.
+        registerRuleGauge(metrics, "preprocessed", Publication::preprocessedCount);
         // trigger reload
         // -> blocks classification requests until the first load settles
         reload();
