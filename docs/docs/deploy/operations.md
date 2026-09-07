@@ -289,6 +289,7 @@ lost silently. Alert on the drop counters; watch the depth gauges for early warn
 | `parsers.<name>.undecodableSets` | Data Sets discarded because their IPFIX/NetFlow v9 Template was not known |
 | `parsers.<name>.dispatchQueueDepth` | packets waiting to be enriched (gauge) |
 | `parsers.<name>.dispatchDrops` | **records** discarded because enrichment/persistence fell behind, or discarded at shutdown |
+| `parsers.<name>.unmodelledElementTemplates` | IPFIX templates announcing an information element riptide parses and then discards. **Not an error** — see below |
 | `pipeline.dispatchErrors` | records lost because enrichment or persistence threw |
 | `persister.batch.queueDepth` | rows waiting to be inserted (gauge) |
 | `persister.batch.droppedRows` | rows **the queue never handed to an insert** |
@@ -410,6 +411,22 @@ its flow objects:
 
 A `multi` receiver runs one parser per sub-protocol, each with its own queue and threads, so budget
 per sub-protocol and size down accordingly if you configure several.
+
+### Elements riptide parses and discards
+
+`parsers.<name>.unmodelledElementTemplates` counts IPFIX templates carrying an information element riptide understands well enough to parse, and then deliberately does not use.
+
+**A non-zero reading is not a fault.** Nothing is dropped, no flow is lost, and the export is valid. It means an exporter is stating something riptide is not reading, and somebody should decide whether that matters.
+
+**The log line is per element, per exporter, per parser.** Each watchlisted element is named once for each exporter that announces it, by each parser that sees it. Both halves of that matter: an exporter announcing IE 396 must not silence the IE 390 arrival this exists to catch, and a lab box announcing IE 390 last year must not silence a production box announcing it today. The line names the exporter address and observation domain, because the whole point is that somebody goes and looks at it.
+
+**Alert on the total, not on a rate.** This is a monotonic counter for the life of the process, like `undecodableSets` beside it. A rate computed from it is meaningful over UDP, where an exporter re-announces its templates on a timer, and misleading over TCP, where templates are announced once per connection: the count stops moving while that exporter carries on exporting flow-selection data for the life of the session. **A flat rate on TCP does not mean the condition cleared.**
+
+Today the watchlist holds one family: the IPFIX flow-selection elements, IE 390 to 399. Riptide models **packet** selection and not **flow** selection, so an exporter running an Intermediate Flow Selection Process reports its flows at whatever rate its packet selection states, or at 1, with no signal that most of its flows were discarded before export. See issue 596.
+
+**A zero does not mean no such exporter exists.** It means none has sent a template to *this* collector since it started. That distinction is the reason the counter exists at all: a survey of exporter source concluded the packet-selection family was unimplemented in practice, and softflowd was then found emitting it, with a 1:100 sampled exporter recorded as unsampled and its volume under-reported hundredfold (issue 598).
+
+This counter is IPFIX-only. NetFlow v9 field types are a different numbering space, and a v9 type 390 is not IE 390.
 
 ## Parser gauges: exporters and templates
 
