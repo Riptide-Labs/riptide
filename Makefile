@@ -56,6 +56,8 @@ help:
 	@echo "  sbom-assert-test: Run the SBOM assertion script's fixture tests"
 	@echo "  release-lineage: Check a release tag adds only the version bump on top of main; LINEAGE_REF=<ref>"
 	@echo "  release-lineage-test: Run the release lineage checker's fixture tests"
+	@echo "  build-cost-docs: Check a tree-build change updates its published cost figures; COST_BASE_REF=<ref>"
+	@echo "  build-cost-docs-test: Run the build-cost docs checker's fixture tests"
 	@echo "  nix:          Build the flake package from source (requires Nix)"
 	@echo "  nix-check:    Run the flake checks incl. the NixOS module eval (requires Nix)"
 	@echo "  nix-hash:     Regenerate nix/package.nix's mvnHash after a pom change (requires Nix)"
@@ -335,6 +337,23 @@ release-lineage:
 .PHONY: release-lineage-test
 release-lineage-test:
 	@.github/scripts/check-release-lineage-test.sh
+
+# Refuse a change to how the classification tree is built that neither updates
+# the cost figures published for it nor says they are unaffected (#771). Diffs
+# against origin/main by default, so `git fetch` first; on a pull request CI
+# passes the base branch explicitly. Override with COST_BASE_REF=<ref>.
+COST_HEAD_REF        = HEAD
+COST_BASE_REF        = origin/main
+
+.PHONY: build-cost-docs
+build-cost-docs:
+	@.github/scripts/check-build-cost-docs.sh "$(COST_HEAD_REF)" "$(COST_BASE_REF)"
+
+# Same argument as release-lineage-test: this checker matches nothing in a
+# healthy tree, so its fixtures are the only thing that ever exercises it.
+.PHONY: build-cost-docs-test
+build-cost-docs-test:
+	@.github/scripts/check-build-cost-docs-test.sh
 
 .PHONY: release
 release:

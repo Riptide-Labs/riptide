@@ -239,6 +239,28 @@ public class BundledRulesetTreeIdentityTest {
     }
 
     /**
+     * What a maintainer needs to hear when this reds because the ruleset changed (#771).
+     *
+     * <p>This test is the only observer that catches a CSV edit which holds the row and distinct-port
+     * counts constant — measured: changing one rule's {@code dstPort} to another unused value reds both
+     * rows here while {@code TreeBuildSynthesisTest} and {@code TreeBuildWorkCounterTest} stay green,
+     * because the first pins counts and the second builds only the first 400 rows.
+     *
+     * <p>Being the only observer makes its message load-bearing. Without this it reads {@code [leaves]},
+     * which points at a constant to update and says nothing about the four wall times and four work
+     * counts published for this exact ruleset. Those would then be orphaned by the same commit that
+     * proved them stale, which is what {@code TreeBuildSynthesisTest.STALE_DOCS} exists to prevent for
+     * the count case and what #771 generalised.
+     */
+    private static final String STALE_DOCS =
+            "if this moved because classification-rules.csv was edited rather than because tree"
+                    + " construction changed, docs/docs/deploy/operations.md (Supported ruleset size) is"
+                    + " now stale: it publishes a build time and a work count for this ruleset at four"
+                    + " sizes, and this is the only test that sees a value-only edit. Re-measure with"
+                    + " `make bench-jmh BENCH_TARGET=TreeBuildBenchmark` and update that section in the"
+                    + " same commit. Say which of the two causes it was in the commit message";
+
+    /**
      * The shape pin. This is the row that catches a changed tree: measured against two perturbations of
      * the winner selection — a counting path that disagreed with the list path on one bucket, and a
      * tie broken the other way — this failed on both and the answer row below failed on neither.
@@ -256,12 +278,14 @@ public class BundledRulesetTreeIdentityTest {
         // the ruleset this fingerprint is of - without this the pins below could be met by a
         // truncated or mis-parsed CSV, and this is the pair that separates a deliberate ruleset
         // change from a tree-construction regression
-        assertThat(ruleCount).as("rules parsed from the bundled CSV").isEqualTo(6248);
-        assertThat(preprocessedCount).as("preprocessed rules, reversals included").isEqualTo(12496);
+        assertThat(ruleCount).as("rules parsed from the bundled CSV. %s", STALE_DOCS).isEqualTo(6248);
+        assertThat(preprocessedCount)
+                .as("preprocessed rules, reversals included. %s", STALE_DOCS)
+                .isEqualTo(12496);
 
         final var info = tree.info;
-        assertThat(info.leaves).as("leaves").isEqualTo(LEAVES);
-        assertThat(info.nodes).as("nodes").isEqualTo(NODES);
+        assertThat(info.leaves).as("leaves. %s", STALE_DOCS).isEqualTo(LEAVES);
+        assertThat(info.nodes).as("nodes. %s", STALE_DOCS).isEqualTo(NODES);
         assertThat(info.maxDepth).as("maxDepth").isEqualTo(MAX_DEPTH);
         assertThat(info.minDepth).as("minDepth").isEqualTo(MIN_DEPTH);
         assertThat(info.sumDepth).as("sumDepth").isEqualTo(SUM_DEPTH);

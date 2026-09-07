@@ -52,6 +52,11 @@ jobs:
       - name: Release lineage checker fixture tests
         run: |
           make release-lineage-test
+      # Same argument, and the fixtures need no history so they belong here
+      # rather than in the job that runs the checker itself.
+      - name: Build-cost docs checker fixture tests
+        run: |
+          make build-cost-docs-test
       - name: Build with tests
         run: |
           make
@@ -62,6 +67,39 @@ jobs:
           name: riptide-jar
           path: |
             target/*.jar
+  # The published build-cost figures have no other observer: the benchmark that
+  # produced them runs in no workflow, and the tree-shape pins cannot see a cost
+  # change at all (#771). Its own job because it needs full history to diff the
+  # pull request against its base, and the build job checks out one commit.
+  #
+  # Pull requests only. On a push to main there is no base to compare against
+  # that is not the change itself, and a check that cannot answer its question
+  # must not answer it anyway.
+  build-cost-docs:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The pull request's own head, NOT the default merge ref. GitHub
+          # recomputes refs/pull/N/merge when the base branch advances, but the
+          # event payload keeps the base.sha it fired with. On a re-run after
+          # main has moved, the two disagree and the diff picks up commits that
+          # landed on main in between — which both refuses this change over
+          # files it never touched, and lets an unrelated merged commit's
+          # Cost-Unchanged: trailer clear it. Pinning both ends to the payload
+          # makes the range the pull request and nothing else.
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check the published build-cost figures were considered
+        # Via env rather than inline interpolation, so the expansion is never
+        # part of the command the shell parses.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          make build-cost-docs COST_BASE_REF="${BASE_SHA}"
   e2e:
     runs-on: ubuntu-24.04
     # E2eTestSupport.SUITE_BUDGET (30 min) is sized against this; lowering it means lowering that.

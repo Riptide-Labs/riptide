@@ -115,6 +115,15 @@ class TreeBuildSynthesisTest {
      *
      * <p>This row exists because deleting the guard broke nothing: the bundled ruleset satisfies it,
      * so every other test in this class passes with it gone.
+     *
+     * <p><b>A second thing rests on this guard, in another package (#771).</b>
+     * {@code TreeBuildWorkCounterTest} charges every verdict a cost of 1, and the published work counts
+     * in {@code docs/docs/deploy/operations.md} are that sum. A verdict is really O(k) in the rule's
+     * condition cardinality, because {@code Threshold.match(PreprocessedRule, Bounds)} loops over the
+     * rule's value list. Refusing ranges and addresses here is what keeps k = 1 on the port thresholds,
+     * and port thresholds are 5,990 of the 5,994 distinct candidates. So relaxing this guard would not
+     * only invalidate the measured seconds — it would silently make the work counts describe something
+     * other than the work, and nothing in either test would fail. Widen it deliberately or not at all.
      */
     @Test
     void aRuleShapeTheRemapCannotCloneIsRefusedRatherThanMeasured() {
