@@ -15,6 +15,8 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.function.IntToLongFunction;
 import java.util.function.ToLongFunction;
 import java.util.stream.Collectors;
@@ -41,10 +43,38 @@ public abstract class Tree {
      * and leaves that contain the classifiers that were selected by the thresholds of their ancestor nodes.
      */
     public static Tree of(List<PreprocessedRule> rules) throws InterruptedException  {
-        return of(rules, Bounds.ANY, 0);
+        return of(rules, new LongAdder());
     }
 
-    private static Tree of(List<PreprocessedRule> rules, Bounds bounds, int depth) throws InterruptedException {
+    /**
+     * Builds the tree and reports how much work it took, for #768.
+     *
+     * <p>{@code work} accumulates candidates-scored x rules-at-that-node, summed over every node. That
+     * product is what makes the build quadratic (#746), and it is a structural fact of the loop below
+     * rather than something inferred by instrumenting {@code Threshold} — so nothing is added to the
+     * per-rule verdict on the hot path, and the figure belongs to this build alone. An accumulator
+     * passed in, rather than a static, because a process-wide counter has no meaning when an async
+     * engine reload can build a second tree concurrently.
+     *
+     * <p><b>What it does not count:</b> what happens inside a verdict (each walks the rule's port or
+     * address ranges and exits early), candidate enumeration and {@code distinct()}, {@code canRestrict},
+     * and the classifier sort in a leaf. A regression making one of those dominant would be a real
+     * complexity change this number cannot see.
+     *
+     * <p>Deliberately blind to parallelism: the same candidates are scored whatever {@code .parallel()}
+     * does, so removing it leaves this identical while wall time moves.
+     *
+     * <p>Public rather than package-private only because its two callers cannot be: the JMH benchmark
+     * lives in {@code org.riptide.benchmarks.classification}. No production code calls it — the engine
+     * uses {@link #of(List)} — so widening its use is a decision, not a convenience.
+     */
+    @VisibleForTesting
+    public static Tree of(List<PreprocessedRule> rules, LongAdder work) throws InterruptedException {
+        Objects.requireNonNull(work, "work");
+        return of(rules, Bounds.ANY, 0, work);
+    }
+
+    private static Tree of(List<PreprocessedRule> rules, Bounds bounds, int depth, LongAdder work) throws InterruptedException {
         if (Thread.interrupted()) {
             throw new InterruptedException();
         }
@@ -67,7 +97,11 @@ public abstract class Tree {
                 .distinct()
                 .parallel()
                 .filter(t -> t.canRestrict(bounds))
-                .map(t -> Map.entry(t, t.count(rules, bounds)))
+                .map(t -> {
+                    // one verdict per rule, per candidate scored — the quadratic term (#768)
+                    work.add(ruleSetSize);
+                    return Map.entry(t, t.count(rules, bounds));
+                })
                 .filter(e -> maximumSize(e) < ruleSetSize)
                 // different ordering criteria could be used here
                 // (for example the summed sizes of the collections that result if the rule set is matched by a threshold was also tested)
@@ -77,15 +111,17 @@ public abstract class Tree {
 
         if (entry != null) {
             // the recursion consumes the collections themselves, so they come from match(), for the
-            // winner alone - counting cannot produce them
+            // winner alone - counting cannot produce them. That is a second walk of every rule at this
+            // node, on top of the scoring pass above, so it costs another ruleSetSize verdicts (#768).
+            work.add(ruleSetSize);
             Threshold.Matches matches = entry.getKey().match(rules, bounds);
             log.trace("Node - depth: " + depth + "; rules: " + ruleSetSize + "; threshold: " + entry.getKey() + "; maximum child size: " + maximumSize(entry)
                     + "; lt: " + entry.getValue().lt()
                     + "; eq: " + entry.getValue().eq() + "; gt: " + entry.getValue().gt() + "; na: " + entry.getValue().na());
-            var lt = of(matches.lt, entry.getKey().lt(bounds), depth + 1);
-            var eq = of(matches.eq, entry.getKey().eq(bounds), depth + 1);
-            var gt = of(matches.gt, entry.getKey().gt(bounds), depth + 1);
-            var na = of(matches.na, bounds, depth + 1);
+            var lt = of(matches.lt, entry.getKey().lt(bounds), depth + 1, work);
+            var eq = of(matches.eq, entry.getKey().eq(bounds), depth + 1, work);
+            var gt = of(matches.gt, entry.getKey().gt(bounds), depth + 1, work);
+            var na = of(matches.na, bounds, depth + 1, work);
 
             return node(entry.getKey(), lt, eq, gt, na);
         } else {
