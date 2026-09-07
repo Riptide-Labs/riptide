@@ -657,10 +657,16 @@ What that does **not** establish is which mechanism `cpu` used. async-profiler c
 
 ### Enable native access on a future JDK
 
-With profiling on, JDK 25 warns that `System::load` is a restricted method and that **restricted methods will be blocked in a future release unless native access is enabled**. Profiling works today and will stop working on a JDK that enforces this. If that happens, add to `JAVA_OPTS`:
+With profiling on, JDK 25 warns that `System::load` is a restricted method and that **restricted methods will be blocked in a future release unless native access is enabled**. Profiling works today and will stop working on a JDK that enforces this.
+
+**Which variable depends on how you run riptide, and one of them does nothing in a container.** The deb/rpm unit expands `$JAVA_OPTS`; the container image has an exec-form `ENTRYPOINT` with no shell, so it never sees that variable at all. `JDK_JAVA_OPTIONS` is read by the `java` launcher itself and works everywhere:
 
 ```properties
+# deb/rpm and Nix, via the environment file
 JAVA_OPTS=--enable-native-access=ALL-UNNAMED
+
+# container, and also fine on the other two
+JDK_JAVA_OPTIONS=--enable-native-access=ALL-UNNAMED
 ```
 
 The warning appears only when profiling is enabled, because nothing else here loads a native library.
@@ -675,9 +681,9 @@ The agent's native libraries are glibc-linked with no musl build among them, and
 
 **It also profiles correctly there.** Measured on `eclipse-temurin:25-alpine` amd64: 801 samples over 8 seconds, 99.88% attributed to the intended method, against 99.75% on a glibc image doing the same work. Stack unwinding was the suspected musl failure and it does not appear.
 
-The limit on that: a tight synthetic loop is the easiest case an unwinder ever sees, and riptide's real hot paths are Netty event loops, virtual threads and JIT-compiled code. This shows the profiler is not broken on musl. It does not prove every profile is accurate.
+The limit on that: a tight synthetic loop is the easiest case an unwinder ever sees, and riptide's real hot paths are Netty event loops, virtual threads and JIT-compiled code. This shows the profiler is not broken on musl. It does not prove every profile is accurate, so a container profile showing frames that cannot be real is still worth suspecting the unwinder for.
 
-**The remedy needs two variables, not one.** JFR is a second profiler in the same jar. It uses no native library and no `perf_event_open`, so it behaves identically on musl and glibc:
+**If it ever does look wrong, JFR is the fallback, and it needs two variables rather than one.** JFR is a second profiler in the same jar. It uses no native library and no `perf_event_open`, so it behaves identically on musl and glibc:
 
 ```bash
 PYROSCOPE_PROFILER_TYPE=JFR
