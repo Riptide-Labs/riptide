@@ -603,6 +603,79 @@ jcmd <pid> Thread.dump_to_file -format=json /tmp/threads.json
 ```
 :::
 
+## Continuous profiling
+
+Riptide can ship continuous profiles to a [Pyroscope](https://grafana.com/oss/pyroscope/) server. **It is off by default and starting it is one variable:**
+
+```properties
+riptide.profiling.enabled=true      # RIPTIDE_PROFILING_ENABLED=true
+```
+
+That is the only setting riptide owns. Everything else is Pyroscope's own `PYROSCOPE_*` environment vocabulary, read by the agent rather than restated here, so an option added upstream works without riptide knowing about it:
+
+```bash
+RIPTIDE_PROFILING_ENABLED=true
+PYROSCOPE_SERVER_ADDRESS=http://pyroscope.internal:4040
+PYROSCOPE_APPLICATION_NAME=riptide
+PYROSCOPE_PROFILER_EVENT=itimer          # default; see the event table below
+PYROSCOPE_LABELS=region=eu-west,role=edge
+PYROSCOPE_UPLOAD_INTERVAL=10s
+```
+
+See Pyroscope's own documentation for the full list. Riptide overrides three things and no more: it enables the agent, because reaching that code is the decision to enable; it **merges** the labels below into whatever `PYROSCOPE_LABELS` set, so yours survive; and it supplies a stable application name if you did not choose one. On a label-name collision riptide's identity wins, because it describes what the collector actually is.
+
+**`PYROSCOPE_AGENT_ENABLED` is the one variable riptide overrides unconditionally.** Setting it to `false` will not turn profiling off, because `riptide.profiling.enabled` is the switch this project documents and supports. Use that one.
+
+**If the agent fails to start, riptide says so and carries on.** The agent catches its own start failures and reports them on standard error rather than through the collector's log, so riptide checks afterwards and logs an ERROR naming the application and event when nothing actually started. A green "Continuous profiling started" line therefore means it started; it does not mean profiles will be useful.
+
+**Profiles are labelled with your deployment identity** — `tenant`, `organisation`, `zone` and `system`, from `riptide.identity.*`. That is what makes profiles filterable when several collectors report to one server, and it is the reason profiling is started in-process rather than as a `-javaagent`: the agent has no notion of a tenant or a zone.
+
+### What it costs when it is off
+
+The agent is a dependency, so it ships in every artefact whether or not you enable it: about 5.5 MB of jar, of which roughly 2.3 MB is async-profiler's bundled native libraries. Nothing is loaded, no thread starts and no connection is opened unless the setting above is set.
+
+### What the profile measures, and which event to ask for
+
+The **default event is `itimer`**, and `itimer` measures **CPU time** — async-profiler drives it with `setitimer(ITIMER_PROF)`. It needs no `perf_event_open`, so out of the box nothing is refused and nothing falls back, on any deployment.
+
+The events differ in what they can show you, and picking the wrong one is the easiest way to read a profile backwards:
+
+| `PYROSCOPE_PROFILER_EVENT` | measures | needs `perf_event_open`? |
+|---|---|---|
+| `itimer` (default) | CPU time | no |
+| `cpu` | CPU time, with kernel stacks | **yes** |
+| `wall` | wall-clock — includes time blocked on IO and locks | no |
+| `alloc`, `lock` | allocation, contention | no |
+
+**`cpu` is the one that can be refused.** The shipped systemd unit sets `NoNewPrivileges=yes` and grants no `CAP_PERFMON`, and the default container seccomp profile is similarly restrictive, so an operator who asks for `cpu` may get less than they asked for there. `itimer` gets you CPU time in both without that problem.
+
+**If you are chasing time spent waiting rather than time spent computing, ask for `wall`.** Blocked-on-IO and lock-wait frames dominate a wall-clock profile and are nearly absent from a CPU one, so neither `itimer` nor `cpu` will show you a stall.
+
+**Riptide cannot tell you which mode the process actually obtained.** The agent's API exposes the event that was *configured* and nothing that reports a fallback, so the line logged at startup names what was requested and says so explicitly.
+
+**None of this has been measured under the shipped unit file.** The `cpu` caveat above is derived from what async-profiler requires and what the unit file grants, not from a profiling run on a packaged install.
+
+### A stable application name
+
+If `PYROSCOPE_APPLICATION_NAME` is unset, riptide uses `riptide`. Left to the agent it would generate `javaspy.<random>` afresh on every start, so each restart would appear as a new service nobody can search for. Set it explicitly if you run more than one collector against one server, or rely on the identity labels above to tell them apart.
+
+### Containers, and what to do when a profile looks wrong
+
+The agent's native libraries are glibc-linked with no musl build among them, and the shipped image is Alpine. That turns out not to stop it: musl ignores symbol versioning, so they load, and **the profiler starts on the shipped image for every event tested** (`itimer`, `cpu`, `wall`, on amd64).
+
+**Starting is not profiling.** Whether the samples are correct on musl is untested. async-profiler publishes separate musl builds upstream, which suggests glibc-linked builds meet trouble somewhere past loading, plausibly in stack unwinding. If a container profile looks wrong, empty, or shows frames that cannot be real, that is the first thing to suspect.
+
+**The remedy needs two variables, not one.** JFR is a second profiler in the same jar. It uses no native library and no `perf_event_open`, so it behaves identically on musl and glibc:
+
+```bash
+PYROSCOPE_PROFILER_TYPE=JFR
+PYROSCOPE_PROFILER_EVENT=cpu     # required: JFR rejects the default itimer
+```
+
+Setting only `PYROSCOPE_PROFILER_TYPE=JFR` does **not** work. JFR refuses the default `itimer` event and refuses `wall`; it accepts `cpu`, `alloc` and `lock`. Riptide logs an ERROR and carries on without profiling if you get this wrong, so the failure is visible rather than silent.
+
+What JFR costs you is fidelity. Its sampling is subject to safepoint bias, meaning samples land where the JVM can conveniently stop rather than exactly where time is spent, and its allocation and lock profiling are weaker than async-profiler's. For questions like "which method dominates a rebuild" it is entirely adequate.
+
 ## Ports
 
 | Port | Protocol | What |
