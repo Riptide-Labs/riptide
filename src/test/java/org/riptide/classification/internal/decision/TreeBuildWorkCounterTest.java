@@ -57,11 +57,49 @@ import static org.assertj.core.api.Assertions.assertThat;
  * fails to observe: {@link #theCountEqualsTheVerdictsActuallyPerformed} checks the total against a count
  * taken inside {@code Threshold}, which is the one blind spot the magnitudes and the ratio share.
  * A gate built on this must still not be described as covering the four above.
+ *
+ * <p><b>Why "one verdict" is a fair unit here, and what holds it fair (#771).</b> A verdict is not
+ * O(1). All three {@code Threshold.match(PreprocessedRule, Bounds)} implementations loop over the
+ * rule's value list, exiting early only once {@code lt && eq && gt} all hold. So charging every verdict
+ * 1 is an approximation, and what makes it a good one is a property of the shipped ruleset rather than
+ * of this code: 5,990 distinct {@code dstPort} values against 4 distinct protocol keywords, so 5,990 of
+ * the 5,994 distinct candidate thresholds are single-valued. Protocol candidates are the exception and
+ * they are the costlier ones — 5,294 of 6,248 rules carry a multi-value protocol, and against threshold
+ * {@code tcp} the values of {@code tcp,udp} give {@code eq} then {@code gt}, never all three, so the
+ * early exit never fires and both iterations run.
+ *
+ * <p>That property is enforced, but not here. {@code TreeBuildSynthesisTest} refuses any rule carrying
+ * a port range, a source port or an address, which is what keeps the port thresholds single-valued.
+ * <b>Relax that guard and this counter quietly stops meaning what
+ * {@code docs/docs/deploy/operations.md} says it means</b>, with nothing failing. An operator ruleset
+ * using port ranges is already outside it, which is what the docs' "one rule shape" caveat covers.
  */
 class TreeBuildWorkCounterTest {
 
     /** Small enough to cost milliseconds; large enough that the build branches several levels. */
     private static final int SLICE = 200;
+
+    /**
+     * What a maintainer needs to hear when one of the pinned magnitudes reds (#771).
+     *
+     * <p>Deliberately the same shape as {@code TreeBuildSynthesisTest.STALE_DOCS}, and for the same
+     * reason: these constants are not internal to this test. The build they measure is the build
+     * {@code docs/docs/deploy/operations.md} publishes a work count and a wall time for, so a change
+     * that moves them has also invalidated a published figure that nothing else will notice is wrong.
+     *
+     * <p>Without this the failure looks like a constant that needs updating, because that is the only
+     * thing the message names. The published figure is then orphaned by the very commit that proved it
+     * stale — which is the failure #771 exists to stop, and the sibling test already avoids.
+     */
+    private static final String STALE_DOCS =
+            "if this moved because Tree.of's work genuinely changed, then"
+                    + " docs/docs/deploy/operations.md (Supported ruleset size) is now stale too: it"
+                    + " publishes 262,251,844 for the shipped ruleset and a wall time per size, both"
+                    + " measured from this build. Re-measure with `make bench-jmh"
+                    + " BENCH_TARGET=TreeBuildBenchmark` and update that section in the same commit."
+                    + " If instead the first " + SLICE * 2 + " rows of classification-rules.csv were"
+                    + " edited, the docs figures move as well and TreeBuildSynthesisTest should be red"
+                    + " beside this. Say which of the two it was in the commit message";
 
     /**
      * Recorded, not derived: the work a build of the first {@value #SLICE} bundled rules costs.
@@ -115,11 +153,11 @@ class TreeBuildWorkCounterTest {
         // the winner-site count; these are not. See WORK_AT_SLICE for the re-baselining rule.
         assertThat(smallWork)
                 .as("work to build the first %s CSV rows (%s preprocessed rules, reversals included);"
-                        + " see WORK_AT_SLICE before changing", SLICE, small.size())
+                        + " see WORK_AT_SLICE before changing. %s", SLICE, small.size(), STALE_DOCS)
                 .isEqualTo(WORK_AT_SLICE);
         assertThat(largeWork)
                 .as("work to build the first %s CSV rows (%s preprocessed rules, reversals included);"
-                        + " see WORK_AT_SLICE before changing", SLICE * 2, large.size())
+                        + " see WORK_AT_SLICE before changing. %s", SLICE * 2, large.size(), STALE_DOCS)
                 .isEqualTo(WORK_AT_DOUBLE_SLICE);
 
         final double ratio = (double) largeWork / smallWork;
