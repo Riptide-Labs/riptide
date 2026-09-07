@@ -647,13 +647,23 @@ The events differ in what they can show you, and picking the wrong one is the ea
 | `wall` | wall-clock — includes time blocked on IO and locks | no |
 | `alloc`, `lock` | allocation, contention | no |
 
-**`cpu` is the one that can be refused.** The shipped systemd unit sets `NoNewPrivileges=yes` and grants no `CAP_PERFMON`, and the default container seccomp profile is similarly restrictive, so an operator who asks for `cpu` may get less than they asked for there. `itimer` gets you CPU time in both without that problem.
+**`cpu` was expected to be refused under the shipped unit, and measurement says otherwise.** On a real deployment running the shipped unit file (`User=riptide`, `NoNewPrivileges=yes`, `ProtectSystem=strict`, no capabilities) on Ubuntu 24.04 with `perf_event_paranoid=4`, both `itimer` and `cpu` started and produced correctly attributed samples: around 800 samples over 8 seconds with 99.9% on the intended method.
+
+What that does **not** establish is which mechanism `cpu` used. async-profiler can fall back internally without saying so, and the sample output cannot distinguish a successful `perf_event_open` from a silent degrade. The practical answer is that both events give you a usable profile on a hardened unit; the mechanistic one is unverified.
 
 **If you are chasing time spent waiting rather than time spent computing, ask for `wall`.** Blocked-on-IO and lock-wait frames dominate a wall-clock profile and are nearly absent from a CPU one, so neither `itimer` nor `cpu` will show you a stall.
 
 **Riptide cannot tell you which mode the process actually obtained.** The agent's API exposes the event that was *configured* and nothing that reports a fallback, so the line logged at startup names what was requested and says so explicitly.
 
-**None of this has been measured under the shipped unit file.** The `cpu` caveat above is derived from what async-profiler requires and what the unit file grants, not from a profiling run on a packaged install.
+### Enable native access on a future JDK
+
+With profiling on, JDK 25 warns that `System::load` is a restricted method and that **restricted methods will be blocked in a future release unless native access is enabled**. Profiling works today and will stop working on a JDK that enforces this. If that happens, add to `JAVA_OPTS`:
+
+```properties
+JAVA_OPTS=--enable-native-access=ALL-UNNAMED
+```
+
+The warning appears only when profiling is enabled, because nothing else here loads a native library.
 
 ### A stable application name
 
@@ -663,7 +673,9 @@ If `PYROSCOPE_APPLICATION_NAME` is unset, riptide uses `riptide`. Left to the ag
 
 The agent's native libraries are glibc-linked with no musl build among them, and the shipped image is Alpine. That turns out not to stop it: musl ignores symbol versioning, so they load, and **the profiler starts on the shipped image for every event tested** (`itimer`, `cpu`, `wall`, on amd64).
 
-**Starting is not profiling.** Whether the samples are correct on musl is untested. async-profiler publishes separate musl builds upstream, which suggests glibc-linked builds meet trouble somewhere past loading, plausibly in stack unwinding. If a container profile looks wrong, empty, or shows frames that cannot be real, that is the first thing to suspect.
+**It also profiles correctly there.** Measured on `eclipse-temurin:25-alpine` amd64: 801 samples over 8 seconds, 99.88% attributed to the intended method, against 99.75% on a glibc image doing the same work. Stack unwinding was the suspected musl failure and it does not appear.
+
+The limit on that: a tight synthetic loop is the easiest case an unwinder ever sees, and riptide's real hot paths are Netty event loops, virtual threads and JIT-compiled code. This shows the profiler is not broken on musl. It does not prove every profile is accurate.
 
 **The remedy needs two variables, not one.** JFR is a second profiler in the same jar. It uses no native library and no `perf_event_open`, so it behaves identically on musl and glibc:
 
