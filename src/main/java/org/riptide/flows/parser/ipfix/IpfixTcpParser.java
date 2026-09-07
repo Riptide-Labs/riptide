@@ -42,6 +42,10 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
 
     private final IpFixFlowBuilder flowBuilder;
 
+    // #596: see the sibling comment in IpfixUdpParser. Both sites are fixed together because a guard that
+    // reaches one transport and not the other reports half a fleet.
+    private final UnmodelledElements unmodelledElements;
+
     private final Set<TcpSession> sessions = Sets.newConcurrentHashSet();
 
     private OptionListener optionListener = OptionListener.NONE;
@@ -57,6 +61,7 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
                       @Qualifier("ipfixValueConversionService") ValueConversionService conversionService) {
         super(Protocol.IPFIX, name, dispatcher, identity, metricRegistry);
         this.flowBuilder = new IpFixFlowBuilder(conversionService);
+        this.unmodelledElements = new UnmodelledElements(metricRegistry, name);
     }
 
     @Override
@@ -80,6 +85,8 @@ public class IpfixTcpParser extends ParserBase implements TcpParser {
                 final Packet packet;
                 if (buffer.isReadable(header.payloadLength())) {
                     packet = new Packet(session, header, slice(buffer, header.payloadLength()));
+                    // qualified: this sits inside the anonymous per-connection session, not the parser
+                    IpfixTcpParser.this.unmodelledElements.observe(packet, session);
                 } else {
                     buffer.resetReaderIndex();
                     return Optional.empty();

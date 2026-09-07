@@ -40,6 +40,12 @@ public class IpfixUdpParser extends UdpParserBase implements DispatchableUdpPars
 
     private final IpFixFlowBuilder flowBuilder;
 
+    // #596: both IPFIX parsers observe, and this is the complete pair -- Packet is constructed here and in
+    // IpfixTcpParser and nowhere else. Not in the session layer, which also sees NetFlow v9 templates whose
+    // field-type numbers are a different namespace, and not in a TransactionalSession decorator, which the
+    // TCP path does not use.
+    private final UnmodelledElements unmodelledElements;
+
     public IpfixUdpParser(final String name,
                           final BiConsumer<Source, List<Flow>> dispatcher,
                           final Identity identity,
@@ -47,6 +53,7 @@ public class IpfixUdpParser extends UdpParserBase implements DispatchableUdpPars
                           @Qualifier("ipfixValueConversionService") final ValueConversionService conversionService) {
         super(Protocol.IPFIX, name, dispatcher, identity, metricRegistry);
         this.flowBuilder = new IpFixFlowBuilder(conversionService);
+        this.unmodelledElements = new UnmodelledElements(metricRegistry, name);
     }
 
     @Override
@@ -54,6 +61,7 @@ public class IpfixUdpParser extends UdpParserBase implements DispatchableUdpPars
                                final ByteBuf buffer) throws Exception {
         final Header header = new Header(slice(buffer, Header.SIZE));
         final Packet packet = new Packet(session, header, slice(buffer, header.payloadLength()));
+        this.unmodelledElements.observe(packet, session);
         // Same identity the option tap builds when it consumes a sampler options record, so a
         // lookup finds what that record deposited (UdpSessionManager keys on remote address plus
         // observation domain).
