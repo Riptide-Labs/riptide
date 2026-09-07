@@ -52,6 +52,7 @@ class ClassificationReloadMetricsBindingTest {
     @Test
     void theEngineRegistersTheRuleGaugesInTheExportedRegistry() {
         assertThat(this.metrics.getGauges().keySet())
-                .contains("classification.rules.rejected", "classification.rules.published");
+                .contains("classification.rules.rejected", "classification.rules.published",
+                        "classification.rules.preprocessed");
     }
 }

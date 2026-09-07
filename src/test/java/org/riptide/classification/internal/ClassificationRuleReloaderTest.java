@@ -308,6 +308,17 @@ class ClassificationRuleReloaderTest {
         this.reloader.start();
     }
 
+    /**
+     * The same stack with the size bound lowered, so the oversize rows cross it with a handful of rules
+     * instead of the 25,000 preprocessed a real crossing needs (#769). Everything else is the production
+     * path: the same engine, the same source, the same publish callback.
+     */
+    private void startReloaderWithBounds(final int supportedRules, final int supportedPreprocessed) {
+        this.reloader = new ClassificationRuleReloader(
+                this.config, this.engine, this.source, this.metrics, supportedRules, supportedPreprocessed);
+        this.reloader.start();
+    }
+
     private void startReloader(final Duration interval) throws Exception {
         buildStack(new UrlResource(rulesUri()), interval);
         // classify() blocks until the construction-time load settles, so this is the wait
@@ -362,6 +373,95 @@ class ClassificationRuleReloaderTest {
         assertThat(classification()).as("the accepted half of the ruleset is serving").isEqualTo("good");
         assertThat(failures()).as("a rejected rule is not a failed reload").isZero();
         assertThat(stale()).isZero();
+    }
+
+    /**
+     * The production bounds are the numbers the operator documentation publishes, and this is the row that
+     * says so (#769, #771).
+     *
+     * <p>Every other row in this pair injects a small bound, which is what makes them fast and is also what
+     * makes them blind: they would all pass against a production constant of 5, or 5,000,000. Without this
+     * the shipped threshold is untested, and a threshold nothing tests is the documented bound all over
+     * again.
+     *
+     * <p><b>If this reds, {@code docs/docs/deploy/operations.md} ("Supported ruleset size") is stale too.</b>
+     * It states 12,500 rules and roughly 25,000 preprocessed, and those figures are attached to measured
+     * build times. Moving the constant without moving the page leaves the page asserting a bound the
+     * software no longer applies. Change both in the same commit and say which measurement moved.
+     */
+    @Test
+    void theProductionBoundsAreTheOnesTheDocumentationPublishes() {
+        assertThat(reloaderBound("SUPPORTED_RULES"))
+                .as("docs/docs/deploy/operations.md publishes 12,500 rules as the supported size")
+                .isEqualTo(12_500);
+        assertThat(reloaderBound("SUPPORTED_PREPROCESSED_RULES"))
+                .as("and states the bound is really about roughly 25,000 preprocessed rules, which is the"
+                        + " number the warning actually triggers on")
+                .isEqualTo(25_000);
+    }
+
+    private static int reloaderBound(final String field) {
+        try {
+            final var declared = ClassificationRuleReloader.class.getDeclaredField(field);
+            declared.setAccessible(true);
+            return declared.getInt(null);
+        } catch (final ReflectiveOperationException e) {
+            throw new AssertionError(
+                    "ClassificationRuleReloader." + field + " is gone or changed shape. It is the documented"
+                            + " ruleset-size bound; if it moved, operations.md moved with it", e);
+        }
+    }
+
+    /**
+     * #769: the docs state a supported ruleset size and, correctly, that nothing enforces it. This is the
+     * consumer that was missing. The failure mode is not an error — the ruleset loads and classifies
+     * correctly — so without this the only signal is a boot that takes longer than expected, and at startup
+     * that is a boot during which the collector answers nothing, because
+     * {@code AsyncReloadingClassificationEngine.classify} waits for the initial load to publish.
+     *
+     * <p>Three omnidirectional rules carrying a port condition preprocess to six, so the preprocessed bound
+     * of five is crossed while the rule bound of one hundred is not. That pairing is the point: it fails
+     * against a version wired to the row count.
+     */
+    @Test
+    void aRulesetPastTheSupportedSizeWarnsNamingBothCounts() throws Exception {
+        this.body = HEADER + "a;;;;;80;;true\n" + "b;;;;;81;;true\n" + "c;;;;;82;;true\n";
+        buildEngine(new UrlResource(rulesUri()), Duration.ofHours(1), Duration.ofSeconds(10));
+        startReloaderWithBounds(100, 5);
+        await("the boot load to be counted", () -> successes() == 1);
+
+        assertThat(warnings())
+                .as("the operator is told, and told in terms of both numbers: the rows they typed and the"
+                        + " preprocessed count the build actually scales with")
+                .anySatisfy(message -> assertThat(message)
+                        // whole ordered fragments, not the four numbers separately: with the bound and the
+                        // measurement asserted apart, swapping the two supported arguments still passes while
+                        // shipping an inverted sentence, and swapping the two measured ones does the same
+                        .contains("works on 6 preprocessed rules")
+                        .contains("against a supported 5")
+                        .contains("is 3 rules as written, against a documented 100")
+                        .contains("rejected rules excluded"));
+    }
+
+    /**
+     * The row count must not trigger it, and this is the row that says so. Three one-directional rules
+     * preprocess to three, so the rule bound of two is crossed and the preprocessed bound of five is not.
+     *
+     * <p>A ruleset like this is exactly the operator the docs describe: roughly 25,000 one-directional rules
+     * reach the same build cost as 12,500 omnidirectional ones, so warning them at the row bound would be a
+     * false alarm about a ruleset comfortably inside what has been measured. Wiring the warning to
+     * {@code rules.size()} passes every other row in this class and fails only here.
+     */
+    @Test
+    void aOneDirectionalRulesetPastTheRowBoundButInsideTheRealOneDoesNotWarn() throws Exception {
+        this.body = HEADER + "a;;;;;80;;false\n" + "b;;;;;81;;false\n" + "c;;;;;82;;false\n";
+        buildEngine(new UrlResource(rulesUri()), Duration.ofHours(1), Duration.ofSeconds(10));
+        startReloaderWithBounds(2, 5);
+        await("the boot load to be counted", () -> successes() == 1);
+
+        assertThat(warnings())
+                .as("three rules preprocess to three, which is inside the bound that governs build cost")
+                .noneMatch(message -> message.contains("supported"));
     }
 
     /**
