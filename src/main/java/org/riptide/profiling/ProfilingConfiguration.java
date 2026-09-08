@@ -110,9 +110,13 @@ public class ProfilingConfiguration {
         // start() swallows its own failures: its handler spans the scheduler start, which is the call that
         // actually starts async-profiler, and on failure it writes to System.err through its own logger,
         // resets its options and returns normally. Without this check riptide would log "started" at INFO
-        // while nothing sampled -- precisely the untested case, the native profiler failing on musl or
-        // perf_event_open being refused for the `cpu` event under the hardened unit file. The operator would
-        // read green and no profile would ever arrive.
+        // while nothing sampled, and the operator would read green with no profile ever arriving.
+        //
+        // The two failures this was written for have since been measured and neither occurred: the native
+        // library loads and profiles correctly on musl (801 samples, 99.88% attributed, against 99.75% on
+        // glibc), and both itimer and cpu start under the shipped hardened unit at perf_event_paranoid=4.
+        // The guard stays because it costs one call and the failure it catches is silent -- an unreadable
+        // or noexec temp directory, a malformed interval, a libc nobody has tried yet.
         if (!PyroscopeAgent.isStarted()) {
             log.error("Continuous profiling was enabled but the agent did not start; the collector continues"
                     + " without it and no profile will be produced. The agent reports its own reason on"
@@ -123,9 +127,14 @@ public class ProfilingConfiguration {
 
         // profilingEvent, not profilerType, is the sampling mode: profilerType is ASYNC vs JFR and says
         // nothing about what is being sampled. The default event is ITIMER, which measures CPU time via
-        // setitimer(ITIMER_PROF) and needs no perf_event_open -- so out of the box there is nothing to fall
-        // back from. Only an operator who asks for the `cpu` event reaches perf_event_open, and only that
-        // case can be refused by a hardened unit file. Wall clock is the separate `wall` event.
+        // setitimer(ITIMER_PROF) and needs no perf_event_open. Wall clock is the separate `wall` event.
+        //
+        // An earlier version of this comment said only `cpu` reaches perf_event_open and only that case can
+        // be refused by a hardened unit file. The refusal half was never measured and does not hold: on a
+        // real deployment under the shipped unit at perf_event_paranoid=4, cpu started and produced
+        // correctly attributed samples. What remains true, and is why the log line hedges below, is that
+        // the agent exposes no reading of the mode it actually obtained -- a successful perf_event_open and
+        // a silent internal degrade are indistinguishable from here.
         log.info("Continuous profiling started: application={} event={} profiler={} server={} labels={}."
                         + " The event named here is the one configured; the agent exposes no reading of what"
                         + " the process actually obtained.",
