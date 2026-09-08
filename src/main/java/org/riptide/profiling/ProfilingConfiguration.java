@@ -226,7 +226,7 @@ public class ProfilingConfiguration {
             // java/internal-representation-exposure. That was tried, along with two reshapings of this
             // line, and none of them worked: each moved the line, so the rule closed the old alert and
             // opened a new one for the identical finding (165 -> 166 -> 167). The rule traces the flow
-            // from ProfilingConfigurationTest:208 -- the test that mutates its map after construction
+            // out of theStatusHoldsACopyOfItsLabels itself, which mutates its map after construction
             // precisely to assert this copy holds. Deleting that test would clear the alert and make the
             // code no safer, which is why 167 is dismissed as a false positive rather than coded around.
             labels = labels != null ? Map.copyOf(labels) : Map.of();
