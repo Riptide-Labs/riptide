@@ -219,15 +219,29 @@ public class ProfilingConfiguration {
     public record ProfilingStatus(boolean enabled, String applicationName, Map<String, String> labels) {
 
         public ProfilingStatus {
-            // Defensively copied so the map handed out is immutable and no caller can edit a published
-            // status behind the reader's back (CodeQL java/internal-representation-exposure).
-            //
-            // The shape matters, not just the semantics. Map.copyOf(cond ? Map.of() : labels) is
-            // semantically identical and CodeQL kept flagging it; the form below is the one
-            // SnmpProfilesConfig uses, which cleared alerts 143 and 144 of this same rule. An earlier
-            // comment here had the explanation exactly backwards, claiming CodeQL could not see a
-            // sanitizer inside a ternary branch -- it is the copy outside the ternary it does not track.
+            // The copy that actually matters. Without it a caller could edit a published status behind the
+            // reader's back; theStatusHoldsACopyOfItsLabels reds if it is removed.
             labels = labels != null ? Map.copyOf(labels) : Map.of();
+        }
+
+        /**
+         * Overridden purely so CodeQL can see a copy on the accessor (java/internal-representation-exposure).
+         *
+         * <p><b>It does nothing at runtime</b>, and that is worth saying rather than leaving for someone to
+         * work out: the field is already immutable from the compact constructor above, and
+         * {@code Map.copyOf} of an unmodifiable map returns the same instance -- verified, not assumed. So
+         * this adds no safety that was missing. It is here because the rule's dataflow does not model the
+         * compact constructor's reassignment, and two earlier attempts to satisfy it by reshaping that
+         * constructor did not.
+         *
+         * <p>The alternative Copilot Autofix proposed was replacing the record with a hand-written final
+         * class. That would have discarded the generated {@code equals}, {@code hashCode} and
+         * {@code toString} on a value type, for the same nil runtime effect. Overriding one accessor keeps
+         * them.
+         */
+        @Override
+        public Map<String, String> labels() {
+            return Map.copyOf(this.labels);
         }
 
         static ProfilingStatus disabled() {
