@@ -622,6 +622,8 @@ PYROSCOPE_LABELS=region=eu-west,role=edge
 PYROSCOPE_UPLOAD_INTERVAL=10s
 ```
 
+**Set `PYROSCOPE_SERVER_ADDRESS` even though nothing forces you to.** Omit it and the agent falls back to its own default of `http://localhost:4040`, where profiling starts cleanly, logs `Continuous profiling started`, and uploads every profile into nothing. No error is raised, because from the agent's point of view it was configured. The startup line reporting success is not evidence that a server received anything.
+
 See Pyroscope's own documentation for the full list. Riptide overrides three things and no more: it enables the agent, because reaching that code is the decision to enable; it **merges** the labels below into whatever `PYROSCOPE_LABELS` set, so yours survive; and it supplies a stable application name if you did not choose one. On a label-name collision riptide's identity wins, because it describes what the collector actually is.
 
 **`PYROSCOPE_AGENT_ENABLED` is the one variable riptide overrides unconditionally.** Setting it to `false` will not turn profiling off, because `riptide.profiling.enabled` is the switch this project documents and supports. Use that one.
@@ -659,17 +661,42 @@ What that does **not** establish is which mechanism `cpu` used. async-profiler c
 
 With profiling on, JDK 25 warns that `System::load` is a restricted method and that **restricted methods will be blocked in a future release unless native access is enabled**. Profiling works today and will stop working on a JDK that enforces this.
 
-**Which variable depends on how you run riptide, and one of them does nothing in a container.** The deb/rpm unit expands `$JAVA_OPTS`; the container image has an exec-form `ENTRYPOINT` with no shell, so it never sees that variable at all. `JDK_JAVA_OPTIONS` is read by the `java` launcher itself and works everywhere:
+**Only one of the two variables works everywhere, and `JAVA_OPTS` is the narrower one.** The deb and rpm unit is the single case that expands `$JAVA_OPTS`, because its `ExecStart` names the variable. The container has an exec-form `ENTRYPOINT` and no shell, so it never sees it. Nix does not see it either: `nix/package.nix` builds the launcher with `makeWrapper ... --add-flags "-jar ..."`, which emits `exec "<java>" -jar <path> "$@"` and references no environment variable, and `nix/module.nix` points `ExecStart` straight at that wrapper. Verified by building the wrapper and reading it: zero occurrences of `JAVA_OPTS`. So a flag set that way on Nix is discarded in silence.
+
+`JDK_JAVA_OPTIONS` is read by the `java` launcher itself, so it works in all four cases:
 
 ```properties
-# deb/rpm and Nix, via the environment file
+# deb and rpm only, via /etc/riptide/riptide.env
 JAVA_OPTS=--enable-native-access=ALL-UNNAMED
 
-# container, and also fine on the other two
+# container, Nix, plain `java -jar`, and also fine on the deb and rpm
 JDK_JAVA_OPTIONS=--enable-native-access=ALL-UNNAMED
 ```
 
-The warning appears only when profiling is enabled, because nothing else here loads a native library.
+On Nix, put `JDK_JAVA_OPTIONS` in the file named by `services.riptide.environmentFile`. `JAVA_OPTS` there does nothing.
+
+**New** deb and rpm installs ship this pairing commented out in `/etc/riptide/riptide.env`, directly beside the profiling toggle, so turning one on puts the other in front of you.
+An upgrade does not: the file is packaged `config|noreplace`, so an already-edited copy is kept and the new block arrives as `.dpkg-dist` or `.rpmnew` for you to diff.
+`JAVA_OPTS` is a single assignment and the last one wins, so carry every option on one line rather than assigning it twice:
+
+```properties
+JAVA_OPTS=-Xmx2g --enable-native-access=ALL-UNNAMED
+```
+
+The flag is deliberately absent from the default `ExecStart`, `ENTRYPOINT` and Nix wrapper: profiling is opt-in, and putting it there would grant native access to every deployment including the majority that never profile.
+Be clear about what is granted when you do opt in. `ALL-UNNAMED` covers every class on the classpath, not only the agent, and for a Spring Boot fat jar there is no narrower target, since all of it is unnamed.
+
+**Confirm it landed**, because both routes fail silently. The restricted-method warning disappearing from `journalctl -u riptide` is the signal; `tr '\0' '\n' < /proc/<pid>/cmdline | grep enable-native-access` shows whether the flag reached the process at all.
+
+**Measured, on one deployment, that the warning is profiling-only.** On Ubuntu 24.04 with `openjdk 25.0.4` and agent 2.9.1, a journal covering four service starts held three restricted-method warnings and three `Profiling started` lines (the agent's own token, distinct from riptide's `Continuous profiling started`), and the one start without profiling was clean.
+Those are aggregate counts rather than a start-by-start pairing, so they are consistent with one warning per profiling start without demonstrating it.
+Two things would falsify the claim: a start with profiling off that still warns, meaning something else loads a native library, or a start with profiling on that does not, which is what a JDK already denying native access would look like.
+Applying the flag on that deployment took the count from three to zero with profiling still running and samples still reaching the server.
+
+**This flag does not silence the other warning profiling produces.** The agent also triggers `sun.misc.Unsafe::arrayBaseOffset has been called by io.pyroscope.vendor.com.google.protobuf.UnsafeUtil$MemoryAccessor`.
+That is a terminally deprecated method rather than a restricted one, so `--enable-native-access` has no effect on it.
+It comes from a protobuf copy vendored inside the agent, which riptide does not control, and no newer agent avoids it as of the version riptide ships in `pom.xml`'s `pyroscope.version` (2.9.1 at the time of writing, and a Dependabot bump moves that property without updating this sentence).
+`--sun-misc-unsafe-memory-access=allow` quiets it, subject to the same `JAVA_OPTS` and `JDK_JAVA_OPTIONS` distinction above, but it defers the problem rather than fixing it, and the deferral ends more abruptly than the one above: when the JDK drops the option, an unrecognised flag stops the JVM from starting at all rather than costing you a profile.
 
 ### A stable application name
 

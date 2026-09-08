@@ -48,8 +48,13 @@ in
       default = null;
       example = "/run/secrets/riptide.env";
       description = ''
-        Environment file (JAVA_OPTS, secret values) sourced by the service.
+        Environment file (secret values, JVM options) sourced by the service.
         Kept outside the world-readable Nix store.
+
+        Use `JDK_JAVA_OPTIONS` for JVM options, not `JAVA_OPTS`. The launcher
+        here is a makeWrapper script that execs java directly, so it expands no
+        variable and there is no shell to do it; `JAVA_OPTS` set here is
+        silently discarded. The java launcher reads `JDK_JAVA_OPTIONS` itself.
       '';
     };
   };
