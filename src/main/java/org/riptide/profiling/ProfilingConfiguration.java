@@ -216,18 +216,27 @@ public class ProfilingConfiguration {
     }
 
     /** What the decision was, as a value a test can read rather than global agent state. */
-    public record ProfilingStatus(boolean enabled, String applicationName, Map<String, String> labels) {
+    public static final class ProfilingStatus {
+        private final boolean enabled;
+        private final String applicationName;
+        private final Map<String, String> labels;
 
-        public ProfilingStatus {
-            // Defensively copied so the map handed out is immutable and no caller can edit a published
-            // status behind the reader's back (CodeQL java/internal-representation-exposure).
-            //
-            // The shape matters, not just the semantics. Map.copyOf(cond ? Map.of() : labels) is
-            // semantically identical and CodeQL kept flagging it; the form below is the one
-            // SnmpProfilesConfig uses, which cleared alerts 143 and 144 of this same rule. An earlier
-            // comment here had the explanation exactly backwards, claiming CodeQL could not see a
-            // sanitizer inside a ternary branch -- it is the copy outside the ternary it does not track.
-            labels = labels != null ? Map.copyOf(labels) : Map.of();
+        public ProfilingStatus(final boolean enabled, final String applicationName, final Map<String, String> labels) {
+            this.enabled = enabled;
+            this.applicationName = applicationName;
+            this.labels = labels != null ? Map.copyOf(labels) : Map.of();
+        }
+
+        public boolean enabled() {
+            return enabled;
+        }
+
+        public String applicationName() {
+            return applicationName;
+        }
+
+        public Map<String, String> labels() {
+            return Map.copyOf(labels);
         }
 
         static ProfilingStatus disabled() {
