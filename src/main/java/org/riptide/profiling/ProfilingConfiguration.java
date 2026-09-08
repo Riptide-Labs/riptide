@@ -219,10 +219,15 @@ public class ProfilingConfiguration {
     public record ProfilingStatus(boolean enabled, String applicationName, Map<String, String> labels) {
 
         public ProfilingStatus {
-            // Copied unconditionally and directly on the assignment. Semantically identical to a ternary
-            // around Map.copyOf, but CodeQL does not see the sanitizer inside a ternary branch and raised
-            // java/internal-representation-exposure here. theStatusHoldsACopyOfItsLabels pins the behaviour.
-            labels = Map.copyOf(labels == null ? Map.of() : labels);
+            // Defensively copied so the map handed out is immutable and no caller can edit a published
+            // status behind the reader's back (CodeQL java/internal-representation-exposure).
+            //
+            // The shape matters, not just the semantics. Map.copyOf(cond ? Map.of() : labels) is
+            // semantically identical and CodeQL kept flagging it; the form below is the one
+            // SnmpProfilesConfig uses, which cleared alerts 143 and 144 of this same rule. An earlier
+            // comment here had the explanation exactly backwards, claiming CodeQL could not see a
+            // sanitizer inside a ternary branch -- it is the copy outside the ternary it does not track.
+            labels = labels != null ? Map.copyOf(labels) : Map.of();
         }
 
         static ProfilingStatus disabled() {
