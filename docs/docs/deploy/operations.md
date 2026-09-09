@@ -693,10 +693,16 @@ Those are aggregate counts rather than a start-by-start pairing, so they are con
 Two things would falsify the claim: a start with profiling off that still warns, meaning something else loads a native library, or a start with profiling on that does not, which is what a JDK already denying native access would look like.
 Applying the flag on that deployment took the count from three to zero with profiling still running and samples still reaching the server.
 
-**This flag does not silence the other warning profiling produces.** The agent also triggers `sun.misc.Unsafe::arrayBaseOffset has been called by io.pyroscope.vendor.com.google.protobuf.UnsafeUtil$MemoryAccessor`.
-That is a terminally deprecated method rather than a restricted one, so `--enable-native-access` has no effect on it.
-It comes from a protobuf copy vendored inside the agent, which riptide does not control, and no newer agent avoids it as of the version riptide ships in `pom.xml`'s `pyroscope.version` (2.9.1 at the time of writing, and a Dependabot bump moves that property without updating this sentence).
-`--sun-misc-unsafe-memory-access=allow` quiets it, subject to the same `JAVA_OPTS` and `JDK_JAVA_OPTIONS` distinction above, but it defers the problem rather than fixing it, and the deferral ends more abruptly than the one above: when the JDK drops the option, an unrecognised flag stops the JVM from starting at all rather than costing you a profile.
+**Profiling used to produce a second warning, which this flag never silenced. That one is now gone.** Through agent 2.9.1 the agent also triggered `sun.misc.Unsafe::arrayBaseOffset has been called by io.pyroscope.vendor.com.google.protobuf.UnsafeUtil$MemoryAccessor`.
+That is a terminally deprecated method rather than a restricted one, so `--enable-native-access` had no effect on it either way.
+It came from a protobuf copy vendored inside the agent, which riptide does not control: 2.9.1 vendored protobuf 4.33.5, and the 2.9.2 that riptide now ships in `pom.xml`'s `pyroscope.version` vendors 4.36.1, which no longer touches that class when it encodes a profile.
+**The call has not been deleted, so do not read this as the class being fixed.** Force `io.pyroscope.vendor.com.google.protobuf.UnsafeUtil` to initialise under 2.9.2 and it still warns, attributed now to `UnsafeUtil` itself rather than to its `MemoryAccessor`: 4.36.1 probes `arrayBaseOffset` deliberately, to detect a JVM running in deny mode.
+What changed is that nothing on the agent's own path initialises it.
+**Measured, with 2.9.1 as a control**, on one JVM (`openjdk 25.0.4`): each version started the agent against a local server that accepted four uploaded profiles in both runs, so the encode path demonstrably ran either way.
+The 2.9.1 run emitted the `arrayBaseOffset` warning; the 2.9.2 run emitted no line mentioning `Unsafe` at all, leaving only the restricted-method warning above.
+That is a local probe rather than a deployment, so it does not rule out some other path that only a real collector exercises.
+What would falsify it: any `UnsafeUtil` line in the journal of a collector running the shipped agent.
+If you pin an older agent, `--sun-misc-unsafe-memory-access=allow` quiets the warning, subject to the same `JAVA_OPTS` and `JDK_JAVA_OPTIONS` distinction above, but it defers the problem rather than fixing it, and the deferral ends more abruptly than the one above: when the JDK drops the option, an unrecognised flag stops the JVM from starting at all rather than costing you a profile.
 
 ### A stable application name
 
