@@ -222,13 +222,23 @@ public class ProfilingConfiguration {
             // The one copy that matters. Without it a caller could edit a published status behind the
             // reader's back; theStatusHoldsACopyOfItsLabels reds if it is removed.
             //
-            // Do not add a copy to the labels() accessor to appease CodeQL's
-            // java/internal-representation-exposure. That was tried, along with two reshapings of this
-            // line, and none of them worked: each moved the line, so the rule closed the old alert and
-            // opened a new one for the identical finding (165 -> 166 -> 167). The rule traces the flow
-            // out of theStatusHoldsACopyOfItsLabels itself, which mutates its map after construction
-            // precisely to assert this copy holds. Deleting that test would clear the alert and make the
-            // code no safer, which is why 167 is dismissed as a false positive rather than coded around.
+            // Do not reshape any of this to appease CodeQL's java/internal-representation-exposure.
+            // Nothing you can write here will work, and that is measured rather than argued. On PR #791
+            // the copy was moved onto the field itself, by spelling out the canonical constructor
+            // instead of this compact one -- the exact shape the rule's syntactic half looks for. It
+            // was still flagged, as alert 169, on that constructor. De-recording the type on the same
+            // branch, changing nothing else, took the scan from one result to zero.
+            //
+            // So the trigger is the record: extraction contributes the implicit component assignment
+            // `this.labels = labels`, a bare parameter access, whatever the constructor does. The rule's
+            // other half then finds a caller that mutates its argument afterwards, which is
+            // theStatusHoldsACopyOfItsLabels doing precisely what proves this copy holds. Only ceasing
+            // to be a record clears it, and ~30 lines of accessors, equals and hashCode is a bad trade
+            // for a rule that is wrong about code the test already pins.
+            //
+            // Expect to re-dismiss it. The alert renumbers on any nearby edit, and the dismissal does
+            // not follow: 167 was dismissed, the next commit moved the line, and the same scan closed
+            // 167 and opened 168 undismissed. That is 164, 165, 166, 167, 168 and 169 for one finding.
             labels = labels != null ? Map.copyOf(labels) : Map.of();
         }
 

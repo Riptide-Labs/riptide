@@ -18,8 +18,19 @@ import java.util.TreeMap;
  * {@code riptide.inventory.file}.
  *
  * <p>Constructor-bound and defensively copied, so the maps handed out are
- * immutable: no caller can edit the profile set behind the loader's back
- * (CodeQL java/internal-representation-exposure).</p>
+ * immutable: no caller can edit the profile set behind the loader's back.</p>
+ *
+ * <p>The copy's shape carries no weight with CodeQL's
+ * java/internal-representation-exposure, whatever an earlier version of this
+ * comment claimed. Reading it as the reason alerts 143 and 144 cleared is what
+ * sent the first of five attempts on the same finding in {@code ProfilingStatus}
+ * chasing the shape of an expression that never mattered. That rule has no
+ * notion of a defensive copy, and for a record it counts the implicit component
+ * assignment regardless of what the constructor writes. What keeps this record
+ * unflagged is the rule's other half, which needs a caller that mutates its
+ * argument after passing it, and no call site does. Should one ever appear, no
+ * reshaping will help; see the comment on
+ * {@link org.riptide.profiling.ProfilingConfiguration.ProfilingStatus}.</p>
  */
 @ConfigurationProperties(prefix = "riptide.snmp")
 public record SnmpProfilesConfig(Map<String, CredentialSet> credentials, Map<String, PollingProfile> polling) {
