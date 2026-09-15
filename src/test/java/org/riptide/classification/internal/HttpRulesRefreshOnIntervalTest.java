@@ -8,9 +8,11 @@ package org.riptide.classification.internal;
 import com.codahale.metrics.Counter;
 import com.codahale.metrics.MetricRegistry;
 import com.sun.net.httpserver.HttpServer;
-import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.extension.AfterAllCallback;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.extension.ExtensionContext;
 import org.riptide.classification.ClassificationEngine;
 import org.riptide.classification.ClassificationRequest;
 import org.riptide.utils.HttpServerConfig;
@@ -60,9 +62,12 @@ import static org.riptide.classification.internal.ClassificationRulesTestSupport
  * <p>{@code @DirtiesContext} matters here more than usual: without it the cached context
  * keeps a 200ms poll running under every later test class in the fork, fetching and
  * hashing forever. The context is closed first and the server stopped after, because the
- * other order leaves a live schedule counting connection-refused failures into unrelated
- * classes.</p>
+ * other order leaves a live schedule counting connection-refused failures, each with a
+ * stack-trace WARN. A plain {@code @AfterAll} gets that order backwards: JUnit runs it before
+ * {@code SpringExtension} closes the context. {@link StopTheServerAfterTheContext} is what
+ * makes it true, and its {@code @ExtendWith} must stay above {@code @SpringBootTest}.</p>
  */
+@ExtendWith(HttpRulesRefreshOnIntervalTest.StopTheServerAfterTheContext.class)
 @SpringBootTest
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class HttpRulesRefreshOnIntervalTest {
@@ -133,9 +138,18 @@ class HttpRulesRefreshOnIntervalTest {
         }
     }
 
-    @AfterAll
-    static void stopServer() {
-        SERVER.stop(0);
+    /**
+     * Stops the server once Spring has closed the context. Extensions' {@code afterAll}
+     * callbacks run in reverse registration order, after every {@code @AfterAll} method, and
+     * class-level {@code @ExtendWith} registers in declaration order. Declared above
+     * {@code @SpringBootTest}, whose meta-annotation registers {@code SpringExtension}, this runs
+     * after {@code @DirtiesContext(AFTER_CLASS)} has closed the context and stopped the schedule.
+     */
+    static final class StopTheServerAfterTheContext implements AfterAllCallback {
+        @Override
+        public void afterAll(final ExtensionContext context) {
+            SERVER.stop(0);
+        }
     }
 
     @DynamicPropertySource

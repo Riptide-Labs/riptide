@@ -6,6 +6,7 @@
 package org.riptide.node;
 
 import org.junit.jupiter.api.Test;
+import org.riptide.inventory.FileInventoryDocument;
 import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventoryConfig;
 import org.riptide.inventory.InventoryLoader;
@@ -34,7 +35,7 @@ public class ExporterNameEnricherTest {
         private final AtomicInteger captures = new AtomicInteger();
 
         private CountingInventory(final SnmpProfilesConfig profiles, final InventoryConfig config) {
-            super(profiles, config);
+            super(profiles, new FileInventoryDocument(config));
         }
 
         @Override

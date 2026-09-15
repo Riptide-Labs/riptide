@@ -8,6 +8,11 @@ title: Exporter enrichment
 What a flow's exporter is called, and what its interfaces are called.
 Enrichment entries live in the inventory file named by `riptide.inventory.file`, alongside the [agent ranges](agent-configuration.md); the entry's map key is the exporter name that lands on its flows.
 
+:::note[With dynamic discovery enabled]
+When [dynamic discovery](discovery.md) is enabled, discovery owns this tree and an `exporters` tree in the inventory file fails startup.
+The inventory file then carries [agent ranges](agent-configuration.md) only.
+:::
+
 ```yaml
 riptide:
   exporters:

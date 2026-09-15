@@ -5,6 +5,7 @@
 
 package org.riptide.node;
 
+import org.riptide.inventory.FileInventoryDocument;
 import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventoryConfig;
 import org.riptide.inventory.InventoryLoader;
@@ -44,7 +45,7 @@ final class EnricherExporterMatchSemantics implements ExporterMatchSemantics {
                 yaml.append("      observation-domain: ").append(entry.observationDomainPin()).append('\n');
             }
         }
-        final Inventory inventory = new Inventory(NO_PROFILES, new InventoryConfig());
+        final Inventory inventory = new Inventory(NO_PROFILES, new FileInventoryDocument(new InventoryConfig()));
         inventory.swap(InventoryLoader.parse(NO_PROFILES, yaml.toString(), "contract.yaml"));
         final ExporterNameEnricher enricher = new ExporterNameEnricher(inventory);
 

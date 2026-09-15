@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mockito;
 import org.riptide.flows.parser.data.Flow;
+import org.riptide.inventory.FileInventoryDocument;
 import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventoryConfig;
 import org.riptide.inventory.InventoryLoader;
@@ -46,7 +47,7 @@ public class StaticInterfaceEnricherTest {
     /** Pins only, and deliberately no agent range: nothing here is ever walked. */
     private Inventory inventory() {
         final var profiles = new SnmpProfilesConfig(Map.of(), Map.of());
-        final var inventory = new Inventory(profiles, new InventoryConfig());
+        final var inventory = new Inventory(profiles, new FileInventoryDocument(new InventoryConfig()));
         inventory.swap(InventoryLoader.parse(profiles, """
                 riptide:
                   exporters:

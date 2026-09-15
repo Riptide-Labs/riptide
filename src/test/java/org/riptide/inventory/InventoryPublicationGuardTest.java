@@ -45,7 +45,7 @@ class InventoryPublicationGuardTest {
     }
 
     private static Inventory serving(final String yaml) {
-        final Inventory inventory = new Inventory(PROFILES, new InventoryConfig());
+        final Inventory inventory = new Inventory(PROFILES, new FileInventoryDocument(new InventoryConfig()));
         inventory.swap(parse(yaml));
         return inventory;
     }
@@ -123,7 +123,7 @@ class InventoryPublicationGuardTest {
 
     @Test
     void emptyOverEmptyStaysLegalSoBootIsUnchanged() {
-        final Inventory inventory = new Inventory(PROFILES, new InventoryConfig());
+        final Inventory inventory = new Inventory(PROFILES, new FileInventoryDocument(new InventoryConfig()));
         assertThatCode(() -> inventory.swap(InventorySnapshot.empty())).doesNotThrowAnyException();
         assertThatCode(() -> inventory.swap(parse("riptide: {}\n"))).doesNotThrowAnyException();
     }
@@ -150,7 +150,10 @@ class InventoryPublicationGuardTest {
     @Test
     void rebuildRefusesATornFileAndPublishesTheMarkedOne(@TempDir final Path dir) throws Exception {
         final Path file = dir.resolve("inventory.yaml");
-        final Inventory inventory = serving(BOTH_TREES);
+        final InventoryConfig config = new InventoryConfig();
+        config.setFile(file);
+        final Inventory inventory = new Inventory(PROFILES, new FileInventoryDocument(config));
+        inventory.swap(parse(BOTH_TREES));
 
         Files.writeString(file, """
                 riptide:
@@ -158,7 +161,7 @@ class InventoryPublicationGuardTest {
                     core:
                       address: 10.0.0.1
                 """);
-        assertThat(inventory.rebuildAndSwap(PROFILES, file)).isNull();
+        assertThat(inventory.rebuildAndSwap(PROFILES)).isNull();
         assertThat(inventory.snapshot().agentCount()).isEqualTo(1);
 
         Files.writeString(file, """
@@ -169,7 +172,7 @@ class InventoryPublicationGuardTest {
                     core:
                       address: 10.0.0.1
                 """);
-        assertThat(inventory.rebuildAndSwap(PROFILES, file)).isNotNull();
+        assertThat(inventory.rebuildAndSwap(PROFILES)).isNotNull();
         assertThat(inventory.snapshot().agentCount()).isZero();
     }
 
@@ -181,7 +184,10 @@ class InventoryPublicationGuardTest {
     @Test
     void rebuildFlushesWalkWarningsOnlyPastTheGuard(@TempDir final Path dir) throws Exception {
         final Path file = dir.resolve("inventory.yaml");
-        final Inventory inventory = serving(BOTH_TREES);
+        final InventoryConfig config = new InventoryConfig();
+        config.setFile(file);
+        final Inventory inventory = new Inventory(PROFILES, new FileInventoryDocument(config));
+        inventory.swap(parse(BOTH_TREES));
         // exporters torn away (refused over BOTH_TREES) AND a warning-worthy range
         final String warningWorthy = """
                 riptide:
@@ -198,13 +204,13 @@ class InventoryPublicationGuardTest {
         final var appender = LogCapture.startedAppender();
         logger.addAppender(appender);
         try {
-            assertThat(inventory.rebuildAndSwap(PROFILES, file)).isNull();
+            assertThat(inventory.rebuildAndSwap(PROFILES)).isNull();
             assertThat(appender.list)
                     .as("a refused candidate's warnings stay unflushed")
                     .noneMatch(event -> event.getFormattedMessage().contains("declares nothing"));
 
             Files.writeString(file, warningWorthy.replace("riptide:", "riptide:\n  exporters:\n    core:\n      address: 10.0.0.1"));
-            assertThat(inventory.rebuildAndSwap(PROFILES, file)).isNotNull();
+            assertThat(inventory.rebuildAndSwap(PROFILES)).isNotNull();
             assertThat(appender.list)
                     .filteredOn(event -> event.getFormattedMessage().contains("declares nothing"))
                     .as("the published candidate's warnings flush, once")
@@ -261,5 +267,26 @@ class InventoryPublicationGuardTest {
                     .as("bare key: %s", torn.replace("\n", "\\n"))
                     .isInstanceOf(IllegalStateException.class);
         }
+    }
+
+    /** An {@link InventoryDocument} that is not backed by a file, so it needs no config at all. */
+    private record StubDocument(String text, String name) implements InventoryDocument {
+    }
+
+    /**
+     * Every test above drives {@link Inventory} through {@link FileInventoryDocument}, which is
+     * the whole point of the {@link InventoryDocument} seam: nothing here should be able to tell
+     * whether the document behind it came from a file. Proven with the smallest possible
+     * non-file implementation, so a future change that accidentally couples {@link Inventory} to
+     * {@link FileInventoryDocument} specifically (a cast, an {@code instanceof}) fails here first.
+     */
+    @Test
+    void aNonFileDocumentBootsJustLikeAFileOneDoes() {
+        final InventoryDocument stub = new StubDocument(BOTH_TREES, "stub-document");
+        final Inventory inventory = new Inventory(PROFILES, stub);
+        inventory.load();
+
+        assertThat(inventory.snapshot().agentCount()).isEqualTo(1);
+        assertThat(inventory.snapshot().exporterCount()).isEqualTo(1);
     }
 }

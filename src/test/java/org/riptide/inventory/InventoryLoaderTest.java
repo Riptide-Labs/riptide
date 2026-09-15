@@ -45,8 +45,10 @@ class InventoryLoaderTest {
      * <p>The issue predicted the first key parsing as a BOM-prefixed name and matching nothing.
      * Measured against the pinned SnakeYAML, it does not: a leading BOM is stripped on the
      * {@code String} overload as well as the {@code InputStream} one, so this already worked. It is
-     * pinned because {@code load} now removes the BOM itself rather than relying on that, and this
-     * is the assertion that the removal takes no content with it.</p>
+     * pinned because {@link FileInventoryDocument#text()} now removes the BOM itself rather than
+     * relying on that, and this is the assertion that the removal takes no content with it \u2014 read
+     * through the document seam and then parsed, the way the production boot and rebuild paths
+     * compose the two.</p>
      */
     @Test
     void aByteOrderMarkOnTheFrontOfTheFileChangesNothing(@TempDir final Path dir) throws Exception {
@@ -61,7 +63,10 @@ class InventoryLoaderTest {
         final Path file = dir.resolve("inventory.yaml");
         Files.write(file, ("\uFEFF" + body).getBytes(StandardCharsets.UTF_8));
 
-        final var snapshot = InventoryLoader.load(profiles(), file).snapshot();
+        final InventoryConfig config = new InventoryConfig();
+        config.setFile(file);
+        final String text = new FileInventoryDocument(config).text();
+        final var snapshot = InventoryLoader.parse(profiles(), text, file.toString());
 
         assertThat(snapshot.agentView().match(netflow("10.20.5.5", 0)))
                 .as("the BOM must not stop the agents section resolving")
@@ -102,19 +107,32 @@ class InventoryLoaderTest {
                 .map(ExporterEntry::name).hasValue("lab-switch");
     }
 
+    /**
+     * A {@code null} document text — an unset {@code riptide.inventory.file} — is the documented
+     * valid case ({@link InventoryDocument#text()}) and is what {@link Inventory#load()} treats
+     * as the empty inventory rather than handing to the parser at all. Driven through a real
+     * {@link Inventory}, not a ternary re-derived here: the earlier version of this test
+     * recomputed the null-to-empty mapping itself, which stayed green even if
+     * {@code Inventory.load()}'s own null branch broke, because nothing it asserted on came from
+     * production code.
+     */
     @Test
     void unsetFileYieldsTheValidEmptyInventory() {
-        final var snapshot = InventoryLoader.load(profiles(), null).snapshot();
+        final Inventory inventory = new Inventory(profiles(), new FileInventoryDocument(new InventoryConfig()));
+        inventory.load();
 
-        assertThat(snapshot.agentView().match(netflow("10.0.0.1", 0))).isEmpty();
-        assertThat(snapshot.exporterView().match(netflow("10.0.0.1", 0))).isEmpty();
+        assertThat(inventory.snapshot().agentView().match(netflow("10.0.0.1", 0))).isEmpty();
+        assertThat(inventory.snapshot().exporterView().match(netflow("10.0.0.1", 0))).isEmpty();
     }
 
+    /** The file-naming "not readable" message, moved to {@link FileInventoryDocument#text()}. */
     @Test
     void unreadableFileFailsNamingThePath() {
         final Path missing = this.tempDir.resolve("missing.yaml");
+        final InventoryConfig config = new InventoryConfig();
+        config.setFile(missing);
 
-        assertThatThrownBy(() -> InventoryLoader.load(profiles(), missing))
+        assertThatThrownBy(() -> new FileInventoryDocument(config).text())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("not readable")
                 .hasMessageContaining("missing.yaml");

@@ -38,7 +38,7 @@ class InterfaceSnapshotPollerTest {
     /** The published inventory the poller answers to; empty until a test serves one. */
     private final org.riptide.inventory.Inventory serving = new org.riptide.inventory.Inventory(
             new org.riptide.inventory.SnmpProfilesConfig(Map.of(), Map.of()),
-            new org.riptide.inventory.InventoryConfig());
+            new org.riptide.inventory.FileInventoryDocument(new org.riptide.inventory.InventoryConfig()));
 
     /** Agent ranges served so far, so adding one does not drop the others. */
     private final java.util.LinkedHashMap<String, String> ranges = new java.util.LinkedHashMap<>();

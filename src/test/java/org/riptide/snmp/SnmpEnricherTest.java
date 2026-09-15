@@ -17,6 +17,7 @@ import org.riptide.flows.parser.ie.values.StringValue;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
 import org.riptide.inventory.CredentialSet;
 import org.riptide.inventory.CredentialVersion;
+import org.riptide.inventory.FileInventoryDocument;
 import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventoryConfig;
 import org.riptide.inventory.InventoryLoader;
@@ -72,7 +73,7 @@ public class SnmpEnricherTest {
                 Map.of("agent-v2c", CredentialSet.community(CredentialVersion.V2C,
                         SecretRef.of(TestSnmpAgent.COMMUNITY))),
                 Map.of());
-        final var inventory = new Inventory(profiles, new InventoryConfig());
+        final var inventory = new Inventory(profiles, new FileInventoryDocument(new InventoryConfig()));
         inventory.swap(InventoryLoader.parse(profiles, """
                 riptide:
                   snmp:
@@ -267,7 +268,7 @@ public class SnmpEnricherTest {
                         TestSnmpAgent.AUTHNOPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1,
                         SecretRef.of(TestSnmpAgent.AUTHNOPRIV_AUTH_PASSHRASE), null, null)),
                 Map.of());
-        final var zeroTouch = new Inventory(profiles, new InventoryConfig());
+        final var zeroTouch = new Inventory(profiles, new FileInventoryDocument(new InventoryConfig()));
         zeroTouch.swap(InventoryLoader.parse(profiles, """
                 riptide:
                   snmp:
@@ -337,7 +338,7 @@ public class SnmpEnricherTest {
         private final Inventory delegate;
 
         private CountingInventory(final Inventory delegate) {
-            super(new SnmpProfilesConfig(Map.of(), Map.of()), new InventoryConfig());
+            super(new SnmpProfilesConfig(Map.of(), Map.of()), new FileInventoryDocument(new InventoryConfig()));
             this.delegate = delegate;
         }
 

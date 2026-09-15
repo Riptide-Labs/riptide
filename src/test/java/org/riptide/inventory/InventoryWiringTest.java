@@ -48,7 +48,9 @@ class InventoryWiringTest {
     // ObsoleteKeys is what carries the @PostConstruct now; the three rule holders below no longer
     // do. Importing them without it is what this test caught when the hook moved: every context
     // booted clean, which is the #613 defect exactly, in the class written to prevent it.
-    @Import({Inventory.class, ObsoleteKeys.class, InventoryMisplacementCheck.class,
+    // FileInventoryDocument is imported alongside Inventory: this is a curated bean list, not full
+    // component scan, and Inventory's constructor now needs an InventoryDocument.
+    @Import({Inventory.class, FileInventoryDocument.class, ObsoleteKeys.class, InventoryMisplacementCheck.class,
             PollKeyMigrationCheck.class, LegacyNodesFlagDayCheck.class, SecretRefConverter.class})
     static class WiringConfiguration {
     }

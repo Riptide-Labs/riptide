@@ -7,13 +7,9 @@ package org.riptide.inventory;
 
 import inet.ipaddr.IPAddressString;
 import lombok.extern.slf4j.Slf4j;
-import org.riptide.config.ByteOrderMark;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -26,8 +22,10 @@ import java.util.TreeSet;
 
 /**
  * The one pure function from configuration to serving state (AD-4):
- * {@code (Spring-bound profiles, inventory file) -> validated InventorySnapshot},
- * invoked identically at boot and on every reload.
+ * {@code (Spring-bound profiles, inventory document text) -> validated InventorySnapshot},
+ * invoked identically at boot and on every reload. Reading the document itself — the file
+ * access, the size ceiling, the BOM strip — belongs to {@link InventoryDocument} and its
+ * implementations; this class never touches a {@link java.nio.file.Path}.
  * Bypasses the Spring property binder: the trees are direct-parsed with SnakeYAML,
  * which is what makes a 10,000-entry inventory load in milliseconds instead of
  * minutes.
@@ -86,59 +84,11 @@ public final class InventoryLoader {
     private static final int MAX_NAMED_PROBLEMS_PER_ENTRY = 5;
 
     // roughly 700k entries; generous but finite, so a runaway generated file is a
-    // named error instead of an OOM
-    private static final int CODE_POINT_LIMIT = 64 * 1024 * 1024;
-
-    /** Checked before the read, because the code-point limit only bounds the parser. */
-    private static final long MAX_FILE_BYTES = CODE_POINT_LIMIT;
+    // named error instead of an OOM. Package-private: FileInventoryDocument's size check ties
+    // its own ceiling to this one rather than restating the number, so the two cannot diverge
+    static final int CODE_POINT_LIMIT = 64 * 1024 * 1024;
 
     private InventoryLoader() {
-    }
-
-    /**
-     * Loads and validates the inventory. A {@code null} file means an empty
-     * inventory, which is valid; a set but unreadable file is an error naming the
-     * problem.
-     */
-    public static ParseResult load(final SnmpProfilesConfig profiles, final Path file) {
-        if (file == null) {
-            return new ParseResult(InventorySnapshot.empty(), List.of());
-        }
-        requireReadableSize(file);
-        final String content;
-        try {
-            content = Files.readString(file);
-        } catch (final IOException e) {
-            throw new IllegalStateException(
-                    "Inventory file %s is not readable: %s".formatted(file, e.getMessage()), e);
-        }
-        // The boot-time twin of FileWatchTrigger.withoutByteOrderMark (#725). No defect is visible
-        // here today: SnakeYAML strips a leading BOM even on the String overload, which is the half
-        // of #725 that turned out to be wrong, and boot has no blankness guard for a BOM-only file
-        // to slip past the way the reload path's did. This exists so the invariant is "no consumer
-        // downstream of a read ever sees U+FEFF" rather than "the parser we happen to use removes
-        // it" — a validator added between here and the parse would otherwise inherit the problem.
-        return parseWithWarnings(profiles, ByteOrderMark.strip(content), file.toString());
-    }
-
-    /**
-     * The code-point limit bounds the parser, not the read: bytes, chars, a copy and
-     * the object graph are all live before it applies, so a runaway file OOMs first,
-     * and an Error out of a reload cycle kills the schedule for the process lifetime.
-     * Fail on size with the same file-naming message instead.
-     */
-    private static void requireReadableSize(final Path file) {
-        try {
-            final long size = Files.size(file);
-            if (size > MAX_FILE_BYTES) {
-                throw new IllegalStateException(
-                        "Inventory file %s is %d bytes, over the %d byte limit: split it or generate less."
-                                .formatted(file, size, MAX_FILE_BYTES));
-            }
-        } catch (final IOException e) {
-            throw new IllegalStateException(
-                    "Inventory file %s is not readable: %s".formatted(file, e.getMessage()), e);
-        }
     }
 
     /**
@@ -159,7 +109,7 @@ public final class InventoryLoader {
     /**
      * Parse-and-warn-immediately convenience where parsing IS the publication: tests,
      * benches and the converter round-trip harness. Production publication paths (boot,
-     * both reloaders) go through {@link #parseWithWarnings} or {@link #load} and flush
+     * both reloaders) go through {@link #parseWithWarnings} directly and flush
      * only on publication — a rejected candidate whose warnings already hit the log
      * reads as though the warned-about state went live when nothing changed (#539).
      */
@@ -237,6 +187,51 @@ public final class InventoryLoader {
             throw new IllegalStateException(
                     "Inventory file %s: %s".formatted(sourceName, e.getMessage()), e);
         }
+    }
+
+    /**
+     * A document's two top levels, string-keyed: {@code root} is the whole root mapping as
+     * parsed, and {@code riptide} is its {@code riptide} tree, empty when the document has none.
+     *
+     * @see #readTopLevels(String, String)
+     */
+    public record TopLevels(Map<String, Object> root, Map<String, Object> riptide) {
+    }
+
+    /**
+     * Reads a document's top two levels by exactly the rules {@link #parseWithWarnings} applies to
+     * them, for a caller that edits a document before handing it back as text
+     * ({@code ComposedInventoryDocument}).
+     *
+     * <p>It exists so there is one copy of those rules. A caller parsing with SnakeYAML options
+     * of its own drifted from them: duplicate keys collapsed to the last one instead of failing,
+     * a syntax error lost the file's name, and a root or {@code riptide} tree that was not a
+     * mapping was silently dropped. Here they fail as the loader fails them, naming
+     * {@code sourceName}: the same parse options (duplicates refused, {@link #CODE_POINT_LIMIT}),
+     * the same "is not valid YAML" wrap, the same non-string-key refusal at both levels, and the
+     * same "must be a mapping" sentence in the same problem report.</p>
+     *
+     * <p>Nothing below the {@code riptide} level is validated here. The caller's composed text
+     * goes through {@link #parseWithWarnings} afterwards, which validates the whole tree.</p>
+     *
+     * @throws IllegalStateException naming {@code sourceName}, as {@link #parseWithWarnings} would
+     */
+    public static TopLevels readTopLevels(final String content, final String sourceName) {
+        final Problems problems = new Problems();
+        final Map<String, Object> root = parseYaml(content, sourceName, problems);
+        final Map<String, Object> riptide;
+        try {
+            riptide = section(root, "riptide", problems);
+        } catch (final IllegalStateException structural) {
+            // the same wrap as parseWithWarnings: the non-mapping level joins whatever was
+            // collected before it, so a stray non-string root key is not swallowed by it
+            problems.add(problemText(structural, "inventory file", sourceName), structural);
+            throw problems.report(sourceName);
+        }
+        if (!problems.isEmpty()) {
+            throw problems.report(sourceName);
+        }
+        return new TopLevels(root, riptide);
     }
 
     /**
