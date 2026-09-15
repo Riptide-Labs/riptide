@@ -5,23 +5,21 @@
 
 package org.riptide.classification.internal;
 
+import org.riptide.config.BoundedHttpRead;
 import org.riptide.config.ByteOrderMark;
 import org.riptide.config.ClassificationConfig;
 import org.riptide.config.FileWatchTrigger;
 import org.springframework.core.io.Resource;
 import org.springframework.util.ResourceUtils;
 
-import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.net.URLConnection;
 import java.time.Duration;
+import java.util.Map;
 import java.util.Objects;
-import java.util.regex.Pattern;
 
 /**
  * The one read of {@code riptide.classification.rules}, shared by the provider that
@@ -70,19 +68,8 @@ public final class ClassificationRulesSource implements FileWatchTrigger.Source 
      */
     static final int MAX_BYTES = 8 * 1024 * 1024;
 
-    /** How much of an error response is drained so the connection can be pooled again. */
-    private static final int ERROR_DRAIN_LIMIT = 64 * 1024;
-
-    /**
-     * Credentials embedded in a location, as {@code scheme://user:token@host}. The docs
-     * say the endpoint carries no authentication, which makes reaching for this shape the
-     * natural next move — and the location is logged at INFO on startup and in every
-     * failure WARN.
-     */
-    private static final Pattern USERINFO = Pattern.compile("([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\\s\\]]*@");
-
     private final ClassificationConfig config;
-    private final Duration timeout;
+    private final BoundedHttpRead http;
 
     public ClassificationRulesSource(final ClassificationConfig config) {
         this(config, DEFAULT_TIMEOUT);
@@ -91,7 +78,11 @@ public final class ClassificationRulesSource implements FileWatchTrigger.Source 
     /** Visible for tests, which cannot wait out the default timeout on every hung-server row. */
     ClassificationRulesSource(final ClassificationConfig config, final Duration timeout) {
         this.config = Objects.requireNonNull(config);
-        this.timeout = Objects.requireNonNull(timeout);
+        // describe() is a supplier because the location is re-read from config on every call, and
+        // "ruleset" keeps the ceiling message byte-identical to what ClassificationRuleReloaderTest
+        // asserts
+        this.http = new BoundedHttpRead(
+                Objects.requireNonNull(timeout), MAX_BYTES, "ruleset", this::describe, Map.of());
     }
 
     /**
@@ -126,10 +117,10 @@ public final class ClassificationRulesSource implements FileWatchTrigger.Source 
         final URL remote = remoteUrl(resource);
         if (remote == null) {
             try (InputStream in = resource.getInputStream()) {
-                return ByteOrderMark.strip(readBounded(in, null));
+                return ByteOrderMark.strip(this.http.readLocal(in));
             }
         }
-        return ByteOrderMark.strip(fetchRemote(remote));
+        return ByteOrderMark.strip(this.http.readRemote(remote));
     }
 
     @Override
@@ -153,10 +144,15 @@ public final class ClassificationRulesSource implements FileWatchTrigger.Source 
         }
     }
 
-    /** The location, with any embedded credentials removed; safe to log. */
+    /**
+     * The location, with any embedded credentials removed; safe to log. The pattern that does the
+     * removing lives in {@link BoundedHttpRead#redacted}, which is the one copy of it: it was
+     * private here and private again in {@code DiscoveryClient}, which is the shape #561 warns
+     * about, and a third site had no copy at all.
+     */
     @Override
     public String describe() {
-        return USERINFO.matcher(this.config.getRules().getDescription()).replaceAll("$1***@");
+        return BoundedHttpRead.redacted(this.config.getRules().getDescription());
     }
 
     /**
@@ -176,106 +172,8 @@ public final class ClassificationRulesSource implements FileWatchTrigger.Source 
         return ResourceUtils.isFileURL(url) || ResourceUtils.isJarURL(url) ? null : url;
     }
 
-    /**
-     * Opens the connection this class is willing to read from. Split out so the timeouts
-     * the production constructor applies are observable without a ten-second test: nothing
-     * else reaches them, and a {@code Duration.ZERO} default would read as "no timeout" to
-     * {@code URLConnection} while every behavioural test kept passing on its own injected
-     * timeout.
-     */
+    /** Visible for tests: the timeouts this source applies, observable without a ten-second wait. */
     URLConnection openBounded(final URL url) throws IOException {
-        final URLConnection connection = url.openConnection();
-        connection.setConnectTimeout(timeoutMillis());
-        connection.setReadTimeout(timeoutMillis());
-        // the content hash decides whether anything is rebuilt, so a cached response would
-        // only hide a change from it
-        connection.setUseCaches(false);
-        return connection;
-    }
-
-    private byte[] fetchRemote(final URL url) throws IOException {
-        final URLConnection connection = openBounded(url);
-        final HttpURLConnection http = connection instanceof HttpURLConnection h ? h : null;
-        final long deadline = System.nanoTime() + this.timeout.toNanos();
-        try {
-            if (http != null) {
-                final int status = http.getResponseCode();
-                if (status == HttpURLConnection.HTTP_NOT_FOUND) {
-                    // the one status that is absence rather than failure
-                    throw new FileNotFoundException("%s answered 404".formatted(describe()));
-                }
-                if (status != HttpURLConnection.HTTP_OK) {
-                    // a 3xx this connection did not follow, a 5xx, or a proxy's error page:
-                    // handing that body to the CSV parser would report a rules problem for
-                    // what is a transport problem
-                    throw new IOException("%s answered HTTP %d, not 200".formatted(describe(), status));
-                }
-            }
-            try (InputStream in = connection.getInputStream()) {
-                return readBounded(in, deadline);
-            }
-        } catch (final IOException e) {
-            // drain first: an undrained error body keeps the socket out of the keep-alive
-            // pool, and this endpoint is polled again on every interval. A socket we
-            // abandoned mid-response cannot be reused, so that one is closed instead
-            release(http, !(e instanceof SocketTimeoutException));
-            throw e;
-        }
-    }
-
-    /**
-     * Reads to the end, refusing to grow past {@link #MAX_BYTES} and to keep reading past
-     * {@code deadline} — a {@code System.nanoTime()} reading, or {@code null} for a local
-     * read, which has no peer to stall on. The deadline is what makes the bound a bound: a
-     * per-read timeout is reset by every byte that arrives, so a server sending one byte
-     * just inside it holds the thread forever. Boxed rather than sentinelled because
-     * {@code nanoTime()} may legitimately be negative, so no {@code long} value is free to
-     * mean "none".
-     */
-    private byte[] readBounded(final InputStream in, final Long deadline) throws IOException {
-        final ByteArrayOutputStream out = new ByteArrayOutputStream();
-        final byte[] buffer = new byte[8192];
-        while (true) {
-            if (deadline != null && System.nanoTime() - deadline > 0) {
-                throw new SocketTimeoutException(
-                        "%s did not finish responding within %s".formatted(describe(), this.timeout));
-            }
-            final int read = in.read(buffer);
-            if (read < 0) {
-                return out.toByteArray();
-            }
-            if (out.size() + read > MAX_BYTES) {
-                throw new IOException("%s is larger than the %d byte ceiling for a ruleset"
-                        .formatted(describe(), MAX_BYTES));
-            }
-            out.write(buffer, 0, read);
-        }
-    }
-
-    private static void release(final HttpURLConnection http, final boolean reusable) {
-        if (http == null) {
-            return;
-        }
-        boolean drained = true;
-        try (InputStream errors = http.getErrorStream()) {
-            if (errors != null) {
-                errors.readNBytes(ERROR_DRAIN_LIMIT);
-            }
-        } catch (final IOException e) {
-            drained = false;
-        }
-        if (!reusable || !drained) {
-            http.disconnect();
-        }
-    }
-
-    /**
-     * The timeout as {@code URLConnection} wants it. Clamped rather than thrown: an
-     * operator-sized {@code Duration} beyond 24 days is absurd, but turning it into an
-     * {@code ArithmeticException} on the poll thread would be worse than treating it as
-     * the longest timeout the API can express.
-     */
-    private int timeoutMillis() {
-        return (int) Math.min(this.timeout.toMillis(), Integer.MAX_VALUE);
+        return this.http.openBounded(url);
     }
 }

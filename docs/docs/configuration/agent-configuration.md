@@ -11,14 +11,23 @@ Two trees carry it, in two files:
 - **Named credential sets and polling profiles** live in the main configuration (`riptide.snmp.credentials.<name>`, `riptide.snmp.polling.<name>`).
 - **Agent ranges** live in the inventory file named by `riptide.inventory.file`, and reference the sets and profiles by name.
 
+:::note[Agent ranges are unaffected by discovery]
+Agent ranges always come from the inventory file.
+[Dynamic discovery](discovery.md) supplies exporter entries only, so enabling it does not affect anything on this page.
+:::
+
 The split is deliberate.
 Credentials are few, sensitive, and change rarely; ranges are many and change often.
 The inventory file is direct-parsed, so it scales to tens of thousands of entries without binding cost, and it hot-reloads on content change.
 
 :::warning[The inventory file is a file, full stop]
-Agent ranges and [enrichment entries](exporter-enrichment.md) cannot be supplied through environment variables or `spring.config.import`.
+Agent ranges cannot be supplied through environment variables or `spring.config.import`.
 The file named by `riptide.inventory.file` is read directly, never property-bound.
-A set-but-missing file fails startup; an unset `riptide.inventory.file` means an empty inventory, which is valid and enriches nothing.
+A set-but-missing file fails startup.
+
+With [dynamic discovery](discovery.md) off, the same is true of [enrichment entries](exporter-enrichment.md), and an unset `riptide.inventory.file` means an empty inventory: no agent ranges, no enrichment entries, both valid.
+With discovery on, enrichment entries come from the discovery endpoint instead, and an unset `riptide.inventory.file` is then valid on its own.
+The endpoint supplies the `exporters` tree, and the file is needed only for agent ranges.
 :::
 
 ## Credential sets

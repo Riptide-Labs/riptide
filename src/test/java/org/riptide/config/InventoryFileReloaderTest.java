@@ -11,10 +11,13 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.riptide.inventory.TestCredentials;
+import org.riptide.discovery.ComposedInventoryDocument;
+import org.riptide.discovery.DiscoveryConfig;
+import org.riptide.inventory.FileInventoryDocument;
 import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventoryConfig;
 import org.riptide.inventory.SnmpProfilesConfig;
+import org.riptide.inventory.TestCredentials;
 import org.riptide.snmp.InterfaceSnapshotPoller;
 import org.riptide.snmp.SnmpPollConfig;
 import org.riptide.pipeline.ExporterIdentity;
@@ -23,10 +26,12 @@ import org.riptide.testsupport.LogCapture;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -91,14 +96,14 @@ class InventoryFileReloaderTest {
 
         // a set-but-missing file fails boot by design, so boot always sees a file
         write("riptide: {}");
-        this.inventory = new Inventory(this.profiles, inventoryConfig);
+        this.inventory = new Inventory(this.profiles, new FileInventoryDocument(inventoryConfig));
         this.inventory.load();
         this.metrics = new MetricRegistry();
         // a poller with no scheduler and nothing registered: these tests exercise the
         // reload trigger, and the refresh half has its own tests in the poller suite
         this.poller = new CountingPoller(this.inventory, this.metrics);
         this.reloader = new InventoryFileReloader(properties, inventoryConfig, this.inventory,
-                this.poller, this.metrics);
+                this.poller, this.metrics, Optional.empty());
         this.reloader.start();
     }
 
@@ -577,7 +582,7 @@ class InventoryFileReloaderTest {
         final ConfigReloadProperties properties = new ConfigReloadProperties();
         properties.setReloadInterval(Duration.ofHours(1));
         final InventoryFileReloader disabled = new InventoryFileReloader(
-                properties, noFile, this.inventory, this.poller, new MetricRegistry());
+                properties, noFile, this.inventory, this.poller, new MetricRegistry(), Optional.empty());
 
         disabled.start();
         disabled.stop();
@@ -594,13 +599,13 @@ class InventoryFileReloaderTest {
         final InventoryConfig withFile = new InventoryConfig();
         withFile.setFile(this.file);
         final var noInterval = new InventoryFileReloader(
-                new ConfigReloadProperties(), withFile, this.inventory, this.poller, fresh);
+                new ConfigReloadProperties(), withFile, this.inventory, this.poller, fresh, Optional.empty());
         noInterval.start();
 
         final ConfigReloadProperties hourly = new ConfigReloadProperties();
         hourly.setReloadInterval(Duration.ofHours(1));
         final var noFile = new InventoryFileReloader(
-                hourly, new InventoryConfig(), this.inventory, this.poller, fresh);
+                hourly, new InventoryConfig(), this.inventory, this.poller, fresh, Optional.empty());
         noFile.start();
 
         assertThat(fresh.getGauges()).doesNotContainKeys("inventory.reload.stale", "inventory.reload.dead");
@@ -626,7 +631,7 @@ class InventoryFileReloaderTest {
         final ConfigReloadProperties properties = new ConfigReloadProperties();
         properties.setReloadInterval(Duration.ofHours(1));
         final var restarted = new InventoryFileReloader(
-                properties, config, this.inventory, this.poller, this.metrics);
+                properties, config, this.inventory, this.poller, this.metrics, Optional.empty());
         restarted.start();
         assertThat(dead()).as("a live schedule is not a corpse").isZero();
 
@@ -814,7 +819,7 @@ class InventoryFileReloaderTest {
         private int refusals;
 
         private RacingInventory(final SnmpProfilesConfig profiles, final InventoryConfig config) {
-            super(profiles, config);
+            super(profiles, new FileInventoryDocument(config));
         }
 
         @Override
@@ -844,7 +849,8 @@ class InventoryFileReloaderTest {
         final RacingInventory racing = new RacingInventory(this.profiles, config);
         racing.load();
         final MetricRegistry fresh = new MetricRegistry();
-        final var deferring = new InventoryFileReloader(properties, config, racing, this.poller, fresh);
+        final var deferring = new InventoryFileReloader(properties, config, racing, this.poller, fresh,
+                Optional.empty());
         deferring.start();
         try {
             racing.refusals = 1;
@@ -884,6 +890,348 @@ class InventoryFileReloaderTest {
     void thePollThreadIsNamedForThisReloader() {
         assertThat(Thread.getAllStackTraces().keySet())
                 .anyMatch(thread -> "InventoryFileReloader".equals(thread.getName()));
+    }
+
+    /** Discovery on: the composed document over this test's file, with a fixed endpoint answer. */
+    private static ComposedInventoryDocument composedOver(final InventoryConfig config) {
+        final DiscoveryConfig discovery = new DiscoveryConfig();
+        discovery.setUrl("https://netbox.example.com/api/devices/");
+        discovery.setInterval(Duration.ofHours(1));
+        return new ComposedInventoryDocument(new FileInventoryDocument(config),
+                () -> """
+                        [{"targets":["firewall-01"],
+                          "labels":{"__meta_netbox_name":"firewall-01",
+                                    "__meta_netbox_primary_ip4":"10.0.0.1"}}]
+                        """.getBytes(StandardCharsets.UTF_8),
+                () -> "the endpoint", discovery, new MetricRegistry());
+    }
+
+    /**
+     * The requirement the composed source exists for. With discovery on the file carries no
+     * exporters tree, so a watcher re-reading the file alone would offer a candidate with none,
+     * the regression pre-check would refuse it every cycle, and this edit would never apply. The
+     * config reload interval is left unset: discovery's own interval is what enables the watcher.
+     */
+    @Test
+    void withDiscoveryOnAnAgentRangeEditInTheFileApplies() throws Exception {
+        final InventoryConfig config = new InventoryConfig();
+        config.setFile(this.file);
+        final ComposedInventoryDocument composed = composedOver(config);
+        final Inventory composedInventory = new Inventory(this.profiles, composed);
+        composedInventory.load();
+        final MetricRegistry fresh = new MetricRegistry();
+        final var watcher = new InventoryFileReloader(new ConfigReloadProperties(), config,
+                composedInventory, this.poller, fresh, Optional.of(composed));
+        watcher.start();
+        try {
+            write("""
+                    riptide:
+                      snmp:
+                        agents:
+                          "10.20.0.0/16":
+                            credentials: corp-v3
+                    """);
+            watcher.poll();
+
+            assertThat(composedInventory.snapshot().agentView().match(netflow("10.20.5.5")))
+                    .as("the file's agent-range edit applied")
+                    .isPresent();
+            assertThat(composedInventory.snapshot().exporterView().match(netflow("10.0.0.1")))
+                    .as("and the exporters still come from discovery")
+                    .isPresent();
+            assertThat(fresh.counter("inventory.reload.successes").getCount()).isEqualTo(1);
+        } finally {
+            watcher.stop();
+        }
+    }
+
+    /**
+     * A composed candidate that drops the file's agent ranges is refused exactly like a file one,
+     * but the WARN names the composed document rather than a file, and offers only advice that can
+     * be followed: an exporters tree in the file is refused outright while discovery is on.
+     */
+    @Test
+    void withDiscoveryOnARefusalNamesTheComposedDocumentAndOnlyAdviceThatCanBeFollowed() throws Exception {
+        write("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """);
+        final InventoryConfig config = new InventoryConfig();
+        config.setFile(this.file);
+        final ComposedInventoryDocument composed = composedOver(config);
+        final Inventory composedInventory = new Inventory(this.profiles, composed);
+        composedInventory.load();
+        final var watcher = new InventoryFileReloader(new ConfigReloadProperties(), config,
+                composedInventory, this.poller, new MetricRegistry(), Optional.of(composed));
+        watcher.start();
+        final var appender = capture(InventoryFileReloader.class);
+        try {
+            // a torn write: the agents tree is gone and was not declared empty
+            write("riptide: {}");
+            watcher.poll();
+        } finally {
+            release(InventoryFileReloader.class, appender);
+            watcher.stop();
+        }
+
+        assertThat(composedInventory.snapshot().agentCount())
+                .as("the polled fleet survives").isEqualTo(1);
+        assertThat(appender.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                .startsWith("Inventory document " + this.file + " + the endpoint would drop a whole tree")
+                .contains("1 -> 0 agent range(s)")
+                .contains("(agents: {})")
+                .doesNotContain("exporters: {}"));
+    }
+
+    /**
+     * A boot that could not reach the endpoint served the file's trees alone, and this watcher is
+     * what heals it. Two things must hold. The gauge reads 1 from the start, before any cycle: a 404
+     * skips cycles without recomputing staleness, so a latch set only by a failed cycle would never
+     * come. And the hashes are not seeded: the endpoint answers by the time the watcher starts here,
+     * so a seed would record the discovered document as committed while the file-only one serves,
+     * and the first cycle would skip it as unchanged forever.
+     */
+    @Test
+    void withDiscoveryOnABootThatCouldNotReachTheEndpointIsStaleUntilTheWatcherPublishes() throws Exception {
+        write("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """);
+        final InventoryConfig config = new InventoryConfig();
+        config.setFile(this.file);
+        final DiscoveryConfig discovery = new DiscoveryConfig();
+        discovery.setUrl("https://netbox.example.com/api/devices/");
+        discovery.setInterval(Duration.ofHours(1));
+        final java.util.concurrent.atomic.AtomicBoolean up = new java.util.concurrent.atomic.AtomicBoolean();
+        final ComposedInventoryDocument composed = new ComposedInventoryDocument(new FileInventoryDocument(config),
+                () -> {
+                    if (!up.get()) {
+                        throw new IOException("connection refused");
+                    }
+                    return """
+                            [{"targets":["firewall-01"],
+                              "labels":{"__meta_netbox_name":"firewall-01",
+                                        "__meta_netbox_primary_ip4":"10.0.0.1"}}]
+                            """.getBytes(StandardCharsets.UTF_8);
+                },
+                () -> "the endpoint", discovery, new MetricRegistry());
+        final Inventory composedInventory = new Inventory(this.profiles, composed);
+        composedInventory.load();
+        assertThat(composedInventory.snapshot().agentCount()).as("boot served the file").isEqualTo(1);
+        assertThat(composedInventory.snapshot().exporterCount()).as("with no exporters").isZero();
+
+        up.set(true);
+        final MetricRegistry fresh = new MetricRegistry();
+        final var watcher = new InventoryFileReloader(new ConfigReloadProperties(), config,
+                composedInventory, this.poller, fresh, Optional.of(composed));
+        watcher.start();
+        try {
+            assertThat((Integer) ((Gauge<?>) fresh.getGauges().get("inventory.reload.stale")).getValue())
+                    .as("stale from the start: what serves is not what the source says")
+                    .isEqualTo(1);
+
+            watcher.poll();
+
+            assertThat(composedInventory.snapshot().exporterView().match(netflow("10.0.0.1")))
+                    .as("the first cycle that reaches the endpoint publishes its exporters")
+                    .isPresent();
+            assertThat(composedInventory.snapshot().agentCount()).isEqualTo(1);
+            assertThat((Integer) ((Gauge<?>) fresh.getGauges().get("inventory.reload.stale")).getValue())
+                    .as("and clears the gauge")
+                    .isZero();
+        } finally {
+            watcher.stop();
+        }
+    }
+
+    /**
+     * A 404 after a healthy publish is what an operator gets when a NetBox plugin path changes
+     * under a running collector: nothing fails, nothing is counted, and every later discovery
+     * change silently stops arriving. The docs promise {@code inventory.reload.stale} says so, and
+     * the gauge read 0 forever instead, because absence skips the cycle without recomputing it.
+     *
+     * <p>The failure counter is asserted throughout: a 404 is absence, not failure, and the
+     * contract that a cycle which read nothing never moves {@code inventory.reload.failures} is
+     * older than discovery (#539).</p>
+     */
+    @Test
+    void withDiscoveryOnAnEndpointThatStarts404ingAfterAPublishRaisesStaleAndClearsOnRecovery()
+            throws Exception {
+        write("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """);
+        final InventoryConfig config = new InventoryConfig();
+        config.setFile(this.file);
+        final DiscoveryConfig discovery = new DiscoveryConfig();
+        discovery.setUrl("https://netbox.example.com/api/devices/");
+        discovery.setInterval(Duration.ofHours(1));
+        final java.util.concurrent.atomic.AtomicBoolean present =
+                new java.util.concurrent.atomic.AtomicBoolean(true);
+        final ComposedInventoryDocument composed = new ComposedInventoryDocument(
+                new FileInventoryDocument(config),
+                () -> {
+                    if (!present.get()) {
+                        // exactly what DiscoveryClient raises for a 404, and the only ENDPOINT
+                        // failure the composed document turns into absence (a missing inventory
+                        // file is the other absence, and it does not latch this gauge)
+                        throw new java.io.FileNotFoundException("the endpoint answered 404");
+                    }
+                    return """
+                            [{"targets":["firewall-01"],
+                              "labels":{"__meta_netbox_name":"firewall-01",
+                                        "__meta_netbox_primary_ip4":"10.0.0.1"}}]
+                            """.getBytes(StandardCharsets.UTF_8);
+                },
+                () -> "the endpoint", discovery, new MetricRegistry());
+        final Inventory composedInventory = new Inventory(this.profiles, composed);
+        composedInventory.load();
+        final MetricRegistry fresh = new MetricRegistry();
+        final var watcher = new InventoryFileReloader(new ConfigReloadProperties(), config,
+                composedInventory, this.poller, fresh, Optional.of(composed));
+        watcher.start();
+        try {
+            // a healthy cycle first: the gauge has to have been 0 for a later 1 to mean anything
+            write("""
+                    riptide:
+                      snmp:
+                        agents:
+                          "10.20.0.0/16":
+                            credentials: corp-v3
+                          "10.30.0.0/16":
+                            credentials: corp-v3
+                    """);
+            watcher.poll();
+            assertThat(staleOf(fresh)).as("a healthy poll published and the gauge is clean").isZero();
+            assertThat(fresh.counter("inventory.reload.failures").getCount()).isZero();
+
+            present.set(false);
+            watcher.poll();
+
+            assertThat(staleOf(fresh))
+                    .as("the endpoint answers 404: what discovery would serve is unknown, so stale")
+                    .isEqualTo(1);
+            assertThat(fresh.counter("inventory.reload.failures").getCount())
+                    .as("absence is not failure: the counter must not move")
+                    .isZero();
+            assertThat(composedInventory.snapshot().exporterView().match(netflow("10.0.0.1")))
+                    .as("and the last good inventory keeps serving")
+                    .isPresent();
+
+            present.set(true);
+            watcher.poll();
+
+            assertThat(staleOf(fresh))
+                    .as("the endpoint recovered with the same document, so the gauge clears again")
+                    .isZero();
+            assertThat(fresh.counter("inventory.reload.failures").getCount()).isZero();
+        } finally {
+            watcher.stop();
+        }
+    }
+
+    /**
+     * With discovery off a missing inventory file is a skip: the trigger warns once and keeps
+     * serving. With discovery on it was a counted failure, logged with a stack trace on every poll
+     * forever, because the composed document mapped only {@code FileNotFoundException} to absence
+     * while {@code FileInventoryDocument} wraps a {@code NoSuchFileException}. An operator reaches
+     * it by deleting the file after boot, and through the {@code rm}+{@code mv} replacement this
+     * project's own skip message recommends, which has a real window where the read sees the gap.
+     */
+    @Test
+    void withDiscoveryOnADeletedInventoryFileIsAbsenceAndIsNeverCounted() throws Exception {
+        write("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """);
+        final InventoryConfig config = new InventoryConfig();
+        config.setFile(this.file);
+        final ComposedInventoryDocument composed = composedOver(config);
+        final Inventory composedInventory = new Inventory(this.profiles, composed);
+        composedInventory.load();
+        final MetricRegistry fresh = new MetricRegistry();
+        final var watcher = new InventoryFileReloader(new ConfigReloadProperties(), config,
+                composedInventory, this.poller, fresh, Optional.of(composed));
+        watcher.start();
+        try {
+            Files.delete(this.file);
+
+            watcher.poll();
+            watcher.poll();
+
+            assertThat(fresh.counter("inventory.reload.failures").getCount())
+                    .as("a missing inventory file is absence, exactly as it is with discovery off")
+                    .isZero();
+            assertThat(composedInventory.snapshot().agentCount())
+                    .as("and the last good inventory keeps serving")
+                    .isEqualTo(1);
+            assertThat(composedInventory.snapshot().exporterView().match(netflow("10.0.0.1")))
+                    .as("exporters included")
+                    .isPresent();
+        } finally {
+            watcher.stop();
+        }
+    }
+
+    /**
+     * The other half of the same distinction: a path that is <em>there</em> and cannot be read is a
+     * real failure and has to keep being counted. Produced with a directory, which stats fine and
+     * fails the read — the portable stand-in for the permission denial. Removing read permission is
+     * not used, because it does not deny a process running as root, which is how this suite runs in
+     * a container; a chmod-based test would pass there by skipping the guard entirely. The
+     * permission denial's own exception type is pinned in {@code ComposedInventoryDocumentTest}.
+     *
+     * <p>A path under a regular file was tried first and is not usable either: macOS answers
+     * {@code Files.size} for it with {@code NoSuchFileException}, so it reads as absence.</p>
+     */
+    @Test
+    void withDiscoveryOnAnUnreadableInventoryPathIsStillACountedFailure() throws Exception {
+        write("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """);
+        final InventoryConfig config = new InventoryConfig();
+        config.setFile(this.file);
+        final ComposedInventoryDocument composed = composedOver(config);
+        final Inventory composedInventory = new Inventory(this.profiles, composed);
+        composedInventory.load();
+        final MetricRegistry fresh = new MetricRegistry();
+        final var watcher = new InventoryFileReloader(new ConfigReloadProperties(), config,
+                composedInventory, this.poller, fresh, Optional.of(composed));
+        watcher.start();
+        try {
+            // the document re-reads InventoryConfig.getFile() on every fetch, so this is what a
+            // file turning unreadable under a running collector looks like
+            config.setFile(Files.createDirectory(this.tempDir.resolve("unreadable")));
+
+            watcher.poll();
+
+            assertThat(fresh.counter("inventory.reload.failures").getCount())
+                    .as("there and unreadable is a failure, not absence: an operator told to make a "
+                            + "file reappear that is already there has been sent to the wrong place")
+                    .isEqualTo(1);
+        } finally {
+            watcher.stop();
+        }
+    }
+
+    private static int staleOf(final MetricRegistry registry) {
+        return (Integer) ((Gauge<?>) registry.getGauges().get("inventory.reload.stale")).getValue();
     }
 
     private int dead() {

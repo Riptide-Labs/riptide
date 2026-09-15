@@ -214,7 +214,7 @@ public class ConfigFileReloader {
 
     /**
      * Shutdown recognition for the rebuild-path catches, where the poll-level belt cannot
-     * reach: {@code InventoryLoader.load} wraps an interrupted read's
+     * reach: {@code FileInventoryDocument.text()} wraps an interrupted read's
      * {@link ClosedByInterruptException} into its "not readable" IllegalStateException,
      * so both the flag and the cause chain must be consulted. Still untested: the
      * trigger's own mid-cycle belt is now pinned through the Cycle seam
@@ -248,6 +248,16 @@ public class ConfigFileReloader {
      * updated. Success is logged and clears the partial state; a repeated failure stays
      * quiet (the WARN at commit time named the cause and the gauge holds it visible), a
      * changed cause WARNs once.
+     *
+     * <p><b>With discovery on this retry does network IO, on this schedule.</b>
+     * {@link Inventory#rebuildAndSwap} reads the composed document's strict {@code text()}, which
+     * fetches the discovery endpoint inside {@code Inventory}'s monitor. So while a rotation is
+     * pending and the endpoint is unreachable, the endpoint is polled once per <em>config</em>
+     * reload cycle — at {@code riptide.config.reload-interval}, which can be seconds, not at
+     * {@code riptide.discovery.interval} — and each attempt can hold that monitor for
+     * {@code riptide.discovery.timeout}. Deliberate and load-bearing: this loop is the only thing
+     * that heals a rotation the inventory watcher cannot, because the watcher re-parses against the
+     * SERVING profiles.</p>
      */
     private void retryPendingRebuild() {
         final SnmpProfilesConfig pending = this.pendingProfiles;
@@ -256,7 +266,11 @@ public class ConfigFileReloader {
         }
         final InventorySnapshot published;
         try {
-            published = this.inventory.rebuildAndSwap(pending, this.inventoryConfig.getFile());
+            // with discovery on this is an HTTP fetch, held under Inventory's monitor, once per
+            // config reload poll for as long as the rotation stays pending: paced by
+            // riptide.config.reload-interval, NOT riptide.discovery.interval, and bounded per
+            // attempt by riptide.discovery.timeout. See this method's javadoc for why it stays
+            published = this.inventory.rebuildAndSwap(pending);
         } catch (final RuntimeException e) {
             if (interruptedShutdown(e)) {
                 // a shutdown artifact must not be remembered as a failure cause: the
@@ -387,8 +401,10 @@ public class ConfigFileReloader {
                 .bind("riptide.inventory", Bindable.of(InventoryConfig.class))
                 .orElseGet(InventoryConfig::new);
         if (!Objects.equals(candidateInventoryConfig.getFile(), this.inventoryConfig.getFile())) {
-            // the inventory watcher captured its path at start, so following a new one here
-            // would leave the two reloaders publishing different files at each other
+            // the inventory watcher keeps the boot path: it captured it at start with discovery
+            // off, and with discovery on the composed document reads this same boot-bound
+            // InventoryConfig, which nothing rebinds. Following a new one here would leave the
+            // two reloaders publishing different files at each other
             log.warn("riptide.inventory.file changed from {} to {}: the running inventory keeps the old "
                     + "path until a restart", this.inventoryConfig.getFile(), candidateInventoryConfig.getFile());
         }
@@ -431,7 +447,7 @@ public class ConfigFileReloader {
         // message this episode never showed the operator
         try {
             final InventorySnapshot published =
-                    this.inventory.rebuildAndSwap(candidateProfiles, this.inventoryConfig.getFile());
+                    this.inventory.rebuildAndSwap(candidateProfiles);
             if (published == null) {
                 // a new episode with no named cause: the failure memory resets so the
                 // FIRST throwing retry of this episode WARNs rather than matching a
@@ -440,12 +456,16 @@ public class ConfigFileReloader {
                 // pre-formatted for the same reason as the inventory watcher's refusal WARN:
                 // the taught idiom "agents: {}" is an SLF4J placeholder unless the whole
                 // message bypasses SLF4J formatting
+                // named by the inventory's own document, not by riptide.inventory.file: that key
+                // can be unset (discovery then supplies the whole document) and printed "null"
+                // here, and with discovery on a rebuild failure is as likely to be the endpoint's
+                // as the file's. Inventory.documentName() is the one spelling; this was the third
                 log.warn(("Config reloaded, but the inventory was left alone: rebuilding it from %s would "
                         + "have dropped a whole tree that is currently serving (a partially written file "
                         + "reads this way; write atomically via mv, or declare a deliberate decommission "
                         + "as an explicit empty mapping, e.g. agents: {}). The credential and profile "
                         + "changes in this edit are NOT serving until the file is whole; they are retried "
-                        + "every poll").formatted(this.inventoryConfig.getFile()));
+                        + "every poll").formatted(this.inventory.documentName()));
             } else {
                 inventoryPublished = true;
                 // the supersede, at the earliest true point: the edit is fully published,
@@ -473,11 +493,12 @@ public class ConfigFileReloader {
             // the cause goes LAST, not into a parenthesis mid-sentence: since #630 it can
             // be the loader's whole multi-line report, and interpolated inline it pushed
             // the remediation clause below the last bullet, orphaned from the sentence it
-            // completes — at the one site that explains a credential rotation is not live
+            // completes — at the one site that explains a credential rotation is not live.
+            // Subject from Inventory.documentName(), for the reason the sibling WARN above gives
             log.warn("Config reloaded, but the inventory could not be rebuilt from {}. The credential "
                     + "and profile changes in this edit are NOT serving until the inventory file is fixed; "
                     + "they are retried every poll. The inventory file says: {}",
-                    this.inventoryConfig.getFile(), e.getMessage());
+                    this.inventory.documentName(), e.getMessage());
         }
         if (inventoryPublished) {
             // outside the rebuild try: the snapshot IS serving by now, so a refresh failure

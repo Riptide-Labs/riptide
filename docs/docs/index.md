@@ -25,8 +25,9 @@ UDP/TCP ingest (NetFlow v5 · NetFlow v9 · IPFIX · sFlow)
 - **Flow protocols:** NetFlow v5, NetFlow v9, IPFIX, and sFlow (UDP; IPFIX also via
   TCP). See [Receivers](configuration/receivers.md).
 - **Inventory model:** named credential sets and polling profiles in the main config;
-  agent ranges and exporter enrichment entries in a hot-reloaded inventory file. A device
-  inside a credentialed range is polled from its first flow, with no per-device
+  agent ranges in a hot-reloaded inventory file; exporter enrichment entries in that same
+  file, or from a [dynamic discovery](configuration/discovery.md) endpoint such as NetBox.
+  A device inside a credentialed range is polled from its first flow, with no per-device
   configuration. See [SNMP agents](configuration/agent-configuration.md) and
   [Exporter enrichment](configuration/exporter-enrichment.md).
 - **Secrets:** SNMP credentials are **references** (`env://`, `file://`, `vault://`,

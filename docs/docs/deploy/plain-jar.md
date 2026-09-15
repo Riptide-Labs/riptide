@@ -53,9 +53,12 @@ binding): uppercase, dots and dashes become underscores, list indexes become `_0
 | `riptide.snmp.credentials.monitoring.security-name` | `RIPTIDE_SNMP_CREDENTIALS_MONITORING_SECURITYNAME` |
 | `riptide.inventory.file` | `RIPTIDE_INVENTORY_FILE` |
 
-Agent ranges and enrichment entries are the exception: they live in the
+Agent ranges are the exception: they live in the
 [inventory file](../configuration/agent-configuration.md) and cannot be supplied
 through environment variables at all.
+Enrichment entries follow the same rule unless [dynamic discovery](../configuration/discovery.md)
+is enabled, in which case they come from the discovery endpoint instead of the file; either way,
+neither source is an environment variable.
 
 Environment-variable configuration is fixed for the process lifetime — changing it
 means a restart. File-based configuration can

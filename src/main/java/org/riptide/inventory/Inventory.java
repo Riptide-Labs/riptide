@@ -11,7 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.nio.file.Path;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -19,8 +19,15 @@ import java.util.Objects;
  * serving state is published when the inventory file is unreadable or invalid; on
  * success one immutable snapshot instance is published behind this single volatile
  * reference, so a whole-instance swap is the entire concurrency story (AD-3), and a
- * hot reload is exactly such a swap. This bean performs no IO after startup and
- * serves no consumers yet: the enrichers and the poller cut over in story 2.8.
+ * hot reload is exactly such a swap. Its consumers read {@link #snapshot()}:
+ * {@code SnmpEnricher}, {@code ExporterNameEnricher} and {@code InterfaceSnapshotPoller}.
+ *
+ * <p>IO after startup: with discovery off there is none. With it on, {@link #rebuildAndSwap}
+ * reads a document that is fetched over HTTP, and it does so <em>inside this bean's monitor</em>
+ * — deliberately, for the reason that method's javadoc gives, but with the consequence that a
+ * credential rotation blocks every other publication path here for as long as the fetch takes,
+ * bounded by {@code riptide.discovery.timeout}. The readers above are unaffected: they take one
+ * volatile read and never the monitor.</p>
  */
 @Slf4j
 @Component
@@ -34,27 +41,44 @@ public class Inventory {
     private volatile SnmpProfilesConfig profiles;
 
     @NonNull
-    private final InventoryConfig config;
+    private final InventoryDocument document;
 
     private volatile InventorySnapshot active = InventorySnapshot.empty();
 
     @PostConstruct
     public void load() {
-        // boot commits through the same path as reload, so the whole-instance swap
-        // stays the only way serving state ever changes. Warnings flush after the swap:
-        // boot either publishes or dies, and the log must never describe a candidate
-        // that did not go live (#539)
-        final InventoryLoader.ParseResult result = InventoryLoader.load(this.profiles, this.config.getFile());
+        // boot commits through the same path as reload, so the whole-instance swap stays the only
+        // way serving state ever changes. Warnings flush after the swap: boot either publishes or
+        // dies, and the log must never describe a candidate that did not go live (#539).
+        // bootText(), not text(): the one read allowed to degrade rather than fail (discovery
+        // with its endpoint down). rebuildAndSwap below reads text() and stays strict
+        final String text = this.document.bootText();
+        final InventoryLoader.ParseResult result = parse(this.profiles, text, this.document.name());
         final InventorySnapshot loaded = result.snapshot();
         swap(loaded);
         result.flushWarnings();
-        if (this.config.getFile() == null) {
-            // silence here would read as "working" while every flow goes unenriched
-            log.info("No inventory file configured (riptide.inventory.file): serving the empty inventory");
+        if (text == null) {
+            // silence here would read as "working" while every flow goes unenriched.
+            // Not "No inventory configured ({})": document.name() already carries its own
+            // parenthesis for an unset file, so that spelling nested one inside the other
+            // ("(riptide.inventory.file (unset))") on the path every existing operator is on
+            log.info("Nothing to load from {}: serving the empty inventory", this.document.name());
         } else {
             log.info("Inventory loaded from {}: {} agent ranges, {} enrichment entries",
-                    this.config.getFile(), loaded.agentCount(), loaded.exporterCount());
+                    this.document.name(), loaded.agentCount(), loaded.exporterCount());
         }
+    }
+
+    /**
+     * The one place that knows a {@code null} document text means the valid empty inventory
+     * rather than something to hand the parser. {@link #load()} and {@link #rebuildAndSwap}
+     * both need this, and a rule encoded twice is the rule the next bug fixes in only one place.
+     */
+    private static InventoryLoader.ParseResult parse(final SnmpProfilesConfig profiles, final String text,
+                                                      final String name) {
+        return text == null
+                ? new InventoryLoader.ParseResult(InventorySnapshot.empty(), List.of())
+                : InventoryLoader.parseWithWarnings(profiles, text, name);
     }
 
     /**
@@ -117,18 +141,19 @@ public class Inventory {
     }
 
     /**
-     * Rebuilds from {@code file} against {@code profiles} and publishes both, atomically
+     * Rebuilds from {@link #document} against {@code profiles} and publishes both, atomically
      * with respect to {@link #swapIfProfilesUnchanged}.
      *
      * <p>The read happens inside the monitor deliberately. A main-config reload rotating a
-     * credential has to load the inventory file to resolve it, and the inventory watcher
-     * can commit newer file content during that load: publishing afterwards would
+     * credential has to load the inventory document to resolve it, and the inventory watcher
+     * can commit newer content during that load: publishing afterwards would
      * overwrite it with older content, and neither reloader would notice, because both
      * would consider their own hashes committed. Holding the monitor makes the watcher's
      * compare-and-set fail instead, which it handles by re-parsing on its next cycle.</p>
      */
-    public synchronized InventorySnapshot rebuildAndSwap(final SnmpProfilesConfig profiles, final Path file) {
-        final InventoryLoader.ParseResult result = InventoryLoader.load(profiles, file);
+    public synchronized InventorySnapshot rebuildAndSwap(final SnmpProfilesConfig profiles) {
+        final String text = this.document.text();
+        final InventoryLoader.ParseResult result = parse(profiles, text, this.document.name());
         final InventorySnapshot rebuilt = result.snapshot();
         if (rebuilt.isRegressiveOver(this.active)) {
             // refused, not published: a file caught mid-write parses cleanly with one tree
@@ -162,6 +187,20 @@ public class Inventory {
                             .formatted(this.active.agentCount(), snapshot.agentCount(),
                                     this.active.exporterCount(), snapshot.exporterCount()));
         }
+    }
+
+    /**
+     * How the inventory's source names itself in an operator-facing sentence: the file's path
+     * with discovery off, {@code <file> + <endpoint>} with it on, and {@code riptide.inventory.file
+     * (unset)} rather than a bare {@code null} when no file is configured, which discovery makes a
+     * valid configuration.
+     *
+     * <p>The one spelling, for every sentence outside this package that has to name the inventory's
+     * source. {@code ConfigFileReloader} built its own from {@code InventoryConfig.getFile()},
+     * which was the third place that remembered this and got both of those cases wrong.</p>
+     */
+    public String documentName() {
+        return this.document.name();
     }
 
     /** The profiles the serving snapshot was built from, for a reloader re-parsing the file. */
