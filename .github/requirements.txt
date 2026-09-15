@@ -10,4 +10,4 @@
 # Consumers: `.github/workflows/lint-actions.yml` installs from it, and the
 # "pip" ecosystem in `.github/dependabot.yml` (directory `/.github`) keeps it
 # current.
-zizmor==1.30.0
+zizmor==1.30.1
