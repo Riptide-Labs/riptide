@@ -20,6 +20,14 @@ The inventory file keeps owning `snmp.agents`, because agent ranges are a handfu
 No entry ever has two possible sources.
 Writing an `exporters` tree into the inventory file while `riptide.discovery.url` is set is refused with a message naming both locations, whether or not the endpoint can be reached. The check runs on every merge of the file with the endpoint, at boot and on every later poll, not only at startup.
 
+### Decommissioning a fleet
+
+The reloader refuses a file in which a previously populated tree is simply absent, because that is what a half-written file looks like. To empty one on purpose you write it as an explicit empty mapping, and that still holds with discovery enabled.
+
+Both spellings work: the narrow `riptide.snmp.agents: {}`, and the broad `riptide: {}`. The broad one declares everything the file still owns to be empty, which with discovery enabled means the agent ranges; the exporters keep coming from the endpoint, because the file does not own that tree any more.
+
+The third form documented for a file-only inventory, `exporters: {}`, is not available here. The file may not declare an exporters tree at all while discovery owns it, so writing one is refused rather than read as a decommission.
+
 ## Configuration
 
 | Key | Default | Meaning |

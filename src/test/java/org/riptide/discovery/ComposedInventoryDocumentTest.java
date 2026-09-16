@@ -507,4 +507,89 @@ class ComposedInventoryDocumentTest {
 
         assertThat(document.endpointAbsent()).isFalse();
     }
+
+    /**
+     * Tasks 1.1, 1.3 and 1.4 of the empty-declaration change. The loader tells a tree the operator
+     * declared empty on purpose from one that is simply missing, and only the first permits a
+     * publish that drops it. Composition must not quietly turn the first into the second.
+     */
+    private static final String RIPTIDE_DECLARED_EMPTY = """
+            riptide: {}
+            """;
+
+    private static final String AGENTS_DECLARED_EMPTY = """
+            riptide:
+              snmp:
+                agents: {}
+            """;
+
+    private static final String POPULATED_AGENT_TREE = """
+            riptide:
+              snmp:
+                agents:
+                  "10.0.0.0/8":
+                    credentials: corp-v3
+            """;
+
+    private static SnmpProfilesConfig testProfiles() {
+        return new SnmpProfilesConfig(Map.of("corp-v3", TestCredentials.v3()), Map.of());
+    }
+
+    /** A snapshot with one agent range, to measure a drop against. */
+    private static InventorySnapshot populatedInventory() {
+        return InventoryLoader.parse(testProfiles(), composed(POPULATED_AGENT_TREE, DEVICES).text(), "populated");
+    }
+
+    @Test
+    void aBroadlyDeclaredEmptyTreeStaysDeclaredThroughComposition() {
+        final String composedText = composed(RIPTIDE_DECLARED_EMPTY, DEVICES).text();
+        final InventorySnapshot candidate = InventoryLoader.parse(testProfiles(), composedText, "decommission");
+
+        assertThat(candidate.agentCount()).isZero();
+        assertThat(candidate.isRegressiveOver(populatedInventory()))
+                .as("`riptide: {}` is the documented broad decommission; composition must not revoke it")
+                .isFalse();
+    }
+
+    @Test
+    void aNarrowlyDeclaredEmptyTreeStaysDeclaredThroughComposition() {
+        final String composedText = composed(AGENTS_DECLARED_EMPTY, DEVICES).text();
+        final InventorySnapshot candidate = InventoryLoader.parse(testProfiles(), composedText, "decommission");
+
+        assertThat(candidate.agentCount()).isZero();
+        assertThat(candidate.isRegressiveOver(populatedInventory()))
+                .as("the narrow form already survived; a fix for the broad one must not break it")
+                .isFalse();
+    }
+
+    @Test
+    void anAbsentAgentTreeIsStillNotADeclaration() {
+        final InventorySnapshot withAgents = InventoryLoader.parse(
+                testProfiles(), composed(POPULATED_AGENT_TREE, DEVICES).text(), "present");
+        final InventorySnapshot noTreeAtAll =
+                InventoryLoader.parse(testProfiles(), composed(null, DEVICES).text(), "absent");
+
+        assertThat(withAgents.agentCount()).isEqualTo(1);
+        assertThat(noTreeAtAll.isRegressiveOver(withAgents))
+                .as("a file that declares no agent tree must not read as a deliberate decommission")
+                .isTrue();
+    }
+
+    @Test
+    void aDegradedCompositionCarriesTheBroadDeclarationThroughUnchanged() {
+        final ComposedInventoryDocument document = composed(RIPTIDE_DECLARED_EMPTY, () -> {
+            throw new IOException("connection refused");
+        });
+
+        final String text = document.bootText();
+        final InventorySnapshot candidate = InventoryLoader.parse(testProfiles(), text, "degraded");
+
+        assertThat(document.degradedAtBoot()).isTrue();
+        assertThat(text)
+                .as("a degraded document has no exporters key at all, not an empty one")
+                .doesNotContain("exporters");
+        assertThat(candidate.isRegressiveOver(populatedInventory()))
+                .as("an unreachable endpoint must not change the meaning of what the operator wrote")
+                .isFalse();
+    }
 }

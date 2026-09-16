@@ -969,8 +969,15 @@ class InventoryFileReloaderTest {
         watcher.start();
         final var appender = capture(InventoryFileReloader.class);
         try {
-            // a torn write: the agents tree is gone and was not declared empty
-            write("riptide: {}");
+            // a torn write: the writer reached the `agents:` key and stopped, so the tree is gone
+            // and nothing declared it empty. NOT `riptide: {}`, which this test used to write and
+            // call a torn write: that spelling is the documented broad decommission, truncation
+            // cannot produce it, and reading it as a partial write was the defect in #805
+            write("""
+                    riptide:
+                      snmp:
+                        agents:
+                    """);
             watcher.poll();
         } finally {
             release(InventoryFileReloader.class, appender);
@@ -982,8 +989,51 @@ class InventoryFileReloaderTest {
         assertThat(appender.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
                 .startsWith("Inventory document " + this.file + " + the endpoint would drop a whole tree")
                 .contains("1 -> 0 agent range(s)")
-                .contains("(agents: {})")
+                // both spellings that reach the file's own tree, because the discovery page
+                // promises both and an operator told only one would think the other had stopped
+                // working. Not "exporters: {}", which the file may not write while discovery owns it
+                .contains("agents: {}")
+                .contains("riptide: {}")
                 .doesNotContain("exporters: {}"));
+    }
+
+    /**
+     * The twin of the test above, and the one #805 was about. A broad {@code riptide: {}} is the
+     * documented way to decommission everything the file still owns, so with discovery on it must
+     * publish rather than be refused: composition inserts an exporters tree into that map, and
+     * before the fix that silently revoked the declaration and wedged every poll.
+     */
+    @Test
+    void withDiscoveryOnABroadEmptyDeclarationDecommissionsTheFleet() throws Exception {
+        write("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """);
+        final InventoryConfig config = new InventoryConfig();
+        config.setFile(this.file);
+        final ComposedInventoryDocument composed = composedOver(config);
+        final Inventory composedInventory = new Inventory(this.profiles, composed);
+        composedInventory.load();
+        final var watcher = new InventoryFileReloader(new ConfigReloadProperties(), config,
+                composedInventory, this.poller, new MetricRegistry(), Optional.of(composed));
+        watcher.start();
+        try {
+            assertThat(composedInventory.snapshot().agentCount()).isEqualTo(1);
+            write("riptide: {}");
+            watcher.poll();
+        } finally {
+            watcher.stop();
+        }
+
+        assertThat(composedInventory.snapshot().agentCount())
+                .as("the operator asked for the fleet to be empty and the file still owns that tree")
+                .isZero();
+        assertThat(composedInventory.snapshot().exporterCount())
+                .as("discovery still owns the exporters tree, so it is unaffected")
+                .isPositive();
     }
 
     /**

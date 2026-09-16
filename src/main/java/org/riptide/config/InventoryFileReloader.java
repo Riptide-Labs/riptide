@@ -419,11 +419,17 @@ public class InventoryFileReloader {
      * something an operator can write: the file may not carry an exporters tree at all (the
      * composed document refuses one), and the renderer refuses an empty result, so the only tree
      * a composed candidate can drop is the file's agent ranges.
+     *
+     * <p>Both spellings that reach that tree are offered, because the discovery documentation
+     * promises both and an operator told only the narrow one would think the broad one had stopped
+     * working. The broad {@code riptide: {}} survives composition as of #805; before that fix it
+     * was silently revoked, which is exactly the confusion this clause has to avoid causing.</p>
      */
     private String emptyTreeAdvice() {
         return this.discovery == null
                 ? "To deliberately empty a tree, write it as an explicit empty mapping (agents: {} / exporters: {})"
-                : "To deliberately empty the agent ranges, write them as an explicit empty mapping (agents: {}); "
+                : "To deliberately empty the agent ranges, write them as an explicit empty mapping "
+                        + "(agents: {}, or riptide: {} for everything the file still owns); "
                         + "the exporters tree belongs to discovery, which never renders it empty";
     }
 

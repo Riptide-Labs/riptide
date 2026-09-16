@@ -311,7 +311,27 @@ public class ComposedInventoryDocument implements InventoryDocument, FileWatchTr
                             + "never have two possible sources. Remove the exporters tree from the file, or "
                             + "unset riptide.discovery.url.").formatted(this.file.name()));
         }
+        // `riptide: {}` declares BOTH trees deliberately empty, which is what lets the guard pass a
+        // decommission instead of refusing it as a half-written file. Inserting exporters below
+        // makes that map non-empty, so the declaration would be gone before the loader ever read
+        // it, and an operator emptying a twelve-range fleet would get every poll refused. Measured
+        // here, before the insert, because afterwards the evidence is destroyed. The test is
+        // ComposedInventoryDocumentTest.aBroadlyDeclaredEmptyTreeStaysDeclaredThroughComposition.
+        //
+        // Present-as-a-mapping, not merely present: a file's bare `riptide:` is null, which is not
+        // a declaration today and must not become one.
+        final boolean fileDeclaredBothTreesEmpty =
+                root.get("riptide") instanceof Map<?, ?> declared && declared.isEmpty();
         if (rendered != null) {
+            if (fileDeclaredBothTreesEmpty) {
+                // the same statement in the narrow spelling, which survives composition because
+                // nothing here looks inside `snmp`. A translation between two forms the loader
+                // already treats as equivalent, so the rule about what counts as a declaration
+                // stays in InventoryLoader alone and discovery-off keeps deciding it the one way.
+                // The exporters half of the file's declaration is necessarily dropped: with
+                // discovery on the file does not own that tree, and what it still owns is agents
+                riptide.put("snmp", new LinkedHashMap<>(Map.of("agents", new LinkedHashMap<>())));
+            }
             final Map<String, Object> exporters = new LinkedHashMap<>();
             rendered.byName().forEach((name, address) -> exporters.put(name, Map.of("address", address)));
             riptide.put("exporters", exporters);
