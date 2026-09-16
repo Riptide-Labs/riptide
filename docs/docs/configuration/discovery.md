@@ -122,11 +122,13 @@ Nothing else does.
 
 | Metric | Meaning |
 |---|---|
-| `discovery.targets` | Entries in the last rendered document. |
-| `discovery.skipped` | Entries dropped for want of a usable address. |
+| `discovery.targets` | Exporter entries in the inventory **currently serving**. It never describes a candidate that was composed and then refused, so it is safe to alert on. |
+| `discovery.skipped` | Entries the **most recent render** dropped for want of a usable address, whether or not the candidate built from it was published. |
 | `inventory.reload.successes` | Shared with the inventory file watcher. |
 | `inventory.reload.failures` | A refused or unreachable poll counts here. With discovery on, content validation runs on every fetch, so an endpoint that keeps answering with the same bad content is counted, and logged, on every poll rather than once. |
 | `inventory.reload.stale` | The endpoint's document differs from what is serving. |
+
+The two discovery gauges answer different questions and will legitimately disagree while a candidate is being refused: the first describes what is serving, the second describes what the endpoint last offered. That is deliberate. A device the endpoint keeps returning without a usable address is worth seeing precisely while the candidate around it is being rejected, which is when it explains the most.
 
 ## Limits
 

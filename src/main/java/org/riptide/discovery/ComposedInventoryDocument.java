@@ -73,7 +73,6 @@ public class ComposedInventoryDocument implements InventoryDocument, FileWatchTr
     private final Fetcher fetcher;
     private final Supplier<String> describe;
     private final DiscoveryConfig config;
-    private final AtomicInteger targets = new AtomicInteger();
     private final AtomicInteger skipped = new AtomicInteger();
     private volatile boolean degradedAtBoot;
     private volatile boolean endpointAbsent;
@@ -90,7 +89,6 @@ public class ComposedInventoryDocument implements InventoryDocument, FileWatchTr
         Objects.requireNonNull(metrics, "metrics");
         // remove-then-register, not Dropwizard's get-or-create: a restarted bean would otherwise
         // be handed the old bean's lambda, permanently reading dead fields
-        register(metrics, "discovery.targets", this.targets);
         register(metrics, "discovery.skipped", this.skipped);
     }
 
@@ -198,7 +196,11 @@ public class ComposedInventoryDocument implements InventoryDocument, FileWatchTr
         final List<TargetGroup> groups = ServiceDiscoveryParser.parse(json, this.describe.get());
         final RenderedExporters rendered =
                 ExporterRenderer.render(groups, this.config.getAddressLabels(), this.describe.get());
-        this.targets.set(rendered.byName().size());
+        // Only skipped is set here. discovery.targets is derived from the published inventory by
+        // DiscoveryTargetsGauge, because a value set at this point describes a candidate that the
+        // merge, the loader, the regression guard or a lost profile race may still reject (#807).
+        // skipped is deliberately render-time: a device the endpoint keeps offering with no usable
+        // address is worth seeing precisely while the candidate around it is being refused
         this.skipped.set(rendered.skipped());
         return merge(rendered);
     }
