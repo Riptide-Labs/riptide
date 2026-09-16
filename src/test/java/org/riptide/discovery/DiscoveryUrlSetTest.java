@@ -21,6 +21,9 @@ import org.springframework.context.annotation.Import;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import org.riptide.inventory.Inventory;
+import org.riptide.inventory.SnmpProfilesConfig;
+import java.util.Map;
 
 /**
  * {@link DiscoveryUrlSet}'s match outcome, read the way an operator actually reads it: through
@@ -49,6 +52,17 @@ class DiscoveryUrlSetTest {
         @Bean
         SecretResolvers secretResolvers() {
             return new SecretResolvers(List.of());
+        }
+
+        /**
+         * The inventory the target gauge reports. Built explicitly over the FILE document, not the
+         * primary composed one: an Inventory holding the composed document would fetch the endpoint
+         * during its @PostConstruct load, and this context's URL points at a host that does not
+         * exist. What this fixture owes DiscoveryConfiguration is a collaborator, not a decision.
+         */
+        @Bean
+        Inventory inventory(final FileInventoryDocument file) {
+            return new Inventory(new SnmpProfilesConfig(Map.of(), Map.of()), file);
         }
     }
 

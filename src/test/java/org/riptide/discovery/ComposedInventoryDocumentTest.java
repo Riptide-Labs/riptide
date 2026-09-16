@@ -164,8 +164,15 @@ class ComposedInventoryDocumentTest {
                 .hasMessageContaining("no exporter");
     }
 
+    /**
+     * Only the skipped gauge lives here, and only it is render-time. The target gauge moved to
+     * {@link DiscoveryTargetsGauge} and reads the published inventory, because a value set during
+     * composition describes a candidate that may still be refused (#807). Skipped stays render-time
+     * on purpose: a device the endpoint keeps offering with no usable address is worth seeing
+     * precisely while the candidate around it is being refused.
+     */
     @Test
-    void theGaugesReportWhatTheLastRenderProduced() {
+    void theSkippedGaugeReportsWhatTheLastRenderDropped() {
         final MetricRegistry metrics = new MetricRegistry();
         final DiscoveryConfig config = new DiscoveryConfig();
         config.setUrl("https://netbox.example.com/api/devices/");
@@ -182,8 +189,10 @@ class ComposedInventoryDocumentTest {
 
         document.text();
 
-        assertThat(metrics.getGauges().get("discovery.targets").getValue()).isEqualTo(1);
         assertThat(metrics.getGauges().get("discovery.skipped").getValue()).isEqualTo(1);
+        assertThat(metrics.getGauges())
+                .as("the target gauge is not this object's to register; it needs the serving inventory")
+                .doesNotContainKey("discovery.targets");
     }
 
     @Test

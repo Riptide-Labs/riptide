@@ -7,6 +7,7 @@ package org.riptide.discovery;
 
 import com.codahale.metrics.MetricRegistry;
 import org.riptide.inventory.FileInventoryDocument;
+import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventoryDocument;
 import org.riptide.secrets.SecretResolvers;
 import org.springframework.context.annotation.Bean;
@@ -60,5 +61,19 @@ public class DiscoveryConfiguration {
                                                                final DiscoveryConfig config,
                                                                final MetricRegistry metrics) {
         return new ComposedInventoryDocument(file, client::fetch, client::describe, config, metrics);
+    }
+
+    /**
+     * Registers {@code discovery.targets} against the published inventory.
+     *
+     * <p>Declared here, alongside the other discovery beans, so it exists exactly when discovery
+     * does. Gating it separately would be a second condition that could disagree with the one on
+     * this class. It takes {@link Inventory} rather than living on the composed document, which
+     * {@code Inventory} is itself constructed with and so cannot depend on in return.</p>
+     */
+    @Bean
+    public DiscoveryTargetsGauge discoveryTargetsGauge(final Inventory inventory,
+                                                       final MetricRegistry metrics) {
+        return new DiscoveryTargetsGauge(inventory, metrics);
     }
 }
