@@ -175,6 +175,10 @@ public final class InventoryLoader {
             // honoured at any ancestor, because the reasoning is the ancestor's too: a torn
             // write dies at a bare or missing key, and `snmp: {}` or `riptide: {}` can only
             // be authored — truncation never replaces a populated tree with a literal {}
+            // One other site reads this same shape: ComposedInventoryDocument.merge translates a
+            // broad `riptide: {}` into the narrow `snmp.agents: {}` before inserting the exporters
+            // that would otherwise make this map non-empty and silently revoke the declaration
+            // (#805). Change the rule here and that translation has to move with it.
             final boolean riptideEmpty = root.get("riptide") instanceof java.util.Map<?, ?> r && r.isEmpty();
             final boolean snmpEmpty = riptide.get("snmp") instanceof java.util.Map<?, ?> m && m.isEmpty();
             return new ParseResult(new InventorySnapshot(
