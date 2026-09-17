@@ -7,8 +7,12 @@ package org.riptide.discovery;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.SortedMap;
+import java.util.TreeMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -246,6 +250,34 @@ class ExporterRendererTest {
                 group(List.of("no-ip"), Map.of("__meta_netbox_name", "no-ip")))))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("no exporter");
+    }
+
+    /**
+     * The ordering is the record's, and it is natural ordering whatever the caller hands in.
+     *
+     * <p>Two things are pinned here that the type alone did not give. The component was declared
+     * {@code SortedMap}, which reads as a guarantee and was not one: {@code TreeMap}'s copy
+     * constructor is overloaded, and the {@code SortedMap} form inherits the source's comparator,
+     * so a reverse-ordered map in produced a reverse-ordered document out. And a caller with no
+     * ordering at all, which is what {@link ExporterRenderer} now hands over, must still come back
+     * ordered (#808).</p>
+     */
+    @Test
+    void theRecordOrdersWhateverItIsHandedByName() {
+        final Map<String, String> unordered = new LinkedHashMap<>();
+        unordered.put("zulu", "10.0.0.26");
+        unordered.put("alpha", "10.0.0.1");
+
+        assertThat(new RenderedExporters(unordered, 0).byName().keySet())
+                .as("an unordered map is what the renderer hands over")
+                .containsExactly("alpha", "zulu");
+
+        final SortedMap<String, String> reversed = new TreeMap<>(Comparator.reverseOrder());
+        reversed.putAll(unordered);
+
+        assertThat(new RenderedExporters(reversed, 0).byName().keySet())
+                .as("a caller's comparator must not decide the document's order")
+                .containsExactly("alpha", "zulu");
     }
 
     @Test
