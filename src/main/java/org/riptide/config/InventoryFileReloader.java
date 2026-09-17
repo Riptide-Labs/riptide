@@ -432,11 +432,7 @@ public class InventoryFileReloader {
      * was silently revoked, which is exactly the confusion this clause has to avoid causing.</p>
      */
     private String emptyTreeAdvice() {
-        return this.discovery == null
-                ? "To deliberately empty a tree, write it as an explicit empty mapping (agents: {} / exporters: {})"
-                : "To deliberately empty the agent ranges, write them as an explicit empty mapping "
-                        + "(agents: {}, or riptide: {} for everything the file still owns); "
-                        + "the exporters tree belongs to discovery, which never renders it empty";
+        return this.inventory.documentEmptyTreeAdvice();
     }
 
     private static String strictUtf8(final byte[] content, final String subject) {

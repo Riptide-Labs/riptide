@@ -183,13 +183,13 @@ public class Inventory {
             // spelling was unified with its two siblings when it moved to the seam (#803)
             throw new IllegalStateException(
                     ("Refusing to publish an inventory that drops a whole tree: %d -> %d agent "
-                            + "range(s), %d -> %d enrichment entrie(s) (%s). To "
-                            + "deliberately empty a tree, write it as an explicit empty mapping "
-                            + "(agents: {} / exporters: {}); to stop polling a fleet while keeping "
-                            + "its entries, set enabled: false on a covering range.")
+                            + "range(s), %d -> %d enrichment entrie(s) (%s). %s; to stop polling a "
+                            + "fleet while keeping its entries, set enabled: false on a covering "
+                            + "range.")
                             .formatted(this.active.agentCount(), snapshot.agentCount(),
                                     this.active.exporterCount(), snapshot.exporterCount(),
-                                    this.document.partialReadAdvice()));
+                                    this.document.partialReadAdvice(),
+                                    this.document.emptyTreeAdvice()));
         }
     }
 
@@ -199,9 +199,14 @@ public class Inventory {
      * (unset)} rather than a bare {@code null} when no file is configured, which discovery makes a
      * valid configuration.
      *
-     * <p>The one spelling, for every sentence outside this package that has to name the inventory's
-     * source. {@code ConfigFileReloader} built its own from {@code InventoryConfig.getFile()},
-     * which was the third place that remembered this and got both of those cases wrong.</p>
+     * <p>The one spelling of the <em>name</em>, for every sentence outside this package that has to
+     * name the inventory's source. {@code ConfigFileReloader} built its own from
+     * {@code InventoryConfig.getFile()}, which was the third place that remembered this and got
+     * both of those cases wrong.</p>
+     *
+     * <p>A sentence that needs the noun as well as the name wants {@link #documentSubject()}. This
+     * one is for a slot that already has a noun in front of it, as in "reloaded from {@code {}}".
+     * Handing this to {@code InventoryLoader} instead produces a failure with no noun at all.</p>
      */
     public String documentName() {
         return this.document.name();
@@ -227,6 +232,11 @@ public class Inventory {
     /** What to tell an operator when the document was read while something else was writing it. */
     public String documentPartialReadAdvice() {
         return this.document.partialReadAdvice();
+    }
+
+    /** How to empty a tree on purpose, which depends on which trees this document owns. */
+    public String documentEmptyTreeAdvice() {
+        return this.document.emptyTreeAdvice();
     }
 
     /** The profiles the serving snapshot was built from, for a reloader re-parsing the file. */

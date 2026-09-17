@@ -94,4 +94,17 @@ public interface InventoryDocument {
     default String partialReadAdvice() {
         return "a partially written file reads this way; write atomically via mv";
     }
+
+    /**
+     * How to empty a tree on purpose, which is what tells a deliberate decommission apart from the
+     * torn read {@link #partialReadAdvice()} describes.
+     *
+     * <p>Here for the same reason as the other two: which trees the operator can empty depends on
+     * which of them this document owns. The reloader used to branch on whether discovery was wired
+     * to answer this, which made it a fourth site remembering what kind of source was in play.</p>
+     */
+    default String emptyTreeAdvice() {
+        return "To deliberately empty a tree, write it as an explicit empty mapping "
+                + "(agents: {} / exporters: {})";
+    }
 }

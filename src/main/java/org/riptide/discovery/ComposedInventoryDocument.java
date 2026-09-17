@@ -223,6 +223,18 @@ public class ComposedInventoryDocument implements InventoryDocument, FileWatchTr
     }
 
     /**
+     * {@code exporters: {}} is not something an operator can write here: the file may not carry an
+     * exporters tree at all, because this document refuses one, and the renderer refuses an empty
+     * result. So the only tree the file can still empty is the agent ranges.
+     */
+    @Override
+    public String emptyTreeAdvice() {
+        return "To deliberately empty the agent ranges, write them as an explicit empty mapping "
+                + "(agents: {}, or riptide: {} for everything the file still owns); "
+                + "the exporters tree belongs to discovery, which never renders it empty";
+    }
+
+    /**
      * The endpoint's answer can be short as easily as the file's can, and neither is fixed by an
      * {@code mv} the operator runs: a response read mid-write is the endpoint's business, and the
      * poll that follows is what heals it. Naming the file's remedy here would name a mechanism that
@@ -230,7 +242,7 @@ public class ComposedInventoryDocument implements InventoryDocument, FileWatchTr
      */
     @Override
     public String partialReadAdvice() {
-        return "a short read of either half reads this way; the next poll composes it again";
+        return "a short read of either half reads this way; wait for the next poll, which composes it again";
     }
 
     /**
