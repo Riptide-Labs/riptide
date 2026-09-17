@@ -47,6 +47,12 @@ public class DiscoveryConfiguration {
         return new DiscoveryClient(config, secretResolvers);
     }
 
+    /** The source the {@code riptide.discovery.type} key selects; see {@link DiscoverySource}. */
+    @Bean
+    public DiscoverySource discoverySource(final DiscoveryClient client) {
+        return new ServiceDiscoverySource(client::fetch, client::describe);
+    }
+
     /**
      * Primary, so {@code Inventory} takes the composed document without knowing discovery exists,
      * and {@code ConfigFileReloader}'s two {@code rebuildAndSwap} calls reach it through
@@ -58,9 +64,10 @@ public class DiscoveryConfiguration {
     @Primary
     public ComposedInventoryDocument composedInventoryDocument(final FileInventoryDocument file,
                                                                final DiscoveryClient client,
+                                                               final DiscoverySource source,
                                                                final DiscoveryConfig config,
                                                                final MetricRegistry metrics) {
-        return new ComposedInventoryDocument(file, client::fetch, client::describe, config, metrics);
+        return new ComposedInventoryDocument(file, source, client::describe, config, metrics);
     }
 
     /**

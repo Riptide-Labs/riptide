@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.riptide.discovery.ComposedInventoryDocument;
 import org.riptide.discovery.DiscoveryConfig;
+import org.riptide.discovery.ServiceDiscoverySource;
 import org.riptide.inventory.FileInventoryDocument;
 import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventoryConfig;
@@ -898,11 +899,12 @@ class InventoryFileReloaderTest {
         discovery.setUrl("https://netbox.example.com/api/devices/");
         discovery.setInterval(Duration.ofHours(1));
         return new ComposedInventoryDocument(new FileInventoryDocument(config),
-                () -> """
+                new ServiceDiscoverySource(() -> """
                         [{"targets":["firewall-01"],
                           "labels":{"__meta_netbox_name":"firewall-01",
                                     "__meta_netbox_primary_ip4":"10.0.0.1"}}]
                         """.getBytes(StandardCharsets.UTF_8),
+                        () -> "the endpoint"),
                 () -> "the endpoint", discovery, new MetricRegistry());
     }
 
@@ -1060,7 +1062,7 @@ class InventoryFileReloaderTest {
         discovery.setInterval(Duration.ofHours(1));
         final java.util.concurrent.atomic.AtomicBoolean up = new java.util.concurrent.atomic.AtomicBoolean();
         final ComposedInventoryDocument composed = new ComposedInventoryDocument(new FileInventoryDocument(config),
-                () -> {
+                new ServiceDiscoverySource(() -> {
                     if (!up.get()) {
                         throw new IOException("connection refused");
                     }
@@ -1069,7 +1071,7 @@ class InventoryFileReloaderTest {
                               "labels":{"__meta_netbox_name":"firewall-01",
                                         "__meta_netbox_primary_ip4":"10.0.0.1"}}]
                             """.getBytes(StandardCharsets.UTF_8);
-                },
+                }, () -> "the endpoint"),
                 () -> "the endpoint", discovery, new MetricRegistry());
         final Inventory composedInventory = new Inventory(this.profiles, composed);
         composedInventory.load();
@@ -1129,7 +1131,7 @@ class InventoryFileReloaderTest {
                 new java.util.concurrent.atomic.AtomicBoolean(true);
         final ComposedInventoryDocument composed = new ComposedInventoryDocument(
                 new FileInventoryDocument(config),
-                () -> {
+                new ServiceDiscoverySource(() -> {
                     if (!present.get()) {
                         // exactly what DiscoveryClient raises for a 404, and the only ENDPOINT
                         // failure the composed document turns into absence (a missing inventory
@@ -1141,7 +1143,7 @@ class InventoryFileReloaderTest {
                               "labels":{"__meta_netbox_name":"firewall-01",
                                         "__meta_netbox_primary_ip4":"10.0.0.1"}}]
                             """.getBytes(StandardCharsets.UTF_8);
-                },
+                }, () -> "the endpoint"),
                 () -> "the endpoint", discovery, new MetricRegistry());
         final Inventory composedInventory = new Inventory(this.profiles, composed);
         composedInventory.load();
