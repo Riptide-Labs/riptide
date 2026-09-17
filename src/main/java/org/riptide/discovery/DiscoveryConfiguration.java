@@ -48,6 +48,42 @@ public class DiscoveryConfiguration {
     }
 
     /**
+     * The source {@code riptide.discovery.type} selects.
+     *
+     * <p>Both read NetBox in the deployments this was built for; they differ in what they speak to.
+     * One reads a Prometheus service discovery document, which on NetBox means a plugin is
+     * installed. The other reads NetBox's own device API and needs nothing installed, pages its
+     * results and accepts NetBox's filters.</p>
+     */
+    @Bean
+    public DiscoverySource discoverySource(final DiscoveryClient client, final DiscoveryConfig config) {
+        return switch (config.sourceType()) {
+            case PROMETHEUS_SD -> new ServiceDiscoverySource(client::fetch, client::describe);
+            case NETBOX_API -> {
+                // address-labels names the labels the renderer READS, and this source controls both
+                // sides: it emits the NetBox names and the renderer must look for the same ones. An
+                // operator who customised the key for a prometheus-sd producer and then switched
+                // type would match no label on any device, so every one would fall through to the
+                // device name, fail the strict address check, be skipped, and boot would die with
+                // "yielded no exporter entries" naming neither key. Refused here instead.
+                if (!NetboxDeviceSource.EMITTED_ADDRESS_LABELS.equals(config.getAddressLabels())) {
+                    throw new IllegalStateException(
+                            ("riptide.discovery.address-labels cannot be customised while "
+                                    + "riptide.discovery.type is '%s': this source emits %s and the "
+                                    + "renderer must read the same names. Leave the labels at their "
+                                    + "default, or use type '%s' where the producer chooses them.")
+                                    .formatted(DiscoverySourceType.NETBOX_API.key(),
+                                            NetboxDeviceSource.EMITTED_ADDRESS_LABELS,
+                                            DiscoverySourceType.PROMETHEUS_SD.key()));
+                }
+                yield new NetboxDeviceSource(
+                        NetboxDeviceSource.firstPage(config.endpoint(), config.getFilter()),
+                        client::fetchPage, client::describe);
+            }
+        };
+    }
+
+    /**
      * Primary, so {@code Inventory} takes the composed document without knowing discovery exists,
      * and {@code ConfigFileReloader}'s two {@code rebuildAndSwap} calls reach it through
      * {@code Inventory}. {@code InventoryFileReloader} is the one consumer that does know: it
@@ -58,9 +94,10 @@ public class DiscoveryConfiguration {
     @Primary
     public ComposedInventoryDocument composedInventoryDocument(final FileInventoryDocument file,
                                                                final DiscoveryClient client,
+                                                               final DiscoverySource source,
                                                                final DiscoveryConfig config,
                                                                final MetricRegistry metrics) {
-        return new ComposedInventoryDocument(file, client::fetch, client::describe, config, metrics);
+        return new ComposedInventoryDocument(file, source, client::describe, config, metrics);
     }
 
     /**

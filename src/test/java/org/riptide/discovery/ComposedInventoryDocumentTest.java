@@ -49,7 +49,7 @@ class ComposedInventoryDocumentTest {
         config.setUrl("https://netbox.example.com/api/devices/");
         return new ComposedInventoryDocument(
                 new FixedFile(fileText),
-                () -> json.getBytes(StandardCharsets.UTF_8),
+                new ServiceDiscoverySource(() -> json.getBytes(StandardCharsets.UTF_8), () -> "the endpoint"),
                 () -> "the endpoint",
                 config,
                 new MetricRegistry());
@@ -178,11 +178,12 @@ class ComposedInventoryDocumentTest {
         config.setUrl("https://netbox.example.com/api/devices/");
         final ComposedInventoryDocument document = new ComposedInventoryDocument(
                 new FixedFile(null),
-                () -> """
+                new ServiceDiscoverySource(() -> """
                         [{"targets":["a"],"labels":{"__meta_netbox_name":"a",
                           "__meta_netbox_primary_ip4":"10.0.0.1"}},
                          {"targets":["b"],"labels":{"__meta_netbox_name":"b"}}]
                         """.getBytes(StandardCharsets.UTF_8),
+                        () -> "the endpoint"),
                 () -> "the endpoint",
                 config,
                 metrics);
@@ -215,10 +216,10 @@ class ComposedInventoryDocumentTest {
     }
 
     private static ComposedInventoryDocument composed(final String fileText,
-                                                      final ComposedInventoryDocument.Fetcher fetcher) {
+                                                      final ServiceDiscoverySource.Fetcher fetcher) {
         final DiscoveryConfig config = new DiscoveryConfig();
         config.setUrl("https://netbox.example.com/api/devices/");
-        return new ComposedInventoryDocument(new FixedFile(fileText), fetcher, () -> "the endpoint", config,
+        return new ComposedInventoryDocument(new FixedFile(fileText), new ServiceDiscoverySource(fetcher, () -> "the endpoint"), () -> "the endpoint", config,
                 new MetricRegistry());
     }
 
@@ -428,9 +429,9 @@ class ComposedInventoryDocumentTest {
         config.setUrl("https://netbox.example.com/api/devices/");
         return new ComposedInventoryDocument(
                 new FixedFile(null),
-                () -> {
+                new ServiceDiscoverySource(() -> {
                     throw failure;
-                },
+                }, () -> "the endpoint"),
                 () -> "the endpoint",
                 config,
                 new MetricRegistry());
@@ -483,7 +484,8 @@ class ComposedInventoryDocumentTest {
     private static ComposedInventoryDocument withFile(final InventoryDocument file) {
         final DiscoveryConfig config = new DiscoveryConfig();
         config.setUrl("https://netbox.example.com/api/devices/");
-        return new ComposedInventoryDocument(file, () -> DEVICES.getBytes(StandardCharsets.UTF_8),
+        return new ComposedInventoryDocument(file,
+                new ServiceDiscoverySource(() -> DEVICES.getBytes(StandardCharsets.UTF_8), () -> "the endpoint"),
                 () -> "the endpoint", config, new MetricRegistry());
     }
 

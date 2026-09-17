@@ -28,16 +28,53 @@ Both spellings work: the narrow `riptide.snmp.agents: {}`, and the broad `riptid
 
 The third form documented for a file-only inventory, `exporters: {}`, is not available here. The file may not declare an exporters tree at all while discovery owns it, so writing one is refused rather than read as a decommission.
 
+## Choosing a source
+
+There are two, and `riptide.discovery.type` picks between them. Unset means `prometheus-sd`, so an existing deployment is unaffected.
+
+| Type | Reads | Needs a NetBox plugin | Pages | Filters |
+|---|---|---|---|---|
+| `prometheus-sd` (default) | A Prometheus HTTP service discovery document | Yes, `netbox-plugin-prometheus-sd` | No | No |
+| `netbox-api` | NetBox's own device API | No | Yes | Yes |
+
+Both read NetBox in most deployments; they differ in what they speak to. The names say that rather than naming the product, because naming one of them "netbox" would suggest the other does not read NetBox.
+
+Pick `netbox-api` if you cannot install a NetBox plugin, or if your inventory is large enough that fetching all of it on every poll is a cost you would rather not pay. The plugin endpoint disables pagination and supports no conditional requests, so every poll transfers a full serialization of every visible device.
+
+Pick `prometheus-sd` if the plugin is already installed and working, or if your source of truth is not NetBox at all. That format is a contract many producers emit, not a NetBox feature.
+
+Point `riptide.discovery.url` at whichever endpoint the type needs: the plugin's path for one, `/api/dcim/devices/` for the other.
+
+### Narrowing what NetBox returns
+
+`riptide.discovery.filter` is passed to NetBox in its own query terms, so you can develop it against NetBox directly and paste in what works:
+
+```yaml
+riptide:
+  discovery:
+    type: netbox-api
+    url: https://netbox.example.com/api/dcim/devices/
+    filter: status=active&role=leaf&role=spine
+```
+
+It is read by the `netbox-api` source only. The service discovery reader takes its filtering from whatever produced the document.
+
+A filter matching nothing is refused rather than publishing an empty exporters tree, which is the same rule an empty endpoint answer gets. If discovery stops updating right after you add a filter, that is the first thing to check.
+
+The walk requests a stable ordering, so a device added while it is in progress appends rather than shifting the pages still to be read.
+
 ## Configuration
 
 | Key | Default | Meaning |
 |---|---|---|
-| `riptide.discovery.url` | unset | The endpoint. Unset or blank disables discovery. |
+| `riptide.discovery.url` | unset | The endpoint. Unset or blank disables discovery. Point it at whichever endpoint the type needs. |
+| `riptide.discovery.type` | `prometheus-sd` | Which source to read: `prometheus-sd` or `netbox-api`. An unrecognised value fails startup, naming what is accepted. |
+| `riptide.discovery.filter` | unset | Narrows what NetBox returns, in its own query terms. Read by `netbox-api` only. |
 | `riptide.discovery.token` | unset | Credential, as a [secret reference](secret-references.md). |
 | `riptide.discovery.auth-scheme` | `Token` | Paired with the token in the `Authorization` header. NetBox expects `Token`, not `Bearer`. With a token set, a blank value is refused at startup naming the key, rather than treated as unset like the URL: it would send an `Authorization` header with no scheme, which an endpoint rejects with nothing naming the scheme. Leave the key out to get the default. With no token set the scheme is never read, so a blank value is harmless and startup is unaffected. |
 | `riptide.discovery.interval` | `60s` | Poll interval. Zero or negative disables the watcher entirely; see [Startup](#startup). |
 | `riptide.discovery.timeout` | `10s` | Bounds the connect, each read, and the whole response. |
-| `riptide.discovery.address-labels` | `__meta_netbox_primary_ip4,__meta_netbox_primary_ip6` | Labels consulted in order for an address. |
+| `riptide.discovery.address-labels` | `__meta_netbox_primary_ip4,__meta_netbox_primary_ip6` | Labels consulted in order for an address. Customising it while `type` is `netbox-api` is refused at startup: that source emits these two names itself, so a different list would match nothing and every device would be skipped. |
 
 Example against the NetBox service discovery plugin:
 

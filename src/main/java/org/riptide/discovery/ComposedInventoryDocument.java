@@ -63,14 +63,8 @@ import java.util.function.Supplier;
 @Slf4j
 public class ComposedInventoryDocument implements InventoryDocument, FileWatchTrigger.Source {
 
-    /** What a discovery fetch answers with; an interface so tests need no HTTP server. */
-    @FunctionalInterface
-    public interface Fetcher {
-        byte[] fetch() throws IOException;
-    }
-
     private final InventoryDocument file;
-    private final Fetcher fetcher;
+    private final DiscoverySource source;
     private final Supplier<String> describe;
     private final DiscoveryConfig config;
     private final AtomicInteger skipped = new AtomicInteger();
@@ -78,12 +72,12 @@ public class ComposedInventoryDocument implements InventoryDocument, FileWatchTr
     private volatile boolean endpointAbsent;
 
     public ComposedInventoryDocument(final InventoryDocument file,
-                                     final Fetcher fetcher,
+                                     final DiscoverySource source,
                                      final Supplier<String> describe,
                                      final DiscoveryConfig config,
                                      final MetricRegistry metrics) {
         this.file = Objects.requireNonNull(file);
-        this.fetcher = Objects.requireNonNull(fetcher);
+        this.source = Objects.requireNonNull(source);
         this.describe = Objects.requireNonNull(describe);
         this.config = Objects.requireNonNull(config);
         Objects.requireNonNull(metrics, "metrics");
@@ -104,14 +98,14 @@ public class ComposedInventoryDocument implements InventoryDocument, FileWatchTr
      */
     @Override
     public String text() {
-        final byte[] json;
+        final List<TargetGroup> groups;
         try {
-            json = this.fetcher.fetch();
+            groups = this.source.targets();
         } catch (final IOException e) {
             throw new IllegalStateException(
                     "%s could not be read: %s".formatted(this.describe.get(), e.getMessage()), e);
         }
-        return compose(json);
+        return compose(groups);
     }
 
     /**
@@ -132,9 +126,9 @@ public class ComposedInventoryDocument implements InventoryDocument, FileWatchTr
      */
     @Override
     public String bootText() {
-        final byte[] json;
+        final List<TargetGroup> groups;
         try {
-            json = this.fetcher.fetch();
+            groups = this.source.targets();
         } catch (final IOException e) {
             // composed first, warned after: the merge can still fail boot with the endpoint down
             // (an exporters tree in the file is refused either way, and so is an unparseable
@@ -150,7 +144,7 @@ public class ComposedInventoryDocument implements InventoryDocument, FileWatchTr
             return degraded;
         }
         this.degradedAtBoot = false;
-        return compose(json);
+        return compose(groups);
     }
 
     /**
@@ -192,8 +186,7 @@ public class ComposedInventoryDocument implements InventoryDocument, FileWatchTr
         return this.degradedAtBoot;
     }
 
-    private String compose(final byte[] json) {
-        final List<TargetGroup> groups = ServiceDiscoveryParser.parse(json, this.describe.get());
+    private String compose(final List<TargetGroup> groups) {
         final RenderedExporters rendered =
                 ExporterRenderer.render(groups, this.config.getAddressLabels(), this.describe.get());
         // Only skipped is set here. discovery.targets is derived from the published inventory by

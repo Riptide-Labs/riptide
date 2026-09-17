@@ -43,6 +43,17 @@ public class DiscoveryConfig {
     private String url;
 
     /**
+     * Which source to read, as one of {@link DiscoverySourceType}'s keys. Unset means the
+     * Prometheus service discovery reader, so a deployment that predates this key behaves exactly
+     * as it did. This chooses HOW discovery reads; whether it runs at all is {@link #url} alone.
+     *
+     * <p>A String rather than the enum so an unrecognised value fails with a message this project
+     * writes, naming the key, the value and what is accepted, instead of a binder stack trace. The
+     * same reason {@link #url} is a String.</p>
+     */
+    private String type;
+
+    /**
      * Credential for the endpoint, as a secret reference like every other credential here. NetBox
      * wants its API token; a producer needing no authentication leaves this unset.
      */
@@ -72,6 +83,18 @@ public class DiscoveryConfig {
     private Duration timeout = Duration.ofSeconds(10);
 
     /**
+     * Narrows what the source returns, in the endpoint's own query terms, so a large inventory is
+     * not fetched whole on every poll. Read by the NetBox device source, which appends it to the
+     * device request; the Prometheus service discovery reader ignores it, because that endpoint
+     * takes its filtering from whatever produced the document.
+     *
+     * <p>Deliberately NetBox's own vocabulary rather than one invented here, for example
+     * {@code status=active&role=leaf&role=spine}. An operator can develop it against NetBox
+     * directly and paste in what already works.</p>
+     */
+    private String filter;
+
+    /**
      * Labels consulted in order for an entry's address, first one present wins. The default pair is
      * what the NetBox service discovery plugin emits; every IP it emits already has its CIDR mask
      * stripped. When no label in this list is present the target itself is used, which is what makes
@@ -79,6 +102,17 @@ public class DiscoveryConfig {
      */
     private List<String> addressLabels =
             List.of("__meta_netbox_primary_ip4", "__meta_netbox_primary_ip6");
+
+    /**
+     * The source an operator selected, defaulting to the Prometheus service discovery reader.
+     *
+     * @throws IllegalStateException naming the key, the value and every accepted value
+     */
+    public DiscoverySourceType sourceType() {
+        return this.type == null || this.type.isBlank()
+                ? DiscoverySourceType.PROMETHEUS_SD
+                : DiscoverySourceType.parse(this.type);
+    }
 
     /**
      * The endpoint as a {@link URL}.

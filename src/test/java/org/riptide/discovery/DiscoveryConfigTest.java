@@ -79,4 +79,41 @@ class DiscoveryConfigTest {
 
         assertThat(config.endpoint().getHost()).isEqualTo("netbox.example.com");
     }
+
+    @Test
+    void theTypeUnsetSelectsTheServiceDiscoveryReader() {
+        assertThat(new DiscoveryConfig().sourceType())
+                .as("a deployment that predates this key behaves exactly as it did")
+                .isEqualTo(DiscoverySourceType.PROMETHEUS_SD);
+    }
+
+    @Test
+    void aBlankTypeAlsoSelectsTheDefault() {
+        final DiscoveryConfig config = new DiscoveryConfig();
+        config.setType("   ");
+
+        assertThat(config.sourceType()).isEqualTo(DiscoverySourceType.PROMETHEUS_SD);
+    }
+
+    @Test
+    void theTypeCanNameTheNativeSource() {
+        final DiscoveryConfig config = new DiscoveryConfig();
+        config.setType("netbox-api");
+
+        assertThat(config.sourceType()).isEqualTo(DiscoverySourceType.NETBOX_API);
+    }
+
+    @Test
+    void anUnrecognisedTypeFailsNamingTheKeyTheValueAndWhatIsAccepted() {
+        final DiscoveryConfig config = new DiscoveryConfig();
+        config.setType("netbox");
+
+        assertThatThrownBy(config::sourceType)
+                .as("a source that quietly fell back is one an operator cannot tell they mistyped")
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("riptide.discovery.type")
+                .hasMessageContaining("'netbox'")
+                .hasMessageContaining("'prometheus-sd'")
+                .hasMessageContaining("'netbox-api'");
+    }
 }

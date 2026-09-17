@@ -64,10 +64,10 @@ class DiscoveryTargetsGaugeTest {
     }
 
     private static ComposedInventoryDocument composed(final String fileText,
-                                                      final ComposedInventoryDocument.Fetcher fetcher) {
+                                                      final ServiceDiscoverySource.Fetcher fetcher) {
         final DiscoveryConfig config = new DiscoveryConfig();
         config.setUrl("https://netbox.example.com/api/devices/");
-        return new ComposedInventoryDocument(new FixedFile(fileText), fetcher, () -> "the endpoint", config,
+        return new ComposedInventoryDocument(new FixedFile(fileText), new ServiceDiscoverySource(fetcher, () -> "the endpoint"), () -> "the endpoint", config,
                 new MetricRegistry());
     }
 
@@ -99,7 +99,7 @@ class DiscoveryTargetsGaugeTest {
 
     @Test
     void aPollThatFailsBeforeAnyCandidateDoesNotMoveTheGauge() {
-        final AtomicReference<ComposedInventoryDocument.Fetcher> fetcher =
+        final AtomicReference<ServiceDiscoverySource.Fetcher> fetcher =
                 new AtomicReference<>(() -> ONE_DEVICE.getBytes(StandardCharsets.UTF_8));
         final ComposedInventoryDocument document = composed(AGENTS, () -> fetcher.get().fetch());
         final Inventory inventory = new Inventory(profiles(), document);
@@ -178,7 +178,8 @@ class DiscoveryTargetsGaugeTest {
         // this very name and this test would see it
         final MetricRegistry metrics = new MetricRegistry();
         final ComposedInventoryDocument document = new ComposedInventoryDocument(
-                new MutableFile(fileText), () -> answer.get().getBytes(StandardCharsets.UTF_8),
+                new MutableFile(fileText),
+                new ServiceDiscoverySource(() -> answer.get().getBytes(StandardCharsets.UTF_8), () -> "the endpoint"),
                 () -> "the endpoint", config, metrics);
         final Inventory inventory = new Inventory(profiles(), document);
         inventory.load();
