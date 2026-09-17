@@ -156,13 +156,7 @@ public final class InventoryLoader {
             agentCandidates = validateAgents(profiles, section(snmp, "agents", problems), warnings, problems);
             exporterCandidates = validateExporters(section(riptide, "exporters", problems), warnings, problems);
         } catch (final IllegalStateException structural) {
-            // a tree level that is not a mapping cannot be walked, so it ends the pass —
-            // but never alone. Whatever was collected before it must still reach the
-            // operator, or a stray key at one level plus a bad section below it reports
-            // the section and silently swallows the key, leaving them blinder than they
-            // were before problems were collected at all
-            problems.add(problemText(structural, "inventory file", sourceName), structural);
-            throw problems.report(sourceName);
+            throw structuralReport(problems, structural, sourceName);
         }
         if (!problems.isEmpty()) {
             // the report names the file itself, so it is raised outside the wrap below
@@ -227,10 +221,7 @@ public final class InventoryLoader {
         try {
             riptide = section(root, "riptide", problems);
         } catch (final IllegalStateException structural) {
-            // the same wrap as parseWithWarnings: the non-mapping level joins whatever was
-            // collected before it, so a stray non-string root key is not swallowed by it
-            problems.add(problemText(structural, "inventory file", sourceName), structural);
-            throw problems.report(sourceName);
+            throw structuralReport(problems, structural, sourceName);
         }
         if (!problems.isEmpty()) {
             throw problems.report(sourceName);
@@ -346,6 +337,31 @@ public final class InventoryLoader {
         private static String entries(final int count) {
             return count == 1 ? "1 entry" : count + " entries";
         }
+    }
+
+    /**
+     * The report for a structural failure that ended a pass, joined with whatever was collected
+     * before it.
+     *
+     * <p>A tree level that is not a mapping cannot be walked, so it ends the pass — but never
+     * alone. Whatever was collected before it must still reach the operator, or a stray key at one
+     * level plus a bad section below it reports the section and silently swallows the key, leaving
+     * them blinder than they were before problems were collected at all.</p>
+     *
+     * <p>One copy for both entry points. {@link #parseWithWarnings} and {@link #readTopLevels} each
+     * restated these two statements, so the rule for reporting a malformed document had two sites
+     * and the next change to it had to reach both (#809).</p>
+     *
+     * <p>Returns the exception rather than throwing it, so the caller writes {@code throw} and the
+     * compiler still sees the {@code catch} block end the flow. A void helper that threw would
+     * leave the finals assigned inside {@link #parseWithWarnings}'s {@code try} looking possibly
+     * unassigned to definite-assignment analysis.</p>
+     */
+    private static IllegalStateException structuralReport(final Problems problems,
+                                                          final IllegalStateException structural,
+                                                          final String sourceName) {
+        problems.add(problemText(structural, "inventory file", sourceName), structural);
+        return problems.report(sourceName);
     }
 
     /**
