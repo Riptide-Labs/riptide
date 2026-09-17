@@ -461,11 +461,12 @@ public class ConfigFileReloader {
                 // here, and with discovery on a rebuild failure is as likely to be the endpoint's
                 // as the file's. Inventory.documentName() is the one spelling; this was the third
                 log.warn(("Config reloaded, but the inventory was left alone: rebuilding it from %s would "
-                        + "have dropped a whole tree that is currently serving (a partially written file "
-                        + "reads this way; write atomically via mv, or declare a deliberate decommission "
-                        + "as an explicit empty mapping, e.g. agents: {}). The credential and profile "
-                        + "changes in this edit are NOT serving until the file is whole; they are retried "
-                        + "every poll").formatted(this.inventory.documentName()));
+                        + "have dropped a whole tree that is currently serving (%s, or declare a "
+                        + "deliberate decommission as an explicit empty mapping, e.g. agents: {}). The "
+                        + "credential and profile changes in this edit are NOT serving until the %s is "
+                        + "whole; they are retried every poll")
+                        .formatted(this.inventory.documentName(),
+                                this.inventory.documentPartialReadAdvice(), this.inventory.documentNoun()));
             } else {
                 inventoryPublished = true;
                 // the supersede, at the earliest true point: the edit is fully published,
@@ -495,9 +496,12 @@ public class ConfigFileReloader {
             // the remediation clause below the last bullet, orphaned from the sentence it
             // completes — at the one site that explains a credential rotation is not live.
             // Subject from Inventory.documentName(), for the reason the sibling WARN above gives
-            log.warn("Config reloaded, but the inventory could not be rebuilt from {}. The credential "
-                    + "and profile changes in this edit are NOT serving until the inventory file is fixed; "
-                    + "they are retried every poll. The inventory file says: {}",
+            // the noun pre-formatted, the values left to SLF4J: the sibling WARN above is fully
+            // pre-formatted because it teaches the literal "agents: {}", which SLF4J would eat
+            log.warn(("Config reloaded, but the inventory could not be rebuilt from {}. The credential "
+                    + "and profile changes in this edit are NOT serving until the %s is fixed; "
+                    + "they are retried every poll. The %s says: {}")
+                    .formatted(this.inventory.documentNoun(), this.inventory.documentNoun()),
                     this.inventory.documentName(), e.getMessage());
         }
         if (inventoryPublished) {

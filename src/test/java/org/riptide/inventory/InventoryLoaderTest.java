@@ -1478,7 +1478,11 @@ class InventoryLoaderTest {
             yaml.append("        %d: { alias: \"  \" }\n".formatted(ifIndex));
         }
 
-        final var thrown = catchThrowable(() -> InventoryLoader.parse(profiles(), yaml.toString(), "test.yaml"));
+        // the subject, not a bare name: the loader prints what it is handed and asserts no noun of
+        // its own (#803), so a caller hands it what InventoryDocument.subject() produces. The
+        // expected text below is unchanged, which is the point — this is what an operator still reads
+        final var thrown = catchThrowable(
+                () -> InventoryLoader.parse(profiles(), yaml.toString(), "Inventory file test.yaml"));
 
         assertThat(thrown).isInstanceOf(IllegalStateException.class);
         assertThat(thrown.getMessage()).isEqualTo("""

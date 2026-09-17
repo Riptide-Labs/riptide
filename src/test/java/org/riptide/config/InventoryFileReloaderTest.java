@@ -989,8 +989,13 @@ class InventoryFileReloaderTest {
         assertThat(composedInventory.snapshot().agentCount())
                 .as("the polled fleet survives").isEqualTo(1);
         assertThat(appender.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
-                .startsWith("Inventory document " + this.file + " + the endpoint would drop a whole tree")
+                .startsWith("Inventory source " + this.file + " + the endpoint would drop a whole tree")
                 .contains("1 -> 0 agent range(s)")
+                // the name of this test promises advice that can be followed, and until #803 it
+                // asserted only the subject: the message still prescribed an mv against a composed
+                // document, where the half that was short may be the endpoint's response
+                .doesNotContain("write atomically via mv")
+                .doesNotContain("partially written file")
                 // both spellings that reach the file's own tree, because the discovery page
                 // promises both and an operator told only one would think the other had stopped
                 // working. Not "exporters: {}", which the file may not write while discovery owns it

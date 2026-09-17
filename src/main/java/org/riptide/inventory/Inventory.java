@@ -53,7 +53,7 @@ public class Inventory {
         // bootText(), not text(): the one read allowed to degrade rather than fail (discovery
         // with its endpoint down). rebuildAndSwap below reads text() and stays strict
         final String text = this.document.bootText();
-        final InventoryLoader.ParseResult result = parse(this.profiles, text, this.document.name());
+        final InventoryLoader.ParseResult result = parse(this.profiles, text, this.document.subject());
         final InventorySnapshot loaded = result.snapshot();
         swap(loaded);
         result.flushWarnings();
@@ -75,10 +75,10 @@ public class Inventory {
      * both need this, and a rule encoded twice is the rule the next bug fixes in only one place.
      */
     private static InventoryLoader.ParseResult parse(final SnmpProfilesConfig profiles, final String text,
-                                                      final String name) {
+                                                      final String subject) {
         return text == null
                 ? new InventoryLoader.ParseResult(InventorySnapshot.empty(), List.of())
-                : InventoryLoader.parseWithWarnings(profiles, text, name);
+                : InventoryLoader.parseWithWarnings(profiles, text, subject);
     }
 
     /**
@@ -153,7 +153,7 @@ public class Inventory {
      */
     public synchronized InventorySnapshot rebuildAndSwap(final SnmpProfilesConfig profiles) {
         final String text = this.document.text();
-        final InventoryLoader.ParseResult result = parse(profiles, text, this.document.name());
+        final InventoryLoader.ParseResult result = parse(profiles, text, this.document.subject());
         final InventorySnapshot rebuilt = result.snapshot();
         if (rebuilt.isRegressiveOver(this.active)) {
             // refused, not published: a file caught mid-write parses cleanly with one tree
@@ -177,15 +177,19 @@ public class Inventory {
     private void requireNotRegressive(final InventorySnapshot snapshot) {
         Objects.requireNonNull(snapshot);
         if (snapshot.isRegressiveOver(this.active)) {
+            // the advice from the document, not from here: with discovery on the half that was
+            // short may be the endpoint's response, where no mv exists. This site used to spell the
+            // file's remedy a third way ("write the inventory atomically (write then mv)"), so the
+            // spelling was unified with its two siblings when it moved to the seam (#803)
             throw new IllegalStateException(
                     ("Refusing to publish an inventory that drops a whole tree: %d -> %d agent "
-                            + "range(s), %d -> %d enrichment entrie(s). A partially written file "
-                            + "reads this way; write the inventory atomically (write then mv). To "
+                            + "range(s), %d -> %d enrichment entrie(s) (%s). To "
                             + "deliberately empty a tree, write it as an explicit empty mapping "
                             + "(agents: {} / exporters: {}); to stop polling a fleet while keeping "
                             + "its entries, set enabled: false on a covering range.")
                             .formatted(this.active.agentCount(), snapshot.agentCount(),
-                                    this.active.exporterCount(), snapshot.exporterCount()));
+                                    this.active.exporterCount(), snapshot.exporterCount(),
+                                    this.document.partialReadAdvice()));
         }
     }
 
@@ -201,6 +205,28 @@ public class Inventory {
      */
     public String documentName() {
         return this.document.name();
+    }
+
+    /**
+     * How a sentence about the inventory opens, noun included: {@code Inventory file <path>} with
+     * discovery off, {@code Inventory source <file> + <endpoint>} with it on.
+     *
+     * <p>Beside {@link #documentName()} because callers outside this package already look here for
+     * the spelling, and because a caller that has the name but not the noun ends up choosing a noun
+     * of its own, which is the defect this pair exists to close.</p>
+     */
+    public String documentSubject() {
+        return this.document.subject();
+    }
+
+    /** The bare noun, for a clause referring back to the document mid-message. */
+    public String documentNoun() {
+        return this.document.noun();
+    }
+
+    /** What to tell an operator when the document was read while something else was writing it. */
+    public String documentPartialReadAdvice() {
+        return this.document.partialReadAdvice();
     }
 
     /** The profiles the serving snapshot was built from, for a reloader re-parsing the file. */

@@ -142,7 +142,37 @@ class ComposedInventoryDocumentTest {
                 """, DEVICES).text())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("inventory.yaml")
-                .hasMessageContaining("Key 'true' under the file root is not a string");
+                // "the document root", not "the file root": with discovery on the root being walked
+                // belongs to a composed document. This is the one phrase that could not be
+                // dispatched per source, because it is a literal inside a problem line (#803)
+                .hasMessageContaining("Key 'true' under the document root is not a string");
+    }
+
+    /**
+     * What every sentence naming this document says, which is never "file": it is a file composed
+     * with an endpoint, and an operator told to fix a file goes to the half that may be fine. The
+     * reloader used to decide this with a conditional of its own, and said "Inventory document"
+     * while its sibling sentences said "Inventory source" (#803).
+     */
+    @Test
+    void theComposedDocumentIsNamedASourceAndNeverAFile() {
+        final var composed = composed("riptide:\n", DEVICES);
+
+        assertThat(composed.subject())
+                .startsWith("Inventory source ")
+                .contains(composed.name())
+                .doesNotContain("Inventory file")
+                .doesNotContain("Inventory document");
+        assertThat(composed.noun()).isEqualTo("inventory source");
+    }
+
+    @Test
+    void itPrescribesARemedyThatExistsOnAnEndpoint() {
+        assertThat(composed("riptide:\n", DEVICES).partialReadAdvice())
+                .as("no mv fixes a response that was read short")
+                .doesNotContain("mv")
+                .doesNotContain("file")
+                .contains("the next poll");
     }
 
     @Test

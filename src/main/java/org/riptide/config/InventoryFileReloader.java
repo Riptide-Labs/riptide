@@ -337,7 +337,7 @@ public class InventoryFileReloader {
         // gave the loader (Inventory.load() names the document by name()), so a reload error and
         // a startup error name the same thing
         final InventoryLoader.ParseResult parsed = InventoryLoader.parseWithWarnings(parsedWith,
-                strictUtf8(content, subject()), this.watched);
+                strictUtf8(content, subject()), subject());
         final InventorySnapshot candidate = parsed.snapshot();
 
         final InventorySnapshot serving = this.inventory.snapshot();
@@ -352,12 +352,12 @@ public class InventoryFileReloader {
             // "agents: {}" idiom, and {} in an SLF4J format string IS a placeholder —
             // the first version consumed its own arguments and printed shifted counts
             log.warn(("%s would drop a whole tree (%d -> %d agent range(s), %d -> %d "
-                    + "enrichment entry/entries): keeping the running inventory (a partially written "
-                    + "file reads this way; write atomically via mv). %s; "
+                    + "enrichment entry/entries): keeping the running inventory (%s). %s; "
                     + "to stop polling while keeping entries, set enabled: false on a covering "
                     + "range").formatted(subject(),
                     serving.agentCount(), candidate.agentCount(),
-                    serving.exporterCount(), candidate.exporterCount(), emptyTreeAdvice()));
+                    serving.exporterCount(), candidate.exporterCount(),
+                    this.inventory.documentPartialReadAdvice(), emptyTreeAdvice()));
             // latch immediately, like the failure path: the watched content (the file, or
             // the composed document with discovery on) does not match what is serving.
             // Without this the gauge read 0 until the next cycle's
@@ -406,12 +406,18 @@ public class InventoryFileReloader {
 
     /**
      * How this reloader's own sentences open: {@code Inventory file <path>} when discovery is off,
-     * spelled exactly as it always was, and {@code Inventory document <file> + <endpoint>} when it
-     * is on. "File" is false there: the bytes that failed are the composed document, and an
-     * operator told "Inventory file" goes looking at a file that may not even be configured.
+     * spelled exactly as it always was, and {@code Inventory source <file> + <endpoint>} when it is
+     * on. "File" is false there: the bytes that failed are the composed document, and an operator
+     * told "Inventory file" goes looking at a file that may not even be configured.
+     *
+     * <p>From {@link Inventory#documentSubject()}, for the same reason {@link #watched} comes from
+     * {@code documentName()}: one spelling. This method used to decide it here, with a conditional
+     * on whether discovery was wired, and it said "Inventory document" while the absent-and-blank
+     * sentences a few lines up said "Inventory source" — two nouns for one thing, which is what
+     * happens when each message decides for itself (#803).</p>
      */
     private String subject() {
-        return (this.discovery == null ? "Inventory file " : "Inventory document ") + this.watched;
+        return this.inventory.documentSubject();
     }
 
     /**

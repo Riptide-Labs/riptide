@@ -86,7 +86,13 @@ class ConfigReloadRebuildSubjectTest {
             assertThat(captured.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
                     .contains("could not be rebuilt from")
                     .contains("riptide.inventory.file (unset) + " + ENDPOINT)
-                    .doesNotContain("rebuilt from null"));
+                    .doesNotContain("rebuilt from null")
+                    // the noun as well as the subject (#803): this message referred back to the
+                    // source twice more, as "the inventory file", in a configuration where no
+                    // inventory file is even set
+                    .contains("until the inventory source is fixed")
+                    .contains("The inventory source says:")
+                    .doesNotContain("inventory file is"));
         } finally {
             release(captured);
         }
