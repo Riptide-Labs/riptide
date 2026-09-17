@@ -136,6 +136,22 @@ A **missing inventory file** is absence too, exactly as it is with discovery off
 That covers both a file deleted after boot and the window an `rm` plus `mv` replacement opens.
 A file that is present but unreadable, a permission denial for example, stays a counted failure: an operator told to make a file reappear that is already there has been sent to the wrong place.
 
+## How a failure names itself
+
+With discovery on the inventory is one document composed from two sources, so failures name both:
+
+```
+Inventory source /etc/riptide/inventory.yaml + https://netbox.example.com/api/dcim/devices/ carries problems in 1 entry:
+```
+
+"Source" rather than "file", and the same for the clauses that refer back to it later in a message.
+Which half to look at is what the two names are for: a problem in an agent range is the file's, a problem in an exporter is the endpoint's, and the entry named in the line tells you which.
+With discovery off the same failure reads `Inventory file /etc/riptide/inventory.yaml ...`, unchanged.
+One phrase inside a problem line changed on both paths rather than being dispatched per source: a stray or non-string key at the top level is now reported under "the document root" rather than "the file root", because with discovery on that root belongs to a composed document.
+
+This matters for the remediation as much as the noun.
+A message about a partly written document tells you to write the file atomically only when the document is a file; with discovery on it says the next poll composes it again, because no `mv` you run fixes a response that was read short.
+
 ## Startup
 
 An endpoint that cannot be **reached** at boot (a refused connection, a timeout, or a 404) does not fail startup.

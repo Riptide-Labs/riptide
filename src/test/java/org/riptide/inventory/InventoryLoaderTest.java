@@ -1345,6 +1345,8 @@ class InventoryLoaderTest {
                 .contains("carries problems in 2 entries");
     }
 
+
+
     /**
      * An exporter's interfaces map is its own iteration, so each bad pin recovers on its
      * own: a generated exporter with thirty blank aliases used to cost thirty boots. The
@@ -1453,6 +1455,29 @@ class InventoryLoaderTest {
     }
 
     /**
+     * The one phrase this change reworded on the discovery-off path, pinned here because it is the
+     * exception to byte-identity rather than an oversight.
+     *
+     * <p>"The file root" could not be dispatched per source the way the subject is: it is a literal
+     * inside a problem line, and with discovery on the root being walked belongs to a composed
+     * document rather than a file. "The document root" is true of both, so both paths now read it,
+     * and this is what an operator with no discovery configured sees (#803).</p>
+     */
+    @Test
+    void aStrayRootKeyNamesTheDocumentRootOnEitherPath() {
+        assertThatThrownBy(() -> InventoryLoader.parse(profiles(), """
+                nope: 1
+                riptide:
+                  snmp:
+                    agents: {}
+                """, "Inventory file test.yaml"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Inventory file test.yaml carries problems")
+                .hasMessageContaining("Unknown key 'nope' under the document root")
+                .hasMessageNotContaining("the file root");
+    }
+
+    /**
      * The report as an operator reads it, asserted whole rather than grepped.
      *
      * <p>Substring assertions pass identically on a report whose header is wrong, whose
@@ -1478,7 +1503,11 @@ class InventoryLoaderTest {
             yaml.append("        %d: { alias: \"  \" }\n".formatted(ifIndex));
         }
 
-        final var thrown = catchThrowable(() -> InventoryLoader.parse(profiles(), yaml.toString(), "test.yaml"));
+        // the subject, not a bare name: the loader prints what it is handed and asserts no noun of
+        // its own (#803), so a caller hands it what InventoryDocument.subject() produces. The
+        // expected text below is unchanged, which is the point — this is what an operator still reads
+        final var thrown = catchThrowable(
+                () -> InventoryLoader.parse(profiles(), yaml.toString(), "Inventory file test.yaml"));
 
         assertThat(thrown).isInstanceOf(IllegalStateException.class);
         assertThat(thrown.getMessage()).isEqualTo("""

@@ -114,8 +114,8 @@ public final class InventoryLoader {
      * reads as though the warned-about state went live when nothing changed (#539).
      */
     public static InventorySnapshot parse(final SnmpProfilesConfig profiles, final String content,
-                                          final String sourceName) {
-        final ParseResult result = parseWithWarnings(profiles, content, sourceName);
+                                          final String subject) {
+        final ParseResult result = parseWithWarnings(profiles, content, subject);
         result.flushWarnings();
         return result.snapshot();
     }
@@ -138,16 +138,16 @@ public final class InventoryLoader {
      * one duplicate take two boots.</p>
      */
     public static ParseResult parseWithWarnings(final SnmpProfilesConfig profiles, final String content,
-                                                final String sourceName) {
+                                                final String subject) {
         final List<String> warnings = new ArrayList<>();
         final Problems problems = new Problems();
-        final Map<String, Object> root = parseYaml(content, sourceName, problems);
+        final Map<String, Object> root = parseYaml(content, subject, problems);
         final Map<String, Object> riptide;
         final Map<String, Object> snmp;
         final List<AgentCandidate> agentCandidates;
         final List<ExporterEntry> exporterCandidates;
         try {
-            requireKnownKeys("the file root", root, ROOT_KEYS, problems);
+            requireKnownKeys("the document root", root, ROOT_KEYS, problems);
             riptide = section(root, "riptide", problems);
             requireKnownKeys("'riptide'", riptide, RIPTIDE_KEYS, problems);
             snmp = section(riptide, "snmp", problems);
@@ -156,17 +156,11 @@ public final class InventoryLoader {
             agentCandidates = validateAgents(profiles, section(snmp, "agents", problems), warnings, problems);
             exporterCandidates = validateExporters(section(riptide, "exporters", problems), warnings, problems);
         } catch (final IllegalStateException structural) {
-            // a tree level that is not a mapping cannot be walked, so it ends the pass —
-            // but never alone. Whatever was collected before it must still reach the
-            // operator, or a stray key at one level plus a bad section below it reports
-            // the section and silently swallows the key, leaving them blinder than they
-            // were before problems were collected at all
-            problems.add(problemText(structural, "inventory file", sourceName), structural);
-            throw problems.report(sourceName);
+            throw structuralReport(problems, structural, subject);
         }
         if (!problems.isEmpty()) {
             // the report names the file itself, so it is raised outside the wrap below
-            throw problems.report(sourceName);
+            throw problems.report(subject);
         }
 
         try {
@@ -189,7 +183,7 @@ public final class InventoryLoader {
             // uniform operator experience: every entry-level error names the file,
             // including the matcher's duplicate-coverage errors
             throw new IllegalStateException(
-                    "Inventory file %s: %s".formatted(sourceName, e.getMessage()), e);
+                    "%s: %s".formatted(subject, e.getMessage()), e);
         }
     }
 
@@ -211,29 +205,26 @@ public final class InventoryLoader {
      * of its own drifted from them: duplicate keys collapsed to the last one instead of failing,
      * a syntax error lost the file's name, and a root or {@code riptide} tree that was not a
      * mapping was silently dropped. Here they fail as the loader fails them, naming
-     * {@code sourceName}: the same parse options (duplicates refused, {@link #CODE_POINT_LIMIT}),
+     * {@code subject}: the same parse options (duplicates refused, {@link #CODE_POINT_LIMIT}),
      * the same "is not valid YAML" wrap, the same non-string-key refusal at both levels, and the
      * same "must be a mapping" sentence in the same problem report.</p>
      *
      * <p>Nothing below the {@code riptide} level is validated here. The caller's composed text
      * goes through {@link #parseWithWarnings} afterwards, which validates the whole tree.</p>
      *
-     * @throws IllegalStateException naming {@code sourceName}, as {@link #parseWithWarnings} would
+     * @throws IllegalStateException naming {@code subject}, as {@link #parseWithWarnings} would
      */
-    public static TopLevels readTopLevels(final String content, final String sourceName) {
+    public static TopLevels readTopLevels(final String content, final String subject) {
         final Problems problems = new Problems();
-        final Map<String, Object> root = parseYaml(content, sourceName, problems);
+        final Map<String, Object> root = parseYaml(content, subject, problems);
         final Map<String, Object> riptide;
         try {
             riptide = section(root, "riptide", problems);
         } catch (final IllegalStateException structural) {
-            // the same wrap as parseWithWarnings: the non-mapping level joins whatever was
-            // collected before it, so a stray non-string root key is not swallowed by it
-            problems.add(problemText(structural, "inventory file", sourceName), structural);
-            throw problems.report(sourceName);
+            throw structuralReport(problems, structural, subject);
         }
         if (!problems.isEmpty()) {
-            throw problems.report(sourceName);
+            throw problems.report(subject);
         }
         return new TopLevels(root, riptide);
     }
@@ -316,9 +307,9 @@ public final class InventoryLoader {
          * repeated failure quiet, and every other message in this file renders
          * identically on every platform.</p>
          */
-        IllegalStateException report(final String sourceName) {
-            final StringBuilder text = new StringBuilder("Inventory file %s carries problems in %s:"
-                    .formatted(sourceName, entries(this.entryCount)));
+        IllegalStateException report(final String subject) {
+            final StringBuilder text = new StringBuilder("%s carries problems in %s:"
+                    .formatted(subject, entries(this.entryCount)));
             for (final Entry entry : this.named) {
                 for (final String problem : entry.named) {
                     text.append('\n').append("  - ").append(problem);
@@ -349,6 +340,31 @@ public final class InventoryLoader {
     }
 
     /**
+     * The report for a structural failure that ended a pass, joined with whatever was collected
+     * before it.
+     *
+     * <p>A tree level that is not a mapping cannot be walked, so it ends the pass — but never
+     * alone. Whatever was collected before it must still reach the operator, or a stray key at one
+     * level plus a bad section below it reports the section and silently swallows the key, leaving
+     * them blinder than they were before problems were collected at all.</p>
+     *
+     * <p>One copy for both entry points. {@link #parseWithWarnings} and {@link #readTopLevels} each
+     * restated these two statements, so the rule for reporting a malformed document had two sites
+     * and the next change to it had to reach both (#809).</p>
+     *
+     * <p>Returns the exception rather than throwing it, so the caller writes {@code throw} and the
+     * compiler still sees the {@code catch} block end the flow. A void helper that threw would
+     * leave the finals assigned inside {@link #parseWithWarnings}'s {@code try} looking possibly
+     * unassigned to definite-assignment analysis.</p>
+     */
+    private static IllegalStateException structuralReport(final Problems problems,
+                                                          final IllegalStateException structural,
+                                                          final String subject) {
+        problems.add(problemText(structural, subject), structural);
+        return problems.report(subject);
+    }
+
+    /**
      * The line one rejected entry contributes.
      *
      * <p>{@code getMessage()} is nullable, and a report line reading {@code null} names
@@ -356,9 +372,16 @@ public final class InventoryLoader {
      * what rejected it.</p>
      */
     private static String problemText(final IllegalStateException e, final String kind, final String name) {
+        return problemText(e, "The %s '%s'".formatted(kind, name));
+    }
+
+    /**
+     * The same line for a subject that is already a phrase, such as the document's own subject,
+     * where a {@code kind} and a {@code name} would read as two nouns for one thing.
+     */
+    private static String problemText(final IllegalStateException e, final String subject) {
         return e.getMessage() != null ? e.getMessage()
-                : "The %s '%s' was rejected by %s, which said nothing more."
-                        .formatted(kind, name, e.getClass().getName());
+                : "%s was rejected by %s, which said nothing more.".formatted(subject, e.getClass().getName());
     }
 
     /**
@@ -561,19 +584,19 @@ public final class InventoryLoader {
         return builder.build();
     }
 
-    private static Map<String, Object> parseYaml(final String content, final String sourceName,
+    private static Map<String, Object> parseYaml(final String content, final String subject,
                                                  final Problems problems) {
         final LoaderOptions options = new LoaderOptions();
         options.setCodePointLimit(CODE_POINT_LIMIT);
         options.setAllowDuplicateKeys(false);
         try {
             final Map<?, ?> root = new Yaml(options).load(content);
-            return root != null ? stringKeyed(root, "the file root", problems) : Map.of();
+            return root != null ? stringKeyed(root, "the document root", problems) : Map.of();
         } catch (final IllegalStateException e) {
             throw e;
         } catch (final RuntimeException e) {
             throw new IllegalStateException(
-                    "Inventory file %s is not valid YAML: %s".formatted(sourceName, e.getMessage()), e);
+                    "%s is not valid YAML: %s".formatted(subject, e.getMessage()), e);
         }
     }
 

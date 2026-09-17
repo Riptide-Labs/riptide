@@ -204,6 +204,48 @@ public class ComposedInventoryDocument implements InventoryDocument, FileWatchTr
     }
 
     /**
+     * {@code Inventory source}, never {@code Inventory file}: this document is a file composed with
+     * an endpoint, and {@link #name()} above names both halves, so a sentence calling the pair a
+     * file sends an operator to edit the half that may be fine.
+     *
+     * <p>"Source" rather than "document", which {@code InventoryFileReloader} used to say here
+     * through a conditional of its own: the reloader's absent-and-blank sentences already say
+     * "Inventory source", and one spelling that both reach is the point of moving it here.</p>
+     */
+    @Override
+    public String subject() {
+        return "Inventory source " + name();
+    }
+
+    @Override
+    public String noun() {
+        return "inventory source";
+    }
+
+    /**
+     * {@code exporters: {}} is not something an operator can write here: the file may not carry an
+     * exporters tree at all, because this document refuses one, and the renderer refuses an empty
+     * result. So the only tree the file can still empty is the agent ranges.
+     */
+    @Override
+    public String emptyTreeAdvice() {
+        return "To deliberately empty the agent ranges, write them as an explicit empty mapping "
+                + "(agents: {}, or riptide: {} for everything the file still owns); "
+                + "the exporters tree belongs to discovery, which never renders it empty";
+    }
+
+    /**
+     * The endpoint's answer can be short as easily as the file's can, and neither is fixed by an
+     * {@code mv} the operator runs: a response read mid-write is the endpoint's business, and the
+     * poll that follows is what heals it. Naming the file's remedy here would name a mechanism that
+     * does not exist on this path.
+     */
+    @Override
+    public String partialReadAdvice() {
+        return "a short read of either half reads this way; wait for the next poll, which composes it again";
+    }
+
+    /**
      * How often the watcher re-composes this document, which is {@code riptide.discovery.interval}
      * and never {@code riptide.config.reload-interval}: enabling discovery must not also require
      * enabling config hot-reload. Read from here rather than from a second injection of
@@ -296,7 +338,7 @@ public class ComposedInventoryDocument implements InventoryDocument, FileWatchTr
         // an empty root itself, so it needs no case of its own here
         final InventoryLoader.TopLevels levels = fileText == null
                 ? new InventoryLoader.TopLevels(Map.of(), Map.of())
-                : InventoryLoader.readTopLevels(fileText, this.file.name());
+                : InventoryLoader.readTopLevels(fileText, this.file.subject());
         final Map<String, Object> root = new LinkedHashMap<>(levels.root());
         final Map<String, Object> riptide = new LinkedHashMap<>(levels.riptide());
         if (riptide.containsKey("exporters")) {

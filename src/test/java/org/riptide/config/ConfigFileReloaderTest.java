@@ -841,6 +841,60 @@ public class ConfigFileReloaderTest {
         }
     }
 
+    /**
+     * The rotation refusal, on the path every existing operator is on.
+     *
+     * <p>Its remediation and its "until ... is whole" clause moved to the document seam in #803,
+     * because with discovery on they told an operator to {@code mv} a file when the half that was
+     * short may have been an HTTP response. This pins that the move reworded nothing here: the
+     * message was uncovered before, so nothing else would have caught a drift.</p>
+     */
+    @Test
+    public void theRotationRefusalStillSpellsTheFilesRemedyExactlyAsItDid() throws Exception {
+        write("""
+                riptide:
+                  snmp:
+                    credentials:
+                      seed:
+                        version: v3
+                        security-name: monitoring
+                """);
+        reloader.poll();
+
+        // the same shape as aPartialReloadStaysVisibleUntilItHeals: an inventory that parses to
+        // no entries over a populated one, plus a credential rotation in the main config
+        Files.writeString(INVENTORY, "---\n");
+        final var captured = captureReloaderLog();
+        try {
+            write("""
+                    riptide:
+                      snmp:
+                        credentials:
+                          rotated-for-wording:
+                            version: v3
+                            security-name: monitoring
+                    """);
+            reloader.poll();
+
+            assertThat(captured.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                    .contains("the inventory was left alone")
+                    .contains("a partially written file reads this way; write atomically via mv")
+                    .contains("until the inventory file is whole"));
+        } finally {
+            releaseReloaderLog(captured);
+            // leave the fixture publishable: this class has been order-dependent before
+            Files.writeString(INVENTORY, """
+                    riptide:
+                      snmp:
+                        agents: {}
+                      exporters:
+                        neutral:
+                          address: 198.51.100.1
+                    """);
+            reloader.poll();
+        }
+    }
+
     /** Warnings whose rendered message contains {@code needle}. */
     private static long warnCount(
             final ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> captured,

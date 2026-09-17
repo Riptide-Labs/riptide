@@ -51,4 +51,60 @@ public interface InventoryDocument {
 
     /** How the document is named in loader errors. */
     String name();
+
+    /**
+     * How a sentence opens when it names this document: the noun plus {@link #name()}, as in
+     * {@code Inventory file /etc/riptide/inventory.yaml}.
+     *
+     * <p><b>The noun lives here because {@link #name()} already does.</b> With discovery on the
+     * document is a file composed with an endpoint, and every sentence calling that a file sends an
+     * operator to edit a file for a problem the endpoint produced. Deciding it at the message
+     * instead needs a test for whether discovery is enabled, at every message; three such sentences
+     * had already been written that way, in three different spellings, before this seam existed
+     * (#803).</p>
+     *
+     * <p>Sentence-initial and capitalised, because every site that uses it starts a sentence with
+     * it. A clause referring back to the document mid-sentence wants {@link #noun()}.</p>
+     */
+    default String subject() {
+        return "Inventory file " + name();
+    }
+
+    /**
+     * The bare noun for a clause that refers back to this document, with no article and no name, as
+     * in {@code The <noun> says: ...} or {@code until the <noun> is whole}.
+     *
+     * <p>No article, so the caller supplies one along with the capitalisation its sentence needs.
+     * Separate from {@link #subject()} rather than derived from it: the two differ in whether they
+     * carry the name, and deriving one from the other means a string helper doing grammar, which is
+     * machinery in place of two literals.</p>
+     */
+    default String noun() {
+        return "inventory file";
+    }
+
+    /**
+     * What to tell an operator when this document was read while something else was writing it.
+     *
+     * <p>A file is fixed by writing it atomically; an endpoint's response is not, and no {@code mv}
+     * exists there. The advice belongs to the source for the same reason the noun does: prescribing
+     * a remedy that does not exist on the operator's source is worse than saying nothing, because
+     * it names a mechanism they cannot apply and implies the fault is theirs.</p>
+     */
+    default String partialReadAdvice() {
+        return "a partially written file reads this way; write atomically via mv";
+    }
+
+    /**
+     * How to empty a tree on purpose, which is what tells a deliberate decommission apart from the
+     * torn read {@link #partialReadAdvice()} describes.
+     *
+     * <p>Here for the same reason as the other two: which trees the operator can empty depends on
+     * which of them this document owns. The reloader used to branch on whether discovery was wired
+     * to answer this, which made it a fourth site remembering what kind of source was in play.</p>
+     */
+    default String emptyTreeAdvice() {
+        return "To deliberately empty a tree, write it as an explicit empty mapping "
+                + "(agents: {} / exporters: {})";
+    }
 }
