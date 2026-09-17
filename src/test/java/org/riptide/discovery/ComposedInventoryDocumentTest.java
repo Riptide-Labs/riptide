@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.NoSuchFileException;
+import java.time.Duration;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -384,6 +385,65 @@ class ComposedInventoryDocumentTest {
 
         assertThat(captured.list).singleElement().satisfies(event -> assertThat(event.getFormattedMessage())
                 .startsWith("Boot could not reach the endpoint: Connection refused."));
+    }
+
+    /**
+     * A degraded boot promises only what the configuration can deliver.
+     *
+     * <p>With the watcher disabled nothing re-reads the endpoint, so a sentence naming a retry
+     * cadence and a staleness gauge would send an operator to wait for a poll that never runs and
+     * to watch a metric that is never registered. The clause was written per-interval from the
+     * start; until #808 nothing tested either branch of it.</p>
+     */
+    @Test
+    void withTheWatcherDisabledTheBootWarningNamesTheRestartAndNoGauge() {
+        final var captured = captureDocumentLog();
+        try {
+            degradedBootWith(Duration.ZERO);
+
+            assertThat(captured.list).singleElement().satisfies(event -> {
+                final String message = event.getFormattedMessage();
+                assertThat(message)
+                        .contains("stay missing until a restart")
+                        .contains("riptide.discovery.interval");
+                assertThat(message)
+                        .as("no gauge is registered in this configuration, so promising one misleads")
+                        .doesNotContain("inventory.reload.stale reads 1")
+                        .doesNotContain("A reload retries every");
+            });
+        } finally {
+            releaseDocumentLog(captured);
+        }
+    }
+
+    @Test
+    void withAWorkingScheduleTheBootWarningNamesTheIntervalThatWillRetry() {
+        final var captured = captureDocumentLog();
+        try {
+            degradedBootWith(Duration.ofSeconds(30));
+
+            assertThat(captured.list).singleElement().satisfies(event -> assertThat(event.getFormattedMessage())
+                    .as("the twin: a test covering only the disabled branch cannot tell a working "
+                            + "conditional from one that always takes it")
+                    .contains("A reload retries every PT30S")
+                    .contains("inventory.reload.stale")
+                    .doesNotContain("until a restart"));
+        } finally {
+            releaseDocumentLog(captured);
+        }
+    }
+
+    /** A boot that cannot reach the endpoint, under a given poll interval. */
+    private static void degradedBootWith(final Duration interval) {
+        final DiscoveryConfig config = new DiscoveryConfig();
+        config.setUrl("https://netbox.example.com/api/devices/");
+        config.setInterval(interval);
+        new ComposedInventoryDocument(new FixedFile(AGENTS),
+                new ServiceDiscoverySource(() -> {
+                    throw new IOException("connection refused");
+                }, () -> "the endpoint"),
+                () -> "the endpoint", config, new MetricRegistry())
+                .bootText();
     }
 
     private static ListAppender<ILoggingEvent> captureDocumentLog() {
