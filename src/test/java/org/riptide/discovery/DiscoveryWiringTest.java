@@ -127,6 +127,46 @@ class DiscoveryWiringTest {
                 });
     }
 
+    /**
+     * The native source emits the NetBox label names and the renderer must read the same ones, so
+     * a customised list would match no label on any device. Every device would then fall through to
+     * its name, fail the strict address check, be skipped, and boot would die with "yielded no
+     * exporter entries" naming neither key.
+     */
+    @Test
+    void customisedAddressLabelsAreRefusedAgainstTheNativeSource() {
+        this.runner
+                .withPropertyValues("riptide.discovery.url=http://127.0.0.1:9/api/dcim/devices/",
+                        "riptide.discovery.type=netbox-api",
+                        "riptide.discovery.address-labels=__meta_custom_ip")
+                .run(context -> assertThat(context)
+                        .getFailure()
+                        .rootCause()
+                        .hasMessageContaining("riptide.discovery.address-labels")
+                        .hasMessageContaining("netbox-api")
+                        .hasMessageContaining("prometheus-sd"));
+    }
+
+    @Test
+    void theDefaultAddressLabelsAreTheOnesTheNativeSourceEmits() {
+        this.runner
+                .withPropertyValues("riptide.discovery.url=http://127.0.0.1:9/api/dcim/devices/",
+                        "riptide.discovery.type=netbox-api")
+                .run(context -> assertThat(context)
+                        .as("the refusal must not fire on an operator who customised nothing")
+                        .hasNotFailed());
+    }
+
+    @Test
+    void customisedAddressLabelsStayAllowedForTheServiceDiscoverySource() {
+        this.runner
+                .withPropertyValues("riptide.discovery.url=http://127.0.0.1:9/devices",
+                        "riptide.discovery.address-labels=__meta_custom_ip")
+                .run(context -> assertThat(context)
+                        .as("a non-NetBox producer chooses its own label names")
+                        .hasNotFailed());
+    }
+
     @Test
     void withTheUrlSetTheComposedDocumentIsThePrimaryInventoryDocument() {
         this.runner

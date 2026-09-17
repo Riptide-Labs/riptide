@@ -65,12 +65,22 @@ public final class DiscoveryClient {
     }
 
     /**
+     * One page from an explicit URL, for a source that pages. Same bounds, same headers and same
+     * 404-is-absence contract as {@link #fetch()}; only the address differs, because NetBox hands
+     * the next page's link back in the body rather than letting a caller construct it.
+     */
+    public byte[] fetchPage(final java.net.URL page) throws IOException {
+        return ByteOrderMark.strip(this.http.readRemote(page));
+    }
+
+    /**
      * The document as the endpoint has it now, with any byte-order mark removed.
      *
      * @throws java.io.FileNotFoundException on a 404, which is absence rather than failure
      * @throws IOException on any other non-200, a refused connection, a timeout, or a body past the
      *     ceiling
      */
+
     public byte[] fetch() throws IOException {
         return ByteOrderMark.strip(this.http.readRemote(this.config.endpoint()));
     }
