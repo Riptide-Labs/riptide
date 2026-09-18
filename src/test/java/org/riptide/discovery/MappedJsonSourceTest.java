@@ -233,6 +233,55 @@ class MappedJsonSourceTest {
     }
 
     @Test
+    void aBareTopLevelArrayIsReadWithNoItemsPath() throws Exception {
+        final var groups = source(Map.of(ENDPOINT, """
+                [{"hostname": "edge-01", "mgmt_ip": "10.0.0.1"}]
+                """), new MappedJsonSource.MappingPaths(null,
+                JsonPath.of("hostname", "riptide.discovery.mapping.name"),
+                JsonPath.of("mgmt_ip", "riptide.discovery.mapping.address"), null)).targets();
+
+        assertThat(groups.getFirst().targets())
+                .as("the commonest shape of all, and one no path can name")
+                .containsExactly("10.0.0.1");
+    }
+
+    @Test
+    void aRelativeNextLinkIsResolvedAgainstThePageItCameFrom() throws Exception {
+        final var groups = source(Map.of(
+                ENDPOINT, """
+                        {"results": [{"hostname": "edge-01", "mgmt_ip": "10.0.0.1"}],
+                         "paging": {"next": "/api/devices?page=2"}}
+                        """,
+                "http://assets.internal/api/devices?page=2", """
+                        {"results": [{"hostname": "edge-02", "mgmt_ip": "10.0.0.2"}], "paging": {}}
+                        """),
+                paths("results", "hostname", "mgmt_ip", "paging.next")).targets();
+
+        assertThat(groups.stream().map(g -> g.targets().getFirst()).toList())
+                .as("an arbitrary endpoint often answers with a relative link; NetBox never does")
+                .containsExactly("10.0.0.1", "10.0.0.2");
+    }
+
+    /**
+     * A prefixed address is still emitted, so the shared renderer skips and counts it on
+     * {@code discovery.skipped}. Dropping it at the source made a fleet lose devices with the gauge
+     * reading zero and nothing logged.
+     */
+    @Test
+    void aPrefixedAddressBesideUsableOnesIsCountedRatherThanVanishing() throws Exception {
+        final var groups = source("""
+                {"results": [{"hostname": "edge-01", "mgmt_ip": "10.0.0.1"},
+                             {"hostname": "edge-02", "mgmt_ip": "10.0.0.2/24"}]}
+                """).targets();
+        final var rendered = ExporterRenderer.render(groups, List.of("x"), "the endpoint");
+
+        assertThat(rendered.byName()).as("the usable one publishes").containsOnlyKeys("edge-01");
+        assertThat(rendered.skipped())
+                .as("and the unusable one is visible on the gauge rather than silently gone")
+                .isEqualTo(1);
+    }
+
+    @Test
     void anItemsPathThatIsNotAnArrayIsRefusedNamingTheKeyAndWhatWasFound() {
         final var source = source(Map.of(ENDPOINT, """
                 {"results": {"edge-01": "10.0.0.1"}}

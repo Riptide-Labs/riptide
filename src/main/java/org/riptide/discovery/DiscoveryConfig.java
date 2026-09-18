@@ -105,7 +105,10 @@ public class DiscoveryConfig {
     @lombok.Data
     public static class Mapping {
 
-        /** Where the array of devices is in the response, e.g. {@code results}. Required. */
+        /**
+         * Where the array of devices is in the response, e.g. {@code results}. Unset means the
+         * response is itself the array, which is a shape no path can name.
+         */
         private String items;
 
         /** Where the exporter name is in one device, e.g. {@code name}. Required. */

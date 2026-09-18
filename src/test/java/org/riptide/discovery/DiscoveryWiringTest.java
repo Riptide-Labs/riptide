@@ -183,8 +183,9 @@ class DiscoveryWiringTest {
      */
     @Test
     void theMappedSourceRefusesEachMissingPathAtStartupNamingIt() {
+        // items is deliberately not here: unset means the response is itself the array, which is a
+        // shape no path can name and the commonest one an endpoint has
         final Map<String, String> complete = Map.of(
-                "riptide.discovery.mapping.items", "results",
                 "riptide.discovery.mapping.name", "hostname",
                 "riptide.discovery.mapping.address", "mgmt_ip");
 
@@ -220,6 +221,18 @@ class DiscoveryWiringTest {
                             .hasNotFailed();
                     assertThat(context.getBean(DiscoverySource.class)).isInstanceOf(MappedJsonSource.class);
                 });
+    }
+
+    @Test
+    void theMappedSourceStartsWithNoItemsPathBecauseTheResponseMayBeTheArray() {
+        this.runner
+                .withPropertyValues("riptide.discovery.url=http://127.0.0.1:9/devices",
+                        "riptide.discovery.type=mapped-json",
+                        "riptide.discovery.mapping.name=hostname",
+                        "riptide.discovery.mapping.address=mgmt_ip")
+                .run(context -> assertThat(context)
+                        .as("a bare top-level array is a shape no path can name")
+                        .hasNotFailed());
     }
 
     @Test

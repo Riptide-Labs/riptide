@@ -56,6 +56,12 @@ final class JsonPath {
             throw new IllegalStateException("%s must name a field: it is not set.".formatted(key));
         }
         final String[] segments = path.strip().split("\\.", -1);
+        for (int i = 0; i < segments.length; i++) {
+            // stripped per segment, not only whole: 'net. mgmt.v4' otherwise passes validation and
+            // then matches nothing forever, which is the failure this method exists to prevent. An
+            // inner space survives, because a field name may legitimately contain one
+            segments[i] = segments[i].strip();
+        }
         for (final String segment : segments) {
             if (segment.isBlank()) {
                 throw new IllegalStateException(

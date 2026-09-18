@@ -121,8 +121,11 @@ public final class NetboxDeviceSource implements DiscoverySource {
         try {
             // getQuery() on a URL is already the raw form, so escapes the operator configured
             // survive; single-argument URI parses without re-encoding what is here
+            // no bare '?' when nothing was joined: a gateway, a strict router or a signed-request
+            // proxy can treat '/api/devices?' differently from '/api/devices', and with the NetBox
+            // ordering gone there is now a path where the query really is empty
             return new URI(endpoint.getProtocol() + "://" + endpoint.getAuthority()
-                    + endpoint.getPath() + "?" + query).toURL();
+                    + endpoint.getPath() + (query.isEmpty() ? "" : "?" + query)).toURL();
         } catch (final URISyntaxException | IOException e) {
             throw new IllegalStateException(
                     "riptide.discovery.url and riptide.discovery.filter do not combine into a usable URL: '%s' + '%s'"

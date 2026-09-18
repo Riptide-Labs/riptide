@@ -10,7 +10,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
-import java.net.URI;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
@@ -146,7 +145,10 @@ final class PagedJsonWalk {
             return null;
         }
         try {
-            final URL next = new URI(link).toURL();
+            // resolved against the page it came from, so a relative or root-relative link works.
+            // NetBox always answers with an absolute one; an arbitrary endpoint often does not, and
+            // "not a usable URL" would read as a malformed endpoint rather than an unsupported form
+            final URL next = this.first.toURI().resolve(link).toURL();
             if (!sameOrigin(this.first, next)) {
                 throw new IllegalStateException(
                         ("%s gave a 'next' page on a different origin (%s://%s). The API token is sent "
@@ -164,9 +166,20 @@ final class PagedJsonWalk {
         }
     }
 
-    /** Same scheme, host and port, so the credential never leaves the origin it was configured for. */
+    /**
+     * Same scheme, host and port, so the credential never leaves the origin it was configured for.
+     *
+     * <p>The port is normalised rather than compared as written: {@code https://host} and
+     * {@code https://host:443} are one origin, and refusing the second would tell an operator their
+     * endpoint is leaking a credential because it spelled a default port.</p>
+     */
     private static boolean sameOrigin(final URL first, final URL next) {
         return first.getProtocol().equalsIgnoreCase(next.getProtocol())
-                && first.getAuthority().equalsIgnoreCase(next.getAuthority());
+                && first.getHost().equalsIgnoreCase(next.getHost())
+                && port(first) == port(next);
+    }
+
+    private static int port(final URL url) {
+        return url.getPort() == -1 ? url.getDefaultPort() : url.getPort();
     }
 }

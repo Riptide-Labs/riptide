@@ -63,7 +63,12 @@ public final class MappedJsonSource implements DiscoverySource {
         final List<String> prefixed = new ArrayList<>();
         final List<TargetGroup> groups =
                 this.walk.walk(this::devices, this::nextLink, device -> group(device, prefixed));
-        if (groups.isEmpty() && !prefixed.isEmpty()) {
+        // the diagnostic fires on "nothing usable", not "nothing emitted": every mapped device is
+        // emitted so the shared renderer can skip and COUNT it on discovery.skipped, which is what
+        // the documentation promises and what a fleet losing fifty devices needs to be visible
+        final boolean nothingUsable = groups.stream()
+                .noneMatch(group -> ExporterRenderer.isAcceptableAddress(group.targets().getFirst()));
+        if (nothingUsable && !prefixed.isEmpty()) {
             // the one failure the path language cannot fix, said plainly. Otherwise every device is
             // skipped and the shared renderer reports yielding nothing, which names a filter
             throw new IllegalStateException(
@@ -78,14 +83,23 @@ public final class MappedJsonSource implements DiscoverySource {
         return groups;
     }
 
-    /** The devices in one response, wherever the operator said they are. */
+    /**
+     * The devices in one response, wherever the operator said they are.
+     *
+     * <p>No items path means the response <em>is</em> the array, which is the commonest shape an
+     * endpoint can have and one no path can name: a path is field names, and the root has none.</p>
+     */
     private List<JsonNode> devices(final JsonNode body) {
-        final JsonNode at = this.paths.items().node(body).orElse(null);
+        final JsonNode at = this.paths.items() == null ? body : this.paths.items().node(body).orElse(null);
         if (at == null || !at.isArray()) {
             throw new IllegalStateException(
-                    ("%s did not answer with an array at riptide.discovery.mapping.items = '%s': found %s. "
-                            + "The path names where the devices are in the response.")
-                            .formatted(this.describe.get(), this.paths.items(), found(at)));
+                    ("%s did not answer with an array at %s: found %s. The path names where the devices "
+                            + "are in the response; leave it unset if the response is itself the array.")
+                            .formatted(this.describe.get(),
+                                    this.paths.items() == null
+                                            ? "the response root (riptide.discovery.mapping.items is unset)"
+                                            : "riptide.discovery.mapping.items = '" + this.paths.items() + "'",
+                                    found(at)));
         }
         final List<JsonNode> devices = new ArrayList<>();
         at.forEach(devices::add);
@@ -134,13 +148,11 @@ public final class MappedJsonSource implements DiscoverySource {
             return Optional.empty();
         }
         if (hostBitsSet(address)) {
-            // skipped here rather than emitted, which is what the renderer would do with it anyway:
-            // the difference is that this source knows WHY, and can say so if it turns out to be why
-            // nothing was usable. Remembered, never stripped — stripping is the transform this
-            // language does not have, and doing it for one field is how a language arrives without
-            // anyone deciding to have one
+            // remembered, never stripped: stripping is the transform this language does not have,
+            // and doing it for one field is how a language arrives without anyone deciding to have
+            // one. Still emitted, so the renderer skips it and counts it like any other unusable
+            // address; this list only decides whether the failure can explain itself
             prefixed.add(address);
-            return Optional.empty();
         }
         return Optional.of(new TargetGroup(List.of(address), Map.of(ExporterRenderer.NAME_LABEL, name)));
     }

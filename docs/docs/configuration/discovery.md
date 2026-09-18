@@ -54,9 +54,9 @@ Point `riptide.discovery.url` at whichever endpoint the type needs: the plugin's
 
 | Key | Required | Meaning |
 |---|---|---|
-| `riptide.discovery.mapping.items` | yes | Where the array of devices is in the response |
 | `riptide.discovery.mapping.name` | yes | Where the exporter name is, in one device |
 | `riptide.discovery.mapping.address` | yes | Where the exporter address is, in one device |
+| `riptide.discovery.mapping.items` | no | Where the array of devices is. Unset means the response **is** the array |
 | `riptide.discovery.mapping.next` | no | Where the link to the next page is. Unset means one request |
 
 ```yaml
@@ -65,7 +65,7 @@ riptide:
     url: https://assets.internal/api/devices
     type: mapped-json
     mapping:
-      items: payload.inventory.nodes
+      items: payload.inventory.nodes   # unset if the response is itself the array
       name: identity.fqdn
       address: net.mgmt.v4
       next: cursor.more
@@ -83,6 +83,20 @@ That configuration reads this:
 ```
 
 A missing required path fails startup naming the key, rather than turning up as an empty result at the first poll.
+
+An endpoint that answers with a bare array needs no `items` path, because a path is field names and the root has none:
+
+```yaml
+riptide:
+  discovery:
+    url: https://assets.internal/api/devices
+    type: mapped-json
+    mapping:
+      name: hostname
+      address: mgmt_ip
+```
+
+A `next` link may be absolute or relative: a relative one is resolved against the page it came from, and either way it must stay on the same host as `riptide.discovery.url`, because the credential is sent with every page.
 
 ### What a path is, and what it is not
 

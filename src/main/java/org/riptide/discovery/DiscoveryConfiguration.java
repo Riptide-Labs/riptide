@@ -58,7 +58,9 @@ public class DiscoveryConfiguration {
      */
     private static MappedJsonSource.MappingPaths mapping(final DiscoveryConfig.Mapping mapping) {
         return new MappedJsonSource.MappingPaths(
-                JsonPath.of(mapping.getItems(), "riptide.discovery.mapping.items"),
+                mapping.getItems() == null || mapping.getItems().isBlank()
+                        ? null
+                        : JsonPath.of(mapping.getItems(), "riptide.discovery.mapping.items"),
                 JsonPath.of(mapping.getName(), "riptide.discovery.mapping.name"),
                 JsonPath.of(mapping.getAddress(), "riptide.discovery.mapping.address"),
                 mapping.getNext() == null || mapping.getNext().isBlank()
