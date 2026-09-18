@@ -9,6 +9,7 @@ import com.codahale.metrics.MetricRegistry;
 import org.junit.jupiter.api.Test;
 import org.riptide.inventory.FileInventoryDocument;
 import org.riptide.inventory.InventoryConfig;
+import org.riptide.config.OutboundHttpTrust;
 import org.riptide.secrets.SecretResolvers;
 import org.springframework.boot.autoconfigure.condition.ConditionEvaluationReport;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -52,6 +53,12 @@ class DiscoveryUrlSetTest {
         @Bean
         SecretResolvers secretResolvers() {
             return new SecretResolvers(List.of());
+        }
+
+        /** Default trust: this fixture pins the URL gate, not what the read trusts. */
+        @Bean
+        OutboundHttpTrust outboundHttpTrust() {
+            return new OutboundHttpTrust();
         }
 
         /**

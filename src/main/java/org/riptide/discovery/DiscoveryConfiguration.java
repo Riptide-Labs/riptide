@@ -7,6 +7,7 @@ package org.riptide.discovery;
 
 import com.codahale.metrics.MetricRegistry;
 import org.riptide.inventory.FileInventoryDocument;
+import org.riptide.config.OutboundHttpTrust;
 import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventoryDocument;
 import org.riptide.secrets.SecretResolvers;
@@ -43,8 +44,9 @@ public class DiscoveryConfiguration {
 
     @Bean
     public DiscoveryClient discoveryClient(final DiscoveryConfig config,
-                                           final SecretResolvers secretResolvers) {
-        return new DiscoveryClient(config, secretResolvers);
+                                           final SecretResolvers secretResolvers,
+                                           final OutboundHttpTrust trust) {
+        return new DiscoveryClient(config, secretResolvers, trust);
     }
 
     /**

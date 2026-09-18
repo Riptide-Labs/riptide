@@ -15,6 +15,8 @@ import org.riptide.classification.internal.DefaultClassificationEngine;
 import org.riptide.classification.internal.TimingClassificationEngine;
 import org.riptide.classification.internal.csv.CsvImporter;
 import org.riptide.config.ClassificationConfig;
+import org.riptide.config.OutboundHttpConfig;
+import org.riptide.config.OutboundHttpTrust;
 import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.ie.values.visitor.ValueVisitor;
 import org.riptide.flows.parser.ipfix.IpfixRawFlow;
@@ -58,9 +60,20 @@ public class RiptideConfiguration {
         return new CsvImporter();
     }
 
+    /**
+     * What every outbound read through {@code BoundedHttpRead} trusts. One bean, because an operator
+     * with an internal certificate authority has one authority rather than one per feature, and
+     * because the alternative is two keys that always hold the same value.
+     */
     @Bean
-    ClassificationRulesSource classificationRulesSource(final ClassificationConfig config) {
-        return new ClassificationRulesSource(config);
+    OutboundHttpTrust outboundHttpTrust(final OutboundHttpConfig config) {
+        return new OutboundHttpTrust(config);
+    }
+
+    @Bean
+    ClassificationRulesSource classificationRulesSource(final ClassificationConfig config,
+                                                        final OutboundHttpTrust trust) {
+        return new ClassificationRulesSource(config, trust);
     }
 
     @Bean

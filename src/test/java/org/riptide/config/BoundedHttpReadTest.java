@@ -84,7 +84,7 @@ class BoundedHttpReadTest {
     }
 
     private static BoundedHttpRead read(final int maxBytes, final Map<String, String> headers) {
-        return new BoundedHttpRead(Duration.ofSeconds(5), maxBytes, "document", () -> "the endpoint", headers);
+        return new BoundedHttpRead(Duration.ofSeconds(5), maxBytes, "document", () -> "the endpoint", () -> headers);
     }
 
     @Test

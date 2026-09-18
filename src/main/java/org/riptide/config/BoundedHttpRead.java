@@ -9,6 +9,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLSocketFactory;
 import java.net.HttpURLConnection;
 import java.net.SocketTimeoutException;
 import java.net.URL;
@@ -53,7 +55,8 @@ public final class BoundedHttpRead {
     private final int maxBytes;
     private final String subject;
     private final Supplier<String> describe;
-    private final Map<String, String> headers;
+    private final Supplier<Map<String, String>> headers;
+    private final OutboundHttpTrust trust;
 
     /**
      * @param timeout bounds the connect, each read, and the whole response. A cycle against a hung
@@ -62,18 +65,38 @@ public final class BoundedHttpRead {
      * @param maxBytes refusal ceiling for the response body
      * @param subject the noun in the ceiling message, e.g. {@code "ruleset"}
      * @param describe the location with credentials redacted; safe to log, evaluated per message
-     * @param headers request headers to set, e.g. an {@code Authorization} header
+     * @param headers request headers to set, e.g. an {@code Authorization} header. A supplier
+     *     rather than a value, and asked once per opened connection — per request, which for a
+     *     caller that pages is once per page rather than once per poll. A caller whose header
+     *     carries a credential can then resolve its reference per read, so a rotation takes effect
+     *     on the next request instead of at the next restart (#804). A caller with nothing to send
+     *     supplies an empty map, which is what it passed as a value before.
      */
     public BoundedHttpRead(final Duration timeout,
                            final int maxBytes,
                            final String subject,
                            final Supplier<String> describe,
-                           final Map<String, String> headers) {
+                           final Supplier<Map<String, String>> headers) {
+        this(timeout, maxBytes, subject, describe, headers, new OutboundHttpTrust());
+    }
+
+    /**
+     * @param trust which certificate authorities this reader accepts. Here rather than at either
+     *     call site because this is the one place a connection is opened, so a bundle configured
+     *     once reaches every consumer without any of them knowing about it (#802).
+     */
+    public BoundedHttpRead(final Duration timeout,
+                           final int maxBytes,
+                           final String subject,
+                           final Supplier<String> describe,
+                           final Supplier<Map<String, String>> headers,
+                           final OutboundHttpTrust trust) {
         this.timeout = Objects.requireNonNull(timeout);
         this.maxBytes = maxBytes;
         this.subject = Objects.requireNonNull(subject);
         this.describe = Objects.requireNonNull(describe);
-        this.headers = Map.copyOf(headers);
+        this.headers = Objects.requireNonNull(headers);
+        this.trust = Objects.requireNonNull(trust);
     }
 
     /**
@@ -140,12 +163,21 @@ public final class BoundedHttpRead {
      */
     public URLConnection openBounded(final URL url) throws IOException {
         final URLConnection connection = url.openConnection();
+        // left alone entirely when nothing is configured, so an unset key is indistinguishable from
+        // how this read behaved before the key existed
+        final SSLSocketFactory factory = this.trust.socketFactory();
+        if (factory != null && connection instanceof HttpsURLConnection https) {
+            https.setSSLSocketFactory(factory);
+        }
         connection.setConnectTimeout(timeoutMillis());
         connection.setReadTimeout(timeoutMillis());
         // the content hash decides whether anything is rebuilt, so a cached response would only
         // hide a change from it
         connection.setUseCaches(false);
-        this.headers.forEach(connection::setRequestProperty);
+        // asked here, once per connection, so a credential is as fresh as this read
+        final Map<String, String> requestHeaders = Objects.requireNonNull(
+                this.headers.get(), "the header supplier returned null; it must return a map, empty if there is nothing to send");
+        requestHeaders.forEach(connection::setRequestProperty);
         return connection;
     }
 

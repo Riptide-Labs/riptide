@@ -7,6 +7,7 @@ package org.riptide.discovery;
 
 import org.riptide.config.BoundedHttpRead;
 import org.riptide.config.ByteOrderMark;
+import org.riptide.config.OutboundHttpTrust;
 import org.riptide.secrets.SecretResolvers;
 
 import java.io.IOException;
@@ -17,10 +18,11 @@ import java.util.Objects;
  * Fetches a Prometheus HTTP service discovery document, within every bound the shared
  * {@link BoundedHttpRead} applies.
  *
- * <p>The token resolves once, here, rather than on every poll: an unresolvable reference is a
- * startup failure in this project, which is the same rule {@code ClickhouseRepository} follows for
- * its credentials. A reference that cannot resolve at poll time would instead surface as a counted
- * reload failure every minute forever.</p>
+ * <p>The token is resolved twice over, and both times matter. Once in the constructor, purely as a
+ * startup gate: an unresolvable reference stops the collector, which is the rule
+ * {@code ClickhouseRepository} follows for its credentials and keeps a mistyped reference from
+ * becoming a failure repeated every minute forever. Then again on every read, so a rotated token
+ * takes effect on the next poll rather than at the next restart (#804); see {@link #headers()}.</p>
  */
 public final class DiscoveryClient {
 
@@ -35,11 +37,21 @@ public final class DiscoveryClient {
     static final String AUTH_SCHEME_PROPERTY = "riptide.discovery.auth-scheme";
 
     private final DiscoveryConfig config;
+    private final SecretResolvers secretResolvers;
     private final BoundedHttpRead http;
 
     public DiscoveryClient(final DiscoveryConfig config, final SecretResolvers secretResolvers) {
+        this(config, secretResolvers, new OutboundHttpTrust());
+    }
+
+    public DiscoveryClient(final DiscoveryConfig config,
+                           final SecretResolvers secretResolvers,
+                           final OutboundHttpTrust trust) {
         this.config = Objects.requireNonNull(config);
         Objects.requireNonNull(secretResolvers, "secretResolvers");
+        // resolved here as a startup gate, and thrown away: per-read resolution must not turn a
+        // mistyped reference into a failure repeated every poll for the life of the process, which
+        // is the reason this was resolved once in the first place
         final String token = secretResolvers.resolve(config.getToken());
         // refused here, not silently prefixed: an exported-but-empty variable is exactly the shape
         // the URL gate defends against, and a blank scheme sends "Authorization: <space><token>",
@@ -57,11 +69,36 @@ public final class DiscoveryClient {
                             + "rejects it. Set it (NetBox wants 'Token'), or leave the key unset to get "
                             + "that default.").formatted(AUTH_SCHEME_PROPERTY, "riptide.discovery.token"));
         }
-        final Map<String, String> headers = token == null
-                ? Map.of()
-                : Map.of("Authorization", config.getAuthScheme() + " " + token);
+        this.secretResolvers = secretResolvers;
         this.http = new BoundedHttpRead(
-                config.getTimeout(), MAX_BYTES, "discovery document", this::describe, headers);
+                config.getTimeout(), MAX_BYTES, "discovery document", this::describe, this::headers, trust);
+    }
+
+    /**
+     * The request headers for one read, with the token resolved now rather than at startup.
+     *
+     * <p><b>Why per read.</b> Resolved once, rotating the token needed a restart, and nothing said
+     * so. That contradicts what the reference schemes promise elsewhere here: a {@code file://}
+     * reference is re-read on every use for a device credential, so an operator who rotates a
+     * file-backed discovery token reasonably expects the same (#804).</p>
+     *
+     * <p><b>The cost is one resolver call per request, not per poll.</b> Resolution hangs off opening
+     * a connection, so the native NetBox source's page walk multiplies it: a fleet spanning ten pages
+     * costs ten resolutions a poll. Free for {@code file://}, {@code env://} and {@code plain://};
+     * for {@code vault://} it is one remote read per page, which is the number an operator budgeting
+     * that scheme needs. {@code DiscoveryClientTest.aPagedWalkResolvesOncePerPage} pins it.</p>
+     *
+     * <p><b>What it must never do is fall back.</b> A reference that stops resolving throws, which
+     * fails the poll and leaves the last good inventory serving. Sending the request without the
+     * header instead would let an endpoint that answers an unauthenticated read publish a fleet the
+     * operator never authorised this collector to see, and every guard downstream would read that
+     * as a legitimate change.</p>
+     */
+    private Map<String, String> headers() {
+        final String token = this.secretResolvers.resolve(this.config.getToken());
+        return token == null
+                ? Map.of()
+                : Map.of("Authorization", this.config.getAuthScheme() + " " + token);
     }
 
     /**

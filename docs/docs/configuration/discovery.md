@@ -70,7 +70,7 @@ The walk requests a stable ordering, so a device added while it is in progress a
 | `riptide.discovery.url` | unset | The endpoint. Unset or blank disables discovery. Point it at whichever endpoint the type needs. |
 | `riptide.discovery.type` | `prometheus-sd` | Which source to read: `prometheus-sd` or `netbox-api`. An unrecognised value fails startup, naming what is accepted. |
 | `riptide.discovery.filter` | unset | Narrows what NetBox returns, in its own query terms. Read by `netbox-api` only. |
-| `riptide.discovery.token` | unset | Credential, as a [secret reference](secret-references.md). |
+| `riptide.discovery.token` | unset | Credential, as a [secret reference](secret-references.md). Resolved on every poll, so rotating it takes effect on the next one with no restart. A reference that stops resolving fails the poll rather than sending an unauthenticated request. |
 | `riptide.discovery.auth-scheme` | `Token` | Paired with the token in the `Authorization` header. NetBox expects `Token`, not `Bearer`. With a token set, a blank value is refused at startup naming the key, rather than treated as unset like the URL: it would send an `Authorization` header with no scheme, which an endpoint rejects with nothing naming the scheme. Leave the key out to get the default. With no token set the scheme is never read, so a blank value is harmless and startup is unaffected. |
 | `riptide.discovery.interval` | `60s` | Poll interval. Zero or negative disables the watcher entirely; see [Startup](#startup). |
 | `riptide.discovery.timeout` | `10s` | Bounds the connect, each read, and the whole response. |
@@ -185,8 +185,8 @@ The two discovery gauges answer different questions and will legitimately disagr
 
 ## Limits
 
-Certificate authorities are not configurable.
-An endpoint served by an internal CA needs the JVM trust store, via `-Djavax.net.ssl.trustStore`.
+An endpoint served by an internal certificate authority needs that authority in `riptide.http.ca-bundle`; see [Outbound TLS](outbound-tls.md).
+There is no way to disable certificate verification, and that page says what to do instead.
 
 The NetBox service discovery plugin disables pagination and supports no conditional requests, so every poll transfers a full serialization of every visible device.
 Bound it with NetBox filters, for example `?status=active&role=leaf&role=spine`.

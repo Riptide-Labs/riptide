@@ -6,6 +6,7 @@
 package org.riptide.classification.internal;
 
 import org.riptide.config.BoundedHttpRead;
+import org.riptide.config.OutboundHttpTrust;
 import org.riptide.config.ByteOrderMark;
 import org.riptide.config.ClassificationConfig;
 import org.riptide.config.FileWatchTrigger;
@@ -72,17 +73,32 @@ public final class ClassificationRulesSource implements FileWatchTrigger.Source 
     private final BoundedHttpRead http;
 
     public ClassificationRulesSource(final ClassificationConfig config) {
-        this(config, DEFAULT_TIMEOUT);
+        this(config, DEFAULT_TIMEOUT, new OutboundHttpTrust());
+    }
+
+    /**
+     * The production constructor. The trust is here as well as on discovery because a ruleset served
+     * by an internal certificate authority has had this gap for longer than discovery has existed,
+     * and "whatever lands has to reach both call sites" is what the report asked for (#802).
+     */
+    public ClassificationRulesSource(final ClassificationConfig config, final OutboundHttpTrust trust) {
+        this(config, DEFAULT_TIMEOUT, trust);
     }
 
     /** Visible for tests, which cannot wait out the default timeout on every hung-server row. */
     ClassificationRulesSource(final ClassificationConfig config, final Duration timeout) {
+        this(config, timeout, new OutboundHttpTrust());
+    }
+
+    ClassificationRulesSource(final ClassificationConfig config,
+                              final Duration timeout,
+                              final OutboundHttpTrust trust) {
         this.config = Objects.requireNonNull(config);
         // describe() is a supplier because the location is re-read from config on every call, and
         // "ruleset" keeps the ceiling message byte-identical to what ClassificationRuleReloaderTest
         // asserts
         this.http = new BoundedHttpRead(
-                Objects.requireNonNull(timeout), MAX_BYTES, "ruleset", this::describe, Map.of());
+                Objects.requireNonNull(timeout), MAX_BYTES, "ruleset", this::describe, Map::of, trust);
     }
 
     /**
