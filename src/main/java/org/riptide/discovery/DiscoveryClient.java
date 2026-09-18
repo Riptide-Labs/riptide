@@ -61,7 +61,7 @@ public final class DiscoveryClient {
                 ? Map.of()
                 : Map.of("Authorization", config.getAuthScheme() + " " + token);
         this.http = new BoundedHttpRead(
-                config.getTimeout(), MAX_BYTES, "discovery document", this::describe, headers);
+                config.getTimeout(), MAX_BYTES, "discovery document", this::describe, () -> headers);
     }
 
     /**

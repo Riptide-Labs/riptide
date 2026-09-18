@@ -82,7 +82,7 @@ public final class ClassificationRulesSource implements FileWatchTrigger.Source 
         // "ruleset" keeps the ceiling message byte-identical to what ClassificationRuleReloaderTest
         // asserts
         this.http = new BoundedHttpRead(
-                Objects.requireNonNull(timeout), MAX_BYTES, "ruleset", this::describe, Map.of());
+                Objects.requireNonNull(timeout), MAX_BYTES, "ruleset", this::describe, Map::of);
     }
 
     /**
