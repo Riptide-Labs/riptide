@@ -100,8 +100,10 @@ public class DiscoveryConfiguration {
                         NetboxDeviceSource.firstPage(config.endpoint(), config.getFilter()),
                         client::fetchPage, client::describe);
             }
+            // firstPage without the ordering: this endpoint is not NetBox, so NetBox's
+            // pagination-stability term has no business being appended to it
             case MAPPED_JSON -> new MappedJsonSource(
-                    NetboxDeviceSource.firstPage(config.endpoint(), config.getFilter()),
+                    NetboxDeviceSource.firstPage(config.endpoint(), config.getFilter(), false),
                     client::fetchPage, client::describe, mapping(config.getMapping()));
         };
     }

@@ -92,7 +92,11 @@ That is the whole language. There are no transforms, no defaults, no conditional
 
 A dot separates field names and nothing else, so a field whose name contains a dot cannot be reached.
 
-**A value is used as found, which means a value that is not usable cannot be made usable.** The case you are most likely to meet is an address served with a prefix length, `10.0.0.1/24`. An exporter address is matched against the source address of a flow, so a prefix cannot be used: Riptide skips those devices and tells you which path and which value, rather than reporting that your endpoint yielded nothing.
+**A value is used as found, which means a value that is not usable cannot be made usable.** The case you are most likely to meet is an address served with host bits under a prefix length, `10.0.0.1/24`. An exporter address is matched against the source address of a flow, so that cannot be used, and those devices are skipped and counted on `discovery.skipped` like any other unusable entry.
+
+When *nothing* was usable for that reason, the failure says so: which path, which values, and that `netbox-api` exists for NetBox. That is the case worth naming, because otherwise the only message is that your endpoint yielded nothing, which reads as a filter or permission mistake. A fleet where only some devices carry a prefix publishes the rest and reports the skipped count on the gauge.
+
+A network **range** is not this problem. `10.0.0.0/24` with no host bits is a legal exporter entry, because the matcher is a prefix trie, and it is used as found.
 
 If that endpoint is NetBox, use `netbox-api`, which knows to strip it. If it is your own, serve the address without the prefix.
 
@@ -110,7 +114,7 @@ riptide:
     filter: status=active&role=leaf&role=spine
 ```
 
-It is read by the `netbox-api` source only. The service discovery reader takes its filtering from whatever produced the document.
+It is read by `netbox-api` and `mapped-json`, which append it to the endpoint's query. The service discovery reader takes its filtering from whatever produced the document.
 
 A filter matching nothing is refused rather than publishing an empty exporters tree, which is the same rule an empty endpoint answer gets. If discovery stops updating right after you add a filter, that is the first thing to check.
 
@@ -121,8 +125,12 @@ The walk requests a stable ordering, so a device added while it is in progress a
 | Key | Default | Meaning |
 |---|---|---|
 | `riptide.discovery.url` | unset | The endpoint. Unset or blank disables discovery. Point it at whichever endpoint the type needs. |
-| `riptide.discovery.type` | `prometheus-sd` | Which source to read: `prometheus-sd` or `netbox-api`. An unrecognised value fails startup, naming what is accepted. |
-| `riptide.discovery.filter` | unset | Narrows what NetBox returns, in its own query terms. Read by `netbox-api` only. |
+| `riptide.discovery.type` | `prometheus-sd` | Which source to read: `prometheus-sd`, `netbox-api` or `mapped-json`. An unrecognised value fails startup, naming what is accepted. |
+| `riptide.discovery.filter` | unset | Narrows what the endpoint returns, in its own query terms. Read by `netbox-api` and `mapped-json`. |
+| `riptide.discovery.mapping.items` | unset | Where the array of devices is. Required by `mapped-json`; see [Mapping your own endpoint](#mapping-your-own-endpoint). |
+| `riptide.discovery.mapping.name` | unset | Where the exporter name is in one device. Required by `mapped-json`. |
+| `riptide.discovery.mapping.address` | unset | Where the exporter address is in one device. Required by `mapped-json`. |
+| `riptide.discovery.mapping.next` | unset | Where the link to the next page is. Read by `mapped-json`; unset means one request. |
 | `riptide.discovery.token` | unset | Credential, as a [secret reference](secret-references.md). Resolved on every poll, so rotating it takes effect on the next one with no restart. A reference that stops resolving fails the poll rather than sending an unauthenticated request. |
 | `riptide.discovery.auth-scheme` | `Token` | Paired with the token in the `Authorization` header. NetBox expects `Token`, not `Bearer`. With a token set, a blank value is refused at startup naming the key, rather than treated as unset like the URL: it would send an `Authorization` header with no scheme, which an endpoint rejects with nothing naming the scheme. Leave the key out to get the default. With no token set the scheme is never read, so a blank value is harmless and startup is unaffected. |
 | `riptide.discovery.interval` | `60s` | Poll interval. Zero or negative disables the watcher entirely; see [Startup](#startup). |

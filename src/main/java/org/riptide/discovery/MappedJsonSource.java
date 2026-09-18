@@ -92,6 +92,22 @@ public final class MappedJsonSource implements DiscoverySource {
         return devices;
     }
 
+    /**
+     * Whether a value is unusable only because it carries host bits under a prefix length.
+     *
+     * <p>Asked of the renderer's own parser rather than by looking for a slash, because a slash is
+     * not the problem: {@code 10.0.0.0/24} is a legal exporter entry and the matcher is a prefix
+     * trie, so a range is deliberately accepted. Rejecting every value with a slash would drop a
+     * block that works under the other sources, and then advise switching to NetBox about an
+     * address NetBox has nothing to do with.</p>
+     */
+    private static boolean hostBitsSet(final String address) {
+        final int slash = address.indexOf('/');
+        return slash > 0
+                && !ExporterRenderer.isAcceptableAddress(address)
+                && ExporterRenderer.isAcceptableAddress(address.substring(0, slash));
+    }
+
     private static String found(final JsonNode at) {
         if (at == null) {
             return "nothing";
@@ -117,7 +133,7 @@ public final class MappedJsonSource implements DiscoverySource {
         if (name == null || name.isBlank() || address == null || address.isBlank()) {
             return Optional.empty();
         }
-        if (address.indexOf('/') >= 0) {
+        if (hostBitsSet(address)) {
             // skipped here rather than emitted, which is what the renderer would do with it anyway:
             // the difference is that this source knows WHY, and can say so if it turns out to be why
             // nothing was usable. Remembered, never stripped — stripping is the transform this

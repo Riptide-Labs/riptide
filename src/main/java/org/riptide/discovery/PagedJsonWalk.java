@@ -28,7 +28,12 @@ import java.util.function.Supplier;
  * rule its siblings already hold, and the copy that drifts is the one nobody is looking at
  * (#800).</p>
  *
- * <p><b>The bound counts devices read, not entries emitted.</b> A device a source cannot map still
+ * <p><b>Two bounds, because one does not close the loop.</b> The device bound counts devices read,
+ * not entries emitted; the page bound catches the walk that reads no devices at all. Without the
+ * second, an empty page whose {@code next} points back at itself spins forever with the device
+ * counter never moving.</p>
+ *
+ * <p><b>The device bound counts devices read, not entries emitted.</b> A device a source cannot map still
  * cost a read, so counting emitted entries leaves a fleet whose devices are all unusable, or a
  * {@code next} link cycling back to a page already seen, walking forever with the counter pinned at
  * zero. Exceeding it is refused rather than truncated: a short read is indistinguishable downstream
@@ -54,6 +59,17 @@ final class PagedJsonWalk {
      * cannot reason about a megabyte figure without knowing the endpoint's serialization size.</p>
      */
     static final int MAX_DEVICES = 100_000;
+
+    /**
+     * How many pages one walk may read before it is refused.
+     *
+     * <p>The device bound alone does not close the loop it claims to: a page whose array is empty
+     * increments nothing, so an endpoint answering with an empty page and a {@code next} link back
+     * to itself walks forever with the counter pinned at zero. Cursor APIs that emit a {@code next}
+     * on every page, including a trailing empty one, are an ordinary shape, and the mapped source
+     * points this walk at arbitrary endpoints.</p>
+     */
+    static final int MAX_PAGES = 10_000;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -89,7 +105,14 @@ final class PagedJsonWalk {
         final List<TargetGroup> groups = new ArrayList<>();
         URL page = this.first;
         int read = 0;
+        int pages = 0;
         while (page != null) {
+            if (++pages > MAX_PAGES) {
+                throw new IllegalStateException(
+                        ("%s served more than %d pages. An endpoint that offers a next page forever, "
+                                + "including an empty one, would otherwise be walked forever.")
+                                .formatted(this.describe.get(), MAX_PAGES));
+            }
             final JsonNode body = parse(this.pages.read(page));
             for (final JsonNode device : devices.apply(body)) {
                 if (++read > MAX_DEVICES) {

@@ -201,6 +201,37 @@ class MappedJsonSourceTest {
                 .hasMessageNotContaining("prefix length");
     }
 
+    /**
+     * A CIDR block is a legal exporter entry, so it must not be treated as the prefix problem.
+     *
+     * <p>The renderer accepts one deliberately: the matcher is a prefix trie, so a range is an
+     * entry. Rejecting every value with a slash would drop a block that works under the other
+     * sources, and then advise switching to NetBox about an address NetBox has nothing to do
+     * with.</p>
+     */
+    @Test
+    void aCidrBlockIsAnEntryRatherThanThePrefixProblem() throws Exception {
+        final var groups = source("""
+                {"results": [{"hostname": "site-a", "mgmt_ip": "10.0.0.0/24"}]}
+                """).targets();
+
+        assertThat(groups.getFirst().targets())
+                .as("a range is a legal entry, and the other sources accept it")
+                .containsExactly("10.0.0.0/24");
+    }
+
+    @Test
+    void aWalkOverEmptyPagesThatNeverEndIsRefused() {
+        final var source = source(Map.of(ENDPOINT, """
+                {"results": [], "paging": {"next": "%s"}}
+                """.formatted(ENDPOINT)), paths("results", "hostname", "mgmt_ip", "paging.next"));
+
+        assertThatThrownBy(source::targets)
+                .as("the device bound never moves here, so the page bound is the only thing that ends it")
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("pages");
+    }
+
     @Test
     void anItemsPathThatIsNotAnArrayIsRefusedNamingTheKeyAndWhatWasFound() {
         final var source = source(Map.of(ENDPOINT, """

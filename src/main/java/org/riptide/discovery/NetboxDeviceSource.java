@@ -97,12 +97,25 @@ public final class NetboxDeviceSource implements DiscoverySource {
      * device can be returned twice or missed. Ordering by a stable key makes an insert append.</p>
      */
     static URL firstPage(final URL endpoint, final String filter) {
+        return firstPage(endpoint, filter, true);
+    }
+
+    /**
+     * The same joining without NetBox's ordering, for a source whose endpoint is not NetBox.
+     *
+     * <p>{@code ordering=id} is a NetBox query term and a NetBox concern: it exists so that paging
+     * by offset over an unordered result cannot return a device twice. Sent to an arbitrary endpoint
+     * it is at best ignored, and at worst a 400 from an API that rejects unknown parameters or a
+     * silent re-sort by a field that happens to share the name. The joining itself is shared because
+     * it is the kind of string work that is wrong in a different way at every call site (#800).</p>
+     */
+    static URL firstPage(final URL endpoint, final String filter, final boolean ordered) {
         final StringBuilder query = new StringBuilder(endpoint.getQuery() == null ? "" : endpoint.getQuery());
         final String terms = normalise(filter);
         if (!terms.isEmpty()) {
             append(query, terms);
         }
-        if (!hasOrdering(query.toString())) {
+        if (ordered && !hasOrdering(query.toString())) {
             append(query, "ordering=id");
         }
         try {

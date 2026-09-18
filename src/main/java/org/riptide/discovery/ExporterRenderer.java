@@ -197,7 +197,7 @@ public final class ExporterRenderer {
      * validator: its defaults accept inet_aton and single-segment spellings, so a device named
      * "1234" would render as the address 0.0.4.210 instead of being skipped.
      */
-    private static boolean isAcceptableAddress(final String candidate) {
+    static boolean isAcceptableAddress(final String candidate) {
         try {
             StrictAddresses.parse(candidate, false);
             return true;
