@@ -74,8 +74,11 @@ public final class MappedJsonSource implements DiscoverySource {
             throw new IllegalStateException(
                     ("%s mapped %d address(es) that carry a prefix length, which cannot be used as an "
                             + "exporter address: %s. The path language has no transform to remove it "
-                            + "(riptide.discovery.mapping.address = '%s'). Serve the address without the "
-                            + "prefix, or use riptide.discovery.type 'netbox-api' if this is NetBox.")
+                            + "(riptide.discovery.mapping.address = '%s'). Map a field that serves the "
+                            + "bare host if the endpoint has one — Nautobot serves 'primary_ip4.host' "
+                            + "beside 'primary_ip4.address' — or serve the address without the prefix. "
+                            + "If this endpoint is NetBox itself, riptide.discovery.type 'netbox-api' "
+                            + "strips it for you.")
                             .formatted(this.describe.get(), prefixed.size(),
                                     String.join(", ", prefixed.subList(0, Math.min(NAMED_EXAMPLES, prefixed.size()))),
                                     this.paths.address()));

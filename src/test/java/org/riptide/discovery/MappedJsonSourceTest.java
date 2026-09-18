@@ -281,6 +281,71 @@ class MappedJsonSourceTest {
                 .isEqualTo(1);
     }
 
+    /**
+     * The documented Nautobot recipe, pinned against the shape Nautobot 3.2.5 actually serves.
+     *
+     * <p>Recorded from a running instance rather than a schema. Two things in the recipe are
+     * load-bearing and both are asserted here: {@code depth=1}, without which {@code primary_ip4} is
+     * a reference carrying no address at all, and {@code primary_ip4.host} rather than
+     * {@code .address}, because Nautobot serves both and only the first is usable (#801).</p>
+     *
+     * <p>{@code netbox-api} cannot read Nautobot: it appends {@code ordering=id}, which Nautobot
+     * rejects with a 400. That is a property of Nautobot's query handling and cannot be asserted
+     * against a stub; it is measured in the issue and stated on the discovery page.</p>
+     */
+    @Test
+    void theDocumentedNautobotRecipeReadsNautobotsOwnShape() throws Exception {
+        final String nautobotDepthOne = """
+                {"count": 2, "next": null, "previous": null, "results": [
+                  {"id": "8f2e-1", "name": "edge-01",
+                   "role": {"id": "r-1", "object_type": "extras.role", "url": "http://n/api/extras/roles/r-1/"},
+                   "status": {"value": "active", "label": "Active"},
+                   "primary_ip4": {"id": "ip-1", "address": "10.0.0.1/24", "host": "10.0.0.1",
+                                   "mask_length": 24, "ip_version": 4}},
+                  {"id": "8f2e-2", "name": "edge-02",
+                   "role": {"id": "r-1", "object_type": "extras.role", "url": "http://n/api/extras/roles/r-1/"},
+                   "status": {"value": "active", "label": "Active"},
+                   "primary_ip4": {"id": "ip-2", "address": "10.0.0.2/24", "host": "10.0.0.2",
+                                   "mask_length": 24, "ip_version": 4}}
+                ]}
+                """;
+
+        final var groups = source(Map.of(ENDPOINT, nautobotDepthOne),
+                paths("results", "name", "primary_ip4.host", "next")).targets();
+        final var rendered = ExporterRenderer.render(groups, List.of("x"), "the endpoint");
+
+        assertThat(rendered.byName())
+                .as("the recipe on the discovery page, against the shape Nautobot serves")
+                .containsExactly(java.util.Map.entry("edge-01", "10.0.0.1"),
+                        java.util.Map.entry("edge-02", "10.0.0.2"));
+
+        assertThatThrownBy(() -> source(Map.of(ENDPOINT, nautobotDepthOne),
+                paths("results", "name", "primary_ip4.address", "next")).targets())
+                .as("mapping .address instead is the mistake the recipe exists to prevent")
+                .isInstanceOf(IllegalStateException.class)
+                // the value alone would pass on any failure that merely echoes its input, including
+                // a regression replacing this diagnostic with a generic parse error
+                .hasMessageContaining("prefix length")
+                .hasMessageContaining("primary_ip4.address")
+                .hasMessageContaining("10.0.0.1/24");
+    }
+
+    /** Without depth=1, Nautobot serves a reference with no address anywhere in it. */
+    @Test
+    void withoutTheDepthTermNautobotOffersNoAddressToMap() throws Exception {
+        final var groups = source(Map.of(ENDPOINT, """
+                {"count": 1, "next": null, "results": [
+                  {"id": "8f2e-1", "name": "edge-01",
+                   "primary_ip4": {"id": "ip-1", "object_type": "ipam.ipaddress",
+                                   "url": "http://n/api/ipam/ip-addresses/ip-1/"}}
+                ]}
+                """), paths("results", "name", "primary_ip4.host", "next")).targets();
+
+        assertThat(groups)
+                .as("every device skipped, which is what the required filter term prevents")
+                .isEmpty();
+    }
+
     @Test
     void anItemsPathThatIsNotAnArrayIsRefusedNamingTheKeyAndWhatWasFound() {
         final var source = source(Map.of(ENDPOINT, """
