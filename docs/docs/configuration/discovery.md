@@ -44,7 +44,7 @@ Pick `netbox-api` if you cannot install a NetBox plugin, or if your inventory is
 
 Pick `prometheus-sd` if the plugin is already installed and working, or if your source of truth emits that format. It is a contract many producers emit, not a NetBox feature.
 
-Pick `mapped-json` if your source of truth is something else entirely: a home-grown asset database, a CMDB, a DCIM that is not NetBox. You point it at the endpoint you already serve and say which fields hold the name and the address, instead of running a service to translate one into a format Riptide already knows.
+Pick `mapped-json` if your source of truth is something else entirely: a home-grown asset database, a CMDB, a DCIM that is not NetBox — **Nautobot included, see [Nautobot](#nautobot)**. You point it at the endpoint you already serve and say which fields hold the name and the address, instead of running a service to translate one into a format Riptide already knows.
 
 Point `riptide.discovery.url` at whichever endpoint the type needs: the plugin's path for one, `/api/dcim/devices/` for another, your own for the third.
 
@@ -98,6 +98,40 @@ riptide:
 
 A `next` link may be absolute or relative: a relative one is resolved against the page it came from, and either way it must stay on the same host as `riptide.discovery.url`, because the credential is sent with every page.
 
+### Nautobot
+
+Nautobot is a NetBox fork, but `netbox-api` **cannot** read it: that source appends `ordering=id`, which Nautobot rejects with `HTTP 400 {"ordering":["Unknown filter field"]}`.
+
+No `filter` value rescues it. The append is only suppressed when the filter already contains an `ordering=` term, and Nautobot rejects that too, so every poll is a 400 whatever you set.
+
+`mapped-json` reads it as it is, with no NetBox plugin and nothing installed on the Nautobot side:
+
+```yaml
+riptide:
+  discovery:
+    url: https://nautobot.example.com/api/dcim/devices/
+    token: vault://secret/nautobot#token
+    type: mapped-json
+    filter: depth=1
+    mapping:
+      items: results
+      name: name
+      address: primary_ip4.host
+      next: next
+```
+
+Two things in that configuration are load-bearing.
+
+`filter: depth=1` is required. Without it Nautobot serves `primary_ip4` as a reference carrying only `id`, `object_type` and `url`, so there is no address to map and every device is skipped.
+
+`primary_ip4.host` rather than `primary_ip4.address`. Nautobot serves both: `address` is `10.0.0.1/24` and cannot be used as an exporter address, while `host` is the bare `10.0.0.1`. Mapping `address` fails the poll and tells you so, naming the values it found.
+
+**Paging needs no ordering term.** Nautobot orders devices by name by default, so a walk in pages is stable without one: measured across a three-page walk, five devices, no duplicates and none missed, identical on every read. This is unlike `netbox-api`, which appends `ordering=id` precisely because NetBox needs it.
+
+If you do want a different order, Nautobot's term is `sort`. Note that `sort=id` is **not** insertion order the way NetBox's `ordering=id` is: Nautobot's primary keys are UUIDs, so it sorts by a value that looks random. The default is almost certainly what you want.
+
+Verified against Nautobot 3.2.5. Nautobot's own filters go in the same `filter` value, joined with `&`, for example `filter: depth=1&status=active`.
+
 ### What a path is, and what it is not
 
 A path is dotted field names. `net.mgmt.v4` walks three fields and takes what it finds.
@@ -132,7 +166,9 @@ It is read by `netbox-api` and `mapped-json`, which append it to the endpoint's 
 
 A filter matching nothing is refused rather than publishing an empty exporters tree, which is the same rule an empty endpoint answer gets. If discovery stops updating right after you add a filter, that is the first thing to check.
 
-The walk requests a stable ordering, so a device added while it is in progress appends rather than shifting the pages still to be read.
+`netbox-api` also appends `ordering=id`, so a device added while the walk is in progress appends rather than shifting the pages still to be read. Without a stable order, an endpoint paging by offset can return one device twice and miss another.
+
+`mapped-json` appends nothing of its own, because the endpoint is not NetBox and `ordering` may mean nothing there or mean something else. If your endpoint pages, put its own ordering term in this filter.
 
 ## Configuration
 

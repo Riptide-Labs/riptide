@@ -246,4 +246,6 @@ Three epics, deliberately excluded here:
 2. #800 — a generic HTTP loader with operator-written field mapping, for sources that emit neither the Prometheus format nor NetBox's.
 3. #801 — Nautobot support. Its REST API is a near-identical NetBox fork, so this is close to free once the native client exists. The Nautobot service discovery plugin fork appears abandoned, so this depends on #799 rather than on the format.
 
+   *Correction, 2026-09-18, measured against Nautobot 3.2.5:* "close to free once the native client exists" did not hold. The native client cannot read Nautobot at all, because it appends `ordering=id` and Nautobot answers 400; the fork diverges on query terms, not only on fields. What does read it is the generic mapped source from #800, with `depth=1` and `primary_ip4.host`. See the Nautobot section of the discovery page.
+
 Also filed rather than fixed: #802, custom certificate authority configuration for outbound HTTP, which affects the classification rules source equally.
