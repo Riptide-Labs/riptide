@@ -5,6 +5,8 @@
 
 package org.riptide.config;
 
+import javax.net.ssl.KeyManager;
+import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
@@ -39,7 +41,9 @@ import java.util.List;
  * names that certificate in the bundle instead: it takes one {@code openssl s_client} command and
  * leaves a configuration stating what is trusted, which is what disabling the check does not.</p>
  *
- * <p>Hostname verification is untouched and stays the platform's.</p>
+ * <p>Hostname verification is untouched and stays the platform's, and so is the client's own key
+ * material: a bundle configured here does not stop a mutual-TLS deployment presenting the
+ * certificate {@code javax.net.ssl.keyStore} names.</p>
  */
 public final class OutboundHttpTrust {
 
@@ -64,9 +68,14 @@ public final class OutboundHttpTrust {
         this.trustManager = managerFor(config.getCaBundle());
         try {
             final SSLContext context = SSLContext.getInstance("TLS");
-            context.init(null, new TrustManager[]{this.trustManager}, null);
+            // the platform's key managers, not null: null hands the context no key material at all,
+            // so an operator using -Djavax.net.ssl.keyStore for mutual TLS would stop presenting a
+            // client certificate the moment they configured a CA bundle, and the endpoint's refusal
+            // would name neither. "Adds, never replaces" has to hold for both halves of the
+            // handshake, not only the half the key is about
+            context.init(platformKeyManagers(), new TrustManager[]{this.trustManager}, null);
             this.socketFactory = context.getSocketFactory();
-        } catch (final GeneralSecurityException e) {
+        } catch (final GeneralSecurityException | IOException e) {
             throw new IllegalStateException(
                     "%s could not be used: %s: %s"
                             .formatted(CA_BUNDLE_PROPERTY, config.getCaBundle(), e.getMessage()), e);
@@ -129,6 +138,28 @@ public final class OutboundHttpTrust {
                             + "more certificate authorities.")
                             .formatted(CA_BUNDLE_PROPERTY, bundle, e.getMessage()), e);
         }
+    }
+
+    /**
+     * The key material the platform would have used, read from the same system properties the
+     * default context reads. {@code null} when none is configured, which is what the default context
+     * amounts to in that case.
+     */
+    private static KeyManager[] platformKeyManagers() throws GeneralSecurityException, IOException {
+        final String path = System.getProperty("javax.net.ssl.keyStore");
+        if (path == null || path.isEmpty() || "NONE".equalsIgnoreCase(path)) {
+            return null;
+        }
+        final char[] password = System.getProperty("javax.net.ssl.keyStorePassword", "").toCharArray();
+        final KeyStore store = KeyStore.getInstance(
+                System.getProperty("javax.net.ssl.keyStoreType", KeyStore.getDefaultType()));
+        try (InputStream in = Files.newInputStream(Path.of(path))) {
+            store.load(in, password);
+        }
+        final KeyManagerFactory factory =
+                KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        factory.init(store, password);
+        return factory.getKeyManagers();
     }
 
     private static X509TrustManager platform() throws GeneralSecurityException {

@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.net.InetAddress;
+import java.net.URI;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -157,7 +158,44 @@ class DiscoveryClientTest {
         final DiscoveryConfig config = new DiscoveryConfig();
         config.setUrl(endpoint("/devices"));
         config.setToken(SecretRef.of("counted"));
-        final SecretResolvers counting = new SecretResolvers(List.of(new SecretResolver() {
+        final DiscoveryClient client = new DiscoveryClient(config, counting(resolutions));
+        final int atConstruction = resolutions.get();
+
+        client.fetch();
+
+        assertThat(resolutions.get() - atConstruction)
+                .as("one read, one resolution")
+                .isEqualTo(1);
+    }
+
+    /**
+     * And a paged walk costs one per page, which is what an operator budgeting a {@code vault://}
+     * token needs to know.
+     *
+     * <p>Resolution hangs off opening a connection, not off a poll, so the native NetBox source's
+     * page walk multiplies it: a fleet spanning ten pages resolves ten times per poll. Worth pinning
+     * rather than describing, because the number is what the documentation promises.</p>
+     */
+    @Test
+    void aPagedWalkResolvesOncePerPage() throws Exception {
+        final AtomicInteger resolutions = new AtomicInteger();
+        final DiscoveryConfig config = new DiscoveryConfig();
+        config.setUrl(endpoint("/devices"));
+        config.setToken(SecretRef.of("counted"));
+        final DiscoveryClient client = new DiscoveryClient(config, counting(resolutions));
+        final int atConstruction = resolutions.get();
+
+        client.fetch();
+        client.fetchPage(URI.create(endpoint("/devices")).toURL());
+        client.fetchPage(URI.create(endpoint("/devices")).toURL());
+
+        assertThat(resolutions.get() - atConstruction)
+                .as("three requests, three resolutions: the cost is per request, not per poll")
+                .isEqualTo(3);
+    }
+
+    private static SecretResolvers counting(final AtomicInteger resolutions) {
+        return new SecretResolvers(List.of(new SecretResolver() {
             @Override
             public String scheme() {
                 return "plain";
@@ -169,14 +207,6 @@ class DiscoveryClientTest {
                 return "counted";
             }
         }));
-        final DiscoveryClient client = new DiscoveryClient(config, counting);
-        final int atConstruction = resolutions.get();
-
-        client.fetch();
-
-        assertThat(resolutions.get() - atConstruction)
-                .as("one read, one resolution")
-                .isEqualTo(1);
     }
 
     private static DiscoveryClient fileBacked(final Path secret) {

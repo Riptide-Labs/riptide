@@ -15,6 +15,9 @@ import org.riptide.utils.HttpServerConfig;
 import org.springframework.core.io.UrlResource;
 
 import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLServerSocket;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
@@ -32,6 +35,10 @@ import java.nio.file.Path;
 import java.security.KeyStore;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -167,6 +174,93 @@ class OutboundHttpTrustTest {
         assertThat(new String(new ClassificationRulesSource(config, trusting(caBundle)).read(),
                 StandardCharsets.UTF_8))
                 .isEqualTo("served over an internally signed certificate");
+    }
+
+    /**
+     * A configured bundle must not stop a mutual-TLS deployment presenting its client certificate.
+     *
+     * <p>Building the context with no key managers looks harmless and is not: an operator reaching
+     * NetBox over mutual TLS with {@code -Djavax.net.ssl.keyStore} would add an internal authority to
+     * fix the server's chain and find the endpoint now rejects them for presenting no certificate,
+     * with nothing naming the bundle.</p>
+     *
+     * <p><b>Asserted from the server's side deliberately.</b> Under TLS 1.3 the client finishes the
+     * handshake before the server validates its certificate, so a client-side success proves nothing
+     * here: the first version of this check passed with no certificate being sent at all.</p>
+     */
+    @Test
+    void aBundleDoesNotStopTheClientPresentingItsOwnCertificate() throws Exception {
+        final Path clientStore = workspace.resolve("client.p12");
+        keytool("-genkeypair", "-alias", "client", "-dname", "CN=riptide-client", "-keyalg", "RSA",
+                "-keysize", "2048", "-validity", "1", "-keystore", clientStore.toString(),
+                "-storetype", "PKCS12", "-storepass", STORE_PASSWORD, "-keypass", STORE_PASSWORD);
+        final Path clientCert = workspace.resolve("client.pem");
+        keytool("-exportcert", "-rfc", "-alias", "client", "-keystore", clientStore.toString(),
+                "-storepass", STORE_PASSWORD, "-file", clientCert.toString());
+        final KeyStore clientTrust = KeyStore.getInstance("PKCS12");
+        clientTrust.load(null, null);
+        try (InputStream in = Files.newInputStream(clientCert)) {
+            clientTrust.setCertificateEntry("client",
+                    java.security.cert.CertificateFactory.getInstance("X.509").generateCertificate(in));
+        }
+
+        final SSLContext serverContext = SSLContext.getInstance("TLS");
+        final KeyStore serverStore = KeyStore.getInstance("PKCS12");
+        try (InputStream in = Files.newInputStream(workspace.resolve("server.p12"))) {
+            serverStore.load(in, STORE_PASSWORD.toCharArray());
+        }
+        final KeyManagerFactory keys = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        keys.init(serverStore, STORE_PASSWORD.toCharArray());
+        final TrustManagerFactory trusts =
+                TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        trusts.init(clientTrust);
+        serverContext.init(keys.getKeyManagers(), trusts.getTrustManagers(), null);
+
+        try (SSLServerSocket socket = (SSLServerSocket) serverContext.getServerSocketFactory()
+                .createServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            socket.setNeedClientAuth(true);
+            final ExecutorService pool = Executors.newSingleThreadExecutor();
+            try {
+                final Future<String> presented = pool.submit(() -> {
+                    try (SSLSocket accepted = (SSLSocket) socket.accept()) {
+                        accepted.startHandshake();
+                        return accepted.getSession().getPeerPrincipal().getName();
+                    }
+                });
+
+                final String previousStore = System.getProperty("javax.net.ssl.keyStore");
+                final String previousPassword = System.getProperty("javax.net.ssl.keyStorePassword");
+                final SSLSocketFactory factory;
+                try {
+                    System.setProperty("javax.net.ssl.keyStore", clientStore.toString());
+                    System.setProperty("javax.net.ssl.keyStorePassword", STORE_PASSWORD);
+                    // built inside the window, because this is when the key material is read
+                    factory = trusting(caBundle).socketFactory();
+                } finally {
+                    restore("javax.net.ssl.keyStore", previousStore);
+                    restore("javax.net.ssl.keyStorePassword", previousPassword);
+                }
+
+                try (SSLSocket client = (SSLSocket) factory.createSocket(
+                        InetAddress.getLoopbackAddress(), socket.getLocalPort())) {
+                    client.startHandshake();
+                }
+
+                assertThat(presented.get(20, TimeUnit.SECONDS))
+                        .as("the server saw the certificate javax.net.ssl.keyStore names")
+                        .isEqualTo("CN=riptide-client");
+            } finally {
+                pool.shutdownNow();
+            }
+        }
+    }
+
+    private static void restore(final String property, final String previous) {
+        if (previous == null) {
+            System.clearProperty(property);
+        } else {
+            System.setProperty(property, previous);
+        }
     }
 
     @Test

@@ -66,10 +66,11 @@ public final class BoundedHttpRead {
      * @param subject the noun in the ceiling message, e.g. {@code "ruleset"}
      * @param describe the location with credentials redacted; safe to log, evaluated per message
      * @param headers request headers to set, e.g. an {@code Authorization} header. A supplier
-     *     rather than a value, and asked once per opened connection: a caller whose header carries
-     *     a credential can then resolve its reference per read, so a rotation takes effect on the
-     *     next one instead of at the next restart (#804). A caller with nothing to send supplies an
-     *     empty map, which is what it passed as a value before.
+     *     rather than a value, and asked once per opened connection — per request, which for a
+     *     caller that pages is once per page rather than once per poll. A caller whose header
+     *     carries a credential can then resolve its reference per read, so a rotation takes effect
+     *     on the next request instead of at the next restart (#804). A caller with nothing to send
+     *     supplies an empty map, which is what it passed as a value before.
      */
     public BoundedHttpRead(final Duration timeout,
                            final int maxBytes,
@@ -174,7 +175,9 @@ public final class BoundedHttpRead {
         // hide a change from it
         connection.setUseCaches(false);
         // asked here, once per connection, so a credential is as fresh as this read
-        this.headers.get().forEach(connection::setRequestProperty);
+        final Map<String, String> requestHeaders = Objects.requireNonNull(
+                this.headers.get(), "the header supplier returned null; it must return a map, empty if there is nothing to send");
+        requestHeaders.forEach(connection::setRequestProperty);
         return connection;
     }
 

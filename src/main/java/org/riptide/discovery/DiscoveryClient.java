@@ -80,9 +80,13 @@ public final class DiscoveryClient {
      * <p><b>Why per read.</b> Resolved once, rotating the token needed a restart, and nothing said
      * so. That contradicts what the reference schemes promise elsewhere here: a {@code file://}
      * reference is re-read on every use for a device credential, so an operator who rotates a
-     * file-backed discovery token reasonably expects the same (#804). The cost is one resolver call
-     * per poll, which is a file read or an environment lookup for every scheme but {@code vault://},
-     * and one Vault read a minute at the default interval.</p>
+     * file-backed discovery token reasonably expects the same (#804).</p>
+     *
+     * <p><b>The cost is one resolver call per request, not per poll.</b> Resolution hangs off opening
+     * a connection, so the native NetBox source's page walk multiplies it: a fleet spanning ten pages
+     * costs ten resolutions a poll. Free for {@code file://}, {@code env://} and {@code plain://};
+     * for {@code vault://} it is one remote read per page, which is the number an operator budgeting
+     * that scheme needs. {@code DiscoveryClientTest.aPagedWalkResolvesOncePerPage} pins it.</p>
      *
      * <p><b>What it must never do is fall back.</b> A reference that stops resolving throws, which
      * fails the poll and leaves the last good inventory serving. Sending the request without the

@@ -61,8 +61,12 @@ Both accept an `https://` endpoint, so this boundary is worth knowing before you
 
 The bundle is read once, at startup, so a rotated authority needs a restart.
 
-A rotated **credential** does not: `riptide.discovery.token` is resolved on every poll, so rewriting the file a `file://` reference names takes effect on the next one.
+A rotated **credential** does not: `riptide.discovery.token` is resolved on every request, so rewriting the file a `file://` reference names takes effect on the next one.
 The asymmetry is deliberate. A certificate authority rotates on a certificate's lifetime, and rebuilding the trust material every poll would spend real work on a file that almost never changes; a token rotates on an operational cadence, and resolving one is a file read.
+
+Per **request**, not per poll, and the difference matters for `vault://`.
+The `netbox-api` source walks pages, so a fleet spanning ten pages resolves the token ten times per poll, which is ten Vault reads.
+`file://`, `env://` and plain references cost nothing worth counting.
 
 If a credential reference stops resolving while Riptide is running, the poll fails, is counted, and the last good inventory keeps serving.
 The request is never sent without the credential: an endpoint that answers an unauthenticated read could hand back a different fleet, and every guard downstream would treat that as a legitimate change.
