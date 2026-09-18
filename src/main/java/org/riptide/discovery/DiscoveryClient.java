@@ -7,6 +7,7 @@ package org.riptide.discovery;
 
 import org.riptide.config.BoundedHttpRead;
 import org.riptide.config.ByteOrderMark;
+import org.riptide.config.OutboundHttpTrust;
 import org.riptide.secrets.SecretResolvers;
 
 import java.io.IOException;
@@ -40,6 +41,12 @@ public final class DiscoveryClient {
     private final BoundedHttpRead http;
 
     public DiscoveryClient(final DiscoveryConfig config, final SecretResolvers secretResolvers) {
+        this(config, secretResolvers, new OutboundHttpTrust());
+    }
+
+    public DiscoveryClient(final DiscoveryConfig config,
+                           final SecretResolvers secretResolvers,
+                           final OutboundHttpTrust trust) {
         this.config = Objects.requireNonNull(config);
         Objects.requireNonNull(secretResolvers, "secretResolvers");
         // resolved here as a startup gate, and thrown away: per-read resolution must not turn a
@@ -64,7 +71,7 @@ public final class DiscoveryClient {
         }
         this.secretResolvers = secretResolvers;
         this.http = new BoundedHttpRead(
-                config.getTimeout(), MAX_BYTES, "discovery document", this::describe, this::headers);
+                config.getTimeout(), MAX_BYTES, "discovery document", this::describe, this::headers, trust);
     }
 
     /**

@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.riptide.classification.internal.csv.CsvImporter;
 import org.riptide.config.ClassificationConfig;
+import org.riptide.config.OutboundHttpTrust;
 import org.springframework.core.io.FileSystemResource;
 
 import java.io.UncheckedIOException;
@@ -33,7 +34,7 @@ public class ClassificationRuleProviderTest {
 
         final var configuration = new RiptideConfiguration();
         final var provider = configuration.classificationRuleProvider(
-                new CsvImporter(), configuration.classificationRulesSource(config));
+                new CsvImporter(), configuration.classificationRulesSource(config, new OutboundHttpTrust()));
         Assertions.assertThat(provider.getRules()).hasSize(1);
 
         Files.writeString(rulesFile, HEADER + "ntp;udp;;;;123;;true\nssh;tcp;;;;22;;true\n");
@@ -47,7 +48,7 @@ public class ClassificationRuleProviderTest {
 
         final var configuration = new RiptideConfiguration();
         Assertions.assertThatThrownBy(() -> configuration.classificationRuleProvider(
-                        new CsvImporter(), configuration.classificationRulesSource(config)))
+                        new CsvImporter(), configuration.classificationRulesSource(config, new OutboundHttpTrust())))
                 .isInstanceOf(UncheckedIOException.class);
     }
 }

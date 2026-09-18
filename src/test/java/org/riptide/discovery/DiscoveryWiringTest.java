@@ -7,6 +7,7 @@ package org.riptide.discovery;
 
 import com.codahale.metrics.MetricRegistry;
 import org.junit.jupiter.api.Test;
+import org.riptide.config.OutboundHttpTrust;
 import org.riptide.inventory.FileInventoryDocument;
 import org.riptide.inventory.InventoryConfig;
 import org.riptide.inventory.InventoryDocument;
@@ -49,6 +50,12 @@ class DiscoveryWiringTest {
         @Bean
         SecretResolvers secretResolvers() {
             return new SecretResolvers(List.of());
+        }
+
+        /** Default trust: this fixture pins the discovery gate, not what the read trusts. */
+        @Bean
+        OutboundHttpTrust outboundHttpTrust() {
+            return new OutboundHttpTrust();
         }
 
         /**
