@@ -30,20 +30,73 @@ The third form documented for a file-only inventory, `exporters: {}`, is not ava
 
 ## Choosing a source
 
-There are two, and `riptide.discovery.type` picks between them. Unset means `prometheus-sd`, so an existing deployment is unaffected.
+There are three, and `riptide.discovery.type` picks between them. Unset means `prometheus-sd`, so an existing deployment is unaffected.
 
 | Type | Reads | Needs a NetBox plugin | Pages | Filters |
 |---|---|---|---|---|
 | `prometheus-sd` (default) | A Prometheus HTTP service discovery document | Yes, `netbox-plugin-prometheus-sd` | No | No |
 | `netbox-api` | NetBox's own device API | No | Yes | Yes |
+| `mapped-json` | Any JSON endpoint, by paths you write | No | If you say where the next link is | Whatever the endpoint accepts |
 
-Both read NetBox in most deployments; they differ in what they speak to. The names say that rather than naming the product, because naming one of them "netbox" would suggest the other does not read NetBox.
+The first two read NetBox in most deployments and differ in what they speak to. The names say that rather than naming the product, because naming one of them "netbox" would suggest the other does not read NetBox.
 
 Pick `netbox-api` if you cannot install a NetBox plugin, or if your inventory is large enough that fetching all of it on every poll is a cost you would rather not pay. The plugin endpoint disables pagination and supports no conditional requests, so every poll transfers a full serialization of every visible device.
 
-Pick `prometheus-sd` if the plugin is already installed and working, or if your source of truth is not NetBox at all. That format is a contract many producers emit, not a NetBox feature.
+Pick `prometheus-sd` if the plugin is already installed and working, or if your source of truth emits that format. It is a contract many producers emit, not a NetBox feature.
 
-Point `riptide.discovery.url` at whichever endpoint the type needs: the plugin's path for one, `/api/dcim/devices/` for the other.
+Pick `mapped-json` if your source of truth is something else entirely: a home-grown asset database, a CMDB, a DCIM that is not NetBox. You point it at the endpoint you already serve and say which fields hold the name and the address, instead of running a service to translate one into a format Riptide already knows.
+
+Point `riptide.discovery.url` at whichever endpoint the type needs: the plugin's path for one, `/api/dcim/devices/` for another, your own for the third.
+
+## Mapping your own endpoint
+
+`mapped-json` reads four paths. Three are required; the fourth turns on paging.
+
+| Key | Required | Meaning |
+|---|---|---|
+| `riptide.discovery.mapping.items` | yes | Where the array of devices is in the response |
+| `riptide.discovery.mapping.name` | yes | Where the exporter name is, in one device |
+| `riptide.discovery.mapping.address` | yes | Where the exporter address is, in one device |
+| `riptide.discovery.mapping.next` | no | Where the link to the next page is. Unset means one request |
+
+```yaml
+riptide:
+  discovery:
+    url: https://assets.internal/api/devices
+    type: mapped-json
+    mapping:
+      items: payload.inventory.nodes
+      name: identity.fqdn
+      address: net.mgmt.v4
+      next: cursor.more
+```
+
+That configuration reads this:
+
+```json
+{
+  "payload": {"inventory": {"nodes": [
+    {"identity": {"fqdn": "edge-01.dc1"}, "net": {"mgmt": {"v4": "10.0.0.1"}}}
+  ]}},
+  "cursor": {"more": "https://assets.internal/api/devices?page=2"}
+}
+```
+
+A missing required path fails startup naming the key, rather than turning up as an empty result at the first poll.
+
+### What a path is, and what it is not
+
+A path is dotted field names. `net.mgmt.v4` walks three fields and takes what it finds.
+
+That is the whole language. There are no transforms, no defaults, no conditionals, no concatenation, no indexing and no wildcards, and there is no template or expression syntax. Those were considered and rejected: an expression language fed from a configuration file is a code-execution surface, which is the thing Riptide resolves every credential through a [secret reference](secret-references.md) to avoid.
+
+A dot separates field names and nothing else, so a field whose name contains a dot cannot be reached.
+
+**A value is used as found, which means a value that is not usable cannot be made usable.** The case you are most likely to meet is an address served with a prefix length, `10.0.0.1/24`. An exporter address is matched against the source address of a flow, so a prefix cannot be used: Riptide skips those devices and tells you which path and which value, rather than reporting that your endpoint yielded nothing.
+
+If that endpoint is NetBox, use `netbox-api`, which knows to strip it. If it is your own, serve the address without the prefix.
+
+A path that matches nothing on a particular device is not an error: that device is skipped and counted, like any device with no usable address.
 
 ### Narrowing what NetBox returns
 

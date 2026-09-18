@@ -44,8 +44,8 @@ import java.util.function.Supplier;
  */
 public final class NetboxDeviceSource implements DiscoverySource {
 
-    /** The label the renderer reads for an exporter's name, matching what the plugin emits. */
-    static final String NAME_LABEL = "__meta_netbox_name";
+    /** The label the renderer reads for an exporter's name; one value, defined where it is read. */
+    static final String NAME_LABEL = ExporterRenderer.NAME_LABEL;
 
     /** The labels the renderer reads for an address, in the order its default consults them. */
     static final String IPV4_LABEL = "__meta_netbox_primary_ip4";

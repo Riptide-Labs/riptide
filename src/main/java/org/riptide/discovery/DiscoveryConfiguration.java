@@ -50,12 +50,30 @@ public class DiscoveryConfiguration {
     }
 
     /**
+     * The mapping paths, resolved at startup rather than at the first poll.
+     *
+     * <p>A missing path is a configuration error, and surfacing it at the first poll would arrive as
+     * an empty result, whose refusal names a filter and sends an operator to a key they never set.
+     * Each is named here so the message says which one.</p>
+     */
+    private static MappedJsonSource.MappingPaths mapping(final DiscoveryConfig.Mapping mapping) {
+        return new MappedJsonSource.MappingPaths(
+                JsonPath.of(mapping.getItems(), "riptide.discovery.mapping.items"),
+                JsonPath.of(mapping.getName(), "riptide.discovery.mapping.name"),
+                JsonPath.of(mapping.getAddress(), "riptide.discovery.mapping.address"),
+                mapping.getNext() == null || mapping.getNext().isBlank()
+                        ? null
+                        : JsonPath.of(mapping.getNext(), "riptide.discovery.mapping.next"));
+    }
+
+    /**
      * The source {@code riptide.discovery.type} selects.
      *
-     * <p>Both read NetBox in the deployments this was built for; they differ in what they speak to.
-     * One reads a Prometheus service discovery document, which on NetBox means a plugin is
-     * installed. The other reads NetBox's own device API and needs nothing installed, pages its
-     * results and accepts NetBox's filters.</p>
+     * <p>Two of the three read NetBox in the deployments this was built for; they differ in what
+     * they speak to. One reads a Prometheus service discovery document, which on NetBox means a
+     * plugin is installed. The second reads NetBox's own device API and needs nothing installed,
+     * pages its results and accepts NetBox's filters. The third reads any JSON endpoint by paths the
+     * operator writes, for a source of truth that is neither.</p>
      */
     @Bean
     public DiscoverySource discoverySource(final DiscoveryClient client, final DiscoveryConfig config) {
@@ -82,6 +100,9 @@ public class DiscoveryConfiguration {
                         NetboxDeviceSource.firstPage(config.endpoint(), config.getFilter()),
                         client::fetchPage, client::describe);
             }
+            case MAPPED_JSON -> new MappedJsonSource(
+                    NetboxDeviceSource.firstPage(config.endpoint(), config.getFilter()),
+                    client::fetchPage, client::describe, mapping(config.getMapping()));
         };
     }
 

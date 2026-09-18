@@ -27,8 +27,14 @@ import java.util.Map;
  */
 public final class ExporterRenderer {
 
-    /** The label the NetBox service discovery plugin always emits for a device's name. */
-    private static final String NAME_LABEL = "__meta_netbox_name";
+    /**
+     * The label this renderer reads for an exporter's name, which every source emits.
+     *
+     * <p>Package-private rather than private because it is a contract between the renderer and the
+     * sources, not a detail of either: the NetBox plugin emits it, and both sources written here
+     * emit it because this is the name that is read.</p>
+     */
+    static final String NAME_LABEL = "__meta_netbox_name";
 
     private ExporterRenderer() {
     }

@@ -174,6 +174,63 @@ class DiscoveryWiringTest {
                         .hasNotFailed());
     }
 
+    /**
+     * Selecting the mapped source without the paths it needs fails at startup, naming the key.
+     *
+     * <p>Surfacing this at the first poll instead would arrive as an empty result, and the refusal
+     * for an empty result names a filter — sending an operator to look at a key they never set
+     * (#800).</p>
+     */
+    @Test
+    void theMappedSourceRefusesEachMissingPathAtStartupNamingIt() {
+        final Map<String, String> complete = Map.of(
+                "riptide.discovery.mapping.items", "results",
+                "riptide.discovery.mapping.name", "hostname",
+                "riptide.discovery.mapping.address", "mgmt_ip");
+
+        for (final String missing : complete.keySet()) {
+            final List<String> properties = new java.util.ArrayList<>(List.of(
+                    "riptide.discovery.url=http://127.0.0.1:9/devices",
+                    "riptide.discovery.type=mapped-json"));
+            complete.forEach((key, value) -> {
+                if (!key.equals(missing)) {
+                    properties.add(key + "=" + value);
+                }
+            });
+
+            this.runner.withPropertyValues(properties.toArray(new String[0]))
+                    .run(context -> assertThat(context)
+                            .getFailure()
+                            .rootCause()
+                            .hasMessageContaining(missing));
+        }
+    }
+
+    @Test
+    void theMappedSourceStartsWithEveryRequiredPathAndNoNextPath() {
+        this.runner
+                .withPropertyValues("riptide.discovery.url=http://127.0.0.1:9/devices",
+                        "riptide.discovery.type=mapped-json",
+                        "riptide.discovery.mapping.items=results",
+                        "riptide.discovery.mapping.name=hostname",
+                        "riptide.discovery.mapping.address=mgmt_ip")
+                .run(context -> {
+                    assertThat(context)
+                            .as("the next path is optional: unset means a single request")
+                            .hasNotFailed();
+                    assertThat(context.getBean(DiscoverySource.class)).isInstanceOf(MappedJsonSource.class);
+                });
+    }
+
+    @Test
+    void anUnsetTypeStillSelectsTheServiceDiscoveryReader() {
+        this.runner
+                .withPropertyValues("riptide.discovery.url=http://127.0.0.1:9/devices")
+                .run(context -> assertThat(context.getBean(DiscoverySource.class))
+                        .as("a third type must not change what an unset key selects")
+                        .isInstanceOf(ServiceDiscoverySource.class));
+    }
+
     @Test
     void withTheUrlSetTheComposedDocumentIsThePrimaryInventoryDocument() {
         this.runner
