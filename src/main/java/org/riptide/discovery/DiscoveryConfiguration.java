@@ -88,9 +88,11 @@ public class DiscoveryConfiguration {
     /**
      * Primary, so {@code Inventory} takes the composed document without knowing discovery exists,
      * and {@code ConfigFileReloader}'s two {@code rebuildAndSwap} calls reach it through
-     * {@code Inventory}. {@code InventoryFileReloader} is the one consumer that does know: it
-     * injects this type by name to watch it, because a lookup by {@code FileWatchTrigger.Source}
-     * would also find the classification rule reloader's source.
+     * {@code Inventory}. {@code InventoryFileReloader} watches it, and since #806 does so through
+     * {@code PacedInventorySource} rather than this type: the interface is narrower than
+     * {@code FileWatchTrigger.Source}, which the classification rule reloader's source also
+     * implements, so the watcher cannot resolve to the wrong one and the configuration package no
+     * longer names anything in this one.
      */
     @Bean
     @Primary
