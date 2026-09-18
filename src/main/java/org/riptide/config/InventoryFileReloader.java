@@ -10,7 +10,6 @@ import com.codahale.metrics.MetricRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
-import org.riptide.discovery.ComposedInventoryDocument;
 import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventoryConfig;
 import org.riptide.inventory.InventoryLoader;
@@ -63,7 +62,8 @@ import java.util.Optional;
  *
  * <p><b>With discovery on</b> ({@code riptide.discovery.url} holding a non-blank value; blank
  * counts as unset, so an exported-but-empty variable leaves discovery off) the watched source is the
- * {@link ComposedInventoryDocument}, not the file: discovery owns the {@code exporters} tree,
+ * composed discovery document, seen through {@link PacedInventorySource}, not the file: discovery
+ * owns the {@code exporters} tree,
  * so a cycle that re-read the file alone would offer the loader a document with no exporters,
  * the regression guard below would refuse it forever, and the staleness gauge would pin at 1
  * while an operator's agent-range edit never applied. The pace then comes from
@@ -98,11 +98,12 @@ public class InventoryFileReloader {
     private final InterfaceSnapshotPoller interfacePoller;
     /**
      * The composed document when discovery is on, {@code null} when it is off. Typed to the
-     * composed document rather than to {@code FileWatchTrigger.Source}: the classification rule
-     * reloader publishes a {@code Source} bean too, so a by-interface lookup would find that one
-     * with discovery off and this watcher would silently poll the classification ruleset.
+     * {@link PacedInventorySource} rather than to {@code FileWatchTrigger.Source}: the
+     * classification rule reloader publishes a {@code Source} bean too, so a lookup by the wider
+     * interface would find that one and this watcher would silently poll the classification
+     * ruleset. The narrower type makes that unrepresentable rather than merely unlikely (#806).
      */
-    private final ComposedInventoryDocument discovery;
+    private final PacedInventorySource discovery;
 
     private final MetricRegistry metrics;
     private final Counter reloadSuccesses;
@@ -128,7 +129,7 @@ public class InventoryFileReloader {
                                  final Inventory inventory,
                                  final InterfaceSnapshotPoller interfacePoller,
                                  final MetricRegistry metrics,
-                                 final Optional<ComposedInventoryDocument> discovery) {
+                                 final Optional<PacedInventorySource> discovery) {
         this.properties = Objects.requireNonNull(properties);
         this.inventoryConfig = Objects.requireNonNull(inventoryConfig);
         this.inventory = Objects.requireNonNull(inventory);
@@ -276,7 +277,7 @@ public class InventoryFileReloader {
      * {@code inventory.reload.stale} latched, not as a silent skip. A future reader must not
      * conclude the blank guard still applies here; it cannot fire.</p>
      */
-    private static FileWatchTrigger.Messages messages(final ComposedInventoryDocument source) {
+    private static FileWatchTrigger.Messages messages(final PacedInventorySource source) {
         return messages(
                 ("Inventory source %s is absent: either the endpoint answered 404 or the inventory file "
                         + "is missing (deletion and atomic replacement are indistinguishable). Skipping "

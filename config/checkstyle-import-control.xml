@@ -13,4 +13,14 @@
 
     <!-- Prevent Junit 4 as a precaution, as sometimes IntelliJ adds it -->
     <disallow pkg="org.junit" exact-match="true" />
+
+    <!--
+        The dependency between config and discovery runs one way (#806). Discovery depends on
+        config for the watch trigger, the bounded read and the outbound trust; config depends on
+        nothing in discovery. What the inventory watcher needs from the composed document is
+        PacedInventorySource, declared here and implemented there.
+    -->
+    <subpackage name="config">
+        <disallow pkg="org\.riptide\.discovery" regex="true" />
+    </subpackage>
 </import-control>

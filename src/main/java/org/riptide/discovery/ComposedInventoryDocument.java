@@ -9,6 +9,7 @@ import com.codahale.metrics.Gauge;
 import com.codahale.metrics.MetricRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.config.FileWatchTrigger;
+import org.riptide.config.PacedInventorySource;
 import org.riptide.inventory.InventoryDocument;
 import org.riptide.inventory.InventoryLoader;
 import org.yaml.snakeyaml.DumperOptions;
@@ -61,7 +62,7 @@ import java.util.function.Supplier;
  * can reach the degraded answer by calling in an unexpected order.</p>
  */
 @Slf4j
-public class ComposedInventoryDocument implements InventoryDocument, FileWatchTrigger.Source {
+public class ComposedInventoryDocument implements InventoryDocument, PacedInventorySource {
 
     private final InventoryDocument file;
     private final DiscoverySource source;
@@ -182,6 +183,7 @@ public class ComposedInventoryDocument implements InventoryDocument, FileWatchTr
      * watcher reads it at start to latch its staleness gauge and to skip seeding its hashes, which
      * would otherwise record a later successful fetch as already committed and never publish it.
      */
+    @Override
     public boolean degradedAtBoot() {
         return this.degradedAtBoot;
     }
@@ -252,6 +254,7 @@ public class ComposedInventoryDocument implements InventoryDocument, FileWatchTr
      * {@link DiscoveryConfig} into the watcher, so the interval and the source it paces cannot come
      * from two different places.
      */
+    @Override
     public Duration interval() {
         return this.config.getInterval();
     }
@@ -319,6 +322,7 @@ public class ComposedInventoryDocument implements InventoryDocument, FileWatchTr
      * staleness from the hashes on that cycle, and this no longer overrides it. A counted failure
      * needs no flag here, because the trigger latches staleness for those itself.</p>
      */
+    @Override
     public boolean endpointAbsent() {
         return this.endpointAbsent;
     }

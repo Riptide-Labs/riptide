@@ -8,4 +8,12 @@
     <!-- The one place allowed to construct a ListAppender; the IllegalInstantiation rule that bans
          it everywhere else exists so #735 cannot come back through a 25th call site. -->
     <suppress files="[\\/]LogCapture\.java$" checks="IllegalInstantiation"/>
+
+    <!-- The config-to-discovery rule (#806) is about production code: org.riptide.config must not
+         depend on org.riptide.discovery. Its tests must, because they build the composed document
+         the production code is forbidden to name, and a fixture that could not construct its
+         subject would be no test at all. Scoped to that one import so every other ImportControl
+         rule still applies to these files. -->
+    <suppress files="[\\/]src[\\/]test[\\/]java[\\/]org[\\/]riptide[\\/]config[\\/]"
+              checks="ImportControl" message="org\.riptide\.discovery"/>
 </suppressions>
