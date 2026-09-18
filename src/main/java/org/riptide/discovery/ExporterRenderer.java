@@ -11,7 +11,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 
 /**
  * Maps service discovery target groups onto exporter entries.
@@ -44,7 +43,11 @@ public final class ExporterRenderer {
     public static RenderedExporters render(final List<TargetGroup> groups,
                                            final List<String> addressLabels,
                                            final String sourceName) {
-        final TreeMap<String, String> byName = new TreeMap<>();
+        // NOT sorted here: RenderedExporters normalises into a sorted map as its type invariant,
+        // and two copies of one rule meant neither was load-bearing — the test proving the same
+        // groups render identically in any order passed with either one deleted (#808). Nothing
+        // reads this map in order: it is written, checked for emptiness, and handed over
+        final Map<String, String> byName = new LinkedHashMap<>();
         // insertion-ordered so the collision report reads in document order, and every colliding
         // address is listed rather than only the winner
         final Map<String, List<String>> claims = new LinkedHashMap<>();
