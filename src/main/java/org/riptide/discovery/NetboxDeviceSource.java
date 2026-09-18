@@ -5,9 +5,7 @@
 
 package org.riptide.discovery;
 
-import com.fasterxml.jackson.core.JacksonException;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.net.URI;
@@ -46,8 +44,8 @@ import java.util.function.Supplier;
  */
 public final class NetboxDeviceSource implements DiscoverySource {
 
-    /** The label the renderer reads for an exporter's name, matching what the plugin emits. */
-    static final String NAME_LABEL = "__meta_netbox_name";
+    /** The label the renderer reads for an exporter's name; one value, defined where it is read. */
+    static final String NAME_LABEL = ExporterRenderer.NAME_LABEL;
 
     /** The labels the renderer reads for an address, in the order its default consults them. */
     static final String IPV4_LABEL = "__meta_netbox_primary_ip4";
@@ -61,34 +59,19 @@ public final class NetboxDeviceSource implements DiscoverySource {
     static final List<String> EMITTED_ADDRESS_LABELS = List.of(IPV4_LABEL, IPV6_LABEL);
 
     /**
-     * How many devices one walk may gather before it is refused.
-     *
-     * <p>A count rather than a byte total, deliberately. The per-request byte ceiling already
-     * protects the heap against one oversized answer, and what this bound exists for is the other
-     * shape: a walk that never ends. An operator can reason about "more devices than I have",
-     * and cannot reason about a megabyte figure without knowing NetBox's serialization size.</p>
+     * The bound on one walk, which lives on the shared walk with the origin refusal. Restated here
+     * as a constant so the name stays greppable from this source's own tests.
      */
-    static final int MAX_DEVICES = 100_000;
+    static final int MAX_DEVICES = PagedJsonWalk.MAX_DEVICES;
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
-    private final NetboxPageReader pages;
+    private final PagedJsonWalk walk;
     private final Supplier<String> describe;
 
-    /** Reads one page of JSON from a URL; an interface so tests need no HTTP server. */
-    @FunctionalInterface
-    public interface NetboxPageReader {
-        byte[] read(URL page) throws IOException;
-    }
-
-    private final URL first;
-
     public NetboxDeviceSource(final URL first,
-                              final NetboxPageReader pages,
+                              final PagedJsonWalk.PageReader pages,
                               final Supplier<String> describe) {
-        this.first = Objects.requireNonNull(first, "first");
-        this.pages = Objects.requireNonNull(pages, "pages");
         this.describe = Objects.requireNonNull(describe, "describe");
+        this.walk = new PagedJsonWalk(first, pages, this.describe);
     }
 
 
@@ -114,19 +97,35 @@ public final class NetboxDeviceSource implements DiscoverySource {
      * device can be returned twice or missed. Ordering by a stable key makes an insert append.</p>
      */
     static URL firstPage(final URL endpoint, final String filter) {
+        return firstPage(endpoint, filter, true);
+    }
+
+    /**
+     * The same joining without NetBox's ordering, for a source whose endpoint is not NetBox.
+     *
+     * <p>{@code ordering=id} is a NetBox query term and a NetBox concern: it exists so that paging
+     * by offset over an unordered result cannot return a device twice. Sent to an arbitrary endpoint
+     * it is at best ignored, and at worst a 400 from an API that rejects unknown parameters or a
+     * silent re-sort by a field that happens to share the name. The joining itself is shared because
+     * it is the kind of string work that is wrong in a different way at every call site (#800).</p>
+     */
+    static URL firstPage(final URL endpoint, final String filter, final boolean ordered) {
         final StringBuilder query = new StringBuilder(endpoint.getQuery() == null ? "" : endpoint.getQuery());
         final String terms = normalise(filter);
         if (!terms.isEmpty()) {
             append(query, terms);
         }
-        if (!hasOrdering(query.toString())) {
+        if (ordered && !hasOrdering(query.toString())) {
             append(query, "ordering=id");
         }
         try {
             // getQuery() on a URL is already the raw form, so escapes the operator configured
             // survive; single-argument URI parses without re-encoding what is here
+            // no bare '?' when nothing was joined: a gateway, a strict router or a signed-request
+            // proxy can treat '/api/devices?' differently from '/api/devices', and with the NetBox
+            // ordering gone there is now a path where the query really is empty
             return new URI(endpoint.getProtocol() + "://" + endpoint.getAuthority()
-                    + endpoint.getPath() + "?" + query).toURL();
+                    + endpoint.getPath() + (query.isEmpty() ? "" : "?" + query)).toURL();
         } catch (final URISyntaxException | IOException e) {
             throw new IllegalStateException(
                     "riptide.discovery.url and riptide.discovery.filter do not combine into a usable URL: '%s' + '%s'"
@@ -164,29 +163,7 @@ public final class NetboxDeviceSource implements DiscoverySource {
 
     @Override
     public List<TargetGroup> targets() throws IOException {
-        final List<TargetGroup> groups = new ArrayList<>();
-        URL page = this.first;
-        int read = 0;
-        while (page != null) {
-            final JsonNode body = parse(this.pages.read(page));
-            for (final JsonNode device : results(body)) {
-                // devices READ, not groups emitted: a device this source cannot name produces no
-                // group, so counting groups left a nameless fleet, or a `next` link that cycles
-                // back to a page already seen, walking forever with the counter pinned at zero
-                if (++read > MAX_DEVICES) {
-                    // refused, not truncated: a short read is indistinguishable downstream from a
-                    // fleet that shrank, and the guard would either refuse it or publish it and
-                    // drop exporters that still exist
-                    throw new IllegalStateException(
-                            ("%s returned more than %d devices. Narrow it with riptide.discovery.filter "
-                                    + "rather than reading an unbounded inventory on every poll.")
-                                    .formatted(this.describe.get(), MAX_DEVICES));
-                }
-                group(device).ifPresent(groups::add);
-            }
-            page = next(body);
-        }
-        return List.copyOf(groups);
+        return this.walk.walk(this::results, NetboxDeviceSource::nextLink, this::group);
     }
 
     /** A device as the renderer wants it, or empty when it carries nothing usable as a name. */
@@ -228,18 +205,6 @@ public final class NetboxDeviceSource implements DiscoverySource {
         return value == null || !value.isTextual() ? null : value.textValue();
     }
 
-    private JsonNode parse(final byte[] json) {
-        try {
-            return MAPPER.readTree(json);
-        } catch (final JacksonException e) {
-            throw new IllegalStateException(
-                    "%s's response is not valid JSON: %s".formatted(this.describe.get(), e.getOriginalMessage()), e);
-        } catch (final IOException e) {
-            throw new IllegalStateException(
-                    "%s could not be read: %s".formatted(this.describe.get(), e.getMessage()), e);
-        }
-    }
-
     /** The page's devices. NetBox wraps them in a paging envelope, unlike the plugin's bare array. */
     private List<JsonNode> results(final JsonNode body) {
         final JsonNode results = body == null ? null : body.get("results");
@@ -255,38 +220,9 @@ public final class NetboxDeviceSource implements DiscoverySource {
         return devices;
     }
 
-    /** Same scheme, host and port, so the token never leaves the origin it was configured for. */
-    private static boolean sameOrigin(final URL first, final URL next) {
-        return first.getProtocol().equalsIgnoreCase(next.getProtocol())
-                && first.getAuthority().equalsIgnoreCase(next.getAuthority());
-    }
-
-    /** The next page, or null at the end of the walk. */
-    private URL next(final JsonNode body) {
+    /** Where NetBox puts the link to the next page. The walk decides whether to follow it. */
+    private static String nextLink(final JsonNode body) {
         final JsonNode link = body.get("next");
-        if (link == null || link.isNull() || !link.isTextual()) {
-            return null;
-        }
-        try {
-            final URL next = new URI(link.textValue()).toURL();
-            // the Authorization header carrying the API token is bound to the client, not to a URL,
-            // so a `next` link pointing elsewhere would send the token there. NetBox builds this
-            // link from its own request host, which a reverse proxy sending a wrong forwarded host
-            // can make into another origin entirely
-            if (!sameOrigin(this.first, next)) {
-                throw new IllegalStateException(
-                        ("%s gave a 'next' page on a different origin (%s://%s). The API token is sent "
-                                + "with every page, so the walk stops rather than following it. Check "
-                                + "whatever sets the forwarded host in front of NetBox.")
-                                .formatted(this.describe.get(), next.getProtocol(), next.getAuthority()));
-            }
-            return next;
-        } catch (final IllegalStateException e) {
-            throw e;
-        } catch (final Exception e) {
-            throw new IllegalStateException(
-                    "%s gave a 'next' page link that is not a usable URL: '%s'"
-                            .formatted(this.describe.get(), link.textValue()), e);
-        }
+        return link == null || link.isNull() || !link.isTextual() ? null : link.textValue();
     }
 }

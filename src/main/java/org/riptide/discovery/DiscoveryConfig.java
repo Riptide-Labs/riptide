@@ -95,6 +95,33 @@ public class DiscoveryConfig {
     private String filter;
 
     /**
+     * Where the fields are, for {@code riptide.discovery.type} 'mapped-json'. Read by
+     * {@code DiscoveryConfiguration}, which turns them into the paths {@code MappedJsonSource} uses
+     * and refuses at startup when a required one is missing.
+     */
+    private Mapping mapping = new Mapping();
+
+    /** The paths a mapped-json source reads. Dotted field names; see {@code JsonPath}. */
+    @lombok.Data
+    public static class Mapping {
+
+        /**
+         * Where the array of devices is in the response, e.g. {@code results}. Unset means the
+         * response is itself the array, which is a shape no path can name.
+         */
+        private String items;
+
+        /** Where the exporter name is in one device, e.g. {@code name}. Required. */
+        private String name;
+
+        /** Where the exporter address is in one device, e.g. {@code primary_ip.address}. Required. */
+        private String address;
+
+        /** Where the link to the next page is, e.g. {@code next}. Unset means a single request. */
+        private String next;
+    }
+
+    /**
      * Labels consulted in order for an entry's address, first one present wins. The default pair is
      * what the NetBox service discovery plugin emits; every IP it emits already has its CIDR mask
      * stripped. When no label in this list is present the target itself is used, which is what makes

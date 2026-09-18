@@ -27,7 +27,14 @@ public enum DiscoverySourceType {
     PROMETHEUS_SD("prometheus-sd"),
 
     /** NetBox's own device API, which needs nothing installed on the NetBox side. */
-    NETBOX_API("netbox-api");
+    NETBOX_API("netbox-api"),
+
+    /**
+     * Any JSON endpoint, read by paths the operator writes. The escape hatch for a source of truth
+     * that is neither NetBox nor a producer of the service discovery format, so that a site does not
+     * have to run a shim to be discovered.
+     */
+    MAPPED_JSON("mapped-json");
 
     private final String key;
 

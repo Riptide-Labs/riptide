@@ -226,6 +226,27 @@ class NetboxDeviceSourceTest {
                 .contains("name=a%26b");
     }
 
+    /**
+     * The ordering is NetBox's own term and stays out of a URL built for anything else.
+     *
+     * <p>Sent to an arbitrary endpoint it is at best ignored, and at worst a 400 from an API that
+     * rejects unknown parameters, or a silent re-sort by a field that happens to share the name. The
+     * mapped source builds its first page through this same joining and must not inherit it
+     * (#800).</p>
+     */
+    @Test
+    void theOrderingIsNotAppendedForASourceThatIsNotNetbox() {
+        final URL unordered = NetboxDeviceSource.firstPage(
+                url("https://assets.internal/api/devices"), "site=dc1", false);
+
+        assertThat(unordered.toString())
+                .contains("site=dc1")
+                .doesNotContain("ordering");
+        assertThat(NetboxDeviceSource.firstPage(url("https://netbox.test/api/dcim/devices/"), "site=dc1").toString())
+                .as("NetBox still gets it, because paging by offset over an unordered result needs it")
+                .contains("ordering=id");
+    }
+
     @Test
     void aTermMerelyEndingInOrderingDoesNotSuppressTheStableOrdering() {
         final URL first = NetboxDeviceSource.firstPage(
