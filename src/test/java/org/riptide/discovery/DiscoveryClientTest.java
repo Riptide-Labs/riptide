@@ -9,6 +9,7 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.riptide.secrets.SecretRef;
+import org.riptide.secrets.SecretResolver;
 import org.riptide.secrets.SecretResolvers;
 import org.riptide.utils.HttpServerConfig;
 
@@ -19,6 +20,10 @@ import java.io.UncheckedIOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -91,6 +96,94 @@ class DiscoveryClientTest {
         client("/devices", null).fetch();
 
         assertThat(AUTHORIZATION.get()).isNull();
+    }
+
+    /**
+     * A rotated token reaches the next fetch, with no restart (#804).
+     *
+     * <p>The reason this is not merely nice: a {@code file://} reference is re-read on every use for
+     * a device credential, so an operator rotating a file-backed discovery token reasonably expects
+     * the same. Resolved once at construction, it silently did not, and nothing said so.</p>
+     */
+    @Test
+    void aRotatedTokenReachesTheNextFetchWithoutARestart() throws Exception {
+        final Path secret = Files.createTempFile("discovery-token", ".txt");
+        secret.toFile().deleteOnExit();
+        Files.writeString(secret, "first-token");
+        final DiscoveryClient client = fileBacked(secret);
+
+        client.fetch();
+        assertThat(AUTHORIZATION.get()).isEqualTo("Token first-token");
+
+        Files.writeString(secret, "rotated-token");
+        client.fetch();
+
+        assertThat(AUTHORIZATION.get())
+                .as("the same client, no restart, the new value")
+                .isEqualTo("Token rotated-token");
+    }
+
+    /**
+     * The security-relevant half. A reference that stops resolving must fail the read, never fall
+     * through to an unauthenticated one: an endpoint that answers 200 to a request with no token
+     * would hand back whatever an anonymous caller may see, and every guard downstream would treat
+     * that fleet as a legitimate change to the inventory.
+     */
+    @Test
+    void aTokenThatStopsResolvingFailsTheReadRatherThanSendingNone() throws Exception {
+        final Path secret = Files.createTempFile("discovery-token-vanishing", ".txt");
+        Files.writeString(secret, "present-for-now");
+        final DiscoveryClient client = fileBacked(secret);
+        client.fetch();
+
+        Files.delete(secret);
+        AUTHORIZATION.set("not-overwritten");
+
+        assertThatThrownBy(client::fetch)
+                .as("the poll fails, and the caller counts it")
+                .isInstanceOf(RuntimeException.class);
+        assertThat(AUTHORIZATION.get())
+                .as("no request reached the endpoint at all, so none reached it unauthenticated")
+                .isEqualTo("not-overwritten");
+    }
+
+    /**
+     * Once per read, not once per header or once per retry. {@code vault://} is the one scheme with
+     * a remote cost and it is charged per call, so this bounds what per-read resolution costs.
+     */
+    @Test
+    void theTokenIsResolvedOncePerFetch() throws Exception {
+        final AtomicInteger resolutions = new AtomicInteger();
+        final DiscoveryConfig config = new DiscoveryConfig();
+        config.setUrl(endpoint("/devices"));
+        config.setToken(SecretRef.of("counted"));
+        final SecretResolvers counting = new SecretResolvers(List.of(new SecretResolver() {
+            @Override
+            public String scheme() {
+                return "plain";
+            }
+
+            @Override
+            public String resolve(final SecretRef ref) {
+                resolutions.incrementAndGet();
+                return "counted";
+            }
+        }));
+        final DiscoveryClient client = new DiscoveryClient(config, counting);
+        final int atConstruction = resolutions.get();
+
+        client.fetch();
+
+        assertThat(resolutions.get() - atConstruction)
+                .as("one read, one resolution")
+                .isEqualTo(1);
+    }
+
+    private static DiscoveryClient fileBacked(final Path secret) {
+        final DiscoveryConfig config = new DiscoveryConfig();
+        config.setUrl(endpoint("/devices"));
+        config.setToken(SecretRef.of("file://" + secret));
+        return new DiscoveryClient(config, SecretResolvers.defaults());
     }
 
     @Test
