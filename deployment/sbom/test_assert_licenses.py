@@ -112,6 +112,58 @@ class AssertLicensesTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("drifted", result.stderr)
 
+    def maven_entries(self, doc):
+        return [p for p in doc["packages"] if "java-archive-riptide-flows" in p["SPDXID"]]
+
+    def test_first_party_maven_entry_inheriting_the_parent_license_fails(self):
+        # The #821 defect exactly: pom.xml loses its <licenses> block, the effective POM
+        # inherits spring-boot-starter-parent's Apache-2.0, and syft stamps it on our jar.
+        doc = json.loads(self.sbom.read_text())
+        for pkg in self.maven_entries(doc):
+            pkg["licenseDeclared"] = "LicenseRef-Apache-License--Version-2.0"
+        self.sbom.write_text(json.dumps(doc))
+        result = run(self.sbom, self.nfpm)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("2 of 2 Maven entries", result.stderr)
+        self.assertIn("LicenseRef-Apache-License--Version-2.0", result.stderr)
+        self.assertIn("<licenses>", result.stderr)
+        self.assertIn("#821", result.stderr)
+
+    def test_one_wrong_maven_entry_among_several_fails(self):
+        # The jar and the pom are catalogued separately; a check that looked at only the
+        # first would pass while the other shipped the wrong licence.
+        doc = json.loads(self.sbom.read_text())
+        self.maven_entries(doc)[-1]["licenseDeclared"] = "LicenseRef-Apache-License--Version-2.0"
+        self.sbom.write_text(json.dumps(doc))
+        result = run(self.sbom, self.nfpm)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("1 of 2 Maven entries", result.stderr)
+
+    def test_first_party_maven_selector_no_match_fails(self):
+        # A coordinate change in pom.xml, or a syft upgrade that stops cataloguing us,
+        # must fail the release rather than skip the check.
+        doc = json.loads(self.sbom.read_text())
+        doc["packages"] = [p for p in doc["packages"] if "java-archive-riptide-flows" not in p["SPDXID"]]
+        self.sbom.write_text(json.dumps(doc))
+        result = run(self.sbom, self.nfpm)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("our own Maven entries", result.stderr)
+        self.assertIn("matched no packages", result.stderr)
+
+    def test_maven_entries_are_checked_never_rewritten(self):
+        # Rewriting would paper over a missing <licenses> block and re-hide #821.
+        doc = json.loads(self.sbom.read_text())
+        for pkg in self.maven_entries(doc):
+            pkg["licenseDeclared"] = "LicenseRef-Apache-License--Version-2.0"
+        self.sbom.write_text(json.dumps(doc))
+        result = run(self.sbom, self.nfpm)
+        # Both halves matter. Without the exit code this passes even if the check is
+        # deleted, because nothing rewrites Maven entries on any path.
+        self.assertNotEqual(result.returncode, 0, "a wrong licence must stop the release")
+        after = self.maven_entries(json.loads(self.sbom.read_text()))
+        self.assertEqual([p["licenseDeclared"] for p in after],
+                         ["LicenseRef-Apache-License--Version-2.0"] * 2)
+
     def test_stale_allowlist_entry_fails(self):
         # A dependency bump changes the filename-derived purl; the entry must not silently carry over.
         doc = json.loads(self.sbom.read_text())

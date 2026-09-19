@@ -110,7 +110,13 @@ hard-wrapped at 100 columns displays as a narrow ragged column. Write one line p
 line per bullet.
 
 The attached SBOM contains post-generation first-party license assertions: syft cannot read our license from a deb control file or attach one to the scanned directory, so `make sbom-assert` sets `licenseDeclared: GPL-3.0-or-later` (read from `nfpm.yaml`) on those two entries before the report is rendered and the file is signed.
-A release that fails at the "Assert first-party license facts" step means the SBOM shape drifted (typically after a syft upgrade) and the selectors in `deployment/sbom/assert_licenses.py` no longer match exactly one entry each — fix the selector, never ship `NOASSERTION`.
+The rpm entry and our own Maven entries are cross-checked instead of rewritten: a mismatch there means the sources of truth have drifted, and the release stops.
+A release that fails at the "Assert first-party license facts" step means the SBOM shape drifted (typically after a syft upgrade) and a selector in `deployment/sbom/assert_licenses.py` no longer matches; fix the selector, never ship `NOASSERTION`.
+The deb, rpm and root selectors each match exactly one entry; the Maven selector may match several, because syft catalogues our artifact once per path it finds it at.
+
+**If the Maven check fails, the fix is in `pom.xml`, not in the SBOM.** A POM with no `<licenses>` block inherits `spring-boot-starter-parent`'s Apache-2.0, and syft reads the effective POM.
+That is how v0.11.0 through v0.14.0 shipped a signed SBOM declaring this GPL-3.0-or-later release to be Apache-2.0 ([#821](https://github.com/Riptide-Labs/riptide/issues/821)).
+The check exists so that block cannot be removed without stopping a release; rewriting the entry instead would paper over its absence and re-hide the defect.
 The same step also sets `licenseConcluded` on a reviewed allowlist of third-party packages syft cannot identify (`deployment/sbom/concluded-licenses.json`).
 A failure naming an allowlist entry means a dependency bump or a syft change invalidated it: re-review the new version's license and update the entry (purl, evidence, review date), or remove it if syft now identifies the package.
 Never fix that failure by deleting the check.

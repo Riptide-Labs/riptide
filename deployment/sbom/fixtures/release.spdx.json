@@ -293,6 +293,42 @@
      "referenceLocator": "pkg:maven/org.eclipse.angus/angus-activation@2.0.3"
     }
    ]
+  },
+  {
+   "name": "riptide-flows",
+   "SPDXID": "SPDXRef-Package-java-archive-riptide-flows-19857e2a1bd1a24d",
+   "versionInfo": "0.7.1-rc3",
+   "downloadLocation": "NOASSERTION",
+   "filesAnalyzed": false,
+   "sourceInfo": "acquired package info from installed java archive: /pom.xml",
+   "licenseConcluded": "NOASSERTION",
+   "licenseDeclared": "GPL-3.0-or-later",
+   "copyrightText": "NOASSERTION",
+   "externalRefs": [
+    {
+     "referenceCategory": "PACKAGE-MANAGER",
+     "referenceType": "purl",
+     "referenceLocator": "pkg:maven/org.riptide.flows/riptide-flows@0.7.1-rc3"
+    }
+   ]
+  },
+  {
+   "name": "riptide-flows",
+   "SPDXID": "SPDXRef-Package-java-archive-riptide-flows-0ad4ac63e16032cd",
+   "versionInfo": "0.7.1-rc3",
+   "downloadLocation": "NOASSERTION",
+   "filesAnalyzed": false,
+   "sourceInfo": "acquired package info from installed java archive: /target/riptide-flows-0.7.1-rc3.jar",
+   "licenseConcluded": "NOASSERTION",
+   "licenseDeclared": "GPL-3.0-or-later",
+   "copyrightText": "NOASSERTION",
+   "externalRefs": [
+    {
+     "referenceCategory": "PACKAGE-MANAGER",
+     "referenceType": "purl",
+     "referenceLocator": "pkg:maven/org.riptide.flows/riptide-flows@0.7.1-rc3"
+    }
+   ]
   }
  ],
  "relationships": [

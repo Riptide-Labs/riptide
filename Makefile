@@ -279,9 +279,12 @@ compose-smoke: deps-oci
 
 # Sets licenseDeclared on the SBOM entries syft cannot fill for us (the deb and
 # the document root, issue #406) and licenseConcluded on the reviewed allowlist
-# of third-party packages syft cannot identify (issue #405). Runs in release.yml
-# between SBOM generation and the HTML report render; fails if the SBOM shape
-# drifted or an allowlist entry went stale.
+# of third-party packages syft cannot identify (issue #405). The rpm entry and
+# our own Maven entries are cross-checked instead, not rewritten (issue #821).
+# Runs in release.yml between SBOM generation and the HTML report render; fails
+# if the SBOM shape drifted, an allowlist entry went stale, or a first-party
+# declaration disagrees with nfpm.yaml. That last one is usually a pom.xml that
+# lost its <licenses> block — see RELEASING.md, not the allowlist.
 .PHONY: sbom-assert
 sbom-assert:
 	@test -n "$(SBOM)" || { echo "usage: make sbom-assert SBOM=target/riptide-<version>.spdx.json"; exit 1; }
