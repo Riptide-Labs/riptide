@@ -5,8 +5,14 @@ title: Dynamic exporter discovery
 
 # Dynamic exporter discovery
 
-Riptide can read its exporter list from a Prometheus HTTP service discovery endpoint instead of from the inventory file.
-A site already running NetBox as its source of truth then maintains one device list rather than two.
+Riptide can read its exporter list from whatever already holds your device inventory, instead of from the inventory file.
+A site then maintains one device list rather than two.
+
+Three readers ship.
+One speaks the Prometheus HTTP service discovery format, which many systems emit and which is not tied to any one product.
+One speaks NetBox's own device API.
+One reads any JSON endpoint by paths you write.
+NetBox is reachable by either of the first two, and neither is only for NetBox.
 
 Discovery is off until `riptide.discovery.url` holds a non-blank value.
 A blank value (unset, or whitespace-only) is treated the same as no value at all: nothing discovery-related is created, and the inventory file stays the only source of exporter entries.
@@ -32,21 +38,45 @@ The third form documented for a file-only inventory, `exporters: {}`, is not ava
 
 There are three, and `riptide.discovery.type` picks between them. Unset means `prometheus-sd`, so an existing deployment is unaffected.
 
-| Type | Reads | Needs a NetBox plugin | Pages | Filters |
+| Type | Reads | Needs installing | Pages | Filters |
 |---|---|---|---|---|
-| `prometheus-sd` (default) | A Prometheus HTTP service discovery document | Yes, `netbox-plugin-prometheus-sd` | No | No |
-| `netbox-api` | NetBox's own device API | No | Yes | Yes |
-| `mapped-json` | Any JSON endpoint, by paths you write | No | If you say where the next link is | Whatever the endpoint accepts |
+| `prometheus-sd` (default) | A Prometheus HTTP service discovery document | Nothing, unless the producer is NetBox | No | No |
+| `netbox-api` | NetBox's own device API | Nothing | Yes | Yes |
+| `mapped-json` | Any JSON endpoint, by paths you write | Nothing | If you say where the next link is | Whatever the endpoint accepts |
 
-The first two read NetBox in most deployments and differ in what they speak to. The names say that rather than naming the product, because naming one of them "netbox" would suggest the other does not read NetBox.
+The names say what is being spoken to, not which product is behind it.
+One is a format that any producer can emit; one is a product's API; one is whatever you can describe with paths.
+Start from what holds your inventory.
 
-Pick `netbox-api` if you cannot install a NetBox plugin, or if your inventory is large enough that fetching all of it on every poll is a cost you would rather not pay. The plugin endpoint disables pagination and supports no conditional requests, so every poll transfers a full serialization of every visible device.
+Point `riptide.discovery.url` at whichever endpoint the type needs: the producer's path for one, `/api/dcim/devices/` for another, your own for the third.
 
-Pick `prometheus-sd` if the plugin is already installed and working, or if your source of truth emits that format. It is a contract many producers emit, not a NetBox feature.
+### If your inventory lives in NetBox
 
-Pick `mapped-json` if your source of truth is something else entirely: a home-grown asset database, a CMDB, a DCIM that is not NetBox — **Nautobot included, see [Nautobot](#nautobot)**. You point it at the endpoint you already serve and say which fields hold the name and the address, instead of running a service to translate one into a format Riptide already knows.
+Either of two readers gets you there, and the choice is about what NetBox is willing to serve rather than about Riptide.
 
-Point `riptide.discovery.url` at whichever endpoint the type needs: the plugin's path for one, `/api/dcim/devices/` for another, your own for the third.
+**`netbox-api` reads NetBox directly.** Nothing is installed on the NetBox side, the walk follows pagination to completion, and `riptide.discovery.filter` is passed in NetBox's own query terms so a large inventory is not fetched whole on every poll.
+Prefer it unless you have a reason not to.
+
+**`prometheus-sd` reads the [`netbox-plugin-prometheus-sd`](https://github.com/FlxPeters/netbox-plugin-prometheus-sd) endpoint.** Pick it when the plugin is already installed and working and you would rather not change a running integration.
+Know the cost: that endpoint disables pagination and supports no conditional requests, so every poll transfers a full serialization of every visible device.
+
+So the plugin is a way to reach NetBox, not a requirement of the format.
+An operator who cannot install plugins is not shut out, and an operator who already runs one does not have to migrate.
+
+### If your inventory emits Prometheus service discovery
+
+Use `prometheus-sd` and point `riptide.discovery.url` at the document.
+
+The format is a published contract that many systems emit, and Riptide reads it as such.
+Nothing about this path involves NetBox, and nothing needs installing.
+If something in your estate already publishes targets for Prometheus to scrape, it will likely serve this reader too.
+
+### If your inventory is somewhere else
+
+Use `mapped-json`: a home-grown asset database, a CMDB, or a DCIM that is not NetBox.
+**Nautobot is included, see [Nautobot](#nautobot).**
+
+You point it at the endpoint you already serve and say which fields hold the name and the address, instead of running a service to translate one into a format Riptide already knows.
 
 ## Mapping your own endpoint
 
@@ -150,9 +180,13 @@ If that endpoint is NetBox, use `netbox-api`, which knows to strip it. If it is 
 
 A path that matches nothing on a particular device is not an error: that device is skipped and counted, like any device with no usable address.
 
-### Narrowing what NetBox returns
+## Narrowing what the endpoint returns
 
-`riptide.discovery.filter` is passed to NetBox in its own query terms, so you can develop it against NetBox directly and paste in what works:
+`riptide.discovery.filter` is appended to the endpoint's query by `netbox-api` and `mapped-json`, so it belongs to neither on its own.
+The service discovery reader takes its filtering from whatever produced the document.
+
+NetBox is the worked example here, because its query terms are the ones most readers will be pasting.
+The filter is passed in NetBox's own terms, so you can develop it against NetBox directly and paste in what works:
 
 ```yaml
 riptide:
@@ -161,8 +195,6 @@ riptide:
     url: https://netbox.example.com/api/dcim/devices/
     filter: status=active&role=leaf&role=spine
 ```
-
-It is read by `netbox-api` and `mapped-json`, which append it to the endpoint's query. The service discovery reader takes its filtering from whatever produced the document.
 
 A filter matching nothing is refused rather than publishing an empty exporters tree, which is the same rule an empty endpoint answer gets. If discovery stops updating right after you add a filter, that is the first thing to check.
 
