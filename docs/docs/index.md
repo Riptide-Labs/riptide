@@ -24,12 +24,14 @@ UDP/TCP ingest (NetFlow v5 · NetFlow v9 · IPFIX · sFlow)
 
 - **Flow protocols:** NetFlow v5, NetFlow v9, IPFIX, and sFlow (UDP; IPFIX also via
   TCP). See [Receivers](configuration/receivers.md).
-- **Inventory model:** named credential sets and polling profiles in the main config;
-  agent ranges in a hot-reloaded inventory file; exporter enrichment entries in that same
-  file, or from a [dynamic discovery](configuration/discovery.md) endpoint such as NetBox.
-  A device inside a credentialed range is polled from its first flow, with no per-device
-  configuration. See [SNMP agents](configuration/agent-configuration.md) and
-  [Exporter enrichment](configuration/exporter-enrichment.md).
+- **Inventory model:** named credential sets and polling profiles in the main config; agent ranges in a hot-reloaded inventory file; exporter enrichment entries in that same file.
+  A device inside a credentialed range is polled from its first flow, with no per-device configuration.
+  See [SNMP agents](configuration/agent-configuration.md) and [Exporter enrichment](configuration/exporter-enrichment.md).
+- **Dynamic discovery:** exporter enrichment entries can come from an external source of truth instead of that file.
+  Three sources ship: a Prometheus HTTP service discovery document, NetBox's device API with nothing installed on it, or any JSON endpoint mapped by paths you write.
+  Discovery stays off until `riptide.discovery.url` is set.
+  Until then the inventory file owns both trees.
+  See [Dynamic discovery](configuration/discovery.md).
 - **Secrets:** SNMP credentials are **references** (`env://`, `file://`, `vault://`,
   `sops://`), never plaintext in configuration. See
   [Secret references](configuration/secret-references.md).
