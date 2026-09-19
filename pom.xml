@@ -15,6 +15,18 @@
     <name>riptide-flows</name>
     <description>NetFlow analysis engine</description>
 
+    <!-- Without this, the effective POM inherits spring-boot-starter-parent's Apache-2.0 and
+         syft stamps it on our own jar: v0.11.0 through v0.14.0 shipped an SBOM declaring the
+         release Apache-2.0. See #821. deployment/sbom/assert_licenses.py pins the value that
+         reaches the SBOM, so this cannot drift back silently. -->
+    <licenses>
+        <license>
+            <name>GPL-3.0-or-later</name>
+            <url>https://www.gnu.org/licenses/gpl-3.0.html</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <build-helper-maven-plugin.version>3.6.2</build-helper-maven-plugin.version>

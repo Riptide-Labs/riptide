@@ -130,6 +130,9 @@ jobs:
       # it). Asserted here — before the HTML render and the later signing — so the
       # machine-readable file, the report, and the signed asset agree. Fails the
       # release rather than shipping NOASSERTION if the SBOM shape drifts (#406).
+      # The rpm and our own Maven entries are cross-checked, not rewritten: the
+      # Maven one catches a pom.xml that lost its <licenses> block and so inherits
+      # the Spring Boot parent's Apache-2.0, which shipped in v0.11.0-v0.14.0 (#821).
       - name: Assert first-party license facts in the SBOM
         run: |
           make sbom-assert SBOM="target/riptide-${VERSION}.spdx.json"

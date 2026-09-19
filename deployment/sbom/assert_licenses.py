@@ -2,10 +2,10 @@
 # Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Assert license facts in the release SBOM (issues #406 and #405).
+"""Assert license facts in the release SBOM (issues #406, #405 and #821).
 
-Syft cannot derive our own license for two of the three entries that describe
-what we ship: a deb control file has no license field, and syft has no flag to
+Syft cannot derive our own license for two of the entries that describe what
+we ship: a deb control file has no license field, and syft has no flag to
 attach a license to the scanned directory. This script sets `licenseDeclared`
 on exactly those two entries after generation. It runs between SBOM generation
 and the HTML report render in the release workflow, so the machine-readable
@@ -17,10 +17,22 @@ so this assertion cannot disagree with what nfpm writes into the RPM header.
 The rpm entry is cross-checked, not rewritten: a mismatch there means the
 sources of truth have drifted and the release must not ship.
 
-Every selector must match exactly one package; zero or multiple matches exit
-non-zero. The silent failure mode — a selector drifting after a syft upgrade
-and NOASSERTION shipping again — is the bug class this script exists to
-remove, so it fails the release instead.
+The Maven entries are cross-checked the same way, for a defect that shipped.
+Syft catalogues our own artifact twice, once from /pom.xml and once from the
+built jar, and reads the license off the effective POM. A POM with no
+`<licenses>` block inherits spring-boot-starter-parent's Apache-2.0, so
+v0.11.0 through v0.14.0 shipped a signed SBOM declaring this GPL-3.0-or-later
+release to be Apache-2.0 (#821). pom.xml now declares it, and checking rather
+than rewriting is the point: the check fails if that block is ever removed,
+whereas rewriting would paper over its absence and re-hide the defect.
+
+Every selector must match at least one package; zero matches exit non-zero.
+The silent failure mode — a selector drifting after a syft upgrade and
+NOASSERTION shipping again — is the bug class this script exists to remove,
+so it fails the release instead. The deb, rpm and root selectors must match
+exactly one; the Maven selector may match several, because the number of
+places syft finds our own artifact is syft's business, not a fact worth
+pinning.
 
 licenseDeclared is the correct SPDX field here: we are the package author,
 and nfpm.yaml/pom.xml/LICENSE are our declaration.
@@ -51,6 +63,12 @@ import json
 import re
 import sys
 from pathlib import Path
+
+
+
+# Our own Maven coordinates. Changing groupId or artifactId in pom.xml without changing this
+# makes the selector match nothing, which fails the release rather than skipping the check.
+FIRST_PARTY_MAVEN_PURL = "pkg:maven/org.riptide.flows/riptide-flows@"
 
 
 def read_license(nfpm_path: Path) -> str:
@@ -109,6 +127,15 @@ def select_one(packages: list, predicate, what: str) -> dict:
     return hits[0]
 
 
+def select_some(packages: list, predicate, what: str) -> list:
+    """Like select_one, but for a selector whose match count is syft's business."""
+    hits = [p for p in packages if predicate(p)]
+    if not hits:
+        sys.exit(f"error: selector for {what} matched no packages. It has drifted, "
+                 f"and leaving it unchecked is how #821 shipped")
+    return hits
+
+
 def root_ids(doc: dict) -> set:
     """SPDXIDs the document describes — the shorthand field or DESCRIBES relationships."""
     ids = set(doc.get("documentDescribes") or [])
@@ -140,6 +167,15 @@ def main() -> None:
         sys.exit(f"error: rpm entry declares {rpm.get('licenseDeclared')!r} but {args.nfpm} says "
                  f"{license_id!r} — the sources of truth have drifted")
 
+    maven = select_some(packages, lambda p: purl_of(p).startswith(FIRST_PARTY_MAVEN_PURL),
+                        "our own Maven entries")
+    wrong = [p for p in maven if p.get("licenseDeclared") != license_id]
+    if wrong:
+        sys.exit(f"error: {len(wrong)} of {len(maven)} Maven entries for our own artifact declare "
+                 f"{sorted({str(p.get('licenseDeclared')) for p in wrong})} but {args.nfpm} says "
+                 f"{license_id!r} ({[p['SPDXID'] for p in wrong]}). Check the <licenses> block in "
+                 f"pom.xml, without which the effective POM inherits the parent's license (#821)")
+
     for package in (root, deb):
         package["licenseDeclared"] = license_id
 
@@ -148,7 +184,7 @@ def main() -> None:
 
     args.sbom.write_text(json.dumps(doc, indent=1) + "\n")
     print(f"asserted licenseDeclared={license_id} on {root['SPDXID']} and {deb['SPDXID']}; "
-          f"rpm entry already declares it")
+          f"rpm entry and {len(maven)} Maven entrie(s) for our own artifact already declare it")
     for package in concluded:
         print(f"concluded {package['licenseConcluded']} on {package['SPDXID']} per allowlist")
 
