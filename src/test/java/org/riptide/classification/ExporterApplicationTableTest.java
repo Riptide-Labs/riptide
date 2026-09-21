@@ -34,12 +34,6 @@ class ExporterApplicationTableTest {
         return config;
     }
 
-    private static SessionAdmissionConfig admission(final int perScope) {
-        final SessionAdmissionConfig config = new SessionAdmissionConfig();
-        config.setMaxIfIndexesPerScope(perScope);
-        return config;
-    }
-
     private static ExporterIdentity identity(final String host, final long domain) throws UnknownHostException {
         return new ExporterIdentity.NetflowIpfix(InetAddress.getByName(host), domain);
     }
@@ -128,23 +122,53 @@ class ExporterApplicationTableTest {
 
     @Test
     void aSprayWithinOneScopeIsBoundedAndCounted() throws Exception {
-        final var bounded = new ExporterApplicationTable(config(60_000), admission(8), this.metrics);
+        final var bounded = new ExporterApplicationTable(config(60_000), new SessionAdmissionConfig(), this.metrics);
         final var identity = identity("10.0.0.1", 1);
 
-        for (int id = 1; id <= 500; id++) {
+        for (int id = 1; id <= 20_000; id++) {
             bounded.accept(identity,
                     List.of(new UnsignedValue("applicationId", 0x03000000L + id)),
                     List.of(new StringValue("applicationName", "app" + id)));
         }
 
         int retained = 0;
-        for (int id = 1; id <= 500; id++) {
+        for (int id = 1; id <= 20_000; id++) {
             if (bounded.lookup(identity, 0x03000000L + id).isPresent()) {
                 retained++;
             }
         }
-        assertThat(retained).isLessThanOrEqualTo(8);
+        assertThat(retained).isLessThanOrEqualTo(16_384);
         assertThat(this.metrics.meter("enrichment.optionApplications.rejected").getCount()).isPositive();
+    }
+
+    /**
+     * The c8000v sends 1,560 rows per refresh, IANA engines first and the Cisco engine last. With
+     * the interface table's cap of 1,024 the rows that name http, dns and icmp were evicted before
+     * the first flow arrived (replay gate, 2026-09-21).
+     */
+    @Test
+    void aFullNbar2TableFitsWithoutEvictingItsEarliestRows() throws Exception {
+        final var shipped = new ExporterApplicationTable(config(60_000), new SessionAdmissionConfig(), this.metrics);
+        final var identity = identity("10.10.3.1", 6);
+        // engine 1 first, then 3, then 13, as the router orders its refresh
+        int rows = 0;
+        for (final int engine : new int[]{1, 3, 13}) {
+            for (int selector = 1; selector <= 520; selector++, rows++) {
+                shipped.accept(identity,
+                        List.of(new UnsignedValue("applicationId", ((long) engine << 24) | selector)),
+                        List.of(new StringValue("applicationName", "app-" + engine + "-" + selector)));
+            }
+        }
+        assertThat(rows).isEqualTo(1560);
+
+        assertThat(shipped.lookup(identity("10.10.3.1", 256), (1L << 24) | 1)).map(ApplicationInfo::name)
+                .as("the very first row of the refresh must survive the whole refresh")
+                .contains("app-1-1");
+        assertThat(shipped.lookup(identity("10.10.3.1", 256), (3L << 24) | 80)).map(ApplicationInfo::name)
+                .contains("app-3-80");
+        assertThat(this.metrics.meter("enrichment.optionApplications.rejected").getCount())
+                .as("a real table must never trip the cap")
+                .isZero();
     }
 
     @Test

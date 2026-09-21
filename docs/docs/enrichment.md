@@ -187,7 +187,8 @@ That is normal for the first table refresh interval after a restart (Cisco defau
 A Juniper SRX 345 with application tracking exports `applicationId` in its IPv4 template but sends `0` until application identification classifies, and sends no table at all.
 
 The table's own meters follow the interface table's vocabulary: `enrichment_optionApplications_consumed`, `_skipped` (a named row with no usable id) and `_rejected` (an entry evicted because a scope hit its cap).
-Retention and the per-scope cap are the interface table's settings, `riptide.snmp.options.retention-ms` and `max-ifindexes-per-scope`; there is no separate key.
+Retention is the interface table's setting, `riptide.snmp.options.retention-ms`; there is no separate key.
+The per-scope cap is fixed at 16,384 ids, sized for a full NBAR2 protocol pack, and `enrichment_optionApplications_rejected` counts anything it evicts.
 
 Lookups try the exact exporter identity, address plus observation domain, and then any observation domain of the same address.
 A Catalyst 8000V sends its option tables under one observation domain and its flow records under another; the fallback is what makes its names resolve, for interface names as well as application names.

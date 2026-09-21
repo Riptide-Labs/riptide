@@ -34,8 +34,9 @@ import java.util.concurrent.ExecutionException;
  *
  * <p>Recognised shape: an {@code applicationName} (96) or {@code applicationDescription} (94)
  * field, with the packed {@code applicationId} (95) in the scope or, failing that, in the fields.
- * Keyed and bounded exactly like {@link org.riptide.snmp.ExporterInterfaceTable}: one inner cache
- * per exporter identity, capped per scope, so a sprayed table displaces only its own entries.</p>
+ * Keyed like {@link org.riptide.snmp.ExporterInterfaceTable}: one inner cache per exporter
+ * identity, capped per scope at {@link #MAX_APPLICATIONS_PER_SCOPE} so a sprayed table displaces
+ * only its own entries.</p>
  *
  * <p>Lookups fall back from the exact identity to the device address; see {@link OptionTables#lookup}.
  * A Catalyst 8000V sends its option tables under one observation domain and its flow records under
@@ -49,10 +50,24 @@ public class ExporterApplicationTable implements OptionListener {
     private static final List<String> NAME_FIELDS = List.of("applicationName");
     private static final List<String> DESCRIPTION_FIELDS = List.of("applicationDescription");
 
+    /**
+     * Application ids retained per scope identity, fixed rather than shared with the interface
+     * table's {@code max-ifindexes-per-scope}.
+     *
+     * <p>A full NBAR2 protocol pack plus the IANA L3/L4 rows the option table also carries is a few
+     * thousand ids; a Catalyst 8000V sends 1,560 rows in a single refresh, IANA engines first and
+     * the Cisco engine last. At the interface table's cap of 1,024 the rows naming http, dns and
+     * icmp were evicted before the first flow arrived, so every such flow fell back to the port
+     * rules (replay gate, 2026-09-21). The {@code applicationId} space is 8 bits of engine and 24
+     * of selector, so an unbounded cache is still not an option: a bound is required, it is just
+     * not the interface table's bound. The outer per-source ceiling still comes from
+     * {@link SessionAdmissionConfig} via {@link OptionTables#scopeCeiling}.</p>
+     */
+    private static final int MAX_APPLICATIONS_PER_SCOPE = 16_384;
+
     private final Cache<ExporterIdentity, Cache<Long, ApplicationInfo>> table;
 
     private final Duration retention;
-    private final int maxIdsPerScope;
 
     private final Meter recordsConsumed;
     private final Meter recordsSkipped;
@@ -63,9 +78,6 @@ public class ExporterApplicationTable implements OptionListener {
                                     final MetricRegistry metrics) {
         admissionConfig.validate();
         this.retention = Duration.ofMillis(optionsConfig.getRetentionMs());
-        // The interface table's per-scope cap, reused rather than duplicated as a new key: both
-        // tables are one option record per row, and the same chassis sends both.
-        this.maxIdsPerScope = admissionConfig.getMaxIfIndexesPerScope();
         this.table = CacheBuilder.newBuilder()
                 .expireAfterWrite(this.retention)
                 .maximumSize(OptionTables.scopeCeiling(admissionConfig))
@@ -104,7 +116,7 @@ public class ExporterApplicationTable implements OptionListener {
         try {
             return this.table.get(identity, () -> CacheBuilder.newBuilder()
                     .expireAfterWrite(this.retention)
-                    .maximumSize(this.maxIdsPerScope)
+                    .maximumSize(MAX_APPLICATIONS_PER_SCOPE)
                     .<Long, ApplicationInfo>removalListener(notification -> {
                         if (notification.getCause() == RemovalCause.SIZE) {
                             this.recordsRejected.mark();
