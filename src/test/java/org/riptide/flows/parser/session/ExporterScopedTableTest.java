@@ -104,4 +104,52 @@ class ExporterScopedTableTest {
         put(table, identity("10.10.3.1", 6), 2, "Gi2");
         assertThat(table.isEmpty()).isFalse();
     }
+
+    /**
+     * The outer cache must expire a scope on idleness, not on a fixed timer from creation: a
+     * busy exporter that keeps re-sending its table has to stay resolvable for as long as it does.
+     *
+     * <p>A row rewritten on every iteration can't tell the two policies apart: {@code scope()}'s
+     * loading {@code get} recreates an expired entry and writes straight into the fresh copy, so the
+     * just-written key is always found no matter which policy governs the outer cache. The
+     * discriminating row is one written once, part-way through the scope's life, and checked while
+     * it is still within its own {@code expireAfterWrite} budget: a creation-anchored outer timer
+     * (the bug) wipes it out from under that still-valid budget the moment some other row's write
+     * lands after the fixed window, while an access-anchored one (the fix) does not, because the
+     * scope keeps getting touched.</p>
+     */
+    @Test
+    void aScopeThatKeepsBeingRefreshedOutlivesTheRetention() throws Exception {
+        final var table = new ExporterScopedTable<Integer, String>(Duration.ofMillis(300), 1_000L, 64, () -> {
+        });
+        final var identity = identity("10.10.3.1", 6);
+
+        put(table, identity, 0, "bootstrap"); // t=0: creates the scope
+        Thread.sleep(200);
+        put(table, identity, 1, "the-row"); // t=200: its own 300 ms budget runs to ~t=500
+        for (int i = 0; i < 2; i++) { // t=300, t=400: other rows keep the scope busy
+            Thread.sleep(100);
+            put(table, identity, 200 + i, "keepalive-" + i);
+        }
+
+        assertThat(table.lookup(identity, 1))
+                .as("t≈400: past the 300 ms a creation-anchored timer would allow, but well inside "
+                        + "\"the-row\"'s own budget (due ~t=500) and the scope has been touched every "
+                        + "100 ms since it was created")
+                .contains("the-row");
+    }
+
+    /** The other half of the same rule: a scope nobody touches expires after the retention. */
+    @Test
+    void anIdleScopeExpiresOnTheRetention() throws Exception {
+        final var table = new ExporterScopedTable<Integer, String>(Duration.ofMillis(50), 1_000L, 64, () -> {
+        });
+        final var identity = identity("10.10.3.1", 6);
+        put(table, identity, 1, "Gi2");
+
+        Thread.sleep(150);
+
+        assertThat(table.lookup(identity, 1)).isEmpty();
+        assertThat(table.indexedIdentities()).isZero();
+    }
 }

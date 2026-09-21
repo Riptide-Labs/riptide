@@ -51,6 +51,13 @@ import java.util.concurrent.ExecutionException;
  */
 public final class ExporterScopedTable<K, V> {
 
+    /**
+     * {@code scope()}'s insert and {@code unindex()}'s removal both go through
+     * {@link ConcurrentMap#compute}, so for a given address the two serialise on that map's own
+     * per-key lock: one cannot observe the other's set as absent partway through and replace it with
+     * a fresh, single-identity set, which would silently drop every sibling {@code unindex()} had
+     * not yet gotten to.
+     */
     private final ConcurrentMap<InetAddress, Set<ExporterIdentity>> byAddress = new ConcurrentHashMap<>();
 
     /**
@@ -61,6 +68,11 @@ public final class ExporterScopedTable<K, V> {
      * sustained spray could hold more scopes here than are admitted at any instant. Bounding the
      * outer level too is what makes the documented worst-case product an actual ceiling rather than
      * a steady-state estimate.
+     *
+     * <p>Expires on access ({@code scope()} or {@code lookup()}), not on a fixed timer from
+     * creation: a scope an exporter keeps refreshing must stay resolvable for as long as it keeps
+     * being read or written. A creation-anchored timer would drop a busy scope, rows and all, the
+     * moment the fixed window elapsed, regardless of how recently it was last touched.</p>
      */
     private final Cache<ExporterIdentity, Cache<K, V>> table;
 
@@ -69,7 +81,8 @@ public final class ExporterScopedTable<K, V> {
     private final Runnable onSizeEviction;
 
     /**
-     * @param retention how long a row and an idle scope survive, the exporters' re-send cadence
+     * @param retention how long a scope survives after it is last read or written, and how long a
+     *     row survives after its last write, the exporters' re-send cadence
      * @param scopeCeiling the most scopes retained across every exporter, from
      *     {@link OptionTables#scopeCeiling}
      * @param maxKeysPerScope rows retained per scope, evicted least-recently-used within that scope
@@ -84,7 +97,7 @@ public final class ExporterScopedTable<K, V> {
         this.maxKeysPerScope = maxKeysPerScope;
         this.onSizeEviction = onSizeEviction;
         this.table = CacheBuilder.newBuilder()
-                .expireAfterWrite(retention)
+                .expireAfterAccess(retention)
                 .maximumSize(scopeCeiling)
                 // every cause, so the index never outlives the scope it points at: an expired or
                 // size-evicted identity left behind would make the fallback walk dead entries
@@ -109,8 +122,11 @@ public final class ExporterScopedTable<K, V> {
             // The loader is a plain builder call and throws nothing checked; Guava still declares it.
             throw new IllegalStateException("option table scope for " + identity + " could not be created", e);
         }
-        this.byAddress.computeIfAbsent(identity.deviceAddress(), address -> ConcurrentHashMap.newKeySet())
-                .add(identity);
+        this.byAddress.compute(identity.deviceAddress(), (address, identities) -> {
+            final Set<ExporterIdentity> set = identities == null ? ConcurrentHashMap.newKeySet() : identities;
+            set.add(identity);
+            return set;
+        });
         return forScope;
     }
 
