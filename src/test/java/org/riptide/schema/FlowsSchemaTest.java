@@ -1224,4 +1224,12 @@ class FlowsSchemaTest {
         assertThat(FlowsSchema.addAdditiveColumns("riptide")).contains(
                 "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS applicationId UInt32");
     }
+
+    @Test
+    void applicationSourceIsAnAdditiveLowCardinalityColumn() {
+        assertThat(FlowsSchema.additiveColumnNames()).contains("applicationSource");
+        assertThat(FlowsSchema.createFlowsTable("riptide")).contains("applicationSource LowCardinality(String)");
+        assertThat(FlowsSchema.addAdditiveColumns("riptide")).contains(
+                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS applicationSource LowCardinality(String)");
+    }
 }

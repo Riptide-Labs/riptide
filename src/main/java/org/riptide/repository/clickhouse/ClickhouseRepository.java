@@ -14,6 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.mapstruct.BeanMapping;
 import org.mapstruct.Mapper;
 import org.mapstruct.NullValueCheckStrategy;
+import org.riptide.classification.ApplicationSource;
 import org.riptide.config.ClickhouseConfig;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.pipeline.EnrichedFlow;
@@ -1390,6 +1391,14 @@ public class ClickhouseRepository implements FlowRepository {
          * Java constant cannot silently change what stored rows say.
          */
         protected String samplingProvenance(final Flow.SamplingProvenance value) {
+            return value.token();
+        }
+
+        /**
+         * As {@link #samplingProvenance}: the token is the stable identifier, so a stored row
+         * cannot be silently rewritten by renaming a Java constant.
+         */
+        protected String applicationSource(final ApplicationSource value) {
             return value.token();
         }
     }

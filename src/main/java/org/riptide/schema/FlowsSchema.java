@@ -714,6 +714,7 @@ public final class FlowsSchema {
         ADDITIVE_COLUMNS.put("exporterName", "LowCardinality(String)");
         ADDITIVE_COLUMNS.put("samplingProvenance", "LowCardinality(String)");
         ADDITIVE_COLUMNS.put("applicationId", "UInt32");
+        ADDITIVE_COLUMNS.put("applicationSource", "LowCardinality(String)");
     }
 
     /** The additive column names, for callers distinguishing in-place-upgradeable columns. */
@@ -1442,7 +1443,11 @@ public final class FlowsSchema {
 
             -- The exporter's application id (IPFIX element 95, RFC 6759), packed as
             -- engine << 24 | selector. 0 = the record carried none.
-            applicationId UInt32
+            applicationId UInt32,
+
+            -- Which rung named `application`: 'exporter' (the exporter's application table),
+            -- 'rules' (a port/address rule) or 'none'. '' = written before this column existed.
+            applicationSource LowCardinality(String)
         ) ENGINE = MergeTree()
         -- PRIMARY KEY declared, not derived, for the reason spelled out at rollupTable(): a later
         -- MODIFY ORDER BY appends to the sorting key alone, and a derived primary key would leave

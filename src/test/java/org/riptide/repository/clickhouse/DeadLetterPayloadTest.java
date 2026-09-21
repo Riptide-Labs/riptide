@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.riptide.classification.ApplicationSource;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.pipeline.EnrichedFlow;
 
@@ -381,6 +382,7 @@ class DeadLetterPayloadTest {
                 .vlan(42)
                 .application("https")
                 .applicationId(0x0100002AL)
+                .applicationSource(ApplicationSource.Rules)
                 .exporterAddr("203.0.113.7")
                 .tenant("acme")
                 .organisation("org")

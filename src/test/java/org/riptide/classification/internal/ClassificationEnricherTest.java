@@ -12,13 +12,16 @@ import org.mockito.Mockito;
 import org.riptide.classification.ClassificationEngine;
 import org.riptide.classification.ClassificationEnricher;
 import org.riptide.classification.ClassificationRequest;
+import org.riptide.classification.ExporterApplicationTable;
 import org.riptide.classification.Protocols;
 import org.riptide.flows.parser.data.Flow;
+import org.riptide.flows.parser.session.SessionAdmissionConfig;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Pipeline;
 import org.riptide.pipeline.Source;
 import org.riptide.repository.TestRepository;
+import org.riptide.snmp.SnmpOptionsConfig;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
@@ -56,7 +59,9 @@ public class ClassificationEnricherTest {
 
     @Test
     public void testEnrichment() throws Exception {
-        final var enrichers = List.<Enricher>of(new ClassificationEnricher(this.classificationEngine));
+        final var enrichers = List.<Enricher>of(new ClassificationEnricher(this.classificationEngine,
+                new ExporterApplicationTable(new SnmpOptionsConfig(), new SessionAdmissionConfig(), this.metricRegistry),
+                this.metricRegistry));
         final var repository = new TestRepository(metricRegistry);
         final var pipeline = new Pipeline(enrichers, repository.asPersister(), this.metricRegistry, this.flowMapper);
 
@@ -170,7 +175,9 @@ public class ClassificationEnricherTest {
 
     private Pipeline pipeline(final TestRepository repository) {
         return new Pipeline(
-                List.<Enricher>of(new ClassificationEnricher(this.classificationEngine)),
+                List.<Enricher>of(new ClassificationEnricher(this.classificationEngine,
+                        new ExporterApplicationTable(new SnmpOptionsConfig(), new SessionAdmissionConfig(), this.metricRegistry),
+                        this.metricRegistry)),
                 repository.asPersister(),
                 this.metricRegistry,
                 this.flowMapper);

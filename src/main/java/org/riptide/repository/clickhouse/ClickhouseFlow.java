@@ -6,6 +6,7 @@
 package org.riptide.repository.clickhouse;
 
 import lombok.Data;
+import org.riptide.classification.ApplicationSource;
 import org.riptide.flows.parser.data.Flow;
 
 import java.net.Inet6Address;
@@ -87,6 +88,9 @@ public class ClickhouseFlow {
 
     // UInt32 on the wire; long so an engine id above 127 in the top byte never goes negative.
     private long applicationId;
+
+    // 'none' for an unenriched flow; '' is reserved for rows written before the column existed.
+    private String applicationSource = ApplicationSource.None.token();
 
     private byte srcLocality;
     private byte dstLocality;

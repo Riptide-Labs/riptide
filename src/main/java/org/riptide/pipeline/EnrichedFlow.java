@@ -10,6 +10,7 @@ import lombok.Data;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import org.mapstruct.NullValueCheckStrategy;
+import org.riptide.classification.ApplicationSource;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.data.Flow.Direction;
 import org.riptide.flows.parser.data.Flow.FlowProtocol;
@@ -66,6 +67,7 @@ public class EnrichedFlow {
     private String application;
     /** Exporter application id, packed; 0 when none was sent. Mapped by name from {@link Flow}. */
     private Long applicationId;
+    private ApplicationSource applicationSource;
     private String exporterAddr;
     private String tenant;
     private String organisation;
@@ -99,6 +101,7 @@ public class EnrichedFlow {
             componentModel = "spring")
     public abstract static class FlowMapper {
         @Mapping(target = "application", ignore = true)
+        @Mapping(target = "applicationSource", ignore = true)
         @Mapping(target = "srcLocality", ignore = true)
         @Mapping(target = "dstLocality", ignore = true)
         @Mapping(target = "flowLocality", ignore = true)
