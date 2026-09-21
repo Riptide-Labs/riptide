@@ -117,7 +117,7 @@ public class ExporterInterfaceTable implements OptionListener {
         final String description = string(values, DESCRIPTION_FIELDS);
         if (name == null && description == null) {
             // Neither a name nor a description: not this table's shape at all.
-            return Verdict.UNRECOGNISED; // sampler/VRF/app tables, …
+            return Verdict.UNRECOGNISED; // sampler, VRF, application tables, …
         }
 
         Integer ifIndex = unsigned(scopes, IFINDEX_SCOPES);

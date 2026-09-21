@@ -15,6 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import org.riptide.classification.ExporterApplicationTable;
 import org.riptide.config.DaemonConfig;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.ie.values.ValueConversionService;
@@ -285,6 +286,7 @@ class Netflow5SamplingFallbackTest {
                 Mockito.mock(ValueConversionService.class),
                 Mockito.mock(ExporterInterfaceTable.class),
                 Mockito.mock(ExporterSamplingTable.class),
+                Mockito.mock(ExporterApplicationTable.class),
                 new SessionAdmissionConfig(),
                 config);
     }

@@ -5,10 +5,13 @@
 
 package org.riptide.flows.ipfix;
 
+import com.codahale.metrics.MetricRegistry;
 import com.google.common.primitives.UnsignedLong;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import org.junit.jupiter.api.Test;
+import org.riptide.classification.ApplicationInfo;
+import org.riptide.classification.ExporterApplicationTable;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.ie.values.ValueConversionService;
@@ -29,8 +32,10 @@ import org.riptide.flows.parser.ipfix.proto.Packet;
 import org.riptide.flows.parser.session.OptionListener;
 import org.riptide.flows.parser.session.SequenceNumberTracker;
 import org.riptide.flows.parser.session.Session;
+import org.riptide.flows.parser.session.SessionAdmissionConfig;
 import org.riptide.flows.parser.session.TcpSession;
 import org.riptide.pipeline.ExporterIdentity;
+import org.riptide.snmp.SnmpOptionsConfig;
 
 import java.net.InetAddress;
 import java.nio.file.Files;
@@ -177,5 +182,26 @@ public class CiscoAvcBlackboxTest {
         final List<Packet> packets = parse("ipfix_test_cisco_c8000v_avc_tpl258.dat");
 
         assertThat(packets.getFirst().header.observationDomainId).isEqualTo(FLOWS_DOMAIN);
+    }
+
+    @Test
+    public void theRealTableNamesTheHttpFlowsAcrossTheDomainSplit() throws Exception {
+        final var table = new ExporterApplicationTable(new SnmpOptionsConfig(), new SessionAdmissionConfig(), new MetricRegistry());
+        final Session tapped = new TcpSession(InetAddress.getLoopbackAddress(), () -> new SequenceNumberTracker(32), table);
+        for (final String fixture : List.of("ipfix_test_cisco_c8000v_avc_apptable257_tpl.dat",
+                "ipfix_test_cisco_c8000v_avc_apptable257_dns.dat",
+                "ipfix_test_cisco_c8000v_avc_apptable257_http.dat",
+                "ipfix_test_cisco_c8000v_avc_apptable257_ssh.dat")) {
+            final ByteBuf buf = Unpooled.wrappedBuffer(Files.readAllBytes(FOLDER.resolve(fixture)));
+            new Packet(tapped, new Header(slice(buf, Header.SIZE)), buf);
+        }
+        final var flowIdentity = new ExporterIdentity.NetflowIpfix(InetAddress.getLoopbackAddress(), FLOWS_DOMAIN);
+
+        assertThat(table.lookup(flowIdentity, HTTP)).map(ApplicationInfo::name).contains("http");
+        assertThat(table.lookup(flowIdentity, DNS)).map(ApplicationInfo::name).contains("dns");
+        assertThat(table.lookup(flowIdentity, SSH)).map(ApplicationInfo::name).contains("ssh");
+        assertThat(table.lookup(flowIdentity, ICMP))
+                .as("icmp is not in the three table packets kept as fixtures; an unresolved id stays unresolved")
+                .isEmpty();
     }
 }
