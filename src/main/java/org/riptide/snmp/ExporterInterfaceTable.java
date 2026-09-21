@@ -40,7 +40,7 @@ import java.time.Duration;
  * its own examples include ifAlias-style content; per-field authority in
  * {@link IfInfo#optionsThenSnmp} lets a real SNMP ifAlias win over it.</p>
  *
- * <p>Lookups fall back from the exact identity to the device address; see {@link #lookup}.</p>
+ * <p>Lookups fall back from the exact identity to the device address; see {@link OptionTables#lookup}.</p>
  */
 @Component
 public class ExporterInterfaceTable implements OptionListener {
