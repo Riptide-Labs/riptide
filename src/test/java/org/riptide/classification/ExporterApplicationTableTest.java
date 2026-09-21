@@ -137,7 +137,7 @@ class ExporterApplicationTableTest {
                 retained++;
             }
         }
-        assertThat(retained).isLessThanOrEqualTo(16_384);
+        assertThat(retained).isGreaterThan(0).isLessThanOrEqualTo(16_384);
         assertThat(this.metrics.meter("enrichment.optionApplications.rejected").getCount()).isPositive();
     }
 

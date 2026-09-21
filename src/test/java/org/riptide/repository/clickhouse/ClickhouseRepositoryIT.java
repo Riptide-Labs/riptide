@@ -658,7 +658,7 @@ public class ClickhouseRepositoryIT {
         final var named = testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 62001, 80, 100L);
         named.setApplicationId(0x03000050L);
         named.setApplication("http");
-        named.setApplicationSource(org.riptide.classification.ApplicationSource.Exporter);
+        named.setApplicationSource(org.riptide.pipeline.ApplicationSource.Exporter);
         final var bare = testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 62002, 80, 100L);
         repo.persist(List.of(named, bare));
 

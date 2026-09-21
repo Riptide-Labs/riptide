@@ -14,7 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.mapstruct.BeanMapping;
 import org.mapstruct.Mapper;
 import org.mapstruct.NullValueCheckStrategy;
-import org.riptide.classification.ApplicationSource;
+import org.riptide.pipeline.ApplicationSource;
 import org.riptide.config.ClickhouseConfig;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.pipeline.EnrichedFlow;

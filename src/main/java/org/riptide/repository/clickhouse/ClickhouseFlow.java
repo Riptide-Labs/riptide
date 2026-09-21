@@ -6,7 +6,7 @@
 package org.riptide.repository.clickhouse;
 
 import lombok.Data;
-import org.riptide.classification.ApplicationSource;
+import org.riptide.pipeline.ApplicationSource;
 import org.riptide.flows.parser.data.Flow;
 
 import java.net.Inet6Address;

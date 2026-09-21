@@ -10,7 +10,6 @@ import lombok.Data;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import org.mapstruct.NullValueCheckStrategy;
-import org.riptide.classification.ApplicationSource;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.data.Flow.Direction;
 import org.riptide.flows.parser.data.Flow.FlowProtocol;

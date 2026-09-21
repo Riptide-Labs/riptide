@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.riptide.flows.parser.ie.values.StringValue;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
 import org.riptide.flows.parser.session.SessionAdmissionConfig;
+import org.riptide.pipeline.ApplicationSource;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.ExporterIdentity;
 import org.riptide.pipeline.Source;
@@ -76,6 +77,26 @@ class ClassificationEnricherPrecedenceTest {
     void anUnresolvedIdFallsToTheRulesAndIsCounted() throws Exception {
         when(this.engine.classify(any())).thenReturn("www");
         final EnrichedFlow flow = flow(ICMP);
+
+        this.enricher.enrich(source(), List.of(flow)).join();
+
+        assertThat(flow.getApplication()).isEqualTo("www");
+        assertThat(flow.getApplicationSource()).isEqualTo(ApplicationSource.Rules);
+        assertThat(this.metrics.meter("enrichment.application.unresolved").getCount()).isEqualTo(1);
+    }
+
+    /**
+     * A row that carries a description and no name is a stored row that still names nothing, so it
+     * is not a hit: the ladder falls to the rules and the id counts as unresolved, exactly as it
+     * would if the table held no row at all.
+     */
+    @Test
+    void aDescriptionOnlyRowFallsToTheRulesAndIsCounted() throws Exception {
+        this.table.accept(new ExporterIdentity.NetflowIpfix(InetAddress.getByName("10.10.3.1"), 6),
+                List.of(new UnsignedValue("applicationId", HTTP)),
+                List.of(new StringValue("applicationDescription", "World Wide Web traffic")));
+        when(this.engine.classify(any())).thenReturn("www");
+        final EnrichedFlow flow = flow(HTTP);
 
         this.enricher.enrich(source(), List.of(flow)).join();
 

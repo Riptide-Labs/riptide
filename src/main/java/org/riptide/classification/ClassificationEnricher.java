@@ -7,7 +7,7 @@ package org.riptide.classification;
 
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
-import lombok.NonNull;
+import org.riptide.pipeline.ApplicationSource;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.Enricher;
 import org.riptide.pipeline.Source;
@@ -15,6 +15,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
@@ -28,10 +29,8 @@ import java.util.concurrent.CompletableFuture;
 @ConditionalOnProperty(name = "riptide.enricher.classification.enabled", havingValue = "true", matchIfMissing = true)
 public class ClassificationEnricher extends Enricher.Single {
 
-    @NonNull
     private final ClassificationEngine classificationEngine;
 
-    @NonNull
     private final ExporterApplicationTable applicationTable;
 
     /**
@@ -43,8 +42,8 @@ public class ClassificationEnricher extends Enricher.Single {
     public ClassificationEnricher(final ClassificationEngine classificationEngine,
                                   final ExporterApplicationTable applicationTable,
                                   final MetricRegistry metrics) {
-        this.classificationEngine = classificationEngine;
-        this.applicationTable = applicationTable;
+        this.classificationEngine = Objects.requireNonNull(classificationEngine);
+        this.applicationTable = Objects.requireNonNull(applicationTable);
         this.unresolved = metrics.meter(MetricRegistry.name("enrichment", "application", "unresolved"));
     }
 

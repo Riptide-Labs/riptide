@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-package org.riptide.classification;
+package org.riptide.pipeline;
 
 /**
  * Which rung named a flow's {@code application}. Each constant carries the token written to the

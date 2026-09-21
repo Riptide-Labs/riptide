@@ -9,6 +9,7 @@ import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import com.google.common.cache.Cache;
 import org.riptide.flows.parser.ie.Value;
+import org.riptide.flows.parser.ie.values.ApplicationIdValue;
 import org.riptide.flows.parser.session.ExporterScopedTable;
 import org.riptide.flows.parser.session.OptionListener;
 import org.riptide.flows.parser.session.OptionListener.Verdict;
@@ -45,7 +46,7 @@ import java.util.Optional;
 @Component
 public class ExporterApplicationTable implements OptionListener {
 
-    private static final List<String> ID_FIELDS = List.of("applicationId");
+    private static final List<String> ID_FIELDS = List.of(ApplicationIdValue.NAME);
     private static final List<String> NAME_FIELDS = List.of("applicationName");
     private static final List<String> DESCRIPTION_FIELDS = List.of("applicationDescription");
 

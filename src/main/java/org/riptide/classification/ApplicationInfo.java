@@ -5,7 +5,13 @@
 
 package org.riptide.classification;
 
-/** One row of an exporter's application table: RFC 6759 applicationName and applicationDescription. */
+/**
+ * One row of an exporter's application table: RFC 6759 applicationName and applicationDescription.
+ *
+ * @param name what the exporter calls the application; what reaches the {@code application} column
+ * @param description the exporter's prose for it. Stored for a future {@code applicationDescription}
+ *     column and read by nothing today, so it costs memory and nothing else.
+ */
 public record ApplicationInfo(String name, String description) {
 
     /** The fresh record pins the fields it carries; the existing entry fills the rest. */
