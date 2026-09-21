@@ -1212,4 +1212,16 @@ class FlowsSchemaTest {
                         + " reservedValueFor applies to the same syntax")
                 .isFalse();
     }
+
+    /**
+     * The raw exporter application id is additive: an upgraded table gets it in place, a fresh one
+     * declares it in the same trailing position. 0 is "not sent", so no NULL is needed.
+     */
+    @Test
+    void applicationIdIsAnAdditiveUInt32Column() {
+        assertThat(FlowsSchema.additiveColumnNames()).contains("applicationId");
+        assertThat(FlowsSchema.createFlowsTable("riptide")).contains("applicationId UInt32");
+        assertThat(FlowsSchema.addAdditiveColumns("riptide")).contains(
+                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS applicationId UInt32");
+    }
 }

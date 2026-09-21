@@ -380,6 +380,7 @@ class DeadLetterPayloadTest {
                 .flowProtocol(Flow.FlowProtocol.IPFIX)
                 .vlan(42)
                 .application("https")
+                .applicationId(0x0100002AL)
                 .exporterAddr("203.0.113.7")
                 .tenant("acme")
                 .organisation("org")

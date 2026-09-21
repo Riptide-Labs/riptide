@@ -64,6 +64,14 @@ public interface Flow {
      */
     SamplingProvenance getSamplingProvenance();
 
+    /**
+     * The exporter's application id (IPFIX element 95, RFC 6759), packed as
+     * {@code engine << 24 | selector}. {@code 0} when the record carried none: no exporter
+     * assigns engine 0 selector 0 to a real application, and the Juniper SRX sends exactly that
+     * when it has not classified.
+     */
+    long getApplicationId();
+
     enum Locality {
         PUBLIC, PRIVATE
     }

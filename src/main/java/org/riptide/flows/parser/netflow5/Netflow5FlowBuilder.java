@@ -306,6 +306,12 @@ public final class Netflow5FlowBuilder {
             public SamplingProvenance getSamplingProvenance() {
                 return rate.from();
             }
+
+            /* Out of scope for this protocol; see the L7 design spec. */
+            @Override
+            public long getApplicationId() {
+                return 0L;
+            }
         };
     }
 

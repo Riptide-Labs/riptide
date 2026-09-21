@@ -64,6 +64,8 @@ public class EnrichedFlow {
     private Integer vlan;
 
     private String application;
+    /** Exporter application id, packed; 0 when none was sent. Mapped by name from {@link Flow}. */
+    private Long applicationId;
     private String exporterAddr;
     private String tenant;
     private String organisation;

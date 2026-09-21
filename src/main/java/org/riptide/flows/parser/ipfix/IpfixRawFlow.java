@@ -75,6 +75,12 @@ public class IpfixRawFlow {
      * and leaves only this reference on the record itself.
      */
     public UnsignedLong selectorId;
+    /**
+     * IE 95, RFC 6759, packed as {@code engine << 24 | selector} by
+     * {@link org.riptide.flows.parser.ie.values.ApplicationIdValue}. Null when the template has no
+     * such element.
+     */
+    public Long applicationId;
     public Double samplingInterval;
     public Double samplerRandomInterval;
     public InetAddress sourceIPv6Address;

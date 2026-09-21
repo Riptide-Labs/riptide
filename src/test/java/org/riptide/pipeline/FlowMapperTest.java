@@ -13,6 +13,7 @@ import java.net.InetAddress;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Pins the name-driven MapStruct mapping of {@link Source} properties into
@@ -69,5 +70,17 @@ public class FlowMapperTest {
 
         assertThat(source.getExporterAddr()).isEqualTo(agent);
         assertThat(source.identity()).isEqualTo(new ExporterIdentity.NetflowIpfix(agent, 42));
+    }
+
+    /** The packed id maps by name; a rename on either side would otherwise leave the column 0. */
+    @Test
+    public void applicationIdMapsFromTheFlow() throws Exception {
+        final var source = new Source("here", InetAddress.getByName("203.0.113.9"));
+        final Flow flow = mock(Flow.class);
+        when(flow.getApplicationId()).thenReturn(0x03000050L);
+
+        final var enriched = mapper.enrichedFlow(source, flow);
+
+        assertThat(enriched.getApplicationId()).isEqualTo(0x03000050L);
     }
 }

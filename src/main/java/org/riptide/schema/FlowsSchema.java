@@ -713,6 +713,7 @@ public final class FlowsSchema {
         ADDITIVE_COLUMNS.put("dstCity", "LowCardinality(String)");
         ADDITIVE_COLUMNS.put("exporterName", "LowCardinality(String)");
         ADDITIVE_COLUMNS.put("samplingProvenance", "LowCardinality(String)");
+        ADDITIVE_COLUMNS.put("applicationId", "UInt32");
     }
 
     /** The additive column names, for callers distinguishing in-place-upgradeable columns. */
@@ -1437,7 +1438,11 @@ public final class FlowsSchema {
             -- Which rung of the resolution ladder supplied samplingInterval: 'record', 'options',
             -- 'header', 'derived', 'fallback' or 'assumed'. '' means the row was written before
             -- this column existed, which is distinct from 'assumed' and is not backfillable.
-            samplingProvenance LowCardinality(String)
+            samplingProvenance LowCardinality(String),
+
+            -- The exporter's application id (IPFIX element 95, RFC 6759), packed as
+            -- engine << 24 | selector. 0 = the record carried none.
+            applicationId UInt32
         ) ENGINE = MergeTree()
         -- PRIMARY KEY declared, not derived, for the reason spelled out at rollupTable(): a later
         -- MODIFY ORDER BY appends to the sorting key alone, and a derived primary key would leave

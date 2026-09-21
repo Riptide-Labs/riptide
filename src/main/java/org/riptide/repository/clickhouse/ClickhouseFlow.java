@@ -85,6 +85,9 @@ public class ClickhouseFlow {
 
     private String application;
 
+    // UInt32 on the wire; long so an engine id above 127 in the top byte never goes negative.
+    private long applicationId;
+
     private byte srcLocality;
     private byte dstLocality;
     private byte flowLocality;

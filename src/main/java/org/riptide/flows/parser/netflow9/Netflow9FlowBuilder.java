@@ -320,6 +320,12 @@ public class Netflow9FlowBuilder {
             public SamplingProvenance getSamplingProvenance() {
                 return this.rate.get().from();
             }
+
+            /* Out of scope for this protocol; see the L7 design spec. */
+            @Override
+            public long getApplicationId() {
+                return 0L;
+            }
         };
     }
 
