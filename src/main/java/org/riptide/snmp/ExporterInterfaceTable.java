@@ -52,16 +52,10 @@ public class ExporterInterfaceTable implements OptionListener {
     private static final List<String> IFINDEX_FIELDS = List.of("INPUT_SNMP", "ingressInterface", "OUTPUT_SNMP", "egressInterface");
 
     /**
-     * Nested per scope rather than flat on {@code (identity, ifIndex)}, so the {@code ifIndex} half
-     * can be bounded on its own.
-     *
-     * <p>A per-scope cap is what this table actually needs: {@code addOptions} runs once per option
-     * <em>data record</em>, several hundred fit in one datagram, and an attacker inside a single
-     * admitted scope can walk {@code ifIndex} across 2^32 values. A flat map with one size bound
-     * would instead evict across scopes, letting whoever sprays hardest displace a real exporter's
-     * interface names — the global-LRU hole {@code SessionAdmission} exists to avoid.
-     *
-     * <p>Both bounds and the device-address index live in {@link ExporterScopedTable}.
+     * Why this table needs the per-scope cap {@link ExporterScopedTable} gives it: {@code addOptions}
+     * runs once per option <em>data record</em>, several hundred fit in one datagram, and an
+     * attacker inside a single admitted scope can walk {@code ifIndex} across 2^32 values. The
+     * nesting, both bounds and the device-address index are all {@link ExporterScopedTable}'s.
      */
     private final ExporterScopedTable<Integer, IfInfo> table;
 
@@ -95,7 +89,8 @@ public class ExporterInterfaceTable implements OptionListener {
         final String description = OptionTables.string(values, DESCRIPTION_FIELDS);
         if (name == null && description == null) {
             // Neither a name nor a description: not this table's shape at all.
-            return Verdict.UNRECOGNISED; // sampler, VRF, application tables, …
+            // sampler, VRF and application tables: another consumer's shape, or nobody's
+            return Verdict.UNRECOGNISED;
         }
 
         Integer ifIndex = toIfIndex(OptionTables.unsigned(scopes, IFINDEX_SCOPES));
@@ -107,8 +102,8 @@ public class ExporterInterfaceTable implements OptionListener {
             this.recordsSkipped.mark();
             // Recognised and unusable, which is a different fact from unrecognised (#599). riptide
             // understood this record and still got nothing from it — the state worth an operator's
-            // attention. Reporting it as unrecognised would bury it among the VRF and application
-            // tables nobody is meant to read.
+            // attention. Reporting it as unrecognised would bury it among the VRF tables and other
+            // shapes nobody consumes.
             return Verdict.RECOGNISED_BUT_UNUSABLE;
         }
 

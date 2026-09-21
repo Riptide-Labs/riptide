@@ -749,7 +749,7 @@
       },
       "gridPos": {
         "h": 9,
-        "w": 12,
+        "w": 24,
         "x": 0,
         "y": 26
       },
@@ -805,7 +805,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT if(exporterName != '', exporterName, exporterAddr) AS \"Exporter\",\n       if(applicationSource != '', applicationSource, 'before 0.15') AS \"Name source\",\n       count() AS \"Flows\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY \"Exporter\", \"Name source\"\nORDER BY \"Flows\" DESC LIMIT 50",
+          "rawSql": "SELECT if(exporterName != '', exporterName, exporterAddr) AS \"Exporter\",\n       if(applicationSource != '', applicationSource, 'before this column existed') AS \"Name source\",\n       count() AS \"Flows\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY \"Exporter\", \"Name source\"\nORDER BY \"Flows\" DESC LIMIT 50",
           "refId": "A",
           "meta": {
             "timezone": "UTC"

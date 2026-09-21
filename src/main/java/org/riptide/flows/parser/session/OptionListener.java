@@ -27,7 +27,8 @@ public interface OptionListener {
      *
      * <p>Three states rather than two, because two collapse the only distinction that matters
      * (#599). A record no consumer <em>recognised</em> is a shape riptide was never taught — a VRF
-     * or application table, routine on real exporters and nobody's defect. A record a consumer
+     * table or a metering-process statistics record, routine on real exporters and nobody's defect.
+     * A record a consumer
      * recognised and could take nothing from is a rate riptide was offered and dropped, which is
      * what #598 was: softflowd advertising 1:100 in a scope riptide discarded, a hundredfold
      * undercount found by reading that exporter's source rather than from any signal riptide

@@ -186,13 +186,16 @@ A non-zero id the table cannot name falls through to the rules and marks `enrich
 That is normal for the first table refresh interval after a restart (Cisco defaults to 600 s, the lab exporter used 60 s), and permanent on a device that exports ids without a table.
 A Juniper SRX 345 with application tracking exports `applicationId` in its IPv4 template but sends `0` until application identification classifies, and sends no table at all.
 
-The table's own meters follow the interface table's vocabulary: `enrichment_optionApplications_consumed`, `_skipped` (a named row with no usable id) and `_rejected` (an entry evicted because a scope hit its cap).
-Retention is the interface table's setting, `riptide.snmp.options.retention-ms`; there is no separate key.
+The table's own meters follow the interface table's vocabulary: `enrichment_optionApplications_consumed`, `_skipped` (a named row with no usable id, or a name past the cap below) and `_rejected` (an entry evicted because a scope hit its cap).
+Retention is the interface table's setting, `riptide.snmp.options.retention-ms`.
+There is no separate key.
 The per-scope cap is fixed at 16,384 ids, sized for a full NBAR2 protocol pack, and `enrichment_optionApplications_rejected` counts anything it evicts.
 A name longer than 64 characters is not stored and counts under `enrichment_optionApplications_skipped`, because `application` is a rollup dimension and an exporter must not be able to fill it with arbitrary text.
 
 Lookups try the exact exporter identity, address plus observation domain, and then any observation domain of the same address.
-A Catalyst 8000V sends its option tables under one observation domain and its flow records under another; the fallback is what makes its names resolve, for interface names as well as application names.
+A domain that has a table of its own never borrows from another domain, so two exporting processes behind one address only share names when one of them sends no table at all.
+A Catalyst 8000V sends its option tables under one observation domain and its flow records under another.
+The fallback is what makes its names resolve, for interface names as well as application names.
 
 ### Writing a rule
 

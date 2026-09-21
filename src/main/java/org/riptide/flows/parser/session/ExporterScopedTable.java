@@ -24,9 +24,9 @@ import java.util.concurrent.ExecutionException;
  * application names both live here, and any table shaped the same way can.
  *
  * <p>Nested per scope rather than flat on {@code (identity, key)}, so the key half can be bounded
- * on its own. A flat map with one size bound would evict across scopes, letting whoever sprays
- * hardest displace a real exporter's rows — the global-LRU hole {@code SessionAdmission} exists to
- * avoid.</p>
+ * on its own. A flat map with one size bound would evict across scopes instead, letting whoever
+ * sprays hardest displace a real exporter's rows. That is the global-LRU hole
+ * {@code SessionAdmission} exists to avoid.</p>
  *
  * <p><strong>Why the address index exists.</strong> Lookups happen on the ingest path, once or
  * twice per flow record, and they must fall back from the exact identity to the device address

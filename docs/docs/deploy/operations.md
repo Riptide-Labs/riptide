@@ -280,7 +280,8 @@ from](../configuration/receivers.md#where-a-rate-came-from).
 
 **`applicationId` and `applicationSource` columns are added to `flows` on upgrade.** They carry the exporter's RFC 6759 application id and which rung named `application` (`exporter`, `rules` or `none`).
 The mechanics are those of `samplingProvenance` above: manage mode adds them in place, a provisioned deployment re-runs `riptide onboard`, and existing rows read `0` and `''`.
-Where an exporter sends an application table, `application` now carries the exporter's name instead of the rule's; the rollups by application therefore change vocabulary for those exporters from the upgrade onward.
+Where an exporter sends an application table, `application` now carries the exporter's name instead of the rule's.
+The rollups by application therefore change vocabulary for those exporters from the upgrade onward.
 See [Application names from the exporter](../enrichment.md#application-names-from-the-exporter).
 
 ## Ingest loss counters

@@ -230,10 +230,10 @@ parser_options_unrecognised         no consumer knew the shape
 
 **`recognisedUnusable` is the one to watch.** It means riptide understood a record and served nothing from it — an exporter told it something and it was not kept. The shapes that reach it today:
 
+- an application table row with a name but no usable `applicationId`, or an id of `0`, or a name longer than 64 characters
 - an interface option record naming no `ifIndex` — benign on exporters that tag one direction only
 - an interval of `0`, exporter-wide or per Selector — a withdrawal, routine when an exporter turns sampling off
 - a sampling advertisement or Selector Report whose algorithm expresses a ratio riptide cannot store, or names an algorithm and omits its parameters
-- an application table row with a name but no usable `applicationId`, or an id of `0`
 
 The last is the one that costs accuracy. A rate the exporter stated is being dropped. A rate learned earlier from another record keeps serving until it expires, so the effect is delayed rather than immediate; an exporter that never taught a usable rate reports `assumed` or the configured fallback from the start.
 
@@ -455,14 +455,19 @@ exporter and stop v9/IPFIX decoding altogether.
 Worst-case retained state is a product you can multiply out:
 
 ```
-session tables : max-sources × max-scopes-per-source × ~852 B
-option table   : max-sources × max-scopes-per-source × max-ifindexes-per-scope × ~144 B
+session tables    : max-sources × max-scopes-per-source × ~852 B
+interface table   : max-sources × max-scopes-per-source × max-ifindexes-per-scope × ~144 B
+application table : max-sources × max-scopes-per-source × 16,384 × ~464 B
 ```
 
-Read the second line as a ceiling, not an expectation. Reaching it means an attacker holding all
-`max-sources` slots at once. What a single source can spend is
-`max-scopes-per-source × max-ifindexes-per-scope × ~144 B` — about 2.4 MB at the defaults. A real
-fleet holds one scope per exporter and its own interfaces, far below either number.
+The application table's per-scope cap is fixed at 16,384 rather than configurable.
+Its entry is the ~144 B the interface table's is, plus a name of at most 64 characters and a description of at most 255.
+
+Read the last two lines as a ceiling, not an expectation.
+Reaching either means an attacker holding all `max-sources` slots at once.
+What a single source can spend is `max-scopes-per-source × max-ifindexes-per-scope × ~144 B` for interfaces and `max-scopes-per-source × 16,384 × ~464 B` for applications.
+That is about 2.4 MB and about 122 MB at the defaults, so about 124 MB together.
+A real fleet holds one scope per exporter, its own interfaces and one protocol pack, far below any of these numbers.
 
 The defaults suit real hardware: a per-linecard chassis exporting several observation domains from
 one address, and a large router carrying up to a thousand interfaces once subinterfaces are counted.

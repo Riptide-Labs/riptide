@@ -26,15 +26,21 @@ import java.time.Duration;
  * retained state is a product of documented limits rather than a function of what arrives:
  *
  * <pre>
- *   session tables : maxSources x maxScopesPerSource x ~852 B
- *   option table   : maxSources x maxScopesPerSource x maxIfIndexesPerScope x ~144 B
+ *   session tables    : maxSources x maxScopesPerSource x ~852 B
+ *   interface table   : maxSources x maxScopesPerSource x maxIfIndexesPerScope x ~144 B
+ *   application table : maxSources x maxScopesPerSource x 16,384 x ~464 B
  * </pre>
  *
- * <p>Read the second line as a ceiling, not an expectation. Reaching it means holding every one of
- * {@code maxSources} slots at once. What a single source can actually spend is
- * {@code maxScopesPerSource x maxIfIndexesPerScope x ~144 B} — about 2.4 MB at the defaults below —
- * and a real fleet holds one scope per exporter with its own interfaces, orders of magnitude below
- * either figure.
+ * <p>The application table's per-scope cap is a fixed 16,384 and not one of these properties. Its
+ * entry is the interface entry's ~144 B, plus a name of at most 64 characters and a description of
+ * at most 255.
+ *
+ * <p>Read the last two lines as a ceiling, not an expectation. Reaching either means holding every
+ * one of {@code maxSources} slots at once. What a single source can actually spend is
+ * {@code maxScopesPerSource x maxIfIndexesPerScope x ~144 B} for interfaces and
+ * {@code maxScopesPerSource x 16,384 x ~464 B} for applications. That is about 2.4 MB and about
+ * 122 MB at the defaults below, so about 124 MB together. A real fleet holds one scope per exporter
+ * with its own interfaces and one protocol pack, orders of magnitude below any of these figures.
  *
  * <p>JavaBean properties (not bare public fields) on purpose, for the reason recorded in
  * {@code SnmpCacheConfig}: Spring's binder silently skips fields without accessors, which here
