@@ -72,6 +72,8 @@ _bmad-output/
 _bmad/
 openspec/
 .claude/
+.superpowers/
+superpowers/
 .agent/
 .agents/
 __pycache__/
