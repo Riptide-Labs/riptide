@@ -738,6 +738,81 @@
         }
       ],
       "description": "Exporters whose sampling rate resolved from more than one rung over this window. Any value above zero is worth investigating: firmware that populates the sampling field on some export paths and not others interleaves 'header' and 'assumed' for one exporter, and a NetFlow v9 sampler options table that expires between refreshes does the same with 'options'. Both silently mix traffic recorded on different scales from one device. Rows written before the provenance column existed carry an empty source and count as a distinct rung, so expect a non-zero value across the upgrade.\n\nRaw `flows` only. The 1-minute rollups carry `samplingInterval` but not `samplingProvenance`, so this panel cannot be widened past the raw table's retention — see riptide issue #581."
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "Application names by exporter",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false,
+          "reducer": [
+            "sum"
+          ],
+          "countRows": false,
+          "fields": ""
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT if(exporterName != '', exporterName, exporterAddr) AS \"Exporter\",\n       if(applicationSource != '', applicationSource, 'before 0.15') AS \"Name source\",\n       count() AS \"Flows\",\n       sum(bytes) AS \"Bytes\"\nFROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY \"Exporter\", \"Name source\"\nORDER BY \"Flows\" DESC LIMIT 50",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "description": "Where each exporter's application names come from. 'exporter' is the device's own application table (Cisco NBAR2 and other RFC 6759 exporters): a Layer 7 name. 'rules' is riptide's port and address rule set: a guess from the transport header. 'none' is a flow nothing named. An exporter that should be sending an application table but shows only 'rules' is exporting ids riptide cannot name; watch enrichment_application_unresolved and check that the device sends its application table to this collector. Raw `flows` only: the rollups carry the name but not its source."
     }
   ],
   "annotations": {
