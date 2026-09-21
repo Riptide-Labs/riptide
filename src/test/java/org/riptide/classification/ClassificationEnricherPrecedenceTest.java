@@ -128,6 +128,25 @@ class ClassificationEnricherPrecedenceTest {
         assertThat(flow.getApplicationSource()).isEqualTo(ApplicationSource.None);
     }
 
+    /**
+     * NBAR2 devices carry an explicit "unknown" row (id {@code 0x0d000001} on a c8000v) for traffic
+     * the router has not classified yet. That is not an answer: it must not outrank a port rule, and
+     * because the exporter did answer (just with "no answer"), it must not count as unresolved
+     * either.
+     */
+    @Test
+    void anExporterNameOfUnknownFallsToTheRulesWithoutCountingAsUnresolved() throws Exception {
+        tableNames(HTTP, "unknown");
+        when(this.engine.classify(any())).thenReturn("ssh");
+        final EnrichedFlow flow = flow(HTTP);
+
+        this.enricher.enrich(source(), List.of(flow)).join();
+
+        assertThat(flow.getApplication()).isEqualTo("ssh");
+        assertThat(flow.getApplicationSource()).isEqualTo(ApplicationSource.Rules);
+        assertThat(this.metrics.meter("enrichment.application.unresolved").getCount()).isZero();
+    }
+
     @Test
     void aNullApplicationIdOnTheEnrichedFlowReadsAsZero() throws Exception {
         when(this.engine.classify(any())).thenReturn("www");

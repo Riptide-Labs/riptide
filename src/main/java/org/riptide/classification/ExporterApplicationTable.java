@@ -66,16 +66,18 @@ public class ExporterApplicationTable implements OptionListener {
     private static final int MAX_APPLICATIONS_PER_SCOPE = 16_384;
 
     /**
-     * Longest {@code applicationName} stored. A longer one is refused outright rather than
-     * truncated.
+     * Longest {@code applicationName} stored, counted the way Java counts a {@code String}'s
+     * {@code length()}: in UTF-16 code units, not the bytes the name occupied on the wire. A longer
+     * one is refused outright rather than truncated.
      *
      * <p>{@code application} is a sort key on the LowCardinality rollups
      * ({@code flows_by_application_1m}, {@code flows_by_conversation_1m}), and a wire
      * {@code StringValue} carries up to 65,535 bytes. Without this an exporter, or anything that
      * can forge one packet from its address, writes arbitrary text into a rollup dimension. A real
-     * NBAR2 name is at most 24 bytes, so anything past this cap is not an application name; storing
-     * a truncated prefix of it would put the same fabricated vocabulary in the column, just
-     * shorter.</p>
+     * NBAR2 name is at most 24 bytes, decoded to well under 64 UTF-16 code units, so every legitimate
+     * name clears this cap with room to spare; the byte figure on the wire stops mattering once the
+     * value has been decoded into the {@code String} this cap measures. Storing a truncated prefix
+     * of an over-long name would put the same fabricated vocabulary in the column, just shorter.</p>
      */
     private static final int MAX_NAME_LENGTH = 64;
 

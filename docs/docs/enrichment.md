@@ -177,6 +177,9 @@ The ladder for `application`, in order:
 2. Otherwise the classification rules run: a match sets `applicationSource` to `rules`.
 3. Nothing matched: `application` is null and `applicationSource` is `none`.
 
+An exporter that names a flow `unknown` has not classified it, so the rules answer instead and `applicationSource` says `rules`.
+The unresolved meter does not move, because the exporter did answer.
+
 Two columns on `flows` carry the evidence.
 `applicationId` is the packed id, `engine << 24 | selector`, and `0` when the record carried none.
 `applicationSource` is one of the three tokens above; `''` means the row predates the column.

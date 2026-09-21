@@ -29,6 +29,15 @@ import java.util.concurrent.CompletableFuture;
 @ConditionalOnProperty(name = "riptide.enricher.classification.enabled", havingValue = "true", matchIfMissing = true)
 public class ClassificationEnricher extends Enricher.Single {
 
+    /**
+     * The name Cisco NBAR2 gives an {@code applicationId} it has not classified yet, for example
+     * the c8000v's PANA-L7 row {@code 0x0d000001}. The exporter did answer, but the answer is "no
+     * answer": treating it as a name would let a router's not-yet-classified state permanently
+     * outrank a port rule that already knows what the flow is, for example a fresh SSH connection an
+     * NBAR2 engine has not finished fingerprinting.
+     */
+    static final String UNCLASSIFIED_NAME = "unknown";
+
     private final ClassificationEngine classificationEngine;
 
     private final ExporterApplicationTable applicationTable;
@@ -52,12 +61,15 @@ public class ClassificationEnricher extends Enricher.Single {
         final long applicationId = flow.getApplicationId() != null ? flow.getApplicationId() : 0L;
         if (applicationId != 0L) {
             final Optional<ApplicationInfo> named = this.applicationTable.lookup(source.identity(), applicationId);
-            if (named.isPresent() && named.get().name() != null) {
-                flow.setApplication(named.get().name());
+            final String name = named.map(ApplicationInfo::name).orElse(null);
+            if (name != null && !UNCLASSIFIED_NAME.equalsIgnoreCase(name.trim())) {
+                flow.setApplication(name);
                 flow.setApplicationSource(ApplicationSource.Exporter);
                 return CompletableFuture.completedFuture(null);
             }
-            this.unresolved.mark();
+            if (name == null) {
+                this.unresolved.mark();
+            }
         }
 
         final var request = ClassificationRequest.builder()
