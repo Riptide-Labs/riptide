@@ -320,4 +320,33 @@ public class ExporterInterfaceTableTest {
                 List.of(new UnsignedValue("SAMPLING_INTERVAL", 100))))
                 .isEqualTo(OptionListener.Verdict.UNRECOGNISED);
     }
+
+    /**
+     * A Catalyst 8000V sends its interface table under observation domain 6 and its flow records
+     * under domain 256, so an exact-identity lookup never resolved a name on that router.
+     */
+    @Test
+    public void lookupFallsBackFromTheExactIdentityToTheDeviceAddress() throws Exception {
+        this.table.accept(identity("10.10.3.1", 6),
+                List.of(new UnsignedValue("ingressInterface", 2)),
+                List.of(new StringValue("interfaceName", "Gi2")));
+
+        assertThat(this.table.lookup(identity("10.10.3.1", 256), 2)).map(IfInfo::name).contains("Gi2");
+        assertThat(this.table.lookup(identity("10.10.3.2", 256), 2))
+                .as("another device's table is never consulted")
+                .isEmpty();
+    }
+
+    @Test
+    public void anExactIdentityWinsOverAnotherDomainOfTheSameDevice() throws Exception {
+        this.table.accept(identity("10.10.3.1", 6),
+                List.of(new UnsignedValue("ingressInterface", 2)),
+                List.of(new StringValue("interfaceName", "from-domain-6")));
+        this.table.accept(identity("10.10.3.1", 256),
+                List.of(new UnsignedValue("ingressInterface", 2)),
+                List.of(new StringValue("interfaceName", "from-domain-256")));
+
+        assertThat(this.table.lookup(identity("10.10.3.1", 256), 2)).map(IfInfo::name)
+                .contains("from-domain-256");
+    }
 }

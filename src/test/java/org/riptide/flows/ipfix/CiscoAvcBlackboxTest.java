@@ -35,6 +35,8 @@ import org.riptide.flows.parser.session.Session;
 import org.riptide.flows.parser.session.SessionAdmissionConfig;
 import org.riptide.flows.parser.session.TcpSession;
 import org.riptide.pipeline.ExporterIdentity;
+import org.riptide.snmp.ExporterInterfaceTable;
+import org.riptide.snmp.IfInfo;
 import org.riptide.snmp.SnmpOptionsConfig;
 
 import java.net.InetAddress;
@@ -203,5 +205,16 @@ public class CiscoAvcBlackboxTest {
         assertThat(table.lookup(flowIdentity, ICMP))
                 .as("icmp is not in the three table packets kept as fixtures; an unresolved id stays unresolved")
                 .isEmpty();
+    }
+
+    @Test
+    public void theRealInterfaceTableNamesGi2ForAFlowOnTheFlowsDomain() throws Exception {
+        final var table = new ExporterInterfaceTable(new SnmpOptionsConfig(), new SessionAdmissionConfig(), new MetricRegistry());
+        final Session tapped = new TcpSession(InetAddress.getLoopbackAddress(), () -> new SequenceNumberTracker(32), table);
+        final ByteBuf buf = Unpooled.wrappedBuffer(Files.readAllBytes(FOLDER.resolve("ipfix_test_cisco_c8000v_avc_iftable256.dat")));
+        new Packet(tapped, new Header(slice(buf, Header.SIZE)), buf);
+        final var flowIdentity = new ExporterIdentity.NetflowIpfix(InetAddress.getLoopbackAddress(), FLOWS_DOMAIN);
+
+        assertThat(table.lookup(flowIdentity, 2)).map(IfInfo::name).contains("Gi2");
     }
 }

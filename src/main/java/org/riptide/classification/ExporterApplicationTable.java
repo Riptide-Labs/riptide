@@ -10,12 +10,10 @@ import com.codahale.metrics.MetricRegistry;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.RemovalCause;
-import com.google.common.primitives.UnsignedLong;
 import org.riptide.flows.parser.ie.Value;
-import org.riptide.flows.parser.ie.values.visitor.StringVisitor;
-import org.riptide.flows.parser.ie.values.visitor.UnsignedLongVisitor;
 import org.riptide.flows.parser.session.OptionListener;
 import org.riptide.flows.parser.session.OptionListener.Verdict;
+import org.riptide.flows.parser.session.OptionTables;
 import org.riptide.flows.parser.session.SessionAdmissionConfig;
 import org.riptide.pipeline.ExporterIdentity;
 import org.riptide.snmp.SnmpOptionsConfig;
@@ -39,10 +37,10 @@ import java.util.concurrent.ExecutionException;
  * Keyed and bounded exactly like {@link org.riptide.snmp.ExporterInterfaceTable}: one inner cache
  * per exporter identity, capped per scope, so a sprayed table displaces only its own entries.</p>
  *
- * <p>{@link #lookup} tries the exact identity first and then any observation domain of the same
- * device address. A Catalyst 8000V sends its option tables under one observation domain and its
- * flow records under another; RFC 6759 scopes the application table to the exporting process,
- * which is what the address fallback expresses.</p>
+ * <p>Lookups fall back from the exact identity to the device address; see {@link OptionTables#lookup}.
+ * A Catalyst 8000V sends its option tables under one observation domain and its flow records under
+ * another; RFC 6759 scopes the application table to the exporting process, which is what the
+ * address fallback expresses.</p>
  */
 @Component
 public class ExporterApplicationTable implements OptionListener {
@@ -70,31 +68,25 @@ public class ExporterApplicationTable implements OptionListener {
         this.maxIdsPerScope = admissionConfig.getMaxIfIndexesPerScope();
         this.table = CacheBuilder.newBuilder()
                 .expireAfterWrite(this.retention)
-                .maximumSize(scopeCeiling(admissionConfig))
+                .maximumSize(OptionTables.scopeCeiling(admissionConfig))
                 .build();
         this.recordsConsumed = metrics.meter(MetricRegistry.name("enrichment", "optionApplications", "consumed"));
         this.recordsSkipped = metrics.meter(MetricRegistry.name("enrichment", "optionApplications", "skipped"));
         this.recordsRejected = metrics.meter(MetricRegistry.name("enrichment", "optionApplications", "rejected"));
     }
 
-    private static long scopeCeiling(final SessionAdmissionConfig config) {
-        final long sources = Math.max(1, config.getMaxSources());
-        final long scopes = Math.max(1, config.getMaxScopesPerSource());
-        return sources > Long.MAX_VALUE / scopes ? Long.MAX_VALUE : sources * scopes;
-    }
-
     @Override
     public Verdict accept(final ExporterIdentity identity,
                           final Collection<Value<?>> scopes, final List<Value<?>> values) {
-        final String name = string(values, NAME_FIELDS);
-        final String description = string(values, DESCRIPTION_FIELDS);
+        final String name = OptionTables.string(values, NAME_FIELDS);
+        final String description = OptionTables.string(values, DESCRIPTION_FIELDS);
         if (name == null && description == null) {
             return Verdict.UNRECOGNISED; // interface, sampler, VRF tables, …
         }
 
-        Long applicationId = unsigned(scopes, ID_FIELDS);
+        Long applicationId = OptionTables.unsigned(scopes, ID_FIELDS);
         if (applicationId == null || applicationId == 0L) {
-            applicationId = unsigned(values, ID_FIELDS);
+            applicationId = OptionTables.unsigned(values, ID_FIELDS);
         }
         if (applicationId == null || applicationId == 0L) {
             this.recordsSkipped.mark();
@@ -131,48 +123,6 @@ public class ExporterApplicationTable implements OptionListener {
 
     /** Exact identity first, then any observation domain of the same device address. */
     public Optional<ApplicationInfo> lookup(final ExporterIdentity identity, final long applicationId) {
-        final Cache<Long, ApplicationInfo> exact = this.table.getIfPresent(identity);
-        if (exact != null) {
-            final ApplicationInfo info = exact.getIfPresent(applicationId);
-            if (info != null) {
-                return Optional.of(info);
-            }
-        }
-        for (final var entry : this.table.asMap().entrySet()) {
-            if (!entry.getKey().equals(identity)
-                    && entry.getKey().deviceAddress().equals(identity.deviceAddress())) {
-                final ApplicationInfo info = entry.getValue().getIfPresent(applicationId);
-                if (info != null) {
-                    return Optional.of(info);
-                }
-            }
-        }
-        return Optional.empty();
-    }
-
-    private static String string(final Collection<Value<?>> values, final List<String> names) {
-        for (final Value<?> value : values) {
-            if (names.contains(value.getName())) {
-                final String s = value.accept(new StringVisitor());
-                if (s != null) {
-                    // fixed-width and NUL-padded on the wire (24 and 55 bytes on a c8000v)
-                    final String trimmed = s.replace("\0", "").trim();
-                    return trimmed.isEmpty() ? null : trimmed;
-                }
-            }
-        }
-        return null;
-    }
-
-    private static Long unsigned(final Collection<Value<?>> values, final List<String> names) {
-        for (final Value<?> value : values) {
-            if (names.contains(value.getName())) {
-                final UnsignedLong u = value.accept(new UnsignedLongVisitor());
-                if (u != null) {
-                    return u.longValue();
-                }
-            }
-        }
-        return null;
+        return OptionTables.lookup(this.table, identity, applicationId);
     }
 }

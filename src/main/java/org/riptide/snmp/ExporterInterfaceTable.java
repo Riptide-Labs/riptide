@@ -10,12 +10,10 @@ import com.codahale.metrics.MetricRegistry;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.RemovalCause;
-import com.google.common.primitives.UnsignedLong;
 import org.riptide.flows.parser.ie.Value;
-import org.riptide.flows.parser.ie.values.visitor.StringVisitor;
-import org.riptide.flows.parser.ie.values.visitor.UnsignedLongVisitor;
 import org.riptide.flows.parser.session.OptionListener;
 import org.riptide.flows.parser.session.OptionListener.Verdict;
+import org.riptide.flows.parser.session.OptionTables;
 import org.riptide.flows.parser.session.SessionAdmissionConfig;
 import org.riptide.pipeline.ExporterIdentity;
 import org.springframework.stereotype.Component;
@@ -41,6 +39,8 @@ import java.time.Duration;
  * <p>Description (83) lands in the {@code alias} slot: IANA anchors it to ifDescr but
  * its own examples include ifAlias-style content; per-field authority in
  * {@link IfInfo#optionsThenSnmp} lets a real SNMP ifAlias win over it.</p>
+ *
+ * <p>Lookups fall back from the exact identity to the device address; see {@link #lookup}.</p>
  */
 @Component
 public class ExporterInterfaceTable implements OptionListener {
@@ -93,37 +93,27 @@ public class ExporterInterfaceTable implements OptionListener {
         this.maxIfIndexesPerScope = admissionConfig.getMaxIfIndexesPerScope();
         this.table = CacheBuilder.newBuilder()
                 .expireAfterWrite(this.retention)
-                .maximumSize(scopeCeiling(admissionConfig))
+                .maximumSize(OptionTables.scopeCeiling(admissionConfig))
                 .build();
         this.recordsConsumed = metrics.meter(MetricRegistry.name("enrichment", "optionInterfaces", "consumed"));
         this.recordsSkipped = metrics.meter(MetricRegistry.name("enrichment", "optionInterfaces", "skipped"));
         this.recordsRejected = metrics.meter(MetricRegistry.name("enrichment", "optionInterfaces", "rejected"));
     }
 
-    /**
-     * The most scopes that can be admitted anywhere, clamped so a large configuration cannot
-     * overflow the {@code long} Guava wants.
-     */
-    private static long scopeCeiling(final SessionAdmissionConfig config) {
-        final long sources = Math.max(1, config.getMaxSources());
-        final long scopes = Math.max(1, config.getMaxScopesPerSource());
-        return sources > Long.MAX_VALUE / scopes ? Long.MAX_VALUE : sources * scopes;
-    }
-
     @Override
     public Verdict accept(final ExporterIdentity identity,
             final Collection<Value<?>> scopes, final List<Value<?>> values) {
-        final String name = string(values, NAME_FIELDS);
-        final String description = string(values, DESCRIPTION_FIELDS);
+        final String name = OptionTables.string(values, NAME_FIELDS);
+        final String description = OptionTables.string(values, DESCRIPTION_FIELDS);
         if (name == null && description == null) {
             // Neither a name nor a description: not this table's shape at all.
             return Verdict.UNRECOGNISED; // sampler, VRF, application tables, …
         }
 
-        Integer ifIndex = unsigned(scopes, IFINDEX_SCOPES);
+        Integer ifIndex = toIfIndex(OptionTables.unsigned(scopes, IFINDEX_SCOPES));
         if (ifIndex == null || ifIndex == 0) {
             // a zero scope value is as good as none: fall through to the fields
-            ifIndex = unsigned(values, IFINDEX_FIELDS);
+            ifIndex = toIfIndex(OptionTables.unsigned(values, IFINDEX_FIELDS));
         }
         if (ifIndex == null || ifIndex == 0) {
             this.recordsSkipped.mark();
@@ -182,34 +172,12 @@ public class ExporterInterfaceTable implements OptionListener {
         return this.table.size() == 0;
     }
 
+    /** Exact identity first, then any observation domain of the same device address. */
     public Optional<IfInfo> lookup(final ExporterIdentity identity, final int ifIndex) {
-        final Cache<Integer, IfInfo> forScope = this.table.getIfPresent(identity);
-        return forScope == null ? Optional.empty() : Optional.ofNullable(forScope.getIfPresent(ifIndex));
+        return OptionTables.lookup(this.table, identity, ifIndex);
     }
 
-    private static String string(final Collection<Value<?>> values, final List<String> names) {
-        for (final Value<?> value : values) {
-            if (names.contains(value.getName())) {
-                final String s = value.accept(new StringVisitor());
-                if (s != null) {
-                    // v9 strings are fixed-width and NUL-padded on the wire
-                    final String trimmed = s.replace("\0", "").trim();
-                    return trimmed.isEmpty() ? null : trimmed;
-                }
-            }
-        }
-        return null;
-    }
-
-    private static Integer unsigned(final Collection<Value<?>> values, final List<String> names) {
-        for (final Value<?> value : values) {
-            if (names.contains(value.getName())) {
-                final UnsignedLong u = value.accept(new UnsignedLongVisitor());
-                if (u != null) {
-                    return u.intValue();
-                }
-            }
-        }
-        return null;
+    private static Integer toIfIndex(final Long unsigned) {
+        return unsigned == null ? null : unsigned.intValue();
     }
 }
