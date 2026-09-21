@@ -184,6 +184,39 @@ class ExporterApplicationTableTest {
         assertThat(shortLived.lookup(identity, HTTP)).isEmpty();
     }
 
+    /**
+     * {@code application} is a sort key on the LowCardinality rollups, and a {@code StringValue}
+     * accepts up to 65,535 bytes off the wire. A real NBAR2 name is at most 24 bytes, so anything
+     * past the cap is not an application name and must not reach the column.
+     */
+    @Test
+    void aNameLongerThanTheCapIsRecognisedButUnusable() throws Exception {
+        final var identity = identity("10.10.3.1", 6);
+
+        final Verdict verdict = this.table.accept(identity,
+                List.of(new UnsignedValue("applicationId", HTTP)),
+                List.of(new StringValue("applicationName", "x".repeat(65))));
+
+        assertThat(verdict).isEqualTo(Verdict.RECOGNISED_BUT_UNUSABLE);
+        assertThat(this.table.lookup(identity, HTTP)).isEmpty();
+        assertThat(this.metrics.meter("enrichment.optionApplications.skipped").getCount()).isEqualTo(1);
+    }
+
+    /** A description is never a dimension, so an over-long one is truncated rather than refused. */
+    @Test
+    void aDescriptionLongerThanTheCapIsTruncated() throws Exception {
+        final var identity = identity("10.10.3.1", 6);
+
+        final Verdict verdict = this.table.accept(identity,
+                List.of(new UnsignedValue("applicationId", HTTP)),
+                List.of(new StringValue("applicationName", "http"),
+                        new StringValue("applicationDescription", "d".repeat(300))));
+
+        assertThat(verdict).isEqualTo(Verdict.CLAIMED);
+        assertThat(this.table.lookup(identity, HTTP))
+                .contains(new ApplicationInfo("http", "d".repeat(255)));
+    }
+
     @Test
     void aFreshRowFillsOnlyTheFieldsItCarries() throws Exception {
         final var identity = identity("10.10.3.1", 6);

@@ -64,6 +64,29 @@ public class ExporterApplicationTable implements OptionListener {
      */
     private static final int MAX_APPLICATIONS_PER_SCOPE = 16_384;
 
+    /**
+     * Longest {@code applicationName} stored. A longer one is refused outright rather than
+     * truncated.
+     *
+     * <p>{@code application} is a sort key on the LowCardinality rollups
+     * ({@code flows_by_application_1m}, {@code flows_by_conversation_1m}), and a wire
+     * {@code StringValue} carries up to 65,535 bytes. Without this an exporter, or anything that
+     * can forge one packet from its address, writes arbitrary text into a rollup dimension. A real
+     * NBAR2 name is at most 24 bytes, so anything past this cap is not an application name; storing
+     * a truncated prefix of it would put the same fabricated vocabulary in the column, just
+     * shorter.</p>
+     */
+    private static final int MAX_NAME_LENGTH = 64;
+
+    /**
+     * Longest {@code applicationDescription} stored; a longer one is truncated to it.
+     *
+     * <p>Truncated rather than refused because a description is never a dimension: it has no column
+     * today and is not a sort key in any rollup, so an over-long one costs memory and nothing else.
+     * Refusing the row over it would throw away the name, which is the field that matters.</p>
+     */
+    private static final int MAX_DESCRIPTION_LENGTH = 255;
+
     private final ExporterScopedTable<Long, ApplicationInfo> table;
 
     private final Meter recordsConsumed;
@@ -86,10 +109,17 @@ public class ExporterApplicationTable implements OptionListener {
     public Verdict accept(final ExporterIdentity identity,
                           final Collection<Value<?>> scopes, final List<Value<?>> values) {
         final String name = OptionTables.string(values, NAME_FIELDS);
-        final String description = OptionTables.string(values, DESCRIPTION_FIELDS);
-        if (name == null && description == null) {
+        final String rawDescription = OptionTables.string(values, DESCRIPTION_FIELDS);
+        if (name == null && rawDescription == null) {
             return Verdict.UNRECOGNISED; // interface, sampler, VRF tables, …
         }
+        if (name != null && name.length() > MAX_NAME_LENGTH) {
+            this.recordsSkipped.mark();
+            return Verdict.RECOGNISED_BUT_UNUSABLE;
+        }
+        final String description = rawDescription == null || rawDescription.length() <= MAX_DESCRIPTION_LENGTH
+                ? rawDescription
+                : rawDescription.substring(0, MAX_DESCRIPTION_LENGTH);
 
         Long applicationId = OptionTables.unsigned(scopes, ID_FIELDS);
         if (applicationId == null || applicationId == 0L) {
