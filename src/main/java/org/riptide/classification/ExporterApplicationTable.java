@@ -8,9 +8,8 @@ package org.riptide.classification;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
-import com.google.common.cache.RemovalCause;
 import org.riptide.flows.parser.ie.Value;
+import org.riptide.flows.parser.session.ExporterScopedTable;
 import org.riptide.flows.parser.session.OptionListener;
 import org.riptide.flows.parser.session.OptionListener.Verdict;
 import org.riptide.flows.parser.session.OptionTables;
@@ -23,7 +22,6 @@ import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.ExecutionException;
 
 /**
  * Application names pushed by exporters as IPFIX option records (RFC 6759 §4.3, Cisco's
@@ -38,7 +36,8 @@ import java.util.concurrent.ExecutionException;
  * identity, capped per scope at {@link #MAX_APPLICATIONS_PER_SCOPE} so a sprayed table displaces
  * only its own entries.</p>
  *
- * <p>Lookups fall back from the exact identity to the device address; see {@link OptionTables#lookup}.
+ * <p>Storage and lookup are {@link ExporterScopedTable}'s, so lookups fall back from the exact
+ * identity to the device address.
  * A Catalyst 8000V sends its option tables under one observation domain and its flow records under
  * another; RFC 6759 scopes the application table to the exporting process, which is what the
  * address fallback expresses.</p>
@@ -65,9 +64,7 @@ public class ExporterApplicationTable implements OptionListener {
      */
     private static final int MAX_APPLICATIONS_PER_SCOPE = 16_384;
 
-    private final Cache<ExporterIdentity, Cache<Long, ApplicationInfo>> table;
-
-    private final Duration retention;
+    private final ExporterScopedTable<Long, ApplicationInfo> table;
 
     private final Meter recordsConsumed;
     private final Meter recordsSkipped;
@@ -77,14 +74,12 @@ public class ExporterApplicationTable implements OptionListener {
                                     final SessionAdmissionConfig admissionConfig,
                                     final MetricRegistry metrics) {
         admissionConfig.validate();
-        this.retention = Duration.ofMillis(optionsConfig.getRetentionMs());
-        this.table = CacheBuilder.newBuilder()
-                .expireAfterWrite(this.retention)
-                .maximumSize(OptionTables.scopeCeiling(admissionConfig))
-                .build();
         this.recordsConsumed = metrics.meter(MetricRegistry.name("enrichment", "optionApplications", "consumed"));
         this.recordsSkipped = metrics.meter(MetricRegistry.name("enrichment", "optionApplications", "skipped"));
         this.recordsRejected = metrics.meter(MetricRegistry.name("enrichment", "optionApplications", "rejected"));
+        this.table = new ExporterScopedTable<>(Duration.ofMillis(optionsConfig.getRetentionMs()),
+                OptionTables.scopeCeiling(admissionConfig), MAX_APPLICATIONS_PER_SCOPE,
+                this.recordsRejected::mark);
     }
 
     @Override
@@ -105,36 +100,20 @@ public class ExporterApplicationTable implements OptionListener {
             return Verdict.RECOGNISED_BUT_UNUSABLE;
         }
 
-        final Cache<Long, ApplicationInfo> forScope = scopeTable(identity);
+        final Cache<Long, ApplicationInfo> forScope = this.table.scope(identity);
         final ApplicationInfo existing = forScope.getIfPresent(applicationId);
         forScope.put(applicationId, ApplicationInfo.merge(new ApplicationInfo(name, description), existing));
         this.recordsConsumed.mark();
         return Verdict.CLAIMED;
     }
 
-    private Cache<Long, ApplicationInfo> scopeTable(final ExporterIdentity identity) {
-        try {
-            return this.table.get(identity, () -> CacheBuilder.newBuilder()
-                    .expireAfterWrite(this.retention)
-                    .maximumSize(MAX_APPLICATIONS_PER_SCOPE)
-                    .<Long, ApplicationInfo>removalListener(notification -> {
-                        if (notification.getCause() == RemovalCause.SIZE) {
-                            this.recordsRejected.mark();
-                        }
-                    })
-                    .build());
-        } catch (final ExecutionException e) {
-            throw new IllegalStateException("application table for " + identity + " could not be created", e);
-        }
-    }
-
     /** Approximate and cheap; exactly {@code true} when nothing was ever inserted. */
     public boolean isEmpty() {
-        return this.table.size() == 0;
+        return this.table.isEmpty();
     }
 
-    /** Exact identity first, then any observation domain of the same device address. */
+    /** Exact identity first, then, only if it has no table at all, another domain of the device. */
     public Optional<ApplicationInfo> lookup(final ExporterIdentity identity, final long applicationId) {
-        return OptionTables.lookup(this.table, identity, applicationId);
+        return this.table.lookup(identity, applicationId);
     }
 }
