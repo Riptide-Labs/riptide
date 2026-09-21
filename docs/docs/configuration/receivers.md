@@ -226,17 +226,18 @@ parser_options_unrecognised         no consumer knew the shape
 
 `offered` always equals the sum of the other three.
 
-**`unrecognised` is normal and rarely urgent.** VRF tables, application tables and metering-process statistics are routine on real exporters and riptide has no consumer for them. Expect a steady rate here and alert on changes rather than on presence.
+**`unrecognised` is normal and rarely urgent.** VRF tables and metering-process statistics are routine on real exporters and riptide has no consumer for them. Expect a steady rate here and alert on changes rather than on presence.
 
 **`recognisedUnusable` is the one to watch.** It means riptide understood a record and served nothing from it — an exporter told it something and it was not kept. The shapes that reach it today:
 
 - an interface option record naming no `ifIndex` — benign on exporters that tag one direction only
 - an interval of `0`, exporter-wide or per Selector — a withdrawal, routine when an exporter turns sampling off
 - a sampling advertisement or Selector Report whose algorithm expresses a ratio riptide cannot store, or names an algorithm and omits its parameters
+- an application table row with a name but no usable `applicationId`, or an id of `0`
 
 The last is the one that costs accuracy. A rate the exporter stated is being dropped. A rate learned earlier from another record keeps serving until it expires, so the effect is delayed rather than immediate; an exporter that never taught a usable rate reports `assumed` or the configured fallback from the start.
 
-These four meters are collector-wide. Nothing in them says which exporter. When `recognisedUnusable` climbs, the per-consumer `_skipped` meters say which consumer declined — `parser_optionSampling_skipped`, `parser_selectorReport_skipped` or `enrichment_optionInterfaces_skipped` move with it, never `_consumed`. To find the exporter, query `samplingProvenance` per exporter for the same period and compare against each candidate's advertised sampling configuration.
+These four meters are collector-wide. Nothing in them says which exporter. When `recognisedUnusable` climbs, the per-consumer `_skipped` meters say which consumer declined — `parser_optionSampling_skipped`, `parser_selectorReport_skipped`, `enrichment_optionInterfaces_skipped` or `enrichment_optionApplications_skipped` move with it, never `_consumed`. To find the exporter, query `samplingProvenance` per exporter for the same period and compare against each candidate's advertised sampling configuration.
 
 Note the vocabulary differs from the per-consumer counters on purpose: `enrichment_optionInterfaces_skipped` means *that* table declined a record, which is routine — most records are not its own. Only these three describe what became of the record overall.
 
@@ -488,6 +489,7 @@ flows.session.scopes                # gauge: admitted scope identities
 flows.session.rejectedSources       # meter: source bound reached
 flows.session.rejectedScopes        # meter: a scope was displaced
 enrichment.optionInterfaces.rejected # meter: an interface entry was evicted
+enrichment.optionApplications.rejected # meter: an application-table entry was evicted
 ```
 
 A rejection meter climbing steadily on a healthy fleet means the bound is too low for your
