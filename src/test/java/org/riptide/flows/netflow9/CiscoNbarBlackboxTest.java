@@ -153,6 +153,62 @@ public class CiscoNbarBlackboxTest {
         assertThat(text(value(egp.values(), "APPLICATION DESCRIPTION"))).isEqualTo("Exterior Gateway Protocol");
     }
 
+    /**
+     * One v9 packet, source id 0, holding one options data record for the captured template 260
+     * whose System scope is {@code scopeValue}, then a three-field data template 300 (no field 95)
+     * and one record for it. Field ids and widths of the option row are the captured template's;
+     * only the values are synthetic.
+     */
+    static ByteBuf tableRowAndBareRecord(final long scopeValue, final long applicationId) {
+        final ByteBuf b = Unpooled.buffer();
+        b.writeShort(9).writeShort(3)                // version, count
+                .writeInt(1000).writeInt(1_700_000_000).writeInt(7)
+                .writeInt((int) SOURCE_ID);
+        // options data set for template 260: scope System(4), applicationId(4), name(24), description(55)
+        b.writeShort(260).writeShort(4 + 87 + 1);
+        b.writeInt((int) scopeValue).writeInt((int) applicationId);
+        b.writeBytes("egp".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).writeZero(24 - 3);
+        b.writeBytes("Exterior Gateway Protocol".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).writeZero(55 - 25);
+        b.writeZero(1);
+        // data template 300: IPV4_SRC_ADDR(4), IPV4_DST_ADDR(4), PROTOCOL(1)
+        b.writeShort(0).writeShort(4 + 4 + 3 * 4);
+        b.writeShort(300).writeShort(3);
+        b.writeShort(8).writeShort(4).writeShort(12).writeShort(4).writeShort(4).writeShort(1);
+        // one record for template 300
+        b.writeShort(300).writeShort(4 + 9 + 3);
+        b.writeBytes(new byte[]{10, 0, 0, 1}).writeBytes(new byte[]{10, 0, 0, 2}).writeByte(6);
+        b.writeZero(3);
+        return b;
+    }
+
+    /**
+     * The session merges a stored option row into every data record whose synthesised
+     * {@code SCOPE:SYSTEM = sourceId} equals the row's scope value. The captured router writes its
+     * address there, so its rows never merge; an exporter writing its source id (or 0) there would
+     * merge the last stored application row into every record. Now that field 95 binds, that merge
+     * must not hand a record without field 95 an id it never carried, and must not outrank the
+     * record's own id when it has one.
+     */
+    @Test
+    public void aMergedTableRowDoesNotStampItsIdOnRecords() throws Exception {
+        parse(this.session, "netflow9_test_cisco_nbar_opttpl260.dat");
+        parse(this.session, "netflow9_test_cisco_nbar_tpl262.dat");
+        final var builder = new Netflow9FlowBuilder(new ValueConversionService(Netflow9RawFlow.class, VISITORS));
+
+        final ByteBuf merged = tableRowAndBareRecord(SOURCE_ID, EGP);
+        final List<Flow> bare = builder.buildFlows(Instant.EPOCH,
+                new Packet(this.session, new Header(slice(merged, Header.SIZE)), merged)).toList();
+        final List<Flow> withOwnId = flows("netflow9_test_cisco_nbar_data262.dat");
+
+        assertThat(bare).hasSize(1);
+        assertThat(bare.getFirst().getApplicationId())
+                .as("template 300 has no field 95; the merged egp row must not supply one")
+                .isZero();
+        assertThat(withOwnId).extracting(Flow::getApplicationId)
+                .as("a record's own field 95 is unaffected by the merged row")
+                .containsExactly(ICMP, SNMP, ICMP, NTP, SNMP);
+    }
+
     @Test
     public void theRealTableNamesTheIcmpFlow() throws Exception {
         final var table = new ExporterApplicationTable(new SnmpOptionsConfig(), new SessionAdmissionConfig(), new MetricRegistry());
