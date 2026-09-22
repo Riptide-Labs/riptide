@@ -1033,6 +1033,14 @@
       "asDropdown": true,
       "includeVars": true,
       "keepTime": true
+    },
+    {
+      "title": "Dashboards v1.0.0",
+      "type": "link",
+      "url": "https://github.com/Riptide-Labs/riptide/tree/main/deployment/clickhouse/container-fs/grafana/provisioning/dashboards",
+      "tooltip": "Version of the provisioned dashboard set. Independent of the riptide version.",
+      "icon": "info",
+      "targetBlank": true
     }
   ],
   "description": "What looks unusual in the traffic shape alone? Every panel is behavioural \u2014 counting fan-out, fan-in, flow size and TCP flags \u2014 so none of it needs a threat feed and none of it is an accusation. Thresholds are variables at the top: tune them to your network before treating any row as a finding. Scope with Tenant/Zone/Exporter, then pivot into Flow Forensics for a specific address."

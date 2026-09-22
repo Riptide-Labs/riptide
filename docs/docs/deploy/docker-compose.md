@@ -113,6 +113,12 @@ Grafana ships provisioned dashboards backed by the `flows` table and the
 
 The JSON sources live in `deployment/clickhouse/container-fs/grafana/provisioning/dashboards/`.
 UI edits last only until the provisioned JSON changes — use *Save as* to keep a customized copy.
+
+The dashboard set carries its own version, shown as a `Dashboards vX.Y.Z` link in the top bar of every dashboard, so you can tell which set a Grafana is running without reading the JSON.
+It is independent of the riptide version: the collector and the dashboards move on their own schedules, and the same dashboards serve several collector releases.
+One number covers all nine dashboards, because they link to each other by uid and variable name and ship together.
+The major part moves when a change breaks something outside the files, such as a renamed uid or variable that an external link depends on; the minor part for a new panel, variable or dashboard; the patch part for text, query and layout fixes.
+A contributor bumps it with `make dashboards-version DASHBOARDS_VERSION=x.y.z`, and CI refuses a pull request that changes a dashboard without moving the number.
 The dashboards are deployment-neutral: a **Datasource** variable selects the ClickHouse
 connection and a **Database** variable (auto-populated from databases containing a `flows` table)
 selects the riptide database, so they import into any external Grafana without a specifically

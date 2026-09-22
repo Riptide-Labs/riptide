@@ -873,6 +873,14 @@
       "asDropdown": true,
       "includeVars": true,
       "keepTime": true
+    },
+    {
+      "title": "Dashboards v1.0.0",
+      "type": "link",
+      "url": "https://github.com/Riptide-Labs/riptide/tree/main/deployment/clickhouse/container-fs/grafana/provisioning/dashboards",
+      "tooltip": "Version of the provisioned dashboard set. Independent of the riptide version.",
+      "icon": "info",
+      "targetBlank": true
     }
   ],
   "description": "Is any link running out of room, and is traffic leaving the way we intended? Capacity panels measure load against SNMP-reported link speed (ifHighSpeed, Mbit/s) and are blind to interfaces without one \u2014 the coverage stat says how blind. Routing panels cover next hop, prefix-level volume, and conversations we only see one side of. Scope with Tenant/Zone/Exporter."
