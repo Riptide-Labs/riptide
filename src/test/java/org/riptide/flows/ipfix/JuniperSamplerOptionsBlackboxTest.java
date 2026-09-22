@@ -45,7 +45,8 @@ import static org.riptide.flows.utils.BufferUtils.slice;
  * A Juniper SRX advertising its sampling rate out of band, driven through the real IPFIX parse
  * path (Packet → session.addOptions → option tap) into the sampling table and back out as a flow.
  *
- * <p>Every byte here is captured, not constructed. An SRX 345 running inline-jflow at
+ * <p>Every byte here is captured, not constructed. An SRX340 (bbone-fw01, called a 345 in earlier
+ * notes; {@code show version} says srx340) running inline-jflow at
  * {@code input rate 100} exported these two messages to a live collector; the options template,
  * its data record, the data template and the flow records are all as the hardware sent them.
  * That matters because this rung had never been exercised against a real IPFIX exporter: riptide
