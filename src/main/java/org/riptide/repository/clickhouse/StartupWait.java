@@ -8,7 +8,10 @@ package org.riptide.repository.clickhouse;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
+import java.time.temporal.ChronoUnit;
+import java.util.LinkedHashSet;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.LongSupplier;
 
 /**
@@ -116,7 +119,8 @@ final class StartupWait {
             } catch (final InterruptedException e) {
                 throw interrupted(endpoint, e);
             }
-            final Duration elapsed = Duration.ofNanos(this.nanoTime.getAsLong() - start);
+            final Duration elapsed = Duration.ofNanos(this.nanoTime.getAsLong() - start)
+                    .truncatedTo(ChronoUnit.MILLIS);
             if (outcome instanceof Outcome.Answered) {
                 if (attempts > 1) {
                     log.info("ClickHouse at {} answered after {} attempts ({})", endpoint, attempts, elapsed);
@@ -127,17 +131,33 @@ final class StartupWait {
             final Duration remaining = this.window.minus(elapsed);
             if (remaining.isZero() || remaining.isNegative()) {
                 throw new IllegalStateException("ClickHouse at " + endpoint + " did not answer within "
-                        + this.window + " (" + attempts + " attempt(s); last cause: " + cause + ")."
+                        + this.window + " (" + attempts + " attempt(s); last cause: " + rootCause(cause) + ")."
                         + " Start it, check riptide.clickhouse.endpoint, or raise " + KEY + ".", cause);
             }
             log.warn("ClickHouse at {} did not answer (attempt {}, {} elapsed of {}): {}",
-                    endpoint, attempts, elapsed, this.window, cause.toString());
+                    endpoint, attempts, elapsed, this.window, rootCause(cause));
             try {
                 this.sleeper.sleep(remaining.compareTo(INTERVAL) < 0 ? remaining : INTERVAL);
             } catch (final InterruptedException e) {
                 throw interrupted(endpoint, e);
             }
         }
+    }
+
+    /**
+     * The innermost cause, as text. Read off a real run: the client wraps a refused connection as
+     * {@code ConnectionInitiationException: Query request failed (attempt: 4, duration: 54ms,
+     * queryId: null)}, which names neither the host nor the refusal; the {@code Connection refused}
+     * an operator needs is three causes down. Bounded by a visited set, as every chain walk in this
+     * package is, so a self-referential chain cannot spin the wait.
+     */
+    private static String rootCause(final Throwable thrown) {
+        final Set<Throwable> seen = new LinkedHashSet<>();
+        Throwable deepest = thrown;
+        for (Throwable cause = thrown; cause != null && seen.add(cause); cause = cause.getCause()) {
+            deepest = cause;
+        }
+        return deepest.toString();
     }
 
     /** Startup is being torn down; restore the flag and say so, the shape {@code checkSchema} uses. */
