@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+"""Fixture tests for dashboards-version.py. Run with:
+    python3 -m unittest discover -s deployment/clickhouse
+
+Each test builds a throwaway git repository holding two minimal dashboards,
+runs the script as a subprocess against it, and asserts the exit code, the
+message, and the JSON it wrote. The checker matches nothing in a healthy tree,
+so these fixtures are the only thing that ever exercises its failure arms.
+"""
+
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+SCRIPT = Path(__file__).parent / "dashboards-version.py"
+REL = Path("container-fs/grafana/provisioning/dashboards")
+
+
+def dashboard(uid: str, links=None) -> dict:
+    return {
+        "uid": uid,
+        "title": uid,
+        "links": links if links is not None else [
+            {"title": "Riptide dashboards", "type": "dashboards", "tags": ["riptide"]}],
+        "panels": [],
+    }
+
+
+class Repo:
+    """A git repository with a dashboards directory at the real relative path."""
+
+    def __init__(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.dir = self.root / REL
+        self.dir.mkdir(parents=True)
+        self.git("init", "-q")
+        self.git("config", "user.email", "t@example.org")
+        self.git("config", "user.name", "t")
+
+    def git(self, *args):
+        return subprocess.run(["git", "-C", str(self.root), *args], check=True, capture_output=True, text=True)
+
+    def write(self, name: str, data: dict):
+        (self.dir / f"{name}.json").write_text(json.dumps(data, indent=2) + "\n")
+
+    def read(self, name: str) -> dict:
+        return json.loads((self.dir / f"{name}.json").read_text())
+
+    def commit(self):
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "fixture")
+
+    def run(self, *args):
+        return subprocess.run([sys.executable, str(SCRIPT), "--dir", str(self.dir), *args],
+                              capture_output=True, text=True)
+
+
+def version_link(d: dict):
+    return [l for l in d["links"] if l.get("title", "").startswith("Dashboards v")]
+
+
+class SetWritesTheLinkIntoEveryDashboard(unittest.TestCase):
+
+    def test_adds_the_link_where_absent_and_keeps_the_existing_links(self):
+        repo = Repo()
+        repo.write("a", dashboard("a"))
+        repo.write("b", dashboard("b"))
+
+        proc = repo.run("set", "1.0.0")
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        for name in ("a", "b"):
+            d = repo.read(name)
+            self.assertEqual(len(version_link(d)), 1, name)
+            self.assertEqual(version_link(d)[0]["title"], "Dashboards v1.0.0")
+            self.assertEqual(version_link(d)[0]["type"], "link")
+            self.assertEqual(d["links"][0]["title"], "Riptide dashboards", "the navigation dropdown stays first")
+
+    def test_rewrites_an_existing_link_in_place_and_is_idempotent(self):
+        repo = Repo()
+        repo.write("a", dashboard("a"))
+        repo.run("set", "1.0.0")
+        first = (repo.dir / "a.json").read_text()
+
+        repo.run("set", "1.1.0")
+        self.assertEqual(version_link(repo.read("a"))[0]["title"], "Dashboards v1.1.0")
+        self.assertEqual(len(repo.read("a")["links"]), 2)
+
+        repo.run("set", "1.0.0")
+        self.assertEqual((repo.dir / "a.json").read_text(), first, "a round trip leaves the file byte-identical")
+
+    def test_keeps_each_file_s_own_escaping_of_non_ascii_text(self):
+        repo = Repo()
+        raw = dashboard("raw"); raw["title"] = "Scope — raw"
+        (repo.dir / "raw.json").write_text(json.dumps(raw, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        escaped = dashboard("escaped"); escaped["title"] = "Scope — escaped"
+        repo.write("escaped", escaped)  # json.dumps default: —
+
+        repo.run("set", "1.0.0")
+
+        self.assertIn("Scope — raw", (repo.dir / "raw.json").read_text(encoding="utf-8"))
+        self.assertIn("Scope \\u2014 escaped", (repo.dir / "escaped.json").read_text())
+        for name in ("raw", "escaped"):
+            before = (repo.dir / f"{name}.json").read_text(encoding="utf-8")
+            repo.run("set", "1.0.0")
+            self.assertEqual((repo.dir / f"{name}.json").read_text(encoding="utf-8"), before, name)
+
+    def test_refuses_a_dashboard_that_already_carries_two_version_links(self):
+        repo = Repo()
+        repo.write("a", dashboard("a", links=[
+            {"title": "Dashboards v1.0.0", "type": "link"},
+            {"title": "Dashboards v0.9.0", "type": "link"}]))
+
+        proc = repo.run("set", "1.1.0")
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("a.json", proc.stderr)
+        self.assertIn("more than one version link", proc.stderr)
+        self.assertEqual(len(version_link(repo.read("a"))), 2, "nothing was rewritten")
+
+    def test_refuses_a_malformed_version(self):
+        repo = Repo()
+        repo.write("a", dashboard("a"))
+
+        proc = repo.run("set", "v1.0")
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("MAJOR.MINOR.PATCH", proc.stderr)
+
+
+class CheckDemandsOneWellFormedVersionEverywhere(unittest.TestCase):
+
+    def test_passes_when_every_dashboard_agrees(self):
+        repo = Repo()
+        repo.write("a", dashboard("a"))
+        repo.write("b", dashboard("b"))
+        repo.run("set", "1.0.0")
+
+        proc = repo.run("check")
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("1.0.0", proc.stdout)
+
+    def test_names_a_dashboard_that_disagrees(self):
+        repo = Repo()
+        repo.write("a", dashboard("a"))
+        repo.write("b", dashboard("b"))
+        repo.run("set", "1.0.0")
+        b = repo.read("b")
+        version_link(b)[0]["title"] = "Dashboards v1.0.1"
+        repo.write("b", b)
+
+        proc = repo.run("check")
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("b.json", proc.stderr)
+        self.assertIn("1.0.1", proc.stderr)
+
+    def test_names_a_dashboard_without_the_link(self):
+        repo = Repo()
+        repo.write("a", dashboard("a"))
+        repo.write("b", dashboard("b"))
+        repo.run("set", "1.0.0")
+        repo.write("b", dashboard("b"))
+
+        proc = repo.run("check")
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("b.json", proc.stderr)
+        self.assertIn("no version link", proc.stderr)
+
+    def test_rejects_a_malformed_version_in_a_link(self):
+        repo = Repo()
+        repo.write("a", dashboard("a"))
+        repo.run("set", "1.0.0")
+        a = repo.read("a")
+        version_link(a)[0]["title"] = "Dashboards v1.0"
+        repo.write("a", a)
+
+        proc = repo.run("check")
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("a.json", proc.stderr)
+
+
+class CheckAgainstABaseRefDemandsABumpWhenADashboardChanged(unittest.TestCase):
+
+    def base(self) -> Repo:
+        repo = Repo()
+        repo.write("a", dashboard("a"))
+        repo.write("b", dashboard("b"))
+        repo.run("set", "1.0.0")
+        repo.commit()
+        return repo
+
+    def test_passes_when_nothing_changed(self):
+        repo = self.base()
+
+        proc = repo.run("check", "--base-ref", "HEAD")
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_fails_when_a_dashboard_changed_and_the_version_did_not(self):
+        repo = self.base()
+        b = repo.read("b")
+        b["panels"].append({"id": 1, "title": "new"})
+        repo.write("b", b)
+
+        proc = repo.run("check", "--base-ref", "HEAD")
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("b.json", proc.stderr)
+        self.assertIn("1.0.0", proc.stderr)
+        self.assertIn("bump", proc.stderr)
+
+    def test_passes_when_a_dashboard_changed_and_the_version_moved(self):
+        repo = self.base()
+        b = repo.read("b")
+        b["panels"].append({"id": 1, "title": "new"})
+        repo.write("b", b)
+        repo.run("set", "1.1.0")
+
+        proc = repo.run("check", "--base-ref", "HEAD")
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_new_dashboard_counts_as_a_change(self):
+        repo = self.base()
+        repo.write("c", dashboard("c"))
+        repo.run("set", "1.0.0")
+
+        proc = repo.run("check", "--base-ref", "HEAD")
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("c.json", proc.stderr)
+
+    def test_passes_when_the_base_had_no_version_yet(self):
+        repo = Repo()
+        repo.write("a", dashboard("a"))
+        repo.commit()
+        repo.run("set", "1.0.0")
+
+        proc = repo.run("check", "--base-ref", "HEAD")
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_removed_dashboard_counts_as_a_change(self):
+        repo = self.base()
+        (repo.dir / "b.json").unlink()
+
+        proc = repo.run("check", "--base-ref", "HEAD")
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("b.json", proc.stderr)
+
+    def test_an_unresolvable_base_ref_fails_rather_than_passing(self):
+        repo = self.base()
+
+        proc = repo.run("check", "--base-ref", "no-such-ref")
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("no-such-ref", proc.stderr)
+        self.assertIn("does not resolve", proc.stderr)
+
+    def test_a_version_lower_than_the_base_is_refused(self):
+        repo = self.base()
+        b = repo.read("b")
+        b["panels"].append({"id": 1, "title": "new"})
+        repo.write("b", b)
+        repo.run("set", "0.9.0")
+
+        proc = repo.run("check", "--base-ref", "HEAD")
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("0.9.0", proc.stderr)
+        self.assertIn("1.0.0", proc.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

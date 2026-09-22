@@ -34,6 +34,14 @@
       "asDropdown": true,
       "includeVars": true,
       "keepTime": true
+    },
+    {
+      "title": "Dashboards v1.0.0",
+      "type": "link",
+      "url": "https://github.com/Riptide-Labs/riptide/tree/main/deployment/clickhouse/container-fs/grafana/provisioning/dashboards",
+      "tooltip": "Version of the provisioned dashboard set. Independent of the riptide version.",
+      "icon": "info",
+      "targetBlank": true
     }
   ],
   "annotations": {

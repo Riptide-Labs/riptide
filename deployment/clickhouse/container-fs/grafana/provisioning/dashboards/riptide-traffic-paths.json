@@ -373,6 +373,14 @@
       "asDropdown": true,
       "includeVars": true,
       "keepTime": true
+    },
+    {
+      "title": "Dashboards v1.0.0",
+      "type": "link",
+      "url": "https://github.com/Riptide-Labs/riptide/tree/main/deployment/clickhouse/container-fs/grafana/provisioning/dashboards",
+      "tooltip": "Version of the provisioned dashboard set. Independent of the riptide version.",
+      "icon": "info",
+      "targetBlank": true
     }
   ],
   "description": "How does traffic route through the network \u2014 which AS pairs peer across which exporters, where does it originate and terminate geographically, and where does it exit? Byte-weighted Sankey paths over the flows table for the selected range. Scope with Tenant/Zone/Locality/Exporter/Direction; Depth caps nodes per column to keep the diagrams readable."

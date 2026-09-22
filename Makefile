@@ -55,6 +55,9 @@ help:
 	@echo "  sbom-assert:  Assert license facts in a release SBOM; SBOM=<path to .spdx.json>"
 	@echo "  sbom-assert-test: Run the SBOM assertion script's fixture tests"
 	@echo "  replay-pcap-test: Run the pcap replay script's fixture tests"
+	@echo "  dashboards-version: Stamp the Grafana dashboard set with DASHBOARDS_VERSION=<x.y.z>"
+	@echo "  dashboards-version-check: Every dashboard carries the same version; with DASHBOARDS_BASE_REF=<ref>, that it moved when a dashboard changed"
+	@echo "  dashboards-version-test: Run the dashboards version checker's fixture tests"
 	@echo "  release-lineage: Check a release tag adds only the version bump on top of main; LINEAGE_REF=<ref>"
 	@echo "  release-lineage-test: Run the release lineage checker's fixture tests"
 	@echo "  build-cost-docs: Check a tree-build change updates its published cost figures; COST_BASE_REF=<ref>"
@@ -301,6 +304,28 @@ sbom-assert-test:
 .PHONY: replay-pcap-test
 replay-pcap-test:
 	python3 -m unittest discover -s contrib
+
+# The dashboard set carries one version of its own, in a link on every
+# dashboard's top bar, independent of the riptide version in pom.xml. A number
+# nobody bumps lies, so the check with a base ref demands a bump whenever a
+# dashboard JSON changed; CI runs it against the pull request's base.
+DASHBOARDS_VERSION  ?=
+DASHBOARDS_BASE_REF ?=
+
+.PHONY: dashboards-version
+dashboards-version:
+	@test -n "$(DASHBOARDS_VERSION)" || { echo "usage: make dashboards-version DASHBOARDS_VERSION=x.y.z" >&2; exit 2; }
+	python3 deployment/clickhouse/dashboards-version.py set "$(DASHBOARDS_VERSION)"
+
+.PHONY: dashboards-version-check
+dashboards-version-check:
+	python3 deployment/clickhouse/dashboards-version.py check $(if $(DASHBOARDS_BASE_REF),--base-ref "$(DASHBOARDS_BASE_REF)")
+
+# The checker matches nothing in a healthy tree, so its fixtures are the only
+# thing that ever exercises its failure arms.
+.PHONY: dashboards-version-test
+dashboards-version-test:
+	python3 -m unittest discover -s deployment/clickhouse
 
 .PHONY: deps-nix
 deps-nix:

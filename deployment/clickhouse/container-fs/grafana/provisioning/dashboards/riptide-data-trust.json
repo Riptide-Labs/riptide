@@ -828,6 +828,14 @@
       "asDropdown": true,
       "includeVars": true,
       "keepTime": true
+    },
+    {
+      "title": "Dashboards v1.0.0",
+      "type": "link",
+      "url": "https://github.com/Riptide-Labs/riptide/tree/main/deployment/clickhouse/container-fs/grafana/provisioning/dashboards",
+      "tooltip": "Version of the provisioned dashboard set. Independent of the riptide version.",
+      "icon": "info",
+      "targetBlank": true
     }
   ],
   "description": "Can the other dashboards be believed? Sampling configuration, clock corrections, scope labelling and exporter identity — the metadata that silently invalidates a byte comparison when it changes. Read this one first when a number looks wrong somewhere else. Collection Health answers whether data is arriving; this answers whether it means what you think."

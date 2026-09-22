@@ -51,6 +51,17 @@ jobs:
       - name: pcap replay script fixture tests
         run: |
           make replay-pcap-test
+      # The dashboards version checker only fails on a bump that was forgotten,
+      # so a healthy tree never exercises its failure arms; the fixtures do.
+      - name: Dashboards version checker fixture tests
+        run: |
+          make dashboards-version-test
+      # Without a base ref: every dashboard carries the same well-formed
+      # version. Runs on pushes to main too, so two pull requests that each
+      # bumped against their own base cannot leave main disagreeing unnoticed.
+      - name: Dashboards agree on their version
+        run: |
+          make dashboards-version-check
       # The release lineage check only ever runs on a tag, and it matches nothing
       # in a healthy tree — so without these its first real execution would be
       # the release it is supposed to protect, and a broken checker would look
@@ -106,6 +117,11 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           make build-cost-docs COST_BASE_REF="${BASE_SHA}"
+      - name: Check the dashboards version moved if a dashboard changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          make dashboards-version-check DASHBOARDS_BASE_REF="${BASE_SHA}"
   e2e:
     runs-on: ubuntu-24.04
     # E2eTestSupport.SUITE_BUDGET (30 min) is sized against this; lowering it means lowering that.
