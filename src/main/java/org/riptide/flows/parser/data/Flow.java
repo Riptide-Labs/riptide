@@ -72,6 +72,21 @@ public interface Flow {
      */
     long getApplicationId();
 
+    /**
+     * The HTTP host a Cisco AVC exporter sent (PEN 9 / 12235), with its application prefix
+     * stripped. Null when the template carried no such element, empty when the record carried no
+     * host; a reader treats both as "none". Only the ingress record of an HTTP request carries
+     * one, so the response record of the same conversation reads empty.
+     */
+    String getHttpHost();
+
+    /**
+     * The HTTP URI a Cisco AVC exporter sent (PEN 9 / 9357), reduced to the URI with the highest
+     * hit count. The router records the first path segment only. Null or empty as for
+     * {@link #getHttpHost()}.
+     */
+    String getHttpUri();
+
     enum Locality {
         PUBLIC, PRIVATE
     }

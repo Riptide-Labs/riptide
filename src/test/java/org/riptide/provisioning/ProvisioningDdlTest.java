@@ -162,7 +162,7 @@ class ProvisioningDdlTest {
         // one-line change in FlowsSchema and not a test edit.
         assertThat(sql.subList(0, additive)).allMatch(s -> s.contains("ADD COLUMN IF NOT EXISTS"));
         assertThat(sql).filteredOn(s -> s.contains("ADD COLUMN")).hasSize(additive);
-        assertThat(sql.get(additive - 1)).contains("applicationSource LowCardinality(String)");
+        assertThat(sql.get(additive - 1)).contains("applicationDescription LowCardinality(String)");
     }
 
     @Test

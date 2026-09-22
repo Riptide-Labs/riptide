@@ -67,6 +67,11 @@ public class EnrichedFlow {
     /** Exporter application id, packed; 0 when none was sent. Mapped by name from {@link Flow}. */
     private Long applicationId;
     private ApplicationSource applicationSource;
+    /** The exporter table's description for {@link #applicationId}; set on the exporter rung only. */
+    private String applicationDescription;
+    /** Cisco AVC HTTP host and URI; mapped by name from {@link Flow}, null when the record carried none. */
+    private String httpHost;
+    private String httpUri;
     private String exporterAddr;
     private String tenant;
     private String organisation;
@@ -101,6 +106,7 @@ public class EnrichedFlow {
     public abstract static class FlowMapper {
         @Mapping(target = "application", ignore = true)
         @Mapping(target = "applicationSource", ignore = true)
+        @Mapping(target = "applicationDescription", ignore = true)
         @Mapping(target = "srcLocality", ignore = true)
         @Mapping(target = "dstLocality", ignore = true)
         @Mapping(target = "flowLocality", ignore = true)

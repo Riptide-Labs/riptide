@@ -83,4 +83,19 @@ public class FlowMapperTest {
 
         assertThat(enriched.getApplicationId()).isEqualTo(0x03000050L);
     }
+
+    /** Same reason as the id: a rename on either side would leave both columns ''. */
+    @Test
+    public void httpHostAndUriMapFromTheFlow() throws Exception {
+        final var source = new Source("here", InetAddress.getByName("203.0.113.9"));
+        final Flow flow = mock(Flow.class);
+        when(flow.getHttpHost()).thenReturn("www.example.com");
+        when(flow.getHttpUri()).thenReturn("/api");
+
+        final var enriched = mapper.enrichedFlow(source, flow);
+
+        assertThat(enriched.getHttpHost()).isEqualTo("www.example.com");
+        assertThat(enriched.getHttpUri()).isEqualTo("/api");
+        assertThat(enriched.getApplicationDescription()).as("an enricher's field, not the parser's").isNull();
+    }
 }

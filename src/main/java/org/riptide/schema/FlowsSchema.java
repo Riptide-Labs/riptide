@@ -715,6 +715,9 @@ public final class FlowsSchema {
         ADDITIVE_COLUMNS.put("samplingProvenance", "LowCardinality(String)");
         ADDITIVE_COLUMNS.put("applicationId", "UInt32");
         ADDITIVE_COLUMNS.put("applicationSource", "LowCardinality(String)");
+        ADDITIVE_COLUMNS.put("httpHost", "String");
+        ADDITIVE_COLUMNS.put("httpUri", "String");
+        ADDITIVE_COLUMNS.put("applicationDescription", "LowCardinality(String)");
     }
 
     /** The additive column names, for callers distinguishing in-place-upgradeable columns. */
@@ -1447,7 +1450,20 @@ public final class FlowsSchema {
 
             -- Which rung named `application`: 'exporter' (the exporter's application table),
             -- 'rules' (a port/address rule) or 'none'. '' = written before this column existed.
-            applicationSource LowCardinality(String)
+            applicationSource LowCardinality(String),
+
+            -- Cisco AVC HTTP host (PEN 9 / 12235) with its application prefix stripped, and the
+            -- HTTP URI (PEN 9 / 9357, the pair with the most hits; the router keeps the first path
+            -- segment only). Only the ingress record of an HTTP request carries them, so the
+            -- response record of the same conversation is ''. '' also = no such element, or
+            -- written before these columns existed; the three cannot be told apart.
+            httpHost String,
+            httpUri String,
+
+            -- The exporter table's applicationDescription for applicationId, set only when
+            -- applicationSource = 'exporter'. '' = no description, or written before this column
+            -- existed.
+            applicationDescription LowCardinality(String)
         ) ENGINE = MergeTree()
         -- PRIMARY KEY declared, not derived, for the reason spelled out at rollupTable(): a later
         -- MODIFY ORDER BY appends to the sorting key alone, and a derived primary key would leave

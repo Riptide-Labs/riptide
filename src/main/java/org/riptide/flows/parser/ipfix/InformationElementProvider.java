@@ -22,6 +22,8 @@ import org.riptide.flows.parser.ie.values.ApplicationIdValue;
 import org.riptide.flows.parser.ie.values.BooleanValue;
 import org.riptide.flows.parser.ie.values.DateTimeValue;
 import org.riptide.flows.parser.ie.values.FloatValue;
+import org.riptide.flows.parser.ie.values.HttpHostValue;
+import org.riptide.flows.parser.ie.values.HttpUriStatisticsValue;
 import org.riptide.flows.parser.ie.values.IPv4AddressValue;
 import org.riptide.flows.parser.ie.values.IPv6AddressValue;
 import org.riptide.flows.parser.ie.values.ListValue;
@@ -85,11 +87,28 @@ public class InformationElementProvider implements InformationElementDatabase.Pr
             .build();
 
     /**
-     * Elements whose IANA data type is not the shape riptide needs. 95 is registered as an octet
-     * array, which has no visitor and so never binds; RFC 6759 gives it a structure worth decoding.
+     * IANA elements whose registered data type is not the shape riptide needs. 95 is registered as
+     * an octet array, which has no visitor and so never binds; RFC 6759 gives it a structure worth
+     * decoding. Keyed by IANA id, so enterprise elements go in {@link #CISCO} instead.
      */
     private static final Map<Integer, InformationElementDatabase.ValueParserFactory> OVERRIDES = ImmutableMap.of(
             95, ApplicationIdValue::parser);
+
+    private static final long CISCO_PEN = 9L;
+
+    /**
+     * Cisco enterprise elements riptide models, keyed by element id under PEN 9 so an IANA element
+     * with the same id cannot collide. The registration name is the {@link IpfixRawFlow} field the
+     * value binds to. Layouts are pinned by the value classes against the Catalyst 8000V reference
+     * capture; PEN 9 / 12242 (connection id) is deliberately not here and keeps its undeclared
+     * warning at template parse.
+     */
+    private static final List<CiscoElement> CISCO = List.of(
+            new CiscoElement(12235, HttpHostValue.NAME, HttpHostValue::parser),
+            new CiscoElement(9357, HttpUriStatisticsValue.NAME, HttpUriStatisticsValue::parser));
+
+    private record CiscoElement(int id, String name, InformationElementDatabase.ValueParserFactory factory) {
+    }
 
     @Override
     public void load(final InformationElementDatabase.Adder adder) {
@@ -108,6 +127,9 @@ public class InformationElementProvider implements InformationElementDatabase.Pr
                         final var semantics = SEMANTICS_LOOKUP.get(record.getDataTypeSemantics());
                         adder.add(Protocol.IPFIX, record.getElementId(), valueParserFactory, record.getName(), semantics, record.getUnit());
                     });
+            for (final CiscoElement element : CISCO) {
+                adder.add(Protocol.IPFIX, CISCO_PEN, element.id(), element.factory(), element.name(), Semantics.DEFAULT, null);
+            }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

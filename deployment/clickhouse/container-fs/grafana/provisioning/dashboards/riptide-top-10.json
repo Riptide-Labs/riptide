@@ -1055,6 +1055,76 @@
       "interval": "1m"
     },
     {
+      "id": 14,
+      "type": "bargauge",
+      "title": "Top 10 HTTP hosts (requests)",
+      "description": "HTTP request records per host name over the time range, from exporters that send the Cisco AVC HTTP host element (NBAR2 with 'collect application http host'). Counts request records, not bytes: the host rides the ingress record of a request only, so the response bytes sit on a record with no host and cannot be attributed. Empty on a network with no AVC exporter. Normal: a stable set of well-known hosts \u2014 a new host at the top is a new consumer or a misdirected client, not a network fault.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 40
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "namePlacement": "left",
+        "showUnfilled": true,
+        "valueMode": "color",
+        "sizing": "auto",
+        "minVizWidth": 8,
+        "minVizHeight": 16,
+        "reduceOptions": {
+          "values": true,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^Requests$/"
+        },
+        "text": {}
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT httpHost AS \"Host\", count() AS \"Requests\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND httpHost != ''\nGROUP BY httpHost\nORDER BY \"Requests\" DESC\nLIMIT 10",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
       "id": 13,
       "type": "table",
       "title": "Top 10 Source AS - statistics",

@@ -255,6 +255,16 @@ public final class SflowFlowBuilder {
             public long getApplicationId() {
                 return 0L;
             }
+
+            @Override
+            public String getHttpHost() {
+                return null;
+            }
+
+            @Override
+            public String getHttpUri() {
+                return null;
+            }
         };
     }
 

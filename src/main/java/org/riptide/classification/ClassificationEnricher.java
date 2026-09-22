@@ -65,6 +65,7 @@ public class ClassificationEnricher extends Enricher.Single {
             if (name != null && !UNCLASSIFIED_NAME.equalsIgnoreCase(name.trim())) {
                 flow.setApplication(name);
                 flow.setApplicationSource(ApplicationSource.Exporter);
+                flow.setApplicationDescription(named.map(ApplicationInfo::description).orElse(null));
                 return CompletableFuture.completedFuture(null);
             }
             if (name == null) {

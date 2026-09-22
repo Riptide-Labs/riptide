@@ -49,6 +49,7 @@ import java.util.Collection;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.riptide.flows.utils.BufferUtils.slice;
 
 /**
@@ -62,7 +63,8 @@ import static org.riptide.flows.utils.BufferUtils.slice;
  *   options template 256  scope ingressInterface -> interfaceName, interfaceDescription, egressInterface
  *   options template 257  scope applicationId    -> applicationName(24), applicationDescription(55)
  * observation domain 256
- *   data template 258     ... applicationId (95, 4 bytes), PEN 9 elements 12242/9357/12235 ...
+ *   data template 258     ... applicationId (95, 4 bytes), PEN 9 connection id (12242, dropped),
+ *                         PEN 9 HTTP URI statistics (9357, httpUri), PEN 9 HTTP host (12235, httpHost) ...
  * </pre>
  * The option tables and the flow records arrive under different observation domains, which is
  * why every table lookup here falls back from the exact identity to the device address.
@@ -148,6 +150,43 @@ public class CiscoAvcBlackboxTest {
         final List<Flow> flows = flows("ipfix_test_cisco_c8000v_avc_data258_icmp.dat");
 
         assertThat(flows).extracting(Flow::getApplicationId).containsExactly(ICMP, 0x0d0001dfL, 0x0d0001dfL);
+    }
+
+    /**
+     * PEN 9 / 12235 and 9357 as the router encodes them: the host behind its six-byte application
+     * prefix, the URI as one {@code URI NUL count} pair holding the first path segment only. Both
+     * ride the ingress (flowDirection 0) http record; the egress record and every record the L7
+     * engine reclassified carry the prefix alone and an empty URI field.
+     */
+    @Test
+    public void theHttpDataPacketCarriesTheHostAndUriOnTheIngressHttpRecords() throws Exception {
+        parse("ipfix_test_cisco_c8000v_avc_tpl258.dat");
+
+        final List<Flow> flows = flows("ipfix_test_cisco_c8000v_avc_data258_http.dat");
+
+        final List<Flow> requests = flows.stream()
+                .filter(f -> f.getApplicationId() == HTTP && f.getDirection() == Flow.Direction.INGRESS)
+                .toList();
+        assertThat(requests).hasSize(5);
+        assertThat(requests).extracting(Flow::getHttpHost, Flow::getHttpUri).containsExactly(
+                tuple("www.example.com", "/"),
+                tuple("www.example.com", "/api"),
+                tuple("www.example.com", "/static"),
+                tuple("www.example.com", "/api"),
+                tuple("api.example.com", "/"));
+        assertThat(flows).filteredOn(f -> !requests.contains(f))
+                .as("the other 12 records carry the prefix alone and an empty URI field, which decode to empty, not null: the template has the elements")
+                .extracting(Flow::getHttpHost, Flow::getHttpUri)
+                .containsOnly(tuple("", ""));
+    }
+
+    @Test
+    public void theIcmpDataPacketCarriesNeitherHostNorUri() throws Exception {
+        parse("ipfix_test_cisco_c8000v_avc_tpl258.dat");
+
+        final List<Flow> flows = flows("ipfix_test_cisco_c8000v_avc_data258_icmp.dat");
+
+        assertThat(flows).extracting(Flow::getHttpHost, Flow::getHttpUri).containsOnly(tuple("", ""));
     }
 
     @Test

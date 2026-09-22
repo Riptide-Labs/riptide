@@ -369,6 +369,16 @@ public class IpFixFlowBuilder {
             }
 
             @Override
+            public String getHttpHost() {
+                return rawFlow.httpHost;
+            }
+
+            @Override
+            public String getHttpUri() {
+                return rawFlow.httpUri;
+            }
+
+            @Override
             public InetAddress getSrcAddr() {
                 return Optionals.first(rawFlow.sourceIPv6Address, rawFlow.sourceIPv4Address).orElse(null);
             }
