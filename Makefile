@@ -54,6 +54,7 @@ help:
 	@echo "  compose-smoke: Bring up the shipped compose stack and assert its ClickHouse and Grafana wiring (requires Docker)"
 	@echo "  sbom-assert:  Assert license facts in a release SBOM; SBOM=<path to .spdx.json>"
 	@echo "  sbom-assert-test: Run the SBOM assertion script's fixture tests"
+	@echo "  replay-pcap-test: Run the pcap replay script's fixture tests"
 	@echo "  release-lineage: Check a release tag adds only the version bump on top of main; LINEAGE_REF=<ref>"
 	@echo "  release-lineage-test: Run the release lineage checker's fixture tests"
 	@echo "  build-cost-docs: Check a tree-build change updates its published cost figures; COST_BASE_REF=<ref>"
@@ -293,6 +294,13 @@ sbom-assert:
 .PHONY: sbom-assert-test
 sbom-assert-test:
 	python3 -m unittest discover -s deployment/sbom
+
+# contrib/reply-pcap.py has no caller but a person at a shell, which is how it
+# stayed broken for a Python release (issue #834). The fixture tests are the
+# only thing that runs it on every build.
+.PHONY: replay-pcap-test
+replay-pcap-test:
+	python3 -m unittest discover -s contrib
 
 .PHONY: deps-nix
 deps-nix:

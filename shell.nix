@@ -1,14 +1,6 @@
 { pkgs ? import <nixpkgs-unstable> {} }:
 
-let
-
-  pyenv = pkgs.python3.withPackages (ps: with ps; [
-    pyshark
-    click
-    tqdm
-  ]);
-
-in pkgs.mkShell {
+pkgs.mkShell {
   buildInputs = with pkgs; [
     bash
     git
@@ -16,6 +8,6 @@ in pkgs.mkShell {
     maven
     protobuf
     just
-    pyenv
+    python3  # contrib/reply-pcap.py and the fixture-test scripts need only the standard library
   ];
 }
