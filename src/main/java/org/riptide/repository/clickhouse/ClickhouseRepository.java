@@ -9,6 +9,7 @@ import com.clickhouse.client.api.Client;
 import com.clickhouse.client.api.ServerException;
 import com.clickhouse.client.api.insert.InsertSettings;
 import com.clickhouse.client.api.query.GenericRecord;
+import com.clickhouse.client.api.query.QueryResponse;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.mapstruct.BeanMapping;
@@ -43,6 +44,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.LinkedHashSet;
@@ -78,6 +81,13 @@ public class ClickhouseRepository implements FlowRepository {
     private final String username;
     private final String password;
 
+    /**
+     * The bounded wait {@link #start()} runs before its first statement (#833). Built here so a
+     * negative {@code riptide.clickhouse.startup-wait} fails at construction, next to the batch
+     * settings' own validation, rather than on the first start.
+     */
+    private final StartupWait startupWait;
+
     @SneakyThrows
     public ClickhouseRepository(final FlowMapper flowMapper,
                                 final ClickhouseConfig config,
@@ -85,6 +95,7 @@ public class ClickhouseRepository implements FlowRepository {
         this.flowMapper = Objects.requireNonNull(flowMapper);
         this.config = Objects.requireNonNull(config);
         Objects.requireNonNull(secretResolvers, "secretResolvers");
+        this.startupWait = new StartupWait(config.getStartupWait());
 
         // Resolve the credential SecretRefs once, before the client is built. resolve() is
         // null-safe; an unset ref falls back to the ClickHouse default user / empty password —
@@ -277,6 +288,12 @@ public class ClickhouseRepository implements FlowRepository {
     @Override
     @SneakyThrows
     public void start() {
+        // Before either mode's first statement, and once for both: a backend that is not up yet is
+        // waited for, bounded (#833). Manage mode's bootstrap client below shares this client's
+        // endpoint and credentials, so one probe through this client covers the CREATE DATABASE
+        // that follows. Everything after the server has answered fails as it always did.
+        this.startupWait.await(this.config.getEndpoint(), this::probeServer);
+
         if (this.config.isManageSchema()) {
             // Manage mode: ensure the schema idempotently. The database comes first — the main
             // client pins it via setDefaultDatabase, so DDL through it fails with UNKNOWN_DATABASE
@@ -1014,6 +1031,62 @@ public class ClickhouseRepository implements FlowRepository {
     private static final Duration STARTUP_READ_TIMEOUT = Duration.ofSeconds(10);
 
     /**
+     * One startup-wait attempt: is anything answering at the endpoint?
+     *
+     * <p>Not {@code Client.ping()}. In client-v2 0.10.0 that runs {@code SELECT 1} and folds every
+     * failure into {@code false}, so it cannot tell a server that is not there from one that refused
+     * the credential, and the wait must retry only the first. This runs the same statement and
+     * classifies the failure itself: a {@link ServerException} anywhere in the cause chain means the
+     * server answered, whatever it said. On a fresh server in manage mode the answer is
+     * {@code UNKNOWN_DATABASE}, because this client is pinned to a database that does not exist yet,
+     * and that is an answer: {@code ensureDatabase} is what happens next. A wrong password is an
+     * answer too, and {@code checkSchema} reports it with the server's own message.</p>
+     *
+     * <p>Bounded per attempt, for the same reason every other startup read is: a server that accepts
+     * the connection and never replies must not hold the wait past its window.</p>
+     */
+    private StartupWait.Outcome probeServer() throws InterruptedException {
+        CompletableFuture<QueryResponse> pending = null;
+        try {
+            pending = this.client.query("SELECT 1");
+            try (QueryResponse response = pending.get(STARTUP_READ_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
+                return new StartupWait.Outcome.Answered();
+            }
+        } catch (final InterruptedException e) {
+            cancel(pending);
+            throw e;
+        } catch (final TimeoutException e) {
+            cancel(pending);
+            return new StartupWait.Outcome.Silent(e);
+        } catch (final Exception e) {
+            return carriesServerAnswer(e)
+                    ? new StartupWait.Outcome.Answered()
+                    : new StartupWait.Outcome.Silent(e);
+        }
+    }
+
+    private static void cancel(final Future<?> pending) {
+        if (pending != null) {
+            pending.cancel(true);
+        }
+    }
+
+    /**
+     * Whether a failure carries a {@link ServerException} anywhere in its cause chain. Walked the
+     * way {@link #outcomeOf(Throwable)} walks it, and for the same reason: the client wraps the
+     * server's answer in an {@code ExecutionException}, so the top-level type says nothing.
+     */
+    static boolean carriesServerAnswer(final Throwable thrown) {
+        final Set<Throwable> seen = new LinkedHashSet<>();
+        for (Throwable cause = thrown; cause != null && seen.add(cause); cause = cause.getCause()) {
+            if (cause instanceof ServerException) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * The probe outcome for a thrown failure.
      *
      * <p>The cause chain is walked rather than the thrown type inspected. The client wraps a
@@ -1174,8 +1247,9 @@ public class ClickhouseRepository implements FlowRepository {
                     + " in database '" + this.config.getDatabase() + "'.", e);
         } catch (final Exception e) {
             // NOT the not-found message. An absent table is zero rows (see below), so what reaches
-            // here is a wrong password, an unreachable server, a database that does not exist, a
-            // revoked read on system.columns or a type this client cannot parse — and telling that
+            // here is a wrong password, a database that does not exist, a revoked read on
+            // system.columns, a type this client cannot parse, or a server that answered the startup
+            // wait's probe and has stopped answering since (#833) — and telling that
             // operator to provision a table would be the same misdiagnosis #692 itself was. The
             // cause is named first; the provisioning pointer stays, because an unprovisioned
             // database reaches here too.

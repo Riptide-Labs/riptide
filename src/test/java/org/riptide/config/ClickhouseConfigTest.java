@@ -8,12 +8,24 @@ package org.riptide.config;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
+
 /**
  * The {@code asyncInserts} derivation: batching supersedes server-side coalescing, but only
  * while batching is actually enabled — with it off the pre-batching manage-mode default applies,
  * so a {@code batch.enabled=false} config does not silently land on the slowest combination.
+ *
+ * <p>And the {@code startupWait} default (#833): 30 s, chosen to sit under the compose healthcheck
+ * and Kubernetes startupProbe budgets the docs state. The negative-value rejection and the read of
+ * the key live where the value is consumed: {@code StartupWaitTest} and
+ * {@code ClickhouseStartupWaitIT}.</p>
  */
 class ClickhouseConfigTest {
+
+    @Test
+    void startupWaitDefaultsToThirtySeconds() {
+        Assertions.assertThat(new ClickhouseConfig().getStartupWait()).isEqualTo(Duration.ofSeconds(30));
+    }
 
     @Test
     void asyncInsertsAreOffWhileBatchingIsEnabled() {
