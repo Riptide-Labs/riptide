@@ -59,4 +59,11 @@ public class Netflow9RawFlow {
     public Integer TOS;
     public Integer SRC_VLAN;
     public Integer DST_VLAN;
+    /**
+     * Field 95, RFC 6759, packed as {@code engine << 24 | selector} by
+     * {@link org.riptide.flows.parser.ie.values.ApplicationIdValue}; named after the IPFIX element
+     * because Cisco's {@code APPLICATION TAG} cannot be a field name. Null when the template has no
+     * such field.
+     */
+    public Long applicationId;
 }

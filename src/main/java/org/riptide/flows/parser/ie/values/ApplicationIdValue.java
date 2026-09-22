@@ -13,7 +13,7 @@ import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.session.Session;
 
 /**
- * IPFIX element 95, {@code applicationId}, RFC 6759 §4.1: one byte of Classification Engine ID
+ * IPFIX element 95 and NetFlow v9 field 95, {@code applicationId}, RFC 6759 §4.1: one byte of Classification Engine ID
  * followed by a Selector ID of one to three bytes. The IANA registry types it as an octet array,
  * which nothing downstream can bind; this parser yields an {@link UnsignedValue} carrying the
  * packed form {@code engine << 24 | selector}, so a 4 byte field reads as its own big-endian

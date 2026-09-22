@@ -8,6 +8,7 @@ package org.riptide.flows.parser.netflow9;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.ie.InformationElementDatabase;
 import org.riptide.flows.parser.ie.Semantics;
+import org.riptide.flows.parser.ie.values.ApplicationIdValue;
 import org.riptide.flows.parser.ie.values.IPv4AddressValue;
 import org.riptide.flows.parser.ie.values.IPv6AddressValue;
 import org.riptide.flows.parser.ie.values.MacAddressValue;
@@ -114,7 +115,10 @@ public class InformationElementProvider implements InformationElementDatabase.Pr
         adder.add(Protocol.NETFLOW9, 92, UnsignedValue::parserWith32Bit, "SRC TRAFFIC INDEX", Semantics.DEFAULT, null);
         adder.add(Protocol.NETFLOW9, 93, UnsignedValue::parserWith32Bit, "DST TRAFFIC INDEX", Semantics.DEFAULT, null);
         adder.add(Protocol.NETFLOW9, 94, StringValue::parser, "APPLICATION DESCRIPTION", Semantics.DEFAULT, null);
-        adder.add(Protocol.NETFLOW9, 95, OctetArrayValue::parser, "APPLICATION TAG", Semantics.DEFAULT, null);
+        // Cisco calls 95 APPLICATION TAG, an octet array. Registered under the IPFIX name with the
+        // RFC 6759 parser instead: a name with a space binds to no raw-flow field, an octet array
+        // has no visitor, and ExporterApplicationTable matches the id by this name.
+        adder.add(Protocol.NETFLOW9, 95, ApplicationIdValue::parser, ApplicationIdValue.NAME, Semantics.IDENTIFIER, null);
         adder.add(Protocol.NETFLOW9, 96, StringValue::parser, "APPLICATION NAME", Semantics.DEFAULT, null);
         // 97 ?
         adder.add(Protocol.NETFLOW9, 98, UnsignedValue::parserWith8Bit, "postipDiffServCodePoint", Semantics.DEFAULT, null);

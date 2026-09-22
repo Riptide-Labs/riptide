@@ -230,4 +230,36 @@ class ExporterApplicationTableTest {
         assertThat(this.table.lookup(identity, HTTP))
                 .contains(new ApplicationInfo("http", "World Wide Web traffic"));
     }
+
+    /**
+     * The NetFlow v9 shape, as the captured IOS application table sends it: a {@code SCOPE:SYSTEM}
+     * scope carrying the exporter address, the id as an option field, and Cisco's field names for
+     * name and description. The id must be read from the fields because the scope has none.
+     */
+    @Test
+    void aNetflow9ApplicationTableRowIsClaimed() throws Exception {
+        final var identity = identity("10.15.1.115", 0);
+
+        final Verdict verdict = this.table.accept(identity,
+                List.of(new UnsignedValue("SCOPE:SYSTEM", 0x0a0f0173L)),
+                List.of(new UnsignedValue("applicationId", 0x01000008L),
+                        new StringValue("APPLICATION NAME", "egp\0\0\0"),
+                        new StringValue("APPLICATION DESCRIPTION", "Exterior Gateway Protocol\0\0")));
+
+        assertThat(verdict).isEqualTo(Verdict.CLAIMED);
+        assertThat(this.table.lookup(identity, 0x01000008L))
+                .contains(new ApplicationInfo("egp", "Exterior Gateway Protocol"));
+        assertThat(this.metrics.meter("enrichment.optionApplications.consumed").getCount()).isEqualTo(1);
+    }
+
+    @Test
+    void aNetflow9RowWithAZeroIdIsRecognisedButUnusable() throws Exception {
+        final Verdict verdict = this.table.accept(identity("10.15.1.115", 0),
+                List.of(new UnsignedValue("SCOPE:SYSTEM", 0x0a0f0173L)),
+                List.of(new UnsignedValue("applicationId", 0),
+                        new StringValue("APPLICATION NAME", "unknown")));
+
+        assertThat(verdict).isEqualTo(Verdict.RECOGNISED_BUT_UNUSABLE);
+        assertThat(this.metrics.meter("enrichment.optionApplications.skipped").getCount()).isEqualTo(1);
+    }
 }

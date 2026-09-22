@@ -77,4 +77,34 @@ class ApplicationIdValueTest {
         assertThat(value).isInstanceOf(UnsignedValue.class);
         assertThat(value.getValue()).isEqualTo(UnsignedLong.valueOf(0x03000035L));
     }
+
+    /**
+     * Cisco's v9 field list calls 95 {@code APPLICATION TAG}, an octet array; a name with a space
+     * cannot bind to a raw-flow field and an octet array has no visitor, so the v9 registry must
+     * serve the same typed parser under the same name as IPFIX.
+     */
+    @Test
+    void theRegistryServesTheTypedParserForNetflow9Field95() throws Exception {
+        final var element = InformationElementDatabase.instance.lookup(Protocol.NETFLOW9, 95).orElseThrow();
+
+        final Value<?> value = element.parse(null, Unpooled.wrappedBuffer(new byte[]{1, 0, 0, 1}));
+
+        assertThat(element.getName()).isEqualTo("applicationId");
+        assertThat(value).isInstanceOf(UnsignedValue.class);
+        assertThat(value.getValue()).as("IANA-L3 (1), selector 1: icmp").isEqualTo(UnsignedLong.valueOf(0x01000001L));
+    }
+
+    /** Only 95 changes name; the table matches the v9 names of 94 and 96 as they are. */
+    @Test
+    void theNetflow9NameAndDescriptionFieldsKeepTheirNames() throws Exception {
+        final var name = InformationElementDatabase.instance.lookup(Protocol.NETFLOW9, 96).orElseThrow();
+        final var description = InformationElementDatabase.instance.lookup(Protocol.NETFLOW9, 94).orElseThrow();
+
+        assertThat(name.getName()).isEqualTo("APPLICATION NAME");
+        assertThat(description.getName()).isEqualTo("APPLICATION DESCRIPTION");
+        assertThat(name.parse(null, Unpooled.wrappedBuffer("egp\0".getBytes(java.nio.charset.StandardCharsets.US_ASCII))))
+                .isInstanceOf(StringValue.class);
+        assertThat(description.parse(null, Unpooled.wrappedBuffer("EGP\0".getBytes(java.nio.charset.StandardCharsets.US_ASCII))))
+                .isInstanceOf(StringValue.class);
+    }
 }

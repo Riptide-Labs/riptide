@@ -321,10 +321,9 @@ public class Netflow9FlowBuilder {
                 return this.rate.get().from();
             }
 
-            /* Out of scope for this protocol; see the L7 design spec. */
             @Override
             public long getApplicationId() {
-                return 0L;
+                return raw.applicationId != null ? raw.applicationId : 0L;
             }
 
             @Override
