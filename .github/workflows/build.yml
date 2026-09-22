@@ -45,6 +45,12 @@ jobs:
       - name: SBOM assertion fixture tests
         run: |
           make sbom-assert-test
+      # The replay script has no caller in the build, so this is the only
+      # place a Python or format change would be noticed before a contributor
+      # needs a replay (issue #834).
+      - name: pcap replay script fixture tests
+        run: |
+          make replay-pcap-test
       # The release lineage check only ever runs on a tag, and it matches nothing
       # in a healthy tree — so without these its first real execution would be
       # the release it is supposed to protect, and a broken checker would look

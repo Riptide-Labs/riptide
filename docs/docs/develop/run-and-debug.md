@@ -42,12 +42,32 @@ Set breakpoints anywhere — parsers (`org.riptide.flows.parser`), enrichers
 
 ## 3. Send traffic
 
-**Replay a capture** — reproduce bugs from a pcap with `contrib/reply-pcap.py`
-(needs `pyshark` — which requires `tshark` — plus `click` and `tqdm`):
+**Replay a capture** — reproduce bugs from a pcap with `contrib/reply-pcap.py`.
+It needs only `python3`: it reads the libpcap file itself and sends every UDP payload
+to the collector, whatever port the exporter used in the capture.
 
 ```bash
-python3 contrib/reply-pcap.py capture.pcap    # replays NetFlow/cflow packets to 127.0.0.1:9999
+python3 contrib/reply-pcap.py capture.pcap                     # every UDP payload to 127.0.0.1:9999
+python3 contrib/reply-pcap.py capture.pcap --port 4739         # a collector on another port
+python3 contrib/reply-pcap.py capture.pcap --match-port 2055   # only datagrams the exporter sent to 2055
+python3 contrib/reply-pcap.py capture.pcap --delay 0           # no pacing (default 10 ms between sends)
 ```
+
+It finishes with one line saying how many payloads it sent and what it skipped, by reason.
+Only classic pcap is read; convert a pcapng file first with `tcpdump -r in.pcapng -w out.pcap`.
+
+What a replay is not:
+
+- **The exporter is `127.0.0.1`.** The collector sees the replay host, not the capture's source address,
+  so node and SNMP enrichment keyed on the real exporter does not apply unless your node inventory
+  maps the loopback address.
+- **Timestamps are the capture's.** Rows land at the time the flows were recorded, so a dashboard on
+  "last 15 minutes" shows nothing. Widen the time window to cover the capture.
+- **Templates must come first.** A capture that starts mid-stream replays data records the collector
+  drops until the next template refresh in the capture.
+- **Several exporters collapse into one session.** Riptide still tells them apart by observation
+  domain (IPFIX) or source ID (NetFlow v9), so two exporters in one capture only clash when they share
+  that ID and use the same template IDs with different layouts.
 
 **Simulate a network** — the [nl6](https://github.com/labmonkeys-space/nl6) simulator
 emits NetFlow v5/v9 and IPFIX from simulated devices; the [e2e tier](testing.md) runs it
