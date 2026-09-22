@@ -1075,18 +1075,17 @@
           "min": 0,
           "decimals": 0,
           "color": {
-            "mode": "palette-classic"
+            "mode": "fixed",
+            "fixedColor": "blue"
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "noValue": "No exporter sent HTTP host or URI in this range"
+          "noValue": "No exporter sent HTTP host or URI in this range",
+          "links": [
+            {
+              "title": "Flow Forensics: conversations with this host",
+              "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${__url_time_range}&var-http_host=${__data.fields.Host}",
+              "targetBlank": false
+            }
+          ]
         },
         "overrides": []
       },
@@ -1146,18 +1145,17 @@
           "min": 0,
           "decimals": 0,
           "color": {
-            "mode": "palette-classic"
+            "mode": "fixed",
+            "fixedColor": "blue"
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "noValue": "No exporter sent HTTP host or URI in this range"
+          "noValue": "No exporter sent HTTP host or URI in this range",
+          "links": [
+            {
+              "title": "Flow Forensics: conversations with this host and URI",
+              "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${__url_time_range}&var-http_host=${__data.fields.Host}&var-http_uri=${__data.fields.URI}",
+              "targetBlank": false
+            }
+          ]
         },
         "overrides": []
       },
@@ -1188,7 +1186,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT concat(httpHost, httpUri) AS \"Host and URI\", count() AS \"Requests\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND httpHost != '' AND httpUri != ''\nGROUP BY httpHost, httpUri\nORDER BY \"Requests\" DESC\nLIMIT 10",
+          "rawSql": "SELECT concat(httpHost, httpUri) AS \"Host and URI\", count() AS \"Requests\", httpHost AS \"Host\", httpUri AS \"URI\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND httpHost != '' AND httpUri != ''\nGROUP BY httpHost, httpUri\nORDER BY \"Requests\" DESC\nLIMIT 10",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
