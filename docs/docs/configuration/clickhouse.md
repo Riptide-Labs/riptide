@@ -82,6 +82,12 @@ This exists for deployments that start the collector and ClickHouse in no partic
 Without it, a collector started first exits on its first statement and a restart policy turns that into a loop.
 The [compose stack](../deploy/docker-compose.md) never enters the wait: it starts `riptide` only after `clickhouse` is healthy.
 
+The default was measured, not guessed, on 2026-09-22 against the containerlab topology from #833: a 16-core x86_64 host, ClickHouse 26.7 already pulled, no volume so an empty catalog, and the collector node started first.
+Counting from the collector's first probe: ClickHouse's container was started 0.1 s later, accepted TCP connections within 2 s, and answered `/ping` at 5.0 s, which is 4.6 s after `docker run` returned.
+Probes 2 and 3, at 2.1 s and 4.1 s, got a TCP connection and no HTTP response, which counted as silence; probe 4 at 6.1 s was answered and the collector proceeded.
+A slower disk, a large existing catalog or an image still being pulled all make that longer, which is why the window is 30 s and not 10.
+With ClickHouse never started, the same lab showed what the wait exists to prevent: the collector exited after 16 probes with the startup failure described above, containerlab's `always` restart policy restarted it every 33 s, and the first restart destroyed the veth to the router, so nothing could reach the collector until the lab was redeployed.
+
 The cost is that a wrong endpoint now takes the full window to fail instead of failing at once.
 The WARN lines name the endpoint from the first attempt, and `riptide.clickhouse.startup-wait=0` restores immediate failure: one probe, no retry.
 Receivers start after this wait, so `/readyz` reports not ready for as long as it lasts; the default sits under the [probe budgets](../deploy/operations.md#health-endpoints--probes) the compose healthcheck and the documented Kubernetes `startupProbe` allow, and raising it means raising those too.
