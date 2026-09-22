@@ -119,6 +119,8 @@ named or `defaultDatabase`-pinned datasource.
 
 Point a NetFlow v5/v9, IPFIX or sFlow exporter at UDP `9999` and watch rows arrive in `riptide.flows` via Grafana's Explore view.
 The compose file configures a single `multi` [receiver](../configuration/receivers.md) on that port.
+It also starts `riptide` only once `clickhouse` reports healthy (`depends_on` with `condition: service_healthy`), so the collector never has to wait for its backend here.
+A deployment without that ordering, such as a containerlab topology or a hand-written unit, relies on the collector's own bounded wait instead: see [Startup wait](../configuration/clickhouse.md#startup-wait).
 Further settings — more [receivers](../configuration/receivers.md) or the [credential sets](../configuration/agent-configuration.md) — go through environment variables in the compose file (see [Plain JAR](plain-jar.md#environment-variables) for the `RIPTIDE_*` scheme) or an external config file. Agent ranges live in the inventory file, which must be on the mount: it cannot be supplied through environment variables.
 [Enrichment entries](../configuration/exporter-enrichment.md) live there too, unless [dynamic discovery](../configuration/discovery.md) is enabled, in which case they come from the discovery endpoint instead.
 

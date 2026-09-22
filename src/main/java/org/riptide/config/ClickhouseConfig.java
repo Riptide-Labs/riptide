@@ -38,6 +38,25 @@ public final class ClickhouseConfig {
         private boolean manageSchema = true;
 
         /**
+         * How long startup waits for a ClickHouse endpoint that is not answering yet (#833). Read by
+         * {@code ClickhouseRepository.start()}, which probes the endpoint every 2 s within this
+         * window and proceeds on the first answer; past it, startup fails naming the endpoint and
+         * this key. Proven by {@code ClickhouseStartupWaitIT}, which sets it and observes the
+         * failure at the configured bound.
+         *
+         * <p>Only silence is retried: a refused connection, an unresolvable host, a timeout. A
+         * server that answers with an error (wrong password, missing table) fails at once with the
+         * existing message. {@code 0} means one probe and no retry, which is the pre-#833
+         * behaviour for an endpoint that is simply wrong. Negative is rejected at construction.
+         *
+         * <p>30 s sits under the budgets a slow start has to fit: the compose healthcheck
+         * ({@code start_period} 20 s plus 3 × 10 s) and the documented Kubernetes
+         * {@code startupProbe} (30 × 2 s). Receivers start after this wait, so {@code /readyz} is
+         * not ready for as long as it lasts; an operator who raises it raises those too.
+         */
+        private Duration startupWait = Duration.ofSeconds(30);
+
+        /**
          * Client-side LZ4 compression of insert payloads ({@code compressClientRequest}). On by
          * default, unchanged from when it was hardcoded: it cuts the bytes on the wire severalfold on
          * flow data, which matters for egress-billed or WAN-separated deployments.

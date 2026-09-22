@@ -13,6 +13,7 @@ riptide.clickhouse.username=default
 #riptide.clickhouse.password=vault://secret/riptide/clickhouse#password
 riptide.clickhouse.database=riptide
 riptide.clickhouse.manage-schema=true
+riptide.clickhouse.startup-wait=30s          # how long startup waits for a backend that is not up yet
 #riptide.clickhouse.compress-requests=true   # false trades bandwidth for CPU on a LAN
 riptide.clickhouse.batch.enabled=true
 riptide.clickhouse.batch.max-rows=10000
@@ -62,6 +63,31 @@ riptide.clickhouse.password=vault://secret/riptide/clickhouse/acme#password
 ```
 
 The username carries the database because ClickHouse users are instance-wide — `riptide onboard` prints the exact value to paste. On a deployment onboarded before that rename it is the unqualified `writer_acme`; see [Object names carry their database](../deploy/multi-tenancy.md#object-names-carry-their-database). This field is not a URL, so the `@` is written literally; embed the same name in a URL and it must be `%40`.
+
+## Startup wait
+
+`riptide.clickhouse.startup-wait` (duration, default `30s`) is how long startup waits for a ClickHouse that is not answering yet.
+Before its first schema statement the collector probes the endpoint, and while nothing answers it probes again every 2 seconds until the window has elapsed.
+Each unanswered probe is logged at WARN with the endpoint, the attempt number, the time elapsed and the root cause; when the server answers after a wait, one INFO line says after how many attempts.
+Past the window, startup fails naming the endpoint, the window, the attempt count, the last cause and this key.
+The ClickHouse client logs each failed connect at WARN with a stack trace of its own under `com.clickhouse.client.api`, one per probe, so a wait of several probes is noisy.
+The lines to read are the ones from `StartupWait`; lower that client logger to `ERROR` if the traces are unwelcome.
+
+Only silence is retried: a refused connection, a host that does not resolve, a probe that times out.
+Each probe is bounded on its own, 5 seconds to connect and 5 seconds for the answer, so a server that accepts the connection and never replies, or a host that drops packets instead of refusing them, costs one probe rather than the kernel's patience, and the wait ends at most one probe past its window.
+A server that answers with an error, such as a wrong password or a missing table, ends the wait at once and startup fails with the [schema ownership](#schema-ownership) diagnostics below, unchanged.
+Nothing after the server has answered is retried.
+
+This exists for deployments that start the collector and ClickHouse in no particular order, such as a containerlab topology or a systemd unit with no ordering on the database ([#833](https://github.com/Riptide-Labs/riptide/issues/833)).
+Without it, a collector started first exits on its first statement and a restart policy turns that into a loop.
+The [compose stack](../deploy/docker-compose.md) never enters the wait: it starts `riptide` only after `clickhouse` is healthy.
+
+The cost is that a wrong endpoint now takes the full window to fail instead of failing at once.
+The WARN lines name the endpoint from the first attempt, and `riptide.clickhouse.startup-wait=0` restores immediate failure: one probe, no retry.
+Receivers start after this wait, so `/readyz` reports not ready for as long as it lasts; the default sits under the [probe budgets](../deploy/operations.md#health-endpoints--probes) the compose healthcheck and the documented Kubernetes `startupProbe` allow, and raising it means raising those too.
+
+The key is read by `ClickhouseRepository.start()`.
+`ClickhouseStartupWaitIT` proves the read: it sets a 1 second window against a port nothing listens on and observes startup fail at that bound, naming the key.
 
 ## Schema ownership
 

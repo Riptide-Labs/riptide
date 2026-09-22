@@ -566,6 +566,10 @@ readinessProbe: { httpGet: { path: /readyz, port: 8080 } }
 
 The Compose stack uses `/readyz` as the service `healthcheck` (via the image's BusyBox `wget`).
 
+Receivers start after the collector's [ClickHouse startup wait](../configuration/clickhouse.md#startup-wait), so `/readyz` answers `503` for as long as a backend keeps it waiting, up to `riptide.clickhouse.startup-wait` (30 s by default).
+That default sits under both budgets above: the `startupProbe` allows 30 × 2 s = 60 s, and the compose healthcheck allows `start_period: 20s` plus 3 × 10 s.
+Raise the wait and raise those with it, or the orchestrator restarts a collector that was about to come up.
+
 The endpoints are served on virtual threads, capped by `riptide.management.max-concurrent-requests` (default 32).
 Requests beyond the cap are answered `503` rather than queued, so a probe gets a fast answer instead of waiting behind a burst.
 
