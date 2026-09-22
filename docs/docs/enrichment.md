@@ -188,7 +188,12 @@ The rollups carry the name but not the id or the source.
 
 A non-zero id the table cannot name falls through to the rules and marks `enrichment_application_unresolved`.
 That is normal for the first table refresh interval after a restart (Cisco defaults to 600 s, the lab exporter used 60 s), and permanent on a device that exports ids without a table.
-A Juniper SRX 345 with application tracking exports `applicationId` in its IPv4 template but sends `0` until application identification classifies, and sends no table at all.
+A Juniper SRX340 on Junos 24.4R1-S3.7 exports `applicationId` in its IPv4 template when the template carries `export-extension app-id`, and writes `0` into every record.
+Measured on 2026-09-23 over 662 s: 11,539 IPv4 records, all `0`, while application identification was enabled and classifying (protocol bundle 999 of 2023-06-13; the box's own statistics count millions of named sessions), every sampled interface sat in a zone with `application-tracking` on, and the only options template was the sampling one, so no name table either.
+On that platform and release the field is a placeholder, and Juniper's SRX J-Flow documentation does not list it.
+A different Junos release, a different SRX platform, or a signature package update is a new measurement, not a reason to trust this one.
+Application names leave such a box only as AppTrack syslog (`APPTRACK_SESSION_CLOSE`), which riptide does not consume; that is the follow-up in [#848](https://github.com/Riptide-Labs/riptide/issues/848).
+Until then an SRX is named by the rules rung, and the unresolved meter does not move, because `0` means "not sent".
 
 The table's own meters follow the interface table's vocabulary: `enrichment_optionApplications_consumed`, `_skipped` (a named row with no usable id, or a name past the cap below) and `_rejected` (an entry evicted because a scope hit its cap).
 Retention is the interface table's setting, `riptide.snmp.options.retention-ms`.
