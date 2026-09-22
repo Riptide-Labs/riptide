@@ -204,6 +204,16 @@ class SkipsAndCountsWhatItCannotSend(unittest.TestCase):
         sent, _port, skipped, reasons = summary_of(proc)
         self.assertEqual((sent, skipped, reasons), (1, 1, {"truncated by snaplen": 1}))
 
+    def test_udp_length_below_the_header_is_malformed_not_sent(self):
+        # A length field under 8 would slice an empty payload and count it as sent.
+        bogus = struct.pack("!HHHH", 40000, 9999, 0, 0) + b"payload"
+        frames = [ethernet(ipv4(bogus)), ethernet(ipv4(udp(PAYLOADS[0])))]
+        received, proc = replay(pcap(frames))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(received, [PAYLOADS[0]])
+        sent, _port, skipped, reasons = summary_of(proc)
+        self.assertEqual((sent, skipped, reasons), (1, 1, {"malformed UDP length": 1}))
+
     def test_readable_capture_with_nothing_to_send_is_not_an_error(self):
         received, proc = replay(pcap([ethernet(ipv4(b"\x00" * 20, proto=6))]))
         self.assertEqual(proc.returncode, 0, proc.stderr)

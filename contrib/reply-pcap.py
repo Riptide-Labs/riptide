@@ -85,6 +85,8 @@ def udp_payload(ethertype, packet: bytes):
     if len(packet) < ihl + 8:
         return "truncated by snaplen", None, None
     dport, udp_length = struct.unpack_from("!HH", packet, ihl + 2)
+    if udp_length < 8:
+        return "malformed UDP length", None, None
     payload = packet[ihl + 8:ihl + udp_length]
     if len(payload) < udp_length - 8:
         return "truncated by snaplen", None, None
