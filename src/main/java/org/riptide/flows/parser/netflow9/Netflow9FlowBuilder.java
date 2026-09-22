@@ -7,6 +7,7 @@ package org.riptide.flows.parser.netflow9;
 
 import lombok.Getter;
 import lombok.Setter;
+import org.riptide.flows.parser.ie.values.ApplicationIdValue;
 import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.data.Flow;
 import org.riptide.flows.parser.data.Flow.SamplingProvenance;
@@ -321,10 +322,9 @@ public class Netflow9FlowBuilder {
                 return this.rate.get().from();
             }
 
-            /* Out of scope for this protocol; see the L7 design spec. */
             @Override
             public long getApplicationId() {
-                return 0L;
+                return raw.applicationId != null ? raw.applicationId : 0L;
             }
 
             @Override
@@ -358,7 +358,20 @@ public class Netflow9FlowBuilder {
                 .flatMap(ds -> ds.records.stream())
                 .map(record -> {
                     final var dummyFlow = new Netflow9RawFlow();
-                    for (var value : record.getValues()) {
+                    // Same order as DataRecord.getValues(): merged option rows first, so the
+                    // record's own fields win. An application table row's applicationId is the
+                    // row's key, not a fact about this record; an exporter whose System scope
+                    // equals its source id would otherwise stamp the last stored row's id on
+                    // every record without field 95 (CiscoNbarBlackboxTest#aMergedTableRowDoesNotStampItsIdOnRecords).
+                    for (var value : record.options) {
+                        if (!ApplicationIdValue.NAME.equals(value.getName())) {
+                            this.conversionService.apply(value, dummyFlow);
+                        }
+                    }
+                    for (var value : record.fields) {
+                        this.conversionService.apply(value, dummyFlow);
+                    }
+                    for (var value : record.scopes) {
                         this.conversionService.apply(value, dummyFlow);
                     }
                     dummyFlow.recordCount = packet.header.count;

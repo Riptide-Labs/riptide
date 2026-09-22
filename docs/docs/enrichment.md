@@ -17,7 +17,7 @@ gracefully** — in the worst case a flow carries exactly what the packets said:
 | Layer | Source | Needs |
 |---|---|---|
 | 2 — live | SNMP IF-MIB, reverse DNS | reachable agents/resolvers |
-| 1.5 — exporter-pushed | v9/IPFIX interface option records (`option interface-table`), IPFIX application tables (`option application-table`, RFC 6759) | the exporter sending them — nothing on riptide's side |
+| 1.5 — exporter-pushed | v9/IPFIX interface option records (`option interface-table`), v9/IPFIX application tables (`option application-table`, RFC 6759) | the exporter sending them — nothing on riptide's side |
 | 1 — static | operator mapping files (enrichment-entry `interfaces`, routing mapping) | a config file |
 | 0.5 — global databases | GeoIP mmdb files ([`riptide.geoip`](configuration/geoip.md)) | database files on disk |
 | 0 — packet | ifIndex numbers, exporter-sent AS numbers, addresses, next hop | nothing — always available |
@@ -167,9 +167,10 @@ shadow them.
 
 ### Application names from the exporter
 
-An exporter that runs application recognition sends two things: an `applicationId` (IPFIX element 95, RFC 6759) on every flow record, and an application table as option records that maps each id to a name and a description.
-Cisco NBAR2 does this with `match application name` in the flow record and `option application-table` on the exporter.
-Riptide consumes both.
+An exporter that runs application recognition sends two things: an `applicationId` (IPFIX element 95 or NetFlow v9 field 95, RFC 6759) on every flow record, and an application table as option records that maps each id to a name and a description.
+Cisco NBAR2 does this with `match application name` in the flow record and `option application-table` on the exporter, over IPFIX or NetFlow v9 alike.
+Riptide consumes both, over both protocols.
+A v9 exporter names the table's columns `APPLICATION NAME` and `APPLICATION DESCRIPTION` and scopes each row by the system rather than by the id; those rows feed the same table as the IPFIX `applicationName` rows.
 
 The ladder for `application`, in order:
 

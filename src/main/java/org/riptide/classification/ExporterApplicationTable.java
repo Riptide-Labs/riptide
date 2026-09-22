@@ -25,14 +25,17 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Application names pushed by exporters as IPFIX option records (RFC 6759 §4.3, Cisco's
+ * Application names pushed by exporters as v9/IPFIX option records (RFC 6759 §4.3, Cisco's
  * {@code option application-table}): the enrichment ladder's exporter-pushed rung for the
  * {@code application} column, above the port rules. Fed by the option tap
  * ({@link OptionListener}); entries expire on the same retention as the interface table, since
  * exporters re-send both tables on the same cadence.
  *
- * <p>Recognised shape: an {@code applicationName} (96) or {@code applicationDescription} (94)
+ * <p>Recognised shape: a name (IPFIX {@code applicationName}, v9 {@code APPLICATION NAME}; 96) or
+ * description (IPFIX {@code applicationDescription}, v9 {@code APPLICATION DESCRIPTION}; 94)
  * field, with the packed {@code applicationId} (95) in the scope or, failing that, in the fields.
+ * An IPFIX exporter scopes the row by the id; a v9 exporter scopes it by {@code SCOPE:SYSTEM}
+ * and carries the id as a field, which is the fall-through.
  * Keyed like {@link org.riptide.snmp.ExporterInterfaceTable}: one inner cache per exporter
  * identity, capped per scope at {@link #MAX_APPLICATIONS_PER_SCOPE} so a sprayed table displaces
  * only its own entries.</p>
@@ -47,8 +50,9 @@ import java.util.Optional;
 public class ExporterApplicationTable implements OptionListener {
 
     private static final List<String> ID_FIELDS = List.of(ApplicationIdValue.NAME);
-    private static final List<String> NAME_FIELDS = List.of("applicationName");
-    private static final List<String> DESCRIPTION_FIELDS = List.of("applicationDescription");
+    // v9 keeps Cisco's field names for 96 and 94; 95 is registered as applicationId in both registries
+    private static final List<String> NAME_FIELDS = List.of("APPLICATION NAME", "applicationName");
+    private static final List<String> DESCRIPTION_FIELDS = List.of("APPLICATION DESCRIPTION", "applicationDescription");
 
     /**
      * Application ids retained per scope identity, fixed rather than shared with the interface

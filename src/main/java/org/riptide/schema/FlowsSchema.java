@@ -1444,7 +1444,7 @@ public final class FlowsSchema {
             -- this column existed, which is distinct from 'assumed' and is not backfillable.
             samplingProvenance LowCardinality(String),
 
-            -- The exporter's application id (IPFIX element 95, RFC 6759), packed as
+            -- The exporter's application id (IPFIX element 95 or NetFlow v9 field 95, RFC 6759), packed as
             -- engine << 24 | selector. 0 = the record carried none.
             applicationId UInt32,
 
