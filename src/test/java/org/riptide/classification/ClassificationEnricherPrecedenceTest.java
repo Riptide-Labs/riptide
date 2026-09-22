@@ -73,6 +73,32 @@ class ClassificationEnricherPrecedenceTest {
         verify(this.engine, never()).classify(any());
     }
 
+    /** The description rides the exporter rung and only that rung. */
+    @Test
+    void anExporterNamedIdCarriesTheTableDescription() throws Exception {
+        this.table.accept(new ExporterIdentity.NetflowIpfix(InetAddress.getByName("10.10.3.1"), 6),
+                List.of(new UnsignedValue("applicationId", HTTP)),
+                List.of(new StringValue("applicationName", "http"),
+                        new StringValue("applicationDescription", "World Wide Web traffic")));
+        final EnrichedFlow flow = flow(HTTP);
+
+        this.enricher.enrich(source(), List.of(flow)).join();
+
+        assertThat(flow.getApplicationSource()).isEqualTo(ApplicationSource.Exporter);
+        assertThat(flow.getApplicationDescription()).isEqualTo("World Wide Web traffic");
+    }
+
+    @Test
+    void aRuleNamedFlowCarriesNoDescription() throws Exception {
+        when(this.engine.classify(any())).thenReturn("ssh");
+        final EnrichedFlow flow = flow(ICMP);
+
+        this.enricher.enrich(source(), List.of(flow)).join();
+
+        assertThat(flow.getApplicationSource()).isEqualTo(ApplicationSource.Rules);
+        assertThat(flow.getApplicationDescription()).isNull();
+    }
+
     @Test
     void anUnresolvedIdFallsToTheRulesAndIsCounted() throws Exception {
         when(this.engine.classify(any())).thenReturn("www");

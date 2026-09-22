@@ -84,9 +84,10 @@ public class ExporterApplicationTable implements OptionListener {
     /**
      * Longest {@code applicationDescription} stored; a longer one is truncated to it.
      *
-     * <p>Truncated rather than refused because a description is never a dimension: it has no column
-     * today and is not a sort key in any rollup, so an over-long one costs memory and nothing else.
-     * Refusing the row over it would throw away the name, which is the field that matters.</p>
+     * <p>Truncated rather than refused because a description is never a dimension: its column on
+     * {@code flows} is a plain low-cardinality string and no rollup sorts on it, so an over-long
+     * one costs memory and nothing else. Refusing the row over it would throw away the name, which
+     * is the field that matters.</p>
      */
     private static final int MAX_DESCRIPTION_LENGTH = 255;
 

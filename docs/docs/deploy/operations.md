@@ -284,6 +284,12 @@ Where an exporter sends an application table, `application` now carries the expo
 The rollups by application therefore change vocabulary for those exporters from the upgrade onward.
 See [Application names from the exporter](../enrichment.md#application-names-from-the-exporter).
 
+**`httpHost`, `httpUri` and `applicationDescription` columns are added to `flows` on upgrade.** The first two carry the HTTP host and URI a Cisco AVC exporter sends on the request record; the third carries the exporter table's description of `application` when the exporter named the flow.
+The mechanics are those of `samplingProvenance` above: manage mode adds them in place, a provisioned deployment re-runs `riptide onboard`, and existing rows read `''`.
+`''` is also what a record without a host, a URI or a description produces, so on a row older than the upgrade the two cannot be told apart and nothing is backfilled.
+No rollup changes.
+See [HTTP host and URI from Cisco AVC](../enrichment.md#http-host-and-uri-from-cisco-avc).
+
 ## Ingest loss counters
 
 Flows can be dropped at two bounded queues, and each one counts what it discards — nothing is

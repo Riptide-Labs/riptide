@@ -200,6 +200,36 @@ A domain that has a table of its own never borrows from another domain, so two e
 A Catalyst 8000V sends its option tables under one observation domain and its flow records under another.
 The fallback is what makes its names resolve, for interface names as well as application names.
 
+### HTTP host and URI from Cisco AVC
+
+A Cisco exporter configured with `collect application http host` and `collect application http uri statistics` sends two enterprise elements on its HTTP records: the HTTP host (PEN 9, element 12235) and the HTTP URI statistics (PEN 9, element 9357).
+Riptide stores both, in the `httpHost` and `httpUri` columns of `flows`.
+The layouts below were read from a Catalyst 8000V on IOS-XE 26.01.02, the reference capture that nl6 keeps under `testdata/cisco-avc/capture/`, and riptide's own fixture tests pin them against those bytes.
+Another platform has not been checked.
+
+The host element is not a bare hostname.
+Every value starts with six bytes, the http application id `03 00 00 50` followed by the sub-application id `34 02`, and the hostname follows.
+The prefix is a constant of the layout, http's own id and the host field's sub-application id, so riptide matches it and stores what follows; the prefix alone, which is what a record with no host carries, stores `''`.
+A value that does not start with the prefix is stored as sent, so a platform that sent a bare hostname keeps it, and a platform with a different prefix shows control bytes at the start of the value rather than a hostname missing its first six characters.
+
+The URI element is a sequence of pairs, each a URI terminated by a NUL byte and followed by a two-byte big-endian hit count, with no trailing delimiter.
+The router records the first path segment only: `/api/v1` and `/api/login` both arrive as `/api`.
+The reference capture carries one pair per record, because IOS-XE only binds this element on a monitor aged at transaction end.
+One column holds one URI, so when a record carries several pairs riptide stores the URI with the highest count, the first on a tie.
+A trailing fragment without its NUL or its count is ignored, and a field with no complete pair stores `''`.
+
+Both elements ride the ingress record of a request only.
+The response record of the same conversation carries the six-byte prefix alone and an empty URI field, and so does every record the L7 engine reclassified mid-connection, so those rows read `''` in both columns.
+A panel that ranks hosts must therefore count request records rather than bytes: the response bytes sit on a row with no host.
+`''` also means the exporter sent no such element, or the row predates the columns; the three cannot be told apart.
+
+The exporter's application table carries a description beside each name, and riptide stores it in `applicationDescription` on every row the table named, that is where `applicationSource` is `exporter`.
+A row the rules named, or nothing named, reads `''`.
+
+Riptide does not model the third Cisco element on the same record, the connection id (PEN 9, element 12242).
+It is logged as an undeclared element when the template arrives, which is the only signal that it is being dropped.
+NetFlow v9 export of the HTTP elements is not parsed either.
+
 ### Writing a rule
 
 The header is fixed and every column must be present, in this order:

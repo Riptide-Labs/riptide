@@ -81,6 +81,18 @@ public class IpfixRawFlow {
      * such element.
      */
     public Long applicationId;
+    /**
+     * Cisco AVC HTTP host, PEN 9 / 12235, with its six-byte application prefix already stripped by
+     * {@link org.riptide.flows.parser.ie.values.HttpHostValue}. Null when the template has no such
+     * element; empty when the record carried the prefix alone, as every egress record does.
+     */
+    public String httpHost;
+    /**
+     * Cisco AVC HTTP URI statistics, PEN 9 / 9357, reduced to the URI with the highest hit count
+     * by {@link org.riptide.flows.parser.ie.values.HttpUriStatisticsValue}. Null when the template
+     * has no such element; empty when the record carried no complete pair.
+     */
+    public String httpUri;
     public Double samplingInterval;
     public Double samplerRandomInterval;
     public InetAddress sourceIPv6Address;

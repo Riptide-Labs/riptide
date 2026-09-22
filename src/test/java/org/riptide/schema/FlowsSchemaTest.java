@@ -1232,4 +1232,30 @@ class FlowsSchemaTest {
         assertThat(FlowsSchema.addAdditiveColumns("riptide")).contains(
                 "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS applicationSource LowCardinality(String)");
     }
+
+    /** Exporter-supplied text with no cap and no dictionary: a plain String, never a dimension. */
+    @Test
+    void httpHostIsAnAdditiveStringColumn() {
+        assertThat(FlowsSchema.additiveColumnNames()).contains("httpHost");
+        assertThat(FlowsSchema.createFlowsTable("riptide")).contains("httpHost String");
+        assertThat(FlowsSchema.addAdditiveColumns("riptide")).contains(
+                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS httpHost String");
+    }
+
+    @Test
+    void httpUriIsAnAdditiveStringColumn() {
+        assertThat(FlowsSchema.additiveColumnNames()).contains("httpUri");
+        assertThat(FlowsSchema.createFlowsTable("riptide")).contains("httpUri String");
+        assertThat(FlowsSchema.addAdditiveColumns("riptide")).contains(
+                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS httpUri String");
+    }
+
+    /** One value per application-table row, so a dictionary the size of a protocol pack. */
+    @Test
+    void applicationDescriptionIsAnAdditiveLowCardinalityColumn() {
+        assertThat(FlowsSchema.additiveColumnNames()).contains("applicationDescription");
+        assertThat(FlowsSchema.createFlowsTable("riptide")).contains("applicationDescription LowCardinality(String)");
+        assertThat(FlowsSchema.addAdditiveColumns("riptide")).contains(
+                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS applicationDescription LowCardinality(String)");
+    }
 }

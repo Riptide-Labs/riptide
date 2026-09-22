@@ -92,6 +92,16 @@ public class ClickhouseFlow {
     // 'none' for an unenriched flow; '' is reserved for rows written before the column existed.
     private String applicationSource = ApplicationSource.None.token();
 
+    // '' for any flow the exporter's table did not describe, and for every row written before the
+    // column existed; the two cannot be told apart and neither is backfilled.
+    private String applicationDescription = "";
+
+    // Cisco AVC HTTP host and URI, '' when the record carried none. Only the ingress record of an
+    // HTTP request carries them, so the response record of the same conversation is '' too, as is
+    // every row written before the columns existed.
+    private String httpHost = "";
+    private String httpUri = "";
+
     private byte srcLocality;
     private byte dstLocality;
     private byte flowLocality;

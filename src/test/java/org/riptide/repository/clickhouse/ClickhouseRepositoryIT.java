@@ -674,6 +674,34 @@ public class ClickhouseRepositoryIT {
         Assertions.assertThat(bareRow.getString("applicationSource")).isEqualTo("none");
     }
 
+    /** The AVC host and URI and the table description persist; a flow without them reads ''. */
+    @Test
+    void httpHostUriAndDescriptionRoundTripThroughTheirColumns() throws Exception {
+        final var database = "http_round_trip";
+        final var repo = new ClickhouseRepository(
+                new ClickhouseRepository$FlowMapperImpl(), configFor(database, true), RESOLVERS);
+        repo.start();
+
+        final var request = testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 62003, 80, 100L);
+        request.setHttpHost("www.example.com");
+        request.setHttpUri("/api");
+        request.setApplicationDescription("World Wide Web traffic");
+        final var bare = testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 62004, 80, 100L);
+        repo.persist(List.of(request, bare));
+
+        final var requestRow = queryClient.queryAll("SELECT httpHost, httpUri, applicationDescription FROM "
+                + database + ".flows WHERE srcPort = 62003").getFirst();
+        Assertions.assertThat(requestRow.getString("httpHost")).isEqualTo("www.example.com");
+        Assertions.assertThat(requestRow.getString("httpUri")).isEqualTo("/api");
+        Assertions.assertThat(requestRow.getString("applicationDescription")).isEqualTo("World Wide Web traffic");
+
+        final var bareRow = queryClient.queryAll("SELECT httpHost, httpUri, applicationDescription FROM "
+                + database + ".flows WHERE srcPort = 62004").getFirst();
+        Assertions.assertThat(bareRow.getString("httpHost")).isEmpty();
+        Assertions.assertThat(bareRow.getString("httpUri")).isEmpty();
+        Assertions.assertThat(bareRow.getString("applicationDescription")).isEmpty();
+    }
+
     /**
      * Every rung reads back as its own bit through the real materialized view (#581).
      *
