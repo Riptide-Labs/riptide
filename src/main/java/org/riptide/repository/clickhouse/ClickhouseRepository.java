@@ -44,8 +44,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.LinkedHashMap;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Future;
+import java.time.temporal.ChronoUnit;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.LinkedHashSet;
@@ -289,10 +288,13 @@ public class ClickhouseRepository implements FlowRepository {
     @SneakyThrows
     public void start() {
         // Before either mode's first statement, and once for both: a backend that is not up yet is
-        // waited for, bounded (#833). Manage mode's bootstrap client below shares this client's
-        // endpoint and credentials, so one probe through this client covers the CREATE DATABASE
-        // that follows. Everything after the server has answered fails as it always did.
-        this.startupWait.await(this.config.getEndpoint(), this::probeServer);
+        // waited for, bounded (#833). The probe goes through its own short-lived client, built on
+        // the same endpoint and credentials as this one and the bootstrap client below, so an answer
+        // to it is an answer for both; see probeClient for why it is not this client. Everything
+        // after the server has answered fails as it always did.
+        try (Client probe = probeClient()) {
+            this.startupWait.await(this.config.getEndpoint(), () -> probeServer(probe));
+        }
 
         if (this.config.isManageSchema()) {
             // Manage mode: ensure the schema idempotently. The database comes first — the main
@@ -1031,6 +1033,46 @@ public class ClickhouseRepository implements FlowRepository {
     private static final Duration STARTUP_READ_TIMEOUT = Duration.ofSeconds(10);
 
     /**
+     * How long one startup-wait attempt may spend connecting, and then how long it may wait for the
+     * answer. A healthy ClickHouse answers {@code SELECT 1} in milliseconds; one that takes longer
+     * than this is, for the wait's purpose, not answering yet, and is asked again. Both bounds
+     * together cap an attempt, so the wait ends at most one attempt past its window.
+     */
+    static final Duration PROBE_TIMEOUT = Duration.ofSeconds(5);
+
+    /**
+     * The client the startup wait probes through: the main client's endpoint, credentials and
+     * database, with the bounds the main client does not have.
+     *
+     * <p>Not the main client, and not a {@code get(timeout)} on its future. The main client is built
+     * without {@code useAsyncRequests}, so {@code query()} runs on the calling thread and hands back
+     * an already-completed future; waiting on that with a timeout bounds nothing, which
+     * {@code PoisonBatchProbeIT} measured (the probe there passed with a zero-second bound). And its
+     * own bounds are the defaults: no connect timeout, an unbounded socket timeout, and three
+     * internal retries. A server that accepts the connection and never replies, or a host that
+     * drops packets rather than refusing them, would hold the wait for as long as the kernel
+     * allows, times four, before the loop looked at the clock once. That is the restart loop #833
+     * set out to remove, under a different name. Measured, by mutation: with the socket timeout
+     * below set to zero, {@code ClickhouseStartupWaitIT}'s accepts-and-never-answers case blocks
+     * past its own 30 s timeout, because a blocking read ignores the interrupt.</p>
+     *
+     * <p>Pinned to the configured database like the main client, so what it is told is what the
+     * main client will be told. Retries off: the wait is the retry, and the client's own attempts
+     * only quadrupled the WARN lines and stack traces the by-hand run showed.</p>
+     */
+    private Client probeClient() {
+        return new Client.Builder()
+                .addEndpoint(this.config.getEndpoint())
+                .setUsername(this.username)
+                .setPassword(this.password)
+                .setDefaultDatabase(this.config.getDatabase())
+                .setConnectTimeout(PROBE_TIMEOUT.toMillis(), ChronoUnit.MILLIS)
+                .setSocketTimeout(PROBE_TIMEOUT.toMillis(), ChronoUnit.MILLIS)
+                .setMaxRetries(0)
+                .build();
+    }
+
+    /**
      * One startup-wait attempt: is anything answering at the endpoint?
      *
      * <p>Not {@code Client.ping()}. In client-v2 0.10.0 that runs {@code SELECT 1} and folds every
@@ -1038,36 +1080,26 @@ public class ClickhouseRepository implements FlowRepository {
      * the credential, and the wait must retry only the first. This runs the same statement and
      * classifies the failure itself: a {@link ServerException} anywhere in the cause chain means the
      * server answered, whatever it said. On a fresh server in manage mode the answer is
-     * {@code UNKNOWN_DATABASE}, because this client is pinned to a database that does not exist yet,
-     * and that is an answer: {@code ensureDatabase} is what happens next. A wrong password is an
-     * answer too, and {@code checkSchema} reports it with the server's own message.</p>
+     * {@code UNKNOWN_DATABASE}, because the probe client is pinned to a database that does not exist
+     * yet, and that is an answer: {@code ensureDatabase} is what happens next. A wrong password is
+     * an answer too, and {@code checkSchema} reports it with the server's own message.</p>
      *
-     * <p>Bounded per attempt, for the same reason every other startup read is: a server that accepts
-     * the connection and never replies must not hold the wait past its window.</p>
+     * <p>Everything else, a refused connection, an unresolvable host, a connect or read that ran
+     * into {@link #PROBE_TIMEOUT}, is silence. An interrupt is neither: the wait must end saying
+     * startup was torn down, so it is rethrown rather than classified.</p>
      */
-    private StartupWait.Outcome probeServer() throws InterruptedException {
-        CompletableFuture<QueryResponse> pending = null;
-        try {
-            pending = this.client.query("SELECT 1");
-            try (QueryResponse response = pending.get(STARTUP_READ_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
-                return new StartupWait.Outcome.Answered();
-            }
+    private static StartupWait.Outcome probeServer(final Client probe) throws InterruptedException {
+        try (QueryResponse response = probe.query("SELECT 1").get()) {
+            return new StartupWait.Outcome.Answered();
         } catch (final InterruptedException e) {
-            cancel(pending);
             throw e;
-        } catch (final TimeoutException e) {
-            cancel(pending);
-            return new StartupWait.Outcome.Silent(e);
         } catch (final Exception e) {
+            if (carriesInterrupt(e)) {
+                throw new InterruptedException("interrupted while probing ClickHouse");
+            }
             return carriesServerAnswer(e)
                     ? new StartupWait.Outcome.Answered()
                     : new StartupWait.Outcome.Silent(e);
-        }
-    }
-
-    private static void cancel(final Future<?> pending) {
-        if (pending != null) {
-            pending.cancel(true);
         }
     }
 

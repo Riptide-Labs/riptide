@@ -46,8 +46,8 @@ import java.util.concurrent.Executors;
  *
  * <p>The "late backend" is the running container behind a TCP relay that does not bind its port
  * until a delay has passed. Until then a connection is refused, which is what a collector sees when
- * its backend container has not started; a bound-but-unaccepted socket would instead be accepted
- * into the kernel backlog and hang the probe until its timeout, which is a different case.</p>
+ * its backend container has not started. A bound-but-unaccepted socket is the other case, accepted
+ * into the kernel backlog and answering nothing, and it has its own test below.</p>
  */
 @Testcontainers
 class ClickhouseStartupWaitIT {
@@ -164,6 +164,32 @@ class ClickhouseStartupWaitIT {
                 .as("the window was honoured, not cut short")
                 .isGreaterThanOrEqualTo(Duration.ofSeconds(1));
         Assertions.assertThat(warnings()).hasSize(1);
+    }
+
+    @Test
+    @Timeout(30)
+    void aServerThatAcceptsAndNeverAnswersIsSilenceBoundedPerAttempt() throws Exception {
+        // A bound socket nobody accepts on: the kernel completes the handshake into the backlog and
+        // the request then waits for an answer that never comes. This is the case the per-attempt
+        // bound exists for. The main client's own timeouts are unbounded, and a get(timeout) on its
+        // future bounds nothing (PoisonBatchProbeIT measured that), so this is what pins that the
+        // probe goes through a client that does time out.
+        try (var hung = new ServerSocket(0)) {
+            final var config = config("http://127.0.0.1:" + hung.getLocalPort(), "riptide", "riptide");
+            config.setStartupWait(Duration.ofSeconds(1));
+
+            final Instant before = Instant.now();
+            Assertions.assertThatThrownBy(() -> repository(config).start())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("within PT1S")
+                    .hasMessageContaining("1 attempt(s)")
+                    .hasMessageContaining("timed out");
+            final Duration took = Duration.between(before, Instant.now());
+            Assertions.assertThat(took)
+                    .as("one attempt, bounded by the probe's socket timeout, not by the kernel's")
+                    .isGreaterThanOrEqualTo(ClickhouseRepository.PROBE_TIMEOUT)
+                    .isLessThan(ClickhouseRepository.PROBE_TIMEOUT.multipliedBy(3));
+        }
     }
 
     @Test

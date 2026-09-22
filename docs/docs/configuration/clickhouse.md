@@ -70,10 +70,11 @@ The username carries the database because ClickHouse users are instance-wide —
 Before its first schema statement the collector probes the endpoint, and while nothing answers it probes again every 2 seconds until the window has elapsed.
 Each unanswered probe is logged at WARN with the endpoint, the attempt number, the time elapsed and the root cause; when the server answers after a wait, one INFO line says after how many attempts.
 Past the window, startup fails naming the endpoint, the window, the attempt count, the last cause and this key.
-The ClickHouse client retries each connect a few times on its own before the probe gives up, and logs every one of those at WARN with a stack trace under `com.clickhouse.client.api`, so a wait of several probes is noisy.
+The ClickHouse client logs each failed connect at WARN with a stack trace of its own under `com.clickhouse.client.api`, one per probe, so a wait of several probes is noisy.
 The lines to read are the ones from `StartupWait`; lower that client logger to `ERROR` if the traces are unwelcome.
 
 Only silence is retried: a refused connection, a host that does not resolve, a probe that times out.
+Each probe is bounded on its own, 5 seconds to connect and 5 seconds for the answer, so a server that accepts the connection and never replies, or a host that drops packets instead of refusing them, costs one probe rather than the kernel's patience, and the wait ends at most one probe past its window.
 A server that answers with an error, such as a wrong password or a missing table, ends the wait at once and startup fails with the [schema ownership](#schema-ownership) diagnostics below, unchanged.
 Nothing after the server has answered is retried.
 
