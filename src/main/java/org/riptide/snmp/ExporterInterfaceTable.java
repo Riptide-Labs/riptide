@@ -8,14 +8,11 @@ package org.riptide.snmp;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
-import com.google.common.cache.RemovalCause;
-import com.google.common.primitives.UnsignedLong;
 import org.riptide.flows.parser.ie.Value;
-import org.riptide.flows.parser.ie.values.visitor.StringVisitor;
-import org.riptide.flows.parser.ie.values.visitor.UnsignedLongVisitor;
+import org.riptide.flows.parser.session.ExporterScopedTable;
 import org.riptide.flows.parser.session.OptionListener;
 import org.riptide.flows.parser.session.OptionListener.Verdict;
+import org.riptide.flows.parser.session.OptionTables;
 import org.riptide.flows.parser.session.SessionAdmissionConfig;
 import org.riptide.pipeline.ExporterIdentity;
 import org.springframework.stereotype.Component;
@@ -23,7 +20,6 @@ import org.springframework.stereotype.Component;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.ExecutionException;
 import java.time.Duration;
 
 /**
@@ -41,6 +37,10 @@ import java.time.Duration;
  * <p>Description (83) lands in the {@code alias} slot: IANA anchors it to ifDescr but
  * its own examples include ifAlias-style content; per-field authority in
  * {@link IfInfo#optionsThenSnmp} lets a real SNMP ifAlias win over it.</p>
+ *
+ * <p>Storage and lookup are {@link ExporterScopedTable}'s: one inner cache per exporter identity,
+ * with a fallback from the exact identity to the device address for exporters that send their
+ * tables and their flow records under different observation domains.</p>
  */
 @Component
 public class ExporterInterfaceTable implements OptionListener {
@@ -52,27 +52,12 @@ public class ExporterInterfaceTable implements OptionListener {
     private static final List<String> IFINDEX_FIELDS = List.of("INPUT_SNMP", "ingressInterface", "OUTPUT_SNMP", "egressInterface");
 
     /**
-     * Nested per scope rather than flat on {@code (identity, ifIndex)}, so the {@code ifIndex} half
-     * can be bounded on its own.
-     *
-     * <p>A per-scope cap is what this table actually needs: {@code addOptions} runs once per option
-     * <em>data record</em>, several hundred fit in one datagram, and an attacker inside a single
-     * admitted scope can walk {@code ifIndex} across 2^32 values. A flat map with one size bound
-     * would instead evict across scopes, letting whoever sprays hardest displace a real exporter's
-     * interface names — the global-LRU hole {@code SessionAdmission} exists to avoid.
-     *
-     * <p>The outer bound is belt-and-braces. Reaching {@code addOptions} at all requires a template,
-     * and a template requires admission, so the live scope population is already bounded upstream.
-     * What that argument does not cover is the retention window: a scope displaced from its
-     * admission budget stops receiving records but keeps its inner map until the TTL expires it, so
-     * a sustained spray could hold more scopes here than are admitted at any instant. Bounding the
-     * outer level too is what makes the documented worst-case product an actual ceiling rather than
-     * a steady-state estimate.
+     * Why this table needs the per-scope cap {@link ExporterScopedTable} gives it: {@code addOptions}
+     * runs once per option <em>data record</em>, several hundred fit in one datagram, and an
+     * attacker inside a single admitted scope can walk {@code ifIndex} across 2^32 values. The
+     * nesting, both bounds and the device-address index are all {@link ExporterScopedTable}'s.
      */
-    private final Cache<ExporterIdentity, Cache<Integer, IfInfo>> table;
-
-    private final Duration retention;
-    private final int maxIfIndexesPerScope;
+    private final ExporterScopedTable<Integer, IfInfo> table;
 
     private final Meter recordsConsumed;
     private final Meter recordsSkipped;
@@ -89,52 +74,40 @@ public class ExporterInterfaceTable implements OptionListener {
         // sized against how often exporters re-send option tables, not against how often
         // riptide polls — see SnmpOptionsConfig for why those stopped being the same thing
         admissionConfig.validate();
-        this.retention = Duration.ofMillis(optionsConfig.getRetentionMs());
-        this.maxIfIndexesPerScope = admissionConfig.getMaxIfIndexesPerScope();
-        this.table = CacheBuilder.newBuilder()
-                .expireAfterWrite(this.retention)
-                .maximumSize(scopeCeiling(admissionConfig))
-                .build();
         this.recordsConsumed = metrics.meter(MetricRegistry.name("enrichment", "optionInterfaces", "consumed"));
         this.recordsSkipped = metrics.meter(MetricRegistry.name("enrichment", "optionInterfaces", "skipped"));
         this.recordsRejected = metrics.meter(MetricRegistry.name("enrichment", "optionInterfaces", "rejected"));
-    }
-
-    /**
-     * The most scopes that can be admitted anywhere, clamped so a large configuration cannot
-     * overflow the {@code long} Guava wants.
-     */
-    private static long scopeCeiling(final SessionAdmissionConfig config) {
-        final long sources = Math.max(1, config.getMaxSources());
-        final long scopes = Math.max(1, config.getMaxScopesPerSource());
-        return sources > Long.MAX_VALUE / scopes ? Long.MAX_VALUE : sources * scopes;
+        this.table = new ExporterScopedTable<>(Duration.ofMillis(optionsConfig.getRetentionMs()),
+                OptionTables.scopeCeiling(admissionConfig), admissionConfig.getMaxIfIndexesPerScope(),
+                this.recordsRejected::mark);
     }
 
     @Override
     public Verdict accept(final ExporterIdentity identity,
             final Collection<Value<?>> scopes, final List<Value<?>> values) {
-        final String name = string(values, NAME_FIELDS);
-        final String description = string(values, DESCRIPTION_FIELDS);
+        final String name = OptionTables.string(values, NAME_FIELDS);
+        final String description = OptionTables.string(values, DESCRIPTION_FIELDS);
         if (name == null && description == null) {
             // Neither a name nor a description: not this table's shape at all.
-            return Verdict.UNRECOGNISED; // sampler/VRF/app tables, …
+            // sampler, VRF and application tables: another consumer's shape, or nobody's
+            return Verdict.UNRECOGNISED;
         }
 
-        Integer ifIndex = unsigned(scopes, IFINDEX_SCOPES);
+        Integer ifIndex = toIfIndex(OptionTables.unsigned(scopes, IFINDEX_SCOPES));
         if (ifIndex == null || ifIndex == 0) {
             // a zero scope value is as good as none: fall through to the fields
-            ifIndex = unsigned(values, IFINDEX_FIELDS);
+            ifIndex = toIfIndex(OptionTables.unsigned(values, IFINDEX_FIELDS));
         }
         if (ifIndex == null || ifIndex == 0) {
             this.recordsSkipped.mark();
             // Recognised and unusable, which is a different fact from unrecognised (#599). riptide
             // understood this record and still got nothing from it — the state worth an operator's
-            // attention. Reporting it as unrecognised would bury it among the VRF and application
-            // tables nobody is meant to read.
+            // attention. Reporting it as unrecognised would bury it among the VRF tables and other
+            // shapes nobody consumes.
             return Verdict.RECOGNISED_BUT_UNUSABLE;
         }
 
-        final Cache<Integer, IfInfo> forScope = scopeTable(identity);
+        final Cache<Integer, IfInfo> forScope = this.table.scope(identity);
         // per-field merge: exporters may split name and description over separate
         // option tables (e.g. an interface-scoped table plus the IOS-XR style one);
         // the fresh record pins its fields, the existing entry fills the rest
@@ -148,68 +121,17 @@ public class ExporterInterfaceTable implements OptionListener {
         return Verdict.CLAIMED;
     }
 
-    /**
-     * This scope's interface map, created on first use.
-     *
-     * <p>{@code maximumSize} on the inner cache is the per-scope bound, and Guava's eviction is LRU
-     * within that cache alone — so a scope that sprays displaces only its own entries. The explicit
-     * size check in {@link #accept} sits in front of it because Guava evicts lazily and would
-     * otherwise let the map run over the cap between maintenance passes without ever marking the
-     * meter.
-     */
-    private Cache<Integer, IfInfo> scopeTable(final ExporterIdentity identity) {
-        try {
-            return this.table.get(identity, () -> CacheBuilder.newBuilder()
-                    .expireAfterWrite(this.retention)
-                    .maximumSize(this.maxIfIndexesPerScope)
-                    // Only SIZE is counted. Expiry is the table working as designed — exporters
-                    // re-send their option tables — whereas a size eviction is the cap biting, and
-                    // is the one an operator needs to tell an attack from a cap set too low.
-                    .<Integer, IfInfo>removalListener(notification -> {
-                        if (notification.getCause() == RemovalCause.SIZE) {
-                            this.recordsRejected.mark();
-                        }
-                    })
-                    .build());
-        } catch (final ExecutionException e) {
-            // The loader is a plain builder call and throws nothing checked; Guava still declares it.
-            throw new IllegalStateException("interface table for " + identity + " could not be created", e);
-        }
-    }
-
     /** Approximate and cheap; exactly {@code true} when nothing was ever inserted. */
     public boolean isEmpty() {
-        return this.table.size() == 0;
+        return this.table.isEmpty();
     }
 
+    /** Exact identity first, then, only if it has no table at all, another domain of the device. */
     public Optional<IfInfo> lookup(final ExporterIdentity identity, final int ifIndex) {
-        final Cache<Integer, IfInfo> forScope = this.table.getIfPresent(identity);
-        return forScope == null ? Optional.empty() : Optional.ofNullable(forScope.getIfPresent(ifIndex));
+        return this.table.lookup(identity, ifIndex);
     }
 
-    private static String string(final Collection<Value<?>> values, final List<String> names) {
-        for (final Value<?> value : values) {
-            if (names.contains(value.getName())) {
-                final String s = value.accept(new StringVisitor());
-                if (s != null) {
-                    // v9 strings are fixed-width and NUL-padded on the wire
-                    final String trimmed = s.replace("\0", "").trim();
-                    return trimmed.isEmpty() ? null : trimmed;
-                }
-            }
-        }
-        return null;
-    }
-
-    private static Integer unsigned(final Collection<Value<?>> values, final List<String> names) {
-        for (final Value<?> value : values) {
-            if (names.contains(value.getName())) {
-                final UnsignedLong u = value.accept(new UnsignedLongVisitor());
-                if (u != null) {
-                    return u.intValue();
-                }
-            }
-        }
-        return null;
+    private static Integer toIfIndex(final Long unsigned) {
+        return unsigned == null ? null : unsigned.intValue();
     }
 }

@@ -647,6 +647,33 @@ public class ClickhouseRepositoryIT {
         }
     }
 
+    /** The exporter id and the naming rung persist; an unenriched flow reads 0 and 'none'. */
+    @Test
+    void applicationIdAndSourceRoundTripThroughTheirColumns() throws Exception {
+        final var database = "application_round_trip";
+        final var repo = new ClickhouseRepository(
+                new ClickhouseRepository$FlowMapperImpl(), configFor(database, true), RESOLVERS);
+        repo.start();
+
+        final var named = testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 62001, 80, 100L);
+        named.setApplicationId(0x03000050L);
+        named.setApplication("http");
+        named.setApplicationSource(org.riptide.pipeline.ApplicationSource.Exporter);
+        final var bare = testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 62002, 80, 100L);
+        repo.persist(List.of(named, bare));
+
+        final var namedRow = queryClient.queryAll("SELECT applicationId, applicationSource, application FROM "
+                + database + ".flows WHERE srcPort = 62001").getFirst();
+        Assertions.assertThat(namedRow.getLong("applicationId")).isEqualTo(0x03000050L);
+        Assertions.assertThat(namedRow.getString("applicationSource")).isEqualTo("exporter");
+        Assertions.assertThat(namedRow.getString("application")).isEqualTo("http");
+
+        final var bareRow = queryClient.queryAll("SELECT applicationId, applicationSource FROM "
+                + database + ".flows WHERE srcPort = 62002").getFirst();
+        Assertions.assertThat(bareRow.getLong("applicationId")).isZero();
+        Assertions.assertThat(bareRow.getString("applicationSource")).isEqualTo("none");
+    }
+
     /**
      * Every rung reads back as its own bit through the real materialized view (#581).
      *

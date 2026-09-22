@@ -249,6 +249,12 @@ public final class SflowFlowBuilder {
             public SamplingProvenance getSamplingProvenance() {
                 return usable((double) sample.samplingRate) ? SamplingProvenance.Record : SamplingProvenance.Assumed;
             }
+
+            /* Out of scope for this protocol; see the L7 design spec. */
+            @Override
+            public long getApplicationId() {
+                return 0L;
+            }
         };
     }
 

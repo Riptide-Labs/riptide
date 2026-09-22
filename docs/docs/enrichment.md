@@ -17,7 +17,7 @@ gracefully** — in the worst case a flow carries exactly what the packets said:
 | Layer | Source | Needs |
 |---|---|---|
 | 2 — live | SNMP IF-MIB, reverse DNS | reachable agents/resolvers |
-| 1.5 — exporter-pushed | v9/IPFIX interface option records (`option interface-table`) | the exporter sending them — nothing on riptide's side |
+| 1.5 — exporter-pushed | v9/IPFIX interface option records (`option interface-table`), IPFIX application tables (`option application-table`, RFC 6759) | the exporter sending them — nothing on riptide's side |
 | 1 — static | operator mapping files (enrichment-entry `interfaces`, routing mapping) | a config file |
 | 0.5 — global databases | GeoIP mmdb files ([`riptide.geoip`](configuration/geoip.md)) | database files on disk |
 | 0 — packet | ifIndex numbers, exporter-sent AS numbers, addresses, next hop | nothing — always available |
@@ -164,6 +164,41 @@ client's ephemeral port collides with another rule's registered port — the ear
 matching row wins, in both directions of an omnidirectional rule. In a custom ruleset,
 put specific rules (address + port) above broad ones (port-only), or the broad row will
 shadow them.
+
+### Application names from the exporter
+
+An exporter that runs application recognition sends two things: an `applicationId` (IPFIX element 95, RFC 6759) on every flow record, and an application table as option records that maps each id to a name and a description.
+Cisco NBAR2 does this with `match application name` in the flow record and `option application-table` on the exporter.
+Riptide consumes both.
+
+The ladder for `application`, in order:
+
+1. The record carries a non-zero `applicationId` and the exporter's table names it: `application` is that name and `applicationSource` is `exporter`.
+2. Otherwise the classification rules run: a match sets `applicationSource` to `rules`.
+3. Nothing matched: `application` is null and `applicationSource` is `none`.
+
+An exporter that names a flow `unknown` has not classified it, so the rules answer instead and `applicationSource` says `rules`.
+The unresolved meter does not move, because the exporter did answer.
+
+Two columns on `flows` carry the evidence.
+`applicationId` is the packed id, `engine << 24 | selector`, and `0` when the record carried none.
+`applicationSource` is one of the three tokens above; `''` means the row predates the column.
+The rollups carry the name but not the id or the source.
+
+A non-zero id the table cannot name falls through to the rules and marks `enrichment_application_unresolved`.
+That is normal for the first table refresh interval after a restart (Cisco defaults to 600 s, the lab exporter used 60 s), and permanent on a device that exports ids without a table.
+A Juniper SRX 345 with application tracking exports `applicationId` in its IPv4 template but sends `0` until application identification classifies, and sends no table at all.
+
+The table's own meters follow the interface table's vocabulary: `enrichment_optionApplications_consumed`, `_skipped` (a named row with no usable id, or a name past the cap below) and `_rejected` (an entry evicted because a scope hit its cap).
+Retention is the interface table's setting, `riptide.snmp.options.retention-ms`.
+There is no separate key.
+The per-scope cap is fixed at 16,384 ids, sized for a full NBAR2 protocol pack, and `enrichment_optionApplications_rejected` counts anything it evicts.
+A name longer than 64 characters is not stored and counts under `enrichment_optionApplications_skipped`, because `application` is a rollup dimension and an exporter must not be able to fill it with arbitrary text.
+
+Lookups try the exact exporter identity, address plus observation domain, and then any observation domain of the same address.
+A domain that has a table of its own never borrows from another domain, so two exporting processes behind one address only share names when one of them sends no table at all.
+A Catalyst 8000V sends its option tables under one observation domain and its flow records under another.
+The fallback is what makes its names resolve, for interface names as well as application names.
 
 ### Writing a rule
 

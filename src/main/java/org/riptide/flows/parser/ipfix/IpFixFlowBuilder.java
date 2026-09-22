@@ -364,6 +364,11 @@ public class IpFixFlowBuilder {
             }
 
             @Override
+            public long getApplicationId() {
+                return rawFlow.applicationId != null ? rawFlow.applicationId : 0L;
+            }
+
+            @Override
             public InetAddress getSrcAddr() {
                 return Optionals.first(rawFlow.sourceIPv6Address, rawFlow.sourceIPv4Address).orElse(null);
             }

@@ -711,7 +711,7 @@
           }
         }
       ],
-      "description": "Traffic rate by classified application; 'unclassified' means no classification rule matched. Normal: unclassified stays a small share \u2014 a growing unclassified band means the rule set needs attention, not the network.",
+      "description": "Traffic rate by application. The name is the exporter's own (NBAR2 and other RFC 6759 application tables) where the exporter sends one, and the classification rule's port or address match otherwise; the Data Trust dashboard shows which exporters deliver which. 'unclassified' means neither named the flow. Normal: unclassified stays a small share \u2014 a growing unclassified band means the rule set needs attention, not the network.",
       "interval": "1m"
     },
     {

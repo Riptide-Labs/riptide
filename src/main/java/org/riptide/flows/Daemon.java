@@ -30,6 +30,7 @@ import org.riptide.flows.parser.session.ExporterSamplingTable;
 import org.riptide.flows.parser.session.OptionListener;
 import org.riptide.flows.parser.session.SessionAdmission;
 import org.riptide.flows.parser.session.SessionAdmissionConfig;
+import org.riptide.classification.ExporterApplicationTable;
 import org.riptide.snmp.ExporterInterfaceTable;
 import org.riptide.pipeline.Source;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -59,13 +60,14 @@ public class Daemon implements ApplicationRunner {
                   @Qualifier("netflow9ValueConversionService") final ValueConversionService netflow9ValueConversionService,
                   final ExporterInterfaceTable exporterInterfaceTable,
                   final ExporterSamplingTable exporterSamplingTable,
+                  final ExporterApplicationTable exporterApplicationTable,
                   final SessionAdmissionConfig sessionAdmissionConfig,
                   final DaemonConfig config) {
         final var identity = config.resolveIdentity();
-        // One option stream, two readers: interface names and sampler rates — and a meter for the
-        // records neither of them claims, which is the only place that gap is visible (#599).
+        // One option stream, three readers: interface names, sampler rates and application names,
+        // and a meter for the records none of them claims (#599).
         final OptionListener optionListener =
-                OptionListener.of(metricRegistry, exporterInterfaceTable, exporterSamplingTable);
+                OptionListener.of(metricRegistry, exporterInterfaceTable, exporterSamplingTable, exporterApplicationTable);
         // One oracle for every receiver, so the configured bounds describe the collector's total
         // retained session state. Per-parser instances would silently multiply the ceiling by the
         // number of configured receivers and register colliding gauges.

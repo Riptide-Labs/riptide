@@ -14,6 +14,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.riptide.classification.ExporterApplicationTable;
 import org.riptide.config.DaemonConfig;
 import org.riptide.flows.parser.ie.values.ValueConversionService;
 import org.riptide.flows.parser.session.ExporterSamplingTable;
@@ -431,6 +432,7 @@ class DaemonStartupLoggingTest {
                 Mockito.mock(ValueConversionService.class),
                 Mockito.mock(ExporterInterfaceTable.class),
                 Mockito.mock(ExporterSamplingTable.class),
+                Mockito.mock(ExporterApplicationTable.class),
                 new SessionAdmissionConfig(),
                 config);
     }

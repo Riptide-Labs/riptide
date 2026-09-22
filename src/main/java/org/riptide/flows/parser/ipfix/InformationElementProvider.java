@@ -18,6 +18,7 @@ import lombok.Data;
 import org.riptide.flows.parser.Protocol;
 import org.riptide.flows.parser.ie.InformationElementDatabase;
 import org.riptide.flows.parser.ie.Semantics;
+import org.riptide.flows.parser.ie.values.ApplicationIdValue;
 import org.riptide.flows.parser.ie.values.BooleanValue;
 import org.riptide.flows.parser.ie.values.DateTimeValue;
 import org.riptide.flows.parser.ie.values.FloatValue;
@@ -83,6 +84,13 @@ public class InformationElementProvider implements InformationElementDatabase.Pr
             .put("subTemplateMultiList", ListValue::parserWithSubTemplateMultiList)
             .build();
 
+    /**
+     * Elements whose IANA data type is not the shape riptide needs. 95 is registered as an octet
+     * array, which has no visitor and so never binds; RFC 6759 gives it a structure worth decoding.
+     */
+    private static final Map<Integer, InformationElementDatabase.ValueParserFactory> OVERRIDES = ImmutableMap.of(
+            95, ApplicationIdValue::parser);
+
     @Override
     public void load(final InformationElementDatabase.Adder adder) {
         try (var is = InformationElementProvider.class.getResourceAsStream(XML_FILE_LOCATION)) {
@@ -95,7 +103,8 @@ public class InformationElementProvider implements InformationElementDatabase.Pr
                     .filter(record -> record.getElementId() != null)
                     .filter(record -> TYPE_LOOKUP.containsKey(record.getDataType()))
                     .forEach(record -> {
-                        final var valueParserFactory = TYPE_LOOKUP.get(record.getDataType());
+                        final var valueParserFactory = OVERRIDES.getOrDefault(
+                                record.getElementId(), TYPE_LOOKUP.get(record.getDataType()));
                         final var semantics = SEMANTICS_LOOKUP.get(record.getDataTypeSemantics());
                         adder.add(Protocol.IPFIX, record.getElementId(), valueParserFactory, record.getName(), semantics, record.getUnit());
                     });

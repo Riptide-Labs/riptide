@@ -64,6 +64,9 @@ public class EnrichedFlow {
     private Integer vlan;
 
     private String application;
+    /** Exporter application id, packed; 0 when none was sent. Mapped by name from {@link Flow}. */
+    private Long applicationId;
+    private ApplicationSource applicationSource;
     private String exporterAddr;
     private String tenant;
     private String organisation;
@@ -97,6 +100,7 @@ public class EnrichedFlow {
             componentModel = "spring")
     public abstract static class FlowMapper {
         @Mapping(target = "application", ignore = true)
+        @Mapping(target = "applicationSource", ignore = true)
         @Mapping(target = "srcLocality", ignore = true)
         @Mapping(target = "dstLocality", ignore = true)
         @Mapping(target = "flowLocality", ignore = true)
