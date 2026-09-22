@@ -91,8 +91,9 @@ Grafana ships provisioned dashboards backed by the `flows` table and the
   AS peering (source AS → ingress → egress → destination AS), situational-awareness, geo
   origination/termination, and ultimate-exit views, weighted by bytes over the selected range.
 - **Riptide - Flow Forensics**: slice flows by any combination of tenant, zone, exporter,
-  application, L4 protocol, source/destination address and port — throughput of the slice, top
-  hosts/conversations, protocol/DSCP/TCP-flag mix, locality matrix, and the raw records.
+  application, HTTP host and URI (where an exporter sends them), L4 protocol, source/destination
+  address and port — throughput of the slice, top hosts/conversations, protocol/DSCP/TCP-flag mix,
+  locality matrix, and the raw records.
 - **Riptide - Collection Health**: is every exporter delivering? Reporting/silent-exporter
   verdicts, a per-exporter activity timeline, collection lag percentiles, and an exporter
   inventory with drill-down into Flow Forensics.

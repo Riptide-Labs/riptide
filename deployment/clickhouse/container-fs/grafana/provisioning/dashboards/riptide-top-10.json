@@ -1075,17 +1075,17 @@
           "min": 0,
           "decimals": 0,
           "color": {
-            "mode": "palette-classic"
+            "mode": "fixed",
+            "fixedColor": "blue"
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
+          "noValue": "No exporter sent HTTP host or URI in this range",
+          "links": [
+            {
+              "title": "Flow Forensics: conversations with this host",
+              "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${__url_time_range}&var-http_host=${__data.fields.Host}",
+              "targetBlank": false
+            }
+          ]
         },
         "overrides": []
       },
@@ -1125,6 +1125,76 @@
       ]
     },
     {
+      "id": 15,
+      "type": "bargauge",
+      "title": "Top 10 HTTP URIs (requests)",
+      "description": "HTTP request records per host and URI over the time range, from exporters that send the Cisco AVC URI statistics element. The router records the first path segment only, so '/api/login' shows as '/api'; the host is kept in the label so the same segment on two hosts stays two bars. Counts request records, not bytes, for the reason given on the hosts panel. Normal: the same short list every day; a new path at the top is a new client behaviour worth a look in Flow Forensics.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 49
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "No exporter sent HTTP host or URI in this range",
+          "links": [
+            {
+              "title": "Flow Forensics: conversations with this host and URI",
+              "url": "/d/riptide-flow-forensics?${datasource:queryparam}&${database:queryparam}&${tenant:queryparam}&${zone:queryparam}&${__url_time_range}&var-http_host=${__data.fields.Host}&var-http_uri=${__data.fields.URI}",
+              "targetBlank": false
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "namePlacement": "left",
+        "showUnfilled": true,
+        "valueMode": "color",
+        "sizing": "auto",
+        "minVizWidth": 8,
+        "minVizHeight": 16,
+        "reduceOptions": {
+          "values": true,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^Requests$/"
+        },
+        "text": {}
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT concat(httpHost, httpUri) AS \"Host and URI\", count() AS \"Requests\", httpHost AS \"Host\", httpUri AS \"URI\"\nFROM ${database}.flows\nWHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) AND $__conditionalAll(flowLocality = '$locality', $locality) AND httpHost != '' AND httpUri != ''\nGROUP BY httpHost, httpUri\nORDER BY \"Requests\" DESC\nLIMIT 10",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    {
       "id": 13,
       "type": "table",
       "title": "Top 10 Source AS - statistics",
@@ -1136,7 +1206,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 49
+        "y": 58
       },
       "fieldConfig": {
         "defaults": {
