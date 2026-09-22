@@ -195,10 +195,12 @@ class ClickhouseStartupWaitIT {
     @Timeout(30)
     void aServerThatRefusesTheCredentialIsAnAnswerNotSilence() {
         final var config = config(containerEndpoint(), "wrong", "riptide");
+        // A short window, so that if the refusal were retried as silence the failure would arrive
+        // as "did not answer" after 5 s and the assertion below would catch it, rather than the
+        // test's own timeout. Measured: with the classification mutated to call every failure
+        // silent, this test fails on the message, not on time.
+        config.setStartupWait(Duration.ofSeconds(5));
 
-        // Default window of 30 s, and a @Timeout of 30 s on the test: if the refusal were retried
-        // as silence, this would not fail with the credential message, it would fail on time.
-        //
         // The message is pinned, not the type. In manage mode the refusal reaches the operator as
         // the client's bare ServerException out of ensureDatabase's SneakyThrows get(), which is
         // what it was before the wait existed; the wait's promise is only that the refusal is not
