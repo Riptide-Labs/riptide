@@ -12,6 +12,7 @@ so these fixtures are the only thing that ever exercises its failure arms.
 """
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -42,6 +43,11 @@ class Repo:
         self.git("init", "-q")
         self.git("config", "user.email", "t@example.org")
         self.git("config", "user.name", "t")
+        # Hermetic against a developer's global config: with tag.gpgsign on, a
+        # plain `git tag` becomes a signed annotated tag and fails without a
+        # message; CI signs nothing, so the fixtures must not either.
+        self.git("config", "commit.gpgsign", "false")
+        self.git("config", "tag.gpgsign", "false")
 
     def git(self, *args):
         return subprocess.run(["git", "-C", str(self.root), *args], check=True, capture_output=True, text=True)
@@ -405,6 +411,157 @@ class BundleWritesOneDeterministicArchive(unittest.TestCase):
 
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("dashboards.yml", proc.stderr)
+        self.assertEqual(list(out.iterdir()), [])
+
+
+class HelmValuesPointTheChartAtTheTag(unittest.TestCase):
+    """The values file for the grafana-community chart (issue for step 2 of #864's plan)."""
+
+    PROVIDER = (
+        "# comment kept in the source, discarded by the chart\n"
+        "---\n"
+        "apiVersion: 1\n"
+        "\n"
+        "providers:\n"
+        "  - name: riptide\n"
+        "    type: file\n"
+        "    folder: 'Flow Analytics'\n"
+        "    folderUid: riptide-flow-analytics\n"
+        "    options:\n"
+        "      path: /etc/grafana/provisioning/dashboards\n"
+        "      foldersFromFilesStructure: false\n"
+    )
+    OUT = "riptide-dashboards-helm-values.yaml"
+
+    def stamped(self, provider=None, tag="v9.9.9") -> Repo:
+        """Dashboards a and b at set 1.2.3, committed and tagged: the file describes a tag."""
+        repo = Repo()
+        repo.write("a", dashboard("a"))
+        repo.write("b", dashboard("b"))
+        (repo.dir / "dashboards.yml").write_text(self.PROVIDER if provider is None else provider)
+        repo.run("set", "1.2.3")
+        repo.commit()
+        repo.git("tag", tag)
+        return repo
+
+    def generate(self, repo, *args):
+        out = repo.root / "out"
+        out.mkdir(exist_ok=True)
+        return out, repo.run("helm-values", *args, str(out))
+
+    def test_refuses_to_guess_the_ref(self):
+        repo = self.stamped()
+
+        out, proc = self.generate(repo)
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("--ref", proc.stderr)
+        self.assertNotIn("invalid choice", proc.stderr, "refused for the wrong reason: the subcommand is missing")
+        self.assertEqual(list(out.iterdir()), [])
+
+    def test_lists_every_dashboard_at_the_tag_and_nothing_else(self):
+        repo = self.stamped()
+
+        out, proc = self.generate(repo, "--ref", "v9.9.9")
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        text = (out / self.OUT).read_text()
+        base = "https://raw.githubusercontent.com/Riptide-Labs/riptide/v9.9.9/" + REL.as_posix()
+        urls = re.findall(r'url: "([^"]+)"', text)
+        self.assertEqual(sorted(urls), [f"{base}/a.json", f"{base}/b.json"])
+        self.assertNotIn("dashboards.yml\"", text, "the provider file is not a dashboard to download")
+
+    def test_every_download_keeps_tls_verification_on(self):
+        repo = self.stamped()
+
+        out, proc = self.generate(repo, "--ref", "v9.9.9")
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        text = (out / self.OUT).read_text()
+        self.assertEqual(text.count('curlOptions: "-sSf"'), 2, "one override per dashboard, replacing the chart's -skf")
+        self.assertNotIn("-k", text.replace("-sSf", ""))
+        self.assertNotIn("--insecure", text)
+
+    def test_embeds_the_shipped_provider_with_only_its_path_swapped(self):
+        repo = self.stamped()
+
+        out, proc = self.generate(repo, "--ref", "v9.9.9")
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        text = (out / self.OUT).read_text()
+        expected = [("    " + l) if l else "" for l in self.PROVIDER.replace(
+            "path: /etc/grafana/provisioning/dashboards", "path: /var/lib/grafana/dashboards/riptide").splitlines()
+            if l != "---"]
+        self.assertIn('  "riptide.yaml":\n' + "\n".join(expected) + "\n", text)
+        self.assertNotIn("/etc/grafana/provisioning/dashboards", text)
+        self.assertNotIn("\n---", text, "a document marker inside a mapping is invalid YAML")
+
+    def test_names_the_tag_and_the_set_version_in_its_header(self):
+        repo = self.stamped()
+
+        out, proc = self.generate(repo, "--ref", "v9.9.9")
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        header = (out / self.OUT).read_text().split("\n\n")[0]
+        self.assertIn("v9.9.9", header)
+        self.assertIn("1.2.3", header)
+        self.assertTrue(all(l.startswith("#") for l in header.splitlines()), header)
+
+    def test_refuses_a_provider_without_the_path_line(self):
+        repo = self.stamped(provider=self.PROVIDER.replace("/etc/grafana/provisioning/dashboards", "/srv/dashboards"))
+
+        out, proc = self.generate(repo, "--ref", "v9.9.9")
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("dashboards.yml", proc.stderr)
+        self.assertEqual(list(out.iterdir()), [])
+
+    def test_refuses_a_provider_with_the_path_line_twice(self):
+        repo = self.stamped(provider=self.PROVIDER + "      path: /etc/grafana/provisioning/dashboards\n")
+
+        out, proc = self.generate(repo, "--ref", "v9.9.9")
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("dashboards.yml", proc.stderr)
+        self.assertEqual(list(out.iterdir()), [])
+
+    def test_refuses_a_disagreeing_set_and_writes_nothing(self):
+        repo = self.stamped(tag="v1.0.0")
+        b = repo.read("b")
+        version_link(b)[0]["title"] = "Dashboards v9.9.9"
+        repo.write("b", b)
+        repo.commit()
+        repo.git("tag", "v9.9.9")
+
+        out, proc = self.generate(repo, "--ref", "v9.9.9")
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("b.json", proc.stderr)
+        self.assertEqual(list(out.iterdir()), [])
+
+    def test_describes_the_dashboards_at_the_ref_not_the_working_tree(self):
+        # Found by the kind run: a file generated on main for an older tag said
+        # "set 1.0.2" while its URLs served set 1.0.0.
+        repo = self.stamped()
+        repo.write("c", dashboard("c"))
+        repo.run("set", "2.0.0")
+
+        out, proc = self.generate(repo, "--ref", "v9.9.9")
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        text = (out / self.OUT).read_text()
+        self.assertEqual(sorted(re.findall(r'/([a-z]+)\.json"', text)), ["a", "b"], "c exists only in the working tree")
+        header = text.split("\n\n")[0]
+        self.assertIn("1.2.3", header)
+        self.assertNotIn("2.0.0", header)
+
+    def test_refuses_a_ref_that_does_not_resolve(self):
+        repo = self.stamped()
+
+        out, proc = self.generate(repo, "--ref", "v0.0.404")
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("v0.0.404", proc.stderr)
         self.assertEqual(list(out.iterdir()), [])
 
 

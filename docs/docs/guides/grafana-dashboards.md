@@ -1,7 +1,7 @@
 ---
 sidebar_position: 4.5
 title: Grafana dashboards
-description: Install the riptide dashboard set into Grafana from the compose stack, the deb or rpm package or the release tarball, keep it in the Riptide / Flow Analytics folder, and upgrade it in place.
+description: Install the riptide dashboard set into Grafana from the compose stack, the deb or rpm package, the release tarball or the Grafana Helm chart, keep it in the Riptide / Flow Analytics folder, and upgrade it in place.
 ---
 
 # Install and upgrade the Grafana dashboards
@@ -27,7 +27,9 @@ Every dashboard has a **Datasource** and a **Database** variable, so the same JS
 - Grafana 11 or newer with nested folders. Everything on this page was verified on Grafana 13.0.2, the version the compose stack pins.
 - Plugins **`grafana-clickhouse-datasource`** and **`netsage-sankey-panel`** installed.
 - A ClickHouse datasource pointing at the riptide database. The compose stack provisions one; elsewhere, add it under *Connections* first.
-- For the tarball and package paths: shell access to the Grafana host and an admin login for the one-time folder move.
+- For the tarball and package paths: shell access to the Grafana host.
+- For the Helm path: `helm` and `kubectl` access to the release's namespace.
+- For every path except the compose stack: an admin login for the one-time folder move.
 
 ## Install with the compose stack
 
@@ -161,6 +163,112 @@ The package puts the same files under **`/usr/share/riptide/grafana/dashboards/`
 
 3. Restart Grafana, then move the folder under **Riptide** and verify as in steps 4 and 5 of the tarball section.
 
+## Install with the Grafana Helm chart
+
+Use this for a Grafana deployed with the [grafana-community Helm chart](https://github.com/grafana-community/helm-charts).
+Every release after v0.15.1 carries **`riptide-dashboards-helm-values.yaml`**, a values file that makes the chart download the nine dashboards of that release.
+Everything below was verified with chart 13.2.5.
+
+The Grafana pod needs outbound HTTPS to `raw.githubusercontent.com`.
+An init container downloads each dashboard from there when the pod starts.
+
+The commands assume a release called `grafana` in namespace `monitoring`.
+For a release whose name does not contain `grafana`, the chart names the deployment, service and secret `<release>-grafana`.
+
+1. Add the file to the `helm upgrade` you already run, after your own values file.
+   Keep your own chart version; 13.2.5 is the one verified here.
+
+   ```bash
+   RELEASE=grafana
+   NAMESPACE=monitoring
+   helm upgrade "$RELEASE" oci://ghcr.io/grafana-community/helm-charts/grafana --version 13.2.5 \
+     -n "$NAMESPACE" -f your-values.yaml \
+     -f https://github.com/Riptide-Labs/riptide/releases/download/v%%VERSION%%/riptide-dashboards-helm-values.yaml
+   kubectl -n "$NAMESPACE" rollout status deploy/grafana
+   ```
+
+   Expected output:
+
+   ```text
+   Pulled: ghcr.io/grafana-community/helm-charts/grafana:13.2.5
+   Digest: sha256:0fcb82fdbf9409a24fb0f9b4c20875a2d0fa668d4f3ad71f1717845ba9bb99ca
+   Release "grafana" has been upgraded. Happy Helming!
+   NAME: grafana
+   LAST DEPLOYED: Thu Sep 24 01:03:46 2026
+   NAMESPACE: monitoring
+   STATUS: deployed
+   ...
+   Waiting for deployment "grafana" rollout to finish: 1 old replicas are pending termination...
+   deployment "grafana" successfully rolled out
+   ```
+
+   Pass the file together with your own values, never alone: a `helm upgrade` without your values file resets the release to the chart's defaults.
+   Helm merges the two files, so your own dashboards and providers stay.
+   The file sets its own curl options for each download, so the chart's default `-skf`, whose `-k` skips certificate checks, does not apply to them.
+
+2. Move the folder under **Riptide** once.
+   The move survives later upgrades, including the ones that replace the pod.
+
+   ```bash
+   kubectl -n "$NAMESPACE" port-forward svc/grafana 3000:80 >/dev/null &
+   GRAFANA=http://localhost:3000
+   AUTH="admin:$(kubectl -n "$NAMESPACE" get secret grafana -o jsonpath='{.data.admin-password}' | base64 -d)"
+   curl -s -u "$AUTH" -H 'Content-Type: application/json' -X POST "$GRAFANA/api/folders" \
+     -d '{"uid":"riptide","title":"Riptide"}' -o /dev/null -w '%{http_code}\n'
+   curl -s -u "$AUTH" -H 'Content-Type: application/json' -X POST "$GRAFANA/api/folders/riptide-flow-analytics/move" \
+     -d '{"parentUid":"riptide"}' -o /dev/null -w '%{http_code}\n'
+   ```
+
+   Expected output:
+
+   ```text
+   200
+   200
+   ```
+
+   The first call answers `412` when a folder `Riptide` already exists; the move still applies.
+
+3. Verify.
+
+   ```bash
+   curl -s -u "$AUTH" "$GRAFANA/api/folders/riptide-flow-analytics" | grep -o '"parentUid":"[^"]*"'
+   curl -s -u "$AUTH" "$GRAFANA/api/search?type=dash-db&folderUIDs=riptide-flow-analytics" | grep -o '"uid":"riptide-' | wc -l
+   curl -s -u "$AUTH" "$GRAFANA/api/dashboards/uid/riptide-top10" | grep -o '"title":"Dashboards v[^"]*"'
+   ```
+
+   Expected output, for the release that carries set 1.0.2:
+
+   ```text
+   "parentUid":"riptide"
+   9
+   "title":"Dashboards v1.0.2"
+   ```
+
+Riptide dashboards imported by hand before are adopted into **Flow Analytics** on the first pass, under their uids and URLs.
+A folder that held only those dashboards is left empty; delete it in the UI.
+
+### Check the file's signature before applying it
+
+Download the file and its signature bundle, verify them, then pass the local file to `helm upgrade` instead of the URL.
+
+```bash
+V=%%VERSION%%
+curl -fsSLO "https://github.com/Riptide-Labs/riptide/releases/download/v$V/riptide-dashboards-helm-values.yaml"
+curl -fsSLO "https://github.com/Riptide-Labs/riptide/releases/download/v$V/riptide-dashboards-helm-values.yaml.sigstore.json"
+cosign verify-blob riptide-dashboards-helm-values.yaml \
+  --bundle riptide-dashboards-helm-values.yaml.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/Riptide-Labs/riptide/\.github/workflows/release\.yml@refs/tags/v.*$' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+Expected output:
+
+```text
+Verified OK
+```
+
+The file pins every download to the release tag, and release tags cannot be moved or recreated, so a verified file also fixes the dashboards it downloads.
+
 ## Upgrade an installed set
 
 Replace the files; Grafana does the rest within one 30-second provisioning interval and needs no restart.
@@ -170,6 +278,7 @@ Replace the files; Grafana does the rest within one 30-second provisioning inter
 | Compose stack | Update the checkout, then `docker compose up -d`. |
 | Release tarball | Extract the new archive over the old files. If you changed `path` in `dashboards.yml`, add `--exclude dashboards/dashboards.yml` to the `tar` command so the shipped provider does not replace yours. |
 | deb or rpm | Install the new package; it replaces the directory. |
+| Helm chart | Run the `helm upgrade` from the Helm section with the newer release's URL. The pod restarts and downloads the new files. |
 
 What happens to what is already in Grafana, as observed on 13.0.2:
 

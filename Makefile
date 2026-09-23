@@ -59,6 +59,7 @@ help:
 	@echo "  dashboards-version-check: Every dashboard carries the same version; with DASHBOARDS_BASE_REF=<ref>, that it moved when a dashboard changed"
 	@echo "  dashboards-version-test: Run the dashboards version checker's fixture tests"
 	@echo "  dashboards-bundle: Write target/riptide-dashboards-<set version>.tar.gz, the release asset"
+	@echo "  dashboards-helm-values: Write target/riptide-dashboards-helm-values.yaml for the Grafana Helm chart; DASHBOARDS_REF=<tag>"
 	@echo "  release-lineage: Check a release tag adds only the version bump on top of main; LINEAGE_REF=<ref>"
 	@echo "  release-lineage-test: Run the release lineage checker's fixture tests"
 	@echo "  build-cost-docs: Check a tree-build change updates its published cost figures; COST_BASE_REF=<ref>"
@@ -329,6 +330,18 @@ dashboards-version-check:
 dashboards-bundle:
 	mkdir -p target
 	python3 deployment/clickhouse/dashboards-version.py bundle target/
+
+# Values for the Grafana Helm chart: one download per dashboard, pinned to a
+# release tag. The tag is required, never defaulted, so a local run cannot
+# produce a file that points at a moving branch. The release workflow passes
+# the tag it is building.
+DASHBOARDS_REF ?=
+
+.PHONY: dashboards-helm-values
+dashboards-helm-values:
+	@test -n "$(DASHBOARDS_REF)" || { echo "usage: make dashboards-helm-values DASHBOARDS_REF=vX.Y.Z" >&2; exit 2; }
+	mkdir -p target
+	python3 deployment/clickhouse/dashboards-version.py helm-values --ref "$(DASHBOARDS_REF)" target/
 
 # The checker matches nothing in a healthy tree, so its fixtures are the only
 # thing that ever exercises its failure arms.
