@@ -30,10 +30,13 @@ riptide:
       - /usr/share/GeoIP/GeoLite2-City.mmdb
     refresh-interval: 5m
     overrides:
-      "192.168.0.0/16": { country: "DE", city: "Homelab" }
-      "203.0.113.0/24": { city: "Fulda" }
-      "10.20.0.0/16": { asn: 64500, org: "Lab Fabric" }
+      "[192.168.0.0/16]": { country: "DE", city: "Homelab" }
+      "[203.0.113.0/24]": { city: "Fulda" }
+      "[10.20.0.0/16]": { asn: 64500, org: "Lab Fabric" }
 ```
+
+Override keys need the square brackets: a key written as `"192.168.0.0/16":` is not rejected, binds to nothing, and never matches a flow.
+The rule is the same as for [routing prefix keys](routing.md#prefix-keys).
 
 Expected output at startup while the files are not there yet:
 
@@ -57,7 +60,7 @@ The provider of each file is read from its metadata `database_type`.
 
 An override pins the fields it sets and leaves the others to the databases.
 The longest matching prefix wins.
-Keys are canonicalised to their prefix block, so `10.0.0.5/24` means `10.0.0.0/24`, and two keys resolving to the same block fail startup, the same contract as [`riptide.routing.prefixes`](routing.md).
+Keys are canonicalised to their prefix block, so `10.0.0.5/24` means `10.0.0.0/24`, and two keys resolving to the same block fail startup, the same contract as [`riptide.routing.prefixes`](routing.md#prefix-keys).
 
 ## Precedence
 
