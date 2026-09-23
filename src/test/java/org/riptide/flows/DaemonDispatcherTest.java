@@ -38,7 +38,7 @@ import static org.mockito.Mockito.when;
  * the same mistake one step further along, so these cases call {@link Daemon#dispatcherFor} over a
  * real {@link Pipeline}.</p>
  *
- * <p>What they pin is the contract {@code docs/docs/deploy/operations.md} documents:
+ * <p>What they pin is the contract {@code docs/docs/architecture/loss-accounting.md} documents:
  * {@code recordsDispatched} does not exclude {@code dispatchErrors}, and delivery is
  * {@code recordsReceived − dispatchDrops − dispatchErrors}. If the dispatcher is ever changed to
  * rethrow, or to catch an {@link Error}, these fail — which is the point, because either change

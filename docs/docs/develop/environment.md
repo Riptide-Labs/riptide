@@ -89,7 +89,7 @@ make
 
 The shell provides bash, git, `jdk25_headless`, Maven, protobuf, `just` and Python 3.
 Docker and npm are not part of it.
-Running riptide on NixOS is on the [NixOS page](../deploy/nixos.md).
+Running riptide on NixOS is on the [NixOS page](../guides/nixos.md).
 
 ## Open questions
 

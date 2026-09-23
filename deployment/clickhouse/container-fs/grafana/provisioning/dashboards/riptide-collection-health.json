@@ -19,9 +19,9 @@
   },
   "links": [
     {
-      "title": "Operations runbook (health endpoints, ports, troubleshooting)",
+      "title": "Troubleshooting runbook (metrics, health endpoints, ports)",
       "type": "link",
-      "url": "https://github.com/Riptide-Labs/riptide-flows/blob/main/docs/docs/deploy/operations.md",
+      "url": "https://riptide.space/docs/operations/troubleshooting",
       "targetBlank": true,
       "icon": "doc"
     },
@@ -36,7 +36,7 @@
       "keepTime": true
     },
     {
-      "title": "Dashboards v1.0.0",
+      "title": "Dashboards v1.0.1",
       "type": "link",
       "url": "https://github.com/Riptide-Labs/riptide/tree/main/deployment/clickhouse/container-fs/grafana/provisioning/dashboards",
       "tooltip": "Version of the provisioned dashboard set. Independent of the riptide version.",

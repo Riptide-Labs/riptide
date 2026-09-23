@@ -23,29 +23,29 @@ UDP/TCP ingest (NetFlow v5 · NetFlow v9 · IPFIX · sFlow)
 ```
 
 - **Flow protocols:** NetFlow v5, NetFlow v9, IPFIX, and sFlow (UDP; IPFIX also via
-  TCP). See [Receivers](configuration/receivers.md).
+  TCP). See [Receivers](reference/receivers.md).
 - **Inventory model:** named credential sets and polling profiles in the main config; agent ranges in a hot-reloaded inventory file; exporter enrichment entries in that same file.
   A device inside a credentialed range is polled from its first flow, with no per-device configuration.
-  See [SNMP agents](configuration/agent-configuration.md) and [Exporter enrichment](configuration/exporter-enrichment.md).
+  See [SNMP agents](reference/agent-configuration.md) and [Exporter enrichment](reference/exporter-enrichment.md).
 - **Dynamic discovery:** exporter enrichment entries can come from an external source of truth instead of that file.
   Three sources ship: a Prometheus HTTP service discovery document, NetBox's device API with nothing installed on it, or any JSON endpoint mapped by paths you write.
   Discovery stays off until `riptide.discovery.url` is set.
   Until then the inventory file owns both trees.
-  See [Dynamic discovery](configuration/discovery.md).
+  See [Dynamic discovery](reference/discovery.md).
 - **Secrets:** SNMP credentials are **references** (`env://`, `file://`, `vault://`,
   `sops://`), never plaintext in configuration. See
-  [Secret references](configuration/secret-references.md).
+  [Secret references](reference/secret-references.md).
 - **Enrichment:** a graceful-degradation ladder — rule-based classification, exporter
   clock correction, locality, AS data from the routing mapping, GeoIP country/city
   (MaxMind GeoLite2 or IPinfo, with per-prefix overrides), SNMP IF-MIB interface data,
   exporter-pushed option records, reverse-DNS hostnames. Flows persist even when every
-  live source is unreachable. See [Enrichment](enrichment.md) and
-  [GeoIP](configuration/geoip.md).
+  live source is unreachable. See [Enrichment](architecture/enrichment.md) and
+  [GeoIP](reference/geoip.md).
 - **Multi-tenancy:** every flow carries tenant/organisation/zone/system identity;
   `riptide onboard` provisions role-based ClickHouse access with hard row-level
-  isolation per tenant. See the
-  [multi-tenancy runbook](deploy/multi-tenancy.md).
-- **AI Agent Integration:** native embedded MCP server (`org.riptide.mcp.*`) over stdio IPC and HTTP/SSE with 7 auto-shipped Agent Skills (`/riptide-investigate-ddos`, `/riptide-cause-analysis`, etc.) and `SecretRef` token authentication. See [MCP Server](configuration/mcp-server.md).
+  isolation per tenant. See [Multi-tenancy](architecture/multi-tenancy.md) and
+  [Onboard a tenant](guides/onboard-a-tenant.md).
+- **AI Agent Integration:** native embedded MCP server (`org.riptide.mcp.*`) over stdio IPC and HTTP/SSE with 7 auto-shipped Agent Skills (`/riptide-investigate-ddos`, `/riptide-cause-analysis`, etc.) and `SecretRef` token authentication. See [MCP Server](reference/mcp-server.md).
 
 ## Technology
 
@@ -54,11 +54,9 @@ Java 25 · Spring Boot · Netty · SNMP4J · ClickHouse. Licensed
 
 ## Where to go next
 
-- 🚀 [Deploy Riptide](deploy/docker-compose.md) — run the published image (Compose or plain JAR)
+- 🚀 [Deploy Riptide](guides/docker-compose.md) — run the published image (Compose, plain JAR, packages, NixOS)
 - 🛠 [Develop & Contribute](develop/environment.md) — build, debug, test, send PRs
-- [Receivers](configuration/receivers.md) — configure flow listeners
-- [SNMP agents](configuration/agent-configuration.md) — credential sets, polling profiles, agent ranges
-- [Exporter enrichment](configuration/exporter-enrichment.md) — naming exporters and pinning interfaces
-- [Secret references](configuration/secret-references.md) — Vault, SOPS, env, file
-- [MCP Server](configuration/mcp-server.md) — native AI Agent integration & skills
-- [ClickHouse](configuration/clickhouse.md) — persistence
+- [Guides](guides/upgrade.md) — upgrade, hot reload, profiling, classification rules, rollups, tenants, discovery
+- [Architecture](architecture/enrichment.md) — how enrichment, sampling, persistence, rollups, reloads and multi-tenancy work
+- [Reference](reference/receivers.md) — every setting, subcommand flag, endpoint and metric
+- [Operations](operations/troubleshooting.md) — troubleshooting, rollup drift, dead letters

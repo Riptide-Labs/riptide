@@ -114,7 +114,7 @@ Override it in one of two places:
 ```
 riptide.clickhouse.endpoint -> RIPTIDE_CLICKHOUSE_ENDPOINT
 ```
-Details, including what cannot be set through the environment, are in the [Plain JAR](https://riptide.space/docs/deploy/plain-jar) page.
+Details, including what cannot be set through the environment, are in the [Plain JAR](https://riptide.space/docs/guides/plain-jar) page.
 
 # 📦 Make a release
 

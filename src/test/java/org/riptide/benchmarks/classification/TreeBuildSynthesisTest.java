@@ -35,12 +35,13 @@ class TreeBuildSynthesisTest {
 
     /**
      * What a maintainer needs to hear when one of these reds. These counts are not internal to the
-     * benchmark: docs/docs/deploy/operations.md quotes them, and quotes a build time against each,
-     * so a legitimate ruleset edit does not just move a constant here — it invalidates a published
+     * benchmark: docs/docs/architecture/classification-build-cost.md quotes them, and quotes a build
+     * time against each, so a legitimate ruleset edit does not just move a constant here — it
+     * invalidates a published
      * figure that nothing else will notice is wrong.
      */
     private static final String STALE_DOCS =
-            "the shipped classification-rules.csv changed. docs/docs/deploy/operations.md"
+            "the shipped classification-rules.csv changed. docs/docs/architecture/classification-build-cost.md"
                     + " (Supported ruleset size) quotes these counts and a measured build time for each,"
                     + " so re-measure with `make bench-jmh BENCH_TARGET=TreeBuildBenchmark` and update that"
                     + " section in the same commit as the ruleset change, then update the constants here";
@@ -81,8 +82,8 @@ class TreeBuildSynthesisTest {
             assertThat(TreeBuildBenchmark.distinctDstPorts(cloned))
                     .as("x%d distinct ports — a collision here is the failure that would understate the"
                             + " build cost without failing anything, so the x2 and x4 seconds in"
-                            + " docs/docs/deploy/operations.md would be too low. Fix the remap before"
-                            + " re-measuring. %s", multiple, STALE_DOCS)
+                            + " docs/docs/architecture/classification-build-cost.md would be too low."
+                            + " Fix the remap before re-measuring. %s", multiple, STALE_DOCS)
                     .hasSize(bundledPorts * multiple);
         }
     }
@@ -118,8 +119,9 @@ class TreeBuildSynthesisTest {
      *
      * <p><b>A second thing rests on this guard, in another package (#771).</b>
      * {@code TreeBuildWorkCounterTest} charges every verdict a cost of 1, and the published work counts
-     * in {@code docs/docs/deploy/operations.md} are that sum. A verdict is really O(k) in the rule's
-     * condition cardinality, because {@code Threshold.match(PreprocessedRule, Bounds)} loops over the
+     * in {@code docs/docs/architecture/classification-build-cost.md} are that sum. A verdict is really O(k)
+     * in the rule's condition cardinality, because {@code Threshold.match(PreprocessedRule, Bounds)}
+     * loops over the
      * rule's value list. Refusing ranges and addresses here is what keeps k = 1 on the port thresholds,
      * and port thresholds are 5,990 of the 5,994 distinct candidates. So relaxing this guard would not
      * only invalidate the measured seconds — it would silently make the work counts describe something

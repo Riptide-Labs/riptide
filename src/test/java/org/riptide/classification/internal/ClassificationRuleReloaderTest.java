@@ -384,7 +384,8 @@ class ClassificationRuleReloaderTest {
      * the shipped threshold is untested, and a threshold nothing tests is the documented bound all over
      * again.
      *
-     * <p><b>If this reds, {@code docs/docs/deploy/operations.md} ("Supported ruleset size") is stale too.</b>
+     * <p><b>If this reds, {@code docs/docs/architecture/classification-build-cost.md}
+     * ("Supported ruleset size") is stale too.</b>
      * It states 12,500 rules and roughly 25,000 preprocessed, and those figures are attached to measured
      * build times. Moving the constant without moving the page leaves the page asserting a bound the
      * software no longer applies. Change both in the same commit and say which measurement moved.
@@ -392,7 +393,8 @@ class ClassificationRuleReloaderTest {
     @Test
     void theProductionBoundsAreTheOnesTheDocumentationPublishes() {
         assertThat(reloaderBound("SUPPORTED_RULES"))
-                .as("docs/docs/deploy/operations.md publishes 12,500 rules as the supported size")
+                .as("docs/docs/architecture/classification-build-cost.md"
+                        + " publishes 12,500 rules as the supported size")
                 .isEqualTo(12_500);
         assertThat(reloaderBound("SUPPORTED_PREPROCESSED_RULES"))
                 .as("and states the bound is really about roughly 25,000 preprocessed rules, which is the"

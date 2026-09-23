@@ -194,8 +194,8 @@ class ParserDispatchTest {
      * the dispatcher to rethrow and that test fails; move the mark to reflect delivery and this one
      * does.</p>
      *
-     * <p>Delivery is therefore {@code recordsScheduled − dispatchDrops − dispatchErrors}, as
-     * {@code docs/docs/deploy/operations.md} states. Asserted here so the arithmetic an operator is
+     * <p>Delivery is therefore {@code recordsReceived − dispatchDrops − dispatchErrors}, as
+     * {@code docs/docs/architecture/loss-accounting.md} states. Asserted here so the arithmetic an operator is
      * told to use is checked against the meters rather than only written down.</p>
      */
     @Test

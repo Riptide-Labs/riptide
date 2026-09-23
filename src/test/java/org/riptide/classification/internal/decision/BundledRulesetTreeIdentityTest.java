@@ -254,8 +254,9 @@ public class BundledRulesetTreeIdentityTest {
      */
     private static final String STALE_DOCS =
             "if this moved because classification-rules.csv was edited rather than because tree"
-                    + " construction changed, docs/docs/deploy/operations.md (Supported ruleset size) is"
-                    + " now stale: it publishes a build time and a work count for this ruleset at four"
+                    + " construction changed, docs/docs/architecture/classification-build-cost.md"
+                    + " (Supported ruleset size) is now stale: it publishes a build time and a work count for"
+                    + " this ruleset at four"
                     + " sizes, and this is the only test that sees a value-only edit. Re-measure with"
                     + " `make bench-jmh BENCH_TARGET=TreeBuildBenchmark` and update that section in the"
                     + " same commit. Say which of the two causes it was in the commit message";

@@ -1,7 +1,7 @@
 # Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# Riptide configuration — see https://riptide.space/docs/configuration/receivers
+# Riptide configuration — see https://riptide.space/docs/reference/receivers
 # Every riptide.* property can live here (receivers, nodes & SNMP, secret
 # references, ClickHouse). The service watches this file and hot-reloads most
 # changes; see the operations chapter of the documentation.

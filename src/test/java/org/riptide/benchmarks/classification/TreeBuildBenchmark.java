@@ -40,7 +40,7 @@ import java.util.concurrent.atomic.LongAdder;
  * Measures what one {@code Tree.of} build costs, at the shipped ruleset size and at synthesised
  * multiples of it. This is the boot cost an operator pays once per collector start and once per
  * accepted rule reload, and the measurement behind the supported ruleset size stated in
- * {@code docs/docs/deploy/operations.md}. See issue 746.
+ * {@code docs/docs/architecture/classification-build-cost.md}. See issue 746.
  *
  * <h2>What transfers off this machine and what does not</h2>
  *
@@ -167,8 +167,9 @@ public class TreeBuildBenchmark {
         // The deterministic half of this benchmark (#768). Unlike the score beside it, this number owes
         // nothing to the machine, the core count or the JIT, so the ratio between two sizes is an
         // exponent anyone can reproduce exactly. Locale.ROOT because these numbers are transcribed into
-        // docs/docs/deploy/operations.md and compared across machines; a default-locale run groups them
-        // with '.' in half of Europe, which reads as a decimal point next to the %.2f line above.
+        // docs/docs/architecture/classification-build-cost.md and compared across machines; a
+        // default-locale run groups them with '.' in half of Europe, which reads as a decimal point next
+        // to the %.2f line above.
         System.out.printf(Locale.ROOT,
                 "# ruleset %s work: %,d per-rule verdicts for %,d preprocessed rules%n",
                 ruleset, verdicts, preprocessedCount(rules));
@@ -295,7 +296,7 @@ public class TreeBuildBenchmark {
                 throw new IllegalStateException(
                         "rule '" + rule.getName() + "' does not constrain a single integer destination port and"
                                 + " nothing else, which is the only rule shape this synthesis can clone and the"
-                                + " only shape the build times in docs/docs/deploy/operations.md"
+                                + " only shape the build times in docs/docs/architecture/classification-build-cost.md"
                                 + " (Supported ruleset size) were measured on. Those figures no longer describe"
                                 + " this ruleset: extend the remap to the new shape, re-measure with"
                                 + " `make bench-jmh BENCH_TARGET=TreeBuildBenchmark`, and update that section.");

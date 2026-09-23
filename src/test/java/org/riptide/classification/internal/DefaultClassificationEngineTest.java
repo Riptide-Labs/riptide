@@ -170,7 +170,7 @@ public class DefaultClassificationEngineTest {
      * #757 settled: not a crash, not "no match", but the condition dropped entirely.
      *
      * <p>It is rejected as one rule, not as a failed load. That posture is what
-     * {@code docs/docs/deploy/operations.md} promises an operator for a rule the engine cannot use, and
+     * {@code docs/docs/architecture/reloading.md} promises an operator for a rule the engine cannot use, and
      * it is the reason the check lives here rather than in {@code CsvImporter}: every provider crosses
      * this seam, including {@link ClassificationRuleProvider#forList}, which no importer guard reaches.</p>
      */
