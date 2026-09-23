@@ -1,17 +1,20 @@
 ---
 sidebar_position: 8
+title: Outbound TLS
+description: The one key that adds an internal certificate authority to riptide's HTTP reads, which connections it reaches, and every error it can raise.
 ---
 
-# Outbound TLS
+# Outbound TLS reference
 
-Riptide reads two things over HTTP: the discovery endpoint (`riptide.discovery.url`) and the classification ruleset (`riptide.classification.rules`, when it is an `http://` or `https://` location).
-Both verify the server's certificate against the platform's certificate authorities.
-
+Riptide reads two things over HTTP: the discovery endpoint at `riptide.discovery.url` and the classification ruleset at `riptide.classification.rules` when that is an `http://` or `https://` location.
+Both verify the server certificate against the platform's certificate authorities.
 An endpoint served by an internal authority needs that authority added.
 
-| Key | Default | Meaning |
-| --- | --- | --- |
-| `riptide.http.ca-bundle` | unset | A PEM file holding one or more certificate authorities to trust **in addition** to the platform's own. |
+## Settings
+
+| Name | Type | Default | Description |
+| --- | --- | --- | --- |
+| **`riptide.http.ca-bundle`** | path to a PEM file | unset | One or more certificate authorities to trust in addition to the platform's own. Read once at startup. An unreadable file, or one holding no certificate, fails startup. |
 
 ```yaml
 riptide:
@@ -19,54 +22,60 @@ riptide:
     ca-bundle: /etc/riptide/internal-ca.pem
 ```
 
-One key for both consumers, not one each: an operator has one internal authority, and two keys would always hold the same value.
-A PEM file may hold several certificates, which is how you cover two endpoints behind two different authorities.
+There is no key that disables verification.
+These connections carry a credential, and an unverified peer is one that anything on the path can impersonate.
 
-## In addition, never instead
+## What the bundle reaches
 
-A configured bundle widens what is trusted.
-An endpoint served by a public authority stays readable while an internal bundle is configured, so adding one for NetBox cannot silently break another endpoint.
+| Connection | Setting | Uses `riptide.http.ca-bundle` |
+| --- | --- | --- |
+| Discovery endpoint | `riptide.discovery.url` | yes |
+| Classification ruleset over HTTP | `riptide.classification.rules` | yes |
+| ClickHouse | `riptide.clickhouse.endpoint` | no; the ClickHouse client's own TLS settings apply |
+| Vault | `riptide.secrets.vault.uri` | no; Spring Vault's own TLS settings apply |
 
-An unreadable bundle, or one holding no certificate, fails startup naming the key and the file.
-It does not quietly fall back to the platform's authorities: that would leave you believing an internal authority was configured, and you would find out from a failed read that names neither.
+A configured bundle widens trust and never replaces it.
+A peer is accepted when either the platform's authorities or the bundle verify it, so adding a bundle for one endpoint cannot break another served by a public authority.
+The platform's key managers stay in place too, so a client certificate configured through `javax.net.ssl.keyStore` is still presented.
 
-## There is no way to turn verification off
+## Trust one endpoint's certificate directly
 
-Riptide has no `skip-verify` key, deliberately.
+When there is no authority file, trust the served certificate itself.
 
-These connections carry a credential. An unverified peer is one anything on the path can impersonate, and a setting that disables the check outlives the afternoon that motivated it.
+1. Save it:
 
-If an endpoint's certificate does not verify and you have no authority file, trust that certificate directly:
+   ```bash
+   openssl s_client -showcerts -connect netbox.example.com:443 </dev/null 2>/dev/null \
+     | openssl x509 -outform PEM > /etc/riptide/netbox.pem
+   grep -c 'BEGIN CERTIFICATE' /etc/riptide/netbox.pem
+   ```
 
-```shell
-openssl s_client -showcerts -connect netbox.example.com:443 </dev/null \
-  | openssl x509 -outform PEM > /etc/riptide/netbox.pem
-```
+   Expected output:
 
-Point `riptide.http.ca-bundle` at the result.
-That configuration states what is trusted; disabling verification states nothing.
+   ```text
+   1
+   ```
 
-## What the bundle does not reach
+2. Point **`riptide.http.ca-bundle`** at the file and restart.
 
-Two outbound clients do not use Riptide's own HTTP reader, so this key does not apply to them:
-
-| Client | Configured by |
-| --- | --- |
-| ClickHouse (`riptide.clickhouse.endpoint`) | The ClickHouse client's own TLS settings |
-| Vault (`riptide.secrets.vault.uri`) | Spring Vault's own TLS settings |
-
-Both accept an `https://` endpoint, so this boundary is worth knowing before you conclude the key is not working.
+A PEM file may hold several certificates, which covers two endpoints behind two authorities with one key.
 
 ## Rotation
 
-The bundle is read once, at startup, so a rotated authority needs a restart.
+| What rotates | Takes effect |
+| --- | --- |
+| The bundle | At the next restart. It is read once at startup. |
+| `riptide.discovery.token` | At the next request. It is resolved per request, so a `file://` reference picks up a rewritten file without a restart, and a `vault://` reference costs one Vault read per page of a paged walk. |
 
-A rotated **credential** does not: `riptide.discovery.token` is resolved on every request, so rewriting the file a `file://` reference names takes effect on the next one.
-The asymmetry is deliberate. A certificate authority rotates on a certificate's lifetime, and rebuilding the trust material every poll would spend real work on a file that almost never changes; a token rotates on an operational cadence, and resolving one is a file read.
+A credential reference that stops resolving fails that poll, which is counted, and the last good inventory keeps serving.
+The request is never sent without the credential.
 
-Per **request**, not per poll, and the difference matters for `vault://`.
-The `netbox-api` source walks pages, so a fleet spanning ten pages resolves the token ten times per poll, which is ten Vault reads.
-`file://`, `env://` and plain references cost nothing worth counting.
+## Error catalog
 
-If a credential reference stops resolving while Riptide is running, the poll fails, is counted, and the last good inventory keeps serving.
-The request is never sent without the credential: an endpoint that answers an unauthenticated read could hand back a different fleet, and every guard downstream would treat that as a legitimate change.
+Each fails startup.
+
+| Message | Probable cause | Recovery |
+| --- | --- | --- |
+| `riptide.http.ca-bundle could not be read: /path: ... It must name a readable PEM file holding one or more certificate authorities.` | Missing file, no read permission, or a PEM or DER body that does not parse | Fix the path or the file |
+| `riptide.http.ca-bundle holds no certificate: /path. A PEM file with one or more CERTIFICATE blocks is expected. Leave the key unset to trust only the platform's authorities.` | Empty file, or a file with no `CERTIFICATE` block, such as a key file or plain text | Put the authority's PEM in it, or unset the key |
+| `riptide.http.ca-bundle could not be used: /path: ...` | The certificates parsed but no trust manager could be built, or the platform key store named by `javax.net.ssl.keyStore` could not be opened: missing file, wrong `keyStorePassword` or `keyStoreType` | See the wrapped message; with mutual TLS check the key store properties before the bundle |
