@@ -11,14 +11,15 @@ Two paths, depending on what you're here for:
 
 Deploy the published image or jar — no build toolchain needed.
 
-- [**Docker Compose**](deploy/docker-compose.md) — full stack (Riptide + ClickHouse +
+- [**Docker Compose**](guides/docker-compose.md) — full stack (Riptide + ClickHouse +
   Grafana) in one `docker compose up`
-- [**Plain JAR**](deploy/plain-jar.md) — `java -jar` with file- or env-var-based
+- [**Plain JAR**](guides/plain-jar.md) — `java -jar` with file- or env-var-based
   configuration
-- [**DEB / RPM packages**](deploy/linux-packages.md) — `apt`/`dnf` install with a managed
+- [**DEB / RPM packages**](guides/linux-packages.md) — `apt`/`dnf` install with a managed
   systemd service
-- [**NixOS**](deploy/nixos.md) — flake package plus a `services.riptide` module
-- [Operations notes](deploy/operations.md) — image tags, restarts, upgrades
+- [**NixOS**](guides/nixos.md) — flake package plus a `services.riptide` module
+- [Upgrade Riptide](guides/upgrade.md) — image tags, what the schema check migrates, per-release notes
+- [Troubleshooting](operations/troubleshooting.md) — symptom, cause and fix for probes, metrics and logs
 
 ## 🛠 I want to work on Riptide
 
@@ -30,7 +31,7 @@ Build from source, debug locally, send a pull request.
 - [Testing](develop/testing.md) — unit / e2e / full-mode tiers
 - [Pull requests](develop/pull-requests.md) — quality gates, DCO, commit conventions
 
-Both paths share the [configuration reference](configuration/receivers.md) —
-receivers, [SNMP agents](configuration/agent-configuration.md),
-[secret references](configuration/secret-references.md), and
-[ClickHouse](configuration/clickhouse.md).
+Both paths share the [reference section](reference/receivers.md) —
+receivers, [SNMP agents](reference/agent-configuration.md),
+[secret references](reference/secret-references.md), and
+[ClickHouse](reference/clickhouse.md).

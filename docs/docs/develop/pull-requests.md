@@ -53,7 +53,7 @@ Branch protection requires these four on the pull request's current head:
 | **`build`** | `build.yml` | `make`, after the fixture tests of the repository's checker scripts; see [What `make` enforces](#what-make-enforces). | `make` |
 | **`e2e`** | `build.yml` | `make e2e` in [full mode](testing.md#run-full-mode). | `make e2e` |
 | **`lint`** | `lint-actions.yml` | actionlint and zizmor over the workflows, and the README contributor table in sync with `.all-contributorsrc`. | `make lint-actions`, `make contributors-check` |
-| **`build-cost-docs`** | `build.yml` | A change under `src/main/java/org/riptide/classification/internal/decision/` also changes `docs/docs/deploy/operations.md` or carries a `Cost-Unchanged:` commit trailer. A changed dashboard JSON bumps the dashboards version. | `make build-cost-docs`, `make dashboards-version-check DASHBOARDS_BASE_REF=origin/main` |
+| **`build-cost-docs`** | `build.yml` | A change under `src/main/java/org/riptide/classification/internal/decision/` also changes `docs/docs/architecture/classification-build-cost.md` or carries a `Cost-Unchanged:` commit trailer. A changed dashboard JSON bumps the dashboards version. | `make build-cost-docs`, `make dashboards-version-check DASHBOARDS_BASE_REF=origin/main` |
 
 These run as well, by path or on every pull request, and are not required by branch protection:
 

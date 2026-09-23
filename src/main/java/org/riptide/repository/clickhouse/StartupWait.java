@@ -41,7 +41,7 @@ final class StartupWait {
 
     /**
      * Between attempts. A constant rather than a second key: it is the rate the documented
-     * Kubernetes {@code startupProbe} polls at ({@code periodSeconds: 2} in operations.md), and
+     * Kubernetes {@code startupProbe} polls at ({@code periodSeconds: 2} in management.md), and
      * nothing in #833 asks for a knob here.
      */
     static final Duration INTERVAL = Duration.ofSeconds(2);

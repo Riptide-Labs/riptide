@@ -6,7 +6,7 @@
 # either updating the section that publishes what building it costs, or saying
 # in the commit that the cost did not move.
 #
-# WHY THIS EXISTS. docs/docs/deploy/operations.md publishes a supported ruleset
+# WHY THIS EXISTS. docs/docs/architecture/classification-build-cost.md publishes a supported ruleset
 # size, a wall time at four sizes and a work count at four sizes. All of it is
 # operator-facing and the size is a support commitment. The benchmark that
 # produced those figures runs in no workflow, so nothing re-checks them.
@@ -75,7 +75,7 @@ BASE_REF="${2:-origin/main}"
 TRIGGER_PREFIX="src/main/java/org/riptide/classification/internal/decision/"
 
 # The published figures. Section: "Supported ruleset size".
-DOC_PATH="docs/docs/deploy/operations.md"
+DOC_PATH="docs/docs/architecture/classification-build-cost.md"
 
 # The escape valve, chosen over a pull-request label because a label lives only
 # in GitHub metadata and does not survive a squash-merge into the history. A

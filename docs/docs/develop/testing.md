@@ -75,15 +75,15 @@ Checkstyle, compilation and the unit tests run first; Failsafe then runs only th
 | Class | Proves |
 | --- | --- |
 | `ClickhouseRepositoryIT` | Schema creation on a fresh server, batch insert, and query-back of the persisted values. |
-| `ClickhouseStartupWaitIT` | What the real readiness probe treats as an answer and as silence during the [startup wait](../configuration/clickhouse.md#startup-wait). |
+| `ClickhouseStartupWaitIT` | What the real readiness probe treats as an answer and as silence during the [startup wait](../reference/clickhouse.md#startup-wait). |
 | `DeadLetterIT` | Where the rows of a refused insert go. |
 | `PoisonBatchProbeIT`, `MultiBlockPoisonProbeIT` | What one rejected row does to the batch around it, and where a partial write is and is not possible. |
 | `RollupRepairIT`, `RollupShapeDriftIT` | In-place rollup repair and shape-drift detection through the provisioned writer role. |
 | `ReservedValueIT` | What a row aggregated before an appended rollup column reads back. |
 | `TimestampTimezoneIT` | Flow timestamps are stored as absolute instants regardless of the collector host's timezone. |
 | `CoverageReportingIT` | The MCP coverage report against a real server. |
-| `TenantOnboardingIT`, `TenantWriteBarrierIT`, `TenantQueryIsolationIT` | The `onboard` and `offboard` subcommands, the per-tenant write barrier and the per-tenant reader credential, end to end; see [Multi-tenancy](../deploy/multi-tenancy.md). |
-| `VaultSecretResolverIT` | `vault://` [secret references](../configuration/secret-references.md) against a real Vault. |
+| `TenantOnboardingIT`, `TenantWriteBarrierIT`, `TenantQueryIsolationIT` | The `onboard` and `offboard` subcommands, the per-tenant write barrier and the per-tenant reader credential, end to end; see [Multi-tenancy](../guides/onboard-a-tenant.md). |
+| `VaultSecretResolverIT` | `vault://` [secret references](../reference/secret-references.md) against a real Vault. |
 | `Nl6FlowIngestionIT` | nl6 devices exporting NetFlow v5, NetFlow v9, IPFIX and sFlow into the running listeners, through parsing, enrichment and classification, into ClickHouse; row counts reconciled against nl6's per-collector ledger. |
 | `Nl6SnmpEnrichmentIT` | Full mode only: devices export from their own addresses and SNMP enrichment walks back to each device's simulated agent. |
 

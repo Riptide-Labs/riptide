@@ -35,7 +35,7 @@ in
       description = ''
         Riptide configuration, rendered to YAML and exposed at
         `/etc/riptide/config.yaml`. See the configuration reference at
-        <https://riptide.space/docs/configuration/receivers>.
+        <https://riptide.space/docs/reference/receivers>.
 
         The rendered file is world-readable in the Nix store; keep inline
         credentials out of it and use {option}`services.riptide.environmentFile`

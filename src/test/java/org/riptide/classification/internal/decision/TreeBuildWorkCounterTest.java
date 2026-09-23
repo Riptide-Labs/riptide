@@ -41,8 +41,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * slice size is asserted below so the next version cannot do it again quietly.
  *
  * <p><b>What is gated here and what is not.</b> This slice is pinned exactly, because it is cheap and
- * deterministic. The shipped-size figure in {@code docs/docs/deploy/operations.md} (262,251,844) is not,
- * because reproducing it means building the bundled ruleset — the 30-40 s cost #707 deliberately removed.
+ * deterministic. The shipped-size figure in {@code docs/docs/architecture/classification-build-cost.md}
+ * (262,251,844) is not, because reproducing it means building the bundled ruleset — the 30-40 s cost
+ * #707 deliberately removed.
  * Nor is any absolute <em>budget</em> asserted: research for #768 found no published account, in any
  * ecosystem, of what a deterministic cost gate costs to maintain over a year, and the one that
  * demonstrably survived years in blocking CI (Chromium's binary-size trybot, mandatory since October
@@ -71,8 +72,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>That property is enforced, but not here. {@code TreeBuildSynthesisTest} refuses any rule carrying
  * a port range, a source port or an address, which is what keeps the port thresholds single-valued.
  * <b>Relax that guard and this counter quietly stops meaning what
- * {@code docs/docs/deploy/operations.md} says it means</b>, with nothing failing. An operator ruleset
- * using port ranges is already outside it, which is what the docs' "one rule shape" caveat covers.
+ * {@code docs/docs/architecture/classification-build-cost.md} says it means</b>, with nothing
+ * failing. An operator ruleset using port ranges is already outside it, which is what the docs' "one
+ * rule shape" caveat covers.
  */
 class TreeBuildWorkCounterTest {
 
@@ -84,8 +86,9 @@ class TreeBuildWorkCounterTest {
      *
      * <p>Deliberately the same shape as {@code TreeBuildSynthesisTest.STALE_DOCS}, and for the same
      * reason: these constants are not internal to this test. The build they measure is the build
-     * {@code docs/docs/deploy/operations.md} publishes a work count and a wall time for, so a change
-     * that moves them has also invalidated a published figure that nothing else will notice is wrong.
+     * {@code docs/docs/architecture/classification-build-cost.md} publishes a work count and a wall time
+     * for, so a change that moves them has also invalidated a published figure that nothing else will
+     * notice is wrong.
      *
      * <p>Without this the failure looks like a constant that needs updating, because that is the only
      * thing the message names. The published figure is then orphaned by the very commit that proved it
@@ -93,8 +96,9 @@ class TreeBuildWorkCounterTest {
      */
     private static final String STALE_DOCS =
             "if this moved because Tree.of's work genuinely changed, then"
-                    + " docs/docs/deploy/operations.md (Supported ruleset size) is now stale too: it"
-                    + " publishes 262,251,844 for the shipped ruleset and a wall time per size, both"
+                    + " docs/docs/architecture/classification-build-cost.md (Supported ruleset size)"
+                    + " is now stale too: it publishes 262,251,844 for the shipped ruleset and a wall time"
+                    + " per size, both"
                     + " measured from this build. Re-measure with `make bench-jmh"
                     + " BENCH_TARGET=TreeBuildBenchmark` and update that section in the same commit."
                     + " If instead the first " + SLICE * 2 + " rows of classification-rules.csv were"

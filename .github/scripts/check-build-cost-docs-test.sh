@@ -22,7 +22,7 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
 
 TRIGGER_DIR="src/main/java/org/riptide/classification/internal/decision"
-DOC_PATH="docs/docs/deploy/operations.md"
+DOC_PATH="docs/docs/architecture/classification-build-cost.md"
 
 failures=0
 passes=0

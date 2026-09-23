@@ -88,8 +88,9 @@ public class ClassificationRuleReloader {
     /**
      * The documented supported ruleset size, and the consumer #769 says it never had.
      *
-     * <p><b>These two numbers are published.</b> {@code docs/docs/deploy/operations.md} ("Supported ruleset
-     * size") states a bound of 12,500 rules and explains it is really about roughly 25,000 preprocessed
+     * <p><b>These two numbers are published.</b> {@code docs/docs/architecture/classification-build-cost.md}
+     * ("Supported ruleset size") states a bound of 12,500 rules and explains it is really about roughly
+     * 25,000 preprocessed
      * rules, because an omnidirectional rule carrying a port or address condition is built in both
      * directions. {@code ClassificationRuleReloaderTest} pins both against that page; change one and the
      * other has to move in the same commit.

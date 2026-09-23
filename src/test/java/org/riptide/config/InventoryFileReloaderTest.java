@@ -194,7 +194,7 @@ class InventoryFileReloaderTest {
         assertThat(this.inventory.snapshot().agentView().match(netflow("10.20.5.5"))).isPresent();
         assertThat(failures()).isEqualTo(1);
         assertThat(stale()).isEqualTo(1);
-        // and the operator is told WHY, which operations.md promises ("logs a warning
+        // and the operator is told WHY, which reloading.md promises ("logs a warning
         // naming the problem"). The counter and the gauge both move without a word being
         // said, so emptying this reloader's failure sentence left the whole suite green
         assertThat(appender.list).anySatisfy(event -> {

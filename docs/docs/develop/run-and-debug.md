@@ -37,7 +37,7 @@ description: Start ClickHouse and Grafana from the shipped stack, run riptide fr
    ClickHouse is published on `127.0.0.1:8123`, which riptide's default endpoint `http://localhost:8123` reaches, as user `default` with password `riptide`.
    Grafana is at `http://localhost:3000`, user `admin`, password `admin`, and its port is published on every interface.
    Set **`CLICKHOUSE_PASSWORD`** or **`GF_SECURITY_ADMIN_PASSWORD`** in the environment before `up` to change either.
-   This is the ClickHouse and Grafana half of the [shipped stack](../deploy/docker-compose.md#what-the-stack-runs), without the riptide container.
+   This is the ClickHouse and Grafana half of the [shipped stack](../guides/docker-compose.md#what-the-stack-runs), without the riptide container.
 
 2. Start riptide with one receiver.
    From the IDE, run `org.riptide.RiptideApplication` with the arguments below as program arguments.
@@ -61,7 +61,7 @@ description: Start ClickHouse and Grafana from the shipped stack, run riptide fr
    ```
 
    No receiver is configured by default.
-   Match `type` to the capture: `netflow5`, `netflow9`, `ipfix`, `sflow`, or `multi` for any of them on one port; see [Receivers](../configuration/receivers.md).
+   Match `type` to the capture: `netflow5`, `netflow9`, `ipfix`, `sflow`, or `multi` for any of them on one port; see [Receivers](../reference/receivers.md).
    Set breakpoints in the parsers under `org.riptide.flows.parser`, the enrichers under `org.riptide.snmp`, `org.riptide.dns`, `org.riptide.routing` and `org.riptide.geoip`, or the pipeline under `org.riptide.pipeline`.
 
 3. Replay the capture.
@@ -142,7 +142,7 @@ sent 0 UDP payloads to 127.0.0.1:9999; skipped 595 (port mismatch 595)
 ## What a replay does not reproduce
 
 - **The exporter is `127.0.0.1`.**
-  The collector sees the replay host, not the capture's source address, so [agent enrichment](../configuration/agent-configuration.md) keyed on the real exporter does not apply unless the inventory maps the loopback address.
+  The collector sees the replay host, not the capture's source address, so [agent enrichment](../reference/agent-configuration.md) keyed on the real exporter does not apply unless the inventory maps the loopback address.
 - **Flow timestamps are the capture's.**
   `timestamp`, `firstSwitched` and `lastSwitched` carry the capture's clock; only `receivedAt` is the replay time.
   The provisioned dashboards filter on `timestamp`, except the collection-health panels keyed on `receivedAt`, so a "Last 15 minutes" window shows nothing.
