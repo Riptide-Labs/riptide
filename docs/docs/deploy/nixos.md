@@ -18,7 +18,7 @@ nix run github:Riptide-Labs/riptide -- --help
 
 `nix build github:Riptide-Labs/riptide#default` produces `result/bin/riptide` (a `java -jar`
 launcher over the fat jar) and requires no local JDK. Pin a release by ref:
-`github:Riptide-Labs/riptide?ref=v0.3.1`.
+`github:Riptide-Labs/riptide?ref=v%%VERSION%%`.
 
 ## NixOS module
 

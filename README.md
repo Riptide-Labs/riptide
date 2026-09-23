@@ -69,6 +69,7 @@ simulated agent. It is gated on `RIPTIDE_E2E_FULL_MODE=1` and skipped otherwise
 docker network create --subnet 172.30.42.0/24 nl6-fullmode
 sudo ip route add 10.42.0.0/16 via 172.30.42.10
 sudo sysctl -w net.ipv4.conf.all.rp_filter=2
+sudo sysctl -w net.ipv4.conf.default.rp_filter=2
 RIPTIDE_E2E_FULL_MODE=1 make e2e
 ```
 
@@ -85,7 +86,7 @@ java -jar riptide-flows-*.jar
 git clone https://github.com/Riptide-Labs/riptide.git
 ```
 
-Run with a local build OCI image riptide:local
+Run the published image `ghcr.io/riptide-labs/riptide:latest` with ClickHouse and Grafana
 ```
 cd deployment/riptide
 docker compose up -d
@@ -96,7 +97,7 @@ docker compose up -d
 * Send flows to your Riptide server on 9999/udp
 
 > [!TIP]
-> If you want to run the latest stable version, create a `compose.override.yml` and set the image tag to `ghcr.io/riptide:latest`.
+> To run the image you built with `make oci` (`riptide:local`) instead, add the dev override: `docker compose -f compose.yml -f compose.override.dev.yml up -d`.
 
 Run just a ClickHouse stack
 ```
@@ -107,16 +108,13 @@ docker compose up -d
 # 👩‍🔧 Configuration
 
 The default configuration is shipped in [application.properties](src/main/resources/application.properties).
-You have two options to customize configuration parameters.
-1. Providing an application.properties next to the jar file, in Docker /app/application.properties
-2. Set environment variables
-
-If you want to use environment variables, you need to convert the configuration key to upper case and underscores.
-Here is an example:
+Override it in one of two places:
+1. The file `/etc/riptide/config.yaml`, loaded when present. In the container, mount your file at that path.
+2. Environment variables: upper case, dots and dashes become underscores.
 ```
 riptide.clickhouse.endpoint -> RIPTIDE_CLICKHOUSE_ENDPOINT
 ```
-You can also bind mount your configuration to `/app/application.properties`.
+Details, including what cannot be set through the environment, are in the [Plain JAR](https://riptide.space/docs/deploy/plain-jar) page.
 
 # 📦 Make a release
 

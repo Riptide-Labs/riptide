@@ -126,7 +126,7 @@ riptide:
       address: mgmt_ip
 ```
 
-A `next` link may be absolute or relative: a relative one is resolved against the page it came from, and either way it must stay on the same host as `riptide.discovery.url`, because the credential is sent with every page.
+A `next` link may be absolute or relative: a relative one is resolved against the page it came from, and either way it must stay on the same origin (scheme, host and port) as `riptide.discovery.url`, because the credential is sent with every page.
 
 ### Nautobot
 
@@ -178,7 +178,9 @@ A network **range** is not this problem. `10.0.0.0/24` with no host bits is a le
 
 If that endpoint is NetBox, use `netbox-api`, which knows to strip it. If it is your own, serve the address without the prefix.
 
-A path that matches nothing on a particular device is not an error: that device is skipped and counted, like any device with no usable address.
+A path that matches nothing on a particular device is not an error.
+A device whose name or address path misses is dropped by the source and not counted.
+Only an address that is present but unusable (a prefix length, an unparsable value) is skipped and counted on `discovery.skipped`.
 
 ## Narrowing what the endpoint returns
 
@@ -209,11 +211,11 @@ A filter matching nothing is refused rather than publishing an empty exporters t
 | `riptide.discovery.url` | unset | The endpoint. Unset or blank disables discovery. Point it at whichever endpoint the type needs. |
 | `riptide.discovery.type` | `prometheus-sd` | Which source to read: `prometheus-sd`, `netbox-api` or `mapped-json`. An unrecognised value fails startup, naming what is accepted. |
 | `riptide.discovery.filter` | unset | Narrows what the endpoint returns, in its own query terms. Read by `netbox-api` and `mapped-json`. |
-| `riptide.discovery.mapping.items` | unset | Where the array of devices is. Required by `mapped-json`; see [Mapping your own endpoint](#mapping-your-own-endpoint). |
+| `riptide.discovery.mapping.items` | unset | Where the array of devices is. Optional for `mapped-json`: unset means the response is itself the array; see [Mapping your own endpoint](#mapping-your-own-endpoint). |
 | `riptide.discovery.mapping.name` | unset | Where the exporter name is in one device. Required by `mapped-json`. |
 | `riptide.discovery.mapping.address` | unset | Where the exporter address is in one device. Required by `mapped-json`. |
 | `riptide.discovery.mapping.next` | unset | Where the link to the next page is. Read by `mapped-json`; unset means one request. |
-| `riptide.discovery.token` | unset | Credential, as a [secret reference](secret-references.md). Resolved on every poll, so rotating it takes effect on the next one with no restart. A reference that stops resolving fails the poll rather than sending an unauthenticated request. |
+| `riptide.discovery.token` | unset | Credential, as a [secret reference](secret-references.md). Resolved on every request (each page of a paged walk), so rotating it takes effect on the next one with no restart. A reference that stops resolving fails the poll rather than sending an unauthenticated request. |
 | `riptide.discovery.auth-scheme` | `Token` | Paired with the token in the `Authorization` header. NetBox expects `Token`, not `Bearer`. With a token set, a blank value is refused at startup naming the key, rather than treated as unset like the URL: it would send an `Authorization` header with no scheme, which an endpoint rejects with nothing naming the scheme. Leave the key out to get the default. With no token set the scheme is never read, so a blank value is harmless and startup is unaffected. |
 | `riptide.discovery.interval` | `60s` | Poll interval. Zero or negative disables the watcher entirely; see [Startup](#startup). |
 | `riptide.discovery.timeout` | `10s` | Bounds the connect, each read, and the whole response. |
@@ -252,6 +254,8 @@ When no label qualifies, the target itself is used as the address, but only if t
 
 An entry with a blank name, or with no address from either a label or the target, is never guessed at.
 It is skipped and counted on the `discovery.skipped` gauge.
+For `netbox-api`, a device with no name is dropped by the source before this step and is not counted; only address failures reach the gauge.
+For `mapped-json`, a device missing either path is dropped; only a present but unusable address reaches the gauge.
 Two entries carrying the same name and the same address are not a collision; they collapse into one entry.
 Two entries carrying the same name with *different* addresses are refused, and every collision is named at once.
 Two entries carrying *different* names with the same address are refused the same way.
@@ -330,6 +334,9 @@ The two discovery gauges answer different questions and will legitimately disagr
 
 An endpoint served by an internal certificate authority needs that authority in `riptide.http.ca-bundle`; see [Outbound TLS](outbound-tls.md).
 There is no way to disable certificate verification, and that page says what to do instead.
+
+A paged walk (`netbox-api`, `mapped-json` with `next`) stops at 100,000 devices or 10,000 pages.
+Past either bound the poll fails and the last good inventory keeps serving; the device-bound message names `riptide.discovery.filter`, the page-bound message names the endpoint.
 
 The NetBox service discovery plugin disables pagination and supports no conditional requests, so every poll transfers a full serialization of every visible device.
 Bound it with NetBox filters, for example `?status=active&role=leaf&role=spine`.

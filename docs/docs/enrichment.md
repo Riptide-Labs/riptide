@@ -103,7 +103,7 @@ Expiry is the absolute staleness bound — the backstop for `ifIndex` reassignme
 A snapshot older than the refresh interval but inside the expiry window is **still served**, because an interface name from the previous cycle beats no interface name at all.
 Setting expiry shorter than refresh makes enrichment blank between walks, and the collector warns at startup if you do.
 
-Walks are spread across the refresh interval using a phase derived from the exporter's address, so the fleet does not arrive at the agent as one burst, and the phase is stable across restarts without any stored state.
+Walks are spread across the refresh interval using a phase derived from the exporter's address, plus a small jitter, so the fleet does not arrive at the agent as one burst, and the phase is stable across restarts without any stored state.
 
 :::info[Expect a warmup window]
 
@@ -135,14 +135,11 @@ riptide.snmp.options.retention-ms=1200000
 ## Reverse-DNS hostnames
 
 Source, destination, and next-hop addresses are resolved to hostnames via PTR lookups
-(Netty-based, asynchronous):
+(Netty-based, asynchronous). It is off by default; enable it with:
 
 ```properties
 riptide.enricher.hostnames.enabled=true
 ```
-
-The enricher is on unless disabled; the bundled `application.properties` ships with it
-set to `false`.
 
 ## AS numbers and names
 
@@ -153,7 +150,7 @@ into `srcAsOrg`/`dstAsOrg`.
 ## Classification
 
 Flows are classified by a rule engine (application naming). The rule source is any
-Spring resource location and defaults to the bundled `classification-rules.csv`:
+Spring resource location and defaults to the bundled `classification-rules.csv`. To use your own ruleset:
 
 ```properties
 riptide.classification.rules=file:/etc/riptide/classification-rules.csv
@@ -187,12 +184,9 @@ Two columns on `flows` carry the evidence.
 The rollups carry the name but not the id or the source.
 
 A non-zero id the table cannot name falls through to the rules and marks `enrichment_application_unresolved`.
-That is normal for the first table refresh interval after a restart (Cisco defaults to 600 s, the lab exporter used 60 s), and permanent on a device that exports ids without a table.
-A Juniper SRX340 on Junos 24.4R1-S3.7 exports `applicationId` in its IPv4 template when the template carries `export-extension app-id`, and writes `0` into every record.
-Measured on 2026-09-23 over 662 s: 11,539 IPv4 records, all `0`, while application identification was enabled and classifying (protocol bundle 999 of 2023-06-13; the box's own statistics count millions of named sessions), every sampled interface sat in a zone with `application-tracking` on, and the only options template was the sampling one, so no name table either.
-On that platform and release the field is a placeholder, and Juniper's SRX J-Flow documentation does not list it.
-A different Junos release, a different SRX platform, or a signature package update is a new measurement, not a reason to trust this one.
-Application names leave such a box only as AppTrack syslog (`APPTRACK_SESSION_CLOSE`), which riptide does not consume; that is the follow-up in [#848](https://github.com/Riptide-Labs/riptide/issues/848).
+That is normal for the first table refresh interval after a restart (Cisco defaults to 600 s), and permanent on a device that exports ids without a table.
+A Juniper SRX340 on Junos 24.4R1-S3.7 exports `applicationId` in its IPv4 template when the template carries `export-extension app-id`, writes `0` into every record, and sends no name table; the measurement is recorded in [#848](https://github.com/Riptide-Labs/riptide/issues/848).
+Application names leave such a box only as AppTrack syslog (`APPTRACK_SESSION_CLOSE`), which riptide does not consume; consuming it is the work in that issue.
 Until then an SRX is named by the rules rung, and the unresolved meter does not move, because `0` means "not sent".
 
 The table's own meters follow the interface table's vocabulary: `enrichment_optionApplications_consumed`, `_skipped` (a named row with no usable id, or a name past the cap below) and `_rejected` (an entry evicted because a scope hit its cap).
@@ -266,7 +260,7 @@ rather than silently applied to every exporter. Per-exporter scoping does not ex
 
 A rejected rule is **not** a failed reload: the rest of the ruleset keeps serving, and the
 reload counters and staleness gauge all read healthy. Alert on
-`classification_rules_rejected > 0`, which is the series that says part of your edit is
+`classification.rules.rejected > 0` (`classification_rules_rejected` at `/metrics`), which is the series that says part of your edit is
 classifying nothing; then read the log, where the WARN names the rule and the ERROR beside it
 names the column and the offending value. See
 [Operations](deploy/operations.md) for the reload semantics and the full metric list.

@@ -89,8 +89,20 @@ riptide.identity.tenant=acme
 riptide.identity.organisation=acme-eu
 ```
 
-Secret references resolve through the built-in resolvers (`plain`, `env://`, `file://`);
-`--writer-secret`/`--reader-secret` are the passwords for the tenant's writer and BI users. Add
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--admin-url` | URL | required | ClickHouse HTTP endpoint the admin credential connects to |
+| `--admin-user` | string | `default` | admin user |
+| `--admin-password` | secret ref | empty | admin password |
+| `--tenant` | string | required | tenant id; names the `writer_<tenant>` and `bi_<tenant>` users |
+| `--org` | string | required | organisation pinned on the tenant's users |
+| `--writer-secret` / `--reader-secret` | secret ref | required | passwords for the tenant's writer and BI users |
+| `--database` | string | `riptide` | database holding `flows`; also qualifies the account names |
+| `--quota-bytes` | integer | `50000000000` | `written_bytes` per hour allowed to each writer user |
+| `--create-schema` | flag | off | bootstrap the database, tables, rollups and dead-letter table when absent |
+| `--ttl-days` | integer | `30` | retention for a `flows` table that `--create-schema` creates |
+
+Secret references resolve through the built-in resolvers (`plain`, `env://`, `file://`). Add
 `riptide.clickhouse.manage-schema=false` and `riptide.identity.zone` to the collector config as
 needed.
 
@@ -107,8 +119,8 @@ checks `CREATE` privileges even when `IF NOT EXISTS` would no-op).
 
 | mode | minimum privileges for the admin credential |
 |---|---|
-| default (schema exists) | `CREATE USER`/`CREATE ROLE`/`CREATE QUOTA`/`CREATE ROW POLICY`, `ALTER USER`/`ALTER ROLE`, `DROP USER`/`DROP ROW POLICY` (offboard), `ALTER TABLE` on `<db>.flows`, `INSERT`, `SELECT` on `<db>.flows` plus `SELECT` on `system.databases/tables/columns` **with grant option** (they are granted onward to the roles), and **`SHOW USERS ON *.*`** (see the caution below) |
-| re-running against a database another admin provisioned | the above, plus **`ROLE ADMIN`** — granting a role it did not itself create requires it, and the per-database roles were created by whichever admin ran the first `onboard` there |
+| default (schema exists) | `CREATE USER`/`CREATE ROLE`/`CREATE QUOTA`/`CREATE ROW POLICY`, `ALTER USER`/`ALTER ROLE`, `DROP USER`/`DROP ROW POLICY` (offboard), `ALTER TABLE` on `<db>.flows`, `INSERT`, `SELECT` on `<db>.flows`, `SHOW TABLES` on the rollup views, plus `SELECT` on `system.databases/tables/columns` **with grant option** (they are granted onward to the roles), and **`SHOW USERS ON *.*`** (see the caution below) |
+| re-running against a database another admin provisioned | the above, plus **`ROLE ADMIN`** `(unverified)` — granting a role it did not itself create requires it, and the per-database roles were created by whichever admin ran the first `onboard` there |
 | `--create-schema` | the above, plus `CREATE DATABASE ON <db>.*`, `CREATE TABLE ON <db>.*` (the `flows` table, the dead-letter table and the rollup targets) and `CREATE VIEW ON <db>.*` (the rollups' materialized views) |
 | `revoke-legacy` (standalone — it needs none of the rows above) | `INSERT`, `SELECT` on `<db>.*` **with grant option** (revoking a role's privilege needs it; `ROLE ADMIN` does not), plus `SELECT` on `system.grants` and `system.row_policies` — see [Revoking the pre-rename roles](#revoking-the-pre-rename-roles-on-a-migrated-database) |
 
@@ -195,7 +207,10 @@ CREATE TABLE IF NOT EXISTS riptide.flows_dead_letter (tenant, failedAt, error, p
 CREATE TABLE IF NOT EXISTS riptide.flows_by_application_1m (…);          -- and three more
 CREATE MATERIALIZED VIEW IF NOT EXISTS riptide.flows_by_application_1m_mv
   TO riptide.flows_by_application_1m AS SELECT … FROM riptide.flows AS f GROUP BY …;
--- Once per database (idempotent): roles carry every per-tenant grant and the reader hardening.
+-- Once per database (idempotent), on every run. Additive column upgrades come first, so a
+-- re-run brings a pre-existing table up to date in place.
+ALTER TABLE riptide.flows ADD COLUMN IF NOT EXISTS … ;   -- one per column added since the table was created
+-- Roles carry every per-tenant grant and the reader hardening.
 -- Users, roles and quotas are instance-wide objects, so their names carry the database.
 CREATE ROLE IF NOT EXISTS `flow_writer@riptide`;
 GRANT INSERT ON riptide.flows TO `flow_writer@riptide`;
@@ -223,6 +238,9 @@ GRANT INSERT ON riptide.flows_dead_letter TO `flow_writer@riptide`;
 -- Every rollup gets the same treatment as flows, for both roles.
 GRANT INSERT ON riptide.flows_by_application_1m TO `flow_writer@riptide`;   -- and the other three
 GRANT SELECT ON riptide.flows_by_application_1m TO `flow_reader@riptide`;
+-- SHOW TABLES on each rollup's view, not SELECT: the startup rollup check needs to see the view,
+-- and a row policy does not apply to rows read through a materialized view's name.
+GRANT SHOW TABLES ON riptide.flows_by_application_1m_mv TO `flow_writer@riptide`;   -- and the other three
 
 -- Per tenant (the residual): two scoped users + role grants + one row policy per table.
 CREATE USER IF NOT EXISTS `writer_acme@riptide` IDENTIFIED WITH sha256_password BY '…'
@@ -297,7 +315,7 @@ An instance provisioned under the old naming keeps its unqualified `writer_<tena
 
 Re-running `onboard` **adds** the qualified account alongside the old one — it does not rename or drop it, because the tenant's collector is still authenticating as the old one until you paste the new stanza.
 It also **keeps the old account named on the tenant's row policies** for as long as that account exists.
-That is not cosmetic: the policy name is unchanged by the rename, so the run rewrites the *existing* policy's `TO` list, and an account dropped from it would be named by no policy and start reading every tenant's rows (see [A row policy is not deny-by-default](#what-it-provisions), further down this page).
+That is not cosmetic: the policy name is unchanged by the rename, so the run rewrites the *existing* policy's `TO` list, and an account dropped from it would be named by no policy and start reading every tenant's rows (see [A row policy is not deny-by-default](#dropping-the-roles), further down this page).
 Once you retire the old account, the next `onboard` stops naming it.
 
 The run prints a warning naming the leftover account and the `DROP USER` to run:
@@ -383,7 +401,7 @@ GRANT SELECT ON system.role_grants TO <your admin user>;   -- otherwise the quer
 SELECT * FROM system.role_grants WHERE granted_role_name IN ('flow_writer', 'flow_reader');
 -- only when that returns nothing:
 DROP ROLE IF EXISTS flow_writer, flow_reader;
-DROP QUOTA IF EXISTS flow_ingest;
+DROP QUOTA IF EXISTS flow_ingest;   -- (unverified) pre-rename quota name; no command composes it
 ```
 
 Without the grant an under-privileged operator sees an empty result and concludes it is safe to drop roles another tenant still holds. That blindness is why the per-database `revoke-legacy` above exists: it closes each database as you migrate it, so the instance-wide drop is a tidy-up rather than the only defence.
@@ -506,13 +524,8 @@ What is **not** a boundary on OSS:
 The guarantee comes from the ClickHouse credential + row policy, so it holds regardless of what a
 dashboard sends.
 
-## Scaling ceiling
+## Open questions
 
-Per-tenant ClickHouse users and row policies work comfortably into the **low hundreds of tenants**.
-Beyond that, the per-user access objects become the bottleneck and the model pivots to a **shared
-BI user keyed by `quota_key`** with tenant scoping applied at the application/query layer rather
-than one CH user per tenant.
-
-This is a known future migration, **out of scope** for the current release — documented here so it
-is a planned step, not a surprise. Nothing in the per-tenant model above blocks it: the identity
-columns and row-policy predicates carry over unchanged.
+- Does re-running `onboard` against a database another admin provisioned need `ROLE ADMIN`? The requirement above is stated from ClickHouse's grant rules, not from a measurement or a test in this repository.
+- Was the pre-rename quota named `flow_ingest`? The only quota name the code composes is `onboard`'s qualified `flow_ingest@<database>`; `revoke-legacy` touches no quota, and the unqualified name in the drop statement above is inferred.
+- How many tenants does the per-user model carry? "Low hundreds" is an estimate with no measurement behind it. A pivot to a shared BI user keyed by `quota_key`, with tenant scoping at the query layer, has been discussed but has no issue yet; the identity columns and row-policy predicates would carry over unchanged.

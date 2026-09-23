@@ -6,8 +6,7 @@ title: Receivers
 # Receivers
 
 Receivers are the flow listeners. None are configured by default — the daemon starts no
-listeners until you define them. Entries defined in the bundled `application.properties`
-merge with (and cannot be removed by) external configuration.
+listeners until you define them.
 
 Each receiver has a free-form name and three core settings:
 
@@ -196,16 +195,18 @@ The cost is that a decommissioned exporter's rate lingers for a day before it is
 Drops are counted:
 
 ```
-parser_optionSampling_expired    rates dropped after the exporter stopped advertising
-parser_selectorReport_expired    the same, for IPFIX Selector Reports
-parser_optionSampling_evicted    entries displaced by table pressure rather than by silence
-parser_selectorReport_evicted
+parser.optionSampling.expired    rates dropped after the exporter stopped advertising
+parser.selectorReport.expired    the same, for IPFIX Selector Reports
+parser.optionSampling.evicted    entries displaced by table pressure rather than by silence
+parser.selectorReport.evicted
 ```
+
+Dots become underscores at `/metrics` (`parser_optionSampling_expired`).
 
 A climbing `_expired` means an exporter is losing its learned rate. What its flows fall back to depends on which counter moved:
 
-- `parser_optionSampling_expired` — the exporter has nothing left to resolve against, so its flows fall to the configured fallback, or to `assumed` where none is set.
-- `parser_selectorReport_expired` — only that Selector's entry is gone. Flows naming it fall back to the exporter-wide rate, so provenance moves from `derived` to `options` and the interval may not change at all.
+- `parser.optionSampling.expired` — the exporter has nothing left to resolve against, so its flows fall to the configured fallback, or to `assumed` where none is set.
+- `parser.selectorReport.expired` — only that Selector's entry is gone. Flows naming it fall back to the exporter-wide rate, so provenance moves from `derived` to `options` and the interval may not change at all.
 
 The `_evicted` counters mean something different: the table is full and displacing entries, including live ones. That is pressure, not silence, and it wants a different response.
 
@@ -399,7 +400,7 @@ They carry no volume — the same unchecked rate scaled their counters, so they 
 In the rollups, `0` means only what the warning above says. Backfilling a rollup from raw with `INSERT INTO … SELECT` carries those rows across, where the two meanings become indistinguishable.
 :::
 
-The rate and the protocol are carried for correctness, not offered as something to group by — asking riptide's tools to group by `samplingInterval` or `flowProtocol` answers from raw `flows`, not from a rollup. Writing the SQL yourself against a rollup works and is not discouraged; it is riptide's own query routing that does not yet pick a rollup for those.
+The rate and the protocol are carried for correctness, not offered as something to group by — asking riptide's tools to group by `samplingInterval` or `flowProtocol` answers from raw `flows`, not from a rollup. Writing the SQL yourself against a rollup works.
 
 ## Exporter identity
 

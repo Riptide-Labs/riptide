@@ -5,10 +5,8 @@ title: Secret references
 
 # Secret references
 
-SNMP credentials (`community`, `auth-passphrase`, `priv-passphrase`) are **references to
-secrets, never the secrets themselves**. A reference is a URI resolved at poll time by a
-pluggable resolver — so a single secure store (HashiCorp Vault, SOPS, files, or the
-environment) backs all credentials, and plaintext never lands in configuration.
+Every credential in the configuration is a **reference to a secret, never the secret itself**: the SNMP fields (`community`, `auth-passphrase`, `priv-passphrase`), `riptide.clickhouse.username` and `password`, `riptide.mcp.clickhouse.username` and `password`, `riptide.mcp.auth.tokens`, and `riptide.discovery.token`.
+A reference is a URI resolved by a pluggable resolver, so a single secure store (HashiCorp Vault, SOPS, files, or the environment) backs all credentials, and plaintext never lands in configuration.
 
 | Scheme | Example | Resolves |
 |---|---|---|
@@ -21,8 +19,14 @@ environment) backs all credentials, and plaintext never lands in configuration.
 A bare string (no scheme) is treated as a literal — intended for test fixtures and
 migration only. Log output redacts literals as `plain://***`.
 
-An **unresolvable reference degrades gracefully**: the flow is persisted without SNMP
-enrichment and a warning is logged — a configuration mistake never drops flows.
+When a reference is resolved, and what an unresolvable one does, depends on the consumer:
+
+| Consumer | Resolved | On failure |
+|---|---|---|
+| SNMP credential sets | at every poll | the flow is persisted without SNMP enrichment and a warning is logged; flows are never dropped |
+| `riptide.clickhouse.*` and `riptide.mcp.clickhouse.*` | at startup | startup fails |
+| `riptide.discovery.token` | at startup, then on every request | startup fails; later, the poll fails and the last good inventory keeps serving |
+| `riptide.mcp.auth.tokens` | when the MCP server initialises | the token is logged as an error and skipped |
 
 ## A key must be declared once
 
@@ -84,7 +88,7 @@ and reference them as `vault://secret/snmp/core-router#community` etc.
 
 The `sops://` resolver decrypts files with the [sops](https://getsops.io) binary (age or
 cloud KMS keys) and looks up dot-separated keys in the decrypted YAML/JSON document.
-Decrypted content is cached in memory for the lifetime of the process.
+Decrypted content is cached in memory until the next [config hot-reload](../deploy/operations.md#config-hot-reload) or restart.
 
 ```properties
 riptide.secrets.sops.command=sops                       # default: sops on the PATH

@@ -51,7 +51,7 @@ Credential values should be [secret references](secret-references.md); a scheme-
 Rotation differs by scheme.
 `file://` is re-read on every poll, so rotating the file content reaches a polled agent with **no configuration change and no reload**.
 `env://` is also re-read, but a process environment is immutable, so rotating it means a restart.
-`sops://` decrypted content is cached for the process lifetime and refreshed only by a main-config reload.
+`sops://` decrypted content is cached until the next main-config reload or restart.
 
 ### Protocol values
 

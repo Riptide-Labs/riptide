@@ -12,7 +12,7 @@ Two paths, depending on what you're here for:
 Deploy the published image or jar — no build toolchain needed.
 
 - [**Docker Compose**](deploy/docker-compose.md) — full stack (Riptide + ClickHouse +
-  UI + Grafana) in one `docker compose up`
+  Grafana) in one `docker compose up`
 - [**Plain JAR**](deploy/plain-jar.md) — `java -jar` with file- or env-var-based
   configuration
 - [**DEB / RPM packages**](deploy/linux-packages.md) — `apt`/`dnf` install with a managed

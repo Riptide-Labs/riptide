@@ -27,7 +27,7 @@ Riptide loads an optional external configuration file:
 ```
 
 Everything from the [configuration chapters](../configuration/receivers.md) goes there —
-receivers, nodes & SNMP, secret references, ClickHouse:
+receivers, SNMP agents, secret references, ClickHouse:
 
 ```yaml
 riptide:

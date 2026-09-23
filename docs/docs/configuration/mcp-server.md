@@ -7,16 +7,16 @@ description: Native Java Model Context Protocol (MCP) server integration, Secret
 # Model Context Protocol (MCP) Server
 
 Riptide includes an embedded, native Java **Model Context Protocol (MCP)** server component (`org.riptide.mcp.*`).
-This component allows AI agent frameworks (**Google Antigravity (AGY)**, **Claude CLI**, and custom LLM applications) to directly query ClickHouse network flow telemetry, analyze traffic spikes, and execute automated DDoS triage without requiring external Node.js or Python adapter runtimes.
+This component allows AI agent frameworks (**Claude Code**, other MCP clients, and custom LLM applications) to directly query ClickHouse network flow telemetry, analyze traffic spikes, and execute automated DDoS triage without requiring external Node.js or Python adapter runtimes.
 
 ---
 
 ## Key Capabilities
 
 - **Zero-Dependency Native Java Executable**: Ships directly inside `riptide-flows-*.jar`.
-- **Dual Transport Engine (`stdio` & `sse`)**: Non-blocking IPC loop over standard input/output streams for local CLI hosts (`antigravity-cli`, `claude`) and HTTP Server-Sent Events (`/mcp/sse`) on port 8081 for remote LLM agent clients.
+- **Dual Transport Engine (`stdio` & `sse`)**: Non-blocking IPC loop over standard input/output streams for local CLI hosts (`claude`) and HTTP Server-Sent Events (`/mcp/sse`) on port 8081 for remote LLM agent clients.
 - **Integrated `SecretRef` Token Authentication**: Optional token authorization dynamically resolved from environment variables (`env://`), local files (`file:///`), HashiCorp Vault (`vault://`), or SOPS (`sops://`).
-- **1-Minute Rollup Query Router**: Queries spanning $\ge 60$ minutes are automatically routed to ClickHouse `SummingMergeTree` rollups (`flows_by_application_1m`, `flows_by_conversation_1m`, `flows_by_exporter_iface_1m`, `flows_by_geo_asn_1m`).
+- **1-Minute Rollup Query Router**: Queries spanning 60 minutes or more are automatically routed to ClickHouse `SummingMergeTree` rollups (`flows_by_application_1m`, `flows_by_conversation_1m`, `flows_by_exporter_iface_1m`, `flows_by_geo_asn_1m`).
   The rollups carry `samplingInterval` and `flowProtocol`, so the sampling-corrected *scaling expression* is the same whichever table a request lands on, including on deployments receiving sFlow: each row is scaled by its own protocol's factor, and sFlow's is `1` because its counters arrive pre-scaled. The `WHERE` clause does not port — a rollup needs boundary predicates that raw `flows` must not be given. The tools themselves report counters as the exporter reported them and do not apply the correction — see [sampling-corrected volume](receivers#sampling-corrected-volume-beyond-raw-retention).
 - **7 Auto-Shipped Agent Skills**: Pre-packaged Markdown skill files embedded under `classpath*:mcp/skills/*.md` exposed automatically as MCP Prompts (`prompts/list`) and Resources (`resources/list`).
 
@@ -24,7 +24,7 @@ This component allows AI agent frameworks (**Google Antigravity (AGY)**, **Claud
 
 ## Configuration Properties
 
-Configure the MCP server in `/etc/riptide/config.yaml` or `application.properties`:
+Configure the MCP server in `/etc/riptide/config.yaml` or through environment variables:
 
 ```properties
 # Enable the embedded MCP Server
@@ -105,7 +105,7 @@ Riptide automatically discovers and registers 7 domain-standard network engineer
 
 | Command | Skill ID | Description | Grounding Framework |
 | :--- | :--- | :--- | :--- |
-| `/riptide-investigate-ddos` | `riptide-ddos-mitigation-triage` | Scientific DDoS attack family classification and entropy analysis. | **RFC 4732**, **Shannon Entropy** ($\Delta H < -1.5$), **TCP Flag Histograms**, **NIST SP 800-189** |
+| `/riptide-investigate-ddos` | `riptide-ddos-mitigation-triage` | Scientific DDoS attack family classification and entropy analysis. | **RFC 4732**, **Shannon entropy** (ΔH below -1.5), **TCP Flag Histograms**, **NIST SP 800-189** |
 | `/riptide-cause-analysis` | `riptide-cause-analysis-triage` | Compares current 15m traffic windows against 24h baselines. | Comparative Anomaly Detection |
 | `/riptide-capacity-plan` | `riptide-interface-capacity-analysis` | Evaluates interface bandwidth saturation & 95th percentile headroom. | Enriched SNMP `ifSpeed` & 95th Billing |
 | `/riptide-peering-analysis` | `riptide-peering-geo-analysis` | BGP ASN and geographic traffic breakdown for transit optimization. | BGP Origin AS & Geo-IP |
@@ -145,26 +145,19 @@ The server exposes 6 vendor-neutral flow query tools:
 
 ## Connecting Client Hosts
 
-### 1. Google Antigravity (AGY / `antigravity-cli`)
-Add Riptide to your AGY MCP configuration:
+### Claude Code
+
+Register Riptide as a stdio server (the path is where the DEB/RPM packages install the jar):
+
 ```bash
-agy mcp add riptide java -jar /usr/share/riptide/riptide-flows.jar --riptide.mcp.enabled=true --riptide.mcp.transport=stdio
+claude mcp add riptide -- java -jar /usr/share/riptide/riptide.jar --riptide.mcp.enabled=true --riptide.mcp.transport=stdio
 ```
 
-### 2. Claude CLI
-Add Riptide to `~/.claude/claude_desktop_config.json`:
-```json
-{
-  "mcpServers": {
-    "riptide": {
-      "command": "java",
-      "args": [
-        "-jar",
-        "/usr/share/riptide/riptide-flows.jar",
-        "--riptide.mcp.enabled=true",
-        "--riptide.mcp.transport=stdio"
-      ]
-    }
-  }
-}
-```
+### Other clients
+
+Any MCP client that launches a stdio server takes the same command: `java`, with the arguments `-jar`, `/usr/share/riptide/riptide.jar`, `--riptide.mcp.enabled=true`, `--riptide.mcp.transport=stdio`.
+For a client that connects over HTTP, set `riptide.mcp.transport=sse` and point it at `http://<bind-address>:8081/mcp/sse`.
+
+## Open questions
+
+- An earlier revision of this page listed Google Antigravity (`agy mcp add …`) as a client. No reference for that CLI or command could be verified, so it was removed; add it back with a verified command.
