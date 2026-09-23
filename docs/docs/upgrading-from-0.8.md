@@ -1,102 +1,181 @@
 ---
 sidebar_position: 7
 title: Upgrading from 0.8
+description: Convert a 0.8 riptide.nodes configuration with the bundled converter, remove the keys 0.9 and later do not read, and what changes in behaviour.
 ---
 
-# Upgrading from 0.8
+# Upgrade from 0.8
 
-0.9 removes the `riptide.nodes` tree.
-Any surviving key, in any spelling (`riptide.nodes.<name>.*`, the old indexed `riptide.nodes[0].*`, camelCase, or the `RIPTIDE_NODES_*` environment form) **fails startup** with an error naming the offending key and pointing here.
-The failure is deliberate: nothing reads that tree any more, and a collector that started anyway would run with your whole device configuration silently doing nothing.
+0.9 removed the `riptide.nodes` tree.
+A surviving key in any spelling, `riptide.nodes.<name>.*`, the indexed `riptide.nodes[0].*`, camelCase or `RIPTIDE_NODES_*`, fails startup with a report naming the key.
 
-## The mechanical path
+## Prerequisites
 
-1. **Convert, do not hand-port.** With the 0.9 jar, against your 0.8 configuration:
+- The current jar. The converter is part of it, see [subcommands](deploy/plain-jar.md#subcommands).
+- The 0.8 configuration as nested YAML: `riptide:` containing `nodes:` containing the node names. A flat properties file is not read; re-indent the `riptide.nodes` and `riptide.snmp.poll` trees into a small YAML file first, since only those two are read.
 
-   ```bash
-   riptide convert /etc/riptide/application.yaml \
-       --out-config config-fragment.yaml --out-inventory inventory.yaml
-   ```
+## Steps
 
-   The deb/rpm packages and the container image ship the jar without a `riptide` wrapper; there the invocation is:
+1. Convert. With the packaged jar:
 
    ```bash
    java -jar /usr/share/riptide/riptide.jar convert /etc/riptide/config.yaml \
        --out-config config-fragment.yaml --out-inventory inventory.yaml
    ```
 
-   (`/etc/riptide/config.yaml` is where the deb/rpm packages install the configuration.)
+   Expected output, for a configuration with one v3 host and one v2c subnet:
 
-   Docker, against the same mount the service uses, **before** switching the service to the 0.9 image:
+   ```text
+   Converted 2 node(s): 2 credential set(s), 1 polling profile(s), 2 agent range(s), 2 enrichment entry/entries.
+   Disabled 1 range ('campus', 10.20.40.0/24): v2c credentials on a range wider than one address. Its flows are still named; only polling stops.
+   Re-enable a disabled range by enumerating its devices as single addresses, or by moving the segment to v3. Both are in the comment above each entry.
+   Wrote credential sets and polling profiles to config-fragment.yaml
+   Wrote agent ranges and enrichment entries to inventory.yaml
+   Before starting 0.9, remove 'riptide.nodes' from your application config, and the retired 'riptide.snmp.poll.refresh-interval-ms' and '.snapshot-expiry-ms' keys if you had them. Both fail startup: leaving either in place means the collector will not come up.
+   ```
+
+   In Docker, against the mount the service uses and before switching the service to the new image:
 
    ```bash
-   docker run --rm -v /srv/riptide:/etc/riptide ghcr.io/riptide-labs/riptide:0.9 \
+   docker run --rm -v /srv/riptide:/etc/riptide ghcr.io/riptide-labs/riptide:%%VERSION%% \
        -jar /app/riptide.jar convert /etc/riptide/config.yaml \
        --out-config /etc/riptide/config-fragment.yaml --out-inventory /etc/riptide/inventory.yaml
    ```
 
-   (The image's entrypoint is `java`, so the arguments restate `-jar /app/riptide.jar`; without them Docker would try to run a class named `convert`.)
+   The image's entrypoint is `java`, so the arguments restate `-jar /app/riptide.jar`.
 
-2. **Merge the config fragment** (credential sets, polling profiles) into your `application.yaml`, and set `riptide.inventory.file` to the emitted inventory.
-3. **Remove the keys 0.9 does not read.** There are more than the two obvious ones, and they do not all behave the same way: three refuse to start, and three are ignored silently, which is the worse outcome because the setting simply stops taking effect.
+2. Merge **`config-fragment.yaml`** into the main configuration and set `riptide.inventory.file` to the emitted inventory. The fragment holds the credential sets and polling profiles:
 
-   | key | 0.9 |
+   ```yaml
+   riptide:
+     snmp:
+       credentials:
+         credentials-1:
+           version: "v2c"
+           community: "env://RIPTIDE_SNMP_COMMUNITY"
+         credentials-2:
+           version: "v3"
+           security-name: "monitoring"
+           auth-protocol: "hmac192sha256"
+           auth-passphrase: "vault://secret/snmp/core#auth"
+           priv-protocol: "aes256"
+           priv-passphrase: "vault://secret/snmp/core#priv"
+       polling:
+         default:
+           refresh-interval: PT1M
+           timeout: 500
+           retries: 1
+   ```
+
+3. Remove the keys this release does not read. Three fail startup, together in one report; three are ignored with a log line, which is easy to miss.
+
+   | Key | Effect |
    | --- | --- |
-   | the whole `riptide.nodes` tree | **fails startup** |
-   | `riptide.snmp.poll.refresh-interval-ms` / `.snapshot-expiry-ms` | **fails startup** — cadence lives on [polling profiles](configuration/agent-configuration.md#settings) now |
-   | `riptide.snmp.agents` / `riptide.exporters` in `application.yaml` | **fails startup** — these are current keys, but `application.yaml` is never where they belong: `riptide.snmp.agents` belongs in the file named by `riptide.inventory.file`, and so does `riptide.exporters` unless [dynamic discovery](configuration/discovery.md) is enabled, in which case it comes from the discovery endpoint instead |
-   | `riptide.snmp.config.definitions` | **ignored** — declare credential sets instead |
-   | `riptide.snmp.cache.retention-ms` / `.negative-retention-ms` / `.dead-endpoint-retention-ms` | **ignored** — no longer modelled |
+   | the whole `riptide.nodes` tree | fails startup |
+   | `riptide.snmp.poll.refresh-interval-ms`, `riptide.snmp.poll.snapshot-expiry-ms` | fails startup; cadence lives on [polling profiles](configuration/agent-configuration.md#settings) |
+   | `riptide.snmp.agents`, `riptide.exporters` in the main configuration | fails startup; they belong in the inventory file, or `riptide.exporters` in the [discovery](configuration/discovery.md) endpoint |
+   | `riptide.snmp.config.definitions` | ignored, logged as an error |
+   | `riptide.snmp.cache.retention-ms`, `.negative-retention-ms`, `.dead-endpoint-retention-ms` | ignored, logged as a warning |
 
-   The three that fail startup are reported **together, in one failure naming every offending key**, so this costs one edit rather than one restart per key. The three that are ignored are logged at startup and are easy to miss; check for them explicitly rather than relying on a clean boot to mean a clean configuration.
-   **Leave the other `riptide.snmp.poll.*` keys exactly where they are.** `pool-width`, `max-exporters`, `deregister-after` and the dead-endpoint backoff are not retired: they bind in 0.9 as they did in 0.8, the converter does not read or emit them, and they stay in your `application.yaml` untouched. Only the two cadence keys above moved.
-4. Start 0.9.
-   The converter's output always passes 0.9 validation; if it cannot represent something, it refuses with an error naming the node rather than emitting a file that will not boot.
+   The other `riptide.snmp.poll.*` keys, `pool-width`, `max-exporters`, `deregister-after` and the dead-endpoint back-off, are current and stay where they are. The converter neither reads nor emits them.
 
-:::note[Where the converter writes what]
+   Expected output when all three failing kinds are still present:
 
-The generated documents and the report go to different places, so a redirect never picks up prose.
+   ```text
+   Configuration carries 3 key(s) this release does not read:
 
-With `--out-config` and `--out-inventory`, as every invocation above uses, each document is written to its path and the **summary goes to stdout**. Without them both documents go to stdout — that is the `riptide convert nodes.yaml > new.yaml` form — and the summary moves to **stderr** so the redirected file stays loadable.
+     riptide.nodes tree (1): riptide.nodes.core-router.subnet-address
+       -> riptide.nodes was removed in 0.9: exporter names, interface pins and SNMP credentials now come from the credential sets and polling profiles in the main config plus the inventory file (riptide.inventory.file).
 
-Diagnostics always go to stderr, separately from either. That was not always true: these subcommands run with no Spring context, so logging used to fall back to stdout, where a single record could land inside the file you redirected ([#727](https://github.com/Riptide-Labs/riptide/issues/727)).
+   Convert it, do not delete it:
+       riptide convert <your-config.yaml> --out-config config.yaml --out-inventory inventory.yaml
 
-One report worth reading rather than skimming: if the cadence you are converting expires snapshots faster than it refreshes them, the summary says so and names both keys, including which one it took from the 0.9 default when you did not set it. It is not an error — the conversion is faithful and 0.9 will start — but a single missed walk blanks enrichment for that profile's exporters.
+   The converter deduplicates credential blocks, keeps every exporter name, and refuses rather than emitting anything 0.9 will not start on. Then remove the riptide.nodes tree from your configuration. The 0.9 release notes carry the full upgrade guide.
 
-:::
+     retired per-agent poll keys (1): riptide.snmp.poll.refresh-interval-ms
+       -> refresh and expiry moved into named polling profiles: configure riptide.snmp.polling.<name>.refresh-interval / .snapshot-expiry and reference the profile from agent ranges. Fleet-level riptide.snmp.poll.* keys are unaffected.
 
-:::note[The converter reads nested YAML]
-It wants the shape Spring writes as a tree — `riptide:` containing `nodes:`, containing the node name — not flat dotted property names, and not a `.properties` file. If your 0.8 configuration is flat, re-indent the `riptide.nodes` tree into a small YAML file and convert that; the rest of your configuration does not need to come with it, since only `riptide.nodes` and `riptide.snmp.poll` are read.
+     inventory trees in the main configuration (1): riptide.snmp.agents.10.20.30.7.credentials
+       -> riptide.snmp.agents and riptide.exporters live only in the dedicated inventory file named by riptide.inventory.file — they bind to nothing here and would be silently ignored.
+   ```
 
-**Configured entirely through environment variables?** Two things are worth knowing before you start. Spring never bound a multi-word node name from an environment variable: `RIPTIDE_NODES_CORE_ROUTER_SUBNET_ADDRESS` resolves to no node at all, so a hyphenated node configured that way was **not active in 0.8 either** — there is nothing to convert, and the variable should simply go. Single-word names (`RIPTIDE_NODES_EDGE_SUBNET_ADDRESS`) did bind; write those out as nested YAML and convert that file. Startup tells you which case you are in.
-:::
+4. Start the new version and check the inventory line in the log:
 
-## What the converter does with your nodes
+   ```text
+   org.riptide.inventory.Inventory          : Inventory loaded from /etc/riptide/inventory.yaml: 2 agent ranges, 2 enrichment entries
+   ```
 
-Every legacy node splits in half: an **agent range** (how to talk to the device) and an **enrichment entry** (what to call its flows), keyed by your old node name so exporter names survive.
-Identical credential blocks are deduplicated into named sets; per-node `timeout`/`retries` become polling profiles; a non-default `port` lands on the range.
+   The converter's output passes validation. Where it cannot represent a node it refuses with an error naming the node instead of emitting a file that will not start.
 
-Two cases deserve attention:
+## What the converter writes
 
-- **Wide v1/v2c ranges are emitted disabled.** 0.9 refuses to send a cleartext community to any in-range address that happens to emit a flow, so a v1/v2c node wider than one address becomes `enabled: false`, with the rationale and both remediations (enumerate the devices, or move the segment to v3) as a comment above the entry. **Its flows are still named**; only polling stops. The credential set is kept, unreferenced, so re-enabling is one line.
-- **Range-scoped names survive.** A node that named a whole subnet becomes a prefix enrichment entry with the same coverage; nothing is lost.
+Every 0.8 node splits into an agent range, how to talk to the device, and an enrichment entry, what to call its flows, keyed by the old node name so exporter names survive.
+Identical credential blocks become one named set.
+A non-default `port` lands on the range.
 
-## Behaviour changes to expect
+| Input | Output |
+| --- | --- |
+| A node with a single address and v3 credentials | An agent range referencing the shared credential set, and an enrichment entry with the node's pin and interface pins |
+| A node with a v1 or v2c community on a subnet | An enrichment entry with the same coverage, so its flows keep their name, and an agent range written `enabled: false` with the rationale and both remedies as a comment above it. The credential set is kept, unreferenced, so re-enabling is one line. The node's `timeout` and `retries` are dropped, so re-enabling also means writing them into a polling profile by hand |
+| A node that named a whole subnet | A prefix enrichment entry with the same coverage |
+| `riptide.snmp.poll.refresh-interval-ms` | `refresh-interval` on the `default` polling profile |
+| One field in two spellings, such as `subnet-address` and `subnetAddress` on one node | Refused, naming both |
+| A field the converter does not know | Refused, naming the node and the field |
 
-- Secret **value** rotation behind `file://` references needs no reload at all; `env://` needs a restart (process environments are immutable); `sops://` values are cached until a main-config reload.
-- Each range walks on its profile's own cadence rather than one fleet-wide interval.
-- A device inside a credentialed range is polled from its first flow with no per-device configuration (zero-touch onboarding); the registration cap (`riptide.snmp.poll.max-exporters`) and pool width bound the blast radius.
-- The inventory file hot-reloads on content change; a rejected edit keeps the last good inventory serving and raises `inventory.reload.stale`.
-- **An observation-domain pin still scopes naming; it no longer scopes which credentials poll a device.** Enrichment entries keep their pin, and so does option-data enrichment — both are unchanged. Agent ranges carry no pin, so credentials come from the most specific range covering the address, by the same longest-prefix rule the exporter tree uses. See below.
+The inventory half from the run above:
 
-:::note[If you pinned a polled node to an observation domain]
-This one is a fix, and it is worth understanding rather than working around.
+```yaml
+riptide:
+  snmp:
+    agents:
+      # Range 'campus' used v2c credentials. Disabled: the cleartext
+      # community would be sent to any in-range address that emits a flow.
+      # Either enumerate the devices as single addresses, or migrate the
+      # segment to v3. Its credentials are kept as 'credentials-1' so re-enabling
+      # is one line. (FR-9)
+      "10.20.40.0/24":
+        enabled: false
+      "10.20.30.7":
+        credentials: credentials-2
+        polling: default
+  exporters:
+    "campus":
+      address: "10.20.40.0/24"
+    "core-router":
+      address: "10.20.30.7"
+      observation-domain: 42
+      interfaces:
+        "3":
+          name: "ge-0/0/3"
+          alias: "Peering with AS64500"
+          high-speed: 10000
+```
 
-In 0.8 the poller held **one registration per address** (`Map<InetSocketAddress, Registration>`, unchanged since), and its `register()` returned the existing registration on collision — discarding the newly resolved endpoint. So where a domain-pinned node sat inside a wider polled node, a device covered by both was polled with whichever credentials **the first flow after start-up happened to select**, and that was re-decided on every restart.
+### Where the output goes
 
-0.9 resolves the same configuration by longest prefix: the most specific range wins, always, whatever domain arrives. A race became a rule.
+| Invocation | Documents | Summary | Diagnostics |
+| --- | --- | --- | --- |
+| with `--out-config` and `--out-inventory` | the two files | stdout | stderr |
+| with one of them | that file; the other document on stdout | stderr | stderr |
+| without them | stdout, separated by `---` | stderr | stderr |
 
-`riptide convert` names every node this applies to, so you can check the outcome against what you expected. Naming is unaffected — the pin still decides `exporterName` and interface pins, and a flow on a non-matching domain still falls through to the covering entry exactly as it did in 0.8.
+Diagnostics never reach stdout, so `riptide convert nodes.yaml > new.yaml` writes valid YAML to split by hand.
+The file is not loadable as either configuration on its own: fed to riptide whole, its inventory half fails startup as a misplaced tree.
+If the converted cadence expires snapshots faster than it refreshes them, the summary says so and names both keys, including the one it took from the default. That is a warning, not an error.
 
-Agent ranges deliberately carry no observation domain. One address has one SNMP agent with one configured community, whatever domains the device exports, so a domain cannot select a credential set; honouring one would mean polling a single device several times over and walking the same interface table for each.
-:::
+### Environment-variable configurations
+
+Spring never bound a multi-word node name from an environment variable: `RIPTIDE_NODES_CORE_ROUTER_SUBNET_ADDRESS` resolved to no node, so such a node was not active in 0.8 either and the variable can go.
+A single-word name such as `RIPTIDE_NODES_EDGE_SUBNET_ADDRESS` did bind; write those nodes out as nested YAML and convert that file.
+
+## Behaviour changes
+
+| Area | 0.8 | 0.9 and later |
+| --- | --- | --- |
+| Poll cadence | one fleet-wide interval | each range walks on its profile's cadence |
+| Which device is polled | named nodes only | any device inside a credentialed range, from its first flow; `riptide.snmp.poll.max-exporters` and `pool-width` bound it |
+| Which credentials poll a device covered by two nodes | whichever the first flow after start-up selected, because the poller held one registration per address | the most specific range, by longest prefix, whatever observation domain arrives; `riptide convert` names every node this applies to |
+| Observation-domain pin | scoped naming and polling | scopes naming and interface pins only; agent ranges carry no pin, because one address has one SNMP agent |
+| Inventory edits | restart | hot reload on content change once `riptide.config.reload-interval` is set, see [config hot-reload](deploy/operations.md#config-hot-reload); a rejected file keeps the last good inventory and raises `inventory.reload.stale` |
+| Secret value rotation | | `file://` needs no reload, `env://` needs a restart, `sops://` is cached until the next config reload, see [secret references](configuration/secret-references.md#rotation) |
+
