@@ -875,10 +875,10 @@
       "keepTime": true
     },
     {
-      "title": "Dashboards v1.0.1",
+      "title": "Dashboards v1.0.2",
       "type": "link",
-      "url": "https://github.com/Riptide-Labs/riptide/tree/main/deployment/clickhouse/container-fs/grafana/provisioning/dashboards",
-      "tooltip": "Version of the provisioned dashboard set. Independent of the riptide version.",
+      "url": "https://riptide.space/docs/guides/grafana-dashboards",
+      "tooltip": "Version of the provisioned dashboard set, independent of the riptide version. Opens the install and upgrade guide.",
       "icon": "info",
       "targetBlank": true
     }

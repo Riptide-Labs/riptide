@@ -121,6 +121,7 @@ With Corretto as the runtime, install with `rpm -i --nodeps` and manage the Java
 | **`/usr/lib/systemd/system/riptide.service`** | root, 0644 | The unit, see below. |
 | **`/etc/riptide/config.yaml`** | `root:riptide`, 0640 | Configuration. May hold credentials. Never overwritten on upgrade. |
 | **`/etc/riptide/riptide.env`** | `root:riptide`, 0640 | `EnvironmentFile` of the unit: `JAVA_OPTS` and `RIPTIDE_*` variables. Never overwritten on upgrade. |
+| **`/usr/share/riptide/grafana/dashboards/`** | root, 0644 | The nine Grafana dashboards and their provisioning file, replaced on upgrade. How to point a Grafana at them is on the [Grafana dashboards](grafana-dashboards.md) page. |
 
 The pre-install script creates the `riptide` system user and group with no home and `nologin`.
 The post-install script only reloads systemd; it does not enable or start anything.
