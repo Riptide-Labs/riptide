@@ -43,7 +43,7 @@ The failure is deliberate: nothing reads that tree any more, and a collector tha
    | key | 0.9 |
    | --- | --- |
    | the whole `riptide.nodes` tree | **fails startup** |
-   | `riptide.snmp.poll.refresh-interval-ms` / `.snapshot-expiry-ms` | **fails startup** — cadence lives on [polling profiles](configuration/agent-configuration.md#polling-profiles) now |
+   | `riptide.snmp.poll.refresh-interval-ms` / `.snapshot-expiry-ms` | **fails startup** — cadence lives on [polling profiles](configuration/agent-configuration.md#settings) now |
    | `riptide.snmp.agents` / `riptide.exporters` in `application.yaml` | **fails startup** — these are current keys, but `application.yaml` is never where they belong: `riptide.snmp.agents` belongs in the file named by `riptide.inventory.file`, and so does `riptide.exporters` unless [dynamic discovery](configuration/discovery.md) is enabled, in which case it comes from the discovery endpoint instead |
    | `riptide.snmp.config.definitions` | **ignored** — declare credential sets instead |
    | `riptide.snmp.cache.retention-ms` / `.negative-retention-ms` / `.dead-endpoint-retention-ms` | **ignored** — no longer modelled |
