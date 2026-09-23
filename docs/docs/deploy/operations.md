@@ -10,6 +10,7 @@ title: Operations
 | Tag | Meaning | Use for |
 |---|---|---|
 | `:<version>` | immutable release | production (pin this) |
+| `:X.Y` | newest patch release of that minor; moves on every release of it | tracking a minor |
 | `:latest` | newest release | quickstarts |
 | `:rc` | floating, rebuilt on **every merge to main** | tracking development — at your own risk |
 
@@ -22,12 +23,13 @@ replaced, so **flow data now survives a Riptide restart**. (This fixes the earli
 
 :::warning
 
-Schema evolution is still not migrated automatically. `CREATE TABLE IF NOT EXISTS` no-ops on
-an existing table, so a schema change between Riptide versions is **not** applied — the
-startup column check fails fast if the on-disk schema is stale, and the operator must **drop
-the `flows` table** (Riptide recreates it in manage mode) or re-provision it in
-`manage-schema=false` mode. This is a deliberate fail-fast until schema migrations land; plan
-retention accordingly if a version upgrade requires dropping the table.
+Only additive schema changes migrate automatically: a new column is added with
+`ALTER TABLE … ADD COLUMN IF NOT EXISTS` at startup in manage mode, or by re-running
+`riptide onboard` in `manage-schema=false` mode (see [Upgrading](#upgrading)). Any other schema
+change between Riptide versions is **not** applied — the startup column check fails fast if the
+on-disk schema is stale, and the operator must **drop the `flows` table** (Riptide recreates it in
+manage mode) or re-provision it in `manage-schema=false` mode. Plan retention accordingly if a
+version upgrade requires dropping the table.
 
 :::
 
@@ -41,6 +43,15 @@ within one poll. Opt in with:
 ```properties
 riptide.config.reload-interval=30s   # absent or 0 = disabled (the default)
 ```
+
+| Metric | Kind | Meaning |
+|---|---|---|
+| `config.reload.successes` | counter | a changed `config.yaml` validated and committed |
+| `config.reload.failures` | counter | a changed `config.yaml` failed validation; the running configuration is kept |
+| `config.reload.partial` | counter | the config committed but the inventory rebuild against it is still pending (a subset of `successes`, counted once per edit); the stale gauge stays 1 until a retry or a newer edit publishes |
+| `config.reload.stale` | gauge | 1 while the last file that could be read did not commit |
+| `config.reload.dead` | gauge | 1 when the poll schedule stopped and will not run again |
+| `inventory.reload.successes` / `failures` / `stale` / `dead` | as above | the same family for the inventory file |
 
 Semantics:
 
@@ -127,7 +138,7 @@ Semantics, which are the config reloader's (same poll loop) with a source that c
 
 - **Content-hash polling** — the resource is re-resolved and its bytes hashed every cycle. Unchanged bytes rebuild nothing: the hash decides, not the clock. A cycle that finds no change costs one fetch and no work; a cycle that finds one costs two, because the engine re-reads the resource itself when it rebuilds. Startup costs three (the eager parse, the engine's first load, and the schedule's own baseline).
 - **A remote fetch is bounded end to end** — 10 seconds to connect, 10 seconds for each read, **and** 10 seconds for the whole response. The last of those is the one that matters: a server sending one byte at a time resets a per-read timer forever, so only a deadline across the response ends the cycle. Worst case is roughly twice the bound, because a read already blocked when the deadline passes still has to time out on its own. A response larger than 8 MiB is refused unread rather than buffered.
-- **Only a 200 is a ruleset** — any other status is a failure naming the code, so a redirect this fetch does not follow, a 5xx, or a proxy's error page served as HTML never reaches the CSV parser. The one exception is 404, which is absence and skips.
+- **Only a 200 is a ruleset** — any other status is a failure naming the code, so a redirect to another scheme (same-scheme redirects are followed), a 5xx, or a proxy's error page served as HTML never reaches the CSV parser. The one exception is 404, which is absence and skips.
 - **A source that is not there skips** — a 404, or a deleted file. The last good rules keep classifying, nothing is counted as a failure, and the skip warns once per episode rather than once per poll. So does a response with an empty or whitespace-only body: an empty ruleset is never committed. A *local* file that is present but unreadable (a permission denial) is a failure, not a skip — telling an operator to make a file reappear when it is already there would send them the wrong way.
 - **A failed fetch or a failed load keeps the last good rules serving** — flows keep being classified by whatever loaded last, and nothing is thrown at a flow. See the two cases below.
 - **A condition column must name something Riptide can resolve** — a `protocol`, port or address column that is not empty but resolves to nothing is rejected, and the rule classifies nothing. Name protocols **by keyword, not by number**: `tcp`, not `6`. One bad keyword refuses the whole rule, so `tcp,tpc` is refused rather than quietly narrowed to `tcp`. Leave a column **empty** to mean "any" — that is the only way to say it. The keywords Riptide accepts are IANA's, with two deliberate exceptions it still carries under the older name: **55 is `MOBILE`** (IANA renamed it `Min-IPv4`) and **84 accepts both `TTP` and `IPTM`**. See issue 763.
@@ -748,5 +759,6 @@ What JFR costs you is fidelity. Its sampling is subject to safepoint bias, meani
 | Port | Protocol | What |
 |---|---|---|
 | `9999/udp` | NetFlow/IPFIX | default flow ingest (container `EXPOSE`; receivers are configurable) |
-| `8080` | HTTP | management endpoints (`/livez`, `/readyz`, `/metrics`) |
+| `8080` | HTTP | management endpoints (`/livez`, `/readyz`, `/metrics`); `riptide.management.port` |
 | `8123` | HTTP | ClickHouse (the compose stack publishes it on loopback only; password from `CLICKHOUSE_PASSWORD`) |
+| `9000` | TCP | ClickHouse native protocol (the compose stack publishes it on loopback only) |

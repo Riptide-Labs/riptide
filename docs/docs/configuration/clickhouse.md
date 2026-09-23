@@ -186,7 +186,8 @@ reads a few thousand pre-aggregated rows instead of scanning every flow.
 
 Every rollup carries the same preamble — `tenant`, `organisation`, `timestamp`, `zone` — and the
 same measures: `bytes`, `packets`, `flowCount`, plus the directional split `bytesIn`/`bytesOut`
-and `packetsIn`/`packetsOut`. The undirected totals sit alongside the split deliberately: a flow
+and `packetsIn`/`packetsOut`, and `samplingProvenanceMask`, a `groupBitOr` of the provenance bits
+that is merged rather than summed (see [Rollups gain dimensions in place](#rollups-gain-dimensions-in-place)). The undirected totals sit alongside the split deliberately: a flow
 with `direction = UNKNOWN` counts in neither `bytesIn` nor `bytesOut`, so a query that summed the
 split would quietly lose it. Use `bytes` unless you specifically want one direction.
 
@@ -374,7 +375,7 @@ Alert on a sustained `persister.batch.droppedRows` or `persister.batch.failedRow
 
 Note also that the pre-existing `logPersisting.persister` timer now measures only the **enqueue**
 latency (the hand-off into the buffer, normally microseconds) rather than insert duration; the
-insert duration lives in `persister.batch.flush`. Relevant when metrics do become exportable.
+insert duration lives in `persister.batch.flush`.
 
 :::
 
@@ -414,13 +415,14 @@ receiver runs one parser per enabled protocol and stops them one after another, 
 drain's `shutdown-grace-period` start:
 
 ```
-worst case ≈ (5 s × total parsers across all receivers) + shutdown-grace-period + 1 s
+worst case ≈ (5 s × total parsers across all receivers) + shutdown-grace-period + 1 s + 2 s (management server) + 2 s (MCP SSE transport, when enabled)
 ```
 
-The trailing second is the grace-expired path only: if the flusher has to be interrupted, it is
+The 1 s is the grace-expired path only: if the flusher has to be interrupted, it is
 given one more second to unwind before the queue is swept, so that the sweep and the client
-teardown never race an insert that is still in flight. A collector with one `multi` receiver
-(4 protocols) and one IPFIX receiver is therefore 5 × 5 + 5 + 1 = ~31 s. Keep that sum below systemd's `TimeoutStopSec` (default 90 s), or the process
+teardown never race an insert that is still in flight. The management server and the MCP SSE
+server each get up to 2 s to close their connections. A collector with one `multi` receiver
+(4 protocols) and one IPFIX receiver is therefore 5 × 5 + 5 + 1 + 2 = ~33 s (~35 s with SSE enabled). Keep that sum below systemd's `TimeoutStopSec` (default 90 s), or the process
 is killed mid-drain and the buffer is lost. `shutdown-grace-period` must be at least twice
 `max-latency` (enforced at startup), since the flusher notices the stop signal only between flush
 windows.
@@ -594,8 +596,8 @@ exploded row; rewriting them to this pattern is follow-up work tracked in #346.
 
 :::
 
-The view needs a ClickHouse with the new query analyzer (24.8+ recommended, where it is the
-default). The view does not emit zero rows for empty buckets — use
+The view needs a ClickHouse with the new query analyzer enabled, which it is by default on the
+[tested versions](#server-versions). The view does not emit zero rows for empty buckets — use
 `ORDER BY time WITH FILL STEP {ival}` (or Grafana's null-as-zero option) when a panel needs
 gap filling.
 
@@ -623,7 +625,7 @@ anchor hard isolation, see the [Multi-tenancy runbook](../deploy/multi-tenancy.m
 :::note
 
 `zone` replaces the former `riptide.location` key. `riptide.location` is deprecated but
-still accepted for one release (mapped to `zone` with a warning); prefer
+still accepted (mapped to `zone` with a warning at startup); prefer
 `riptide.identity.zone`.
 
 :::
