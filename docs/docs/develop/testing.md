@@ -67,7 +67,7 @@ Expected output, the Failsafe lines:
 [INFO] Total time:  02:54 min
 ```
 
-The build gate runs first, then Failsafe runs only the named class.
+Checkstyle, compilation and the unit tests run first; Failsafe then runs only the named class at `integration-test`, and SpotBugs and the coverage floor run after it at `verify`.
 `-Dtest=<class>` runs an `*IT` class too, but under Surefire and outside the `e2e` profile's Failsafe lifecycle.
 
 ## Integration test classes
@@ -129,7 +129,7 @@ The floors sit below the unit-only baseline, so a shortfall fails the build befo
 | `SflowParserFuzzTest` | none committed |
 
 The harnesses live in `src/fuzz/java/org/riptide/flows/fuzz/`.
-In every build the seeds replay as ordinary JUnit tests, so a crash input from a fuzz run becomes a regression test once it is copied into the harness's `Inputs/parse` directory.
+In every build the seeds replay as ordinary JUnit tests, so a crash input from a fuzz run becomes a regression test once it is copied into the harness's `Inputs/<method>` directory, `parse` for every seed committed today.
 
 ```bash
 make fuzz FUZZ_TIME=120 FUZZ_TARGET=IpfixParserFuzzTest
@@ -147,7 +147,7 @@ The nightly `fuzz.yml` workflow runs every harness for 180 seconds.
 
 | Image | Pinned in | Read by |
 | --- | --- | --- |
-| ClickHouse | `.github/e2e-images/clickhouse.Dockerfile` | Every `*IT` class through `ContainerImages.clickhouse()`, the CI pre-pull step, and the shipped compose stack, which carries the same pin. |
+| ClickHouse | `.github/e2e-images/clickhouse.Dockerfile` | Every ClickHouse-backed `*IT` class, all but `VaultSecretResolverIT`, through `ContainerImages.clickhouse()`; the CI pre-pull step; and the shipped compose stack, which carries the same pin. |
 | nl6 | `.github/e2e-images/nl6.Dockerfile` | `Nl6Container` through `ContainerImages.nl6()`, and the CI pre-pull step. `Nl6Container.java` holds the container settings the simulator needs (`NET_ADMIN` and `SYS_ADMIN`, `/dev/net/tun`) and the HTTP calls that create devices. |
 
 Each file is one `FROM` line, pinned by tag and digest.
