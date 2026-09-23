@@ -1,65 +1,123 @@
 ---
 sidebar_position: 4
 title: Pull requests
+description: The steps from issue to merged pull request, the checks a pull request must pass and how to run each locally, what the build gate enforces, the tests-with-the-change rule, commit trailers and the licence header.
 ---
 
-# Pull requests
+# Open a pull request
 
-## Quality gates
+## Prerequisites
 
-Every PR must pass, all wired through `make` in CI:
+- A build from [Set up a development environment](environment.md).
+- A GitHub account with a fork or a branch of [Riptide-Labs/riptide](https://github.com/Riptide-Labs/riptide).
 
-| Gate | What it enforces |
-|---|---|
-| Checkstyle | formatting/style rules (`config/checkstyle.xml`) — fails on error |
-| Error Prone | compile-time bug patterns (javac plugin; generated sources excluded) |
-| Unit tests | the full suite |
-| SpotBugs | bytecode analysis, `effort=Max` (`config/spotbugs-exclude.xml` documents the deliberate exclusions) |
-| Coverage floor | ≥ 65% instruction / ≥ 55% branch (JaCoCo `check`) |
-| CodeQL | security-and-quality analysis (separate check) |
-| e2e | the nl6 flow-ingestion tier, full mode included |
-| Docs | broken links, broken anchors, and admonition markup left as body copy |
+## Steps
 
-Run the Maven-side gates locally before pushing: `make` (= `mvn verify`).
-The documentation gates run under `make docs`, and only on PRs that touch `docs/`, `landing/`, `Makefile` or the docs workflow.
+1. Open an issue with the [bug](https://github.com/Riptide-Labs/riptide/issues/new?template=bug.yml) or [enhancement](https://github.com/Riptide-Labs/riptide/issues/new?template=enhancement.yml) template, so the pull request has somewhere to be discussed and can close it.
+   Every claim carries its evidence inline: the command, the output excerpt, the measurement.
+   Never cite a local working document such as research notes or a gitignored scratch file; it does not exist for anyone else.
+   If the evidence matters, paste it; if it is too long, attach it.
+   A bug report with a [capture](run-and-debug.md) is the fastest path to a fix.
+   Report a vulnerability through a [private security advisory](https://github.com/Riptide-Labs/riptide/security/advisories/new), never in a public issue.
 
-The documentation gates exist because the failures they catch are silent.
-A broken anchor published without complaint until `onBrokenAnchors` was set to `throw`.
-An admonition whose syntax is not exactly right is not parsed as a directive at all, so it renders as literal `:::` body copy: no build error, no build warning, and almost no visual difference in a diff.
-That is how a warning about default passwords shipped as ordinary paragraph text.
+2. Branch from `main` and make one focused change, with [its tests](#land-tests-with-the-change) and the [licence header](#add-the-licence-header) on every new source file.
 
-Write `:::type[Title]`.
-No space before the bracket, nothing after it, and close the container with as many colons as opened it.
-`make docs` checks the built HTML rather than the source, so it catches every way of getting this wrong, including a container opened with four colons and closed with three.
-It names the page and quotes the text.
-Prose that needs to *show* a wrong spelling can do so inside a code span, which the checker ignores.
+3. Commit with **`git commit -s`** and a Conventional Commits subject; see [Write the commit](#write-the-commit).
 
-## Tests are part of the change
+4. Run the gates locally:
 
-**New functionality lands with tests, and a bug fix lands with a test that fails without it.**
-A PR that adds behaviour without covering it — or fixes a bug without a regression test — will be
-asked to add one before merge. The coverage floor above is a backstop, not the policy: it catches
-a shortfall in aggregate but does not excuse an untested feature. Match the tier to the change —
-a unit test for pure logic, an `*IT` against real ClickHouse for the repository layer, an e2e/nl6
-case for the ingestion path, a fuzz seed for a parser edge case.
+   ```bash
+   make
+   make e2e
+   ```
 
-## Commits
+   `make docs` when the change touches `docs/`, `make lint-actions` when it touches `.github/workflows/`.
 
-- **Conventional Commits**: `<type>[scope]: <description>` — `feat`, `fix`, `docs`,
-  `refactor`, `test`, `chore`, `ci`, `build`, … Breaking changes append `!`.
-- **DCO sign-off required**: commit with `git commit -s`. The sign-off certifies the
-  [Developer Certificate of Origin](https://developercertificate.org/) with your own
-  identity.
-- **AI assistance is declared**: if a coding assistant helped, add an
-  `Assisted-by: <Agent>:<model>` trailer above the sign-off, e.g.
-  `Assisted-by: ClaudeCode:claude-opus-4-8`. It records provenance — the human who
-  signs off is still responsible for reviewing the change and for its licence
-  compliance, and the sign-off is never an AI's name.
+5. Push and open the pull request.
+   The template asks three things:
 
-## License
+   | Section | Write |
+   | --- | --- |
+   | What does this change? | The behaviour that is different afterwards, and why. `Closes #<issue>`. |
+   | How was it verified? | The command you ran and what it showed: `make`, `make e2e`, a [pcap replay](run-and-debug.md), a dashboard screenshot. "CI is green" is enough when CI covers the change. |
+   | Anything reviewers should look at closely? | Trade-offs, open doubts, follow-ups left out. |
 
-Riptide is GPL-3.0-or-later. Every new source file starts with the SPDX header used
-throughout the codebase:
+6. Verify: the four [required checks](#checks) are green on the pull request's current head.
+
+## Checks
+
+Branch protection requires these four on the pull request's current head:
+
+| Check | Workflow | Enforces | Run locally |
+| --- | --- | --- | --- |
+| **`build`** | `build.yml` | `make`, after the fixture tests of the repository's checker scripts; see [What `make` enforces](#what-make-enforces). | `make` |
+| **`e2e`** | `build.yml` | `make e2e` in [full mode](testing.md#run-full-mode). | `make e2e` |
+| **`lint`** | `lint-actions.yml` | actionlint and zizmor over the workflows, and the README contributor table in sync with `.all-contributorsrc`. | `make lint-actions`, `make contributors-check` |
+| **`build-cost-docs`** | `build.yml` | A change under `src/main/java/org/riptide/classification/internal/decision/` also changes `docs/docs/deploy/operations.md` or carries a `Cost-Unchanged:` commit trailer. A changed dashboard JSON bumps the dashboards version. | `make build-cost-docs`, `make dashboards-version-check DASHBOARDS_BASE_REF=origin/main` |
+
+These run as well, by path or on every pull request, and are not required by branch protection:
+
+| Check | Runs when | Enforces | Run locally |
+| --- | --- | --- | --- |
+| **`analyze`** (CodeQL) | every pull request | The `security-and-quality` query suite over the Java sources. | not available |
+| **`review`** (dependency review) | every pull request | No new dependency with a known vulnerability of severity high or above. | not available |
+| **`build`** (Docs) | `docs/`, `landing/`, `Makefile`, `docs.yml` | The site builds with broken links and anchors as errors, and no rendered page shows admonition markup as body copy. | `make docs` |
+| **`compose-smoke`** | `deployment/riptide/`, `deployment/clickhouse/`, `Makefile` | The shipped compose stack starts and its ClickHouse and Grafana wiring works. | `make compose-smoke` |
+| **`packages`** | `nfpm.yaml`, `deployment/package/`, `Makefile` | The DEB and RPM build and install. | `make packages packages-smoke` |
+| **`nix`** | `flake.nix`, `flake.lock`, `nix/`, `pom.xml` | The flake package builds and the NixOS module evaluates. | `make nix-check` |
+
+A `pom.xml` change makes `mvnHash` in `nix/package.nix` stale.
+On a branch in this repository the failed `nix` run pushes the corrected hash to the branch and re-runs; on a fork, or to skip that round trip, run `make nix-hash` and commit the result.
+
+## What `make` enforces
+
+| Gate | Rule | Configuration |
+| --- | --- | --- |
+| Checkstyle | Fails on any error, test sources included. Runs at `validate`, before compilation. | `config/checkstyle.xml` |
+| Error Prone | Compile-time bug patterns, with a named set promoted to errors; generated sources are excluded. | the compiler arguments in `pom.xml` |
+| Unit tests | Every `*Test` class and the fuzz seed replay. | |
+| SpotBugs | Effort `Max`; any reported bug fails the build. | `config/spotbugs-exclude.xml` documents the deliberate exclusions |
+| Coverage floor | 65 % instruction, 55 % branch. | the `jacoco:check` rule in `pom.xml` |
+
+## Write documentation that passes the gate
+
+Write **`:::type[Title]`** with no space before the bracket and nothing after it, and close the container with as many colons as opened it.
+An admonition whose syntax is not exactly right is not a directive at all: it renders as literal `:::` text, with no build error or warning, and `make docs` reads the built HTML to catch it.
+The checker names the page and quotes the text.
+To show a wrong spelling in prose, put it in a code span, which the checker ignores.
+
+## Land tests with the change
+
+New behaviour lands with tests, and a bug fix lands with a test that fails without it.
+The coverage floor is a backstop, not the policy: it catches a shortfall in aggregate and does not excuse an untested feature.
+
+| Change | Test |
+| --- | --- |
+| Pure logic | A unit test |
+| The repository layer | An `*IT` class against a real ClickHouse |
+| The ingestion path | An e2e case driven by nl6 |
+| A parser edge case | A seed input for the [fuzz harness](testing.md#fuzz-harnesses) |
+
+## Write the commit
+
+- **Conventional Commits**: `<type>[scope]: <description>` with a type such as `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `chore`, `ci` or `build`.
+  A breaking change appends `!`.
+- **DCO sign-off**: commit with **`git commit -s`**.
+  The trailer certifies the [Developer Certificate of Origin](https://developercertificate.org/) with your own identity.
+- **AI assistance is declared**: add an `Assisted-by: <Agent>:<model>` trailer above the sign-off.
+  The human who signs off remains responsible for reviewing the change and for its licence compliance, and the sign-off is never an AI's name.
+
+```text
+feat(flows): decode IPFIX option templates
+
+Assisted-by: ClaudeCode:claude-opus-4-8
+Signed-off-by: Jane Doe <jane@example.org>
+```
+
+## Add the licence header
+
+Riptide is GPL-3.0-or-later.
+Every new source file starts with this header, above the `package` declaration:
 
 ```java
 /*
@@ -68,11 +126,5 @@ throughout the codebase:
  */
 ```
 
-## Flow
-
-Branch from `main`, keep PRs focused, make CI green — reviews happen on GitHub. Bug
-reports with a pcap (see [Run & debug](run-and-debug.md)) are the fastest path to a fix.
-
-## Cutting issues
-
-Every claim in an issue carries its evidence **inline**: the command, the output excerpt, the measurement. Never cite local working documents (research notes, benchmark scratch files, anything gitignored) as the source: they do not exist for anyone else, and an issue that says "see the research doc" is unreviewable the moment the branch is gone. If the evidence matters, paste it; if it is too long, attach it.
+Shell, YAML and other non-Java sources carry the same two lines in their comment syntax.
+Test fixtures, generated files and data files carry none.
