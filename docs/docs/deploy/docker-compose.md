@@ -1,59 +1,115 @@
 ---
 sidebar_position: 1
 title: Docker Compose
+description: Start riptide, ClickHouse and Grafana from the shipped compose stack, set its passwords, reach ClickHouse from another host, and pick an image variant.
 ---
 
-# Deploy with Docker Compose
+# Run the Docker Compose stack
 
-The fastest way to run Riptide: a compose stack with Riptide, ClickHouse and Grafana — using the published image, no build toolchain required.
+The stack starts riptide from the published image, ClickHouse pinned to the version the integration tests run against, and Grafana with the riptide dashboards provisioned.
 
-```bash
-git clone https://github.com/Riptide-Labs/riptide.git   # or copy deployment/ only
-cd riptide/deployment/riptide
-docker compose up -d
-```
+## Prerequisites
 
-:::warning[The stack ships with default passwords]
+- Docker with the Compose plugin.
+- Ports free on the host: `9999/udp`, `3000/tcp`, and `8123/tcp` and `9000/tcp` on loopback.
 
-Grafana starts with `admin`/`admin` and ClickHouse's `default` user with `riptide`. Both are
-fine on a laptop and not fine anywhere else. Grafana's port 3000 is published on every
-interface, so on any host with a routable address that login is reachable from the network.
-ClickHouse's 8123 and 9000 are published on loopback only, but the `default` user holds
-`access_management` (it can create users and row policies), so change its password before
-you publish those ports wider.
+## Steps
 
-Set your own, either in your shell:
+1. Get the stack files and set the two passwords in a `.env` file next to `compose.yml`. Compose interpolates the values, so a literal `$` is written `$$`. The file is gitignored.
 
-```bash
-export GF_SECURITY_ADMIN_PASSWORD='your-secure-password-here'
-export CLICKHOUSE_PASSWORD='another-secure-password-here'
-```
+   ```bash
+   git clone https://github.com/Riptide-Labs/riptide.git
+   cd riptide/deployment/riptide
+   cat > .env <<'EOF'
+   CLICKHOUSE_PASSWORD=change-me-before-anyone-else-can-reach-this-host
+   GF_SECURITY_ADMIN_PASSWORD=change-me-too
+   EOF
+   ```
 
-or in a `.env` file next to `compose.yml` (no `export`; write a literal `$` as `$$`, since
-Compose interpolates the value):
+2. Start it:
 
-```
-GF_SECURITY_ADMIN_PASSWORD=your-secure-password-here
-CLICKHOUSE_PASSWORD=another-secure-password-here
-```
+   ```bash
+   docker compose up -d
+   ```
 
-`.env` is gitignored. `CLICKHOUSE_PASSWORD` is read by ClickHouse, Riptide and Grafana's
-provisioned datasource, so one value configures the stack. Change it and recreate the stack
-and all three follow; there is no second place to edit. Anything else that connected with an
-empty password (`clickhouse-client`, export scripts) now needs the password too.
+   Expected output, after the image pull:
 
-`GF_SECURITY_ADMIN_PASSWORD` is only read when Grafana initialises its database, so set it
-before the first start. Changing it later has no effect unless you also remove the `gf-data`
-volume.
+   ```text
+    Network riptide_default Created
+    Volume riptide_gf-data Created
+    Volume riptide_clickhouse-data Created
+    Container riptide-clickhouse-1 Healthy
+    Container riptide-riptide-1 Started
+    Container riptide-grafana-1 Started
+   ```
 
+3. Verify:
+
+   ```bash
+   docker compose ps --format 'table {{.Service}}\t{{.Status}}'
+   ```
+
+   Expected output, once Grafana's health check has passed:
+
+   ```text
+   SERVICE      STATUS
+   clickhouse   Up 30 seconds (healthy)
+   grafana      Up 20 seconds (healthy)
+   riptide      Up 20 seconds (healthy)
+   ```
+
+4. Point a NetFlow v5, NetFlow v9, IPFIX or sFlow exporter at UDP port `9999` of the host, then count rows:
+
+   ```bash
+   docker compose exec clickhouse sh -c 'clickhouse-client --password "$CLICKHOUSE_PASSWORD" -q "SELECT count() FROM riptide.flows"'
+   ```
+
+   The password comes from the container's environment, so nothing needs exporting on the host. Expected output, before the first flow arrives:
+
+   ```text
+   0
+   ```
+
+   Grafana is at `http://localhost:3000`, user `admin`. Its Explore view runs ad-hoc queries against the provisioned ClickHouse datasource.
+
+:::warning
+Without a `.env` file the stack starts with ClickHouse's `default` user at password `riptide` and Grafana's `admin` at `admin`.
+Grafana's port 3000 is published on every interface, so on a host with a routable address that login is reachable from the network.
+The ClickHouse `default` user holds `access_management`, so change its password before publishing ports 8123 or 9000 beyond loopback.
 :::
 
-:::info[Reaching ClickHouse from another host]
+## What the stack runs
 
-Riptide and Grafana talk to ClickHouse over the compose network, so the loopback binding costs
-the stack nothing. If you need ClickHouse from another machine, set `CLICKHOUSE_PASSWORD` and
-republish the ports in a `compose.override.yml` (gitignored, loaded automatically). Compose
-merges `ports` lists by appending, so the override has to replace the list, not add to it:
+| Service | Image | Published ports | Notes |
+| --- | --- | --- | --- |
+| **`riptide`** | `ghcr.io/riptide-labs/riptide:latest` | `9999/udp` | One `multi` [receiver](../configuration/receivers.md) parses every protocol on that port. Starts only after ClickHouse reports healthy. Health is `/readyz` on the container's port 8080, which is not published. Logs at `WARN`. |
+| **`clickhouse`** | `clickhouse/clickhouse-server:26.7`, pinned by digest | `127.0.0.1:8123`, `127.0.0.1:9000` | Database `riptide`, user `default`. 26.7 is the version the integration suite runs against, see [server versions](../configuration/clickhouse.md#server-versions). |
+| **`grafana`** | `grafana/grafana-oss:13.0.2`, pinned by digest | `3000` | ClickHouse datasource and nine dashboards provisioned; plugins `grafana-clickhouse-datasource` and `netsage-sankey-panel`. |
+
+Dependabot moves the two digest pins.
+The riptide image follows `:latest`, so `docker compose pull` moves the collector forward on its own.
+
+| Variable | Read by | Default | When a change takes effect |
+| --- | --- | --- | --- |
+| **`CLICKHOUSE_PASSWORD`** | ClickHouse, riptide (as `env://CLICKHOUSE_PASSWORD`), Grafana's datasource | `riptide` | On `docker compose up -d`, all three follow. Anything else that connected with the old password needs the new one. |
+| **`GF_SECURITY_ADMIN_PASSWORD`** | Grafana, only when it initialises its database | `admin` | First start only. To change it later, remove the `gf-data` volume, or change it in Grafana. |
+
+Volumes `clickhouse-data` and `gf-data` hold the flows and Grafana's state.
+`docker compose down` keeps them; `docker compose down -v` deletes them.
+
+## Configure riptide further
+
+Riptide reads its settings from the `environment` block of `compose.yml`, in the `RIPTIDE_*` form described on the [Plain JAR](plain-jar.md#environment-variables) page, or from a config file you mount.
+Agent ranges and, without [dynamic discovery](../configuration/discovery.md), enrichment entries live in the [inventory file](../configuration/agent-configuration.md), which has to be mounted into the container and named by `RIPTIDE_INVENTORY_FILE`.
+
+Put local changes in **`compose.override.yml`**.
+Compose loads it automatically and it is gitignored.
+
+## Reach ClickHouse from another host
+
+ClickHouse listens on loopback only because riptide and Grafana reach it over the compose network.
+To publish it, set `CLICKHOUSE_PASSWORD` first, then replace the ports list in `compose.override.yml`.
+Compose merges `ports` by appending, so the override has to replace the list:
 
 ```yaml
 services:
@@ -63,101 +119,53 @@ services:
       - "9000:9000/tcp"
 ```
 
-Do not restrict the `default` user by source address in `users.xml` instead. Riptide and
-Grafana authenticate as that user from a compose bridge address that varies by network, and a
-loopback or fixed-CIDR rule breaks them.
+Do not restrict the `default` user by source address in `users.xml` instead.
+Riptide and Grafana connect from a compose bridge address that varies by network, and a loopback or fixed-CIDR rule breaks them.
 
-:::
+## Dashboards
 
-This starts, from `ghcr.io/riptide-labs/riptide:latest`:
+Grafana provisions nine dashboards from `deployment/clickhouse/container-fs/grafana/provisioning/dashboards/`.
+Edits made in the UI last until the provisioned JSON changes; use *Save as* to keep a copy.
 
-| Service | Port | Purpose |
-|---|---|---|
-| riptide | `9999/udp` | flow ingest (configure your exporters to send here) |
-| clickhouse | `127.0.0.1:8123`, `127.0.0.1:9000` | flow storage (loopback only, see above) |
-| grafana | [`:3000`](http://localhost:3000) | dashboards, and Explore for ad-hoc queries (ClickHouse datasource provisioned) |
+| Dashboard | Answers |
+| --- | --- |
+| **Riptide - Top 10** | Top talkers by AS, host, application, service, protocol, exporter and interface, with a source-AS table carrying a 95th percentile. |
+| **Riptide - Traffic Paths (Sankey)** | Where traffic enters and leaves: AS peering, geo origination and termination, ultimate exit, filterable by exporter and direction. |
+| **Riptide - Flow Forensics** | One slice of flows by tenant, zone, exporter, application, HTTP host and URI, protocol, address and port, down to the raw records. |
+| **Riptide - Collection Health** | Is every exporter delivering: reporting and silent verdicts, activity timeline, collection lag, exporter inventory. |
+| **Riptide - Interface Traffic Analysis** | Throughput and usage per exporter interface, by application, conversation, host and DSCP, in versus out. |
+| **Riptide - Capacity & Routing** | Headroom against SNMP-reported link speed, next-hop distribution, prefix volume, one-directional conversations. |
+| **Riptide - Behavioural Anomalies** | Scanning, sweeps, repeated attempts on service ports, SYN-only ratio, fan-in targets, packet-size outliers, with thresholds as variables. |
+| **Riptide - Traffic Composition** | Country maps, VLAN and DSCP mix, flow duration, IPv4 versus IPv6, prefix lengths, core services. |
+| **Riptide - Data Trust** | Sampling configuration per exporter, clock corrections, tenant and zone labelling, exporter identity. |
 
-ClickHouse and Grafana are pinned by digest, and Dependabot keeps them current.
-The ClickHouse pin is 26.7, the version riptide's integration tests run against; 26.8 is tested too but not pinned here.
-Pointing riptide at a ClickHouse you run yourself instead? See [Server versions](../configuration/clickhouse.md#server-versions) for what has been measured.
-Riptide's own image tracks `:latest`, so `docker compose pull` still moves the collector forward on its own.
+The set carries its own version, shown as a `Dashboards vX.Y.Z` link in every dashboard's top bar, independent of the riptide version.
+A **Datasource** and a **Database** variable select the ClickHouse connection and the riptide database, so the JSON imports into any Grafana.
+A contributor bumps it with `make dashboards-version DASHBOARDS_VERSION=x.y.z`; CI refuses a pull request that changes a dashboard without moving the number. The major part moves for a renamed uid or variable that an external link depends on, the minor part for a new panel, variable or dashboard, the patch part for text, query and layout fixes.
 
-Grafana ships provisioned dashboards backed by the `flows` table and the
-`samples` bucket-expansion view:
+## Variants
 
-- **Riptide - Top 10**: stacked top-10 rate panels (AS, hosts, applications, services, protocols,
-  exporters, interfaces) plus a source-AS statistics table with a 95th-percentile column.
-- **Riptide - Traffic Paths (Sankey)**: exporter- and direction-filterable path diagrams —
-  AS peering (source AS → ingress → egress → destination AS), situational-awareness, geo
-  origination/termination, and ultimate-exit views, weighted by bytes over the selected range.
-- **Riptide - Flow Forensics**: slice flows by any combination of tenant, zone, exporter,
-  application, HTTP host and URI (where an exporter sends them), L4 protocol, source/destination
-  address and port — throughput of the slice, top hosts/conversations, protocol/DSCP/TCP-flag mix,
-  locality matrix, and the raw records.
-- **Riptide - Collection Health**: is every exporter delivering? Reporting/silent-exporter
-  verdicts, a per-exporter activity timeline, collection lag percentiles, and an exporter
-  inventory with drill-down into Flow Forensics.
-- **Riptide - Interface Traffic Analysis**: throughput and data usage per exporter interface,
-  broken out by application, conversation, host and DSCP, each as an in-vs-out pair.
-- **Riptide - Capacity & Routing**: interface headroom measured against SNMP-reported link speed
-  (p95 and peak as a percentage of capacity), next-hop distribution, prefix-level volume, and
-  conversations only seen in one direction.
-- **Riptide - Behavioural Anomalies**: scanning, host sweeps, repeated attempts against service
-  ports, SYN-only ratio, fan-in targets and packet-size outliers — all derived from traffic shape
-  alone, with the thresholds exposed as dashboard variables.
-- **Riptide - Traffic Composition**: source/destination country maps, VLAN and DSCP mix, flow
-  duration profile, IPv4-vs-IPv6 trend, prefix-length distribution, and core network services.
-- **Riptide - Data Trust**: the metadata that decides whether the other dashboards can be
-  believed — sampling configuration per exporter, clock corrections, tenant/organisation/zone
-  labelling, and exporter identity.
+| Command | Runs |
+| --- | --- |
+| `docker compose up -d` | `ghcr.io/riptide-labs/riptide:latest`, the last release |
+| `docker compose -f compose.yml -f compose.override.rc.yml up -d` | `ghcr.io/riptide-labs/riptide:rc`, rebuilt on every merge to main; not for production |
+| `docker compose -f compose.yml -f compose.override.dev.yml up -d` | `riptide:local`, built by `make oci` |
 
-The JSON sources live in `deployment/clickhouse/container-fs/grafana/provisioning/dashboards/`.
-UI edits last only until the provisioned JSON changes — use *Save as* to keep a customized copy.
+## Upgrade from a stack that included ch-ui
 
-The dashboard set carries its own version, shown as a `Dashboards vX.Y.Z` link in the top bar of every dashboard, so you can tell which set a Grafana is running without reading the JSON.
-It is independent of the riptide version: the collector and the dashboards move on their own schedules, and the same dashboards serve several collector releases.
-One number covers all nine dashboards, because they link to each other by uid and variable name and ship together.
-The major part moves when a change breaks something outside the files, such as a renamed uid or variable that an external link depends on; the minor part for a new panel, variable or dashboard; the patch part for text, query and layout fixes.
-A contributor bumps it with `make dashboards-version DASHBOARDS_VERSION=x.y.z`, and CI refuses a pull request that changes a dashboard without moving the number.
-The dashboards are deployment-neutral: a **Datasource** variable selects the ClickHouse
-connection and a **Database** variable (auto-populated from databases containing a `flows` table)
-selects the riptide database, so they import into any external Grafana without a specifically
-named or `defaultDatabase`-pinned datasource.
-
-Point a NetFlow v5/v9, IPFIX or sFlow exporter at UDP `9999` and watch rows arrive in `riptide.flows` via Grafana's Explore view.
-The compose file configures a single `multi` [receiver](../configuration/receivers.md) on that port.
-It also starts `riptide` only once `clickhouse` reports healthy (`depends_on` with `condition: service_healthy`), so the collector never has to wait for its backend here.
-A deployment without that ordering, such as a containerlab topology or a hand-written unit, relies on the collector's own bounded wait instead: see [Startup wait](../configuration/clickhouse.md#startup-wait).
-Further settings — more [receivers](../configuration/receivers.md) or the [credential sets](../configuration/agent-configuration.md) — go through environment variables in the compose file (see [Plain JAR](plain-jar.md#environment-variables) for the `RIPTIDE_*` scheme) or an external config file. Agent ranges live in the inventory file, which must be on the mount: it cannot be supplied through environment variables.
-[Enrichment entries](../configuration/exporter-enrichment.md) live there too, unless [dynamic discovery](../configuration/discovery.md) is enabled, in which case they come from the discovery endpoint instead.
-
-:::note[Upgrading from a stack that included ch-ui]
-
-The stack used to publish a ClickHouse web UI on `5521`. It was removed because the upstream
-image stopped honouring the settings this stack passed it and moved to a different port, so
-`5521` had been answering nothing ([#671](https://github.com/Riptide-Labs/riptide/issues/671)).
-Grafana's Explore view replaces it, against the same provisioned datasource.
-
-Compose does not remove a service you have deleted from the file: it warns about an orphan and
-leaves the old container running, still holding its published port. Clear it once with
+The stack used to publish a ClickHouse web UI on `5521`; it was removed in [#671](https://github.com/Riptide-Labs/riptide/issues/671) and Grafana's Explore view replaces it.
+Compose does not remove a service you deleted from the file: it warns about an orphan and leaves the old container running. Clear it once:
 
 ```bash
 docker compose up -d --remove-orphans
 ```
 
-There is no volume to reclaim; that service never declared one.
+Expected output, on a stack that still had it:
 
-:::
-
-## Variants
-
-```bash
-# Track main (floating rc image, rebuilt on every merge — not for production):
-docker compose -f compose.yml -f compose.override.rc.yml up -d
-
-# Run a locally built image (after `make oci`):
-docker compose -f compose.yml -f compose.override.dev.yml up -d
+```text
+ Container riptide-ch-ui-1 Removed
 ```
 
-A plain `compose.override.yml` is gitignored on purpose — that's your personal,
-auto-loaded slot for local tweaks (timezone, extra ports, …).
+## Open questions
+
+- The `--remove-orphans` output line was not captured from a stack that still ran ch-ui; it follows Compose's usual form `(unverified)`.
