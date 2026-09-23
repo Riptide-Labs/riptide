@@ -60,7 +60,7 @@ class ClickhouseConfigurationTest {
      * counters and control flow to the mode chosen for having neither.</p>
      *
      * <p>This test is the pin. Without it the exclusion rests on nobody having wired a call, and the
-     * docs that state the limit — {@code operations.md} and {@code clickhouse.md} — would be the only
+     * docs that state the limit — {@code dead-letters.md} and {@code persistence.md} — would be the only
      * record of a decision. If a future change does dead-letter here, this test fails and says so.</p>
      */
     @Test

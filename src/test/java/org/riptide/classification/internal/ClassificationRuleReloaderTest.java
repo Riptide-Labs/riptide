@@ -410,7 +410,7 @@ class ClassificationRuleReloaderTest {
         } catch (final ReflectiveOperationException e) {
             throw new AssertionError(
                     "ClassificationRuleReloader." + field + " is gone or changed shape. It is the documented"
-                            + " ruleset-size bound; if it moved, operations.md moved with it", e);
+                            + " ruleset-size bound; if it moved, classification-build-cost.md moved with it", e);
         }
     }
 
@@ -472,7 +472,7 @@ class ClassificationRuleReloaderTest {
      * {@link ClassificationRulesSource#describe()} produces.
      *
      * <p>That last one is not cosmetic. {@code describe()} is the only place applying the userinfo redaction —
-     * {@code credentialsInTheLocationAreNotLogged} pins that it does — and {@code operations.md} promises tokens
+     * {@code credentialsInTheLocationAreNotLogged} pins that it does — and {@code reloading.md} promises tokens
      * are redacted wherever the location is logged. A line built from the raw resource instead would satisfy an
      * assertion that only looked for a host.</p>
      */

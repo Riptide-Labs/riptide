@@ -94,7 +94,7 @@ class ParserDispatchTest {
         }
         assertThat(tally.get()).isEqualTo(2 * FLOWS_PER_PACKET);
 
-        // The delivery arithmetic operations.md gives the operator, asserted where dispatchDrops is
+        // The delivery arithmetic loss-accounting.md gives the operator, asserted where dispatchDrops is
         // actually non-zero — which is the only place it can be wrong. It starts from
         // recordsReceived, not recordsScheduled: a packet refused by a full queue is charged to
         // dispatchDrops and returns BEFORE the scheduled mark, so subtracting drops from scheduled

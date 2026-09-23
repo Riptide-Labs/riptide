@@ -150,7 +150,7 @@ class TreeBuildSynthesisTest {
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("shape-guard-probe")
                     .hasMessageContaining("single integer destination port")
-                    .hasMessageContaining("operations.md");
+                    .hasMessageContaining("classification-build-cost.md");
         }
     }
 
