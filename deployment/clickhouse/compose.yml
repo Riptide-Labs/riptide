@@ -68,3 +68,19 @@ services:
       retries: 20
     ports:
       - "3000:3000/tcp"
+
+  grafana-folders:
+    # One-shot: nests the provisioned "Flow Analytics" folder under "Riptide" once Grafana is
+    # up, then exits. The file provider cannot create a parent folder, and it keeps the folder
+    # where it was moved because it addresses it by uid (#864). Idempotent, so every later
+    # `up` finds nothing to do. Pinned by digest like the two images above.
+    image: docker.io/curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+    depends_on:
+      grafana:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-admin}
+    volumes:
+      - ./container-fs/grafana/folders.sh:/folders.sh:ro
+    entrypoint: ["sh", "/folders.sh"]

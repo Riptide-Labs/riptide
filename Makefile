@@ -58,6 +58,7 @@ help:
 	@echo "  dashboards-version: Stamp the Grafana dashboard set with DASHBOARDS_VERSION=<x.y.z>"
 	@echo "  dashboards-version-check: Every dashboard carries the same version; with DASHBOARDS_BASE_REF=<ref>, that it moved when a dashboard changed"
 	@echo "  dashboards-version-test: Run the dashboards version checker's fixture tests"
+	@echo "  dashboards-bundle: Write target/riptide-dashboards-<set version>.tar.gz, the release asset"
 	@echo "  release-lineage: Check a release tag adds only the version bump on top of main; LINEAGE_REF=<ref>"
 	@echo "  release-lineage-test: Run the release lineage checker's fixture tests"
 	@echo "  build-cost-docs: Check a tree-build change updates its published cost figures; COST_BASE_REF=<ref>"
@@ -320,6 +321,14 @@ dashboards-version:
 .PHONY: dashboards-version-check
 dashboards-version-check:
 	python3 deployment/clickhouse/dashboards-version.py check $(if $(DASHBOARDS_BASE_REF),--base-ref "$(DASHBOARDS_BASE_REF)")
+
+# The release asset (#864): every dashboard plus the provider file, named by
+# the set version the script reads out of the dashboards. Deterministic, so a
+# re-run on the same tree is byte-identical.
+.PHONY: dashboards-bundle
+dashboards-bundle:
+	mkdir -p target
+	python3 deployment/clickhouse/dashboards-version.py bundle target/
 
 # The checker matches nothing in a healthy tree, so its fixtures are the only
 # thing that ever exercises its failure arms.

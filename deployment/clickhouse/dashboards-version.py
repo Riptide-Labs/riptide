@@ -13,23 +13,40 @@ settings.
     dashboards-version.py set 1.2.0             rewrite (or add) the link in every dashboard
     dashboards-version.py check                 every dashboard carries the same well-formed version
     dashboards-version.py check --base-ref REF  ... and it moved if any dashboard differs from REF
+    dashboards-version.py get                   print that version and nothing else
+    dashboards-version.py bundle DIR            write DIR/riptide-dashboards-<version>.tar.gz
+
+The link's url and tooltip are owned by this script too: `set` rewrites the
+whole link, so changing URL below reaches every dashboard on the next bump.
+
+The bundle is the release asset (issue #864): every dashboard plus the
+provider file dashboards.yml under one dashboards/ prefix, so an operator
+extracts it straight into Grafana's provisioning directory. It is written with
+tarfile and pinned metadata so two builds of the same tree are byte-identical
+on one machine; the same is expected across macOS and Linux but no CI compares
+them.
 
 Grafana's own top-level "version" integer is its save-revision counter and is
 left alone.
 """
 
 import argparse
+import gzip
+import io
 import json
 import re
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 DEFAULT_DIR = Path(__file__).parent / "container-fs/grafana/provisioning/dashboards"
 TITLE = re.compile(r"^Dashboards v(.+)$")
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
-URL = "https://github.com/Riptide-Labs/riptide/tree/main/deployment/clickhouse/container-fs/grafana/provisioning/dashboards"
-TOOLTIP = "Version of the provisioned dashboard set. Independent of the riptide version."
+URL = "https://riptide.space/docs/guides/grafana-dashboards"
+TOOLTIP = "Version of the provisioned dashboard set, independent of the riptide version. Opens the install and upgrade guide."
+PROVIDER = "dashboards.yml"
+BUNDLE_PREFIX = "dashboards"
 
 
 def fail(message: str) -> int:
@@ -74,13 +91,67 @@ def set_version(directory: Path, version: str) -> int:
         existing = [link for link in links if TITLE.match(str(link.get("title", "")))]
         if len(existing) > 1:
             return fail(f"{path.name}: more than one version link; remove the stale one by hand")
+        link = {"title": f"Dashboards v{version}", "type": "link", "url": URL,
+                "tooltip": TOOLTIP, "icon": "info", "targetBlank": True}
         if existing:
-            existing[0]["title"] = f"Dashboards v{version}"
+            # Whole link, in place: url and tooltip follow this script, not the file.
+            existing[0].clear()
+            existing[0].update(link)
         else:
-            links.append({"title": f"Dashboards v{version}", "type": "link", "url": URL,
-                          "tooltip": TOOLTIP, "icon": "info", "targetBlank": True})
+            links.append(link)
         dump(path, data, original)
     print(f"dashboards version {version} ({len(files)} dashboards)")
+    return 0
+
+
+def agreed_version(directory: Path):
+    """(version, files, error): the one version every dashboard carries, or why not."""
+    files = sorted(directory.glob("*.json"))
+    if not files:
+        return None, files, f"no dashboards under {directory}"
+    versions = {}
+    for path in files:
+        version, error = version_of(parse(path.read_text()))
+        if error:
+            return None, files, f"{path.name}: {error}"
+        versions[path.name] = version
+    distinct = sorted(set(versions.values()))
+    if len(distinct) > 1:
+        detail = ", ".join(f"{name} has {v}" for name, v in versions.items())
+        return None, files, f"dashboards disagree on their version: {detail}"
+    return distinct[0], files, None
+
+
+def get(directory: Path) -> int:
+    version, _, error = agreed_version(directory)
+    if error:
+        return fail(error)
+    print(version)
+    return 0
+
+
+def bundle(directory: Path, out_dir: Path) -> int:
+    version, files, error = agreed_version(directory)
+    if error:
+        return fail(error)
+    provider = directory / PROVIDER
+    if not provider.is_file():
+        return fail(f"{provider} missing: the bundle must provision itself when extracted")
+    archive = out_dir / f"riptide-dashboards-{version}.tar.gz"
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as tar:
+        for path in sorted([*files, provider]):
+            info = tarfile.TarInfo(f"{BUNDLE_PREFIX}/{path.name}")
+            info.size = path.stat().st_size
+            info.mode = 0o644
+            info.mtime = 0
+            info.uid = info.gid = 0
+            info.uname = info.gname = ""
+            with path.open("rb") as content:
+                tar.addfile(info, content)
+    with archive.open("wb") as out, gzip.GzipFile(filename="", mode="wb", fileobj=out, mtime=0) as gz:
+        gz.write(buffer.getvalue())
+    print(f"{archive} ({len(files)} dashboards + {PROVIDER}, set version {version})")
     return 0
 
 
@@ -114,20 +185,9 @@ def base_dashboards(directory: Path, ref: str) -> dict:
 
 
 def check(directory: Path, base_ref) -> int:
-    files = sorted(directory.glob("*.json"))
-    if not files:
-        return fail(f"no dashboards under {directory}")
-    versions = {}
-    for path in files:
-        version, error = version_of(parse(path.read_text()))
-        if error:
-            return fail(f"{path.name}: {error}")
-        versions[path.name] = version
-    distinct = sorted(set(versions.values()))
-    if len(distinct) > 1:
-        detail = ", ".join(f"{name} has {v}" for name, v in versions.items())
-        return fail(f"dashboards disagree on their version: {detail}")
-    current = distinct[0]
+    current, files, error = agreed_version(directory)
+    if error:
+        return fail(error)
     print(f"dashboards version {current} ({len(files)} dashboards)")
     if base_ref is None:
         return 0
@@ -158,9 +218,16 @@ def main() -> int:
     s.add_argument("version")
     c = sub.add_parser("check", help="every dashboard carries the same well-formed version")
     c.add_argument("--base-ref", help="also require a bump when any dashboard differs from this git ref")
+    sub.add_parser("get", help="print the version every dashboard carries, and nothing else")
+    b = sub.add_parser("bundle", help="write riptide-dashboards-<version>.tar.gz into a directory")
+    b.add_argument("out_dir", type=Path)
     args = parser.parse_args()
     if args.command == "set":
         return set_version(args.dir, args.version)
+    if args.command == "get":
+        return get(args.dir)
+    if args.command == "bundle":
+        return bundle(args.dir, args.out_dir)
     return check(args.dir, args.base_ref)
 
 

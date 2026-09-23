@@ -124,23 +124,10 @@ Riptide and Grafana connect from a compose bridge address that varies by network
 
 ## Dashboards
 
-Grafana provisions nine dashboards from `deployment/clickhouse/container-fs/grafana/provisioning/dashboards/`.
-Edits made in the UI last until the provisioned JSON changes; use *Save as* to keep a copy.
-
-| Dashboard | Answers |
-| --- | --- |
-| **Riptide - Top 10** | Top talkers by AS, host, application, service, protocol, exporter and interface, with a source-AS table carrying a 95th percentile. |
-| **Riptide - Traffic Paths (Sankey)** | Where traffic enters and leaves: AS peering, geo origination and termination, ultimate exit, filterable by exporter and direction. |
-| **Riptide - Flow Forensics** | One slice of flows by tenant, zone, exporter, application, HTTP host and URI, protocol, address and port, down to the raw records. |
-| **Riptide - Collection Health** | Is every exporter delivering: reporting and silent verdicts, activity timeline, collection lag, exporter inventory. |
-| **Riptide - Interface Traffic Analysis** | Throughput and usage per exporter interface, by application, conversation, host and DSCP, in versus out. |
-| **Riptide - Capacity & Routing** | Headroom against SNMP-reported link speed, next-hop distribution, prefix volume, one-directional conversations. |
-| **Riptide - Behavioural Anomalies** | Scanning, sweeps, repeated attempts on service ports, SYN-only ratio, fan-in targets, packet-size outliers, with thresholds as variables. |
-| **Riptide - Traffic Composition** | Country maps, VLAN and DSCP mix, flow duration, IPv4 versus IPv6, prefix lengths, core services. |
-| **Riptide - Data Trust** | Sampling configuration per exporter, clock corrections, tenant and zone labelling, exporter identity. |
+Grafana provisions the nine riptide dashboards from `deployment/clickhouse/container-fs/grafana/provisioning/dashboards/` into the folder **Flow Analytics** under **Riptide**; the `grafana-folders` one-shot service nests the folder after Grafana is healthy.
+What each dashboard answers, how the same set installs into a Grafana you run yourself, and what an upgrade does to UI edits is on the [Grafana dashboards](grafana-dashboards.md) page.
 
 The set carries its own version, shown as a `Dashboards vX.Y.Z` link in every dashboard's top bar, independent of the riptide version.
-A **Datasource** and a **Database** variable select the ClickHouse connection and the riptide database, so the JSON imports into any Grafana.
 A contributor bumps it with `make dashboards-version DASHBOARDS_VERSION=x.y.z`; CI refuses a pull request that changes a dashboard without moving the number. The major part moves for a renamed uid or variable that an external link depends on, the minor part for a new panel, variable or dashboard, the patch part for text, query and layout fixes.
 
 ## Variants

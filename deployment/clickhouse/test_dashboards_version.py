@@ -282,5 +282,131 @@ class CheckAgainstABaseRefDemandsABumpWhenADashboardChanged(unittest.TestCase):
         self.assertIn("1.0.0", proc.stderr)
 
 
+class SetOwnsTheWholeLink(unittest.TestCase):
+
+    def test_replaces_a_stale_url_and_tooltip_without_adding_a_second_link(self):
+        repo = Repo()
+        repo.write("a", dashboard("a", links=[
+            {"title": "Riptide dashboards", "type": "dashboards", "tags": ["riptide"]},
+            {"title": "Dashboards v1.0.0", "type": "link", "url": "https://example.org/tree/main", "tooltip": "old"}]))
+
+        proc = repo.run("set", "1.0.1")
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        links = version_link(repo.read("a"))
+        self.assertEqual(len(links), 1)
+        self.assertEqual(links[0]["title"], "Dashboards v1.0.1")
+        self.assertTrue(links[0]["url"].startswith("https://riptide.space/docs/"), links[0]["url"])
+        self.assertIn("grafana-dashboards", links[0]["url"])
+        self.assertNotIn("tree/main", links[0]["url"])
+        self.assertNotEqual(links[0]["tooltip"], "old")
+        self.assertEqual(links[0]["icon"], "info")
+        self.assertTrue(links[0]["targetBlank"])
+
+
+class GetPrintsTheAgreedVersionAlone(unittest.TestCase):
+
+    def test_prints_only_the_version(self):
+        repo = Repo()
+        repo.write("a", dashboard("a"))
+        repo.write("b", dashboard("b"))
+        repo.run("set", "1.2.3")
+
+        proc = repo.run("get")
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout, "1.2.3\n")
+
+    def test_refuses_a_disagreeing_set(self):
+        repo = Repo()
+        repo.write("a", dashboard("a"))
+        repo.write("b", dashboard("b"))
+        repo.run("set", "1.0.0")
+        b = repo.read("b")
+        version_link(b)[0]["title"] = "Dashboards v1.0.1"
+        repo.write("b", b)
+
+        proc = repo.run("get")
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout, "")
+        self.assertIn("b.json", proc.stderr)
+
+
+class BundleWritesOneDeterministicArchive(unittest.TestCase):
+
+    PROVIDER = "apiVersion: 1\nproviders:\n  - name: riptide\n    type: file\n"
+
+    def stamped(self) -> Repo:
+        repo = Repo()
+        repo.write("a", dashboard("a"))
+        repo.write("b", dashboard("b"))
+        (repo.dir / "dashboards.yml").write_text(self.PROVIDER)
+        repo.run("set", "1.2.3")
+        return repo
+
+    def test_names_the_archive_after_the_set_version_and_holds_exactly_the_set(self):
+        import tarfile
+        repo = self.stamped()
+        out = repo.root / "out"
+        out.mkdir()
+
+        proc = repo.run("bundle", str(out))
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        archive = out / "riptide-dashboards-1.2.3.tar.gz"
+        self.assertTrue(archive.exists(), list(out.iterdir()))
+        self.assertIn(str(archive), proc.stdout)
+        with tarfile.open(archive) as tar:
+            members = {m.name: m for m in tar.getmembers()}
+            self.assertEqual(set(members), {"dashboards/a.json", "dashboards/b.json", "dashboards/dashboards.yml"})
+            for m in members.values():
+                self.assertEqual((m.uid, m.gid, m.uname, m.gname), (0, 0, "", ""), m.name)
+                self.assertEqual(m.mtime, 0, m.name)
+            self.assertEqual(tar.extractfile("dashboards/a.json").read(), (repo.dir / "a.json").read_bytes())
+            self.assertEqual(tar.extractfile("dashboards/dashboards.yml").read(), self.PROVIDER.encode())
+
+    def test_two_builds_are_byte_identical(self):
+        import os, time
+        repo = self.stamped()
+        one, two = repo.root / "one", repo.root / "two"
+        one.mkdir(); two.mkdir()
+
+        self.assertEqual(repo.run("bundle", str(one)).returncode, 0)
+        later = time.time() + 90
+        for path in repo.dir.iterdir():
+            os.utime(path, (later, later))
+        self.assertEqual(repo.run("bundle", str(two)).returncode, 0)
+
+        self.assertEqual((one / "riptide-dashboards-1.2.3.tar.gz").read_bytes(),
+                         (two / "riptide-dashboards-1.2.3.tar.gz").read_bytes())
+
+    def test_refuses_a_disagreeing_set_and_writes_nothing(self):
+        repo = self.stamped()
+        b = repo.read("b")
+        version_link(b)[0]["title"] = "Dashboards v9.9.9"
+        repo.write("b", b)
+        out = repo.root / "out"
+        out.mkdir()
+
+        proc = repo.run("bundle", str(out))
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("b.json", proc.stderr)
+        self.assertEqual(list(out.iterdir()), [])
+
+    def test_refuses_a_directory_without_the_provider_file(self):
+        repo = self.stamped()
+        (repo.dir / "dashboards.yml").unlink()
+        out = repo.root / "out"
+        out.mkdir()
+
+        proc = repo.run("bundle", str(out))
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("dashboards.yml", proc.stderr)
+        self.assertEqual(list(out.iterdir()), [])
+
+
 if __name__ == "__main__":
     unittest.main()

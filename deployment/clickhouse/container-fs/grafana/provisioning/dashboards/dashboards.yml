@@ -6,10 +6,19 @@ apiVersion: 1
 providers:
   - name: riptide
     type: file
+    # The set lands in this folder; the uid is what everything else holds on to. The file
+    # provider cannot create a parent, so nesting it under "Riptide" is one API move that the
+    # compose stack's grafana-folders service performs and the docs describe for every other
+    # install. Provisioning then keeps the folder where it was moved, because it addresses it
+    # by uid (verified on Grafana 13.0.2, issue #864).
+    folder: 'Flow Analytics'
+    folderUid: riptide-flow-analytics
     updateIntervalSeconds: 30
     # UI edits are allowed but live only until the provisioned JSON changes (e.g. an image
     # update) — the file version then wins. Use "Save as" to keep a customized copy.
     allowUiUpdates: true
     options:
       path: /etc/grafana/provisioning/dashboards
+      # Not the folder mechanism: with it, Grafana derives one flat folder with a random uid
+      # from the immediate directory name and cannot nest it.
       foldersFromFilesStructure: false

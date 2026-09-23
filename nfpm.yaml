@@ -32,6 +32,11 @@ contents:
     dst: /usr/share/doc/riptide/copyright
   - src: deployment/package/riptide.service
     dst: /usr/lib/systemd/system/riptide.service
+  # The Grafana dashboard set, identical to the release tarball (#864). Plain data,
+  # replaced on upgrade: an operator points a Grafana file provider at this directory,
+  # see https://riptide.space/docs/guides/grafana-dashboards.
+  - src: deployment/clickhouse/container-fs/grafana/provisioning/dashboards/*
+    dst: /usr/share/riptide/grafana/dashboards/
   # config.yaml may hold inline credentials: root:riptide 0640, never
   # overwritten on upgrade (dpkg keeps the edited file, rpm writes .rpmnew).
   - src: deployment/package/config.yaml

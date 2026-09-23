@@ -10,6 +10,7 @@
 #   - an unauthenticated request is refused and a credentialled one is served
 #   - riptide provisions its schema through the env:// SecretRef indirection
 #   - Grafana's provisioned datasource reports healthy
+#   - the nine dashboards sit in Flow Analytics under Riptide, none in General (#864)
 #
 # It gates the compose wiring, not riptide's own code: the stack runs the
 # published image, so a code change is covered by `make e2e`, not by this.
@@ -43,8 +44,12 @@ fail() {
 echo "=== smoke: bringing the stack up ==="
 # --wait blocks on the healthchecks the compose files already declare, so the
 # stack being up is itself the first assertion: riptide's readyz only answers
-# once it has provisioned its schema against ClickHouse.
-docker compose -f "$COMPOSE_FILE" up --detach --wait --wait-timeout 300
+# once it has provisioned its schema against ClickHouse. The long-running
+# services are named because --wait counts the grafana-folders one-shot's
+# clean exit as a failure; that one runs in the foreground below so its exit
+# code is the assertion.
+docker compose -f "$COMPOSE_FILE" up --detach --wait --wait-timeout 300 clickhouse grafana riptide
+docker compose -f "$COMPOSE_FILE" run --rm --no-deps grafana-folders
 
 echo "=== smoke: ClickHouse ports are loopback only (#651) ==="
 for port in 8123 9000; do
@@ -89,4 +94,33 @@ case "$health" in
     *) fail "datasource health returned '$health'" ;;
 esac
 
-echo "=== smoke: OK (compose stack, ClickHouse auth and grants, schema, Grafana datasource) ==="
+echo "=== smoke: the dashboards sit in Riptide / Flow Analytics, none in General (#864) ==="
+# The provider creates the child folder; the grafana-folders one-shot nests it. Both are
+# addressed by uid so a renamed folder fails here rather than passing by title. The
+# provider re-reads its files every 30 s (updateIntervalSeconds in dashboards.yml), so
+# waiting past one pass is what proves it keeps the folder where it was moved; checking
+# right after the move would pass on a Grafana that reverts it.
+sleep 35
+child="$(curl -s -u admin:admin "http://127.0.0.1:3000/api/folders/riptide-flow-analytics")"
+case "$child" in
+    *'"parentUid":"riptide"'*) echo "  ok  folder riptide-flow-analytics has parent riptide" ;;
+    *) fail "folder riptide-flow-analytics is not under riptide: '$child'" ;;
+esac
+# grep exits 1 when it matches nothing, and that is the passing case for General:
+# without the `|| true` the pipeline's failure ends the script under `set -e` and
+# `pipefail` before the assertion below can run, so a correct stack reports failure
+# with no FAIL line at all. The API answers on one line, so counting occurrences
+# needs `grep -o` piped into `wc -l`, not `grep -c`.
+count_riptide_dashboards() {
+    curl -s -u admin:admin "http://127.0.0.1:3000/api/search?type=dash-db&folderUIDs=$1" \
+        | { grep -o '"uid":"riptide-' || true; } | wc -l | tr -d ' '
+}
+
+in_folder="$(count_riptide_dashboards riptide-flow-analytics)"
+[ "$in_folder" = "9" ] || fail "expected 9 riptide dashboards in Flow Analytics, found $in_folder"
+echo "  ok  9 dashboards in Flow Analytics"
+in_general="$(count_riptide_dashboards general)"
+[ "$in_general" = "0" ] || fail "$in_general riptide dashboards are still in General"
+echo "  ok  none in General"
+
+echo "=== smoke: OK (compose stack, ClickHouse auth and grants, schema, Grafana datasource, dashboard folder) ==="
