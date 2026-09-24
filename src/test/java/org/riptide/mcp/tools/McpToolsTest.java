@@ -104,14 +104,18 @@ public class McpToolsTest {
         assertThat(recording.lastSql).isNull();
     }
 
-    /** An IPv6 zone has no meaning in a flow column and must not reach the SQL text. */
+    /**
+     * An IPv6 zone has no meaning in a flow column and must not reach the SQL text. The zone names an
+     * interface no host has: Guava resolves a named zone against local interfaces, so {@code %en0}
+     * passed on macOS and was refused on the Linux CI runner.
+     */
     @Test
     public void hostTraceDropsAnIpv6Zone() {
         final var recording = new RecordingMcpService();
-        new HostTraceTool(recording).execute(Map.of("ip_address", "fe80::1%en0"));
+        new HostTraceTool(recording).execute(Map.of("ip_address", "fe80::1%nosuchif0"));
         assertThat(recording.lastSql)
                 .contains("srcAddr = 'fe80:0:0:0:0:0:0:1'")
-                .doesNotContain("%en0");
+                .doesNotContain("nosuchif0");
     }
 
     @Test
