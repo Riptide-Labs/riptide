@@ -105,14 +105,16 @@ When executing `/riptide-investigate-ddos`, the LLM must execute the following s
 
 #### Candidate Mitigation Rules
 
+Copied verbatim from the `riptide_generate_mitigation_rules` result; an IPv6 victim gets `/128`, `ipv6 route` and `ip6tables`.
+
 ```text
 [Tier 1: BGP FlowSpec]
-match destination-prefix <victim_ip>/32 protocol tcp flags syn -> rate-limit 0
+<bgp_flowspec>
 
 [Tier 2: RTBH Null-Route]
-ip route <victim_ip>/32 Null0 tag 666
+<rtbh_null_route>
 
-[Tier 3: Host Firewall (iptables)]
-iptables -A INPUT -p tcp --dport 80 -m tcp --tcp-flags SYN,ACK SYN -j DROP
+[Tier 3: Host Firewall]
+<iptables>
 ```
 ```

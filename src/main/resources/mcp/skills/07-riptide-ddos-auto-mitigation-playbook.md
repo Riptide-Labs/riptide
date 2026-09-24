@@ -1,6 +1,6 @@
 ---
 name: "riptide-ddos-auto-mitigation-playbook"
-description: "Riptide multi-tier automated mitigation rules generator emitting BGP FlowSpec, RTBH null-routes, iptables, and cloud scrubbing redirection rules."
+description: "Riptide multi-tier automated mitigation rules generator emitting BGP FlowSpec, RTBH null-routes, and iptables rules."
 slash_command: "/riptide-auto-mitigate"
 ---
 
@@ -23,13 +23,15 @@ This skill converts active attack classification output into actionable multi-ti
 
 ## 3. Remediation & Reporting Output
 
+Copy each rule verbatim from the tool result; do not rewrite prefixes or commands. An IPv6 target comes back with `/128`, `ipv6 route` and `ip6tables`, and an IPv4 target with `/32`, `ip route` and `iptables`.
+
 ```text
 [Tier 1: BGP FlowSpec (RFC 8955)]
-match destination-prefix <victim_ip>/32 protocol tcp flags syn -> rate-limit 0
+<bgp_flowspec>
 
 [Tier 2: RTBH Null-Route (RFC 7999)]
-ip route <victim_ip>/32 Null0 tag 666
+<rtbh_null_route>
 
-[Tier 3: Host Firewall (iptables)]
-iptables -A INPUT -p tcp --dport 80 -m tcp --tcp-flags SYN,ACK SYN -j DROP
+[Tier 3: Host Firewall]
+<iptables>
 ```

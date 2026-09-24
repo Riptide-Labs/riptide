@@ -38,9 +38,40 @@ public class McpToolsTest {
         assertThat(result).hasSize(1);
         final Map<String, Object> rules = result.get(0);
         assertThat(rules.get("target_ip")).isEqualTo("192.0.2.100");
-        assertThat(rules).containsKey("bgp_flowspec");
-        assertThat(rules).containsKey("iptables");
-        assertThat(rules).containsKey("rtbh_null_route");
+        assertThat(rules.get("bgp_flowspec"))
+                .isEqualTo("match destination-prefix 192.0.2.100/32 protocol tcp flags syn -> rate-limit 0");
+        assertThat(rules.get("iptables"))
+                .isEqualTo("iptables -A INPUT -d 192.0.2.100 -p tcp --tcp-flags SYN,ACK SYN -j DROP");
+        assertThat(rules.get("rtbh_null_route")).isEqualTo("ip route 192.0.2.100/32 Null0 tag 666");
+    }
+
+    /** #880: an IPv6 target got IPv4 syntax in every rule, a /32 included. */
+    @Test
+    public void mitigationRulesForAnIpv6TargetUseIpv6Syntax() {
+        final Map<String, Object> rules = new AutoMitigationRulesTool()
+                .execute(Map.of("target_ip", "2001:DB8:0:0:0:0:0:10", "attack_type", "UDP Amplification")).get(0);
+
+        assertThat(rules.get("target_ip")).isEqualTo("2001:db8::10");
+        assertThat(rules.get("bgp_flowspec"))
+                .isEqualTo("match destination-prefix 2001:db8::10/128 protocol udp -> rate-limit 0");
+        assertThat(rules.get("iptables")).isEqualTo("ip6tables -A INPUT -d 2001:db8::10 -p udp -j DROP");
+        assertThat(rules.get("rtbh_null_route")).isEqualTo("ipv6 route 2001:db8::10/128 Null0 tag 666");
+    }
+
+    /** #880: the scrubbing diversion named a host under the project's own domain, with nothing behind it. */
+    @Test
+    public void mitigationRulesNameNoScrubbingTarget() {
+        final Map<String, Object> rules = new AutoMitigationRulesTool()
+                .execute(Map.of("target_ip", "203.0.113.10", "attack_type", "Volumetric Flood")).get(0);
+
+        assertThat(rules).containsOnlyKeys("target_ip", "attack_type", "bgp_flowspec", "iptables", "rtbh_null_route");
+    }
+
+    /** mcp-server.md: "Pass a literal address, not a hostname". A name used to be resolved instead. */
+    @Test
+    public void mitigationRulesRefuseAHostname() {
+        assertThat(new AutoMitigationRulesTool().execute(Map.of("target_ip", "localhost", "attack_type", "x")))
+                .containsExactly(Map.of("error", "Invalid target IP address parameter: localhost"));
     }
 
     @Test
@@ -62,6 +93,29 @@ public class McpToolsTest {
 
         final List<Map<String, Object>> invalidIp = tool.execute(Map.of("ip_address", "not-an-ip"));
         assertThat(invalidIp.get(0)).containsKey("error");
+    }
+
+    /** The address is formatted into SQL: a name must be refused before any query, not resolved. */
+    @Test
+    public void hostTraceRefusesAHostnameWithoutQuerying() {
+        final var recording = new RecordingMcpService();
+        assertThat(new HostTraceTool(recording).execute(Map.of("ip_address", "localhost")))
+                .containsExactly(Map.of("error", "Invalid IP address parameter: localhost"));
+        assertThat(recording.lastSql).isNull();
+    }
+
+    /**
+     * An IPv6 zone has no meaning in a flow column and must not reach the SQL text. The zone names an
+     * interface no host has: Guava resolves a named zone against local interfaces, so {@code %en0}
+     * passed on macOS and was refused on the Linux CI runner.
+     */
+    @Test
+    public void hostTraceDropsAnIpv6Zone() {
+        final var recording = new RecordingMcpService();
+        new HostTraceTool(recording).execute(Map.of("ip_address", "fe80::1%nosuchif0"));
+        assertThat(recording.lastSql)
+                .contains("srcAddr = 'fe80:0:0:0:0:0:0:1'")
+                .doesNotContain("nosuchif0");
     }
 
     @Test

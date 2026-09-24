@@ -5,7 +5,6 @@
 
 package org.riptide.mcp.tools;
 
-import org.riptide.classification.IpAddr;
 import org.riptide.mcp.config.ConditionalOnMcpEnabled;
 import org.riptide.mcp.protocol.McpToolDefinition;
 import org.riptide.mcp.service.RiptideMcpService;
@@ -55,8 +54,8 @@ public class HostTraceTool implements McpTool {
         final String rawIp = String.valueOf(rawIpObj);
         final String ip;
         try {
-            ip = IpAddr.of(rawIp.trim()).toString();
-        } catch (final Exception e) {
+            ip = ToolParams.ipLiteral(rawIp).getHostAddress();
+        } catch (final IllegalArgumentException e) {
             return List.of(Map.of("error", "Invalid IP address parameter: " + rawIp));
         }
 

@@ -5,11 +5,13 @@
 
 package org.riptide.mcp.tools;
 
-import org.riptide.classification.IpAddr;
+import com.google.common.net.InetAddresses;
 import org.riptide.mcp.config.ConditionalOnMcpEnabled;
 import org.riptide.mcp.protocol.McpToolDefinition;
 import org.springframework.stereotype.Component;
 
+import java.net.Inet6Address;
+import java.net.InetAddress;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -47,12 +49,16 @@ public class AutoMitigationRulesTool implements McpTool {
         }
 
         final String rawIp = String.valueOf(rawIpObj);
-        final String ip;
+        final InetAddress address;
         try {
-            ip = IpAddr.of(rawIp.trim()).toString();
-        } catch (final Exception e) {
+            address = ToolParams.ipLiteral(rawIp);
+        } catch (final IllegalArgumentException e) {
             return List.of(Map.of("error", "Invalid target IP address parameter: " + rawIp));
         }
+        final boolean v6 = address instanceof Inet6Address;
+        final String ip = InetAddresses.toAddrString(address);
+        final String host = ip + (v6 ? "/128" : "/32");
+        final String firewall = v6 ? "ip6tables" : "iptables";
 
         final String attackType = String.valueOf(safeParams.getOrDefault("attack_type", "Volumetric Flood"));
 
@@ -61,18 +67,17 @@ public class AutoMitigationRulesTool implements McpTool {
         rules.put("attack_type", attackType);
 
         if (attackType.toLowerCase(Locale.ROOT).contains("syn")) {
-            rules.put("bgp_flowspec", "match destination-prefix " + ip + "/32 protocol tcp flags syn -> rate-limit 0");
-            rules.put("iptables", "iptables -A INPUT -d " + ip + " -p tcp --tcp-flags SYN,ACK SYN -j DROP");
+            rules.put("bgp_flowspec", "match destination-prefix " + host + " protocol tcp flags syn -> rate-limit 0");
+            rules.put("iptables", firewall + " -A INPUT -d " + ip + " -p tcp --tcp-flags SYN,ACK SYN -j DROP");
         } else if (attackType.toLowerCase(Locale.ROOT).contains("udp") || attackType.toLowerCase(Locale.ROOT).contains("dns")) {
-            rules.put("bgp_flowspec", "match destination-prefix " + ip + "/32 protocol udp -> rate-limit 0");
-            rules.put("iptables", "iptables -A INPUT -d " + ip + " -p udp -j DROP");
+            rules.put("bgp_flowspec", "match destination-prefix " + host + " protocol udp -> rate-limit 0");
+            rules.put("iptables", firewall + " -A INPUT -d " + ip + " -p udp -j DROP");
         } else {
-            rules.put("bgp_flowspec", "match destination-prefix " + ip + "/32 -> rate-limit 0");
-            rules.put("iptables", "iptables -A INPUT -d " + ip + " -j DROP");
+            rules.put("bgp_flowspec", "match destination-prefix " + host + " -> rate-limit 0");
+            rules.put("iptables", firewall + " -A INPUT -d " + ip + " -j DROP");
         }
 
-        rules.put("rtbh_null_route", "ip route " + ip + "/32 Null0 tag 666");
-        rules.put("cloud_scrubbing", "Diversion CNAME: " + ip.replace('.', '-') + ".scrubbing.riptide.space");
+        rules.put("rtbh_null_route", (v6 ? "ipv6 route " : "ip route ") + host + " Null0 tag 666");
 
         return List.of(rules);
     }
