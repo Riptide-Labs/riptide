@@ -8,10 +8,10 @@ SPDX-License-Identifier: GPL-3.0-or-later
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Riptide — High-Performance Network Flow Collector & Enrichment Engine</title>
-    <meta name="description" content="Ingest NetFlow v5/v9, IPFIX, and sFlow. Enrich telemetry in real-time with SNMP, GeoIP, and routing context. Query billions of flows instantly with ClickHouse.">
+    <meta name="description" content="Ingest NetFlow v5/v9, IPFIX, and sFlow. Enrich telemetry in real-time with SNMP, GeoIP, and AS context. Store and query flows in ClickHouse.">
     <meta name="keywords" content="NetFlow, IPFIX, sFlow, Network Telemetry, ClickHouse, SNMP, Traffic Analysis, Open Source, Network Monitoring">
     <meta property="og:title" content="Riptide — High-Performance Network Flow Collector">
-    <meta property="og:description" content="Ingest NetFlow, IPFIX, and sFlow. Enrich telemetry in real-time with SNMP, GeoIP, and routing context. Store in ClickHouse.">
+    <meta property="og:description" content="Ingest NetFlow, IPFIX, and sFlow. Enrich telemetry in real-time with SNMP, GeoIP, and AS context. Store in ClickHouse.">
     <meta property="og:image" content="https://riptide.space/img/riptide-logo.png">
     <meta property="og:url" content="https://riptide.space/">
     <meta name="twitter:card" content="summary_large_image">
@@ -72,7 +72,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
                     </div>
                     <h1 class="hero-title">Ingest, Enrich, and Analyze Network Flows at Scale</h1>
                     <p class="hero-description">
-                        Riptide is an open-source telemetry engine that decodes enterprise network flow protocols, applies dynamic context metadata, and persists millions of records into ClickHouse for instant, real-time traffic analysis.
+                        Riptide is an open-source telemetry engine that decodes enterprise network flow protocols, applies dynamic context metadata, and persists the records into ClickHouse for real-time traffic analysis.
                     </p>
                     <div class="hero-actions">
                         <a href="#getting-started" class="btn btn-primary" id="btn-hero-start">Deploy Riptide</a>
@@ -86,17 +86,19 @@ SPDX-License-Identifier: GPL-3.0-or-later
                             <span class="terminal-dot red"></span>
                             <span class="terminal-dot yellow"></span>
                             <span class="terminal-dot green"></span>
-                            <span class="terminal-title">docker-compose.yml</span>
+                            <span class="terminal-title">deployment/riptide</span>
                         </div>
                         <div class="terminal-body">
                             <pre class="code-block"><code><span class="code-comment"># Start the full Riptide stack (Ingest + ClickHouse + Grafana)</span>
 $ docker compose up -d
 
-<span class="code-output">Creating network "riptide_default"
-Creating volume "riptide_clickhouse_data"
-Creating riptide-clickhouse ... <span class="code-green">done</span>
-Creating riptide-collector  ... <span class="code-green">done</span>
-Creating riptide-grafana    ... <span class="code-green">done</span></span></code></pre>
+<span class="code-output">Network riptide_default              <span class="code-green">Created</span>
+Volume riptide_gf-data               <span class="code-green">Created</span>
+Volume riptide_clickhouse-data       <span class="code-green">Created</span>
+Container riptide-clickhouse-1       <span class="code-green">Healthy</span>
+Container riptide-riptide-1          <span class="code-green">Started</span>
+Container riptide-grafana-1          <span class="code-green">Healthy</span>
+Container riptide-grafana-folders-1  <span class="code-green">Started</span></span></code></pre>
                         </div>
                     </div>
                 </div>
@@ -226,7 +228,7 @@ Creating riptide-grafana    ... <span class="code-green">done</span></span></cod
                             </svg>
                         </div>
                         <h3 class="feature-title">Multi-Protocol Ingestion</h3>
-                        <p class="feature-desc">Native decoding for NetFlow v5, NetFlow v9, IPFIX (over UDP & TCP), and sFlow. Run multiple receivers simultaneously on configurable interfaces.</p>
+                        <p class="feature-desc">Native decoding for NetFlow v5, NetFlow v9 and sFlow over UDP, and IPFIX over UDP or TCP. Run multiple receivers simultaneously on configurable interfaces.</p>
                     </div>
 
                     <div class="feature-card">
@@ -239,7 +241,7 @@ Creating riptide-grafana    ... <span class="code-green">done</span></span></cod
                             </svg>
                         </div>
                         <h3 class="feature-title">Asynchronous Enrichment Ladder</h3>
-                        <p class="feature-desc">Adds interface descriptions, GeoIP locations, and AS routes without slowing ingest. Degrades gracefully to packet defaults if SNMP/external DNS fail.</p>
+                        <p class="feature-desc">Adds interface descriptions, GeoIP locations, and AS numbers and names from the exporter, a static prefix map or GeoIP, without slowing ingest. Degrades to the packet's own fields when SNMP or the opt-in reverse DNS lookups fail.</p>
                     </div>
 
                     <div class="feature-card">
@@ -264,7 +266,7 @@ Creating riptide-grafana    ... <span class="code-green">done</span></span></cod
                             </svg>
                         </div>
                         <h3 class="feature-title">Clock Skew Correction</h3>
-                        <p class="feature-desc">Detects and corrects timestamps of exporters with misconfigured NTP clocks or broken sysUpTime math, safeguarding temporal consistency of log queries.</p>
+                        <p class="feature-desc">Repairs out-of-order flow timestamps from broken sysUpTime math by default. Opt-in skew correction (<code>skew-threshold-ms</code>) shifts flows from exporters with misconfigured NTP clocks back to when they happened.</p>
                     </div>
 
                     <div class="feature-card">
@@ -286,7 +288,7 @@ Creating riptide-grafana    ... <span class="code-green">done</span></span></cod
                             </svg>
                         </div>
                         <h3 class="feature-title">Secured Credentials</h3>
-                        <p class="feature-desc">Supports secure variable injection mechanisms (`vault://`, `sops://`, `env://`). Plaintext SNMP secrets are never exposed or saved in static properties.</p>
+                        <p class="feature-desc">SNMP credentials, database passwords and MCP tokens take secret references (<code>env://</code>, <code>file://</code>, <code>vault://</code>, <code>sops://</code>), so the secret stays out of the config file. A literal value is still accepted and is masked in logs.</p>
                     </div>
 
                     <div class="feature-card">
@@ -298,7 +300,7 @@ Creating riptide-grafana    ... <span class="code-green">done</span></span></cod
                             </svg>
                         </div>
                         <h3 class="feature-title">Integrated Grafana Ecosystem</h3>
-                        <p class="feature-desc">Shipped with standard Grafana template dashboards. Seamless integration for 95th percentile analysis, failure headroom, and deep interface traffic drilling.</p>
+                        <p class="feature-desc">Shipped with standard Grafana template dashboards. Covers 95th percentile analysis, headroom against SNMP-reported link speed, and interface traffic drill-down.</p>
                     </div>
 
                     <div class="feature-card">
@@ -310,7 +312,7 @@ Creating riptide-grafana    ... <span class="code-green">done</span></span></cod
                             </svg>
                         </div>
                         <h3 class="feature-title">Native MCP AI Server</h3>
-                        <p class="feature-desc">Embedded Model Context Protocol (MCP) server running stdio IPC and HTTP/SSE. Protected by SecretRef tokens (<code>env://</code>, <code>vault://</code>, <code>sops://</code>) for direct LLM integration.</p>
+                        <p class="feature-desc">Embedded Model Context Protocol (MCP) server running stdio IPC and HTTP/SSE for direct LLM integration. Optional token authentication, off by default, reads its tokens from secret references.</p>
                     </div>
                 </div>
             </div>
@@ -322,7 +324,7 @@ Creating riptide-grafana    ... <span class="code-green">done</span></span></cod
                 <div class="section-header">
                     <div class="tagline-badge">🤖 Model Context Protocol & Shipped Agent Skills</div>
                     <h2 class="section-title">AI-Powered Network Telemetry & Automation</h2>
-                    <p class="section-subtitle">Riptide ships a native Java MCP server component and 7 pre-packaged Agent Skills directly inside the executable JAR for instant integration with AGY, Claude CLI, and custom AI agents.</p>
+                    <p class="section-subtitle">Riptide ships a native Java MCP server component and 7 pre-packaged Agent Skills directly inside the executable JAR for integration with Claude Code and any other MCP client.</p>
                 </div>
 
                 <!-- MCP Capabilities & Architecture Cards -->
@@ -332,8 +334,8 @@ Creating riptide-grafana    ... <span class="code-green">done</span></span></cod
                         <h3>Native Java Protocol Engine</h3>
                         <p>Zero external Node.js or Python runtimes required. Runs directly inside <code>riptide-flows-*.jar</code> over standard input/output (stdio IPC) or HTTP Server-Sent Events (SSE).</p>
                         <ul class="mcp-features-list">
-                            <li>⚡ <strong>Stdio & SSE Transports</strong> — Support for AGY / antigravity-cli and Claude CLI</li>
-                            <li>🔐 <strong>SecretRef Token Auth</strong> — Resolves tokens via <code>env://</code>, <code>vault://</code>, and <code>sops://</code></li>
+                            <li>⚡ <strong>Stdio & SSE Transports</strong> — Works with Claude Code and any MCP client</li>
+                            <li>🔐 <strong>Optional Token Auth</strong> — Off by default; tokens resolve from <code>env://</code>, <code>file://</code>, <code>vault://</code> or <code>sops://</code></li>
                             <li>📊 <strong>1-Minute Rollup Router</strong> — Auto-routes ≥ 60m queries to ClickHouse <code>SummingMergeTree</code> views</li>
                         </ul>
                     </div>
@@ -417,7 +419,7 @@ Creating riptide-grafana    ... <span class="code-green">done</span></span></cod
                             <div class="skill-info">
                                 <h4>Automated DDoS Mitigation</h4>
                                 <span class="skill-cmd">/riptide-auto-mitigate</span>
-                                <p>Generates multi-tier mitigation rules emitting BGP FlowSpec (RFC 8955), RTBH null-routes (RFC 7999), iptables rules, and Cloud Scrubbing GRE redirection.</p>
+                                <p>Generates multi-tier mitigation rules emitting BGP FlowSpec (RFC 8955), RTBH null-routes (RFC 7999), iptables rules, and a DNS CNAME diversion to a cloud scrubbing service.</p>
                             </div>
                         </div>
                     </div>
@@ -431,10 +433,10 @@ Creating riptide-grafana    ... <span class="code-green">done</span></span></cod
                 <div class="tech-details">
                     <h2 class="section-title">Built for Performance</h2>
                     <p class="tech-desc">
-                        Riptide leverages a modern JVM system architecture to process hundreds of thousands of network packets per second per node. Using lightweight event-driven networking and a decoupled asynchronous pipeline, telemetry collection stays fast and resource-efficient.
+                        Riptide receives flows on Netty event loops and writes them to ClickHouse through a bounded, asynchronous batching queue. A slow database never blocks the receivers; rows that overflow the queue are dropped and counted in <code>/metrics</code>.
                     </p>
                     <div class="tech-list">
-                        <div class="tech-item"><span class="tech-dot"></span><strong>Java 25</strong> — Next-generation virtual threads for non-blocking task orchestration</div>
+                        <div class="tech-item"><span class="tech-dot"></span><strong>Java 25</strong> — Virtual threads for the management and MCP HTTP servers</div>
                         <div class="tech-item"><span class="tech-dot"></span><strong>Netty</strong> — Highly optimized TCP/UDP reactive communication loops</div>
                         <div class="tech-item"><span class="tech-dot"></span><strong>SNMP4J</strong> — Industrial-strength interface MIB queries and options caching</div>
                         <div class="tech-item"><span class="tech-dot"></span><strong>ClickHouse</strong> — Ultra-fast columnar data indexing and analytical aggregates</div>
@@ -522,11 +524,18 @@ services.riptide = {
 
                         <!-- Standalone JAR Tab -->
                         <div class="tab-pane" id="tab-jar">
-                            <p class="tab-instructions">Run Riptide as a direct Java executable with native MCP AI Agent server enabled (requires Java 25):</p>
-                            <pre class="code-block"><code>cd target
-java -jar riptide-flows-*.jar --riptide.mcp.enabled=true --riptide.mcp.transport=stdio</code></pre>
+                            <p class="tab-instructions">Download the release jar and run it against a reachable ClickHouse (requires Java 25):</p>
+                            <pre class="code-block"><code>curl -fsSLO https://github.com/Riptide-Labs/riptide/releases/download/v%%VERSION%%/riptide-flows-%%VERSION%%.jar
+export CLICKHOUSE_PASSWORD=riptide
+java -jar riptide-flows-%%VERSION%%.jar \
+  --riptide.clickhouse.endpoint=http://localhost:8123 \
+  --riptide.clickhouse.password=env://CLICKHOUSE_PASSWORD \
+  --riptide.receivers.flows.type=multi \
+  --riptide.receivers.flows.host=0.0.0.0 \
+  --riptide.receivers.flows.port=9999</code></pre>
                             <div class="tab-meta">
-                                <span>📦 Connect AGY / antigravity-cli or Claude CLI directly via stdio IPC or HTTP/SSE at <code>/mcp/sse</code>.</span>
+                                <span>⚙️ Signature check and config file in the <a href="docs/guides/plain-jar">plain JAR guide</a></span>
+                                <span>🤖 Add <code>--riptide.mcp.enabled=true</code> for the MCP server over stdio, as Claude Code launches it. Add <code>--riptide.mcp.transport=sse</code> as well for HTTP/SSE at <code>http://127.0.0.1:8081/mcp/sse</code>. See the <a href="docs/reference/mcp-server">MCP reference</a>.</span>
                             </div>
                         </div>
                     </div>

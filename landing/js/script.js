@@ -112,13 +112,13 @@ function initPipelineSimulator() {
                 await delay(500);
                 logMessage('Enricher: Resolved ifIndex 4 -> <span class="text-yellow">TenGigabitEthernet1/1</span> (Transit uplink) speed=10000M', 'text-yellow');
                 logMessage('Enricher: Resolved GeoIP for Destination 185.190.140.2 -> Country: Netherlands, Org: AS20001');
-                logMessage('Enricher: Clock skew repaired: Exporter offset -12200ms adjusted.', 'text-cyan');
+                logMessage('Enricher: Skew correction (opt-in): exporter clock offset -12200ms adjusted.', 'text-cyan');
                 pulses[3].classList.add('animating');
                 
                 await delay(1200);
                 pulses[3].classList.remove('animating');
                 highlightStage('storage');
-                logMessage('Persist: Inserting records into ClickHouse table <span class="text-cyan">flows_lax_core</span>', 'text-green');
+                logMessage('Persist: Inserting records into ClickHouse table <span class="text-cyan">flows</span>', 'text-green');
                 pulses[4].classList.add('animating');
                 
                 await delay(1200);
@@ -146,8 +146,8 @@ function initPipelineSimulator() {
                 await delay(1200);
                 pulses[2].classList.remove('animating');
                 highlightStage('enrich');
-                logMessage('Enricher: Locality classification matched: <span class="text-cyan">INTERNAL</span> (172.16.42.12 -> 172.16.42.50)');
-                logMessage('Enricher: Hostname reverse DNS resolved: 172.16.42.12 -> app-server-01.sfo.internal');
+                logMessage('Enricher: Locality classification matched: <span class="text-cyan">PRIVATE</span> (172.16.42.12 -> 172.16.42.50)');
+                logMessage('Enricher: Reverse DNS (opt-in) resolved: 172.16.42.12 -> app-server-01.sfo.internal');
                 pulses[3].classList.add('animating');
                 
                 await delay(1200);
@@ -159,7 +159,7 @@ function initPipelineSimulator() {
                 await delay(1200);
                 pulses[4].classList.remove('animating');
                 highlightStage('visual');
-                logMessage('NOC: Grafana graph "Internal App Traffic" refreshed.', 'text-green');
+                logMessage('NOC: Grafana dashboards refreshed.', 'text-green');
                 
                 await delay(1500);
                 clearActiveStages();
@@ -181,20 +181,20 @@ function initPipelineSimulator() {
                 await delay(1200);
                 pulses[2].classList.remove('animating');
                 highlightStage('enrich');
-                logMessage('Enricher: Node routing matched: mapped exporter to Organisation ID: <span class="text-cyan">tenant-transit-nordic</span>');
+                logMessage('Enricher: SNMP, GeoIP and AS context attached to 24 flow records');
                 logMessage('Enricher: SNMP Interface name resolved: ifIndex 102 -> <span class="text-yellow">xe-0/0/2:0</span> (Peer: AS2914)', 'text-yellow');
                 pulses[3].classList.add('animating');
                 
                 await delay(1200);
                 pulses[3].classList.remove('animating');
                 highlightStage('storage');
-                logMessage('Persist: ClickHouse multi-tenancy row policy enforced. Row written to partition.', 'text-green');
+                logMessage('Persist: ClickHouse accepted rows for tenant <span class="text-cyan">transit-nordic</span>; the tenant CHECK rejects any other value from this writer.', 'text-green');
                 pulses[4].classList.add('animating');
                 
                 await delay(1200);
                 pulses[4].classList.remove('animating');
                 highlightStage('visual');
-                logMessage('NOC: Real-time billing metrics updated.', 'text-green');
+                logMessage('NOC: 95th percentile rate panels updated.', 'text-green');
                 
                 await delay(1500);
                 clearActiveStages();
