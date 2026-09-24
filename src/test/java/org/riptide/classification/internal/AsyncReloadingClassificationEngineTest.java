@@ -27,17 +27,22 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.fail;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Pins the whole reload posture of the wrapper, including the parts this change deliberately leaves alone.
@@ -62,6 +67,14 @@ class AsyncReloadingClassificationEngineTest {
     private final MetricRegistry metrics = new MetricRegistry();
     private final ControllableEngine delegate = new ControllableEngine();
 
+    /** Where {@link #offTheTestThread} runs its callers; one per test instance, so per test method. */
+    private final AtomicInteger callerThreads = new AtomicInteger();
+    private final ExecutorService callers = Executors.newCachedThreadPool(runnable -> {
+        final Thread thread = new Thread(runnable, "async-reload-test-caller-" + this.callerThreads.incrementAndGet());
+        thread.setDaemon(true);
+        return thread;
+    });
+
     private AsyncReloadingClassificationEngine engine;
     private ListAppender<ILoggingEvent> appender;
     private ch.qos.logback.classic.Logger logger;
@@ -81,6 +94,9 @@ class AsyncReloadingClassificationEngineTest {
         if (this.engine != null) {
             this.engine.shutdown();
         }
+        // after the engine: its shutdown wakes a caller still parked before the first load, and this interrupts
+        // whatever is left
+        this.callers.shutdownNow();
         this.logger.detachAppender(this.appender);
         this.appender.stop();
     }
@@ -118,7 +134,7 @@ class AsyncReloadingClassificationEngineTest {
         // off the test thread, so a regression fails on the timeout instead of hanging the suite.
         // The reload is still parked on `release`, so anything that waits for it cannot answer.
         final CompletableFuture<String> answer =
-                CompletableFuture.supplyAsync(() -> this.engine.classify(request()));
+                offTheTestThread(() -> this.engine.classify(request()));
         assertThat(answer.get(10, TimeUnit.SECONDS)).isEqualTo("rules-1");
         assertThat(release.getCount()).as("the reload was still in flight").isEqualTo(1);
 
@@ -317,7 +333,7 @@ class AsyncReloadingClassificationEngineTest {
         assertThat(entered.await(10, TimeUnit.SECONDS)).as("the first load started").isTrue();
 
         final CompletableFuture<String> answer =
-                CompletableFuture.supplyAsync(() -> this.engine.classify(request()));
+                offTheTestThread(() -> this.engine.classify(request()));
         assertThatThrownBy(() -> answer.get(500, TimeUnit.MILLISECONDS))
                 .as("nothing is serviceable yet, so the caller waits")
                 .isInstanceOf(TimeoutException.class);
@@ -338,7 +354,7 @@ class AsyncReloadingClassificationEngineTest {
         assertThat(entered.await(10, TimeUnit.SECONDS)).as("the first load started").isTrue();
 
         final CompletableFuture<String> answer =
-                CompletableFuture.supplyAsync(() -> this.engine.classify(request()));
+                offTheTestThread(() -> this.engine.classify(request()));
         this.engine.shutdown();
 
         // nothing will ever settle the state now, so an untimed wait would park this caller for the
@@ -533,7 +549,7 @@ class AsyncReloadingClassificationEngineTest {
         // off the test thread: were this to wait for the initial load like the other accessors do, the
         // regression would be a park, and get() turns that into a failure rather than a hung suite
         final CompletableFuture<Optional<ClassificationEngine.Publication>> answer =
-                CompletableFuture.supplyAsync(() -> this.engine.currentPublication());
+                offTheTestThread(() -> this.engine.currentPublication());
         assertThat(answer.get(10, TimeUnit.SECONDS))
                 .as("nothing published yet, answered rather than waited for").isEmpty();
 
@@ -584,7 +600,7 @@ class AsyncReloadingClassificationEngineTest {
 
         // off the test thread with a deadline: a caller that parks here is the regression, and get() turns
         // that into a failed assertion. A caller that throws fails on the ExecutionException instead
-        final CompletableFuture<String> answer = CompletableFuture.supplyAsync(
+        final CompletableFuture<String> answer = offTheTestThread(
                 () -> this.engine.classify(ClassificationRequest.builder().withSrcPort(1234).withDstPort(80).build()));
         assertThat(answer.get(10, TimeUnit.SECONDS))
                 .as("the boot load published despite the listener, so classification is serviceable")
@@ -630,7 +646,7 @@ class AsyncReloadingClassificationEngineTest {
         this.engine = new AsyncReloadingClassificationEngine(
                 new TimingClassificationEngine(this.metrics, real), this.metrics);
 
-        final CompletableFuture<String> answer = CompletableFuture.supplyAsync(
+        final CompletableFuture<String> answer = offTheTestThread(
                 () -> this.engine.classify(ClassificationRequest.builder().withSrcPort(1234).withDstPort(80).build()));
         assertThat(answer.get(10, TimeUnit.SECONDS))
                 .as("the initial load survived the race, so classification is serviceable")
@@ -643,6 +659,47 @@ class AsyncReloadingClassificationEngineTest {
         this.engine.reload();
         await("the next reload to be counted", () -> successes() == 2);
         assertThat(lateSaw).as("the listener that registered during the race is registered").hasValue(1);
+    }
+
+    /**
+     * #871: five of the tests above timed out on a CI runner, each on a caller that was never scheduled. They all
+     * run their caller through {@link #offTheTestThread}, and it used to run on the common pool, which the whole
+     * surefire JVM shares with production code such as the parallel decision-tree build. This occupies every
+     * common-pool worker with CPU-bound work, which the pool does not compensate for the way it does for a managed
+     * block, and then asks for an answer through that same helper.
+     */
+    @Test
+    void aCallerOffTheTestThreadAnswersWhileTheCommonPoolIsSaturated() throws Exception {
+        final int parallelism = ForkJoinPool.getCommonPoolParallelism();
+        // below 2, CompletableFuture starts a thread per task instead of using the common pool, so a helper that
+        // queued there would pass this too: skipped, because a pass here would prove nothing
+        assumeTrue(parallelism > 1, "common-pool parallelism is " + parallelism
+                + ", so CompletableFuture bypasses the common pool and this guard cannot fail");
+        givenRulesLoaded("rules-1");
+
+        final AtomicBoolean spin = new AtomicBoolean(true);
+        final CountDownLatch spinning = new CountDownLatch(parallelism);
+        try {
+            for (int i = 0; i < parallelism; i++) {
+                ForkJoinPool.commonPool().execute(() -> {
+                    spinning.countDown();
+                    while (spin.get()) {
+                        Thread.onSpinWait();
+                    }
+                });
+            }
+            // measured only once the pool is provably full, so this cannot pass by running before the spinners.
+            // Not asserted: if the latch times out, some spinners are still queued because other work holds the
+            // workers, which is the #871 condition itself, and the pool is just as full
+            final boolean filledByThisTest = spinning.await(10, TimeUnit.SECONDS);
+
+            assertThat(offTheTestThread(() -> this.engine.classify(request())).get(10, TimeUnit.SECONDS))
+                    .as("the caller answers although the common pool has no free worker (held by %s)",
+                            filledByThisTest ? "this test's spinners" : "other work in this JVM")
+                    .isEqualTo("rules-1");
+        } finally {
+            spin.set(false);
+        }
     }
 
     /** Constructs the engine and blocks until its construction-time load has published {@code rules}. */
@@ -688,6 +745,17 @@ class AsyncReloadingClassificationEngineTest {
 
     private List<ILoggingEvent> eventsAt(final Level level) {
         return this.appender.list.stream().filter(event -> event.getLevel() == level).toList();
+    }
+
+    /**
+     * Runs a caller off the test thread, on a thread this test owns. Never on the common pool: the surefire JVM shares
+     * that pool with every other class and with production code, and when it was busy on a CI runner five callers here
+     * were never scheduled and timed out on an engine that had nothing left to do (#871). Guarded by
+     * {@link #aCallerOffTheTestThreadAnswersWhileTheCommonPoolIsSaturated}. ManagementServerTest and
+     * ParserDispatchTest record the same lesson.
+     */
+    private <T> CompletableFuture<T> offTheTestThread(final Supplier<T> supplier) {
+        return CompletableFuture.supplyAsync(supplier, this.callers);
     }
 
     private static ClassificationRequest request() {
