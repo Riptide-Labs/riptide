@@ -956,7 +956,7 @@ a {
 
 .skills-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
     gap: 1.5rem;
 }
 
@@ -1116,7 +1116,7 @@ a {
 }
 
 .footer-bottom {
-    grid-column: 1 / span 2;
+    grid-column: 1 / -1;
     border-top: 1px solid rgba(255,255,255,0.03);
     padding-top: 2rem;
     margin-top: 2rem;
@@ -1128,8 +1128,11 @@ a {
    Responsive Queries
    ========================================================================== */
 @media (max-width: 1024px) {
+    /* minmax(0, 1fr), not 1fr: a 1fr track never shrinks below its content's
+       min-content width, so the terminal <pre> would widen the page on a phone.
+       Same for every single-column grid below. */
     .hero-container {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
         gap: 3rem;
         text-align: center;
     }
@@ -1149,7 +1152,7 @@ a {
     }
     
     .tech-container {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
         gap: 3rem;
     }
 }
@@ -1203,7 +1206,7 @@ a {
     }
     
     .features-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
     }
     
     .tabs-nav {
@@ -1217,15 +1220,20 @@ a {
     }
     
     .community-links {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
+    }
+    
+    .mcp-grid {
+        grid-template-columns: minmax(0, 1fr);
     }
     
     .footer-container {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
         gap: 2rem;
     }
     
     .footer-links {
+        flex-wrap: wrap;
         justify-content: flex-start;
         gap: 2rem;
     }
