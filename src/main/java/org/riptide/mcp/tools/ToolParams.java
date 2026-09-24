@@ -5,6 +5,10 @@
 
 package org.riptide.mcp.tools;
 
+import com.google.common.net.InetAddresses;
+
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.Map;
 
 /**
@@ -61,6 +65,23 @@ public final class ToolParams {
     /** A row limit, clamped so a caller cannot ask for an unbounded result set. */
     public static int limit(final Object raw, final int defaultValue) {
         return boundedInt(raw, defaultValue, MAX_LIMIT);
+    }
+
+    /**
+     * An IPv4 or IPv6 address literal. A hostname is refused, never resolved: the tools document
+     * "pass a literal address, not a hostname", and a name would cost a DNS lookup on the caller's
+     * behalf. An IPv6 zone such as {@code fe80::1%en0} is dropped, because neither a flow column nor
+     * a rule carries one, and the result is formatted into SQL and rule text.
+     *
+     * @throws IllegalArgumentException when the value is not an address literal
+     */
+    public static InetAddress ipLiteral(final String raw) {
+        try {
+            return InetAddress.getByAddress(InetAddresses.forString(raw.trim()).getAddress());
+        } catch (final UnknownHostException e) {
+            // getByAddress refuses only a length other than 4 or 16, and forString answers one of those
+            throw new AssertionError(e);
+        }
     }
 
     private static int boundedInt(final Object raw, final int defaultValue, final int max) {

@@ -61,7 +61,7 @@ Arguments arrive untyped. A numeric argument that is missing or malformed falls 
 | **`riptide_trace_host_flow`** | `ip_address` (required, IPv4 or IPv6), `time_range_minutes` (default `15`) | `flows` only | `srcAddr`, `dstAddr`, `srcPort`, `dstPort`, `protocol`, `application`, `tcpFlags`, `bytes`, `packets`; 50 rows |
 | **`riptide_get_geo_asn_distribution`** | `time_range_minutes` (default `60`) | `flows`, or `flows_by_geo_asn_1m` at 60 minutes or more | `dstAs`, `dstCountry`, `total_bytes`; 20 rows |
 | **`riptide_detect_traffic_spikes`** | `time_range_minutes` (default `15`) | `flows`, or `flows_by_conversation_1m` at 60 minutes or more | `dstAddr`, `total_packets`, `total_bytes`, `flow_count`; 20 rows |
-| **`riptide_generate_mitigation_rules`** | `target_ip` (required), `attack_type` (string, default `Volumetric Flood`) | nothing | `target_ip`, `attack_type`, `bgp_flowspec`, `iptables`, `rtbh_null_route`, `cloud_scrubbing`; one row |
+| **`riptide_generate_mitigation_rules`** | `target_ip` (required, IPv4 or IPv6), `attack_type` (string, default `Volumetric Flood`) | nothing | `target_ip` (IPv6 in compressed form), `attack_type`, `bgp_flowspec`, `iptables`, `rtbh_null_route`; one row. An IPv6 target gets a `/128` prefix, `ip6tables` and `ipv6 route`. |
 
 The `tools/list` schema marks `time_range_minutes`, `group_by` and `attack_type` as required, but a missing value takes the default above.
 
@@ -101,7 +101,7 @@ Each is listed by `prompts/list` under its name and by `resources/list` as `reso
 | **`riptide-peering-geo-analysis`** | `/riptide-peering-analysis` | ASN and country breakdown for transit decisions. |
 | **`riptide-application-performance-triage`** | `/riptide-app-audit` | Application protocol distribution, unclassified traffic and public/private locality. |
 | **`riptide-host-forensic-investigation`** | `/riptide-trace-host` | Peer matrix, active ports, VLANs and flow durations for one host. |
-| **`riptide-ddos-auto-mitigation-playbook`** | `/riptide-auto-mitigate` | BGP FlowSpec (RFC 8955), RTBH (RFC 7999), iptables and cloud scrubbing rules. |
+| **`riptide-ddos-auto-mitigation-playbook`** | `/riptide-auto-mitigate` | BGP FlowSpec (RFC 8955), RTBH (RFC 7999) and iptables rules. |
 
 The slash command is appended to the prompt description as `[Command: /...]`. Whether a client exposes it under that name is up to the client.
 
@@ -238,7 +238,7 @@ curl -s -X POST -H 'Authorization: Bearer e6f1c0b2a9d84f3d9c1b7a5e2f4d6c8a' -H '
 Expected output:
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"[{\"target_ip\":\"203.0.113.10\",\"attack_type\":\"TCP SYN Flood\",\"bgp_flowspec\":\"match destination-prefix 203.0.113.10/32 protocol tcp flags syn -> rate-limit 0\",\"iptables\":\"iptables -A INPUT -d 203.0.113.10 -p tcp --tcp-flags SYN,ACK SYN -j DROP\",\"rtbh_null_route\":\"ip route 203.0.113.10/32 Null0 tag 666\",\"cloud_scrubbing\":\"Diversion CNAME: 203-0-113-10.scrubbing.riptide.space\"}]"}]}}
+{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"[{\"target_ip\":\"203.0.113.10\",\"attack_type\":\"TCP SYN Flood\",\"bgp_flowspec\":\"match destination-prefix 203.0.113.10/32 protocol tcp flags syn -> rate-limit 0\",\"iptables\":\"iptables -A INPUT -d 203.0.113.10 -p tcp --tcp-flags SYN,ACK SYN -j DROP\",\"rtbh_null_route\":\"ip route 203.0.113.10/32 Null0 tag 666\"}]"}]}}
 ```
 
 | Status | Meaning |
