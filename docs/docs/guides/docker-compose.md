@@ -40,7 +40,8 @@ The stack starts riptide from the published image, ClickHouse pinned to the vers
     Volume riptide_clickhouse-data Created
     Container riptide-clickhouse-1 Healthy
     Container riptide-riptide-1 Started
-    Container riptide-grafana-1 Started
+    Container riptide-grafana-1 Healthy
+    Container riptide-grafana-folders-1 Started
    ```
 
 3. Verify:
