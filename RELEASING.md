@@ -80,6 +80,7 @@ with the version in `pom.xml`, or if that version is a `SNAPSHOT`.
 | `riptide_X.Y.Z_all.deb`, `riptide-X.Y.Z-1.noarch.rpm` | GitHub Release |
 | `riptide-dashboards-<set version>.tar.gz` (the Grafana dashboards and their provisioning file, named by the dashboard set's own version) | GitHub Release |
 | `riptide-dashboards-helm-values.yaml` (values for the Grafana Helm chart, pinned to the release tag) | GitHub Release |
+| `riptide-dashboards-import.py` (imports the dashboards into a Grafana over its API) | GitHub Release |
 | `riptide-X.Y.Z.spdx.json` (SBOM) | GitHub Release |
 | `riptide-X.Y.Z-sbom-report.html` (self-contained SBOM report, works offline) | GitHub Release |
 | `*.sigstore.json` (cosign bundles) | GitHub Release |
