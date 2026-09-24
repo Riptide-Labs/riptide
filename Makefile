@@ -57,7 +57,8 @@ help:
 	@echo "  replay-pcap-test: Run the pcap replay script's fixture tests"
 	@echo "  dashboards-version: Stamp the Grafana dashboard set with DASHBOARDS_VERSION=<x.y.z>"
 	@echo "  dashboards-version-check: Every dashboard carries the same version; with DASHBOARDS_BASE_REF=<ref>, that it moved when a dashboard changed"
-	@echo "  dashboards-version-test: Run the dashboards version checker's fixture tests"
+	@echo "  dashboards-version-test: Run the fixture tests of the dashboard tooling (version checker and API import)"
+	@echo "  dashboards-import-asset: Copy the API import script to target/riptide-dashboards-import.py, the release asset"
 	@echo "  dashboards-bundle: Write target/riptide-dashboards-<set version>.tar.gz, the release asset"
 	@echo "  dashboards-helm-values: Write target/riptide-dashboards-helm-values.yaml for the Grafana Helm chart; DASHBOARDS_REF=<tag>"
 	@echo "  release-lineage: Check a release tag adds only the version bump on top of main; LINEAGE_REF=<ref>"
@@ -343,8 +344,16 @@ dashboards-helm-values:
 	mkdir -p target
 	python3 deployment/clickhouse/dashboards-version.py helm-values --ref "$(DASHBOARDS_REF)" target/
 
+# The script that imports the set into a Grafana over its API (#872) ships as a
+# release asset on its own, next to the tarball it reads.
+.PHONY: dashboards-import-asset
+dashboards-import-asset:
+	mkdir -p target
+	cp deployment/clickhouse/dashboards-import.py target/riptide-dashboards-import.py
+
 # The checker matches nothing in a healthy tree, so its fixtures are the only
-# thing that ever exercises its failure arms.
+# thing that ever exercises its failure arms. The same discovery runs the API
+# import script's tests against their fake Grafana.
 .PHONY: dashboards-version-test
 dashboards-version-test:
 	python3 -m unittest discover -s deployment/clickhouse

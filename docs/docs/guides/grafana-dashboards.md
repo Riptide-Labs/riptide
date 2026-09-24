@@ -29,7 +29,8 @@ Every dashboard has a **Datasource** and a **Database** variable, so the same JS
 - A ClickHouse datasource pointing at the riptide database. The compose stack provisions one; elsewhere, add it under *Connections* first.
 - For the tarball and package paths: shell access to the Grafana host.
 - For the Helm path: `helm` and `kubectl` access to the release's namespace.
-- For every path except the compose stack: an admin login for the one-time folder move.
+- For the tarball, package and Helm paths: an admin login for the one-time folder move.
+- For the API path: `python3` and a Grafana service-account token with the Editor role.
 
 ## Install with the compose stack
 
@@ -269,6 +270,130 @@ Verified OK
 
 The file pins every download to the release tag, and release tags cannot be moved or recreated, so a verified file also fixes the dashboards it downloads.
 
+## Install into a Grafana over its API
+
+Use this for a Grafana that reads no provisioning files: a hosted instance, or one whose deployment you cannot change.
+Every release after v0.15.2 carries **`riptide-dashboards-import.py`**, which imports the set over Grafana's HTTP API.
+It creates **Riptide** with **Flow Analytics** inside it, imports every dashboard there under its own uid, and deletes nothing.
+Everything below was verified on Grafana 13.2.2.
+
+1. Create a service account with the **Editor** role and a token for it: *Administration* > *Users and access* > *Service accounts* > *Add service account*, then *Add service account token*.
+   An Editor may create and move folders and import dashboards; a Viewer is refused.
+
+2. Download the script and its signature bundle, and verify them.
+   Download the dashboard tarball from the same release as described in [Install from the release tarball](#install-from-the-release-tarball).
+
+   ```bash
+   V=%%VERSION%%
+   curl -fsSLO "https://github.com/Riptide-Labs/riptide/releases/download/v$V/riptide-dashboards-import.py"
+   curl -fsSLO "https://github.com/Riptide-Labs/riptide/releases/download/v$V/riptide-dashboards-import.py.sigstore.json"
+   cosign verify-blob riptide-dashboards-import.py \
+     --bundle riptide-dashboards-import.py.sigstore.json \
+     --certificate-identity-regexp '^https://github.com/Riptide-Labs/riptide/\.github/workflows/release\.yml@refs/tags/v.*$' \
+     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+   ```
+
+   Expected output:
+
+   ```text
+   Verified OK
+   ```
+
+3. Preview what would change.
+   The token is read from **`GRAFANA_TOKEN`** and never from the command line; `read -rs` keeps it out of your shell history.
+
+   ```bash
+   GRAFANA=https://grafana.example.org
+   read -rs GRAFANA_TOKEN && export GRAFANA_TOKEN
+   python3 riptide-dashboards-import.py --grafana "$GRAFANA" --dry-run riptide-dashboards-1.0.2.tar.gz
+   ```
+
+   Expected output, on a Grafana that holds none of the dashboards yet:
+
+   ```text
+   riptide dashboard set 1.0.2, 9 dashboards -> https://grafana.example.org (dry run, nothing is written)
+   folder Riptide: would create
+   folder Flow Analytics: would create
+   riptide-behavioural-anomalies: would create
+   riptide-capacity-routing: would create
+   riptide-collection-health: would create
+   riptide-data-trust: would create
+   riptide-flow-forensics: would create
+   riptide-interface-traffic-analysis: would create
+   riptide-top10: would create
+   riptide-traffic-composition: would create
+   riptide-traffic-paths: would create
+   ```
+
+4. Import.
+
+   ```bash
+   python3 riptide-dashboards-import.py --grafana "$GRAFANA" riptide-dashboards-1.0.2.tar.gz
+   ```
+
+   Expected output:
+
+   ```text
+   riptide dashboard set 1.0.2, 9 dashboards -> https://grafana.example.org
+   folder Riptide: created
+   folder Flow Analytics: created
+   riptide-behavioural-anomalies: created
+   riptide-capacity-routing: created
+   riptide-collection-health: created
+   riptide-data-trust: created
+   riptide-flow-forensics: created
+   riptide-interface-traffic-analysis: created
+   riptide-top10: created
+   riptide-traffic-composition: created
+   riptide-traffic-paths: created
+   ```
+
+5. Verify.
+
+   ```bash
+   curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" "$GRAFANA/api/folders/riptide-flow-analytics" | grep -o '"parentUid":"[^"]*"'
+   curl -s -H "Authorization: Bearer $GRAFANA_TOKEN" "$GRAFANA/api/folders/riptide-flow-analytics/counts" \
+     | python3 -c 'import sys, json; print(json.load(sys.stdin)["dashboards"])'
+   ```
+
+   Expected output:
+
+   ```text
+   "parentUid":"riptide"
+   9
+   ```
+
+The script prints one line per dashboard and exits non-zero if any was not imported.
+
+| Line | Meaning |
+| --- | --- |
+| **`created`** | The dashboard was not on this instance. |
+| **`updated 1.0.0 -> 1.0.2`** | Replaced. The previous body stays in the dashboard's *Settings* > *Versions*, where a replaced UI edit can be restored. |
+| **`unchanged (1.0.2)`** | Identical to what the instance already had; Grafana saved nothing. |
+| **`(from folder 'Riptide Flow Analytics')`** | The dashboard was in another folder, for example after a hand import, and was moved into **Flow Analytics**. |
+| **`refused: Cannot save provisioned dashboard`** | This instance also loads the dashboard from files. Use one install path per Grafana. |
+| **`folder '…' (…) is now empty: …`** | A folder the dashboards were moved out of holds nothing else: no dashboards, folders, alert rules or library elements. The script does not delete it; an admin can. |
+| **`folder '…' (…) still holds …`** | That folder holds something else. Leave it. |
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `error: the token may not do this (403): … Permissions needed: folders:create …` | The token's service account has the Viewer role. | Use a token of a service account with the Editor role. |
+| `error: Grafana rejected the token (401 Invalid API key)` | The token is wrong, revoked or expired. | Create a new token. |
+| `error: set GRAFANA_TOKEN to a Grafana service-account token (Editor role)` | `GRAFANA_TOKEN` is not exported in this shell. | Run the `read -rs GRAFANA_TOKEN && export GRAFANA_TOKEN` line again. |
+
+To upgrade, run step 4 with the newer release's tarball.
+The output of an upgrade from dashboards imported by hand into a folder of their own:
+
+```text
+riptide dashboard set 1.0.2, 9 dashboards -> https://grafana.example.org
+folder Riptide: created
+folder Flow Analytics: created
+riptide-behavioural-anomalies: updated 1.0.0 -> 1.0.2 (from folder 'Riptide Flow Analytics')
+...
+riptide-traffic-paths: updated 1.0.0 -> 1.0.2 (from folder 'Riptide Flow Analytics')
+folder 'Riptide Flow Analytics' (efsybbe4ozv28c) is now empty: no dashboards, folders, alert rules or library elements. This script deletes nothing.
+```
+
 ## Upgrade an installed set
 
 Replace the files; Grafana does the rest within one 30-second provisioning interval and needs no restart.
@@ -279,6 +404,7 @@ Replace the files; Grafana does the rest within one 30-second provisioning inter
 | Release tarball | Extract the new archive over the old files. If you changed `path` in `dashboards.yml`, add `--exclude dashboards/dashboards.yml` to the `tar` command so the shipped provider does not replace yours. |
 | deb or rpm | Install the new package; it replaces the directory. |
 | Helm chart | Run the `helm upgrade` from the Helm section with the newer release's URL. The pod restarts and downloads the new files. |
+| Grafana API | Run the import script again with the newer release's tarball. |
 
 What happens to what is already in Grafana, as observed on 13.0.2:
 
