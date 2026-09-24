@@ -126,6 +126,7 @@ a {
     cursor: pointer;
     transition: var(--transition);
     font-size: 1rem;
+    white-space: nowrap;
 }
 
 .btn-primary {
@@ -315,6 +316,7 @@ a {
 
 .hero-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 1rem;
 }
 
@@ -1145,6 +1147,10 @@ a {
     
     .hero-title {
         font-size: 3rem;
+    }
+    
+    .hero-actions {
+        justify-content: center;
     }
     
     .features-grid {
