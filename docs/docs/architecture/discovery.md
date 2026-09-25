@@ -32,13 +32,14 @@ Discovery owns the `exporters` tree.
 The inventory file keeps owning `snmp.agents`, because agent ranges are a handful of CIDRs that gain nothing from per-device discovery, and because SNMP enrichment would otherwise stop the moment discovery was enabled.
 
 No entry ever has two possible sources.
-An `exporters` tree in the inventory file while `riptide.discovery.url` is set is refused with a message naming both locations, whether or not the endpoint can be reached.
+An `exporters` tree in the inventory file while `riptide.discovery.url` or `riptide.discovery.urls` is set is refused with a message naming the file and the key that enabled discovery, whether or not the endpoint can be reached.
 The check runs on every merge of the file with the endpoint, at boot and on every later poll.
 
-Discovery is off until `riptide.discovery.url` holds a non-blank value.
+Discovery is off until `riptide.discovery.url` holds a non-blank value, or `riptide.discovery.urls` holds a non-blank entry.
 A blank value, unset or whitespace-only, is treated exactly as no value: nothing discovery-related is created and the inventory file stays the only source of exporter entries.
 That equivalence is deliberate.
 A container image or a Helm template commonly exports every variable it knows about whether or not it has a value, and `RIPTIDE_DISCOVERY_URL=""` must not turn discovery on for an operator who never asked for it.
+`RIPTIDE_DISCOVERY_URLS=""` follows the same rule: a list with no non-blank entry is unset.
 
 ### Decommissioning a fleet
 
@@ -82,6 +83,39 @@ A fleet where only some devices carry a prefix publishes the rest and reports th
 
 A network range is not this problem.
 `10.0.0.0/24` with no host bits is a legal exporter entry, because the matcher is a prefix trie, and it is used as found.
+
+## Composing several endpoints
+
+`riptide.discovery.urls` lists several endpoints under one configuration.
+NetBox serves devices at `/api/dcim/devices/` and virtual machines at `/api/virtualization/virtual-machines/`, so a fleet that mixes both needs two.
+Every endpoint shares `type`, `filter`, `token`, `auth-scheme`, `mapping`, `interval` and `timeout`.
+
+Each endpoint gets its own client and its own source.
+Pagination, `ordering=id` for `netbox-api`, the same-origin check on `next`, and the 100,000-device and 10,000-page limits all apply per endpoint.
+The token is resolved once per endpoint at startup and once per request after that.
+
+A poll reads the endpoints one after the other, in the order they are listed, and stops at the first that fails.
+The composition is all or nothing: every endpoint must answer and yield entries, or nothing from the poll is published.
+Reading the rest after one failed would cost their timeouts for a result that cannot be published.
+A poll takes up to the sum of every endpoint's page reads, each bounded by `riptide.discovery.timeout`.
+
+Name and address collisions are checked once across every endpoint, so a device and a virtual machine that share a name collide exactly as two devices do.
+With more than one endpoint, each claimant in the collision report is followed by the endpoint it came from.
+The same name with the same address on two endpoints is one entry.
+Emptiness is checked per endpoint, not on the merged result.
+NetBox answers a token that cannot view an object type with an empty list, and a merged check would let a token that lost view permission on virtual machines drop every virtual machine exporter while the devices kept the document non-empty.
+`discovery.skipped` is summed across endpoints.
+
+| When | Result |
+| --- | --- |
+| Any endpoint fails after boot | The whole poll is refused, the last good inventory serves, and `inventory.reload.failures` counts one failure naming that endpoint. |
+| Any endpoint answers 404 | Absence for the whole document: `inventory.reload.stale` reads 1, and one warning per episode names that endpoint. |
+| Any endpoint is unreachable at boot | Boot degrades as one endpoint does: no discovered exporters from any endpoint, a warning naming the unreachable one, and `inventory.reload.stale` at 1 until every endpoint answers. |
+| Any endpoint yields zero usable entries | Refused, naming every empty endpoint with its own skip count. |
+| A name or address clash within or across endpoints | Refused, every clash named at once, each claimant with its endpoint. |
+
+Only the first failing endpoint is named when several are down.
+The poll after it recovers names the next one.
 
 ## How a target becomes an exporter
 
@@ -130,11 +164,13 @@ A file that is present but unreadable, a permission denial for example, stays a 
 
 ## How a failure names itself
 
-With discovery on, the inventory is one document composed from two sources, so failures name both:
+With discovery on, the inventory is one document composed from the file and the endpoints, so failures name all of them:
 
 ```text
 Inventory source /etc/riptide/inventory.yaml + https://netbox.example.com/api/dcim/devices/ carries problems in 1 entry:
 ```
+
+With `riptide.discovery.urls` the endpoints follow the file in listed order: `<file> + <url1>, <url2>`.
 
 "Source" rather than "file", and the same for the clauses that refer back to it later in a message.
 Which half to look at is what the two names are for: a problem in an agent range is the file's, a problem in an exporter is the endpoint's, and the entry named in the line tells you which.
@@ -175,3 +211,4 @@ Nothing else does.
 | Paths, not expressions | No code-execution surface fed from configuration | A value the endpoint serves in the wrong shape cannot be fixed on riptide's side |
 | Degrade at boot on an unreachable endpoint | The collector starts while NetBox is down | Flows carry no exporter names until the first successful poll |
 | Token resolved per request | Rotation applies on the next page, no restart | One secret resolution per page of a walk |
+| Several endpoints read in sequence, all or nothing | A deterministic first failure; no partial fleet is ever published | Poll duration grows with the endpoint count; one endpoint down holds back every other |

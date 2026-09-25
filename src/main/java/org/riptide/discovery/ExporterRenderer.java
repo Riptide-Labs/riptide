@@ -40,6 +40,15 @@ public final class ExporterRenderer {
     }
 
     /**
+     * One endpoint's parsed answer, and how that endpoint is named in errors.
+     *
+     * @param name the endpoint, credentials already redacted
+     * @param groups what it returned
+     */
+    public record EndpointGroups(String name, List<TargetGroup> groups) {
+    }
+
+    /**
      * @param groups the parsed document
      * @param addressLabels labels consulted in order for an address, first present wins
      * @param sourceName how the endpoint is named in errors, credentials already redacted
@@ -49,59 +58,88 @@ public final class ExporterRenderer {
     public static RenderedExporters render(final List<TargetGroup> groups,
                                            final List<String> addressLabels,
                                            final String sourceName) {
+        return render(List.of(new EndpointGroups(sourceName, groups)), addressLabels);
+    }
+
+    /**
+     * Every endpoint's answer rendered as one set of exporters, checked as one: a name or an
+     * address claimed on two endpoints collides exactly as it would on one.
+     *
+     * <p>With more than one endpoint each claimant in a collision report is followed by the
+     * endpoint it came from, since the operator has to know where to fix it. With one there is
+     * nothing to disambiguate and the report reads as it always has.</p>
+     *
+     * <p><b>Emptiness is checked per endpoint.</b> NetBox answers 200 with an empty result when the
+     * token cannot view an object type, so a token that lost permission on virtual machines would,
+     * under a merged check, silently drop every virtual machine exporter while the devices kept the
+     * document non-empty.</p>
+     *
+     * @throws IllegalStateException when two entries claim one name, when two entries claim one
+     *     address, or when any endpoint yields no entries
+     */
+    public static RenderedExporters render(final List<EndpointGroups> endpoints,
+                                           final List<String> addressLabels) {
+        final boolean annotate = endpoints.size() > 1;
+        final String sourceName = String.join(", ", endpoints.stream().map(EndpointGroups::name).toList());
         // NOT sorted here: RenderedExporters normalises into a sorted map as its type invariant,
         // and two copies of one rule meant neither was load-bearing — the test proving the same
         // groups render identically in any order passed with either one deleted (#808). Nothing
         // reads this map in order: it is written, checked for emptiness, and handed over
         final Map<String, String> byName = new LinkedHashMap<>();
         // insertion-ordered so the collision report reads in document order, and every colliding
-        // address is listed rather than only the winner
-        final Map<String, List<String>> claims = new LinkedHashMap<>();
+        // address is listed rather than only the winner. Each claimant maps to the endpoint that
+        // first offered it, so deduplication keys on the bare value and the annotation is the
+        // first endpoint's
+        final Map<String, Map<String, String>> claims = new LinkedHashMap<>();
         // the same map inverted, for the same reason: an address and every distinct name claiming it
-        final Map<String, List<String>> addressClaims = new LinkedHashMap<>();
+        final Map<String, Map<String, String>> addressClaims = new LinkedHashMap<>();
+        final List<String> empty = new ArrayList<>();
         int skipped = 0;
 
-        for (final TargetGroup group : groups) {
-            for (final String target : group.targets()) {
-                final String host = host(target);
-                final String name = group.labels().getOrDefault(NAME_LABEL, host);
-                final String address = address(group, addressLabels, host);
-                if (name.isBlank() || address == null || address.isBlank()) {
-                    // never guessed at: an exporter entry with the wrong address silently enriches
-                    // the wrong device's flows, which is worse than one that enriches nothing. A
-                    // blank name is refused the same way: it would be a nameless inventory entry
-                    skipped++;
-                    continue;
+        for (final EndpointGroups endpoint : endpoints) {
+            int endpointEntries = 0;
+            int endpointSkipped = 0;
+            for (final TargetGroup group : endpoint.groups()) {
+                for (final String target : group.targets()) {
+                    final String host = host(target);
+                    final String name = group.labels().getOrDefault(NAME_LABEL, host);
+                    final String address = address(group, addressLabels, host);
+                    if (name.isBlank() || address == null || address.isBlank()) {
+                        // never guessed at: an exporter entry with the wrong address silently enriches
+                        // the wrong device's flows, which is worse than one that enriches nothing. A
+                        // blank name is refused the same way: it would be a nameless inventory entry
+                        endpointSkipped++;
+                        continue;
+                    }
+                    // deduplicated before the collision check: one device legitimately appearing in two
+                    // service discovery roles must not wedge every poll. Two entries claiming one name
+                    // with DIFFERENT addresses still collide below, exactly as before
+                    claims.computeIfAbsent(name, key -> new LinkedHashMap<>()).putIfAbsent(address, endpoint.name());
+                    // deduplicated the same way and for the same reason: the repeated device claims its
+                    // own address twice, which is one claimant, not a collision
+                    addressClaims.computeIfAbsent(address, key -> new LinkedHashMap<>()).putIfAbsent(name, endpoint.name());
+                    byName.put(name, address);
+                    endpointEntries++;
                 }
-                // deduplicated before the collision check: one device legitimately appearing in two
-                // service discovery roles must not wedge every poll. Two entries claiming one name
-                // with DIFFERENT addresses still collide below, exactly as before
-                final List<String> existingClaims = claims.computeIfAbsent(name, key -> new ArrayList<>());
-                if (!existingClaims.contains(address)) {
-                    existingClaims.add(address);
-                }
-                // deduplicated the same way and for the same reason: the repeated device claims its
-                // own address twice, which is one claimant, not a collision
-                final List<String> existingNames = addressClaims.computeIfAbsent(address, key -> new ArrayList<>());
-                if (!existingNames.contains(name)) {
-                    existingNames.add(name);
-                }
-                byName.put(name, address);
+            }
+            skipped += endpointSkipped;
+            if (endpointEntries == 0) {
+                empty.add("%s yielded no exporter entries (%d entr%s skipped for want of a usable address)."
+                        .formatted(endpoint.name(), endpointSkipped, endpointSkipped == 1 ? "y was" : "ies were"));
             }
         }
 
-        refuseCollisions(claims, sourceName);
-        refuseAddressCollisions(addressClaims, sourceName);
+        refuseCollisions(claims, sourceName, annotate);
+        refuseAddressCollisions(addressClaims, sourceName, annotate);
 
-        if (byName.isEmpty()) {
+        if (!empty.isEmpty()) {
             // a successful fetch that yields nothing is the failure mode gnmic users hit, where an
             // empty answer deletes every target. A filter typo or a permission change must not be
-            // able to wipe every exporter name
-            throw new IllegalStateException(
-                    ("%s yielded no exporter entries (%d entr%s skipped for want of a usable address). "
-                            + "Keeping the running inventory: a source of truth that answers with nothing "
-                            + "is more often a filter or permission mistake than an emptied fleet.")
-                            .formatted(sourceName, skipped, skipped == 1 ? "y was" : "ies were"));
+            // able to wipe every exporter name. Every empty endpoint in one refusal, one per line
+            // (#630's rule)
+            throw new IllegalStateException(String.join(System.lineSeparator(), empty)
+                    + " Keeping the running inventory: a source of truth that answers with nothing "
+                    + "is more often a filter or permission mistake than an emptied fleet.");
         }
         return new RenderedExporters(byName, skipped);
     }
@@ -111,8 +149,10 @@ public final class ExporterRenderer {
      * site rather than globally, so two sites each holding a {@code sw1} is ordinary, and being told
      * about one of them at a time costs an operator one poll interval per collision (#630's rule).
      */
-    private static void refuseCollisions(final Map<String, List<String>> claims, final String sourceName) {
-        final List<String> collisions = collisions(claims);
+    private static void refuseCollisions(final Map<String, Map<String, String>> claims,
+                                         final String sourceName,
+                                         final boolean annotate) {
+        final List<String> collisions = collisions(claims, annotate);
         if (collisions.isEmpty()) {
             return;
         }
@@ -141,9 +181,10 @@ public final class ExporterRenderer {
      * not canonicalised, so two spellings of one address ({@code 10.0.0.1} and {@code 10.0.0.1/32})
      * still get as far as the loader's own ambiguity refusal.</p>
      */
-    private static void refuseAddressCollisions(final Map<String, List<String>> addressClaims,
-                                                final String sourceName) {
-        final List<String> collisions = collisions(addressClaims);
+    private static void refuseAddressCollisions(final Map<String, Map<String, String>> addressClaims,
+                                                final String sourceName,
+                                                final boolean annotate) {
+        final List<String> collisions = collisions(addressClaims, annotate);
         if (collisions.isEmpty()) {
             return;
         }
@@ -156,13 +197,19 @@ public final class ExporterRenderer {
     }
 
     /**
-     * The claimed key and its claimants, one indented line each, in document order. One copy, shared
-     * by both refusals: two copies of this format is the shape that drifts.
+     * The claimed key and its claimants, one indented line each, in document order, each claimant
+     * followed by its endpoint when {@code annotate}. One copy, shared by both refusals: two copies
+     * of this format is the shape that drifts.
      */
-    private static List<String> collisions(final Map<String, List<String>> claims) {
+    private static List<String> collisions(final Map<String, Map<String, String>> claims, final boolean annotate) {
         return claims.entrySet().stream()
                 .filter(entry -> entry.getValue().size() > 1)
-                .map(entry -> "  %s -> %s".formatted(entry.getKey(), String.join(", ", entry.getValue())))
+                .map(entry -> "  %s -> %s".formatted(entry.getKey(), String.join(", ",
+                        entry.getValue().entrySet().stream()
+                                .map(claimant -> annotate
+                                        ? "%s (%s)".formatted(claimant.getKey(), claimant.getValue())
+                                        : claimant.getKey())
+                                .toList())))
                 .toList();
     }
 

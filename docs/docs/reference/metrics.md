@@ -141,4 +141,5 @@ Collector-wide; nothing here names an exporter. `offered` always equals the sum 
 | **`discovery.targets`** | gauge | Exporter entries in the inventory currently serving. Never describes a candidate that was composed and then refused. | A drop below the fleet size you expect; safe to alert on because it only ever describes what serves. |
 | **`discovery.skipped`** | gauge | Entries the most recent render dropped for want of a usable address (a prefix length, an unparsable value, a NetBox device with no primary IP), whether or not the candidate built from it was published. | `> 0` when every device should carry an address. Legitimately disagrees with `discovery.targets` while a candidate is being refused. |
 
-Both exist only while `riptide.discovery.url` is set.
+Both exist only while `riptide.discovery.url` or `riptide.discovery.urls` is set.
+`discovery.skipped` is summed across every endpoint in `riptide.discovery.urls`.

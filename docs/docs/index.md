@@ -29,7 +29,7 @@ UDP/TCP ingest (NetFlow v5 · NetFlow v9 · IPFIX · sFlow)
   See [SNMP agents](reference/agent-configuration.md) and [Exporter enrichment](reference/exporter-enrichment.md).
 - **Dynamic discovery:** exporter enrichment entries can come from an external source of truth instead of that file.
   Three sources ship: a Prometheus HTTP service discovery document, NetBox's device API with nothing installed on it, or any JSON endpoint mapped by paths you write.
-  Discovery stays off until `riptide.discovery.url` is set.
+  Discovery stays off until `riptide.discovery.url` or `riptide.discovery.urls` is set.
   Until then the inventory file owns both trees.
   See [Dynamic discovery](reference/discovery.md).
 - **Secrets:** SNMP credentials are **references** (`env://`, `file://`, `vault://`,

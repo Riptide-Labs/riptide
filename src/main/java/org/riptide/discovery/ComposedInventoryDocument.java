@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.NoSuchFileException;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,8 +29,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 /**
- * The inventory document when discovery is on: agent ranges from the file, exporters from the
- * endpoint, merged into one document the existing loader validates as a whole.
+ * The inventory document when discovery is on: agent ranges from the file, exporters from every
+ * configured endpoint, merged into one document the existing loader validates as a whole.
  *
  * <p><b>Why compose rather than publish.</b> {@code Inventory} holds one immutable snapshot with
  * both trees behind a single volatile write. A discovery publisher of its own would publish an
@@ -65,21 +66,29 @@ import java.util.function.Supplier;
 public class ComposedInventoryDocument implements InventoryDocument, PacedInventorySource {
 
     private final InventoryDocument file;
-    private final DiscoverySource source;
-    private final Supplier<String> describe;
+    private final List<DiscoveryEndpoints.Endpoint> endpoints;
     private final DiscoveryConfig config;
     private final AtomicInteger skipped = new AtomicInteger();
     private volatile boolean degradedAtBoot;
     private volatile boolean endpointAbsent;
+    /** The 404 last named in this absence episode, so a different endpoint going absent is named too. */
+    private volatile String absenceWarned;
 
+    /** One endpoint, named by {@code describe}: the configuration {@code riptide.discovery.url} makes. */
     public ComposedInventoryDocument(final InventoryDocument file,
                                      final DiscoverySource source,
                                      final Supplier<String> describe,
                                      final DiscoveryConfig config,
                                      final MetricRegistry metrics) {
+        this(file, new DiscoveryEndpoints(List.of(new DiscoveryEndpoints.Endpoint(describe, source))), config, metrics);
+    }
+
+    public ComposedInventoryDocument(final InventoryDocument file,
+                                     final DiscoveryEndpoints endpoints,
+                                     final DiscoveryConfig config,
+                                     final MetricRegistry metrics) {
         this.file = Objects.requireNonNull(file);
-        this.source = Objects.requireNonNull(source);
-        this.describe = Objects.requireNonNull(describe);
+        this.endpoints = Objects.requireNonNull(endpoints).endpoints();
         this.config = Objects.requireNonNull(config);
         Objects.requireNonNull(metrics, "metrics");
         // remove-then-register, not Dropwizard's get-or-create: a restarted bean would otherwise
@@ -99,14 +108,51 @@ public class ComposedInventoryDocument implements InventoryDocument, PacedInvent
      */
     @Override
     public String text() {
-        final List<TargetGroup> groups;
+        final List<ExporterRenderer.EndpointGroups> groups;
         try {
-            groups = this.source.targets();
-        } catch (final IOException e) {
+            groups = readAll();
+        } catch (final UnreadableEndpoint e) {
             throw new IllegalStateException(
-                    "%s could not be read: %s".formatted(this.describe.get(), e.getMessage()), e);
+                    "%s could not be read: %s".formatted(e.endpoint, e.getCause().getMessage()), e.getCause());
         }
         return compose(groups);
+    }
+
+    /**
+     * Every endpoint's answer, in configured order, sequentially. The first failure stops the read
+     * and is attributed to its endpoint: the composition is all or nothing, so reading the rest
+     * would cost their timeouts for an answer that cannot be published anyway, and a fixed order
+     * keeps "the first failing endpoint" the same one on every poll.
+     */
+    private List<ExporterRenderer.EndpointGroups> readAll() throws UnreadableEndpoint {
+        final List<ExporterRenderer.EndpointGroups> groups = new ArrayList<>(this.endpoints.size());
+        for (final DiscoveryEndpoints.Endpoint endpoint : this.endpoints) {
+            final String name = endpoint.describe().get();
+            try {
+                groups.add(new ExporterRenderer.EndpointGroups(name, endpoint.source().targets()));
+            } catch (final IOException e) {
+                throw new UnreadableEndpoint(name, e);
+            }
+        }
+        return groups;
+    }
+
+    /** A fetch failure and the endpoint it came from. The cause is the source's own exception. */
+    private static final class UnreadableEndpoint extends Exception {
+
+        private static final long serialVersionUID = 1L;
+
+        private final String endpoint;
+
+        UnreadableEndpoint(final String endpoint, final IOException cause) {
+            super(cause);
+            this.endpoint = endpoint;
+        }
+
+        @Override
+        public synchronized IOException getCause() {
+            return (IOException) super.getCause();
+        }
     }
 
     /**
@@ -127,10 +173,10 @@ public class ComposedInventoryDocument implements InventoryDocument, PacedInvent
      */
     @Override
     public String bootText() {
-        final List<TargetGroup> groups;
+        final List<ExporterRenderer.EndpointGroups> groups;
         try {
-            groups = this.source.targets();
-        } catch (final IOException e) {
+            groups = readAll();
+        } catch (final UnreadableEndpoint e) {
             // composed first, warned after: the merge can still fail boot with the endpoint down
             // (an exporters tree in the file is refused either way, and so is an unparseable
             // file), and warning first printed "serving the inventory file's trees" immediately
@@ -141,7 +187,7 @@ public class ComposedInventoryDocument implements InventoryDocument, PacedInvent
             // never starts, so it registers no inventory.reload.stale gauge at all, and the
             // sentence promising one reads as "wait for it" about something that never arrives
             log.warn("Boot could not reach {}: {}. Serving the inventory file's trees with no discovered "
-                    + "exporters. {}", this.describe.get(), reason(e), retryClause());
+                    + "exporters. {}", e.endpoint, reason(e), retryClause());
             return degraded;
         }
         this.degradedAtBoot = false;
@@ -155,10 +201,9 @@ public class ComposedInventoryDocument implements InventoryDocument, PacedInvent
      * "Boot could not reach X (X answered 404)". A JDK-raised message ("Connection refused") names
      * nothing and is quoted as it is.
      */
-    private String reason(final IOException e) {
-        final String message = String.valueOf(e.getMessage());
-        final String endpoint = this.describe.get();
-        return message.startsWith(endpoint) ? message.substring(endpoint.length()).trim() : message;
+    private static String reason(final UnreadableEndpoint e) {
+        final String message = String.valueOf(e.getCause().getMessage());
+        return message.startsWith(e.endpoint) ? message.substring(e.endpoint.length()).trim() : message;
     }
 
     /**
@@ -188,9 +233,8 @@ public class ComposedInventoryDocument implements InventoryDocument, PacedInvent
         return this.degradedAtBoot;
     }
 
-    private String compose(final List<TargetGroup> groups) {
-        final RenderedExporters rendered =
-                ExporterRenderer.render(groups, this.config.getAddressLabels(), this.describe.get());
+    private String compose(final List<ExporterRenderer.EndpointGroups> groups) {
+        final RenderedExporters rendered = ExporterRenderer.render(groups, this.config.getAddressLabels());
         // Only skipped is set here. discovery.targets is derived from the published inventory by
         // DiscoveryTargetsGauge, because a value set at this point describes a candidate that the
         // merge, the loader, the regression guard or a lost profile race may still reject (#807).
@@ -202,7 +246,8 @@ public class ComposedInventoryDocument implements InventoryDocument, PacedInvent
 
     @Override
     public String name() {
-        return "%s + %s".formatted(this.file.name(), this.describe.get());
+        return "%s + %s".formatted(this.file.name(),
+                String.join(", ", this.endpoints.stream().map(endpoint -> endpoint.describe().get()).toList()));
     }
 
     /**
@@ -289,11 +334,20 @@ public class ComposedInventoryDocument implements InventoryDocument, PacedInvent
             final FileWatchTrigger.Fetch.Present present =
                     new FileWatchTrigger.Fetch.Present(text().getBytes(StandardCharsets.UTF_8));
             this.endpointAbsent = false;
+            this.absenceWarned = null;
             return present;
         } catch (final IllegalStateException e) {
             if (e.getCause() instanceof FileNotFoundException) {
                 // a 404: the endpoint is not there, which is not the same as a broken one. Never
                 // Vanished: no remote source can tell an atomic replacement from a deletion
+                if (this.endpoints.size() > 1 && !e.getMessage().equals(this.absenceWarned)) {
+                    // the trigger's own warning names this whole document, which lists every
+                    // endpoint; with several, which one answered 404 is said here, once per
+                    // endpoint per episode: keyed on the message, not on endpointAbsent, so a
+                    // second endpoint going absent before the first recovers is named as well
+                    log.warn("{}", e.getMessage());
+                    this.absenceWarned = e.getMessage();
+                }
                 this.endpointAbsent = true;
                 return new FileWatchTrigger.Fetch.Absent();
             }
@@ -347,10 +401,11 @@ public class ComposedInventoryDocument implements InventoryDocument, PacedInvent
         final Map<String, Object> riptide = new LinkedHashMap<>(levels.riptide());
         if (riptide.containsKey("exporters")) {
             throw new IllegalStateException(
-                    ("%s declares an 'exporters' tree while riptide.discovery.url is set. Discovery owns "
+                    ("%s declares an 'exporters' tree while %s is set. Discovery owns "
                             + "the exporters tree and the inventory file owns snmp.agents, so an entry can "
                             + "never have two possible sources. Remove the exporters tree from the file, or "
-                            + "unset riptide.discovery.url.").formatted(this.file.name()));
+                            + "unset %s.").formatted(this.file.name(), this.config.enablingKey(),
+                            this.config.enablingKey()));
         }
         // `riptide: {}` declares BOTH trees deliberately empty, which is what lets the guard pass a
         // decommission instead of refusing it as a half-written file. Inserting exporters below

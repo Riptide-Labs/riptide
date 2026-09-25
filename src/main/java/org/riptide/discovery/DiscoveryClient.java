@@ -37,17 +37,26 @@ public final class DiscoveryClient {
     static final String AUTH_SCHEME_PROPERTY = "riptide.discovery.auth-scheme";
 
     private final DiscoveryConfig config;
+    private final DiscoveryEndpoint endpoint;
     private final SecretResolvers secretResolvers;
     private final BoundedHttpRead http;
 
+    /** A client for {@code riptide.discovery.url}, the single-endpoint configuration. */
     public DiscoveryClient(final DiscoveryConfig config, final SecretResolvers secretResolvers) {
-        this(config, secretResolvers, new OutboundHttpTrust());
+        this(config, new DiscoveryEndpoint(DiscoveryUrlSet.URL_PROPERTY, config.getUrl()),
+                secretResolvers, new OutboundHttpTrust());
     }
 
+    /**
+     * A client for one of the configured endpoints. Everything but the address is shared, so each
+     * client resolves the token at construction: N endpoints are N resolutions at boot.
+     */
     public DiscoveryClient(final DiscoveryConfig config,
+                           final DiscoveryEndpoint endpoint,
                            final SecretResolvers secretResolvers,
                            final OutboundHttpTrust trust) {
         this.config = Objects.requireNonNull(config);
+        this.endpoint = Objects.requireNonNull(endpoint, "endpoint");
         Objects.requireNonNull(secretResolvers, "secretResolvers");
         // resolved here as a startup gate, and thrown away: per-read resolution must not turn a
         // mistyped reference into a failure repeated every poll for the life of the process, which
@@ -119,16 +128,16 @@ public final class DiscoveryClient {
      */
 
     public byte[] fetch() throws IOException {
-        return ByteOrderMark.strip(this.http.readRemote(this.config.endpoint()));
+        return ByteOrderMark.strip(this.http.readRemote(this.endpoint.endpoint()));
     }
 
     /**
      * The endpoint, with any embedded credentials removed; safe to log. One line of delegation
-     * rather than a second copy of the redaction: {@code DiscoveryConfig.endpoint()} needs the
+     * rather than a second copy of the redaction: {@code DiscoveryEndpoint.endpoint()} needs the
      * same redacted spelling for its own failure message, and two copies of one rule is the
      * shape this project keeps being bitten by.
      */
     public String describe() {
-        return this.config.describe();
+        return this.endpoint.describe();
     }
 }

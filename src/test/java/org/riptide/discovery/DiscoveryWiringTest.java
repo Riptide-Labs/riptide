@@ -13,11 +13,17 @@ import org.riptide.inventory.InventoryConfig;
 import org.riptide.inventory.InventoryDocument;
 import org.riptide.secrets.SecretResolvers;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.test.context.assertj.AssertableApplicationContext;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.env.StandardEnvironment;
+import org.springframework.core.env.SystemEnvironmentPropertySource;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -75,7 +81,7 @@ class DiscoveryWiringTest {
         this.runner.run(context -> {
             assertThat(context).hasNotFailed();
             assertThat(context).doesNotHaveBean(ComposedInventoryDocument.class);
-            assertThat(context).doesNotHaveBean(DiscoveryClient.class);
+            assertThat(context).doesNotHaveBean(DiscoveryEndpoints.class);
             assertThat(context.getBean(InventoryDocument.class))
                     .as("the file stays the only inventory document")
                     .isInstanceOf(FileInventoryDocument.class);
@@ -103,7 +109,7 @@ class DiscoveryWiringTest {
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context).doesNotHaveBean(ComposedInventoryDocument.class);
-                    assertThat(context).doesNotHaveBean(DiscoveryClient.class);
+                    assertThat(context).doesNotHaveBean(DiscoveryEndpoints.class);
                     assertThat(context.getBean(InventoryDocument.class))
                             .as("the file stays the only inventory document")
                             .isInstanceOf(FileInventoryDocument.class);
@@ -219,7 +225,7 @@ class DiscoveryWiringTest {
                     assertThat(context)
                             .as("the next path is optional: unset means a single request")
                             .hasNotFailed();
-                    assertThat(context.getBean(DiscoverySource.class)).isInstanceOf(MappedJsonSource.class);
+                    assertThat(onlySource(context)).isInstanceOf(MappedJsonSource.class);
                 });
     }
 
@@ -239,7 +245,7 @@ class DiscoveryWiringTest {
     void anUnsetTypeStillSelectsTheServiceDiscoveryReader() {
         this.runner
                 .withPropertyValues("riptide.discovery.url=http://127.0.0.1:9/devices")
-                .run(context -> assertThat(context.getBean(DiscoverySource.class))
+                .run(context -> assertThat(onlySource(context))
                         .as("a third type must not change what an unset key selects")
                         .isInstanceOf(ServiceDiscoverySource.class));
     }
@@ -251,11 +257,131 @@ class DiscoveryWiringTest {
                 .run(context -> {
                     assertThat(context).hasNotFailed();
                     assertThat(context).hasSingleBean(ComposedInventoryDocument.class);
-                    assertThat(context).hasSingleBean(DiscoveryClient.class);
+                    assertThat(context).hasSingleBean(DiscoveryEndpoints.class);
                     assertThat(context.getBean(InventoryDocument.class))
                             .isInstanceOf(ComposedInventoryDocument.class);
                     assertThat(context.getBean(MetricRegistry.class).getGauges().keySet())
                             .contains("discovery.targets", "discovery.skipped");
+                });
+    }
+
+    /** The one source a single-endpoint configuration builds. */
+    private static DiscoverySource onlySource(final AssertableApplicationContext context) {
+        final List<DiscoveryEndpoints.Endpoint> endpoints = context.getBean(DiscoveryEndpoints.class).endpoints();
+        assertThat(endpoints).hasSize(1);
+        return endpoints.getFirst().source();
+    }
+
+    /**
+     * A runner whose system environment holds exactly {@code variables}. Replaced in the context
+     * factory, not an initializer: the runner registers the configuration class, and so evaluates
+     * its condition, before any initializer runs.
+     */
+    private ApplicationContextRunner withEnvironment(final Map<String, Object> variables) {
+        return new ApplicationContextRunner(() -> {
+            final AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext();
+            context.getEnvironment().getPropertySources().replace(
+                    StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME,
+                    new SystemEnvironmentPropertySource(
+                            StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME, variables));
+            return context;
+        }).withUserConfiguration(Collaborators.class, DiscoveryConfiguration.class);
+    }
+
+    @Test
+    void twoListedEndpointsBuildTwoSourcesOfTheConfiguredType() {
+        this.runner
+                .withPropertyValues("riptide.discovery.urls[0]=http://127.0.0.1:9/api/dcim/devices/",
+                        "riptide.discovery.urls[1]=http://127.0.0.1:9/api/virtualization/virtual-machines/",
+                        "riptide.discovery.type=netbox-api")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    final List<DiscoveryEndpoints.Endpoint> endpoints =
+                            context.getBean(DiscoveryEndpoints.class).endpoints();
+                    assertThat(endpoints).extracting(endpoint -> endpoint.describe().get())
+                            .containsExactly("http://127.0.0.1:9/api/dcim/devices/",
+                                    "http://127.0.0.1:9/api/virtualization/virtual-machines/");
+                    assertThat(endpoints).extracting(DiscoveryEndpoints.Endpoint::source)
+                            .allMatch(NetboxDeviceSource.class::isInstance);
+                    assertThat(context.getBean(InventoryDocument.class).name())
+                            .endsWith(" + http://127.0.0.1:9/api/dcim/devices/, "
+                                    + "http://127.0.0.1:9/api/virtualization/virtual-machines/");
+                });
+    }
+
+    @Test
+    void theIndexedEnvironmentFormEnablesDiscovery() {
+        withEnvironment(Map.of("RIPTIDE_DISCOVERY_URLS_0", "http://127.0.0.1:9/devices"))
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context.getBean(DiscoveryEndpoints.class).endpoints())
+                            .extracting(endpoint -> endpoint.describe().get())
+                            .containsExactly("http://127.0.0.1:9/devices");
+                });
+    }
+
+    @Test
+    void anExportedButEmptyListLeavesDiscoveryOff() {
+        withEnvironment(Map.of("RIPTIDE_DISCOVERY_URLS", ""))
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(DiscoveryEndpoints.class);
+                    assertThat(context.getBean(InventoryDocument.class)).isInstanceOf(FileInventoryDocument.class);
+                });
+    }
+
+    /**
+     * What Spring does with an empty element in a comma-separated list. It keeps it, so the entry
+     * reaches the blank-entry refusal instead of being dropped without a word; the docs name the
+     * indexed form for a URL that itself holds a comma.
+     */
+    @Test
+    void anEmptyElementInACommaSeparatedListIsKeptAndRefused() {
+        withEnvironment(Map.of("RIPTIDE_DISCOVERY_URLS", "http://127.0.0.1:9/a,,http://127.0.0.1:9/b"))
+                .run(context -> assertThat(context)
+                        .getFailure()
+                        .rootCause()
+                        .hasMessageStartingWith("riptide.discovery.urls[1] is blank."));
+    }
+
+    @Test
+    void bothEndpointKeysSetFailStartupNamingBoth() {
+        this.runner
+                .withPropertyValues("riptide.discovery.url=http://127.0.0.1:9/devices",
+                        "riptide.discovery.urls[0]=http://127.0.0.1:9/vms")
+                .run(context -> assertThat(context)
+                        .getFailure()
+                        .rootCause()
+                        .hasMessage("riptide.discovery.url and riptide.discovery.urls are both set. Set one of "
+                                + "them: riptide.discovery.url for a single endpoint, riptide.discovery.urls "
+                                + "for several."));
+    }
+
+    @Test
+    void aBlankEntryInANonEmptyListFailsStartupNamingItsIndex() {
+        this.runner
+                .withPropertyValues("riptide.discovery.urls[0]=http://127.0.0.1:9/devices",
+                        "riptide.discovery.urls[1]=  ")
+                .run(context -> assertThat(context)
+                        .getFailure()
+                        .rootCause()
+                        .hasMessage("riptide.discovery.urls[1] is blank. Once riptide.discovery.urls holds an "
+                                + "entry, every entry must be a usable URL: remove the blank one."));
+    }
+
+    @Test
+    void aMalformedEntryIsRefusedNamingItsIndexWithTheCredentialRedacted() {
+        this.runner
+                .withPropertyValues("riptide.discovery.urls[0]=http://127.0.0.1:9/devices",
+                        "riptide.discovery.urls[1]=http://svc:s3cret@netbox/api/ bad",
+                        "riptide.discovery.type=netbox-api")
+                .run(context -> {
+                    assertThat(context).getFailure()
+                            .hasStackTraceContaining("riptide.discovery.urls[1] is not a usable URL: "
+                                    + "'http://***@netbox/api/ bad'");
+                    final StringWriter trace = new StringWriter();
+                    context.getStartupFailure().printStackTrace(new PrintWriter(trace));
+                    assertThat(trace.toString()).doesNotContain("s3cret");
                 });
     }
 }

@@ -292,4 +292,87 @@ class ExporterRendererTest {
                         + "the inventory on every poll")
                 .isEqualTo(render(List.of(two, one)).byName().toString());
     }
+
+    private static final String DEVICES = "https://netbox/api/dcim/devices/";
+    private static final String VMS = "https://netbox/api/virtualization/virtual-machines/";
+
+    private static TargetGroup exporter(final String name, final String address) {
+        return group(List.of(name), Map.of("__meta_netbox_name", name, "__meta_netbox_primary_ip4", address));
+    }
+
+    private static RenderedExporters renderBoth(final List<TargetGroup> devices, final List<TargetGroup> vms) {
+        return ExporterRenderer.render(List.of(
+                new ExporterRenderer.EndpointGroups(DEVICES, devices),
+                new ExporterRenderer.EndpointGroups(VMS, vms)), DEFAULT_LABELS);
+    }
+
+    @Test
+    void aNameClaimedOnTwoEndpointsListsEachAddressWithItsEndpoint() {
+        assertThatThrownBy(() -> renderBoth(
+                List.of(exporter("hook", "192.168.10.5")),
+                List.of(exporter("hook", "100.110.244.41"))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageStartingWith(DEVICES + ", " + VMS + " returned 1 exporter name(s)")
+                .hasMessageEndingWith("  hook -> 192.168.10.5 (" + DEVICES + "), 100.110.244.41 (" + VMS + ")");
+    }
+
+    @Test
+    void anAddressClaimedOnTwoEndpointsListsEachNameWithItsEndpoint() {
+        assertThatThrownBy(() -> renderBoth(
+                List.of(exporter("sw1", "10.0.0.1")),
+                List.of(exporter("vm1", "10.0.0.1"))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("returned 1 exporter address(es)")
+                .hasMessageEndingWith("  10.0.0.1 -> sw1 (" + DEVICES + "), vm1 (" + VMS + ")");
+    }
+
+    @Test
+    void theSameNameAndAddressOnTwoEndpointsIsOneEntry() {
+        final var rendered = renderBoth(List.of(exporter("hook", "10.0.0.5")), List.of(exporter("hook", "10.0.0.5")));
+
+        assertThat(rendered.byName()).containsExactly(Map.entry("hook", "10.0.0.5"));
+    }
+
+    /**
+     * The case the per-endpoint check exists for: a token that lost view permission on virtual
+     * machines gets a 200 with no results, and a merged check would publish the devices alone.
+     */
+    @Test
+    void oneEmptyEndpointRefusesTheRenderEvenWhenTheOtherHasEntries() {
+        assertThatThrownBy(() -> renderBoth(List.of(exporter("sw1", "10.0.0.1")), List.of()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage(VMS + " yielded no exporter entries (0 entries were skipped for want of a usable "
+                        + "address). Keeping the running inventory: a source of truth that answers with nothing "
+                        + "is more often a filter or permission mistake than an emptied fleet.");
+    }
+
+    @Test
+    void everyEmptyEndpointIsNamedInOneRefusalWithItsOwnSkipCount() {
+        assertThatThrownBy(() -> renderBoth(
+                List.of(group(List.of("no-ip"), Map.of("__meta_netbox_name", "no-ip"))),
+                List.of()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageStartingWith(DEVICES + " yielded no exporter entries (1 entry was skipped"
+                        + " for want of a usable address)." + System.lineSeparator()
+                        + VMS + " yielded no exporter entries (0 entries were skipped");
+    }
+
+    @Test
+    void theSkipCountIsSummedAcrossEndpoints() {
+        final TargetGroup noAddress = group(List.of("no-ip"), Map.of("__meta_netbox_name", "no-ip"));
+        final var rendered = renderBoth(
+                List.of(exporter("sw1", "10.0.0.1"), noAddress, noAddress),
+                List.of(exporter("vm1", "10.0.0.2"), noAddress, noAddress, noAddress));
+
+        assertThat(rendered.skipped()).isEqualTo(5);
+        assertThat(rendered.byName()).containsOnlyKeys("sw1", "vm1");
+    }
+
+    /** One endpoint has nothing to disambiguate, so its report reads exactly as before. */
+    @Test
+    void aSingleEndpointCollisionReportCarriesNoEndpointAnnotation() {
+        assertThatThrownBy(() -> render(List.of(exporter("sw1", "10.0.0.1"), exporter("sw1", "10.0.0.2"))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageEndingWith("globally." + System.lineSeparator() + "  sw1 -> 10.0.0.1, 10.0.0.2");
+    }
 }

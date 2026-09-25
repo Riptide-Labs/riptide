@@ -6,7 +6,7 @@ description: The one key that adds an internal certificate authority to riptide'
 
 # Outbound TLS reference
 
-Riptide reads two things over HTTP: the discovery endpoint at `riptide.discovery.url` and the classification ruleset at `riptide.classification.rules` when that is an `http://` or `https://` location.
+Riptide reads two things over HTTP: the discovery endpoints at `riptide.discovery.url` or `riptide.discovery.urls` and the classification ruleset at `riptide.classification.rules` when that is an `http://` or `https://` location.
 Both verify the server certificate against the platform's certificate authorities.
 An endpoint served by an internal authority needs that authority added.
 
@@ -29,7 +29,7 @@ These connections carry a credential, and an unverified peer is one that anythin
 
 | Connection | Setting | Uses `riptide.http.ca-bundle` |
 | --- | --- | --- |
-| Discovery endpoint | `riptide.discovery.url` | yes |
+| Discovery endpoint | `riptide.discovery.url`, `riptide.discovery.urls` | yes |
 | Classification ruleset over HTTP | `riptide.classification.rules` | yes |
 | ClickHouse | `riptide.clickhouse.endpoint` | no; the ClickHouse client's own TLS settings apply |
 | Vault | `riptide.secrets.vault.uri` | no; Spring Vault's own TLS settings apply |
