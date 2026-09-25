@@ -310,8 +310,12 @@ public final class FileWatchTrigger {
      * Seeds both hashes from the content that is already serving, so the first cycle
      * does not spuriously recommit an unchanged source. Best-effort: a failed or absent
      * fetch leaves the hashes empty and the first poll re-parses, which is safe. An edit
-     * racing this fetch (between boot's load and here) would be missed until the content
-     * changes again, a sub-second window at startup, accepted.
+     * racing this fetch (between boot's load and here) is recorded as committed, with the
+     * stale gauge at 0, and missed until the content changes again. The window is the
+     * owner's: from its source's boot load to its start. For the config reloader that is
+     * ConfigData to its {@code @PostConstruct}, which includes building the inventory and
+     * so any boot discovery fetch (bounded by {@code riptide.discovery.timeout}). Measured
+     * at about 1.1 s on one small boot (#889), not measured on large inventories. Accepted.
      */
     private void seedHashesFromCurrentContent() {
         try {
