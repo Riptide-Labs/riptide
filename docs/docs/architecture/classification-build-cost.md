@@ -119,5 +119,5 @@ The run prints its cold shot per fork as `# Warmup Iteration 1`; that came out a
 ## Related
 
 - [How configuration reloads work](reloading.md#classification-rule-reloads): what the build blocks and when.
-- [Write a classification rule](../guides/classification-rules.md): the ruleset the build consumes.
+- [Write a classification rule](../operations/classification-rules.md): the ruleset the build consumes.
 - [Metrics reference](../reference/metrics.md#classification-rules): `classification.rules.preprocessed` and the `reload` timer.
