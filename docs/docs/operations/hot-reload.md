@@ -1,6 +1,6 @@
 ---
+sidebar_position: 4
 title: Enable configuration hot reload
-sidebar_position: 7
 description: Set riptide.config.reload-interval so credential sets, polling profiles and routing reload from config.yaml without a restart, and verify the reload from the log and the metrics.
 ---
 
@@ -85,7 +85,7 @@ The gauges exist only while reloading is enabled, so alert on their absence if h
 
 - [How configuration reloads work](../architecture/reloading.md): content-hash polling, why bad config never wins, what a skipped cycle does to the gauges.
 - [Metrics reference](../reference/metrics.md#configuration-and-inventory-reload): every `config.reload.*` and `inventory.reload.*` series.
-- [Troubleshooting](../operations/troubleshooting.md): a stale gauge that will not clear, a dead schedule.
+- [Troubleshooting](troubleshooting.md): a stale gauge that will not clear, a dead schedule.
 
 ## Open questions
 

@@ -11,7 +11,7 @@ Isolation between tenants and organisations is hard, enforced by the server on b
 Filtering by zone and system is soft.
 A monitoring provider can collect NetFlow, IPFIX and sFlow from many customers' isolated networks, overlapping RFC 1918 space included, and keep each customer's data provably separate.
 
-The procedure is [Onboard a tenant](../guides/onboard-a-tenant.md); the flags and the DDL are in the [provisioning CLI reference](../reference/provisioning-cli.md).
+The procedure is [Onboard a tenant](../operations/tenants/onboard-a-tenant.md); the flags and the DDL are in the [provisioning CLI reference](../reference/provisioning-cli.md).
 
 ## The identity model {/* #the-identity-model */}
 
@@ -141,7 +141,7 @@ Measured on the pinned image, not inferred: with `acme` and `other` rows present
 
 Two consequences run through the provisioning recipe.
 Naming a principal on a policy restricts it; it never grants access the principal would otherwise lack.
-Removing a principal from a policy while it still holds `SELECT` widens it to every tenant, which is why `onboard` keeps a live pre-rename account on the policies it rewrites (see [Migrate a deployment onboarded before the rename](../guides/migrate-tenant-accounts.md)).
+Removing a principal from a policy while it still holds `SELECT` widens it to every tenant, which is why `onboard` keeps a live pre-rename account on the policies it rewrites (see [Migrate a deployment onboarded before the rename](../operations/tenants/migrate-tenant-accounts.md)).
 
 If you set the server setting to `false`, the recipe still works; the failure mode flips from "reads too much" to "reads nothing".
 

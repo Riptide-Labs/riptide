@@ -62,7 +62,7 @@ When a new secret value takes effect depends on the scheme and on when the consu
 | --- | --- | --- |
 | `file://` | next poll or request, no reload; after a failed resolve, the next poll comes after the agent's back-off | restart |
 | `vault://` | next poll or request, no reload; nothing is cached; same back-off after a failed resolve | restart |
-| `sops://` | next [config hot-reload](../guides/hot-reload.md) or restart; decrypted files are cached until then | restart |
+| `sops://` | next [config hot-reload](../operations/hot-reload.md) or restart; decrypted files are cached until then | restart |
 | `env://` | restart; a process environment is immutable | restart |
 
 Changing the reference itself is a configuration change and follows the reload rules of the file it lives in.

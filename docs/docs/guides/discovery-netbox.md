@@ -1,6 +1,5 @@
 ---
 title: Discover exporters from NetBox
-sidebar_position: 15
 description: Read the exporter list from NetBox's device API with nothing installed on NetBox, narrowed by a NetBox filter, and verify it from the metrics endpoint.
 ---
 

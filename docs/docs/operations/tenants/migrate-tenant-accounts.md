@@ -1,6 +1,6 @@
 ---
+sidebar_position: 2
 title: Migrate a deployment onboarded before the rename
-sidebar_position: 14
 description: Move a tenant from the instance-wide writer_<tenant> and bi_<tenant> accounts to the database-qualified ones without downtime, close each database to the old roles with revoke-legacy, then drop the roles.
 ---
 
@@ -9,11 +9,11 @@ description: Move a tenant from the instance-wide writer_<tenant> and bi_<tenant
 Nothing breaks on upgrade, and nothing is removed for you.
 An instance provisioned under the old naming keeps its unqualified `writer_<tenant>` and `bi_<tenant>` users and its `flow_writer` and `flow_reader` roles, and its collector keeps working.
 Those accounts carry no database in their name, so they are one object shared by every database on the server; this procedure retires them one tenant and one database at a time.
-Why the names changed is under [Why object names carry their database](../architecture/multi-tenancy.md#object-names-carry-their-database).
+Why the names changed is under [Why object names carry their database](../../architecture/multi-tenancy.md#object-names-carry-their-database).
 
 ## Prerequisites
 
-- The admin credential holds `SHOW USERS ON *.*` for `onboard`, and `SELECT` on `system.grants` and `system.row_policies` plus `INSERT, SELECT ON <db>.* WITH GRANT OPTION` for `revoke-legacy`; see the [admin privileges table](../reference/provisioning-cli.md#admin-privileges).
+- The admin credential holds `SHOW USERS ON *.*` for `onboard`, and `SELECT` on `system.grants` and `system.row_policies` plus `INSERT, SELECT ON <db>.* WITH GRANT OPTION` for `revoke-legacy`; see the [admin privileges table](../../reference/provisioning-cli.md#admin-privileges).
 - You know every database on the server where each tenant is provisioned.
 
 ## Steps {/* #upgrading-a-deployment-onboarded-before-the-rename */}
@@ -44,7 +44,7 @@ Per tenant, in this order.
 
    The run adds the qualified account alongside the old one; it neither renames nor drops it, because the tenant's collector is still authenticating as the old one until you paste the new stanza.
    It also keeps the old account named on the tenant's row policies for as long as that account exists.
-   The policy name is unchanged by the rename, so the run rewrites the existing policy's `TO` list, and an account dropped from it would be named by no policy and start reading every tenant's rows; see [Row policies are not deny-by-default](../architecture/multi-tenancy.md#dropping-the-roles).
+   The policy name is unchanged by the rename, so the run rewrites the existing policy's `TO` list, and an account dropped from it would be named by no policy and start reading every tenant's rows; see [Row policies are not deny-by-default](../../architecture/multi-tenancy.md#dropping-the-roles).
 
 2. Update every collector config to the username from that database's new stanza, and every Grafana or MCP datasource to the matching `bi_<tenant>@<database>`.
    Restart them.
@@ -161,7 +161,7 @@ Run it in each database as you finish migrating it.
 ### When it refuses
 
 It changes nothing in any of these cases; each is a state where the checks would otherwise have found nothing and read that as a clean answer.
-The exact messages are in the [message table](../reference/provisioning-cli.md#messages).
+The exact messages are in the [message table](../../reference/provisioning-cli.md#messages).
 
 | Refusal | Why | Do this |
 | --- | --- | --- |
@@ -202,8 +202,8 @@ Migrating every database first (step 1) avoids the situation entirely.
 
 ## Related
 
-- [Provisioning CLI reference](../reference/provisioning-cli.md) for the flags, the privileges and every refusal message.
-- [How multi-tenancy works](../architecture/multi-tenancy.md) for why names carry the database and why an unnamed user reads every row.
+- [Provisioning CLI reference](../../reference/provisioning-cli.md) for the flags, the privileges and every refusal message.
+- [How multi-tenancy works](../../architecture/multi-tenancy.md) for why names carry the database and why an unnamed user reads every row.
 
 ## Open questions
 

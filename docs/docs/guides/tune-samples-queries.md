@@ -1,6 +1,5 @@
 ---
 title: Tune queries over samples()
-sidebar_position: 12
 description: Keep a query over the samples() view fast by preferring a rollup at minute buckets, bounding both the flow interval and the raw record time, and rendering labels after aggregating.
 ---
 

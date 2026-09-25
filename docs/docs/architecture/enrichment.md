@@ -8,7 +8,7 @@ description: How every flow is enriched from a ladder of sources that degrades t
 
 Every flow passes an asynchronous enrichment pipeline before persistence.
 Enrichment never blocks or drops flows: a failure degrades to an unenriched flow with a logged warning.
-The keys that tune it are on the [enrichment reference](../reference/enrichment.md), and the rule format is in [Write a classification rule](../guides/classification-rules.md).
+The keys that tune it are on the [enrichment reference](../reference/enrichment.md), and the rule format is in [Write a classification rule](../operations/classification-rules.md).
 
 ## The enrichment ladder
 
@@ -105,7 +105,7 @@ The static [routing mapping](../reference/routing.md) fills `srcAs` and `dstAs` 
 ## Classification
 
 Flows are classified by a rule engine that assigns an application name.
-The rule source is any Spring resource location and defaults to the bundled `classification-rules.csv`; [Write a classification rule](../guides/classification-rules.md) has the format and the reload procedure.
+The rule source is any Spring resource location and defaults to the bundled `classification-rules.csv`; [Write a classification rule](../operations/classification-rules.md) has the format and the reload procedure.
 
 Row order is the evaluation priority.
 When several rules match a flow, which is common when a client's ephemeral port collides with another rule's registered port, the earliest matching row wins, in both directions of an omnidirectional rule.

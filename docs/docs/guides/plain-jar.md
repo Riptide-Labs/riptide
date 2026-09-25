@@ -1,5 +1,4 @@
 ---
-sidebar_position: 2
 title: Plain JAR
 description: Download, verify and run the release jar, and how file, environment and command-line configuration reach it.
 ---
@@ -90,7 +89,7 @@ On Debian, Ubuntu or RHEL-family hosts prefer the [DEB and RPM packages](linux-p
 
 | Source | Form | Reloads without restart |
 | --- | --- | --- |
-| **`/etc/riptide/config.yaml`** | YAML, imported by the bundled `spring.config.import=optional:file:/etc/riptide/config.yaml` | yes, with [config hot-reload](hot-reload.md) |
+| **`/etc/riptide/config.yaml`** | YAML, imported by the bundled `spring.config.import=optional:file:/etc/riptide/config.yaml` | yes, with [config hot-reload](../operations/hot-reload.md) |
 | Environment variables | Spring relaxed binding, see below | no; a process environment is immutable |
 | Command line | `--riptide.clickhouse.endpoint=...` after the jar name | no |
 | Inventory file named by `riptide.inventory.file` | YAML, read directly | yes |
@@ -127,5 +126,5 @@ They exit without starting the daemon.
 
 | Command | Purpose | Documented on |
 | --- | --- | --- |
-| `java -jar riptide-flows-%%VERSION%%.jar convert <old-config>` | Migrate a 0.8 configuration | [Upgrading from 0.8](upgrading-from-0.8.md) |
-| `java -jar riptide-flows-%%VERSION%%.jar onboard ...`, `offboard ...`, `revoke-legacy ...` | Provision a tenant on ClickHouse | [Multi-tenancy](onboard-a-tenant.md) |
+| `java -jar riptide-flows-%%VERSION%%.jar convert <old-config>` | Migrate a 0.8 configuration | [Upgrading from 0.8](../operations/upgrades/upgrading-from-0.8.md) |
+| `java -jar riptide-flows-%%VERSION%%.jar onboard ...`, `offboard ...`, `revoke-legacy ...` | Provision a tenant on ClickHouse | [Multi-tenancy](../operations/tenants/onboard-a-tenant.md) |

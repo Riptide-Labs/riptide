@@ -1,5 +1,4 @@
 ---
-sidebar_position: 1
 title: Docker Compose
 description: Start riptide, ClickHouse and Grafana from the shipped compose stack, set its passwords, reach ClickHouse from another host, and pick an image variant.
 ---

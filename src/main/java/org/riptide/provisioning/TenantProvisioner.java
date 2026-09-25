@@ -580,7 +580,7 @@ public final class TenantProvisioner {
         final Map<String, String> sortKeys = new LinkedHashMap<>();
         final Map<String, Set<String>> columns = new LinkedHashMap<>();
         try (var tables = this.admin.queryRecords("SELECT name AS n, sorting_key AS k FROM system.tables"
-                + " WHERE database = '" + database + "'").get()) {
+                + " WHERE database = " + ProvisioningDdl.literal(database)).get()) {
             tables.forEach(record -> sortKeys.put(record.getString("n"), record.getString("k")));
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -595,7 +595,7 @@ public final class TenantProvisioner {
             return Optional.empty();
         }
         try (var cols = this.admin.queryRecords("SELECT table AS t, name AS n FROM system.columns"
-                + " WHERE database = '" + database + "'").get()) {
+                + " WHERE database = " + ProvisioningDdl.literal(database)).get()) {
             cols.forEach(record -> columns
                     .computeIfAbsent(record.getString("t"), table -> new java.util.LinkedHashSet<>())
                     .add(record.getString("n")));
@@ -654,7 +654,7 @@ public final class TenantProvisioner {
     private Set<String> viewRepair(final String database, final Set<String> refused) {
         final Map<String, String> live = new LinkedHashMap<>();
         try (var views = this.admin.queryRecords("SELECT name AS n, as_select AS s FROM system.tables"
-                + " WHERE database = '" + database + "'").get()) {
+                + " WHERE database = " + ProvisioningDdl.literal(database)).get()) {
             views.forEach(record -> live.put(record.getString("n"), record.getString("s")));
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();

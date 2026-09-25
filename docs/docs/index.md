@@ -40,7 +40,7 @@ UDP/TCP ingest (NetFlow v5 · NetFlow v9 · IPFIX · sFlow)
   See [Enrichment](architecture/enrichment.md) and [GeoIP](reference/geoip.md).
 - **Multi-tenancy:** every flow carries tenant/organisation/zone/system identity.
   `riptide onboard` provisions role-based ClickHouse access with hard row-level isolation per tenant.
-  See [Multi-tenancy](architecture/multi-tenancy.md) and [Onboard a tenant](guides/onboard-a-tenant.md).
+  See [Multi-tenancy](architecture/multi-tenancy.md) and [Onboard a tenant](operations/tenants/onboard-a-tenant.md).
 - **AI Agent Integration:** native embedded MCP server (`org.riptide.mcp.*`) over stdio IPC and HTTP/SSE with 7 auto-shipped Agent Skills (`/riptide-investigate-ddos`, `/riptide-cause-analysis`, etc.) and `SecretRef` token authentication.
   See [MCP Server](reference/mcp-server.md).
 
@@ -143,7 +143,7 @@ Run riptide in production:
 - [Plain JAR](guides/plain-jar.md): `java -jar` with file- or env-var-based configuration.
 - [DEB and RPM packages](guides/linux-packages.md): `apt` or `dnf` install with a managed systemd service.
 - [NixOS](guides/nixos.md): flake package plus a `services.riptide` module.
-- [Upgrade riptide](guides/upgrade.md): image tags, what the schema check migrates, per-release notes.
+- [Upgrade riptide](operations/upgrades/upgrade.md): image tags, what the schema check migrates, per-release notes.
 
 Work on riptide:
 
@@ -154,10 +154,10 @@ Work on riptide:
 
 Look something up:
 
-- [Guides](guides/upgrade.md): upgrade, hot reload, profiling, classification rules, rollups, tenants, discovery.
+- [Guides](guides/docker-compose.md): deploy riptide, discover exporters from an inventory, query flow volumes and rollups.
 - [Architecture](architecture/enrichment.md): how enrichment, sampling, persistence, rollups, reloads and multi-tenancy work.
 - [Reference](reference/receivers.md): every setting, subcommand flag, endpoint and metric.
-- [Operations](operations/troubleshooting.md): troubleshooting, rollup drift, dead letters.
+- [Operations](operations/troubleshooting.md): troubleshooting, rollup drift, dead letters, hot reload, profiling, classification rules, tenants and upgrades.
 
 ## Technology
 

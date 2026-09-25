@@ -8,7 +8,7 @@ description: Content-hash polling of the main configuration, the inventory file 
 
 Three things reload without a restart, each on its own opt-in schedule: the main configuration file (`config.yaml`), the inventory file, and the classification rules resource.
 All three share one posture: the running configuration is replaced only by a candidate that passed the same validation as startup, and a candidate that cannot be read decides nothing.
-Enabling them is in [Enable configuration hot reload](../guides/hot-reload.md) and [Write a classification rule](../guides/classification-rules.md); the series are in the [metrics reference](../reference/metrics.md).
+Enabling them is in [Enable configuration hot reload](../operations/hot-reload.md) and [Write a classification rule](../operations/classification-rules.md); the series are in the [metrics reference](../reference/metrics.md).
 
 ## Content-hash polling
 
@@ -85,7 +85,7 @@ The semantics are the config reloader's, with a source that can be a URL:
 - No authentication: no credentials are sent, no conditional `GET`, no ETag or `Last-Modified` handling; the endpoint must answer an unconditional `GET`. Protect it at the network layer. Credentials embedded in the location (`http://user:token@…`) are not a supported way to authenticate; they are redacted wherever riptide logs the location, but they still travel in the clear.
 
 A rejected rule is not a failed reload.
-A condition column that is not empty but resolves to nothing, and an `exporterFilter` column that carries a value, each get the rule rejected; the rules for writing one are in [Write a classification rule](../guides/classification-rules.md).
+A condition column that is not empty but resolves to nothing, and an `exporterFilter` column that carries a value, each get the rule rejected; the rules for writing one are in [Write a classification rule](../operations/classification-rules.md).
 The rest of the ruleset serves, `classification.reload.successes` moves and `classification.reload.stale` stays 0, so every other metric reads healthy.
 Every load that publishes logs how many rules it published and a WARN naming any rule the engine could not use, up to the first 20 before summarising as a count; the ERROR beside it names the column and value.
 `classification.rules.rejected > 0` is the one series that says part of an edit is classifying nothing.
@@ -145,6 +145,6 @@ Either way the WARN names the rule; the ERROR beside it names the column and the
 
 ## Related
 
-- [Enable configuration hot reload](../guides/hot-reload.md)
-- [Write a classification rule](../guides/classification-rules.md)
+- [Enable configuration hot reload](../operations/hot-reload.md)
+- [Write a classification rule](../operations/classification-rules.md)
 - [Metrics reference](../reference/metrics.md)

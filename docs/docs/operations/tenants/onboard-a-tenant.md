@@ -1,6 +1,6 @@
 ---
+sidebar_position: 1
 title: Onboard a tenant
-sidebar_position: 13
 description: Prepare a ClickHouse cluster for multi-tenant writes, provision a tenant with riptide onboard, add the rollups or the dead-letter table to an older deployment, rotate a secret, and offboard.
 ---
 
@@ -13,9 +13,9 @@ Provision one `(tenant, org)` pair on a shared ClickHouse so its collector can o
 | Requirement | Why |
 | --- | --- |
 | ClickHouse with replicated access storage on a cluster | users, roles and row policies must exist on every node; a credential provisioned on one node is otherwise unknown on another |
-| the `SQL_` custom-settings prefix enabled in the server config | the write barrier reads `getSetting('SQL_tenant')`; see [Server requirement](../reference/clickhouse.md#server-requirement) |
-| the collector in validate mode, `riptide.clickhouse.manage-schema=false` | the admin owns the schema; see [Schema ownership](../reference/clickhouse.md#schema-ownership) |
-| an admin credential with the privileges in the [admin privileges table](../reference/provisioning-cli.md#admin-privileges) | `onboard` refuses outright without `SHOW USERS ON *.*` |
+| the `SQL_` custom-settings prefix enabled in the server config | the write barrier reads `getSetting('SQL_tenant')`; see [Server requirement](../../reference/clickhouse.md#server-requirement) |
+| the collector in validate mode, `riptide.clickhouse.manage-schema=false` | the admin owns the schema; see [Schema ownership](../../reference/clickhouse.md#schema-ownership) |
+| an admin credential with the privileges in the [admin privileges table](../../reference/provisioning-cli.md#admin-privileges) | `onboard` refuses outright without `SHOW USERS ON *.*` |
 
 The default ClickHouse config stores SQL-created users in a node-local `local_directory`, so the snippet must replace the whole `user_directories` block, not merge into it.
 Keep `users_xml` for the bootstrap admin, drop `local_directory`, and add `replicated` so new users land in Keeper:
@@ -85,10 +85,10 @@ On a replicated cluster, pre-create `flows` admin-side (`ReplicatedMergeTree`, `
    ```
 
    `riptide.clickhouse.username` takes the `@` verbatim.
-   A URL that embeds the same name needs `%40`; see [Why object names carry their database](../architecture/multi-tenancy.md#object-names-carry-their-database).
+   A URL that embeds the same name needs `%40`; see [Why object names carry their database](../../architecture/multi-tenancy.md#object-names-carry-their-database).
 
 4. Point the tenant's Grafana datasource at `bi_acme@riptide` with the reader secret, in a Grafana org or instance of its own.
-   Per-tenant datasources in a shared org and `$tenant` dashboard variables are not boundaries; see [Grafana topology](../architecture/multi-tenancy.md#grafana-topology).
+   Per-tenant datasources in a shared org and `$tenant` dashboard variables are not boundaries; see [Grafana topology](../../architecture/multi-tenancy.md#grafana-topology).
 
 5. Verify the barrier from the writer's side.
 
@@ -139,7 +139,7 @@ error: database 'riptide' is missing the 1-minute rollup tables or their materia
 2. Restart the collector.
    Which rollups are usable is decided once, at startup, so a collector that declined them keeps answering from raw `flows` until it restarts, however complete the repair was.
 
-Rollups added this way cover traffic from creation onward; see [Backfill a rollup](backfill-a-rollup.md) for the history.
+Rollups added this way cover traffic from creation onward; see [Backfill a rollup](../../guides/backfill-a-rollup.md) for the history.
 
 :::warning[Re-run onboard after every upgrade that adds a rollup dimension]
 
@@ -152,7 +152,7 @@ Then restart the collector.
 `onboard` reads each rollup's live sorting key first and applies the same rule the collector does, so a change that would shrink a key is refused rather than applied.
 ClickHouse itself accepts such a shrink on an upgraded table, because the primary key was frozen at the narrower shape.
 If `onboard` reports a rollup as *left as it is*, that rollup gets no materialized view and stays out of the query path until the state its message describes is fixed; roles, users and password rotation are unaffected.
-See [Recover from a rollup shape message](../operations/rollup-drift.md).
+See [Recover from a rollup shape message](../rollup-drift.md).
 
 ## Add the dead-letter table to an existing deployment {/* #adding-the-dead-letter-table-to-an-existing-deployment */}
 
@@ -170,7 +170,7 @@ error: database 'riptide' is missing the dead-letter table (flows_dead_letter) â
 
 It is a refusal rather than a warning because ClickHouse will not tell you: measured on the pinned image, `GRANT`, `CREATE ROW POLICY` and `REVOKE` naming a table that does not exist all succeed silently.
 An ungated run would grant on nothing, police nothing, print the stanza and exit 0, and you would find out from `persister.batch.deadLetterFailedRows` on some later refused batch.
-Until the table is added, a refused batch costs what it always cost: every row counted in `persister.batch.failedRows` and nothing kept; see [Inspect and replay dead letters](../operations/dead-letters.md).
+Until the table is added, a refused batch costs what it always cost: every row counted in `persister.batch.failedRows` and nothing kept; see [Inspect and replay dead letters](../dead-letters.md).
 
 ## Rotate a secret
 
@@ -201,8 +201,8 @@ Offboarded tenant 'acme' from database 'riptide': dropped writer_acme@riptide an
 
 ## Related
 
-- [Provisioning CLI reference](../reference/provisioning-cli.md) for every flag, the DDL and every message.
-- [How multi-tenancy works](../architecture/multi-tenancy.md) for the identity model and what the barrier guarantees.
+- [Provisioning CLI reference](../../reference/provisioning-cli.md) for every flag, the DDL and every message.
+- [How multi-tenancy works](../../architecture/multi-tenancy.md) for the identity model and what the barrier guarantees.
 
 ## Open questions
 

@@ -1,5 +1,4 @@
 ---
-sidebar_position: 3
 title: DEB / RPM packages
 description: Install the release package on Debian, Ubuntu, RHEL-family or Fedora, what it puts where, and how the systemd service is configured and upgraded.
 ---
@@ -144,7 +143,7 @@ Removing the package stops and disables the unit.
 `riptide.env` takes `JAVA_OPTS`, such as `-Xmx2g`, and any `riptide.*` setting as an environment variable, see [Plain JAR](plain-jar.md#environment-variables).
 `JAVA_OPTS` is one assignment and the last line wins, so keep every option on one line.
 A change in `riptide.env` needs `systemctl restart riptide`.
-A change in `config.yaml` is picked up by [config hot-reload](hot-reload.md) when it is enabled.
+A change in `config.yaml` is picked up by [config hot-reload](../operations/hot-reload.md) when it is enabled.
 
 ### Bind a port below 1024
 

@@ -1,0 +1,10 @@
+{
+  "label": "Upgrades",
+  "position": 8,
+  "collapsed": true,
+  "link": {
+    "type": "generated-index",
+    "slug": "/operations/upgrades",
+    "description": "Move a running deployment to a new release, and the one-time steps when coming from 0.8."
+  }
+}
