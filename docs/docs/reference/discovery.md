@@ -7,7 +7,7 @@ description: Every riptide.discovery.* key with its default, the three sources c
 # Discovery reference
 
 Discovery reads the `exporters` tree from an external inventory instead of from the inventory file.
-It is off until **`riptide.discovery.url`** holds a non-blank value.
+It is off until **`riptide.discovery.url`** holds a non-blank value, or **`riptide.discovery.urls`** holds a non-blank entry.
 How the composed inventory behaves is on [How discovery composes the inventory](../architecture/discovery.md); the per-source procedures are the four `Discover exporters from ...` guides.
 
 ## Sources
@@ -26,9 +26,10 @@ Guides: [NetBox](../guides/discovery-netbox.md), [Prometheus service discovery](
 | Name | Type | Default | Description |
 | --- | --- | --- | --- |
 | **`riptide.discovery.url`** | URL | unset | The endpoint. Unset, empty or whitespace-only disables discovery and creates nothing discovery-related. A value that is not a URL fails startup naming the key. |
+| **`riptide.discovery.urls`** | list of URLs | unset | Several endpoints read under one configuration, for example NetBox devices and virtual machines. Every entry shares `type`, `filter`, `token`, `auth-scheme`, `mapping`, `interval` and `timeout`, so the filter must use terms every endpoint accepts. Set `url` or `urls`, never both. An empty list, or a list of blank entries only, is unset. Once one entry is set, a blank entry fails startup naming `riptide.discovery.urls[i]`. Set it as a YAML list, as indexed environment variables (**`RIPTIDE_DISCOVERY_URLS_0`**, `_1`, ...), or as a comma-separated **`RIPTIDE_DISCOVERY_URLS`**. Use the indexed form for a URL that contains a comma. |
 | **`riptide.discovery.type`** | string | `prometheus-sd` | `prometheus-sd`, `netbox-api` or `mapped-json`, case-insensitive. Blank is the default. Any other value fails startup naming the accepted values. |
 | **`riptide.discovery.filter`** | string | unset | Appended to the endpoint's query, in the endpoint's own terms (`status=active&role=leaf`). Read by `netbox-api` and `mapped-json`. `prometheus-sd` ignores it; the producer filters. |
-| **`riptide.discovery.token`** | [secret reference](secret-references.md) | unset | Credential sent as `Authorization: <auth-scheme> <token>`. Resolved on every request, so each page of a paged walk resolves it again and a rotation applies on the next request with no restart. A reference that stops resolving fails the poll rather than sending an unauthenticated request. |
+| **`riptide.discovery.token`** | [secret reference](secret-references.md) | unset | Credential sent as `Authorization: <auth-scheme> <token>`. Resolved once per endpoint at startup, and on every request, so each page of a paged walk resolves it again and a rotation applies on the next request with no restart. A reference that stops resolving fails the poll rather than sending an unauthenticated request. |
 | **`riptide.discovery.auth-scheme`** | string | `Token` | The scheme in front of the token. NetBox and Nautobot expect `Token`, not `Bearer`. With a token set, a blank value fails startup naming the key. With no token set the scheme is never read and a blank value is harmless. |
 | **`riptide.discovery.interval`** | duration | `60s` | Poll interval of the inventory watcher. Zero or negative never starts the watcher: no reload, no `inventory.reload.stale` gauge, and a degraded boot stays degraded until a restart. |
 | **`riptide.discovery.timeout`** | duration | `10s` | Bounds the connect, each read, and the whole response of every request. |
@@ -53,7 +54,7 @@ A path is dotted field names: `net.mgmt.v4` walks three fields and takes what it
 | Transforms | None. No defaults, conditionals, concatenation, indexing, wildcards, templates or expressions. |
 | Value | Used as found. An address carrying a prefix length (`10.0.0.1/24`) is skipped and counted on `discovery.skipped`; a range with no host bits (`10.0.0.0/24`) is a legal exporter entry. |
 | Miss | A device whose `name` or `address` path matches nothing is dropped by the source and not counted. Only an address that is present but unusable reaches `discovery.skipped`. |
-| `next` | Absolute or relative. A relative link is resolved against the page it came from. It must stay on the same origin (scheme, host and port) as `riptide.discovery.url`, because the credential is sent with every page. |
+| `next` | Absolute or relative. A relative link is resolved against the page it came from. It must stay on the same origin (scheme, host and port) as the endpoint it was read from, because the credential is sent with every page. |
 
 ## Limits
 
@@ -85,22 +86,26 @@ Dots become underscores at `/metrics` (`discovery_targets`), see [Metrics refere
 
 ## Messages
 
-`<endpoint>` stands for the redacted `riptide.discovery.url`; `<file>` for the inventory file path.
+`<endpoint>` stands for one redacted endpoint; `<endpoints>` for every endpoint, redacted and joined with `, `; `<file>` for the inventory file path.
+`<key>` stands for the key the endpoint was set under: `riptide.discovery.url` or `riptide.discovery.urls[i]`.
+`<enabling key>` stands for `riptide.discovery.urls` when that key enabled discovery, and `riptide.discovery.url` otherwise.
 A message that fails startup is also, after boot, a counted reload failure that keeps the last good inventory serving.
 
 | Message | Probable cause | Recovery |
 | --- | --- | --- |
 | `riptide.discovery.type is not a source this collector knows: '<value>'. Accepted values are 'prometheus-sd', 'netbox-api', 'mapped-json'.` | Typo in `type` | Use one of the three values. |
-| `riptide.discovery.url is not a usable URL: '<url>' (<reason>)` | The value is not a URL | Fix the URL. A blank value is not this error; it turns discovery off. |
+| `<key> is not a usable URL: '<url>' (<reason>)` | The value is not a URL | Fix the URL. A blank `url` is not this error; it turns discovery off. |
+| `riptide.discovery.url and riptide.discovery.urls are both set. Set one of them: riptide.discovery.url for a single endpoint, riptide.discovery.urls for several.` | Both endpoint keys set, often an old `url` left behind after adding `urls` | Remove one of the two keys. |
+| `riptide.discovery.urls[<i>] is blank. Once riptide.discovery.urls holds an entry, every entry must be a usable URL: remove the blank one.` | An empty list element, including `a,,b` in `RIPTIDE_DISCOVERY_URLS` | Remove the blank entry. |
 | `riptide.discovery.auth-scheme must not be blank when riptide.discovery.token is set: ...` | An exported-but-empty `RIPTIDE_DISCOVERY_AUTH_SCHEME` | Set it to `Token`, or unset it to get that default. |
 | `riptide.discovery.address-labels cannot be customised while riptide.discovery.type is 'netbox-api': this source emits [__meta_netbox_primary_ip4, __meta_netbox_primary_ip6] and the renderer must read the same names. ...` | Labels customised for a `prometheus-sd` producer, then the type switched | Remove `address-labels`, or use `prometheus-sd`. |
 | `riptide.discovery.mapping.name must name a field: it is not set.` (also `mapping.address`) | `mapped-json` without a required path | Set the path. |
 | `<key> is not a usable path: '<path>'. A dot separates field names, so an empty segment means a field with no name, which nothing can match.` | `a..b` or a trailing dot in a mapping path | Fix the path. |
-| `riptide.discovery.url and riptide.discovery.filter do not combine into a usable URL: '<url>' + '<filter>'` | A filter that does not survive as a query string | Fix the filter. |
-| `<file> declares an 'exporters' tree while riptide.discovery.url is set. Discovery owns the exporters tree and the inventory file owns snmp.agents, so an entry can never have two possible sources. Remove the exporters tree from the file, or unset riptide.discovery.url.` | Both sources define exporters | Do one of the two. Checked on every merge, at boot and on every poll. |
-| `<endpoint> yielded no exporter entries (<n> entries were skipped for want of a usable address). Keeping the running inventory: a source of truth that answers with nothing is more often a filter or permission mistake than an emptied fleet.` | Empty answer, a filter matching nothing, a permission change, or every device skipped | Check the filter and the token first. If discovery stopped updating right after a filter was added, this is why. |
-| `<endpoint> returned <n> exporter name(s) claimed by more than one entry. Exporter names are inventory keys, so a collision would silently drop every claimant but one. NetBox enforces device-name uniqueness per site, not globally.` followed by one `  name -> claimants` line per collision | Two devices with one name and different addresses | Rename one, or filter one out. Every collision is named at once. |
-| `<endpoint> returned <n> exporter address(es) claimed by more than one entry. An exporter address is what a flow is matched on, so two entries sharing one with no observation domain are ambiguous and the loader refuses the whole document. NetBox enforces uniqueness on device name, not on primary IP.` plus one line per collision | Two devices with different names and one primary IP (an HA pair, a virtual-chassis pair) | Give one of them a different primary IP in the source, or filter one out. One device appearing twice with the same name and address is not a collision and is deduplicated. |
+| `<key> and riptide.discovery.filter do not combine into a usable URL: '<url>' + '<filter>'` | A filter that does not survive as a query string | Fix the filter. |
+| `<file> declares an 'exporters' tree while <enabling key> is set. Discovery owns the exporters tree and the inventory file owns snmp.agents, so an entry can never have two possible sources. Remove the exporters tree from the file, or unset <enabling key>.` | Both sources define exporters | Do one of the two. Checked on every merge, at boot and on every poll. |
+| `<endpoint> yielded no exporter entries (<n> entries were skipped for want of a usable address). Keeping the running inventory: a source of truth that answers with nothing is more often a filter or permission mistake than an emptied fleet.` | Empty answer, a filter matching nothing, a permission change, or every device skipped | Check the filter and the token first. If discovery stopped updating right after a filter was added, this is why. Checked per endpoint: with `urls`, every empty endpoint gets its own first sentence on its own line, with its own skip count. NetBox answers a token without view permission on an object type with an empty list, not an error. |
+| `<endpoints> returned <n> exporter name(s) claimed by more than one entry. Exporter names are inventory keys, so a collision would silently drop every claimant but one. NetBox enforces device-name uniqueness per site, not globally.` followed by one `  name -> claimants` line per collision. With several endpoints each claimant is followed by its endpoint: `  hook -> 192.168.10.5 (<endpoint>), 100.110.244.41 (<endpoint>)` | Two devices with one name and different addresses | Rename one, or filter one out. Every collision is named at once. |
+| `<endpoints> returned <n> exporter address(es) claimed by more than one entry. An exporter address is what a flow is matched on, so two entries sharing one with no observation domain are ambiguous and the loader refuses the whole document. NetBox enforces uniqueness on device name, not on primary IP.` plus one line per collision | Two devices with different names and one primary IP (an HA pair, a virtual-chassis pair) | Give one of them a different primary IP in the source, or filter one out. One device appearing twice with the same name and address is not a collision and is deduplicated. |
 | `<endpoint> did not answer with a JSON array. Prometheus service discovery is a bare array of {targets, labels} objects, with no enclosing envelope.` | `prometheus-sd` pointed at a NetBox API page or another envelope | Use `netbox-api` for `/api/dcim/devices/`, or point at the plugin endpoint. |
 | `<endpoint>: entry <i> is not an object` / `has no 'targets' array` / `has a non-string target` / `has a 'labels' field that is not an object` / `label '<name>' is not a string` | A producer that does not follow the Prometheus contract | Fix the producer. Label values are strings; a number is not coerced. |
 | `<endpoint> did not answer with a NetBox device page. Expected an object carrying a 'results' array; a bare array is the Prometheus service discovery shape, which is riptide.discovery.type 'prometheus-sd' rather than 'netbox-api'.` | `netbox-api` pointed at the plugin endpoint | Point at `/api/dcim/devices/`, or switch the type. |

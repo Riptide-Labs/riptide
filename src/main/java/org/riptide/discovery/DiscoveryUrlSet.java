@@ -8,12 +8,24 @@ package org.riptide.discovery;
 import org.springframework.boot.autoconfigure.condition.ConditionMessage;
 import org.springframework.boot.autoconfigure.condition.ConditionOutcome;
 import org.springframework.boot.autoconfigure.condition.SpringBootCondition;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.context.annotation.ConditionContext;
 import org.springframework.core.type.AnnotatedTypeMetadata;
 import org.springframework.util.StringUtils;
 
+import java.util.List;
+
 /**
- * The single gate for discovery: {@code riptide.discovery.url} set to a non-blank value.
+ * The single gate for discovery: {@code riptide.discovery.url} set to a non-blank value, or
+ * {@code riptide.discovery.urls} holding a non-blank entry.
+ *
+ * <p>{@code urls} is read through {@link Binder}, not by name: a list arrives as
+ * {@code riptide.discovery.urls[0]} from YAML and as {@code RIPTIDE_DISCOVERY_URLS_0} from the
+ * environment, and neither is a property called {@code riptide.discovery.urls}. What counts as set
+ * is {@code DiscoveryConfig.hasEntry}, the same rule {@code DiscoveryConfig.endpoints()} applies.
+ * Both keys set is a match here and a refusal there, so the refusal names both keys instead of
+ * this gate silently picking one.</p>
  *
  * <p>A plain {@link SpringBootCondition} rather than {@code @ConditionalOnExpression}, because an
  * expression is the one shape of this rule that can be broken by the value it reads.
@@ -42,6 +54,9 @@ class DiscoveryUrlSet extends SpringBootCondition {
     /** Kept on one line, and the one literal in this gate, so it stays greppable. */
     static final String URL_PROPERTY = "riptide.discovery.url";
 
+    /** The list form, kept on one line for the same reason. */
+    static final String URLS_PROPERTY = "riptide.discovery.urls";
+
     @Override
     public ConditionOutcome getMatchOutcome(final ConditionContext context,
                                              final AnnotatedTypeMetadata metadata) {
@@ -50,6 +65,13 @@ class DiscoveryUrlSet extends SpringBootCondition {
         if (StringUtils.hasText(url)) {
             return ConditionOutcome.match(message.because(URL_PROPERTY + " is set and non-blank"));
         }
-        return ConditionOutcome.noMatch(message.because(URL_PROPERTY + " is not set, or is blank"));
+        final List<String> urls = Binder.get(context.getEnvironment())
+                .bind(URLS_PROPERTY, Bindable.listOf(String.class))
+                .orElse(List.of());
+        if (DiscoveryConfig.hasEntry(urls)) {
+            return ConditionOutcome.match(message.because(URLS_PROPERTY + " holds a non-blank entry"));
+        }
+        return ConditionOutcome.noMatch(message.because(
+                URL_PROPERTY + " is not set, or is blank, and " + URLS_PROPERTY + " holds no non-blank entry"));
     }
 }

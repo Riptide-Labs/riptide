@@ -87,6 +87,53 @@ If the `netbox-plugin-prometheus-sd` plugin is already installed and you would r
    `discovery_skipped` counts devices the filter returned without a usable primary IP; here one of three devices had none.
    `inventory_reload_successes` stays at `0.0` until the first poll after boot finds a change.
 
+## Discover devices and virtual machines
+
+NetBox serves devices and virtual machines from two endpoints.
+List both under **`riptide.discovery.urls`** instead of `url`.
+The token needs view permission on both object types.
+A token that cannot view virtual machines gets an empty list, not an error, and riptide refuses the poll naming the virtual machine endpoint.
+
+1. Replace `url` with `urls` in `/etc/riptide/config.yaml`.
+   Every other key applies to both endpoints, the filter included.
+   Use filter terms that both object types accept, such as `tag`, `status` or `site`, and check the filter against each endpoint in NetBox directly.
+   A device-only term such as `manufacturer` means nothing to the virtual machine endpoint.
+
+   ```yaml
+   riptide:
+     discovery:
+       type: netbox-api
+       urls:
+         - https://netbox.example.com/api/dcim/devices/
+         - https://netbox.example.com/api/virtualization/virtual-machines/
+       token: vault://secret/netbox#token
+       filter: tag=flow-exporter
+       interval: 60s
+     inventory:
+       file: /etc/riptide/inventory.yaml
+   ```
+
+   Setting both `url` and `urls` fails startup naming both keys.
+
+2. Restart the collector and read the inventory line.
+
+   ```bash
+   journalctl -u riptide -n 200 | grep -E 'Inventory loaded|Boot could not reach'
+   ```
+
+   Expected output:
+
+   ```text
+   2026-09-25T02:20:20.109+02:00  INFO 56752 --- [           main] org.riptide.inventory.Inventory          : Inventory loaded from /etc/riptide/inventory.yaml + https://netbox.example.com/api/dcim/devices/, https://netbox.example.com/api/virtualization/virtual-machines/: 2 agent ranges, 7 enrichment entries
+   ```
+
+   The enrichment entries are the tagged devices plus the tagged virtual machines with a primary IP.
+   A virtual machine with no primary IP is counted on `discovery_skipped`.
+
+Riptide reads the endpoints in order on every poll and publishes only when both answer.
+One endpoint that is down, answers 404 or answers empty keeps the last good inventory serving for both, and the log names that endpoint.
+A device and a virtual machine with the same name and different addresses are refused as a collision, each address followed by its endpoint.
+
 ## Related
 
 - [Discovery reference](../reference/discovery.md): every key, the limits, and every message.
@@ -97,3 +144,4 @@ If the `netbox-plugin-prometheus-sd` plugin is already installed and you would r
 
 - The output above was captured on 2026-09-23 against a local stand-in serving a three-device NetBox page, not against a NetBox server; the inventory path and the URL in the quoted lines were substituted for the stand-in's. An earlier session verified this source against a real NetBox; this page's output was not captured there.
 - `journalctl` was not run; the lines were read from the collector's stdout.
+- The devices-and-virtual-machines output was captured on 2026-09-25 against a real NetBox `v4.7-5.1.1` lab on `http://localhost:18000`, with 7 tagged devices and 3 tagged virtual machines, one without a primary IP. The URL and the inventory path in the quoted line were substituted.

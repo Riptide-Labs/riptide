@@ -6,6 +6,7 @@
 package org.riptide.discovery;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import org.riptide.config.BoundedHttpRead;
 
 import java.io.IOException;
 import java.net.URI;
@@ -110,6 +111,16 @@ public final class NetboxDeviceSource implements DiscoverySource {
      * it is the kind of string work that is wrong in a different way at every call site (#800).</p>
      */
     static URL firstPage(final URL endpoint, final String filter, final boolean ordered) {
+        return firstPage(endpoint, filter, ordered, DiscoveryUrlSet.URL_PROPERTY);
+    }
+
+    /**
+     * The same joining for one of several endpoints.
+     *
+     * @param key the property holding {@code endpoint}, named when the join fails, since only that
+     *     entry failed: {@code riptide.discovery.url} or {@code riptide.discovery.urls[i]}
+     */
+    static URL firstPage(final URL endpoint, final String filter, final boolean ordered, final String key) {
         final StringBuilder query = new StringBuilder(endpoint.getQuery() == null ? "" : endpoint.getQuery());
         final String terms = normalise(filter);
         if (!terms.isEmpty()) {
@@ -128,8 +139,8 @@ public final class NetboxDeviceSource implements DiscoverySource {
                     + endpoint.getPath() + (query.isEmpty() ? "" : "?" + query)).toURL();
         } catch (final URISyntaxException | IOException e) {
             throw new IllegalStateException(
-                    "riptide.discovery.url and riptide.discovery.filter do not combine into a usable URL: '%s' + '%s'"
-                            .formatted(endpoint, filter), e);
+                    "%s and riptide.discovery.filter do not combine into a usable URL: '%s' + '%s'"
+                            .formatted(key, BoundedHttpRead.redacted(endpoint.toString()), filter), e);
         }
     }
 

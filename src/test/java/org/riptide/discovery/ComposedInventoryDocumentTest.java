@@ -84,6 +84,29 @@ class ComposedInventoryDocumentTest {
                 .hasMessageContaining("inventory.yaml");
     }
 
+    /** The refusal names the key the operator set, so the key it tells them to unset exists. */
+    @Test
+    void anExportersTreeInTheFileWithTheListKeySetNamesTheListKey() {
+        final DiscoveryConfig config = new DiscoveryConfig();
+        config.setUrls(java.util.List.of("https://netbox.example.com/api/dcim/devices/"));
+        final ComposedInventoryDocument document = new ComposedInventoryDocument(
+                new FixedFile("""
+                        riptide:
+                          exporters:
+                            hand-written:
+                              address: 10.9.9.9
+                        """),
+                new ServiceDiscoverySource(() -> DEVICES.getBytes(StandardCharsets.UTF_8), () -> "the endpoint"),
+                () -> "the endpoint", config, new MetricRegistry());
+
+        assertThatThrownBy(document::text)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("inventory.yaml declares an 'exporters' tree while riptide.discovery.urls is set. "
+                        + "Discovery owns the exporters tree and the inventory file owns snmp.agents, so an entry "
+                        + "can never have two possible sources. Remove the exporters tree from the file, or "
+                        + "unset riptide.discovery.urls.");
+    }
+
     /*
      * The file is parsed by the loader's rules, not a copy of them. Each case below is one guard
      * the loader applies with discovery off; a merge with SnakeYAML options of its own loosened

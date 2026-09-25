@@ -63,7 +63,7 @@ For NetBox use [`netbox-api`](discovery-netbox.md); for Nautobot use [this sourc
    ```
 
    A `next` link may be absolute or relative; a relative one is resolved against the page it came from.
-   It must stay on the same origin (scheme, host and port) as `riptide.discovery.url`, because the credential is sent with every page.
+   It must stay on the same origin (scheme, host and port) as the endpoint it was read from, because the credential is sent with every page.
    If the endpoint pages by offset, put its own ordering term in `riptide.discovery.filter`; this source appends none of its own.
    A missing required path fails startup naming the key, rather than turning up as an empty result at the first poll.
 

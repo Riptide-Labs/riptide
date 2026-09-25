@@ -146,4 +146,4 @@ Inventory file /etc/riptide/inventory.yaml carries problems in 5 entries:
 | `Exporter 'X' interface N has a blank name: remove the key to fall back to SNMP.` | Empty string | Remove the key |
 | `Exporter 'X' interface N has a high-speed 'Y' that is not a whole number.`, `... has a high-speed N Mbit/s outside 1..4294967295.` | | Use 1 to 4294967295 |
 | `Ambiguous matcher entries: 'X' and 'Y' resolve to the same canonical prefix with the same observation-domain pinning ...` | Two spellings of one coverage with the same pin | Merge them, or pin one |
-| `/path declares an 'exporters' tree while riptide.discovery.url is set. ...` | Discovery and the file both supply exporters | Remove the tree from the file |
+| `/path declares an 'exporters' tree while riptide.discovery.url is set. ...` (or `riptide.discovery.urls`, whichever key enabled discovery) | Discovery and the file both supply exporters | Remove the tree from the file |

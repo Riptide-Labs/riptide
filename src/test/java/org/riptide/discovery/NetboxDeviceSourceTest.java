@@ -413,4 +413,28 @@ class NetboxDeviceSourceTest {
             return "inventory.yaml";
         }
     }
+
+    /** Only one entry failed to join, so the refusal names that entry's key, not the list. */
+    @Test
+    void aFilterThatCannotJoinNamesTheEndpointKeyItWasJoinedTo() throws Exception {
+        final java.net.URL endpoint = java.net.URI.create("https://netbox/api/dcim/devices/").toURL();
+
+        assertThatThrownBy(() -> NetboxDeviceSource.firstPage(endpoint, "name=a|b"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageStartingWith("riptide.discovery.url and riptide.discovery.filter do not combine");
+        assertThatThrownBy(() -> NetboxDeviceSource.firstPage(endpoint, "name=a|b", true, "riptide.discovery.urls[1]"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageStartingWith("riptide.discovery.urls[1] and riptide.discovery.filter do not combine");
+    }
+
+    /** The refusal quotes the endpoint, so it quotes it redacted, as every other message does. */
+    @Test
+    void aFilterThatCannotJoinNeverQuotesTheEmbeddedCredential() throws Exception {
+        final java.net.URL endpoint = java.net.URI.create("https://svc:s3cret@netbox/api/dcim/devices/").toURL();
+
+        assertThatThrownBy(() -> NetboxDeviceSource.firstPage(endpoint, "name=a|b", true, "riptide.discovery.urls[0]"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("'https://***@netbox/api/dcim/devices/'")
+                .message().doesNotContain("s3cret");
+    }
 }

@@ -99,7 +99,7 @@ class DiscoveryUrlSetTest {
             assertThat(outcomeMessage(context))
                     .contains(DiscoveryUrlSet.URL_PROPERTY)
                     .containsIgnoringCase("blank");
-            assertThat(context).doesNotHaveBean(DiscoveryClient.class);
+            assertThat(context).doesNotHaveBean(DiscoveryEndpoints.class);
         });
     }
 
@@ -109,7 +109,7 @@ class DiscoveryUrlSetTest {
             assertThat(outcomeMessage(context))
                     .contains(DiscoveryUrlSet.URL_PROPERTY)
                     .containsIgnoringCase("blank");
-            assertThat(context).doesNotHaveBean(DiscoveryClient.class);
+            assertThat(context).doesNotHaveBean(DiscoveryEndpoints.class);
         });
     }
 
@@ -120,7 +120,7 @@ class DiscoveryUrlSetTest {
                     .as("an operator confirming discovery is on must see why")
                     .contains(DiscoveryUrlSet.URL_PROPERTY)
                     .containsIgnoringCase("set and non-blank");
-            assertThat(context).hasSingleBean(DiscoveryClient.class);
+            assertThat(context).hasSingleBean(DiscoveryEndpoints.class);
         });
     }
 
@@ -135,7 +135,7 @@ class DiscoveryUrlSetTest {
                     .as("the value must never become expression source")
                     .hasNotFailed();
             assertThat(outcomeMessage(context)).contains(DiscoveryUrlSet.URL_PROPERTY);
-            assertThat(context).hasSingleBean(DiscoveryClient.class);
+            assertThat(context).hasSingleBean(DiscoveryEndpoints.class);
         });
     }
 }

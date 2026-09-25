@@ -6,21 +6,20 @@
 package org.riptide.discovery;
 
 import lombok.Data;
-import org.riptide.config.BoundedHttpRead;
 import org.riptide.secrets.SecretRef;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.util.StringUtils;
 
-import java.net.MalformedURLException;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.net.URL;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Dynamic exporter discovery from a Prometheus HTTP service discovery endpoint.
  *
- * <p>An unset or blank {@code riptide.discovery.url} disables the feature entirely, which is why
+ * <p>An unset or blank {@code riptide.discovery.url}, with no non-blank entry in
+ * {@code riptide.discovery.urls}, disables the feature entirely, which is why
  * there is no separate enable flag: a key whose only job is to say that another key means it is a
  * key that can disagree with itself. Whether discovery runs at all is decided by
  * {@link DiscoveryUrlSet}, the {@code Condition} on {@code DiscoveryConfiguration}, which is the
@@ -43,9 +42,22 @@ public class DiscoveryConfig {
     private String url;
 
     /**
+     * Several endpoints read under this one configuration, for a source of truth that serves its
+     * exporters from more than one path: NetBox answers devices and virtual machines separately.
+     * Every entry shares {@link #type}, {@link #filter}, {@link #token}, {@link #authScheme} and
+     * {@link #mapping}. Exclusive with {@link #url}; {@link #endpoints()} refuses both.
+     *
+     * <p>A list next to {@code url} rather than a list-valued {@code url}: Spring splits a scalar on
+     * commas, so a URL with a comma in its query would be torn in two. The indexed environment form
+     * {@code RIPTIDE_DISCOVERY_URLS_0} keeps such a URL whole.</p>
+     */
+    private List<String> urls;
+
+    /**
      * Which source to read, as one of {@link DiscoverySourceType}'s keys. Unset means the
      * Prometheus service discovery reader, so a deployment that predates this key behaves exactly
-     * as it did. This chooses HOW discovery reads; whether it runs at all is {@link #url} alone.
+     * as it did. This chooses HOW discovery reads, for every endpoint; whether it runs at all is
+     * {@link #url} or {@link #urls} alone.
      *
      * <p>A String rather than the enum so an unrecognised value fails with a message this project
      * writes, naming the key, the value and what is accepted, instead of a binder stack trace. The
@@ -142,35 +154,76 @@ public class DiscoveryConfig {
     }
 
     /**
-     * The endpoint as a {@link URL}.
+     * The configured endpoints in order, each with the key it was written under. This is the one
+     * place the two endpoint keys are validated; the gate, the beans and the composition all read
+     * this list rather than a rule of their own.
      *
-     * @throws IllegalStateException naming the key and the value, rather than letting a binder
-     *     stack trace reach an operator who wrote one bad character. The value is the redacted
-     *     one from {@link #describe()}, and so is the parser's own complaint: an operator who
-     *     wrote {@code https://svc:token@netbox/...} would otherwise have that token logged at
-     *     startup and again on every poll, because every fetch re-derives the endpoint.
+     * <p>{@code url} alone is one endpoint named {@code riptide.discovery.url}, exactly as before
+     * {@code urls} existed. With neither key set the same single entry is returned unset, which
+     * only a caller outside the {@link DiscoveryUrlSet} gate can reach.</p>
+     *
+     * @throws IllegalStateException when both keys are set, naming both, or when a non-empty
+     *     {@code urls} holds a blank entry, naming {@code riptide.discovery.urls[i]}
      */
-    public URL endpoint() {
-        try {
-            return new URI(this.url).toURL();
-        } catch (final MalformedURLException | URISyntaxException | IllegalArgumentException e) {
-            // both halves are redacted, not just the first: URISyntaxException quotes the whole
-            // offending URL in its own message, so the credential would come back through the
-            // parenthesis that was meant to explain what was wrong with it
-            final String reason = BoundedHttpRead.redacted(e.getMessage());
+    public List<DiscoveryEndpoint> endpoints() {
+        final boolean urlSet = StringUtils.hasText(this.url);
+        if (urlSet && hasEntry(this.urls)) {
             throw new IllegalStateException(
-                    "%s is not a usable URL: '%s' (%s)".formatted(DiscoveryUrlSet.URL_PROPERTY, describe(), reason),
-                    e instanceof MalformedURLException ? e : new MalformedURLException(reason));
+                    "%s and %s are both set. Set one of them: %s for a single endpoint, %s for several."
+                            .formatted(DiscoveryUrlSet.URL_PROPERTY, DiscoveryUrlSet.URLS_PROPERTY,
+                                    DiscoveryUrlSet.URL_PROPERTY, DiscoveryUrlSet.URLS_PROPERTY));
         }
+        if (urlSet || !hasEntry(this.urls)) {
+            return List.of(new DiscoveryEndpoint(DiscoveryUrlSet.URL_PROPERTY, this.url));
+        }
+        final List<DiscoveryEndpoint> endpoints = new ArrayList<>(this.urls.size());
+        for (int i = 0; i < this.urls.size(); i++) {
+            final String key = "%s[%d]".formatted(DiscoveryUrlSet.URLS_PROPERTY, i);
+            if (!StringUtils.hasText(this.urls.get(i))) {
+                // refused rather than skipped: a blank entry between two URLs is a list an
+                // operator edited by hand and got wrong, and skipping it would drop whatever
+                // endpoint they meant to write there without a word
+                throw new IllegalStateException(
+                        ("%s is blank. Once %s holds an entry, every entry must be a usable URL: "
+                                + "remove the blank one.").formatted(key, DiscoveryUrlSet.URLS_PROPERTY));
+            }
+            endpoints.add(new DiscoveryEndpoint(key, this.urls.get(i)));
+        }
+        return List.copyOf(endpoints);
     }
 
     /**
-     * The endpoint with any embedded {@code user:token@} removed; safe to log, and the one
-     * spelling of how this endpoint is named. {@code DiscoveryClient.describe()} delegates here
-     * rather than holding a second copy, so the failure above and every fetch-failure message
-     * name the endpoint identically.
+     * Whether a bound {@code urls} list counts as set: at least one non-blank entry. An empty list,
+     * or a list of blanks only, is unset, the rule {@link #url} follows for an exported-but-empty
+     * variable. One copy, read by both {@link #endpoints()} and the {@link DiscoveryUrlSet} gate, so
+     * the two cannot disagree on {@code RIPTIDE_DISCOVERY_URLS=""}.
      */
+    static boolean hasEntry(final List<String> urls) {
+        return urls != null && urls.stream().anyMatch(StringUtils::hasText);
+    }
+
+    /**
+     * The key that turned discovery on, for the sentences that tell an operator which key to
+     * unset: {@code riptide.discovery.urls} when the list holds an entry and {@code url} does not,
+     * otherwise {@code riptide.discovery.url}.
+     */
+    public String enablingKey() {
+        // read off the list endpoints() built, so which key counts stays decided in one place
+        return endpoints().getFirst().key().startsWith(DiscoveryUrlSet.URLS_PROPERTY)
+                ? DiscoveryUrlSet.URLS_PROPERTY
+                : DiscoveryUrlSet.URL_PROPERTY;
+    }
+
+    /**
+     * {@code riptide.discovery.url} as a {@link URL}; see {@link DiscoveryEndpoint#endpoint()}.
+     * The single-endpoint spelling, kept for callers that predate {@link #endpoints()}.
+     */
+    public URL endpoint() {
+        return new DiscoveryEndpoint(DiscoveryUrlSet.URL_PROPERTY, this.url).endpoint();
+    }
+
+    /** {@code riptide.discovery.url}, redacted; see {@link DiscoveryEndpoint#describe()}. */
     public String describe() {
-        return this.url == null ? DiscoveryUrlSet.URL_PROPERTY + " (unset)" : BoundedHttpRead.redacted(this.url);
+        return new DiscoveryEndpoint(DiscoveryUrlSet.URL_PROPERTY, this.url).describe();
     }
 }

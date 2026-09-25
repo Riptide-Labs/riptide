@@ -60,8 +60,9 @@ import java.util.Optional;
  * every fetch, but nothing rebinds that bean at runtime: {@code ConfigFileReloader} warns
  * about a changed path and keeps the boot one.</p>
  *
- * <p><b>With discovery on</b> ({@code riptide.discovery.url} holding a non-blank value; blank
- * counts as unset, so an exported-but-empty variable leaves discovery off) the watched source is the
+ * <p><b>With discovery on</b> ({@code riptide.discovery.url} holding a non-blank value, or
+ * {@code riptide.discovery.urls} a non-blank entry; blank counts as unset, so an exported-but-empty
+ * variable leaves discovery off) the watched source is the
  * composed discovery document, seen through {@link PacedInventorySource}, not the file: discovery
  * owns the {@code exporters} tree,
  * so a cycle that re-read the file alone would offer the loader a document with no exporters,

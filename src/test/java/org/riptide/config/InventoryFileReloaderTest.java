@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.riptide.discovery.ComposedInventoryDocument;
 import org.riptide.discovery.DiscoveryConfig;
+import org.riptide.discovery.DiscoveryEndpoints;
 import org.riptide.discovery.ServiceDiscoverySource;
 import org.riptide.inventory.FileInventoryDocument;
 import org.riptide.inventory.Inventory;
@@ -31,7 +32,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -1282,6 +1285,249 @@ class InventoryFileReloaderTest {
                     .as("there and unreadable is a failure, not absence: an operator told to make a "
                             + "file reappear that is already there has been sent to the wrong place")
                     .isEqualTo(1);
+        } finally {
+            watcher.stop();
+        }
+    }
+
+    private static final String DEVICES_URL = "https://netbox.example.com/api/dcim/devices/";
+    private static final String VMS_URL = "https://netbox.example.com/api/virtualization/virtual-machines/";
+
+    private static byte[] oneExporter(final String name, final String address) {
+        return """
+                [{"targets":["%s"],
+                  "labels":{"__meta_netbox_name":"%s",
+                            "__meta_netbox_primary_ip4":"%s"}}]
+                """.formatted(name, name, address).getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Discovery over two endpoints, devices then virtual machines, the shape
+     * {@code riptide.discovery.urls} builds. Each answers whatever its reference holds: bytes, or an
+     * exception to throw.
+     */
+    private static ComposedInventoryDocument twoEndpointsOver(final InventoryConfig config,
+                                                              final AtomicReference<Object> vms) {
+        final DiscoveryConfig discovery = new DiscoveryConfig();
+        discovery.setUrls(List.of(DEVICES_URL, VMS_URL));
+        discovery.setInterval(Duration.ofHours(1));
+        final ServiceDiscoverySource.Fetcher vmFetcher = () -> {
+            if (vms.get() instanceof IOException failure) {
+                throw failure;
+            }
+            return (byte[]) vms.get();
+        };
+        return new ComposedInventoryDocument(new FileInventoryDocument(config),
+                new DiscoveryEndpoints(List.of(
+                        new DiscoveryEndpoints.Endpoint(() -> DEVICES_URL,
+                                new ServiceDiscoverySource(() -> oneExporter("firewall-01", "10.0.0.1"),
+                                        () -> DEVICES_URL)),
+                        new DiscoveryEndpoints.Endpoint(() -> VMS_URL,
+                                new ServiceDiscoverySource(vmFetcher, () -> VMS_URL)))),
+                discovery, new MetricRegistry());
+    }
+
+    private static ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> captureRiptide() {
+        final var appender = LogCapture.startedAppender();
+        ((ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger("org.riptide")).addAppender(appender);
+        return appender;
+    }
+
+    private static void releaseRiptide(
+            final ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender) {
+        ((ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger("org.riptide")).detachAppender(appender);
+    }
+
+    @Test
+    void withTwoEndpointsBootNamesBothAndServesTheExportersOfEach() throws Exception {
+        write("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """);
+        final InventoryConfig config = new InventoryConfig();
+        config.setFile(this.file);
+        final ComposedInventoryDocument composed =
+                twoEndpointsOver(config, new AtomicReference<>(oneExporter("hook", "10.0.0.2")));
+        final Inventory composedInventory = new Inventory(this.profiles, composed);
+        final var appender = capture(Inventory.class);
+        try {
+            composedInventory.load();
+        } finally {
+            release(Inventory.class, appender);
+        }
+
+        assertThat(appender.list).anySatisfy(event -> assertThat(event.getFormattedMessage())
+                .isEqualTo("Inventory loaded from %s + %s, %s: 1 agent ranges, 2 enrichment entries"
+                        .formatted(this.file, DEVICES_URL, VMS_URL)));
+        assertThat(composedInventory.snapshot().exporterView().match(netflow("10.0.0.1"))).isPresent();
+        assertThat(composedInventory.snapshot().exporterView().match(netflow("10.0.0.2"))).isPresent();
+    }
+
+    @Test
+    void withTwoEndpointsOneFailingAfterBootIsOneCountedFailureNamingItAndTheLastGoodServes() throws Exception {
+        write("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """);
+        final InventoryConfig config = new InventoryConfig();
+        config.setFile(this.file);
+        final AtomicReference<Object> vms = new AtomicReference<>(oneExporter("hook", "10.0.0.2"));
+        final ComposedInventoryDocument composed = twoEndpointsOver(config, vms);
+        final Inventory composedInventory = new Inventory(this.profiles, composed);
+        composedInventory.load();
+        final MetricRegistry fresh = new MetricRegistry();
+        final var watcher = new InventoryFileReloader(new ConfigReloadProperties(), config,
+                composedInventory, this.poller, fresh, Optional.of(composed));
+        watcher.start();
+        final var appender = captureRiptide();
+        try {
+            vms.set(new IOException(VMS_URL + " answered HTTP 500, not 200"));
+            watcher.poll();
+        } finally {
+            releaseRiptide(appender);
+            watcher.stop();
+        }
+
+        assertThat(fresh.counter("inventory.reload.failures").getCount()).isEqualTo(1);
+        assertThat(appender.list).anySatisfy(event -> assertThat(String.valueOf(event.getThrowableProxy() == null
+                ? event.getFormattedMessage()
+                : event.getFormattedMessage() + " " + event.getThrowableProxy().getMessage()))
+                .contains(VMS_URL + " could not be read: " + VMS_URL + " answered HTTP 500"));
+        assertThat(composedInventory.snapshot().exporterView().match(netflow("10.0.0.1")))
+                .as("the device endpoint answered, and still nothing of this poll was published")
+                .isPresent();
+        assertThat(composedInventory.snapshot().exporterView().match(netflow("10.0.0.2")))
+                .as("the last good inventory keeps serving the virtual machine")
+                .isPresent();
+    }
+
+    @Test
+    void withTwoEndpointsOneAnswering404IsAbsenceStaleAndNamedOnce() throws Exception {
+        write("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """);
+        final InventoryConfig config = new InventoryConfig();
+        config.setFile(this.file);
+        final AtomicReference<Object> vms = new AtomicReference<>(oneExporter("hook", "10.0.0.2"));
+        final ComposedInventoryDocument composed = twoEndpointsOver(config, vms);
+        final Inventory composedInventory = new Inventory(this.profiles, composed);
+        composedInventory.load();
+        final MetricRegistry fresh = new MetricRegistry();
+        final var watcher = new InventoryFileReloader(new ConfigReloadProperties(), config,
+                composedInventory, this.poller, fresh, Optional.of(composed));
+        watcher.start();
+        final var appender = capture(ComposedInventoryDocument.class);
+        try {
+            vms.set(new java.io.FileNotFoundException(VMS_URL + " answered 404"));
+            watcher.poll();
+            watcher.poll();
+        } finally {
+            release(ComposedInventoryDocument.class, appender);
+            watcher.stop();
+        }
+
+        assertThat(staleOf(fresh)).isEqualTo(1);
+        assertThat(fresh.counter("inventory.reload.failures").getCount()).as("absence is not failure").isZero();
+        assertThat(appender.list)
+                .as("which endpoint is absent is said once an episode, not every poll")
+                .singleElement()
+                .satisfies(event -> assertThat(event.getFormattedMessage())
+                        .isEqualTo(VMS_URL + " could not be read: " + VMS_URL + " answered 404"));
+    }
+
+    /**
+     * A second endpoint going absent before the first recovers is a different fault, and naming
+     * only the first would send the operator back to an endpoint they already fixed.
+     */
+    @Test
+    void withTwoEndpointsASecondEndpointGoingAbsentInTheSameEpisodeIsNamedToo() throws Exception {
+        final InventoryConfig config = new InventoryConfig();
+        config.setFile(this.file);
+        final DiscoveryConfig discovery = new DiscoveryConfig();
+        discovery.setUrls(List.of(DEVICES_URL, VMS_URL));
+        final AtomicReference<Object> devices = new AtomicReference<>(
+                new java.io.FileNotFoundException(DEVICES_URL + " answered 404"));
+        final AtomicReference<Object> vms = new AtomicReference<>(oneExporter("hook", "10.0.0.2"));
+        final ComposedInventoryDocument composed = new ComposedInventoryDocument(new FileInventoryDocument(config),
+                new DiscoveryEndpoints(List.of(
+                        new DiscoveryEndpoints.Endpoint(() -> DEVICES_URL, new ServiceDiscoverySource(() -> {
+                            if (devices.get() instanceof IOException failure) {
+                                throw failure;
+                            }
+                            return (byte[]) devices.get();
+                        }, () -> DEVICES_URL)),
+                        new DiscoveryEndpoints.Endpoint(() -> VMS_URL, new ServiceDiscoverySource(() -> {
+                            if (vms.get() instanceof IOException failure) {
+                                throw failure;
+                            }
+                            return (byte[]) vms.get();
+                        }, () -> VMS_URL)))),
+                discovery, new MetricRegistry());
+        final var appender = capture(ComposedInventoryDocument.class);
+        try {
+            composed.fetch();
+            devices.set(oneExporter("firewall-01", "10.0.0.1"));
+            vms.set(new java.io.FileNotFoundException(VMS_URL + " answered 404"));
+            composed.fetch();
+            composed.fetch();
+        } finally {
+            release(ComposedInventoryDocument.class, appender);
+        }
+
+        assertThat(appender.list).extracting(event -> event.getFormattedMessage())
+                .containsExactly(DEVICES_URL + " could not be read: " + DEVICES_URL + " answered 404",
+                        VMS_URL + " could not be read: " + VMS_URL + " answered 404");
+    }
+
+    @Test
+    void withTwoEndpointsOneDownAtBootStartsWithNoDiscoveredExportersUntilBothAnswer() throws Exception {
+        write("""
+                riptide:
+                  snmp:
+                    agents:
+                      "10.20.0.0/16":
+                        credentials: corp-v3
+                """);
+        final InventoryConfig config = new InventoryConfig();
+        config.setFile(this.file);
+        final AtomicReference<Object> vms = new AtomicReference<>(new IOException("Connection refused"));
+        final ComposedInventoryDocument composed = twoEndpointsOver(config, vms);
+        final Inventory composedInventory = new Inventory(this.profiles, composed);
+        final var appender = capture(ComposedInventoryDocument.class);
+        try {
+            composedInventory.load();
+        } finally {
+            release(ComposedInventoryDocument.class, appender);
+        }
+        assertThat(appender.list).singleElement().satisfies(event -> assertThat(event.getFormattedMessage())
+                .startsWith("Boot could not reach " + VMS_URL + ": Connection refused."));
+        assertThat(composedInventory.snapshot().exporterCount())
+                .as("the device endpoint answered, and none of its exporters are served either")
+                .isZero();
+
+        final MetricRegistry fresh = new MetricRegistry();
+        final var watcher = new InventoryFileReloader(new ConfigReloadProperties(), config,
+                composedInventory, this.poller, fresh, Optional.of(composed));
+        watcher.start();
+        try {
+            assertThat(staleOf(fresh)).isEqualTo(1);
+            watcher.poll();
+            assertThat(staleOf(fresh)).as("still one endpoint down").isEqualTo(1);
+
+            vms.set(oneExporter("hook", "10.0.0.2"));
+            watcher.poll();
+            assertThat(staleOf(fresh)).as("both answer").isZero();
+            assertThat(composedInventory.snapshot().exporterCount()).isEqualTo(2);
         } finally {
             watcher.stop();
         }

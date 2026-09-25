@@ -17,8 +17,9 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 
 /**
- * Wires discovery only when {@code riptide.discovery.url} holds a non-blank value. With it unset
- * or blank nothing here is created, the {@link FileInventoryDocument} stays the only
+ * Wires discovery only when {@code riptide.discovery.url} holds a non-blank value or
+ * {@code riptide.discovery.urls} holds a non-blank entry. With both unset or blank nothing here is
+ * created, the {@link FileInventoryDocument} stays the only
  * {@link InventoryDocument}, and every path behaves exactly as it did before discovery existed.
  *
  * <p><b>Why not {@code @ConditionalOnProperty}.</b> That condition with no {@code havingValue}
@@ -42,11 +43,20 @@ import org.springframework.context.annotation.Primary;
 @Conditional(DiscoveryUrlSet.class)
 public class DiscoveryConfiguration {
 
+    /**
+     * One client and one source per configured endpoint, in configured order.
+     * {@code DiscoveryConfig.endpoints()} validates the two endpoint keys here, at startup.
+     */
     @Bean
-    public DiscoveryClient discoveryClient(final DiscoveryConfig config,
-                                           final SecretResolvers secretResolvers,
-                                           final OutboundHttpTrust trust) {
-        return new DiscoveryClient(config, secretResolvers, trust);
+    public DiscoveryEndpoints discoveryEndpoints(final DiscoveryConfig config,
+                                                 final SecretResolvers secretResolvers,
+                                                 final OutboundHttpTrust trust) {
+        return new DiscoveryEndpoints(config.endpoints().stream()
+                .map(endpoint -> {
+                    final DiscoveryClient client = new DiscoveryClient(config, endpoint, secretResolvers, trust);
+                    return new DiscoveryEndpoints.Endpoint(client::describe, source(client, endpoint, config));
+                })
+                .toList());
     }
 
     /**
@@ -69,7 +79,9 @@ public class DiscoveryConfiguration {
     }
 
     /**
-     * The source {@code riptide.discovery.type} selects.
+     * The source {@code riptide.discovery.type} selects, for one endpoint. Every endpoint gets the
+     * same type, so the {@code address-labels} refusal and the mapping resolution below run once
+     * per endpoint and fail on the first.
      *
      * <p>Two of the three read NetBox in the deployments this was built for; they differ in what
      * they speak to. One reads a Prometheus service discovery document, which on NetBox means a
@@ -77,8 +89,9 @@ public class DiscoveryConfiguration {
      * pages its results and accepts NetBox's filters. The third reads any JSON endpoint by paths the
      * operator writes, for a source of truth that is neither.</p>
      */
-    @Bean
-    public DiscoverySource discoverySource(final DiscoveryClient client, final DiscoveryConfig config) {
+    private static DiscoverySource source(final DiscoveryClient client,
+                                          final DiscoveryEndpoint endpoint,
+                                          final DiscoveryConfig config) {
         return switch (config.sourceType()) {
             case PROMETHEUS_SD -> new ServiceDiscoverySource(client::fetch, client::describe);
             case NETBOX_API -> {
@@ -99,13 +112,13 @@ public class DiscoveryConfiguration {
                                             DiscoverySourceType.PROMETHEUS_SD.key()));
                 }
                 yield new NetboxDeviceSource(
-                        NetboxDeviceSource.firstPage(config.endpoint(), config.getFilter()),
+                        NetboxDeviceSource.firstPage(endpoint.endpoint(), config.getFilter(), true, endpoint.key()),
                         client::fetchPage, client::describe);
             }
             // firstPage without the ordering: this endpoint is not NetBox, so NetBox's
             // pagination-stability term has no business being appended to it
             case MAPPED_JSON -> new MappedJsonSource(
-                    NetboxDeviceSource.firstPage(config.endpoint(), config.getFilter(), false),
+                    NetboxDeviceSource.firstPage(endpoint.endpoint(), config.getFilter(), false, endpoint.key()),
                     client::fetchPage, client::describe, mapping(config.getMapping()));
         };
     }
@@ -122,11 +135,10 @@ public class DiscoveryConfiguration {
     @Bean
     @Primary
     public ComposedInventoryDocument composedInventoryDocument(final FileInventoryDocument file,
-                                                               final DiscoveryClient client,
-                                                               final DiscoverySource source,
+                                                               final DiscoveryEndpoints endpoints,
                                                                final DiscoveryConfig config,
                                                                final MetricRegistry metrics) {
-        return new ComposedInventoryDocument(file, source, client::describe, config, metrics);
+        return new ComposedInventoryDocument(file, endpoints, config, metrics);
     }
 
     /**
