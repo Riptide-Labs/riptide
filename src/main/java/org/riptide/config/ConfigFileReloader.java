@@ -168,12 +168,16 @@ public class ConfigFileReloader {
             log.warn("Config hot-reload requested but spring.config.import is not a single file: location — disabled");
             return;
         }
-        // hashes are NOT seeded from the file as it stands at boot: this reloader's first
-        // poll commits the file it finds, which is how a file created after boot (the
-        // optional: import) reaches the running configuration at all
+        // hashes are seeded from the file as it stands now, so an unchanged file is not
+        // reloaded by the first poll (#889: after a degraded discovery boot that phantom
+        // reload WARNed "NOT serving", counted a partial and latched the stale gauge). The
+        // seed skips an absent file, so a file created after boot (the optional: import)
+        // still commits on the first poll that finds it. Known gap: the seed reads the file
+        // here, not when boot loaded it, so an edit landing in between is recorded as
+        // committed and not applied until the file changes again
         this.trigger = new FileWatchTrigger(log, this.location, this.properties.getReloadInterval(),
                 "ConfigFileReloader", messages(this.location), this.metrics, "config",
-                this.reloadFailures, false, new FileWatchTrigger.Cycle() {
+                this.reloadFailures, true, new FileWatchTrigger.Cycle() {
                     @Override
                     public void onContent(final byte[] content) throws Exception {
                         reload(content);

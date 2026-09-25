@@ -595,10 +595,11 @@ class FileWatchTriggerTest {
     // -- the per-cycle properties neither reloader's suite can reach ------------------
 
     /**
-     * Hash seeding is a construction parameter, not a decision the trigger makes: the
-     * inventory watcher seeds from the content boot already served, so its first poll
-     * does not recommit it, and the config reloader deliberately does not, so a file
-     * created after boot reaches the running configuration on the first cycle. Both
+     * Hash seeding is a construction parameter, not a decision the trigger makes: a seeded
+     * owner's first poll does not recommit the content already serving, and an unseeded
+     * one's commits whatever it finds (the inventory watcher's discovery path, where the
+     * fetchable document can differ from the one boot served). Seeding skips an absent
+     * source, so a file created after boot commits on its first cycle either way. Both
      * behaviours, side by side, against the same file.
      */
     @Test
