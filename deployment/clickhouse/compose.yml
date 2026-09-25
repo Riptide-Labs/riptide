@@ -18,11 +18,11 @@ services:
       TZ: UTC
       CLICKHOUSE_USER: default
       CLICKHOUSE_DB: riptide
-      # Defaults to riptide so the quickstart stays one command on a laptop. This user holds
-      # access_management, so set CLICKHOUSE_PASSWORD in the environment or an .env file before
-      # publishing the ports below beyond loopback. Read by users.xml via from_env. See
-      # docs/guides/docker-compose.md.
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-riptide}
+      # Required: the default user holds access_management, named_collection_control, and
+      # show_named_collections_secrets. Set CLICKHOUSE_PASSWORD in the environment or a .env file.
+      # Read by users.xml via from_env. The image entrypoint will refuse to start if this is unset
+      # or empty, preventing unauthenticated privileged access. See docs/guides/docker-compose.md.
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set - the default user holds access_management and cannot run without authentication}
     volumes:
       - clickhouse-data:/var/lib/clickhouse/
       - ./container-fs/clickhouse/config.xml:/etc/clickhouse-server/config.d/config.xml
@@ -55,7 +55,8 @@ services:
       # beyond localhost. See docs/guides/docker-compose.md.
       GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-admin}
       # Consumed by the provisioned ClickHouse datasource, which interpolates it at load.
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-riptide}
+      # Must match the ClickHouse password; no default to prevent mismatched credentials.
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}
       GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,netsage-sankey-panel
       GF_FEATURE_TOGGLES_ENABLE: nestedFolders
     volumes:

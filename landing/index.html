@@ -485,10 +485,11 @@ Container riptide-grafana-folders-1  <span class="code-green">Started</span></sp
                             <p class="tab-instructions">Deploy the full stack including Riptide, ClickHouse, and Grafana in seconds:</p>
                             <pre class="code-block"><code>git clone https://github.com/Riptide-Labs/riptide.git
 cd riptide/deployment/riptide
+export CLICKHOUSE_PASSWORD=change-me-before-anyone-else-can-reach-this-host
 docker compose up -d</code></pre>
                             <div class="tab-meta">
                                 <span>🌐 <strong>Grafana:</strong> http://localhost:3000 (admin/admin, override with <code>GF_SECURITY_ADMIN_PASSWORD</code>)</span>
-                                <span>🗄️ <strong>ClickHouse:</strong> 127.0.0.1:8123 (default/riptide, override with <code>CLICKHOUSE_PASSWORD</code>)</span>
+                                <span>🗄️ <strong>ClickHouse:</strong> 127.0.0.1:8123 (user: default, set <code>CLICKHOUSE_PASSWORD</code> required)</span>
                                 <span>⚡ <strong>UDP Listeners:</strong> Port 9999 for incoming flows</span>
                             </div>
                         </div>
@@ -526,7 +527,7 @@ services.riptide = {
                         <div class="tab-pane" id="tab-jar">
                             <p class="tab-instructions">Download the release jar and run it against a reachable ClickHouse (requires Java 25):</p>
                             <pre class="code-block"><code>curl -fsSLO https://github.com/Riptide-Labs/riptide/releases/download/v%%VERSION%%/riptide-flows-%%VERSION%%.jar
-export CLICKHOUSE_PASSWORD=riptide
+export CLICKHOUSE_PASSWORD=your-clickhouse-password
 java -jar riptide-flows-%%VERSION%%.jar \
   --riptide.clickhouse.endpoint=http://localhost:8123 \
   --riptide.clickhouse.password=env://CLICKHOUSE_PASSWORD \

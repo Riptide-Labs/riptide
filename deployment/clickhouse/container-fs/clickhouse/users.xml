@@ -13,9 +13,9 @@
             <!--
                 Read from the environment so the compose file owns the value and this file carries
                 no secret (#651). This user holds access_management, so without a password anyone
-                who can reach 8123 has ClickHouse admin. Defaulted in compose.yml to keep the
-                quickstart one command, with the ports published on loopback; set
-                CLICKHOUSE_PASSWORD before publishing them wider.
+                who can reach 8123 has ClickHouse admin. CLICKHOUSE_PASSWORD is required in
+                compose.yml (no default) to prevent unauthenticated privileged access. Set it in
+                the environment or a .env file before starting the stack.
 
                 Narrowing <networks> instead was tried three times and does not work here: riptide
                 and Grafana both authenticate as this user and both arrive from a compose bridge

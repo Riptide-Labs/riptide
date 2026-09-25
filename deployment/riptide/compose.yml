@@ -16,7 +16,8 @@ services:
       RIPTIDE_CLICKHOUSE_ENDPOINT: http://clickhouse:8123
       RIPTIDE_CLICKHOUSE_USERNAME: default
       # A SecretRef, so a password containing "://" or "#" is not parsed as scheme://value#key.
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-riptide}
+      # Must match the ClickHouse password; no default to prevent mismatched credentials.
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}
       RIPTIDE_CLICKHOUSE_PASSWORD: env://CLICKHOUSE_PASSWORD
       RIPTIDE_CLICKHOUSE_DATABASE: riptide
       # One multi receiver parses NetFlow v5/v9, IPFIX and sFlow on the published port
