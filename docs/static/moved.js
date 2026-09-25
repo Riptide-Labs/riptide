@@ -149,6 +149,9 @@ window.RIPTIDE_MOVED = {
     "the-enrichment-ladder": "/docs/architecture/enrichment#the-enrichment-ladder",
     "writing-a-rule": "/docs/guides/classification-rules"
   },
+  "/docs/getting-started": {
+    "": "/docs/#quickstart"
+  },
   "/docs/upgrading-from-0.8": {
     "": "/docs/guides/upgrading-from-0.8"
   }
@@ -158,7 +161,7 @@ window.RIPTIDE_MOVED = {
   var moved = window.RIPTIDE_MOVED[path];
   if (!moved) return;
   var anchor = location.hash.slice(1);
-  var to = moved[anchor] || (moved[''] + (anchor ? '#' + anchor : ''));
+  var to = moved[anchor] || (moved[''].indexOf('#') < 0 && anchor ? moved[''] + '#' + anchor : moved['']);
   var hash = to.indexOf('#');
   location.replace(hash < 0 ? to + location.search : to.slice(0, hash) + location.search + to.slice(hash));
 })();
