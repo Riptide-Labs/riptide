@@ -86,36 +86,36 @@ window.RIPTIDE_MOVED = {
     "": "/docs/guides/linux-packages"
   },
   "/docs/deploy/multi-tenancy": {
-    "": "/docs/guides/onboard-a-tenant",
-    "adding-rollups-to-an-existing-deployment": "/docs/guides/onboard-a-tenant#adding-rollups-to-an-existing-deployment",
-    "adding-the-dead-letter-table-to-an-existing-deployment": "/docs/guides/onboard-a-tenant#adding-the-dead-letter-table-to-an-existing-deployment",
+    "": "/docs/operations/tenants/onboard-a-tenant",
+    "adding-rollups-to-an-existing-deployment": "/docs/operations/tenants/onboard-a-tenant#adding-rollups-to-an-existing-deployment",
+    "adding-the-dead-letter-table-to-an-existing-deployment": "/docs/operations/tenants/onboard-a-tenant#adding-the-dead-letter-table-to-an-existing-deployment",
     "admin-privileges": "/docs/reference/provisioning-cli#admin-privileges",
     "dropping-the-roles": "/docs/architecture/multi-tenancy#dropping-the-roles",
     "grafana-topology": "/docs/architecture/multi-tenancy#grafana-topology",
     "object-names-carry-their-database": "/docs/architecture/multi-tenancy#object-names-carry-their-database",
-    "onboard-a-tenant": "/docs/guides/onboard-a-tenant",
+    "onboard-a-tenant": "/docs/operations/tenants/onboard-a-tenant",
     "open-questions": "/docs/architecture/multi-tenancy#open-questions",
-    "prerequisites": "/docs/guides/onboard-a-tenant#prerequisites",
-    "revoking-the-pre-rename-roles-on-a-migrated-database": "/docs/guides/migrate-tenant-accounts#revoking-the-pre-rename-roles-on-a-migrated-database",
+    "prerequisites": "/docs/operations/tenants/onboard-a-tenant#prerequisites",
+    "revoking-the-pre-rename-roles-on-a-migrated-database": "/docs/operations/tenants/migrate-tenant-accounts#revoking-the-pre-rename-roles-on-a-migrated-database",
     "the-identity-model": "/docs/architecture/multi-tenancy#the-identity-model",
-    "upgrading-a-deployment-onboarded-before-the-rename": "/docs/guides/migrate-tenant-accounts#upgrading-a-deployment-onboarded-before-the-rename",
+    "upgrading-a-deployment-onboarded-before-the-rename": "/docs/operations/tenants/migrate-tenant-accounts#upgrading-a-deployment-onboarded-before-the-rename",
     "what-it-provisions": "/docs/reference/provisioning-cli#what-onboard-emits",
     "what-the-reader-guarantees": "/docs/architecture/multi-tenancy#what-the-reader-guarantees",
-    "when-it-refuses": "/docs/guides/migrate-tenant-accounts#when-it-refuses"
+    "when-it-refuses": "/docs/operations/tenants/migrate-tenant-accounts#when-it-refuses"
   },
   "/docs/deploy/nixos": {
     "": "/docs/guides/nixos"
   },
   "/docs/deploy/operations": {
     "": "/docs/operations/troubleshooting",
-    "a-stable-application-name": "/docs/guides/profiling#give-the-service-a-stable-name",
+    "a-stable-application-name": "/docs/operations/profiling#give-the-service-a-stable-name",
     "classification-rule-reloads": "/docs/architecture/reloading#classification-rule-reloads",
-    "config-hot-reload": "/docs/guides/hot-reload",
-    "containers-and-what-to-do-when-a-profile-looks-wrong": "/docs/guides/profiling#fall-back-to-jfr-when-a-profile-looks-wrong",
-    "continuous-profiling": "/docs/guides/profiling",
+    "config-hot-reload": "/docs/operations/hot-reload",
+    "containers-and-what-to-do-when-a-profile-looks-wrong": "/docs/operations/profiling#fall-back-to-jfr-when-a-profile-looks-wrong",
+    "continuous-profiling": "/docs/operations/profiling",
     "dead-letters": "/docs/operations/dead-letters",
     "elements-riptide-parses-and-discards": "/docs/architecture/loss-accounting#elements-riptide-parses-and-discards",
-    "enable-native-access-on-a-future-jdk": "/docs/guides/profiling#steps",
+    "enable-native-access-on-a-future-jdk": "/docs/operations/profiling#steps",
     "health-endpoints--probes": "/docs/reference/management#health-endpoints--probes",
     "image-tags": "/docs/reference/management#image-tags",
     "ingest-loss-counters": "/docs/architecture/loss-accounting",
@@ -124,11 +124,11 @@ window.RIPTIDE_MOVED = {
     "netflow-v5-sampling-rate-resolution": "/docs/architecture/loss-accounting#netflow-v5-sampling-rate-resolution",
     "parser-gauges-exporters-and-templates": "/docs/architecture/loss-accounting#parser-gauges-exporters-and-templates",
     "ports": "/docs/reference/management#ports",
-    "restarts-and-data": "/docs/guides/upgrade#what-the-schema-check-migrates",
+    "restarts-and-data": "/docs/operations/upgrades/upgrade#what-the-schema-check-migrates",
     "supported-ruleset-size": "/docs/architecture/classification-build-cost#supported-ruleset-size",
-    "upgrading": "/docs/guides/upgrade",
-    "what-it-costs-when-it-is-off": "/docs/guides/profiling#what-it-costs-when-it-is-off",
-    "what-the-profile-measures-and-which-event-to-ask-for": "/docs/guides/profiling#choose-the-profiler-event"
+    "upgrading": "/docs/operations/upgrades/upgrade",
+    "what-it-costs-when-it-is-off": "/docs/operations/profiling#what-it-costs-when-it-is-off",
+    "what-the-profile-measures-and-which-event-to-ask-for": "/docs/operations/profiling#choose-the-profiler-event"
   },
   "/docs/deploy/plain-jar": {
     "": "/docs/guides/plain-jar"
@@ -142,18 +142,39 @@ window.RIPTIDE_MOVED = {
     "http-host-and-uri-from-cisco-avc": "/docs/architecture/enrichment#http-host-and-uri-from-cisco-avc",
     "interface-tables-are-polled-not-looked-up": "/docs/architecture/enrichment#interface-tables-are-polled-not-looked-up",
     "locality": "/docs/architecture/enrichment#locality",
-    "migrating-from-riptidesnmpcache": "/docs/guides/upgrade#snmp-cache-keys-are-retired",
+    "migrating-from-riptidesnmpcache": "/docs/operations/upgrades/upgrade#snmp-cache-keys-are-retired",
     "reverse-dns-hostnames": "/docs/architecture/enrichment#reverse-dns-hostnames",
     "snmp-interface-data": "/docs/architecture/enrichment#snmp-interface-data",
     "static-interface-mapping": "/docs/architecture/enrichment#static-interface-mapping",
     "the-enrichment-ladder": "/docs/architecture/enrichment#the-enrichment-ladder",
-    "writing-a-rule": "/docs/guides/classification-rules"
+    "writing-a-rule": "/docs/operations/classification-rules"
   },
   "/docs/getting-started": {
     "": "/docs/#quickstart"
   },
+  "/docs/guides/classification-rules": {
+    "": "/docs/operations/classification-rules"
+  },
+  "/docs/guides/hot-reload": {
+    "": "/docs/operations/hot-reload"
+  },
+  "/docs/guides/migrate-tenant-accounts": {
+    "": "/docs/operations/tenants/migrate-tenant-accounts"
+  },
+  "/docs/guides/onboard-a-tenant": {
+    "": "/docs/operations/tenants/onboard-a-tenant"
+  },
+  "/docs/guides/profiling": {
+    "": "/docs/operations/profiling"
+  },
+  "/docs/guides/upgrade": {
+    "": "/docs/operations/upgrades/upgrade"
+  },
+  "/docs/guides/upgrading-from-0.8": {
+    "": "/docs/operations/upgrades/upgrading-from-0.8"
+  },
   "/docs/upgrading-from-0.8": {
-    "": "/docs/guides/upgrading-from-0.8"
+    "": "/docs/operations/upgrades/upgrading-from-0.8"
   }
 };
 (function () {

@@ -1,4 +1,5 @@
 ---
+sidebar_position: 2
 title: Upgrading from 0.8
 description: Convert a 0.8 riptide.nodes configuration with the bundled converter, remove the keys 0.9 and later do not read, and what changes in behaviour.
 ---
@@ -10,7 +11,7 @@ A surviving key in any spelling, `riptide.nodes.<name>.*`, the indexed `riptide.
 
 ## Prerequisites
 
-- The current jar. The converter is part of it, see [subcommands](plain-jar.md#subcommands).
+- The current jar. The converter is part of it, see [subcommands](../../guides/plain-jar.md#subcommands).
 - The 0.8 configuration as nested YAML: `riptide:` containing `nodes:` containing the node names. A flat properties file is not read; re-indent the `riptide.nodes` and `riptide.snmp.poll` trees into a small YAML file first, since only those two are read.
 
 ## Steps
@@ -71,8 +72,8 @@ A surviving key in any spelling, `riptide.nodes.<name>.*`, the indexed `riptide.
    | Key | Effect |
    | --- | --- |
    | the whole `riptide.nodes` tree | fails startup |
-   | `riptide.snmp.poll.refresh-interval-ms`, `riptide.snmp.poll.snapshot-expiry-ms` | fails startup; cadence lives on [polling profiles](../reference/agent-configuration.md#settings) |
-   | `riptide.snmp.agents`, `riptide.exporters` in the main configuration | fails startup; they belong in the inventory file, or `riptide.exporters` in the [discovery](../reference/discovery.md) endpoint |
+   | `riptide.snmp.poll.refresh-interval-ms`, `riptide.snmp.poll.snapshot-expiry-ms` | fails startup; cadence lives on [polling profiles](../../reference/agent-configuration.md#settings) |
+   | `riptide.snmp.agents`, `riptide.exporters` in the main configuration | fails startup; they belong in the inventory file, or `riptide.exporters` in the [discovery](../../reference/discovery.md) endpoint |
    | `riptide.snmp.config.definitions` | ignored, logged as an error |
    | `riptide.snmp.cache.retention-ms`, `.negative-retention-ms`, `.dead-endpoint-retention-ms` | ignored, logged as a warning |
 
@@ -175,6 +176,6 @@ A single-word name such as `RIPTIDE_NODES_EDGE_SUBNET_ADDRESS` did bind; write t
 | Which device is polled | named nodes only | any device inside a credentialed range, from its first flow; `riptide.snmp.poll.max-exporters` and `pool-width` bound it |
 | Which credentials poll a device covered by two nodes | whichever the first flow after start-up selected, because the poller held one registration per address | the most specific range, by longest prefix, whatever observation domain arrives; `riptide convert` names every node this applies to |
 | Observation-domain pin | scoped naming and polling | scopes naming and interface pins only; agent ranges carry no pin, because one address has one SNMP agent |
-| Inventory edits | restart | hot reload on content change once `riptide.config.reload-interval` is set, see [config hot-reload](hot-reload.md); a rejected file keeps the last good inventory and raises `inventory.reload.stale` |
-| Secret value rotation | | `file://` needs no reload, `env://` needs a restart, `sops://` is cached until the next config reload, see [secret references](../reference/secret-references.md#rotation) |
+| Inventory edits | restart | hot reload on content change once `riptide.config.reload-interval` is set, see [config hot-reload](../hot-reload.md); a rejected file keeps the last good inventory and raises `inventory.reload.stale` |
+| Secret value rotation | | `file://` needs no reload, `env://` needs a restart, `sops://` is cached until the next config reload, see [secret references](../../reference/secret-references.md#rotation) |
 

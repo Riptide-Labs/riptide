@@ -1,0 +1,10 @@
+{
+  "label": "Tenants",
+  "position": 7,
+  "collapsed": true,
+  "link": {
+    "type": "generated-index",
+    "slug": "/operations/tenants",
+    "description": "Give each tenant its own ClickHouse account, and migrate accounts created before the rename."
+  }
+}

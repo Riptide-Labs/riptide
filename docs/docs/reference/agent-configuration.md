@@ -162,7 +162,7 @@ At startup this fails the process. During a hot reload it keeps the last good in
 
 ## Hot reload
 
-With `riptide.config.reload-interval` set, see [config hot-reload](../guides/hot-reload.md), the inventory file is re-read on content change.
+With `riptide.config.reload-interval` set, see [config hot-reload](../operations/hot-reload.md), the inventory file is re-read on content change.
 
 Expected output at startup:
 

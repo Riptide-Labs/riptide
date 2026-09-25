@@ -42,7 +42,7 @@ The application table's per-scope cap is fixed at 16,384 ids and its name length
 | --- | --- | --- |
 | **`riptide.snmp.poll.refresh-interval-ms`** | fails startup, in any file or environment spelling | `riptide.snmp.polling.<name>.refresh-interval` |
 | **`riptide.snmp.poll.snapshot-expiry-ms`** | fails startup | `riptide.snmp.polling.<name>.snapshot-expiry` |
-| **`riptide.snmp.cache.retention-ms`** | ignored, with a startup warning | `riptide.snmp.polling.<name>.refresh-interval`. Not carried over: the old value was a cache TTL, the new one is a poll interval. See [Upgrade riptide](../guides/upgrade.md). |
+| **`riptide.snmp.cache.retention-ms`** | ignored, with a startup warning | `riptide.snmp.polling.<name>.refresh-interval`. Not carried over: the old value was a cache TTL, the new one is a poll interval. See [Upgrade riptide](../operations/upgrades/upgrade.md). |
 | **`riptide.snmp.cache.negative-retention-ms`** | ignored, with a startup warning | none. An `ifIndex` absent from a polled snapshot is a known absence. |
 | **`riptide.snmp.cache.dead-endpoint-retention-ms`** | ignored, with a startup warning | `riptide.snmp.poll.dead-endpoint-base-ms` and `-ceiling-ms` |
 
@@ -71,7 +71,7 @@ Riptide logs a warning at startup for each ignored key it finds set, so a stale 
 | **`riptide.classification.rules`** | Spring resource | `classpath:classification-rules.csv` | The ruleset. `file:` and `http(s)://` locations are accepted. An unreadable or unparseable resource fails startup. |
 | **`riptide.classification.reload-interval`** | duration | `0` (disabled) | Poll the resource on this schedule and apply a changed ruleset without a restart. Absent or `0` parses the rules once at boot. |
 
-The rule format and the reload procedure are in [Write a classification rule](../guides/classification-rules.md).
+The rule format and the reload procedure are in [Write a classification rule](../operations/classification-rules.md).
 
 ## Clock correction
 

@@ -67,7 +67,7 @@ Where GeoIP fits below this rung is on the [GeoIP page](geoip.md#precedence).
 
 ## Apply a change without a restart
 
-With **`riptide.config.reload-interval`** set, the config file is hashed on every poll and both tables are re-bound whenever its content changes; see [config hot-reload](../guides/hot-reload.md).
+With **`riptide.config.reload-interval`** set, the config file is hashed on every poll and both tables are re-bound whenever its content changes; see [config hot-reload](../operations/hot-reload.md).
 The new tables are validated with the startup rules first, then swapped in as one unit.
 Each lookup reads one snapshot, old or new.
 A flow enriched during the swap can still take its prefix from the old table and its AS name from the new one.

@@ -1,4 +1,5 @@
 ---
+sidebar_position: 5
 title: Enable continuous profiling
 description: Ship continuous profiles to a Pyroscope server with one riptide setting and Pyroscope's own environment variables, pick the profiler event, add the JDK native-access flag, and fall back to JFR when a profile looks wrong.
 ---

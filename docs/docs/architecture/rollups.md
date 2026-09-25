@@ -49,7 +49,7 @@ Repair runs in manage mode at startup, and in `riptide onboard` for provisioned 
 It is idempotent, so it runs on every start and does nothing after the first.
 Riptide logs a line naming the rollup and the key change when it repairs something, and stays silent otherwise.
 A validate-mode collector plans no repairs: until `onboard` is re-run it reports all four rollups as not matching this version and declines them at query time, and the decision is made once, at startup, so the collector must be restarted after the repair.
-The procedure is in [Upgrade riptide](../guides/upgrade.md).
+The procedure is in [Upgrade riptide](../operations/upgrades/upgrade.md).
 
 A measure is added in place when the engine does not sum it.
 The sampling-provenance bitmask is `SimpleAggregateFunction(groupBitOr, …)`, so a historical row reading `0` means "no provenance recorded" rather than a total that is too small.
