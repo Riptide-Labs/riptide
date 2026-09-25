@@ -77,3 +77,6 @@ superpowers/
 .agent/
 .agents/
 __pycache__/
+
+# Design specs live under docs/superpowers; the bare pattern above is for the plugin working dir
+!docs/superpowers/
