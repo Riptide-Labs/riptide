@@ -14,7 +14,7 @@ The stack starts riptide from the published image, ClickHouse pinned to the vers
 
 ## Steps
 
-1. Get the stack files and set the two passwords in a `.env` file next to `compose.yml`. Compose interpolates the values, so a literal `$` is written `$$`. The file is gitignored.
+1. Get the stack files and set the two passwords in a `.env` file next to `compose.yml`. `CLICKHOUSE_PASSWORD` is required. Compose interpolates the values, so a literal `$` is written `$$`. The file is gitignored.
 
    ```bash
    git clone https://github.com/Riptide-Labs/riptide.git
@@ -73,10 +73,17 @@ The stack starts riptide from the published image, ClickHouse pinned to the vers
    Grafana is at `http://localhost:3000`, user `admin`. Its Explore view runs ad-hoc queries against the provisioned ClickHouse datasource.
 
 :::warning
-Without a `.env` file the stack starts with ClickHouse's `default` user at password `riptide` and Grafana's `admin` at `admin`.
+Without `GF_SECURITY_ADMIN_PASSWORD`, Grafana's `admin` login is `admin`.
 Grafana's port 3000 is published on every interface, so on a host with a routable address that login is reachable from the network.
-The ClickHouse `default` user holds `access_management`, so change its password before publishing ports 8123 or 9000 beyond loopback.
 :::
+
+Without `CLICKHOUSE_PASSWORD`, every `docker compose` command in the directory stops before it starts anything, `ps` and `down` included:
+
+```text
+error while interpolating services.riptide.environment.CLICKHOUSE_PASSWORD: required variable CLICKHOUSE_PASSWORD is missing a value: set CLICKHOUSE_PASSWORD in a .env file next to compose.yml, see https://riptide.space/docs/guides/docker-compose
+```
+
+Write the `.env` file from step 1, or export the variable in the same shell.
 
 ## What the stack runs
 
@@ -91,7 +98,7 @@ The riptide image follows `:latest`, so `docker compose pull` moves the collecto
 
 | Variable | Read by | Default | When a change takes effect |
 | --- | --- | --- | --- |
-| **`CLICKHOUSE_PASSWORD`** | ClickHouse, riptide (as `env://CLICKHOUSE_PASSWORD`), Grafana's datasource | `riptide` | On `docker compose up -d`, all three follow. Anything else that connected with the old password needs the new one. |
+| **`CLICKHOUSE_PASSWORD`** | ClickHouse, riptide (as `env://CLICKHOUSE_PASSWORD`), Grafana's datasource | none, required | On `docker compose up -d`, all three follow. Anything else that connected with the old password needs the new one. |
 | **`GF_SECURITY_ADMIN_PASSWORD`** | Grafana, only when it initialises its database | `admin` | First start only. To change it later, remove the `gf-data` volume, or change it in Grafana. |
 
 Volumes `clickhouse-data` and `gf-data` hold the flows and Grafana's state.
