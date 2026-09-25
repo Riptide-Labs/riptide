@@ -1,5 +1,4 @@
 ---
-sidebar_position: 6
 title: Upgrading from 0.8
 description: Convert a 0.8 riptide.nodes configuration with the bundled converter, remove the keys 0.9 and later do not read, and what changes in behaviour.
 ---

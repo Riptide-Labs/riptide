@@ -1,5 +1,4 @@
 ---
-sidebar_position: 4
 title: NixOS
 description: Run riptide from the flake, or import the NixOS module and its four options.
 ---

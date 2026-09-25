@@ -1,5 +1,4 @@
 ---
-sidebar_position: 4.5
 title: Grafana dashboards
 description: Install the riptide dashboard set into Grafana from the compose stack, the deb or rpm package, the release tarball or the Grafana Helm chart, keep it in the Riptide / Flow Analytics folder, and upgrade it in place.
 ---

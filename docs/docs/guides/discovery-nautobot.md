@@ -1,6 +1,5 @@
 ---
 title: Discover exporters from Nautobot
-sidebar_position: 17
 description: Read the exporter list from Nautobot's device API with mapped-json, why depth=1 and primary_ip4.host are required, and how to verify it.
 ---
 

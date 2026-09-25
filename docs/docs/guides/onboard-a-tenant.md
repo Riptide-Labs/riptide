@@ -1,6 +1,5 @@
 ---
 title: Onboard a tenant
-sidebar_position: 13
 description: Prepare a ClickHouse cluster for multi-tenant writes, provision a tenant with riptide onboard, add the rollups or the dead-letter table to an older deployment, rotate a secret, and offboard.
 ---
 

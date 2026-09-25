@@ -1,6 +1,5 @@
 ---
 title: Upgrade riptide
-sidebar_position: 5
 description: Replace the image, jar or package, know which configuration keys fail startup, what the schema check migrates on its own, and what changes in stored data and metrics between releases.
 ---
 

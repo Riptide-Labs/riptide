@@ -1,5 +1,4 @@
 ---
-sidebar_position: 3
 title: DEB / RPM packages
 description: Install the release package on Debian, Ubuntu, RHEL-family or Fedora, what it puts where, and how the systemd service is configured and upgraded.
 ---

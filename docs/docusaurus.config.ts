@@ -7,6 +7,7 @@ import {execSync} from 'child_process';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 import {themes as prismThemes} from 'prism-react-renderer';
+import {guidesSidebar} from './guidesSidebar';
 
 // Latest published release version, resolved at build time so install commands
 // stay copy-paste-current without anyone editing the docs. Source of truth is
@@ -57,6 +58,7 @@ const config: Config = {
 
   onBrokenLinks: 'throw',
   onBrokenAnchors: 'throw',
+  onDuplicateRoutes: 'throw',
 
   markdown: {
     hooks: {
@@ -80,6 +82,7 @@ const config: Config = {
         docs: {
           routeBasePath: '/',
           sidebarPath: './sidebars.ts',
+          sidebarItemsGenerator: guidesSidebar,
           editUrl: 'https://github.com/Riptide-Labs/riptide/tree/main/docs/',
           remarkPlugins: [[remarkReplaceVersion, {version: RIPTIDE_VERSION}]],
         },
