@@ -1,6 +1,5 @@
 ---
 title: Write a classification rule
-sidebar_position: 9
 description: Write a ruleset CSV, point riptide at it, reload it without a restart, and confirm every rule loaded.
 ---
 

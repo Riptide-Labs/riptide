@@ -1,6 +1,5 @@
 ---
 title: Backfill a rollup
-sidebar_position: 11
 description: Populate a 1-minute rollup from historical flows rows with an INSERT INTO … SELECT that names every column in the view's own order, and verify nothing was shifted or omitted.
 ---
 

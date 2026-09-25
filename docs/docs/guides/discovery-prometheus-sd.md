@@ -1,6 +1,5 @@
 ---
 title: Discover exporters from Prometheus service discovery
-sidebar_position: 16
 description: Read the exporter list from any endpoint that serves a Prometheus HTTP service discovery document, including the NetBox prometheus-sd plugin, and verify it from the metrics endpoint.
 ---
 

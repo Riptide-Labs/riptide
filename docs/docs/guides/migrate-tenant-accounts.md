@@ -1,6 +1,5 @@
 ---
 title: Migrate a deployment onboarded before the rename
-sidebar_position: 14
 description: Move a tenant from the instance-wide writer_<tenant> and bi_<tenant> accounts to the database-qualified ones without downtime, close each database to the old roles with revoke-legacy, then drop the roles.
 ---
 

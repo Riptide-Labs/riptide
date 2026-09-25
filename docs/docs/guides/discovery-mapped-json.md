@@ -1,6 +1,5 @@
 ---
 title: Discover exporters from any JSON endpoint
-sidebar_position: 18
 description: Read the exporter list from a home-grown asset database, a CMDB or any JSON endpoint by naming where the devices, the name, the address and the next page are.
 ---
 

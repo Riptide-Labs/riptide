@@ -1,6 +1,5 @@
 ---
 title: Enable configuration hot reload
-sidebar_position: 7
 description: Set riptide.config.reload-interval so credential sets, polling profiles and routing reload from config.yaml without a restart, and verify the reload from the log and the metrics.
 ---
 

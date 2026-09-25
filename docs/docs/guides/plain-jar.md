@@ -1,5 +1,4 @@
 ---
-sidebar_position: 2
 title: Plain JAR
 description: Download, verify and run the release jar, and how file, environment and command-line configuration reach it.
 ---

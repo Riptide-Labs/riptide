@@ -1,6 +1,5 @@
 ---
 title: Query sampling-corrected volume
-sidebar_position: 10
 description: Multiply stored counters by each row's sampling rate, against raw flows or a rollup, with the boundary predicates a rollup needs and the checks that tell you whether they apply.
 ---
 
