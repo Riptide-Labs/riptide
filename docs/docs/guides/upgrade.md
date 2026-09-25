@@ -80,6 +80,25 @@ Plan retention accordingly if a release requires dropping the table.
 
 ## What changes between releases
 
+### The compose stack needs `CLICKHOUSE_PASSWORD`
+
+The shipped compose files no longer default `CLICKHOUSE_PASSWORD` to `riptide`, because the ClickHouse `default` user holds `access_management`.
+A stack that ran on the default stops at `docker compose pull`, before it touches a container:
+
+```text
+error while interpolating services.riptide.environment.CLICKHOUSE_PASSWORD: required variable CLICKHOUSE_PASSWORD is missing a value: set CLICKHOUSE_PASSWORD in a .env file next to compose.yml, see https://riptide.space/docs/guides/docker-compose
+```
+
+Write the password into a `.env` file next to `compose.yml` before upgrading.
+To keep every client that connects with the old password working, set it to the old value:
+
+```bash
+echo 'CLICKHOUSE_PASSWORD=riptide' >> .env
+```
+
+To change it instead, set the new value; ClickHouse, riptide and Grafana all follow it on `docker compose up -d`, and anything else that connected with `riptide` needs the new one.
+Deb, rpm, NixOS and plain-jar deployments are not affected.
+
 ### 0.7.0: `sessionCount` means exporters, not templates
 
 `parsers.<name>.sessionCount` used to report the template total, so it overstated by however many templates each exporter announces.

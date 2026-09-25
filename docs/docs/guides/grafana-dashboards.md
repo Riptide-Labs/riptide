@@ -35,6 +35,7 @@ Every dashboard has a **Datasource** and a **Database** variable, so the same JS
 ## Install with the compose stack
 
 Nothing to install. The stack bind-mounts the set from the checkout and a one-shot service nests the folder after Grafana is healthy.
+The commands need the stack's `.env` file with `CLICKHOUSE_PASSWORD`; see [Run the Docker Compose stack](docker-compose.md#steps).
 
 ```bash
 cd deployment/riptide

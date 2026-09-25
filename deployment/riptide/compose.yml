@@ -17,7 +17,7 @@ services:
       RIPTIDE_CLICKHOUSE_USERNAME: default
       # A SecretRef, so a password containing "://" or "#" is not parsed as scheme://value#key.
       # Must match the ClickHouse password; no default to prevent mismatched credentials.
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD in a .env file next to compose.yml, see https://riptide.space/docs/guides/docker-compose}
       RIPTIDE_CLICKHOUSE_PASSWORD: env://CLICKHOUSE_PASSWORD
       RIPTIDE_CLICKHOUSE_DATABASE: riptide
       # One multi receiver parses NetFlow v5/v9, IPFIX and sFlow on the published port

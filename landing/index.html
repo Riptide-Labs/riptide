@@ -90,6 +90,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
                         </div>
                         <div class="terminal-body">
                             <pre class="code-block"><code><span class="code-comment"># Start the full Riptide stack (Ingest + ClickHouse + Grafana)</span>
+$ echo 'CLICKHOUSE_PASSWORD=change-me' > .env
 $ docker compose up -d
 
 <span class="code-output">Network riptide_default              <span class="code-green">Created</span>
@@ -485,11 +486,11 @@ Container riptide-grafana-folders-1  <span class="code-green">Started</span></sp
                             <p class="tab-instructions">Deploy the full stack including Riptide, ClickHouse, and Grafana in seconds:</p>
                             <pre class="code-block"><code>git clone https://github.com/Riptide-Labs/riptide.git
 cd riptide/deployment/riptide
-export CLICKHOUSE_PASSWORD=change-me-before-anyone-else-can-reach-this-host
+echo 'CLICKHOUSE_PASSWORD=change-me-before-anyone-else-can-reach-this-host' > .env
 docker compose up -d</code></pre>
                             <div class="tab-meta">
                                 <span>🌐 <strong>Grafana:</strong> http://localhost:3000 (admin/admin, override with <code>GF_SECURITY_ADMIN_PASSWORD</code>)</span>
-                                <span>🗄️ <strong>ClickHouse:</strong> 127.0.0.1:8123 (user: default, set <code>CLICKHOUSE_PASSWORD</code> required)</span>
+                                <span>🗄️ <strong>ClickHouse:</strong> 127.0.0.1:8123 (user <code>default</code>, password from <code>CLICKHOUSE_PASSWORD</code> in <code>.env</code>, required)</span>
                                 <span>⚡ <strong>UDP Listeners:</strong> Port 9999 for incoming flows</span>
                             </div>
                         </div>

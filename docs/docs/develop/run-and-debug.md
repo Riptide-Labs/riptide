@@ -17,9 +17,10 @@ description: Start ClickHouse and Grafana from the shipped stack, run riptide fr
 
 ## Steps
 
-1. Start ClickHouse and Grafana:
+1. Set a ClickHouse password in a `.env` file next to the compose file, then start ClickHouse and Grafana:
 
    ```bash
+   echo 'CLICKHOUSE_PASSWORD=riptide-dev' > deployment/clickhouse/.env
    docker compose -f deployment/clickhouse/compose.yml up -d
    ```
 
@@ -34,9 +35,10 @@ description: Start ClickHouse and Grafana from the shipped stack, run riptide fr
     Container clickhouse-grafana-1 Started
    ```
 
-   ClickHouse is published on `127.0.0.1:8123`, which riptide's default endpoint `http://localhost:8123` reaches, as user `default` with password `riptide`.
+   ClickHouse is published on `127.0.0.1:8123`, which riptide's default endpoint `http://localhost:8123` reaches, as user `default` with the password from `.env`.
    Grafana is at `http://localhost:3000`, user `admin`, password `admin`, and its port is published on every interface.
-   Set **`CLICKHOUSE_PASSWORD`** or **`GF_SECURITY_ADMIN_PASSWORD`** in the environment before `up` to change either.
+   Add **`GF_SECURITY_ADMIN_PASSWORD`** to the same `.env` to change Grafana's.
+   The file is gitignored, and every later `docker compose -f deployment/clickhouse/compose.yml` command reads it.
    This is the ClickHouse and Grafana half of the [shipped stack](../guides/docker-compose.md#what-the-stack-runs), without the riptide container.
 
 2. Start riptide with one receiver.
@@ -45,7 +47,7 @@ description: Start ClickHouse and Grafana from the shipped stack, run riptide fr
 
    ```bash
    java -jar target/riptide-flows-*.jar \
-     --riptide.clickhouse.password=riptide \
+     --riptide.clickhouse.password=riptide-dev \
      --riptide.receivers.ipfix.type=ipfix \
      --riptide.receivers.ipfix.host=127.0.0.1 \
      --riptide.receivers.ipfix.port=9999
@@ -81,8 +83,7 @@ description: Start ClickHouse and Grafana from the shipped stack, run riptide fr
 
    ```bash
    docker compose -f deployment/clickhouse/compose.yml exec clickhouse \
-     clickhouse-client --password riptide -q \
-     "SELECT count() FROM riptide.flows WHERE receivedAt > now() - INTERVAL 1 MINUTE"
+     sh -c 'clickhouse-client --password "$CLICKHOUSE_PASSWORD" -q "SELECT count() FROM riptide.flows WHERE receivedAt > now() - INTERVAL 1 MINUTE"'
    ```
 
    Expected output, for the same capture:
