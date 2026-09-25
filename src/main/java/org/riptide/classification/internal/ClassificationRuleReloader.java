@@ -207,7 +207,7 @@ public class ClassificationRuleReloader {
             log.debug("Classification rule hot-reload disabled (no riptide.classification.reload-interval)");
             return;
         }
-        // seeded, unlike the config reloader: the engine has already published the rules
+        // seeded: the engine has already published the rules
         // this source held at boot, so an unseeded first cycle would reload the engine from
         // bytes that are already serving — a pointless publish, a pointless listener fan-out
         // and a second fetch. Since #707 that cycle would hit the decision-tree cache rather
