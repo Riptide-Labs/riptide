@@ -78,7 +78,8 @@ class InventoryFileReloaderTest {
         private boolean throwOnRefresh;
 
         private CountingPoller(final Inventory inventory, final MetricRegistry metrics) {
-            super(new NoSnmp(), new SnmpPollConfig(), metrics, inventory);
+            super(new NoSnmp(), new SnmpPollConfig(), metrics, inventory,
+                    new org.riptide.metrics.NoopMetricSink(), new DaemonConfig());
         }
 
         @Override
