@@ -44,6 +44,13 @@ import java.util.List;
  * <p>Hostname verification is untouched and stays the platform's, and so is the client's own key
  * material: a bundle configured here does not stop a mutual-TLS deployment presenting the
  * certificate {@code javax.net.ssl.keyStore} names.</p>
+ *
+ * <p><b>What reaches it.</b> {@code BoundedHttpRead} takes an instance for the discovery endpoint
+ * and an {@code http(s)} classification ruleset. {@code PrometheusRemoteWriteSink} takes one too,
+ * for the {@code riptide.metrics.remote-write.url} connection — it builds its own
+ * {@code HttpURLConnection} directly rather than going through {@code BoundedHttpRead}, since that
+ * class only reads. The ClickHouse client and Spring Vault's do not reach this class at all: both
+ * carry their own transport and trust configuration.</p>
  */
 public final class OutboundHttpTrust {
 
