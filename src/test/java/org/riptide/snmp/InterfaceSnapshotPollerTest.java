@@ -800,8 +800,12 @@ class InterfaceSnapshotPollerTest {
         assertThat(this.metrics.gauge("snmp.poller.inFlight").getValue())
                 .as("the healthy endpoint got a healthy permit").isEqualTo(1);
         assertThat(this.metrics.gauge("snmp.poller.suspectInFlight").getValue()).isEqualTo(1);
+        // the two other suspects are queued behind the one suspect permit; a second tick finds
+        // them still waiting, and they did not take the free healthy permit
+        poller.tick(this.clock.get());
+        assertThat(this.metrics.gauge("snmp.poller.inFlight").getValue()).isEqualTo(1);
         assertThat(this.metrics.meter("snmp.poller.deferred").getCount() - deferredBefore)
-                .as("the other two suspects wait, and did not take the free healthy permit").isEqualTo(2);
+                .as("the other two suspects waited a whole tick").isEqualTo(2);
         snmp.release.countDown();
     }
 
@@ -850,7 +854,11 @@ class InterfaceSnapshotPollerTest {
         poller.tick(this.clock.get());
         assertThat(snmp.entered.await(2, TimeUnit.SECONDS)).isTrue();
         assertThat(this.metrics.gauge("snmp.poller.inFlight").getValue()).isEqualTo(1);
-        assertThat(this.metrics.meter("snmp.poller.deferred").getCount()).as("one walk had to wait").isEqualTo(1);
+        assertThat(this.metrics.meter("snmp.poller.deferred").getCount())
+                .as("waiting milliseconds for a permit is not a deferral").isEqualTo(0);
+        // a second tick finds the queued walk still waiting: that is a deferral
+        poller.tick(this.clock.get());
+        assertThat(this.metrics.meter("snmp.poller.deferred").getCount()).as("one walk waited a whole tick").isEqualTo(1);
 
         // free the permit: the queued walk must start with no tick in between
         snmp.entered = new CountDownLatch(1);

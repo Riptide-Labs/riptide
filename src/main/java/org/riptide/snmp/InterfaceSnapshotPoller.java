@@ -703,6 +703,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         // INFO per registration would be a burst of thousands from the 1 Hz scheduler
         // thread at the moment an operator most needs to read the log
         int stoppedHere = 0;
+        int waitedATick = 0;
         for (final Map.Entry<InetSocketAddress, Registration> entry : this.registrations.entrySet()) {
             final Registration registration = entry.getValue();
             // read per registration, not once for the sweep. Hoisting it looks tidier and is
@@ -773,13 +774,15 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             // healthy budget, and only the next one draws from the suspect budget
             if (registration.queued.compareAndSet(false, true)) {
                 (registration.consecutiveFailures.get() > 0 ? this.dueSuspect : this.dueHealthy).add(registration);
+            } else {
+                // queued by an earlier tick and still waiting: every permit stayed busy for a
+                // whole second. A walk that waits milliseconds for a permit is not deferred
+                waitedATick++;
             }
         }
         dispatch(this.permits, this.dueHealthy);
         dispatch(this.suspectPermits, this.dueSuspect);
-        // still due after this tick's dispatch: every permit was busy. Counted once per waiting
-        // registration per tick, so the rate reads as "due walks per second that had to wait"
-        this.deferred.mark(this.dueHealthy.size() + this.dueSuspect.size());
+        this.deferred.mark(waitedATick);
         if (stoppedHere > 0) {
             log.info("Stopped polling {} registration(s) that no longer resolve to a pollable agent "
                     + "range, of {} polled", stoppedHere, this.registrations.size());

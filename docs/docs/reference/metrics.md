@@ -181,4 +181,4 @@ An agent whose last walk failed draws from the suspect budget, `riptide.snmp.pol
 | --- | --- | --- | --- |
 | **`snmp.poller.inFlight`** | gauge | Walks in flight for agents in good standing. | pinned at `pool-width` together with a rising `deferred` |
 | **`snmp.poller.suspectInFlight`** | gauge | Walks in flight for agents whose last walk failed. | not an alert: pinned at `suspect-pool-width` is the bulkhead doing its job |
-| **`snmp.poller.deferred`** | meter | Due walks still waiting for a permit at the end of a tick, one mark per waiting walk per second. They start in due order as permits free. | sustained rate while `inFlight` is pinned |
+| **`snmp.poller.deferred`** | meter | Due walks that were still waiting for a permit when the next tick came, one mark per such walk per second. A walk that waits milliseconds for a permit is not counted. | sustained rate while `inFlight` is pinned |
