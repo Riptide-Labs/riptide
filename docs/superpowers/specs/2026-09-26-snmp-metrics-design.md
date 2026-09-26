@@ -112,8 +112,8 @@ An entry with `poll: always` needs no observation domain.
 The switch lives on the entry rather than the profile because "poll me without flows" is a fact about one device, while a profile is shared by every device in a range.
 
 Phase 1 sets `poll: always` from discovery through the `__meta_netbox_tags` label, matched against the tag named by `riptide.discovery.poll-always-tag`.
-`netbox-api` is the only source that emits that label, from a device's tag slugs.
-A `prometheus-sd` document that carries the same label is honoured identically, because the renderer reads the label, not the source.
+`netbox-api` emits that label from a device's tag slugs.
+Any source whose document carries the same label, such as a `prometheus-sd` document, is honoured the same way, because the renderer reads the label, not the source.
 `mapped-json` never carries that label, so its entries always default to `on-flow` in phase 1.
 Entries in the inventory file can carry `poll: always` directly when discovery is off; with discovery on, discovery owns the exporters tree and the file cannot add entries to it.
 
@@ -145,6 +145,9 @@ High-availability pairs polling the same slice and a coordination store that rea
 Walks are asynchronous.
 A walk takes a permit when it starts and returns it when its future completes, so no thread waits on an agent for it.
 The one exception is an SNMPv3 walk whose session does not yet know the agent's engine ID: its discovery is synchronous and blocks for up to one second.
+On the shared collect session the engine ID is cached after the first discovery and evicted after any failed walk, so discovery runs on the first walk and again on the walk after a failure.
+The eviction is what lets a device whose engine ID changed be walked again, because snmp4j keeps the cached value when the unknown-engine-ID report arrives.
+Enrichment-only walks open a fresh session each time and discover on every walk.
 Riptide's side of a walk runs on a small `snmp-walk-io` executor, as wide as `poolWidth`, never on the scheduler tick thread or on snmp4j's threads.
 An endpoint whose last walk failed draws from a separate suspect bulkhead, `suspect-pool-width` permits, so dead agents waiting out their timeouts cannot hold the permits healthy endpoints need.
 

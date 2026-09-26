@@ -17,6 +17,7 @@ import org.snmp4j.Target;
 import org.snmp4j.UserTarget;
 import org.snmp4j.fluent.SnmpBuilder;
 import org.snmp4j.fluent.TargetBuilder;
+import org.snmp4j.mp.MPv3;
 import org.snmp4j.smi.Address;
 import org.snmp4j.smi.OID;
 import org.snmp4j.smi.OctetString;
@@ -152,9 +153,9 @@ class SnmpCollectTest {
 
     /**
      * Discovery evicts snmp4j's cached engine ID and blocks the calling walk-io thread on a
-     * synchronous request, so it must run once per agent on a session, not once per walk. The
-     * counting session shares the real session's dispatcher, so the discovery it counts is a
-     * real exchange with the agent.
+     * synchronous request, so it must run only while the session caches no engine ID, not once
+     * per walk. The counting session shares the real session's dispatcher, so the discovery it
+     * counts is a real exchange with the agent.
      */
     @Test
     void v3TargetDiscoversTheEngineIdOnlyWhileTheSessionHasNoneCached() throws Exception {
@@ -183,6 +184,44 @@ class SnmpCollectTest {
         } finally {
             session.close();
         }
+    }
+
+    /**
+     * snmp4j keeps a cached engine ID even when the agent at that address now reports another,
+     * so a long-lived session must evict it after a failed walk. The replacement agent below
+     * listens on the same address with a freshly generated engine ID, as a replaced or
+     * re-imaged device would.
+     */
+    @Test
+    void aFailedV3CollectEvictsTheEngineIdSoAReplacedAgentIsRediscovered(@TempDir final Path dir)
+            throws Exception {
+        final SnmpEndpoint endpoint = SnmpTest.authPriv(new IPAddressString("127.0.0.1"), PORT,
+                TestSnmpAgent.AUTHPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1,
+                TestSnmpAgent.AUTHPRIV_AUTH_PASSHRASE, TargetBuilder.PrivProtocol.aes128,
+                TestSnmpAgent.AUTHPRIV_PRIV_PASSHRASE);
+        final Address address = SnmpVersion.v3.getTargetAddress(endpoint);
+        assertThat(this.service.collect(endpoint, CollectionDefinitions.IF_MIB_INTERFACES,
+                Duration.ofSeconds(10)).walkFailed()).isFalse();
+        final OctetString before = mpv3().getEngineID(address);
+        assertThat(before).as("cached by the first collect").isNotNull();
+
+        this.agent.stop();
+        assertThat(this.service.collect(endpoint, CollectionDefinitions.IF_MIB_INTERFACES,
+                Duration.ofSeconds(3)).walkFailed()).isTrue();
+        assertThat(mpv3().getEngineID(address)).as("evicted after the failed collect").isNull();
+
+        this.agent = new TestSnmpAgent("127.0.0.1/" + PORT, dir);
+        this.agent.start();
+        this.agent.registerIfTable();
+        this.agent.registerIfXTable();
+        assertThat(this.service.collect(endpoint, CollectionDefinitions.IF_MIB_INTERFACES,
+                Duration.ofSeconds(10)).walkFailed()).as("the replacement agent is walked").isFalse();
+        assertThat(mpv3().getEngineID(address)).as("rediscovered from the replacement agent")
+                .isNotNull().isNotEqualTo(before);
+    }
+
+    private MPv3 mpv3() {
+        return (MPv3) this.service.openSession(SnmpVersion.v3).getMessageProcessingModel(MPv3.ID);
     }
 
     @Test
