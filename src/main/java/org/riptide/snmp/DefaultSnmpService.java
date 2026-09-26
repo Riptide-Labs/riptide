@@ -8,11 +8,19 @@ package org.riptide.snmp;
 import com.codahale.metrics.Meter;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Timer;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.secrets.SecretResolvers;
+import org.riptide.snmp.collect.CollectedTable;
+import org.riptide.snmp.collect.CollectionDefinition;
+import org.snmp4j.Snmp;
+import org.snmp4j.Target;
+import org.snmp4j.fluent.SnmpBuilder;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.time.Duration;
+import java.util.EnumMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -22,6 +30,8 @@ import java.util.Optional;
 public class DefaultSnmpService implements SnmpService {
 
     private final SecretResolvers secretResolvers;
+    private final Map<SnmpVersion, Snmp> sessions = new EnumMap<>(SnmpVersion.class);
+    private final Map<SnmpVersion, SnmpBuilder> builders = new EnumMap<>(SnmpVersion.class);
 
     /**
      * Walk accounting. This is the layer where a walk actually happens, so every increment here is
@@ -41,6 +51,10 @@ public class DefaultSnmpService implements SnmpService {
     private final Meter walksAbandoned;
     private final Meter walksFailed;
 
+    private final Meter collects;
+    private final Timer collectDuration;
+    private final Meter collectsFailed;
+
     public DefaultSnmpService(final SecretResolvers secretResolvers, final MetricRegistry metrics) {
         this.secretResolvers = Objects.requireNonNull(secretResolvers);
         Objects.requireNonNull(metrics);
@@ -50,6 +64,9 @@ public class DefaultSnmpService implements SnmpService {
         this.walksTimedOut = metrics.meter(MetricRegistry.name("snmp", "walks", "timedOut"));
         this.walksAbandoned = metrics.meter(MetricRegistry.name("snmp", "walks", "abandoned"));
         this.walksFailed = metrics.meter(MetricRegistry.name("snmp", "walks", "failed"));
+        this.collects = metrics.meter(MetricRegistry.name("snmp", "collects"));
+        this.collectDuration = metrics.timer(MetricRegistry.name("snmp", "collectDuration"));
+        this.collectsFailed = metrics.meter(MetricRegistry.name("snmp", "collects", "failed"));
     }
 
     @Override
@@ -81,5 +98,60 @@ public class DefaultSnmpService implements SnmpService {
             log.warn("Error walking the interface table of {}: {}", snmpEndpoint, e.getMessage());
             return new InterfaceTable(Map.of(), true);
         }
+    }
+
+    /**
+     * One session per version, built on first use. Closing the service closes them all. The
+     * {@code SnmpBuilder} is kept alongside the session because {@link SnmpVersion#getTarget}
+     * configures the target on the already-built builder, which is why every builder sets
+     * {@code allowIncrementalConfigAfterBuild()}.
+     */
+    private synchronized Snmp session(final SnmpVersion version) throws IOException {
+        Snmp snmp = this.sessions.get(version);
+        if (snmp == null) {
+            final SnmpBuilder builder = version.getSnmpBuilder();
+            snmp = builder.build();
+            this.builders.put(version, builder);
+            this.sessions.put(version, snmp);
+        }
+        return snmp;
+    }
+
+    @Override
+    public CollectedTable collect(final SnmpEndpoint endpoint, final CollectionDefinition definition,
+                                  final Duration budget) {
+        this.collects.mark();
+        final long deadline = System.nanoTime() + budget.toNanos();
+        try (var ignored = this.collectDuration.time()) {
+            final SnmpVersion version = endpoint.getSnmpDefinition().getSnmpVersion();
+            final Snmp snmp = session(version);
+            final Target<?> target = version.getTarget(snmp, this.builders.get(version), endpoint, this.secretResolvers);
+            final CollectedTable table = SnmpUtils.collect(snmp, target, endpoint, definition, deadline);
+            if (table.walkFailed()) {
+                this.collectsFailed.mark();
+            }
+            return table;
+        } catch (IOException | IllegalArgumentException e) {
+            this.collectsFailed.mark();
+            log.warn("SNMP collect against {} failed: {}", endpoint, e.getMessage());
+            return new CollectedTable(Map.of(), true);
+        }
+    }
+
+    /** Test seam. */
+    synchronized int openSessions() {
+        return this.sessions.size();
+    }
+
+    @PreDestroy
+    public synchronized void close() {
+        for (final Snmp snmp : this.sessions.values()) {
+            try {
+                snmp.close();
+            } catch (final IOException e) {
+                log.debug("Closing SNMP session: {}", e.getMessage());
+            }
+        }
+        this.sessions.clear();
     }
 }

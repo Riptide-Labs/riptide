@@ -16,6 +16,7 @@ import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetAddress;
+import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -82,6 +83,12 @@ class InterfaceSnapshotPollerTest {
                 return new InterfaceTable(Map.of(), true);
             }
             return new InterfaceTable(Map.of(1, new IfInfo("eth0", "uplink", 1000L)), false);
+        }
+
+        @Override
+        public org.riptide.snmp.collect.CollectedTable collect(final SnmpEndpoint endpoint,
+                final org.riptide.snmp.collect.CollectionDefinition definition, final Duration budget) {
+            return new org.riptide.snmp.collect.CollectedTable(Map.of(), false);
         }
     }
 

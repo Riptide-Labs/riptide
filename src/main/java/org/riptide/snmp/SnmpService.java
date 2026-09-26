@@ -5,6 +5,10 @@
 
 package org.riptide.snmp;
 
+import org.riptide.snmp.collect.CollectedTable;
+import org.riptide.snmp.collect.CollectionDefinition;
+
+import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
 
@@ -33,4 +37,11 @@ public interface SnmpService {
      */
     record InterfaceTable(Map<Integer, IfInfo> rows, boolean walkFailed) {
     }
+
+    /**
+     * Walks the columns of {@code definition} and returns every row. Unlike
+     * {@link #walkInterfaces} there is no ifTable fallback: a device without ifXTable yields a
+     * failed table and no series, which is the spec's "no 32-bit fallback".
+     */
+    CollectedTable collect(SnmpEndpoint snmpEndpoint, CollectionDefinition definition, Duration budget);
 }
