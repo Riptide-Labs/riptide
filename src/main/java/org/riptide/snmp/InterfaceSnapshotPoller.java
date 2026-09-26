@@ -42,6 +42,7 @@ import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -75,8 +76,11 @@ import java.util.function.LongSupplier;
  *       so no parser thread can block on it.</li>
  *   <li>At most one walk per endpoint is in flight, because each registration carries a single
  *       in-flight flag.</li>
- *   <li>Fleet-wide concurrency is bounded by permits, independently of exporter count. A walk
- *       takes a permit when it starts and returns it when its future completes. No thread waits
+ *   <li>Fleet-wide concurrency is bounded by permits, independently of exporter count. The tick
+ *       only finds due registrations and queues them in due order; a walk takes a permit when the
+ *       dispatcher starts it and returns it when its future completes, and that completion starts
+ *       the next queued walk at once. Throughput is therefore permits divided by walk latency, not
+ *       permits per tick, and a queued device cannot be overtaken for ever. No thread waits
  *       on the agent for it, with one exception. An SNMPv3 walk whose session has not yet learned
  *       the agent's engine ID first runs a synchronous discovery, which blocks its
  *       {@code snmp-walk-io} thread for up to the one-second discovery timeout. On the shared
@@ -153,12 +157,15 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         private volatile RegistrationSource source = RegistrationSource.FLOW_ARRIVAL;
         /** Set once a collect found ifTable rows but no ifXTable. Cleared when ifName comes back. */
         private volatile boolean warnedNoIfXTable;
+        /** Set while the registration sits in a due queue, so a tick enqueues it once. */
+        private final AtomicBoolean queued = new AtomicBoolean();
 
         private Registration(final SnmpEndpoint endpoint, final long nowNanos) {
             this.endpoint = endpoint;
             this.lastSeenNanos = nowNanos;
-            // zero delay: warmup is one walk rather than up to a full interval, and a mass
-            // restart drains at the permit count in first-flow order rather than bursting
+            // zero delay for a flow-registered exporter: warmup is one walk rather than up to
+            // a full interval. An inventory-registered one gets its first walk spread by the
+            // sweep, since a whole fleet registers at once there (#900)
             this.nextWalkNanos = nowNanos;
         }
     }
@@ -174,6 +181,15 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     // Error Prone cannot verify it, so each loop needed its own suppression repeating what this
     // line can state once.
     private final ConcurrentHashMap<InetSocketAddress, Registration> registrations = new ConcurrentHashMap<>();
+
+    /**
+     * Due registrations waiting for a permit, in the order the tick found them due. Two queues,
+     * one per permit budget. A freed permit starts the head of its queue at once, from the
+     * completing walk, so throughput is bounded by permits and walk latency rather than by
+     * permits per tick, and FIFO order means no device can be overtaken for ever (#899).
+     */
+    private final ConcurrentLinkedQueue<Registration> dueHealthy = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<Registration> dueSuspect = new ConcurrentLinkedQueue<>();
 
     /**
      * The published inventory is read from here rather than cached in a field of our own.
@@ -617,11 +633,19 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                             + "It is not polled.", entry.name(), entry.address());
                     continue;
                 }
+                final boolean unseen = !this.registrations.containsKey(endpoint.get().getInetSocketAddress());
                 final Registration registration = register(endpoint.get(), now);
                 if (registration == null) {
                     // flow registrations already fill max-exporters. register() marked rejectedLookups
                     refusedAtCap++;
                     continue;
+                }
+                if (unseen && registration.source != RegistrationSource.INVENTORY) {
+                    // a whole fleet registers in one sweep, so the first walks are spread across the
+                    // interval like re-walks are; all due at once, 5,000 devices overflowed the sink
+                    // queue in the first 40 seconds (#900). A flow-registered exporter that raced
+                    // in here keeps its zero delay only if it was already registered
+                    registration.nextWalkNanos = spreadWalkAt(endpoint.get(), now);
                 }
                 registration.source = RegistrationSource.INVENTORY;
                 // the other half of the silence race in tick: a tick that removed this
@@ -742,37 +766,54 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 }
                 continue;
             }
-            if (now < registration.nextWalkNanos) {
+            if (now < registration.nextWalkNanos || registration.walkInFlight.get()) {
                 continue;
             }
-            // one queue entry per endpoint, so a walk still running is never joined by a second
-            if (!registration.walkInFlight.compareAndSet(false, true)) {
+            // suspect is judged here, at enqueue: a walk that fails took its permit from the
+            // healthy budget, and only the next one draws from the suspect budget
+            if (registration.queued.compareAndSet(false, true)) {
+                (registration.consecutiveFailures.get() > 0 ? this.dueSuspect : this.dueHealthy).add(registration);
+            }
+        }
+        dispatch(this.permits, this.dueHealthy);
+        dispatch(this.suspectPermits, this.dueSuspect);
+        // still due after this tick's dispatch: every permit was busy. Counted once per waiting
+        // registration per tick, so the rate reads as "due walks per second that had to wait"
+        this.deferred.mark(this.dueHealthy.size() + this.dueSuspect.size());
+        if (stoppedHere > 0) {
+            log.info("Stopped polling {} registration(s) that no longer resolve to a pollable agent "
+                    + "range, of {} polled", stoppedHere, this.registrations.size());
+        }
+    }
+
+    /**
+     * Starts queued walks while the budget has permits. Runs from the tick and from every walk's
+     * completion, so a freed permit goes straight to the next due registration instead of waiting
+     * for the next tick. A registration removed from the map while it waited is skipped.
+     */
+    private void dispatch(final Semaphore budget, final ConcurrentLinkedQueue<Registration> queue) {
+        while (budget.tryAcquire()) {
+            final Registration registration = queue.poll();
+            if (registration == null) {
+                budget.release();
+                return;
+            }
+            registration.queued.set(false);
+            if (this.registrations.get(registration.endpoint.getInetSocketAddress()) != registration
+                    || !registration.walkInFlight.compareAndSet(false, true)) {
+                budget.release();
                 continue;
             }
-            // suspect is judged here, at submission: a walk that fails takes its permit back
-            // from the healthy budget, and only the next one draws from the suspect budget
-            final Semaphore budget = registration.consecutiveFailures.get() > 0
-                    ? this.suspectPermits
-                    : this.permits;
-            if (!budget.tryAcquire()) {
-                this.deferred.mark();
-                registration.walkInFlight.set(false);
-                // stays due: nextWalkNanos is untouched, so the next tick tries again
-                continue;
-            }
-            // the tick only takes the permit and hands off: the start resolves secrets and
-            // builds sessions, and one slow resolver must not stall every other endpoint
+            // only the permit is taken here: the start resolves secrets and builds sessions,
+            // and one slow resolver must not stall the tick or another walk's completion
             registration.walk = CompletableFuture.completedFuture(registration)
                     .thenComposeAsync(this::walkAsync, this.walkIo)
                     .whenCompleteAsync((ignored, failure) -> {
                         // the permit first: a caller that sees the flag clear must also find the permit back
                         budget.release();
                         registration.walkInFlight.set(false);
+                        dispatch(budget, queue);
                     }, this.walkIo);
-        }
-        if (stoppedHere > 0) {
-            log.info("Stopped polling {} registration(s) that no longer resolve to a pollable agent "
-                    + "range, of {} polled", stoppedHere, this.registrations.size());
         }
     }
 

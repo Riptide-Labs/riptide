@@ -830,9 +830,14 @@ class InterfaceSnapshotPollerTest {
         assertThat(sink.threads).hasSize(2).allSatisfy(name -> assertThat(name).startsWith("snmp-walk-io"));
     }
 
-    /** A due walk that finds no permit is not dropped: it stays due and the next tick runs it. */
+    /**
+     * A due walk that finds no permit waits in the due queue, and the permit that frees starts it
+     * at once: no second tick is needed (#899). Before the queue, a tick could start at most
+     * pool-width walks, so the fleet's ceiling was pool-width walks per second however fast the
+     * agents answered.
+     */
     @Test
-    void aDueWalkWithoutAPermitStaysDueAndRunsOnTheNextTick() throws Exception {
+    void aFreedPermitStartsTheNextDueWalkWithoutWaitingForATick() throws Exception {
         final var snmp = new FakeSnmp();
         snmp.block = true;
         snmp.entered = new CountDownLatch(1);
@@ -845,10 +850,83 @@ class InterfaceSnapshotPollerTest {
         poller.tick(this.clock.get());
         assertThat(snmp.entered.await(2, TimeUnit.SECONDS)).isTrue();
         assertThat(this.metrics.gauge("snmp.poller.inFlight").getValue()).isEqualTo(1);
+        assertThat(this.metrics.meter("snmp.poller.deferred").getCount()).as("one walk had to wait").isEqualTo(1);
+
+        // free the permit: the queued walk must start with no tick in between
+        snmp.entered = new CountDownLatch(1);
         snmp.release.countDown();
-        awaitWalks(poller, snmp, 1);
-        poller.tick(this.clock.get());
+        assertThat(snmp.entered.await(2, TimeUnit.SECONDS)).as("second walk started on the freed permit").isTrue();
         awaitWalks(poller, snmp, 2);
+    }
+
+    /**
+     * Fairness. With one permit and four due devices, one tick per interval walks every device
+     * once before any device is walked twice. Before the due queue the same map-order winner took
+     * the permit every tick and the rest were never polled.
+     */
+    @Test
+    void everyDueDeviceIsWalkedOnceBeforeAnyIsWalkedTwice() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var config = config();
+        config.setPoolWidth(1);
+        final var poller = poller(snmp, config, new RecordingSink());
+        final var endpoints = List.of(endpoint("10.0.0.1"), endpoint("10.0.0.2"), endpoint("10.0.0.3"), endpoint("10.0.0.4"));
+        for (final var ep : endpoints) {
+            poller.trackAndResolve(ep, 1);
+        }
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 4);
+        for (final var ep : endpoints) {
+            assertThat(snmp.walksFor(ep)).as("first round, %s", ep).isEqualTo(1);
+        }
+
+        // one interval plus the jitter later every device is due again; still one tick, one permit
+        advanceMs(config.getRefreshIntervalMs() + config.getRefreshIntervalMs() / 50 + 1);
+        for (final var ep : endpoints) {
+            poller.trackAndResolve(ep, 1);
+        }
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 8);
+        for (final var ep : endpoints) {
+            assertThat(snmp.walksFor(ep)).as("second round, %s", ep).isEqualTo(2);
+        }
+    }
+
+    /**
+     * A sweep registers a whole fleet at once, so the first walks are spread across the interval
+     * the way re-walks are (#900). All due on the first tick, 5,000 devices produced their first
+     * sweep in 40 seconds and overflowed the sink queue.
+     */
+    @Test
+    void pollAlwaysEntriesSpreadTheirFirstWalkAcrossTheInterval() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var config = config();
+        config.setPoolWidth(64);
+        final var poller = poller(snmp, config, new RecordingSink());
+        final var yaml = new StringBuilder("""
+                riptide:
+                  snmp:
+                    agents:
+                      10.7.0.0/24: { credentials: corp-v3, polling: counters }
+                  exporters:
+                """);
+        for (int i = 1; i <= 16; i++) {
+            yaml.append("    sw-").append(i).append(": { address: 10.7.0.").append(i).append(", poll: always }\n");
+        }
+        serve(parse(yaml.toString()));
+        poller.refreshRegistrations();
+        assertThat(this.metrics.gauge("snmp.poller.inventoryRegistered").getValue()).isEqualTo(16);
+
+        poller.tick(this.clock.get());
+        awaitQuiet(poller);
+        final int firstTick = snmp.collects.get();
+        assertThat(firstTick).as("not the whole fleet on the first tick").isLessThan(16);
+
+        // by the end of one interval (plus jitter) every device has had its first walk
+        advanceMs(60_000L + 60_000L / 50 + 1);
+        poller.tick(this.clock.get());
+        awaitQuiet(poller);
+        assertThat(snmp.collects.get()).isGreaterThanOrEqualTo(16);
     }
 
     /**
@@ -1519,6 +1597,8 @@ class InterfaceSnapshotPollerTest {
         final var poller = poller(snmp, config(), sink);
         serve(parse(ALWAYS_INVENTORY));
         poller.refreshRegistrations();
+        // the first walk of an inventory registration is spread across the interval (#900)
+        advanceMs(60_000L + 60_000L / 50 + 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 1);
 
@@ -1563,6 +1643,8 @@ class InterfaceSnapshotPollerTest {
         final var poller = poller(snmp, config(), new RecordingSink());
         serve(parse(ALWAYS_INVENTORY));
         poller.refreshRegistrations();
+        // the first walk of an inventory registration is spread across the interval (#900)
+        advanceMs(60_000L + 60_000L / 50 + 1);
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 1);
 
