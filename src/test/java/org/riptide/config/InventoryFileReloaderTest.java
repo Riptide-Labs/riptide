@@ -64,6 +64,12 @@ class InventoryFileReloaderTest {
         public InterfaceTable walkInterfaces(final org.riptide.snmp.SnmpEndpoint endpoint) {
             return new InterfaceTable(java.util.Map.of(), false);
         }
+
+        @Override
+        public org.riptide.snmp.collect.CollectedTable collect(final org.riptide.snmp.SnmpEndpoint endpoint,
+                final org.riptide.snmp.collect.CollectionDefinition definition, final java.time.Duration budget) {
+            return new org.riptide.snmp.collect.CollectedTable(java.util.Map.of(), false);
+        }
     }
     /** Counts refreshes so the reload trigger is observable; the sweep itself is a no-op here. */
     private static final class CountingPoller extends InterfaceSnapshotPoller {

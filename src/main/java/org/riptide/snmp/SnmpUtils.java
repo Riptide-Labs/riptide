@@ -9,14 +9,20 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
 import org.riptide.secrets.SecretResolvers;
+import org.riptide.snmp.collect.CollectedTable;
+import org.riptide.snmp.collect.CollectionDefinition;
 import org.snmp4j.Snmp;
 import org.snmp4j.Target;
 import org.snmp4j.fluent.SnmpBuilder;
@@ -90,14 +96,17 @@ public final class SnmpUtils {
     public record WalkResult(Map<Integer, IfInfo> rows, WalkOutcome outcome) {
     }
 
-    private static WalkResult walkColumns(final Snmp snmp, final Target<?> target, final SnmpEndpoint snmpEndpoint,
-                                          final OID[] columns, final Function<List<VariableBinding>, IfInfo> row,
-                                          final long deadlineNanos) {
+    /** One table walk: index to the columns' variable bindings, in column order. Null cells kept. */
+    record RawTable(Map<Integer, VariableBinding[]> rows, WalkOutcome outcome) {
+    }
+
+    static RawTable walkRaw(final Snmp snmp, final Target<?> target, final SnmpEndpoint endpoint,
+                            final OID[] columns, final int maxRowsPerPdu, final long deadlineNanos) {
         if (deadlineNanos - System.nanoTime() <= 0) {
             // checked before the request reaches the wire: the fallback walk after a slow
             // ifXTable walk would otherwise fire a real GETBULK, abandon it instantly, and
             // leave snmp4j delivering into a closing session
-            return new WalkResult(new TreeMap<>(), WalkOutcome.ABANDONED);
+            return new RawTable(new TreeMap<>(), WalkOutcome.ABANDONED);
         }
         final TableUtils tableUtils = new TableUtils(snmp, new DefaultPDUFactory());
         // belt and braces with the collector's own cap: the library stops issuing requests
@@ -105,6 +114,8 @@ public final class SnmpUtils {
         // one because the cap is exclusive — the collector must see a cap-exceeding row
         // to distinguish "more than the cap" from "complete at exactly the cap"
         tableUtils.setRowLimit(MAX_TABLE_ROWS + 1);
+        tableUtils.setMaxNumRowsPerPDU(maxRowsPerPdu);
+        tableUtils.setMaxNumColumnsPerPDU(columns.length);
         // the listener variant, not the synchronous one: with getTable(target, columns,
         // lower, upper) the blocking wait belongs to snmp4j and the loop termination
         // belongs to the AGENT — walk duration and heap were both agent-controlled. Here
@@ -118,48 +129,121 @@ public final class SnmpUtils {
             if (Thread.currentThread().isInterrupted()) {
                 // shutdown, not the agent's fault: the walker pool was interrupted while a
                 // walk was in flight. Quietly abandoned; the process is exiting
-                return new WalkResult(new TreeMap<>(), WalkOutcome.ABANDONED);
+                return new RawTable(new TreeMap<>(), WalkOutcome.ABANDONED);
             }
             // rate-bounded by the poller's back-off, which the failed outcome engages
-            log.warn("Interface walk of {} exceeded its {} budget and was abandoned; rows collected "
-                    + "so far are discarded (an incomplete table must not be cached as complete)",
-                    snmpEndpoint, WALK_BUDGET);
-            return new WalkResult(new TreeMap<>(), WalkOutcome.ABANDONED);
+            log.warn("SNMP walk of {} exceeded its budget and was abandoned; rows collected so far "
+                    + "are discarded (an incomplete table must not be cached as complete)", endpoint);
+            return new RawTable(new TreeMap<>(), WalkOutcome.ABANDONED);
         }
         if (collector.capped()) {
-            log.warn("Interface walk of {} stopped at the {}-row cap and was abandoned: either the "
+            log.warn("SNMP walk of {} stopped at the {}-row cap and was abandoned: either the "
                     + "table keeps growing (no real access device does this) or the device carries "
-                    + "more interfaces than riptide enriches. Rows are discarded and the endpoint "
-                    + "backs off", snmpEndpoint, MAX_TABLE_ROWS);
-            return new WalkResult(new TreeMap<>(), WalkOutcome.ABANDONED);
+                    + "more rows than riptide collects. Rows are discarded and the endpoint "
+                    + "backs off", endpoint, MAX_TABLE_ROWS);
+            return new RawTable(new TreeMap<>(), WalkOutcome.ABANDONED);
         }
 
-        final Map<Integer, IfInfo> interfaces = new TreeMap<>();
+        final Map<Integer, VariableBinding[]> rows = new TreeMap<>();
 
         for (final TableEvent tableEvent : collector.events()) {
             if (tableEvent.isError()) {
                 // The SNMP4J target must not be logged: its toString() carries the credential (#335)
-                log.warn("Error querying {} for {}: {}", columns[0], snmpEndpoint, tableEvent.getErrorMessage());
+                log.warn("Error querying {} for {}: {}", columns[0], endpoint, tableEvent.getErrorMessage());
                 // rows collected before the error are discarded: an incomplete table must not
                 // be cached as if it were complete
                 final var outcome = tableEvent.getStatus() == TableEvent.STATUS_TIMEOUT
                         ? WalkOutcome.TIMEOUT
                         : WalkOutcome.ERROR;
-                return new WalkResult(new TreeMap<>(), outcome);
+                return new RawTable(new TreeMap<>(), outcome);
             }
             if (tableEvent.getIndex() == null || tableEvent.getColumns() == null) {
                 continue;
             }
 
-            final int ifIndex = tableEvent.getIndex().last();
-            // Arrays.asList, not List.of: sparse tables leave null entries for missing columns
-            final IfInfo ifInfo = row.apply(Arrays.asList(tableEvent.getColumns()));
-            if (ifInfo != null) {
-                interfaces.put(ifIndex, ifInfo);
-            }
+            rows.put(tableEvent.getIndex().last(), tableEvent.getColumns());
         }
 
+        return new RawTable(rows, WalkOutcome.OK);
+    }
+
+    private static WalkResult walkColumns(final Snmp snmp, final Target<?> target, final SnmpEndpoint snmpEndpoint,
+                                          final OID[] columns, final Function<List<VariableBinding>, IfInfo> row,
+                                          final long deadlineNanos) {
+        // ten rows per PDU is TableUtils's own default; passed explicitly here now that
+        // walkRaw takes the cap as a parameter, so enrichment behaviour is unchanged
+        final RawTable raw = walkRaw(snmp, target, snmpEndpoint, columns, 10, deadlineNanos);
+        if (raw.outcome() != WalkOutcome.OK) {
+            return new WalkResult(new TreeMap<>(), raw.outcome());
+        }
+
+        final Map<Integer, IfInfo> interfaces = new TreeMap<>();
+        for (final Map.Entry<Integer, VariableBinding[]> entry : raw.rows().entrySet()) {
+            // Arrays.asList, not List.of: sparse tables leave null entries for missing columns
+            final IfInfo ifInfo = row.apply(Arrays.asList(entry.getValue()));
+            if (ifInfo != null) {
+                interfaces.put(entry.getKey(), ifInfo);
+            }
+        }
         return new WalkResult(interfaces, WalkOutcome.OK);
+    }
+
+    /**
+     * Walks every column of {@code definition}, one table walk per distinct table the columns
+     * belong to, and joins the results on the row index. ifXTable and ifTable columns in
+     * {@link org.riptide.snmp.collect.CollectionDefinitions#IF_MIB_INTERFACES} are two tables;
+     * either walk failing fails the whole collect, since a partial table must not be cached as
+     * complete.
+     */
+    static CollectedTable collect(final Snmp snmp, final Target<?> target, final SnmpEndpoint endpoint,
+                                  final CollectionDefinition definition, final long deadlineNanos) {
+        final Map<OID, List<CollectionDefinition.Column>> byTable = new LinkedHashMap<>();
+        for (final CollectionDefinition.Column column : definition.columns()) {
+            byTable.computeIfAbsent(tableOf(column.oid()), key -> new ArrayList<>()).add(column);
+        }
+        final Map<Integer, Map<String, String>> info = new TreeMap<>();
+        final Map<Integer, Map<String, Long>> values = new TreeMap<>();
+        for (final List<CollectionDefinition.Column> columns : byTable.values()) {
+            final OID[] oids = columns.stream().map(CollectionDefinition.Column::oid).toArray(OID[]::new);
+            final RawTable raw = walkRaw(snmp, target, endpoint, oids, definition.maxRowsPerPdu(), deadlineNanos);
+            if (raw.outcome() != WalkOutcome.OK) {
+                return new CollectedTable(Map.of(), true);
+            }
+            for (final Map.Entry<Integer, VariableBinding[]> row : raw.rows().entrySet()) {
+                for (int i = 0; i < columns.size(); i++) {
+                    final VariableBinding cell = row.getValue()[i];
+                    final CollectionDefinition.Column column = columns.get(i);
+                    if (column.type() == CollectionDefinition.ColumnType.INFO) {
+                        final String text = string(cell);
+                        if (text != null) {
+                            info.computeIfAbsent(row.getKey(), k -> new HashMap<>()).put(column.metric(), text);
+                        }
+                    } else {
+                        final Long number = number(cell);
+                        if (number != null) {
+                            values.computeIfAbsent(row.getKey(), k -> new HashMap<>()).put(column.metric(), number);
+                        }
+                    }
+                }
+            }
+        }
+        final Map<Integer, CollectedTable.CollectedRow> rows = new TreeMap<>();
+        for (final Integer index : union(info.keySet(), values.keySet())) {
+            rows.put(index, new CollectedTable.CollectedRow(
+                    info.getOrDefault(index, Map.of()), values.getOrDefault(index, Map.of())));
+        }
+        return new CollectedTable(rows, false);
+    }
+
+    /** The table entry OID is the column OID without its last sub-identifier. */
+    private static OID tableOf(final OID column) {
+        return new OID(column.getValue(), 0, column.size() - 1);
+    }
+
+    private static Set<Integer> union(final Set<Integer> left, final Set<Integer> right) {
+        final Set<Integer> result = new TreeSet<>(left);
+        result.addAll(right);
+        return result;
     }
 
     /**
