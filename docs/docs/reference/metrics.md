@@ -9,6 +9,23 @@ description: Every metric riptide registers, by registry name, with its type, wh
 Names below are the registry's dotted names.
 At `GET /metrics` every character outside `[a-zA-Z0-9_:]` becomes `_`, so `config.reload.stale` is scraped as `config_reload_stale`; the exposition rules are in [Management endpoints and ports](management.md#metrics-endpoint).
 Types: a counter only rises, a meter is a counter with `_rate_1m` and `_rate_5m` gauges beside it, a gauge is a current reading, a timer is a summary in seconds.
+A counter whose name ends in `Seconds` or `.seconds` keeps its fraction, so `rate()` of it reads in seconds per second.
+
+## JVM and process
+
+Registered once at startup and never removed.
+A resource the platform cannot measure publishes no value rather than `0`.
+
+| Metric | Type | Meaning | Alert on |
+| --- | --- | --- | --- |
+| **`jvm.cpu.processSeconds`** | counter | CPU time the riptide process used, in seconds | `rate()` over `jvm.cpu.availableProcessors` sustained near 1 |
+| **`jvm.cpu.availableProcessors`** | gauge | cores the JVM may use; honours a container's CPU limit | not an alert; the denominator for CPU |
+| **`jvm.heap.used`** | gauge | heap in use, in bytes | over `jvm.heap.max`, sustained near 1 |
+| **`jvm.heap.max`** | gauge | the heap limit, in bytes, normally `-Xmx`; absent while the JVM reports it as undefined | not an alert; the denominator for heap |
+| **`jvm.gc.seconds`** | counter | time the application was stopped for garbage collection, in seconds; leaves out collector beans named `Concurrent` or `Cycles`, which measure work beside the application | a sustained `rate()` above a few percent |
+| **`jvm.threads.live`** | gauge | live threads, daemon and non-daemon | steady growth |
+| **`process.openFds`** | gauge | open file descriptors; absent where the JVM has no Unix operating system bean | over `process.maxFds`, sustained near 1 |
+| **`process.maxFds`** | gauge | the file descriptor limit; absent on the same condition | not an alert; the denominator for file descriptors |
 
 ## Configuration and inventory reload
 
