@@ -15,8 +15,8 @@ public interface MetricSink {
     void accept(List<Sample> samples);
 
     /**
-     * Called once at shutdown. A default so {@link NoopMetricSink} — which owns no queue, thread
-     * or connection to release — needs no override, while still satisfying the {@code
+     * Called once at shutdown. {@link NoopMetricSink} owns no queue, thread or connection to
+     * release, so it needs no override. The default lets it still satisfy the {@code
      * destroyMethod = "stop"} every {@code MetricSink} bean declares.
      */
     default void stop() {
