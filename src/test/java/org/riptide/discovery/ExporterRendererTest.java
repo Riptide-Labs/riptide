@@ -147,6 +147,18 @@ class ExporterRendererTest {
         assertThat(ExporterRenderer.render(List.of(tagged), DEFAULT_LABELS, "the endpoint", null).pollAlways()).isEmpty();
     }
 
+    /**
+     * {@code mapped-json} groups carry only the name label ({@code MappedJsonSource} never emits
+     * {@code __meta_netbox_tags}), so a configured tag never marks one, however the address is
+     * resolved.
+     */
+    @Test
+    void aMappedJsonShapedGroupWithNoTagsLabelIsNeverMarked() {
+        final var group = group(List.of("10.0.0.1"), Map.of("__meta_netbox_name", "sw-1"));
+        assertThat(ExporterRenderer.render(List.of(group), DEFAULT_LABELS, "the endpoint", "snmp-poll").pollAlways())
+                .isEmpty();
+    }
+
     @Test
     void aBlankTargetNameIsSkippedAndCounted() {
         final var rendered = render(List.of(
