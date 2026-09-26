@@ -9,11 +9,14 @@ import com.codahale.metrics.Counter;
 import com.codahale.metrics.Gauge;
 import com.codahale.metrics.Histogram;
 import com.codahale.metrics.Meter;
+import com.codahale.metrics.Metric;
 import com.codahale.metrics.MetricRegistry;
 import com.codahale.metrics.Snapshot;
 import com.codahale.metrics.Timer;
+import org.riptide.telemetry.SecondsCounter;
 
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -28,6 +31,9 @@ import java.util.concurrent.TimeUnit;
  * allow replaced by {@code _}. Counters are <em>not</em> given the conventional {@code _total}
  * suffix: an operator reading {@code MetricRegistry.name(...)} in the source should be able to
  * search for that same string in Grafana. Prometheus accepts the shorter form.
+ *
+ * <p>A {@link SecondsCounter} renders as a counter with its fractional value, so CPU, GC and busy
+ * time read in seconds without a scale factor in every query.
  *
  * <p>Timer durations are converted from Dropwizard's nanoseconds to seconds, which is the unit
  * Prometheus tooling assumes.
@@ -54,6 +60,15 @@ final class PrometheusExposition {
             final String name = sanitize(entry.getKey());
             type(out, name, "counter");
             sample(out, name, (double) entry.getValue().getCount());
+        }
+
+        // Not one of Dropwizard's five types, so it has no typed getter; sorted like the others.
+        for (final Map.Entry<String, Metric> entry : new TreeMap<>(registry.getMetrics()).entrySet()) {
+            if (entry.getValue() instanceof SecondsCounter counter) {
+                final String name = sanitize(entry.getKey());
+                type(out, name, "counter");
+                sample(out, name, counter.seconds());
+            }
         }
 
         for (final Map.Entry<String, Meter> entry : registry.getMeters().entrySet()) {

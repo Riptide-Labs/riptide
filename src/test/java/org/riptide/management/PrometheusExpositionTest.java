@@ -7,6 +7,7 @@ package org.riptide.management;
 
 import com.codahale.metrics.MetricRegistry;
 import org.junit.jupiter.api.Test;
+import org.riptide.telemetry.SecondsCounter;
 
 import java.util.concurrent.TimeUnit;
 
@@ -74,6 +75,17 @@ class PrometheusExpositionTest {
                 .contains("snmp_walks 5.0")
                 .contains("# TYPE snmp_walks_rate_1m gauge")
                 .contains("# TYPE snmp_walks_rate_5m gauge");
+    }
+
+    @Test
+    void secondsCountersRenderAsFractionalCountersNotScaledIntegers() {
+        final var registry = new MetricRegistry();
+        registry.register("jvm.gc.seconds", SecondsCounter.of(() -> 1.25d));
+
+        // A Dropwizard Counter holds a long, which would force nanoseconds or milliseconds into
+        // every query; this type keeps the fraction and still renders as a Prometheus counter.
+        assertThat(PrometheusExposition.render(registry))
+                .contains("# TYPE jvm_gc_seconds counter\njvm_gc_seconds 1.25\n");
     }
 
     @Test
