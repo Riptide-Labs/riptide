@@ -52,9 +52,9 @@ class SnappyBlockTest {
 
     /**
      * {@code emitMatch}'s remainder-folding branch (a plain 64-byte split would otherwise leave a
-     * final chunk of 1..3 bytes, which a copy tag cannot represent) only runs when the match
-     * length is 65, 66 or 67 more than a multiple of 64 short of the input length; the 100,000-byte
-     * test above never lands there (its match length reduces to a remainder of 31). An
+     * final chunk of 1..3 bytes, which a copy tag cannot represent) fires when a match longer
+     * than 64 bytes leaves a remainder of 1, 2 or 3 after splitting into 64-byte chunks. The
+     * 100,000-byte test above never lands there (its match length reduces to a remainder of 31). An
      * all-identical-byte input of length {@code matchLength + 1} produces exactly one match of
      * {@code matchLength} at offset 1 (one leading literal byte, then the whole rest self-copies),
      * so these four sizes hit match lengths 64, 65, 66 and 67 directly.

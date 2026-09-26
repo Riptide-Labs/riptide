@@ -9,6 +9,7 @@ import org.riptide.secrets.SecretResolvers;
 import org.snmp4j.Snmp;
 import org.snmp4j.Target;
 import org.snmp4j.fluent.SnmpBuilder;
+import org.snmp4j.mp.MPv3;
 import org.snmp4j.security.SecurityProtocols;
 import org.snmp4j.smi.Address;
 import org.snmp4j.smi.OctetString;
@@ -85,7 +86,16 @@ enum SnmpVersion {
         @Override
         Target<?> getTarget(final Snmp snmp, final SnmpBuilder snmpBuilder, final SnmpEndpoint snmpEndpoint, final SecretResolvers secretResolvers) throws UnknownHostException {
             final Address targetAddress = getTargetAddress(snmpEndpoint);
-            final byte[] targetEngineID = snmp.discoverAuthoritativeEngineID(targetAddress, 1000);
+            // Discovery evicts the cached engine ID and time and blocks this thread on a synchronous
+            // request, so it runs only when the session has never learned this agent's engine ID.
+            // No rediscovery after a failure is needed. MPv3 caches the authoritative engine ID of
+            // every incoming message, a report from a device whose engine ID changed included, and
+            // the next walk reads the new value here.
+            final MPv3 mpv3 = (MPv3) snmp.getMessageProcessingModel(MPv3.ID);
+            final OctetString cachedEngineID = mpv3.getEngineID(targetAddress);
+            final byte[] targetEngineID = cachedEngineID != null
+                    ? cachedEngineID.getValue()
+                    : snmp.discoverAuthoritativeEngineID(targetAddress, 1000);
             var userBuilder = snmpBuilder
                     .v3()
                     .target(targetAddress)

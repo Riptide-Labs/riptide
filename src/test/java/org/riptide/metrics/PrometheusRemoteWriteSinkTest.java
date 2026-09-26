@@ -124,7 +124,7 @@ class PrometheusRemoteWriteSinkTest {
         static Received of(final HttpExchange exchange) throws IOException {
             final var headers = new HashMap<String, String>();
             // com.sun.net.httpserver.Headers stores request header names in its own normalized
-            // case (single leading capital, everything else lowercase — "Content-type", not
+            // case (single leading capital, everything else lowercase, so "Content-type", not
             // "Content-Type"), regardless of how the client sent them. Re-canonicalize to the
             // conventional per-word capitalization so assertions can use the header names as
             // this sink actually sets them.

@@ -75,9 +75,14 @@ import java.util.function.LongSupplier;
  *       so no parser thread can block on it.</li>
  *   <li>At most one walk per endpoint is in flight, because each registration carries a single
  *       in-flight flag.</li>
- *   <li>Fleet-wide concurrency is bounded by permits, independently of exporter count. No thread
- *       waits on a walk: a walk takes a permit when it starts and returns it when its future
- *       completes. An endpoint whose last walk failed draws from a separate, smaller suspect
+ *   <li>Fleet-wide concurrency is bounded by permits, independently of exporter count. A walk
+ *       takes a permit when it starts and returns it when its future completes. No thread waits
+ *       on the agent for it, with one exception. An SNMPv3 walk whose session has not yet learned
+ *       the agent's engine ID first runs a synchronous discovery, which blocks its
+ *       {@code snmp-walk-io} thread for up to the one-second discovery timeout. On the shared
+ *       collect session that happens once per agent that answers. An agent that has never
+ *       answered pays it on every walk, and so does every enrichment-only walk, because each
+ *       opens a fresh session. An endpoint whose last walk failed draws from a separate, smaller suspect
  *       budget, so dead agents holding permits for their whole timeout cannot take the permits a
  *       healthy endpoint needs. Starting a walk (secret resolution, session setup, the first
  *       request) and handling its result run on a small {@code snmp-walk-io} executor, never on
@@ -193,7 +198,8 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     private final ScheduledExecutorService scheduler;
     /**
      * Where riptide's side of a walk runs: its start, the per-table chain, and the recording of
-     * its result. Nothing on it waits on an agent. A task it rejects after {@link #stop} runs on
+     * its result. Nothing on it waits on an agent, except an SNMPv3 walk's engine-ID
+     * discovery, described in the class javadoc. A task it rejects after {@link #stop} runs on
      * the submitting thread instead, so a late walk still returns its permit.
      */
     private final ExecutorService walkIo;
@@ -579,9 +585,13 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      * Registers every {@code poll: always} entry the inventory lists, and hands every
      * inventory registration the inventory no longer lists back to the flow lifecycle.
      *
-     * <p>The set is registered whole or not at all. Admitting the first {@code max-exporters}
-     * by name would poll an arbitrary subset and look healthy. Refusing all of them is visible
-     * on the gauge and in the log.</p>
+     * <p>When the set alone exceeds {@code max-exporters}, none of it is registered. Admitting the
+     * first {@code max-exporters} by name would poll an arbitrary subset and look healthy. Refusing
+     * all of them is visible on the gauge and in the log.</p>
+     *
+     * <p>When the set fits but flow-registered exporters already fill the cap, each entry that
+     * finds no room is refused on its own. The gauge counts those entries and one WARN per sweep
+     * names the count, so a partial admission is as visible as a whole refusal.</p>
      *
      * <p>A dropped entry is downgraded rather than removed. Silence then counts from now, so a
      * device still sending flows keeps its registration and a silent one goes after
@@ -597,7 +607,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                             + "None of them is polled. Raise the limit or narrow the discovery filter.",
                     always.size(), maxExporters);
         } else {
-            this.inventoryRefused.set(0);
+            int refusedAtCap = 0;
             for (final ExporterEntry entry : always) {
                 final Optional<SnmpEndpoint> endpoint = snapshot.agentView()
                         .match(new ExporterIdentity.NetflowIpfix(entry.address().getAddress().toInetAddress(), 0L))
@@ -609,7 +619,8 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 }
                 final Registration registration = register(endpoint.get(), now);
                 if (registration == null) {
-                    // the flow-arrival registrations already fill max-exporters; counted on rejectedLookups
+                    // flow registrations already fill max-exporters. register() marked rejectedLookups
+                    refusedAtCap++;
                     continue;
                 }
                 registration.source = RegistrationSource.INVENTORY;
@@ -617,6 +628,12 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 // registration before it saw INVENTORY does not put it back, so put it back here
                 this.registrations.putIfAbsent(endpoint.get().getInetSocketAddress(), registration);
                 wanted.add(endpoint.get().getInetSocketAddress());
+            }
+            this.inventoryRefused.set(refusedAtCap);
+            if (refusedAtCap > 0) {
+                log.warn("{} of {} poll: always entries are not polled. Registered exporters already fill "
+                                + "riptide.snmp.poll.max-exporters ({}). Raise the limit.",
+                        refusedAtCap, always.size(), maxExporters);
             }
         }
         for (final Map.Entry<InetSocketAddress, Registration> entry : this.registrations.entrySet()) {

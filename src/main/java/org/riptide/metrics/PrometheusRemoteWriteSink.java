@@ -105,7 +105,7 @@ public final class PrometheusRemoteWriteSink implements MetricSink {
 
         this.queueDepthGauge = MetricRegistry.name("metrics", "sink", "queueDepth");
         // Replace, don't keep: a stale gauge left by a previous instance would keep reading that
-        // instance's dead queue — worse than no gauge at all. stop() unregisters it again.
+        // instance's dead queue. That is worse than no gauge at all. stop() unregisters it again.
         metrics.remove(this.queueDepthGauge);
         metrics.register(this.queueDepthGauge, (Gauge<Integer>) this.queue::size);
     }
@@ -126,7 +126,7 @@ public final class PrometheusRemoteWriteSink implements MetricSink {
                         ? this.queue.offer(samples.get(i), remaining, TimeUnit.NANOSECONDS)
                         : this.queue.offer(samples.get(i));
                 if (!accepted) {
-                    drop(samples.size() - i, "queue is full — the remote-write endpoint cannot keep up");
+                    drop(samples.size() - i, "queue full because the remote-write endpoint cannot keep up");
                     return;
                 }
             } catch (final InterruptedException e) {
@@ -189,7 +189,7 @@ public final class PrometheusRemoteWriteSink implements MetricSink {
                 }
             } catch (final Throwable e) {
                 // Throwable on purpose: this is the only flusher, and a silent death would turn
-                // into a permanent 100% drop — see BatchingFlowRepository.flushLoop.
+                // into a permanent 100% drop. BatchingFlowRepository.flushLoop does the same.
                 this.failed.inc(batch.size());
                 log.error("Unexpected error in the remote-write flusher, continuing. All {} samples are"
                         + " counted as failed.", batch.size(), e);
@@ -255,9 +255,9 @@ public final class PrometheusRemoteWriteSink implements MetricSink {
 
     /**
      * Reads whatever body the connection has left so it can return to the keep-alive pool.
-     * {@code getInputStream()} throws on a non-2xx status, so the error body — capped, since it
-     * comes from the far end of the connection this batch already failed against — is drained
-     * through {@code getErrorStream()} instead.
+     * {@code getInputStream()} throws on a non-2xx status, so the error body is drained through
+     * {@code getErrorStream()} instead. The drain is capped, because the body comes from the far
+     * end of the connection this batch already failed against.
      */
     private static void drain(final HttpURLConnection connection, final int status) throws IOException {
         if (status >= 200 && status < 300) {
@@ -305,7 +305,7 @@ public final class PrometheusRemoteWriteSink implements MetricSink {
                     Thread.currentThread().interrupt();
                 }
                 if (thread.isAlive()) {
-                    log.warn("Remote-write flusher still alive after the interrupt — continuing shutdown");
+                    log.warn("Remote-write flusher still alive after the interrupt. Continuing shutdown.");
                 }
             }
             this.flusher = null;

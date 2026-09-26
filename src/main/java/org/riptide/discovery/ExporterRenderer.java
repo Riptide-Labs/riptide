@@ -104,9 +104,9 @@ public final class ExporterRenderer {
      * name for {@code poll: always}.
      *
      * <p>Not named {@code render}: {@code render(List<EndpointGroups>, List<String>, String)} would
-     * erase to the same parameter types as {@link #render(List, List, String)} above — both lists
+     * erase to the same parameter types as {@link #render(List, List, String)} above. Both lists
      * erase to {@code List} regardless of their element type, so both would read as
-     * {@code (List, List, String)} — and the JLS forbids two methods of one name sharing an erased
+     * {@code (List, List, String)}. The JLS forbids two methods of one name sharing an erased
      * signature. Package-private because the only caller outside this class is
      * {@code ComposedInventoryDocument}, in the same package.</p>
      *

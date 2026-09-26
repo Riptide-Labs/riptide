@@ -144,7 +144,10 @@ public class DiscoveryConfig {
 
     /**
      * A NetBox tag slug. A discovered device carrying it is composed with {@code poll: always}.
-     * Unset means no device is marked. Read by the exporter renderer; netbox-api only in this phase.
+     * Unset means no device is marked. Read by the exporter renderer, which matches it against the
+     * {@code __meta_netbox_tags} label, not against the source. netbox-api emits that label from a
+     * device's tag slugs. A prometheus-sd document that carries it is honoured the same way.
+     * mapped-json never carries it, so its entries always stay {@code poll: on-flow}.
      */
     private String pollAlwaysTag;
 

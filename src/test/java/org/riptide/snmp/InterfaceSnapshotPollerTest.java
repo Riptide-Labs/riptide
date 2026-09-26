@@ -1616,6 +1616,46 @@ class InterfaceSnapshotPollerTest {
         assertThat(this.metrics.getGauges().get("snmp.poller.exporters").getValue()).isEqualTo(0);
     }
 
+    /**
+     * The set fits under the cap, but flow registrations already fill it. The entry that finds no
+     * room must show on the gauge and in the log, not only on rejectedLookups.
+     */
+    @Test
+    void anAlwaysEntryRefusedBecauseFlowsFillTheCapIsCountedAndWarned() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var config = config();
+        config.setMaxExporters(2);
+        final var poller = poller(snmp, config, new RecordingSink());
+        final var live = serve(parse("""
+                riptide:
+                  snmp:
+                    agents:
+                      10.0.0.0/24: { credentials: corp-v3, polling: counters }
+                  exporters:
+                    c: { address: 10.0.0.3, poll: always }
+                """));
+        poller.trackAndResolve(resolveOnly(live, "10.0.0.1"), 1);
+        poller.trackAndResolve(resolveOnly(live, "10.0.0.2"), 1);
+        assertThat(this.metrics.getGauges().get("snmp.poller.exporters").getValue()).isEqualTo(2);
+
+        final var logger = (Logger) LoggerFactory.getLogger(InterfaceSnapshotPoller.class);
+        final var appender = LogCapture.startedAppender();
+        logger.addAppender(appender);
+        try {
+            poller.refreshRegistrations();
+            assertThat(appender.list)
+                    .filteredOn(event -> event.getLevel() == ch.qos.logback.classic.Level.WARN)
+                    .extracting(ILoggingEvent::getFormattedMessage)
+                    .anySatisfy(m -> assertThat(m).startsWith("1 of 1 poll: always entries are not polled")
+                            .contains("riptide.snmp.poll.max-exporters (2)"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+        assertThat(this.metrics.gauge("snmp.poller.inventoryRefused").getValue()).isEqualTo(1);
+        assertThat(this.metrics.gauge("snmp.poller.inventoryRegistered").getValue()).isEqualTo(0);
+        assertThat(this.metrics.getGauges().get("snmp.poller.exporters").getValue()).isEqualTo(2);
+    }
+
     @Test
     void pollAlwaysEntriesAreRegisteredAtBootWithoutARefresh() throws Exception {
         final var snmp = new FakeSnmp();

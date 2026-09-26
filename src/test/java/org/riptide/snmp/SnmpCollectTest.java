@@ -12,13 +12,19 @@ import org.junit.jupiter.api.io.TempDir;
 import org.riptide.secrets.SecretResolvers;
 import org.riptide.snmp.collect.CollectedTable;
 import org.riptide.snmp.collect.CollectionDefinitions;
+import org.snmp4j.Snmp;
+import org.snmp4j.Target;
+import org.snmp4j.UserTarget;
+import org.snmp4j.fluent.SnmpBuilder;
 import org.snmp4j.fluent.TargetBuilder;
+import org.snmp4j.smi.Address;
 import org.snmp4j.smi.OID;
 import org.snmp4j.smi.OctetString;
 import org.snmp4j.smi.VariableBinding;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import inet.ipaddr.IPAddressString;
 
@@ -89,7 +95,7 @@ class SnmpCollectTest {
      * A device without ifXTable is not a failed collect on v2c/v3: the agent answers a clean,
      * empty walk for it, so ifTable-only columns still populate and only the ifXTable-only ones
      * (ifName, every HC octet counter) are absent. Only v1's noSuchName error fails the whole
-     * table — untested here, covered by {@code shouldFallback}'s existing v1 coverage.
+     * table. That case is not tested here. {@code shouldFallback}'s existing v1 coverage pins it.
      */
     @Test
     void aDeviceWithoutIfXTableIsNotAFailedCollectOnV2c(@TempDir final Path dir) throws Exception {
@@ -116,12 +122,13 @@ class SnmpCollectTest {
 
     /**
      * v3 collect on the shared session: engine-ID discovery and USM user registration must
-     * survive being driven through {@code DefaultSnmpService}'s one-session-per-version session,
-     * and a second collect against the same endpoint must succeed without rediscovering the
-     * engine ID (snmp4j caches it per address; the session stays open between calls).
+     * survive being driven through {@code DefaultSnmpService}'s one-session-per-version session.
+     * A second collect against the same endpoint must succeed on that same session. That the
+     * second walk skips discovery is pinned by
+     * {@code v3TargetDiscoversTheEngineIdOnlyWhileTheSessionHasNoneCached}.
      */
     @Test
-    void v3CollectWorksOnTheSharedSessionAndReusesTheCachedEngineId() {
+    void v3CollectWorksOnTheSharedSessionTwice() {
         final SnmpEndpoint endpoint = SnmpTest.authPriv(new IPAddressString("127.0.0.1"), PORT,
                 TestSnmpAgent.AUTHPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1,
                 TestSnmpAgent.AUTHPRIV_AUTH_PASSHRASE, TargetBuilder.PrivProtocol.aes128,
@@ -140,8 +147,42 @@ class SnmpCollectTest {
         final CollectedTable second = this.service.collect(endpoint, CollectionDefinitions.IF_MIB_INTERFACES,
                 Duration.ofSeconds(10));
         assertThat(second.walkFailed()).isFalse();
-        assertThat(this.service.openSessions()).as("v3 shares one session; the engine ID is cached, not "
-                + "rediscovered").isEqualTo(1);
+        assertThat(this.service.openSessions()).as("v3 shares one session").isEqualTo(1);
+    }
+
+    /**
+     * Discovery evicts snmp4j's cached engine ID and blocks the calling walk-io thread on a
+     * synchronous request, so it must run once per agent on a session, not once per walk. The
+     * counting session shares the real session's dispatcher, so the discovery it counts is a
+     * real exchange with the agent.
+     */
+    @Test
+    void v3TargetDiscoversTheEngineIdOnlyWhileTheSessionHasNoneCached() throws Exception {
+        final SnmpEndpoint endpoint = SnmpTest.authPriv(new IPAddressString("127.0.0.1"), PORT,
+                TestSnmpAgent.AUTHPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1,
+                TestSnmpAgent.AUTHPRIV_AUTH_PASSHRASE, TargetBuilder.PrivProtocol.aes128,
+                TestSnmpAgent.AUTHPRIV_PRIV_PASSHRASE);
+        final SnmpBuilder builder = SnmpVersion.v3.getSnmpBuilder();
+        final Snmp session = builder.build();
+        final AtomicInteger discoveries = new AtomicInteger();
+        final Snmp counting = new Snmp(session.getMessageDispatcher()) {
+            @Override
+            public <A extends Address> byte[] discoverAuthoritativeEngineID(final A address, final long timeout) {
+                discoveries.incrementAndGet();
+                return super.discoverAuthoritativeEngineID(address, timeout);
+            }
+        };
+        try {
+            final Target<?> first = SnmpVersion.v3.getTarget(counting, builder, endpoint, SecretResolvers.defaults());
+            final Target<?> second = SnmpVersion.v3.getTarget(counting, builder, endpoint, SecretResolvers.defaults());
+
+            assertThat(discoveries).as("discovered once, then served from the MPv3 cache").hasValue(1);
+            assertThat(((UserTarget<?>) first).getAuthoritativeEngineID()).isNotEmpty();
+            assertThat(((UserTarget<?>) second).getAuthoritativeEngineID())
+                    .isEqualTo(((UserTarget<?>) first).getAuthoritativeEngineID());
+        } finally {
+            session.close();
+        }
     }
 
     @Test

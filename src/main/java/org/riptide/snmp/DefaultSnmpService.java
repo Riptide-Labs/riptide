@@ -64,9 +64,12 @@ public class DefaultSnmpService implements SnmpService {
      * {@link InterfaceSnapshotPoller}'s snapshot. That distinction is the whole point of metering
      * here and not at the layer callers actually use.
      *
-     * <p>One walk is roughly ⌈interfaces / 10⌉ GETBULK round trips, because {@code TableUtils}
-     * defaults to ten rows per PDU and {@link SnmpUtils} does not override it. The walk rate is
-     * therefore the honest measure of what riptide costs an exporter's CPU.
+     * <p>One enrichment walk is roughly ⌈interfaces / 10⌉ GETBULK round trips, because
+     * {@link SnmpUtils} asks {@code TableUtils} for ten rows per PDU. A collect walk uses its
+     * definition's {@code maxRowsPerPdu} instead, five for {@code if-mib-interfaces}, so it is
+     * roughly ⌈interfaces / 5⌉ round trips and is metered on the collect meters below. The walk
+     * and collect rates together are therefore the honest measure of what riptide costs an
+     * exporter's CPU.
      */
     private final Meter walks;
     private final Timer walkDuration;
@@ -147,7 +150,7 @@ public class DefaultSnmpService implements SnmpService {
      * externally-supplied {@code Snmp} is also {@code protected} (verified by disassembling
      * {@code SnmpBuilder.build()}: it is exactly one field read plus {@code snmp.listen()}).
      * Reaching it would require subclassing into those protected internals, which is leaning on
-     * an implementation detail rather than a supported extension point — not done here. Every
+     * an implementation detail rather than a supported extension point, so it is not done here. Every
      * later {@code collect} against this version retries {@code getSnmpBuilder().build()} and
      * leaks another socket/thread pair until {@code build()} succeeds. {@code build()} failing
      * at all is rare in practice ({@code listen()} mostly fails when the earlier {@code .udp()}
