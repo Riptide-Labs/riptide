@@ -7,6 +7,7 @@ package org.riptide.inventory;
 
 import org.riptide.pipeline.ExporterIdentity;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -18,4 +19,11 @@ import java.util.Optional;
 public interface ExporterView {
 
     Optional<ExporterEntry> match(ExporterIdentity identity);
+
+    /**
+     * Every entry declaring {@code poll: always}, sorted by name. Registering these
+     * from the inventory is a later story; this is only the enumeration a poller
+     * would read.
+     */
+    List<ExporterEntry> alwaysPolled();
 }

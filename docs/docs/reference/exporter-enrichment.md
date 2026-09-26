@@ -30,6 +30,9 @@ riptide:
           name: ge-0/0/3
           alias: Peering with AS64500
           high-speed: 10000
+    silent-switch:
+      address: 10.20.30.9
+      poll: always # register for SNMP polling at load, without waiting for a flow
     campus:
       address: 10.20.0.0/16
 ```
@@ -37,7 +40,7 @@ riptide:
 Expected output at startup:
 
 ```text
-org.riptide.inventory.Inventory          : Inventory loaded from /etc/riptide/inventory.yaml: 0 agent ranges, 2 enrichment entries
+org.riptide.inventory.Inventory          : Inventory loaded from /etc/riptide/inventory.yaml: 0 agent ranges, 3 enrichment entries
 ```
 
 | Key | Type | Default | Description |
@@ -48,6 +51,7 @@ org.riptide.inventory.Inventory          : Inventory loaded from /etc/riptide/in
 | **`interfaces.<ifIndex>.name`** | text | unset | Short interface name, such as `ge-0/0/3`. |
 | **`interfaces.<ifIndex>.alias`** | text | unset | Operator label, `ifAlias`. |
 | **`interfaces.<ifIndex>.high-speed`** | int, 1 to 4294967295 | unset | Speed in Mbit/s, like `ifHighSpeed`. |
+| **`poll`** | `on-flow` or `always` | `on-flow` | `always` registers the device for SNMP polling when the inventory loads, without waiting for a flow. Needs a host address and a covering agent range. |
 
 Unknown keys fail the load.
 An entry without an `address` fails the load.
@@ -132,9 +136,11 @@ Inventory file /etc/riptide/inventory.yaml carries problems in 5 entries:
 | `Exporter 'X' has no address — every enrichment entry needs one.` | Missing `address` | Add it |
 | `The exporter 'X' must be a mapping, found Y.` | Entry written as a scalar or list | Write the keys under it |
 | `The exporter 'X' has a non-string key 'Y' — quote it.` | Unquoted numeric key inside the entry | Quote it |
-| `The exporter 'X' has an unknown key 'Y'; known keys are [address, interfaces, observation-domain].` | Typo | Fix the key |
+| `The exporter 'X' has an unknown key 'Y'; known keys are [address, interfaces, observation-domain, poll].` | Typo | Fix the key |
 | `The exporter 'X' address 'Y' ...` | Rejected address spelling | Write the form the message names, see [address forms](agent-configuration.md#address-forms) |
 | `Exporter 'X' observation-domain 'Y' is not a whole number.`, `... observation-domain N is outside the unsigned 32-bit range.` | | Use 0 to 4294967295 |
+| `Exporter 'X' has an unknown poll value 'Y'; write on-flow or always.` | Typo or unsupported value | Write `on-flow` or `always` |
+| `Exporter 'X' has poll: always on the prefix Y; polling needs a host address, one entry per device.` | `poll: always` on a CIDR prefix | Give the entry a host address, one entry per device |
 | `Exporter 'X' interfaces must be a mapping of ifIndex to pins, found Y.` | A list or scalar under `interfaces` | Write a mapping keyed by ifIndex |
 | `Exporter 'X' pins interface N twice, once quoted and once not: keep one spelling.` | `3:` and `"3":` in one entry | Keep one |
 | `Exporter 'X' has an interface key 'Y': write the ifIndex as plain decimal digits, with no sign, padding or leading zeros.` | Quoted key such as `"03"` or `"+3"` | Write `"3"` |

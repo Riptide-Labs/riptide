@@ -8,6 +8,10 @@ package org.riptide.inventory;
 import inet.ipaddr.IPAddressString;
 import org.riptide.pipeline.ExporterIdentity;
 
+import java.util.Comparator;
+import java.util.List;
+import java.util.Optional;
+
 /**
  * Both configuration trees, compiled off the hot path into one immutable object.
  * The agents trie and the exporters trie always come from the same build, so a
@@ -20,6 +24,7 @@ public final class InventorySnapshot {
 
     private final PinnedPrefixMatcher<AgentEntry> agents;
     private final PinnedPrefixMatcher<ExporterEntry> exporters;
+    private final List<ExporterEntry> alwaysPolled;
     private final AgentView agentView;
     private final ExporterView exporterView;
     /** The tree's key was written as a mapping in the source; see {@link #isRegressiveOver}. */
@@ -28,21 +33,35 @@ public final class InventorySnapshot {
 
     InventorySnapshot(final PinnedPrefixMatcher<AgentEntry> agents,
                       final PinnedPrefixMatcher<ExporterEntry> exporters) {
-        this(agents, exporters, false, false);
+        this(agents, exporters, List.of(), false, false);
     }
 
     InventorySnapshot(final PinnedPrefixMatcher<AgentEntry> agents,
                       final PinnedPrefixMatcher<ExporterEntry> exporters,
+                      final List<ExporterEntry> alwaysPolled,
                       final boolean agentsDeclared,
                       final boolean exportersDeclared) {
         this.agents = agents;
         this.exporters = exporters;
+        this.alwaysPolled = alwaysPolled.stream()
+                .sorted(Comparator.comparing(ExporterEntry::name))
+                .toList();
         this.agentsDeclared = agentsDeclared;
         this.exportersDeclared = exportersDeclared;
         // built once here rather than per call: a consumer that captures a view per
         // batch should pay a volatile read and nothing else
         this.agentView = identity -> this.agents.lookup(probe(identity), domain(identity));
-        this.exporterView = identity -> this.exporters.lookup(probe(identity), domain(identity));
+        this.exporterView = new ExporterView() {
+            @Override
+            public Optional<ExporterEntry> match(final ExporterIdentity identity) {
+                return InventorySnapshot.this.exporters.lookup(probe(identity), domain(identity));
+            }
+
+            @Override
+            public List<ExporterEntry> alwaysPolled() {
+                return InventorySnapshot.this.alwaysPolled;
+            }
+        };
     }
 
     /** How many agent ranges this build carries. */
