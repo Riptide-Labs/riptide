@@ -1232,6 +1232,65 @@ class InventoryLoaderTest {
         assertThat(thrown.getMessage()).contains("carries problems in %d entries".formatted(expected.size()));
     }
 
+    @Test
+    void pollDefaultsToOnFlowAndAlwaysIsListedOnTheView() {
+        final var snapshot = InventoryLoader.parse(profiles(), """
+                riptide:
+                  exporters:
+                    core:
+                      address: 10.20.30.7
+                    silent-switch:
+                      address: 10.20.30.8
+                      poll: always
+                """, "test.yaml");
+
+        assertThat(snapshot.exporterView().match(netflow("10.20.30.7", 0)).orElseThrow().poll())
+                .isEqualTo(PollMode.ON_FLOW);
+        assertThat(snapshot.exporterView().alwaysPolled()).extracting(ExporterEntry::name)
+                .containsExactly("silent-switch");
+    }
+
+    @Test
+    void pollAlwaysOnAPrefixIsRefusedBecauseAPrefixCannotBeWalked() {
+        assertThatThrownBy(() -> InventoryLoader.parse(profiles(), """
+                riptide:
+                  exporters:
+                    site:
+                      address: 10.20.30.0/24
+                      poll: always
+                """, "test.yaml"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("test.yaml")
+                .hasMessageContaining("'site'")
+                .hasMessageContaining("poll: always")
+                .hasMessageContaining("host address");
+    }
+
+    @Test
+    void anUnknownPollValueNamesTheTwoAllowedOnes() {
+        assertThatThrownBy(() -> InventoryLoader.parse(profiles(), """
+                riptide:
+                  exporters:
+                    x:
+                      address: 10.20.30.7
+                      poll: sometimes
+                """, "test.yaml"))
+                .hasMessageContaining("'sometimes'")
+                .hasMessageContaining("on-flow")
+                .hasMessageContaining("always");
+    }
+
+    @Test
+    void theKnownKeysListInTheUnknownKeyMessageNowIncludesPoll() {
+        assertThatThrownBy(() -> InventoryLoader.parse(profiles(), """
+                riptide:
+                  exporters:
+                    typo:
+                      adress: 10.20.30.7
+                """, "test.yaml"))
+                .hasMessageContaining("[address, interfaces, observation-domain, poll]");
+    }
+
     /**
      * The bound counts entries, and the remainder is counted rather than dropped. Both
      * halves are asserted numerically: a conditional assertion inside a loop passes

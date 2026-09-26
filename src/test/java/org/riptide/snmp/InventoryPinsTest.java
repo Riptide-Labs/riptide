@@ -9,6 +9,7 @@ import inet.ipaddr.IPAddressString;
 import org.junit.jupiter.api.Test;
 import org.riptide.inventory.ExporterEntry;
 import org.riptide.inventory.InterfacePin;
+import org.riptide.inventory.PollMode;
 
 import java.util.Map;
 
@@ -17,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class InventoryPinsTest {
 
     private static ExporterEntry entry(final Map<Integer, InterfacePin> pins) {
-        return new ExporterEntry("core-router", new IPAddressString("10.0.0.1"), null, pins);
+        return new ExporterEntry("core-router", new IPAddressString("10.0.0.1"), null, pins, PollMode.ON_FLOW);
     }
 
     @Test
