@@ -168,7 +168,7 @@ Registered whether or not any polling profile sets `collect`, but only marked wh
 | **`snmp.collectDuration`** | timer | Duration of one collect. | not an alert |
 | **`snmp.collects.failed`** | meter | Collects that came back with no usable table: a walk failure, timeout, or an `IOException` opening the session. | sustained rate |
 | **`snmp.poller.inventoryRegistered`** | gauge | `poll: always` entries currently registered and walked. | a drop below the count the inventory names |
-| **`snmp.poller.inventoryRefused`** | gauge | `poll: always` entries in total while the whole set was refused for exceeding `riptide.snmp.poll.max-exporters`, `0` otherwise. | `> 0` |
+| **`snmp.poller.inventoryRefused`** | gauge | `poll: always` entries that are not polled because of `riptide.snmp.poll.max-exporters`. When the set alone exceeds the cap, this is the whole set. Otherwise it counts the entries that found the cap already filled by flow-registered exporters. `0` when every entry fits. | `> 0` |
 | **`snmp.poller.samplesEmitted`** | meter | Samples a walk handed to the metric sink. | compare against `metrics.sink.sentSamples` and `.droppedSamples` |
 | **`snmp.poller.collectsFailed`** | meter | Collects the poller itself saw fail: a returned table with no usable rows, or an unexpected exception the collect did not degrade on its own. | sustained rate |
 

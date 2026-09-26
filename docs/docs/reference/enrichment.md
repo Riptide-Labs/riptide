@@ -24,10 +24,10 @@ Fleet-level keys, under **`riptide.snmp.poll`**:
 | --- | --- | --- | --- |
 | **`riptide.snmp.poll.pool-width`** | int | `4` | Walks in flight across the whole fleet for endpoints whose last walk succeeded. Per-endpoint concurrency is always 1. |
 | **`riptide.snmp.poll.suspect-pool-width`** | int | `8` | Walks in flight for endpoints whose last walk failed, drawn separately from `pool-width`. |
-| **`riptide.snmp.poll.deregister-after`** | int | `3` | Silent refresh intervals after which an exporter stops being polled. |
+| **`riptide.snmp.poll.deregister-after`** | int | `3` | Silent refresh intervals after which a flow-registered exporter stops being polled. An exporter registered from a `poll: always` inventory entry is never removed for silence. |
 | **`riptide.snmp.poll.dead-endpoint-base-ms`** | long (ms) | `60000` | First retry delay after a failed walk. Doubles on each failure. |
 | **`riptide.snmp.poll.dead-endpoint-ceiling-ms`** | long (ms) | `1800000` | Upper bound on the retry delay. |
-| **`riptide.snmp.poll.max-exporters`** | int | `4096` | Bound on retained snapshots, counted in exporters. Registration follows flow arrival, so the population is whatever sends flows, including a spoofed source. |
+| **`riptide.snmp.poll.max-exporters`** | int | `4096` | Bound on retained snapshots, counted in exporters. Registration follows flow arrival, so the population is whatever sends flows, including a spoofed source, plus every inventory entry marked `poll: always`. |
 
 Exporter-pushed option tables (interface and application) share one retention:
 

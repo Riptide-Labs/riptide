@@ -98,11 +98,11 @@ Flow-arrival registrations keep today's lifecycle.
 The first flow registers the exporter and silence for the configured number of intervals removes it.
 
 Inventory registrations come from exporter entries marked `poll: always`.
-They are registered when the inventory loads and on every reload.
+The poller registers them in its inventory sweep, which runs at startup and after every reload.
 Silence never removes them.
 They are removed when the inventory drops the entry.
 
-After registration the two sources share everything: the address-derived offset within the interval, the per-cycle jitter, the walker pool, the budget, the dead-endpoint backoff and the sink.
+After registration the two sources share everything: the address-derived offset within the interval, the per-cycle jitter, the walk permits, the budget, the dead-endpoint backoff and the sink.
 The only code that reads `source` is the reload path and the silence sweep.
 
 ### The `poll` switch is on the entry
@@ -140,15 +140,28 @@ A collector that dies leaves its inventory-registered slice unpolled until it re
 The detection is an `absent_over_time` alert in the shipped rule set.
 High-availability pairs polling the same slice and a coordination store that reassigns devices are both explicitly not designed.
 
+### Walk execution
+
+Walks are asynchronous.
+A walk takes a permit when it starts and returns it when its future completes, so no thread waits on an agent for it.
+The one exception is an SNMPv3 walk whose session does not yet know the agent's engine ID: its discovery is synchronous and blocks for up to one second.
+Riptide's side of a walk runs on a small `snmp-walk-io` executor, as wide as `poolWidth`, never on the scheduler tick thread or on snmp4j's threads.
+An endpoint whose last walk failed draws from a separate suspect bulkhead, `suspect-pool-width` permits, so dead agents waiting out their timeouts cannot hold the permits healthy endpoints need.
+
 ### Pool and guards
 
-`poolWidth` stays the fleet-wide concurrency bound.
-Its default becomes 32 when a profile lists a collection, a starting point chosen so that one JVM can walk about 5,000 devices per minute; the benchmark revises it.
-Whether snmp4j sustains that PDU rate in one JVM is unmeasured and is the first question the benchmark answers.
+`poolWidth` stays the fleet-wide concurrency bound for endpoints in good standing.
+Its default stays 4.
+The reference page gives the sizing rule: permits needed is about walks per second times walk latency, and the suspect budget is separate.
+Whether snmp4j sustains the design PDU rate in one JVM is unmeasured and is the first question the benchmark answers.
 
 `maxExporters` also caps inventory registrations.
-An inventory whose `poll: always` entries exceed the cap is refused at load with the count in the message.
-The flow-arrival path keeps its quiet rejection, because that cap protects memory against a key that comes off the wire.
+The inventory loader is pure and does not read the cap.
+The poller applies it in its inventory sweep.
+When the `poll: always` entries alone exceed the cap, none of them is registered, and the sweep logs an error with the count.
+When they fit but flow-arrival registrations already fill the cap, each entry that finds no room is refused on its own.
+Those entries are counted on the `snmp.poller.inventoryRefused` gauge, and the sweep logs one warning with the count.
+The flow-arrival path keeps its quiet rejection, counted on `snmp.poller.rejectedLookups`, because that cap protects memory against a key that comes off the wire.
 An inventory is authored, so silently polling a prefix of it would be a defect an operator finds weeks later on a dashboard.
 
 ## Collection definitions
@@ -173,8 +186,9 @@ It reports `metrics.sink.queueDepth`, `droppedSamples`, `failedSamples` and `flu
 
 One implementation ships, `PrometheusRemoteWriteSink`.
 It encodes a batch as a remote-write 1.0 `WriteRequest`, compresses it with snappy and POSTs it.
-It retries with backoff on 5xx and 429 and drops with a count on any other 4xx.
-New dependencies are protobuf-java and snappy-java.
+It retries with backoff on 5xx, 429 or a connection failure, and drops with a count on any other non-2xx status.
+The remote-write protobuf and the snappy block are hand-encoded, by `RemoteWriteEncoder` and `SnappyBlock`.
+The only new dependencies are test scope: `protobuf-java` and `aircompressor-v3`, used as independent decoders of what those two classes produce.
 
 Every series carries `tenant`, `organisation`, `zone`, `exporter` (the inventory name), `exporter_address` and the definition's index label.
 The timestamp of every sample from one walk is that walk's start time.
@@ -204,7 +218,8 @@ Riptide ships example vmalert alert rules (utilization, errors, oper status, and
 | Device has no ifXTable | No octet series and one rate-limited warning. There is no 32-bit fallback at this scale. |
 | Store unreachable | Samples drain into the bounded queue, then drop with `droppedSamples` and a rate-limited log. |
 | Store rejects a batch with 4xx | The batch is dropped and counted in `failedSamples`. There is no dead-letter table for samples. |
-| Inventory exceeds `maxExporters` in `poll: always` entries | The load is refused with the count in the message. |
+| Inventory exceeds `maxExporters` in `poll: always` entries | The poller's inventory sweep registers none of them and logs the count. The inventory itself still loads. |
+| Flow registrations leave no room for some `poll: always` entries | Those entries are not registered. The sweep counts them on `snmp.poller.inventoryRefused` and logs one warning. |
 | ifName changes on a device | The counter series churns once. Accepted. |
 
 ## Configuration
@@ -236,8 +251,10 @@ The `InterfaceSnapshotPoller` class javadoc describes flow arrival as the only r
 
 Unit tests cover the definition-to-samples mapping, the remote-write encoding round trip (encode, decode with protobuf, assert labels and timestamps), and the queue drop semantics with the sink stalled.
 
-An integration test under `-Pe2e` runs snmp4j-agent, already in the pom at test scope, serving ifXTable for several simulated agents, one of which sends no flows, against a VictoriaMetrics testcontainer.
-It asserts that `rate(ifHCInOctets[2m])` returns the injected slope for every agent and that the silent agent's series exists.
+An integration test under `-Pe2e`, `SnmpMetricsIT`, runs one snmp4j-agent (already in the pom at test scope) serving ifXTable against a VictoriaMetrics testcontainer.
+The agent sends no flows and is registered through `poll: always`.
+The test asserts that `rate(ifHCInOctets[10s])` returns the injected slope and that `riptide_interface_info` carries the agent's alias.
+The flow-arrival registration path is pinned by unit tests, not by this IT.
 
 A scale benchmark on the rig runs a simulated agent fleet against one collector.
 It measures PDUs per second per JVM, the walk latency distribution at 5,000 devices per collector, the store's ingest rate and its memory per active series.

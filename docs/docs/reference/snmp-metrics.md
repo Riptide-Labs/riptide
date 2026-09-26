@@ -16,7 +16,7 @@ Every key below is under `riptide.metrics.remote-write.` except the last, which 
 
 | Name | Type | Default | Description |
 | --- | --- | --- | --- |
-| **`riptide.metrics.remote-write.url`** | URL | unset | The full write URL, tenant path included for a VictoriaMetrics cluster. Unset disables the sink; samples then go nowhere. A value that is not a URL fails startup. |
+| **`riptide.metrics.remote-write.url`** | URL | unset | The full write URL, tenant path included for a VictoriaMetrics cluster. Unset disables the sink; samples then go nowhere. A value that is not an `http` or `https` URL fails startup. |
 | **`riptide.metrics.remote-write.bearer-token`** | [secret reference](secret-references.md) | unset | Resolved on every flush, so a rotation takes effect without a restart. Sent as `Authorization: Bearer <token>`. Unset sends no `Authorization` header. |
 | **`riptide.metrics.remote-write.batch.max-samples`** | int | `5000` | Samples per flushed batch. Must be positive. |
 | **`riptide.metrics.remote-write.batch.max-latency`** | duration | `2s` | A batch flushes when this elapses, even under `max-samples`. Must be positive. |
@@ -28,6 +28,18 @@ Every key below is under `riptide.metrics.remote-write.` except the last, which 
 
 An internal certificate authority for the write URL goes in `riptide.http.ca-bundle`, documented once on [Outbound TLS](outbound-tls.md); it is not repeated here.
 Requests carry `Content-Type: application/x-protobuf`, `Content-Encoding: snappy` and `X-Prometheus-Remote-Write-Version: 0.1.0`.
+
+## Size the permits
+
+`riptide.snmp.poll.pool-width` defaults to `4`.
+It bounds the walks in flight across the whole fleet, not per agent.
+With `collect` set, the permits needed are about walks per second times walk latency.
+For example, 5,000 devices at a 60 s `refresh-interval` is about 83 walks per second.
+At 200 ms per walk that needs about 17 permits, so `32` is a safe start.
+`riptide.snmp.poll.suspect-pool-width` is a separate budget for agents whose last walk failed, so it does not come out of this figure.
+Watch `snmp.poller.deferred` and `snmp.poller.inFlight` on `/metrics`.
+A sustained `deferred` rate while `inFlight` is pinned at `pool-width` means the permits are too few.
+Both keys are described on the [SNMP agent reference](agent-configuration.md).
 
 ## Series
 
@@ -76,6 +88,7 @@ Sharding collectors by discovery filter, as in [Discover exporters from NetBox](
 | Message | Probable cause | Recovery |
 | --- | --- | --- |
 | `riptide.metrics.remote-write.url is not a URL: <reason>` | `url` is set but not a URL | Fix the URL, or unset it to disable the sink |
+| `riptide.metrics.remote-write.url must be an http or https URL (got scheme <scheme>)` | `url` is a URL with another scheme, such as `file` or `ftp` | Use the receiver's `http` or `https` write URL |
 | `riptide.metrics.remote-write.batch.max-samples must be > 0 (got <n>)` | Zero or negative `batch.max-samples` | Use a positive value |
 | `riptide.metrics.remote-write.batch.max-latency must be > 0 (got <duration>)` | Zero, negative or unset `batch.max-latency` | Use a positive duration |
 | `riptide.metrics.remote-write.queue-capacity must be > 0 (got <n>)` | Zero or negative `queue-capacity` | Use a positive value |
@@ -84,5 +97,6 @@ Sharding collectors by discovery filter, as in [Discover exporters from NetBox](
 | `riptide.metrics.remote-write.shutdown-grace-period (<duration>) must be at least twice batch.max-latency (<duration>)` | `shutdown-grace-period` set too low for `batch.max-latency` | Raise `shutdown-grace-period`, or lower `batch.max-latency` |
 | `riptide.snmp.polling.<name>: timeout <n> ms x <n> attempts exceeds the walk budget of <n> ms (80% of refresh-interval); lower the timeout or lengthen refresh-interval.` | `collect` is set and `timeout x (retries + 1)` does not fit in 80 percent of `refresh-interval` | Lower `timeout` or `retries`, or lengthen `refresh-interval` |
 | `The inventory marks <n> entries poll: always, but riptide.snmp.poll.max-exporters is <n>. None of them is polled. Raise the limit or narrow the discovery filter.` | More `poll: always` entries than `max-exporters` allows; refused whole, not partially | Raise `riptide.snmp.poll.max-exporters`, or narrow the discovery filter that composes `poll: always` entries |
+| `<n> of <n> poll: always entries are not polled. Registered exporters already fill riptide.snmp.poll.max-exporters (<n>). Raise the limit.` | The `poll: always` entries fit under `max-exporters`, but flow-registered exporters already hold the room; logged once per inventory sweep and counted on `snmp.poller.inventoryRefused` | Raise `riptide.snmp.poll.max-exporters` |
 | `Exporter '<name>' (<address>) is poll: always, but no agent range with credentials covers it. It is not polled.` | A `poll: always` entry's address falls outside every agent range, or the covering range has no `credentials` | Add or fix an agent range covering the address |
 | `SNMP endpoint <endpoint> answers ifTable but not ifXTable, so no octet series will exist for it` | The device implements ifTable but not the newer ifXTable | Informational; nothing to fix on riptide's side |
