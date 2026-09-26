@@ -137,6 +137,10 @@ Two entries carrying the same name and the same address collapse into one entry,
 Two entries carrying the same name with different addresses are refused, and every collision is named at once.
 Two entries carrying different names with the same address are refused the same way.
 
+`netbox-api` also reads a device's `tags`, joins its slugs with a comma, and carries that in `__meta_netbox_tags`; the label is absent when the device has no tags.
+When `riptide.discovery.poll-always-tag` is set, the renderer marks an entry's name whenever any group claiming it carries that tag among its comma-split slugs, and the composed document writes `poll: always` for every marked name, right after `address`.
+An entry with no claiming group carrying the tag, or with the key unset, gets no `poll` key at all, which the loader reads as `on-flow`.
+
 `netbox-api` appends `ordering=id` unless the filter already carries an `ordering=` term, so a device added while the walk is in progress appends rather than shifting the pages still to be read.
 Without a stable order an endpoint paging by offset can return one device twice and miss another.
 `mapped-json` appends nothing of its own, because the endpoint is not NetBox and `ordering` may mean nothing there, or something else; an endpoint that pages needs its own ordering term in the filter.

@@ -6,6 +6,9 @@
 package org.riptide.discovery;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Configuration;
 
 import java.net.MalformedURLException;
 import java.time.Duration;
@@ -14,6 +17,27 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class DiscoveryConfigTest {
+
+    private final ApplicationContextRunner runner = new ApplicationContextRunner()
+            .withUserConfiguration(Collaborators.class);
+
+    /** Nothing beyond the properties bean: this pins binding alone, not the discovery gate. */
+    @Configuration(proxyBeanMethods = false)
+    @EnableConfigurationProperties(DiscoveryConfig.class)
+    static class Collaborators {
+    }
+
+    @Test
+    void pollAlwaysTagBindsFromTheProperty() {
+        this.runner.withPropertyValues("riptide.discovery.poll-always-tag=snmp-poll")
+                .run(context -> assertThat(context.getBean(DiscoveryConfig.class).getPollAlwaysTag())
+                        .isEqualTo("snmp-poll"));
+    }
+
+    @Test
+    void pollAlwaysTagIsUnsetByDefault() {
+        this.runner.run(context -> assertThat(context.getBean(DiscoveryConfig.class).getPollAlwaysTag()).isNull());
+    }
 
     @Test
     void theDefaultsAreTheOnesTheDesignNames() {

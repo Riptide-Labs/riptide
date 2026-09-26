@@ -11,6 +11,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 
@@ -129,6 +130,24 @@ class ExporterRendererTest {
     }
 
     @Test
+    void aGroupCarryingThePollAlwaysTagLandsInPollAlways() {
+        final var tagged = group(List.of("10.0.0.1"),
+                Map.of("__meta_netbox_name", "sw-1", "__meta_netbox_tags", "a,snmp-poll,b"));
+        final var plain = group(List.of("10.0.0.2"),
+                Map.of("__meta_netbox_name", "sw-2", "__meta_netbox_tags", "a"));
+        final var rendered = ExporterRenderer.render(List.of(tagged, plain), DEFAULT_LABELS, "the endpoint", "snmp-poll");
+        assertThat(rendered.pollAlways()).containsExactly("sw-1");
+        assertThat(rendered.byName()).containsKeys("sw-1", "sw-2");
+    }
+
+    @Test
+    void withoutAConfiguredTagNothingIsMarked() {
+        final var tagged = group(List.of("10.0.0.1"),
+                Map.of("__meta_netbox_name", "sw-1", "__meta_netbox_tags", "snmp-poll"));
+        assertThat(ExporterRenderer.render(List.of(tagged), DEFAULT_LABELS, "the endpoint", null).pollAlways()).isEmpty();
+    }
+
+    @Test
     void aBlankTargetNameIsSkippedAndCounted() {
         final var rendered = render(List.of(
                 group(List.of(""), Map.of("__meta_netbox_primary_ip4", "10.0.0.9")),
@@ -152,6 +171,17 @@ class ExporterRendererTest {
                         "__meta_netbox_primary_ip4", "10.0.0.5"))));
 
         assertThat(rendered.byName()).containsExactly(Map.entry("dup", "10.0.0.5"));
+    }
+
+    @Test
+    void aNameClaimedByTwoIdenticalGroupsIsMarkedIfEitherClaimCarriesTheTag() {
+        final var untagged = group(List.of("a"), Map.of("__meta_netbox_name", "dup",
+                "__meta_netbox_primary_ip4", "10.0.0.5"));
+        final var tagged = group(List.of("b"), Map.of("__meta_netbox_name", "dup",
+                "__meta_netbox_primary_ip4", "10.0.0.5", "__meta_netbox_tags", "snmp-poll"));
+
+        assertThat(ExporterRenderer.render(List.of(untagged, tagged), DEFAULT_LABELS, "the endpoint", "snmp-poll")
+                .pollAlways()).containsExactly("dup");
     }
 
     @Test
@@ -268,14 +298,14 @@ class ExporterRendererTest {
         unordered.put("zulu", "10.0.0.26");
         unordered.put("alpha", "10.0.0.1");
 
-        assertThat(new RenderedExporters(unordered, 0).byName().keySet())
+        assertThat(new RenderedExporters(unordered, Set.of(), 0).byName().keySet())
                 .as("an unordered map is what the renderer hands over")
                 .containsExactly("alpha", "zulu");
 
         final SortedMap<String, String> reversed = new TreeMap<>(Comparator.reverseOrder());
         reversed.putAll(unordered);
 
-        assertThat(new RenderedExporters(reversed, 0).byName().keySet())
+        assertThat(new RenderedExporters(reversed, Set.of(), 0).byName().keySet())
                 .as("a caller's comparator must not decide the document's order")
                 .containsExactly("alpha", "zulu");
     }
