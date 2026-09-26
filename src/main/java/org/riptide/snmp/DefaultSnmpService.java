@@ -201,12 +201,14 @@ public class DefaultSnmpService implements SnmpService {
         }
         return collect.whenComplete((table, failure) -> {
             timing.stop();
-            if (failure != null || table.walkFailed()) {
+            // table is null exactly when failure is set; one guard serves both branches
+            final boolean walkFailed = table != null && table.walkFailed();
+            if (failure != null || walkFailed) {
                 // the engine ID this session cached may be the reason the walk failed, and snmp4j
                 // will not replace it on its own (see SnmpVersion.v3.getTarget)
                 version.forgetAfterFailedWalk(snmp, target.getAddress());
             }
-            if (table != null && table.walkFailed()) {
+            if (walkFailed) {
                 this.collectsFailed.mark();
             }
         });

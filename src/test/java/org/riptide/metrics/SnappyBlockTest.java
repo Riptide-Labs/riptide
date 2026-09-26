@@ -25,6 +25,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class SnappyBlockTest {
 
+    /** Fixed seed, fresh per test instance: the inputs are the same on every run and every machine. */
+    private final Random random = new Random(0x5eed);
+
     @Test
     void emptyInputDecodesToEmpty() {
         assertThat(decode(SnappyBlock.compress(new byte[0]))).isEmpty();
@@ -39,7 +42,7 @@ class SnappyBlockTest {
     @ValueSource(ints = {59, 60, 61, 256, 257, 70_000})
     void literalTagBoundaries(final int size) {
         final byte[] input = new byte[size];
-        new Random(size).nextBytes(input);
+        this.random.nextBytes(input);
         roundTrips(input);
     }
 
