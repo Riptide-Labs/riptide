@@ -33,6 +33,10 @@ public final class ContainerImages {
         return fromLine("pyroscope.Dockerfile");
     }
 
+    public static String victoriametrics() {
+        return fromLine("victoriametrics.Dockerfile");
+    }
+
     private static String fromLine(final String dockerfile) {
         final Path path = Path.of(".github", "e2e-images", dockerfile);
         try {
