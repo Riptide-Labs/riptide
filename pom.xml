@@ -29,18 +29,15 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <!-- io.airlift:aircompressor-v3 (3.10, the newest release there and the line the
-             upstream project actively develops now; its own pom is aircompressor-v3
-             3.11-SNAPSHOT). RemoteWriteEncoder constructs SnappyJavaCompressor and
-             SnappyJavaDecompressor directly. It does not call the SnappyCompressor.create() /
-             SnappyDecompressor.create() factories: those prefer a native library bundled in the
-             jar and reach for it through the Foreign Function API, which prints a JDK
-             "restricted method" warning on first use. The two Java classes never touch that
-             loader. They still call sun.misc.Unsafe's memory-access methods internally
-             (SnappyRawCompressor/SnappyRawDecompressor), same as every version of this library
-             checked, including the classic (non-v3) artifact this once pinned instead; that is a
-             separate, JEP 471 deprecation-for-removal concern this dependency does not avoid
-             either way. No compile-scope dependency of its own (confirmed with
+        <!-- io.airlift:aircompressor-v3 (3.10, the newest release there), test scope only.
+             org.riptide.metrics.SnappyBlock hand-encodes the snappy block format the remote-write
+             sink sends, because every version of this library checked (this one, and the classic
+             non-v3 line pinned here at an earlier round) implements Snappy through
+             sun.misc.Unsafe's memory-access methods, deprecated for removal under JEP 471; the
+             runtime must not depend on that. This dependency now serves only as the independent
+             decoder RemoteWriteEncoderTest, PrometheusRemoteWriteSinkTest and SnappyBlockTest
+             verify SnappyBlock's output against, via SnappyJavaDecompressor, so main code has no
+             compile-scope dependency on it at all (confirmed with
              `mvn -o dependency:tree -Dincludes=io.airlift`). -->
         <aircompressor.version>3.10</aircompressor.version>
         <!-- protobuf-java is test scope only, used by RemoteWriteEncoderTest to decode what the
@@ -263,14 +260,6 @@
             <version>${spring-vault.version}</version>
         </dependency>
 
-        <!-- Snappy compression for the Prometheus remote-write sink (RemoteWriteEncoder.snappy).
-             The only new runtime dependency this task adds. -->
-        <dependency>
-            <groupId>io.airlift</groupId>
-            <artifactId>aircompressor-v3</artifactId>
-            <version>${aircompressor.version}</version>
-        </dependency>
-
         <!-- Test scope -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -284,6 +273,15 @@
             <groupId>com.google.protobuf</groupId>
             <artifactId>protobuf-java</artifactId>
             <version>${protobuf.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- The independent decoder org.riptide.metrics.SnappyBlock's tests verify against; see
+             the aircompressor.version property comment for why the runtime has no compile-scope
+             dependency on this. -->
+        <dependency>
+            <groupId>io.airlift</groupId>
+            <artifactId>aircompressor-v3</artifactId>
+            <version>${aircompressor.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
