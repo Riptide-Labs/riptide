@@ -138,6 +138,7 @@ Two entries carrying the same name with different addresses are refused, and eve
 Two entries carrying different names with the same address are refused the same way.
 
 `netbox-api` also reads a device's `tags`, joins its slugs with a comma, and carries that in `__meta_netbox_tags`; the label is absent when the device has no tags.
+The renderer reads that label, not the source, so a `prometheus-sd` document carrying the same label is honoured identically; `mapped-json` never carries it.
 When `riptide.discovery.poll-always-tag` is set, the renderer marks an entry's name whenever any group claiming it carries that tag among its comma-split slugs, and the composed document writes `poll: always` for every marked name, right after `address`.
 An entry with no claiming group carrying the tag, or with the key unset, gets no `poll` key at all, which the loader reads as `on-flow`.
 

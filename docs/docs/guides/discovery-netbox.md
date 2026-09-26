@@ -137,6 +137,7 @@ A device and a virtual machine with the same name and different addresses are re
 
 A device with no flows of its own, such as an access switch that only aggregates other traffic, never gets an exporter entry from a flow.
 Tag it in NetBox and name the tag in `riptide.discovery.poll-always-tag`, and discovery composes it with `poll: always` instead, so it is polled for SNMP metrics as soon as the inventory loads.
+This is a NetBox tag rather than a `netbox-api`-only feature: the renderer keys on the `__meta_netbox_tags` label, and any producer that emits it, including a `prometheus-sd` document that copies it in, is honoured the same way.
 
 1. Tag the device in NetBox, for example `snmp-poll`.
 

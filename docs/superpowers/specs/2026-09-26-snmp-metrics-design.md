@@ -111,8 +111,10 @@ An exporters-tree entry gains `poll: on-flow | always`, default `on-flow`.
 An entry with `poll: always` needs no observation domain.
 The switch lives on the entry rather than the profile because "poll me without flows" is a fact about one device, while a profile is shared by every device in a range.
 
-Phase 1 sets `poll: always` from discovery for the `netbox-api` source only, through the tag named by `riptide.discovery.poll-always-tag`.
-Entries from `prometheus-sd` and `mapped-json` sources default to `on-flow` in phase 1.
+Phase 1 sets `poll: always` from discovery through the `__meta_netbox_tags` label, matched against the tag named by `riptide.discovery.poll-always-tag`.
+`netbox-api` is the only source that emits that label, from a device's tag slugs.
+A `prometheus-sd` document that carries the same label is honoured identically, because the renderer reads the label, not the source.
+`mapped-json` never carries that label, so its entries always default to `on-flow` in phase 1.
 Entries in the inventory file can carry `poll: always` directly when discovery is off; with discovery on, discovery owns the exporters tree and the file cannot add entries to it.
 
 ### Sharding
@@ -217,7 +219,7 @@ Every key names its consumer and the test that proves the read.
 | `riptide.metrics.query.url` | URL | unset, tools fall back to flow-derived figures | `MetricsQueryClient` | MCP tool test asserts the query is issued and the fallback is used when unset |
 | polling profile `collect`, `refresh-interval` | list of strings, duration | empty, existing default | poller | poller test asserts the walk column set and cadence |
 | exporters entry `poll` | `on-flow` or `always` | `on-flow` | poller registration | a silent `poll: always` device is walked within one interval; a silent `poll: on-flow` device is not |
-| `riptide.discovery.poll-always-tag` | string | unset, no entry is marked | discovery composer, `netbox-api` source | composed document carries `poll: always` for a tagged device and `on-flow` for an untagged one |
+| `riptide.discovery.poll-always-tag` | string | unset, no entry is marked | discovery composer, matched against the `__meta_netbox_tags` label (`netbox-api` emits it; a `prometheus-sd` document carrying it is honoured the same way) | composed document carries `poll: always` for a tagged device and `on-flow` for an untagged one |
 | `riptide.discovery.filter` (existing) | string | unset | discovery source | already tested; the spec adds the documented use as the shard selector |
 
 The existing outbound-tls key today reaches only the discovery endpoints and the classification ruleset URL.
@@ -248,7 +250,7 @@ That is a separate issue.
 
 Source-address stickiness at the UDP load balancer is documented as a deployment requirement, not enforced by riptide.
 
-Out of scope: a ClickHouse mirror of counters, YAML-loaded collection definitions, `poll: always` from `prometheus-sd` or `mapped-json` sources, high-availability polling pairs, a coordination store, and a 32-bit counter fallback.
+Out of scope: a ClickHouse mirror of counters, YAML-loaded collection definitions, a `poll-always-tag` path for `mapped-json` sources (no label exists there to key it on), high-availability polling pairs, a coordination store, and a 32-bit counter fallback.
 
 ## Rollout
 
