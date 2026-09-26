@@ -80,10 +80,10 @@ import java.util.function.LongSupplier;
  *       on the agent for it, with one exception. An SNMPv3 walk whose session has not yet learned
  *       the agent's engine ID first runs a synchronous discovery, which blocks its
  *       {@code snmp-walk-io} thread for up to the one-second discovery timeout. On the shared
- *       collect session that happens once per agent that answers. An agent that has never
- *       answered pays it on every walk, and so does every enrichment-only walk, because each
- *       opens a fresh session. An endpoint whose last walk failed draws from a separate, smaller suspect
- *       budget, so dead agents holding permits for their whole timeout cannot take the permits a
+ *       collect session that happens on an agent's first walk and again after any failed walk,
+ *       because a failed collect evicts the cached engine ID. Every enrichment-only walk pays it,
+ *       because each opens a fresh session. An endpoint whose last walk failed draws from a
+ *       separate suspect budget, so dead agents holding permits for their whole timeout cannot take the permits a
  *       healthy endpoint needs. Starting a walk (secret resolution, session setup, the first
  *       request) and handling its result run on a small {@code snmp-walk-io} executor, never on
  *       the tick thread or on snmp4j's threads, which only complete futures. That executor is

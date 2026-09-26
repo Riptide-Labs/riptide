@@ -174,11 +174,13 @@ public class DefaultSnmpService implements SnmpService {
         this.collects.mark();
         final long deadline = System.nanoTime() + budget.toNanos();
         final Timer.Context timing = this.collectDuration.time();
+        final SnmpVersion version = endpoint.getSnmpDefinition().getSnmpVersion();
+        final Snmp snmp;
+        final Target<?> target;
         final CompletableFuture<CollectedTable> collect;
         try {
-            final SnmpVersion version = endpoint.getSnmpDefinition().getSnmpVersion();
-            final Snmp snmp = session(version);
-            final Target<?> target = version.getTarget(snmp, this.builders.get(version), endpoint, this.secretResolvers);
+            snmp = session(version);
+            target = version.getTarget(snmp, this.builders.get(version), endpoint, this.secretResolvers);
             collect = SnmpUtils.collectAsync(snmp, target, endpoint, definition, deadline, this.deadlines);
         } catch (IOException | IllegalArgumentException e) {
             timing.stop();
@@ -188,6 +190,11 @@ public class DefaultSnmpService implements SnmpService {
         }
         return collect.whenComplete((table, failure) -> {
             timing.stop();
+            if (failure != null || table.walkFailed()) {
+                // the engine ID this session cached may be the reason the walk failed, and snmp4j
+                // will not replace it on its own (see SnmpVersion.v3.getTarget)
+                version.forgetAfterFailedWalk(snmp, target.getAddress());
+            }
             if (table != null && table.walkFailed()) {
                 this.collectsFailed.mark();
             }
@@ -197,6 +204,11 @@ public class DefaultSnmpService implements SnmpService {
     /** Test seam. */
     synchronized int openSessions() {
         return this.sessions.size();
+    }
+
+    /** Test seam. */
+    synchronized Snmp openSession(final SnmpVersion version) {
+        return this.sessions.get(version);
     }
 
     /**
