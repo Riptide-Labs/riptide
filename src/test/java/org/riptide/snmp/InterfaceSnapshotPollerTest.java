@@ -68,8 +68,53 @@ class InterfaceSnapshotPollerTest {
             return count == null ? 0 : count.get();
         }
         private volatile boolean timeout;
+        /** Endpoints whose walks and collects answer with a failed table. */
+        final Set<SnmpEndpoint> failing = ConcurrentHashMap.newKeySet();
+        /** When set, each walk counts down {@code entered} and then waits on {@code release}. */
+        private volatile boolean block;
         private volatile CountDownLatch entered;
         private volatile CountDownLatch release;
+        /**
+         * Runs the blocking walks off the caller's thread, the way snmp4j completes a real walk
+         * on its own. An unblocked walk completes inline, so a tick's permits come back before
+         * it examines the next registration.
+         */
+        private final java.util.concurrent.ExecutorService completer = java.util.concurrent.Executors.newCachedThreadPool(
+                runnable -> {
+                    final Thread thread = new Thread(runnable, "fake-snmp-completer");
+                    thread.setDaemon(true);
+                    return thread;
+                });
+
+        @Override
+        public java.util.concurrent.CompletableFuture<InterfaceTable> walkInterfacesAsync(final SnmpEndpoint endpoint) {
+            if (this.block) {
+                return java.util.concurrent.CompletableFuture.supplyAsync(() -> walkInterfaces(endpoint), this.completer);
+            }
+            return java.util.concurrent.CompletableFuture.completedFuture(walkInterfaces(endpoint));
+        }
+
+        @Override
+        public java.util.concurrent.CompletableFuture<org.riptide.snmp.collect.CollectedTable> collectAsync(
+                final SnmpEndpoint endpoint, final org.riptide.snmp.collect.CollectionDefinition definition,
+                final Duration budget) {
+            if (this.block) {
+                return java.util.concurrent.CompletableFuture.supplyAsync(
+                        () -> collect(endpoint, definition, budget), this.completer);
+            }
+            return java.util.concurrent.CompletableFuture.completedFuture(collect(endpoint, definition, budget));
+        }
+
+        private void gate() {
+            if (this.block) {
+                this.entered.countDown();
+                try {
+                    this.release.await(10, TimeUnit.SECONDS);
+                } catch (final InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
 
         @Override
         public Optional<IfInfo> getIfInfo(final SnmpEndpoint endpoint, final int ifIndex) {
@@ -83,15 +128,8 @@ class InterfaceSnapshotPollerTest {
             this.walksPerEndpoint.computeIfAbsent(endpoint.getInetSocketAddress().toString(),
                     key -> new AtomicInteger()).incrementAndGet();
             this.walkedEndpoints.add(endpoint);
-            if (this.entered != null) {
-                this.entered.countDown();
-                try {
-                    this.release.await(10, TimeUnit.SECONDS);
-                } catch (final InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-            if (this.timeout) {
+            gate();
+            if (this.timeout || this.failing.contains(endpoint)) {
                 return new InterfaceTable(Map.of(), true);
             }
             return new InterfaceTable(Map.of(1, new IfInfo("eth0", "uplink", 1000L)), false);
@@ -104,7 +142,8 @@ class InterfaceSnapshotPollerTest {
             if (this.throwOnCollect) {
                 throw new IllegalStateException("snmp4j target construction blew up");
             }
-            if (this.timeout) {
+            gate();
+            if (this.timeout || this.failing.contains(endpoint)) {
                 return new org.riptide.snmp.collect.CollectedTable(Map.of(), true);
             }
             final Map<String, String> info = this.noIfXTable
@@ -516,6 +555,7 @@ class InterfaceSnapshotPollerTest {
                       "10.41.0.7":
                         credentials: corp-v3
                 """));
+        snmp.block = true;
         snmp.entered = new CountDownLatch(1);
         snmp.release = new CountDownLatch(1);
 
@@ -685,7 +725,7 @@ class InterfaceSnapshotPollerTest {
     }
 
     /**
-     * Walks run on the pool, so tests wait for the effect rather than assuming it landed. Waiting
+     * Walks complete after the tick returns, so tests wait for the effect rather than assuming it landed. Waiting
      * on the issued-walk count alone is not enough: the poller sets the next walk time only after
      * the walk returns, so a test that raced that would then see a stale schedule.
      */
@@ -701,12 +741,68 @@ class InterfaceSnapshotPollerTest {
         assertThat(poller.anyWalkInFlight()).isFalse();
     }
 
-    /** Waits for pool work to settle without asserting a count, for loops that only step time. */
+    /** Waits for walks to settle without asserting a count, for loops that only step time. */
     private static void awaitQuiet(final InterfaceSnapshotPoller poller) throws InterruptedException {
         final long deadline = System.currentTimeMillis() + 5_000;
         while (poller.anyWalkInFlight() && System.currentTimeMillis() < deadline) {
             Thread.sleep(5);
         }
+    }
+
+    /**
+     * The bulkhead. An endpoint that has failed at least once draws from its own, smaller permit
+     * budget, so a population of dead agents parked in their timeouts cannot take the permits a
+     * healthy endpoint needs.
+     */
+    @Test
+    void suspectEndpointsDrawFromTheirOwnBudgetSoHealthyOnesAreNeverStarved() throws Exception {
+        final var snmp = new FakeSnmp();
+        snmp.entered = new CountDownLatch(1);
+        snmp.release = new CountDownLatch(1);
+        final var config = config();
+        config.setPoolWidth(2);
+        config.setSuspectPoolWidth(1);
+        final var poller = poller(snmp, config, new RecordingSink());
+        // three endpoints that have already failed once each, and one healthy endpoint
+        for (final String ip : List.of("10.0.0.1", "10.0.0.2", "10.0.0.3")) {
+            final var ep = endpoint(ip);
+            snmp.failing.add(ep);
+            poller.trackAndResolve(ep, 1);
+        }
+        final var healthy = endpoint("10.0.0.9");
+        poller.trackAndResolve(healthy, 1);
+        poller.tick(this.clock.get());
+        awaitQuiet(poller);
+        // all four first walks ran (nobody was a suspect yet); now the three are suspects
+        advanceMs(config.getDeadEndpointBaseMs() + 1);
+        snmp.block = true;
+        poller.tick(this.clock.get());
+        snmp.entered.await(2, TimeUnit.SECONDS);
+
+        assertThat(this.metrics.gauge("snmp.poller.suspectInFlight").getValue()).isEqualTo(1);
+        assertThat(this.metrics.meter("snmp.poller.deferred").getCount()).isEqualTo(2);
+        snmp.release.countDown();
+    }
+
+    /** A due walk that finds no permit is not dropped: it stays due and the next tick runs it. */
+    @Test
+    void aDueWalkWithoutAPermitStaysDueAndRunsOnTheNextTick() throws Exception {
+        final var snmp = new FakeSnmp();
+        snmp.block = true;
+        snmp.entered = new CountDownLatch(1);
+        snmp.release = new CountDownLatch(1);
+        final var config = config();
+        config.setPoolWidth(1);
+        final var poller = poller(snmp, config, new RecordingSink());
+        poller.trackAndResolve(endpoint("10.0.0.1"), 1);
+        poller.trackAndResolve(endpoint("10.0.0.2"), 1);
+        poller.tick(this.clock.get());
+        snmp.entered.await(2, TimeUnit.SECONDS);
+        assertThat(this.metrics.gauge("snmp.poller.inFlight").getValue()).isEqualTo(1);
+        snmp.release.countDown();
+        awaitWalks(poller, snmp, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 2);
     }
 
     /**
@@ -777,6 +873,7 @@ class InterfaceSnapshotPollerTest {
     @Test
     void anExporterIsNotDeregisteredWhileItsWalkIsStillRunning() throws Exception {
         final var snmp = new FakeSnmp();
+        snmp.block = true;
         snmp.entered = new CountDownLatch(1);
         snmp.release = new CountDownLatch(1);
         final var poller = poller(snmp, config());
@@ -804,6 +901,17 @@ class InterfaceSnapshotPollerTest {
         assertThatThrownBy(() -> poller(new FakeSnmp(), config))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("riptide.snmp.poll.pool-width");
+    }
+
+    /** No suspect permit would leave every failed endpoint deferred forever, silently. */
+    @Test
+    void aNonPositiveSuspectPoolWidthFailsFastAndNamesTheProperty() {
+        final var config = config();
+        config.setSuspectPoolWidth(0);
+
+        assertThatThrownBy(() -> poller(new FakeSnmp(), config))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("riptide.snmp.poll.suspect-pool-width must be greater than 0");
     }
 
     /**
@@ -981,6 +1089,7 @@ class InterfaceSnapshotPollerTest {
     @Test
     void noSecondWalkIsIssuedWhileOneIsStillRunning() throws Exception {
         final var snmp = new FakeSnmp();
+        snmp.block = true;
         snmp.entered = new CountDownLatch(1);
         snmp.release = new CountDownLatch(1);
         final var poller = poller(snmp, config());
@@ -1002,6 +1111,7 @@ class InterfaceSnapshotPollerTest {
     @Test
     void poolWidthBoundsWalksInFlightAcrossTheFleet() throws Exception {
         final var snmp = new FakeSnmp();
+        snmp.block = true;
         snmp.entered = new CountDownLatch(2);
         snmp.release = new CountDownLatch(1);
         final var config = config();
@@ -1173,7 +1283,7 @@ class InterfaceSnapshotPollerTest {
             poller.trackAndResolve(endpoint("10.4.0." + i), 1);
         }
         poller.tick(this.clock.get());
-        awaitWalks(poller, snmp, 40); // the cold-start burst, drained by the pool
+        awaitWalks(poller, snmp, 40); // the cold-start burst, drained through the permits
 
         // step through one refresh interval in twentieths and record when re-walks land
         int busiestSlice = 0;

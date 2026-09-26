@@ -12,9 +12,12 @@ import com.codahale.metrics.MetricRegistry;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.assertj.core.api.Assertions;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -32,7 +35,24 @@ public class SnmpTest {
 
     private static final AtomicInteger PORT_COUNTER = new AtomicInteger(12345);
     private static final SecretResolvers SECRET_RESOLVERS = SecretResolvers.defaults();
+    /** The walk deadline timer, which {@code DefaultSnmpService} owns in production. */
+    private static final ScheduledExecutorService DEADLINES = Executors.newSingleThreadScheduledExecutor();
     private TestSnmpAgent currentAgent;
+
+    @AfterAll
+    static void stopDeadlines() {
+        DEADLINES.shutdownNow();
+    }
+
+    private static SnmpUtils.WalkResult getIfInfoMap(final SnmpEndpoint endpoint, final SecretResolvers resolvers)
+            throws java.io.IOException {
+        return getIfInfoMap(endpoint, resolvers, SnmpUtils.WALK_BUDGET.toNanos());
+    }
+
+    private static SnmpUtils.WalkResult getIfInfoMap(final SnmpEndpoint endpoint, final SecretResolvers resolvers,
+                                                     final long budgetNanos) throws java.io.IOException {
+        return SnmpUtils.getIfInfoMapAsync(endpoint, resolvers, budgetNanos, DEADLINES).join();
+    }
 
     @AfterEach
     public void cleanup() throws Exception {
@@ -134,14 +154,14 @@ public class SnmpTest {
         currentAgent.registerIfXTable();
 
         final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.COMMUNITY);
-        final var abandoned = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS, 0L);
+        final var abandoned = getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS, 0L);
 
         assertThat(abandoned.outcome()).isEqualTo(SnmpUtils.WalkOutcome.ABANDONED);
         Assertions.assertThat(abandoned.rows()).as("an incomplete table must not be cached as complete").isEmpty();
 
         // and the same agent with a real budget serves the full table: the abandonment was
         // the budget's doing, not the agent's
-        final var full = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS);
+        final var full = getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS);
         assertThat(full.outcome()).isEqualTo(SnmpUtils.WalkOutcome.OK);
         Assertions.assertThat(full.rows()).containsKey(1);
     }
@@ -155,7 +175,7 @@ public class SnmpTest {
         currentAgent.registerIfXTable();
 
         final SnmpEndpoint snmpEndpoint = communityV2c(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.COMMUNITY);
-        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS).rows();
+        final Map<Integer, IfInfo> ifMap = getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS).rows();
 
         assertThat(ifMap.get(1).name()).isEqualTo("eth0-x");
         assertThat(ifMap.get(1).alias()).isEqualTo("My ethernet interface");
@@ -174,7 +194,7 @@ public class SnmpTest {
         currentAgent.registerIfXTable();
 
         final SnmpEndpoint snmpEndpoint = noAuthNoPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.NOAUTHNOPRIV_USERNAME);
-        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS).rows();
+        final Map<Integer, IfInfo> ifMap = getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS).rows();
 
         assertThat(ifMap.get(1).name()).isEqualTo("eth0-x");
         assertThat(ifMap.get(1).alias()).isEqualTo("My ethernet interface");
@@ -192,7 +212,7 @@ public class SnmpTest {
         currentAgent.registerIfTable();
 
         final SnmpEndpoint snmpEndpoint = noAuthNoPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.NOAUTHNOPRIV_USERNAME);
-        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS).rows();
+        final Map<Integer, IfInfo> ifMap = getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS).rows();
 
         assertThat(ifMap.get(1).name()).isEqualTo("eth0");
         assertThat(ifMap.get(1).alias()).isNull();
@@ -209,7 +229,7 @@ public class SnmpTest {
         currentAgent.registerIfXTable();
 
         final SnmpEndpoint snmpEndpoint = authNoPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.AUTHNOPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1, TestSnmpAgent.AUTHNOPRIV_AUTH_PASSHRASE);
-        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS).rows();
+        final Map<Integer, IfInfo> ifMap = getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS).rows();
 
         assertThat(ifMap.get(1).name()).isEqualTo("eth0-x");
         assertThat(ifMap.get(1).alias()).isEqualTo("My ethernet interface");
@@ -228,7 +248,7 @@ public class SnmpTest {
         currentAgent.registerIfXTable();
 
         final SnmpEndpoint snmpEndpoint = authPriv(new IPAddressString("127.0.0.1"), port, TestSnmpAgent.AUTHPRIV_USERNAME, TargetBuilder.AuthProtocol.sha1, TestSnmpAgent.AUTHPRIV_AUTH_PASSHRASE, TargetBuilder.PrivProtocol.aes128, TestSnmpAgent.AUTHPRIV_PRIV_PASSHRASE);
-        final Map<Integer, IfInfo> ifMap = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS).rows();
+        final Map<Integer, IfInfo> ifMap = getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS).rows();
 
         assertThat(ifMap.get(1).name()).isEqualTo("eth0-x");
         assertThat(ifMap.get(1).alias()).isEqualTo("My ethernet interface");
@@ -256,7 +276,7 @@ public class SnmpTest {
         final var appender = LogCapture.startedAppender();
         logger.addAppender(appender);
         try {
-            Assertions.assertThat(SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS).rows()).isEmpty();
+            Assertions.assertThat(getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS).rows()).isEmpty();
 
             // The leak lives in argument rendering, so assert on the formatted messages
             Assertions.assertThat(appender.list)
@@ -285,7 +305,7 @@ public class SnmpTest {
         final var appender = LogCapture.startedAppender();
         logger.addAppender(appender);
         try {
-            final var walk = SnmpUtils.getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS);
+            final var walk = getIfInfoMap(snmpEndpoint, SECRET_RESOLVERS);
 
             assertThat(walk.outcome()).isEqualTo(SnmpUtils.WalkOutcome.TIMEOUT);
             Assertions.assertThat(walk.rows()).isEmpty();

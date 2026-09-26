@@ -171,3 +171,14 @@ Registered whether or not any polling profile sets `collect`, but only marked wh
 | **`snmp.poller.inventoryRefused`** | gauge | `poll: always` entries in total while the whole set was refused for exceeding `riptide.snmp.poll.max-exporters`, `0` otherwise. | `> 0` |
 | **`snmp.poller.samplesEmitted`** | meter | Samples a walk handed to the metric sink. | compare against `metrics.sink.sentSamples` and `.droppedSamples` |
 | **`snmp.poller.collectsFailed`** | meter | Collects the poller itself saw fail: a returned table with no usable rows, or an unexpected exception the collect did not degrade on its own. | sustained rate |
+
+### SNMP poller concurrency
+
+Every poller walk, collecting or not, holds one permit while it is in flight.
+An agent whose last walk failed draws from the suspect budget, `riptide.snmp.poll.suspect-pool-width`; every other agent draws from `riptide.snmp.poll.pool-width`.
+
+| Metric | Type | Meaning | Alert on |
+| --- | --- | --- | --- |
+| **`snmp.poller.inFlight`** | gauge | Walks in flight for agents in good standing. | pinned at `pool-width` together with a rising `deferred` |
+| **`snmp.poller.suspectInFlight`** | gauge | Walks in flight for agents whose last walk failed. | not an alert: pinned at `suspect-pool-width` is the bulkhead doing its job |
+| **`snmp.poller.deferred`** | meter | Due walks that found no permit. Each one stays due and is tried again on the next tick. | sustained rate while `inFlight` is pinned |

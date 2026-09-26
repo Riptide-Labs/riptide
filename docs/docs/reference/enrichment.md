@@ -22,7 +22,8 @@ Fleet-level keys, under **`riptide.snmp.poll`**:
 
 | Name | Type | Default | Description |
 | --- | --- | --- | --- |
-| **`riptide.snmp.poll.pool-width`** | int | `4` | Walks in flight across the whole fleet. Per-endpoint concurrency is always 1. |
+| **`riptide.snmp.poll.pool-width`** | int | `4` | Walks in flight across the whole fleet for endpoints whose last walk succeeded. Per-endpoint concurrency is always 1. |
+| **`riptide.snmp.poll.suspect-pool-width`** | int | `8` | Walks in flight for endpoints whose last walk failed, drawn separately from `pool-width`. |
 | **`riptide.snmp.poll.deregister-after`** | int | `3` | Silent refresh intervals after which an exporter stops being polled. |
 | **`riptide.snmp.poll.dead-endpoint-base-ms`** | long (ms) | `60000` | First retry delay after a failed walk. Doubles on each failure. |
 | **`riptide.snmp.poll.dead-endpoint-ceiling-ms`** | long (ms) | `1800000` | Upper bound on the retry delay. |

@@ -39,11 +39,15 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongSupplier;
@@ -51,7 +55,7 @@ import java.util.function.LongSupplier;
 /**
  * Walks each exporter's interface table on a schedule and serves enrichment from the result.
  * When the endpoint's polling profile names collections, the walk goes through
- * {@link SnmpService#collect} instead and the same rows also become samples for the
+ * {@link SnmpService#collectAsync} instead and the same rows also become samples for the
  * {@link MetricSink}.
  *
  * <p>An exporter is registered in one of two ways, chosen per inventory entry by
@@ -68,14 +72,19 @@ import java.util.function.LongSupplier;
  *       so no parser thread can block on it.</li>
  *   <li>At most one walk per endpoint is in flight, because each registration carries a single
  *       in-flight flag.</li>
- *   <li>Fleet-wide concurrency is bounded by the walker pool, independently of exporter count.</li>
+ *   <li>Fleet-wide concurrency is bounded by permits, independently of exporter count. No thread
+ *       waits on a walk: a walk takes a permit when it starts and returns it when its future
+ *       completes. An endpoint whose last walk failed draws from a separate, smaller suspect
+ *       budget, so dead agents holding permits for their whole timeout cannot take the permits a
+ *       healthy endpoint needs.</li>
  *   <li>An inventory-registered exporter is never removed for silence; only the inventory removes it.</li>
  * </ul>
  *
  * <p>Walks are spread across the refresh interval by an offset derived from the endpoint address,
  * so the schedule survives a restart without stored state, plus a small per-cycle jitter. The
- * offset only distributes statistically and collisions are expected. The pool absorbs them as a
- * brief queue rather than a burst at the agent. Jitter exists for a different reason. A fixed
+ * offset only distributes statistically and collisions are expected. A due walk that finds no
+ * permit stays due and runs on a later tick, so collisions become a brief queue rather than a
+ * burst at the agent. Jitter exists for a different reason. A fixed
  * offset would poll a device at an identical phase forever and collide every cycle with anything
  * the device does on its own schedule.
  */
@@ -100,12 +109,14 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         // the whole point of AD-6 is that the change reaches an agent already being polled
         private volatile SnmpEndpoint endpoint;
         private final AtomicBoolean walkInFlight = new AtomicBoolean();
+        /** The latest walk, done or not. {@link #stop} waits on it; nothing else reads it. */
+        private volatile CompletableFuture<Void> walk = CompletableFuture.completedFuture(null);
         private volatile Snapshot snapshot;
         private volatile long lastSeenNanos;
         private volatile long nextWalkNanos;
         // AtomicInteger rather than a volatile int: only one walk per registration runs at a
-        // time, but successive walks land on different pool threads, so the read-modify-write
-        // needs to be atomic rather than merely visible
+        // time, but successive walks complete on different snmp4j threads, so the
+        // read-modify-write needs to be atomic rather than merely visible
         private final java.util.concurrent.atomic.AtomicInteger consecutiveFailures =
                 new java.util.concurrent.atomic.AtomicInteger();
         private volatile boolean unreachable;
@@ -135,7 +146,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             this.endpoint = endpoint;
             this.lastSeenNanos = nowNanos;
             // zero delay: warmup is one walk rather than up to a full interval, and a mass
-            // restart drains at pool width in first-flow order rather than bursting
+            // restart drains at the permit count in first-flow order rather than bursting
             this.nextWalkNanos = nowNanos;
         }
     }
@@ -164,7 +175,14 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      */
     private final Inventory inventory;
 
-    private final ExecutorService walkers;
+    /** Walks in flight for endpoints in good standing. */
+    private final Semaphore permits;
+    /**
+     * Walks in flight for suspects: endpoints whose last walk failed. Separate so that a
+     * population of dead agents, each holding its permit for a whole timeout, exhausts only
+     * this budget and never the one healthy endpoints draw from.
+     */
+    private final Semaphore suspectPermits;
     private final ScheduledExecutorService scheduler;
 
     private final Meter registered;
@@ -186,6 +204,8 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     private final AtomicInteger inventoryRefused = new AtomicInteger();
     private final Meter samplesEmitted;
     private final Meter collectsFailed;
+    /** Due walks that found no permit. Each one stays due and is tried again on the next tick. */
+    private final Meter deferred;
 
     @Autowired
     public InterfaceSnapshotPoller(final SnmpService snmpService,
@@ -233,16 +253,16 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 "zone", identity.zone());
 
         // Fail loudly at startup rather than silently. Each of these otherwise disables SNMP
-        // enrichment in a way that looks like a data problem: a non-positive pool width throws
-        // from inside the executor factory naming neither property nor class, and non-positive
-        // expiry or exporter bound make every trackAndResolve() return empty with only a meter to show
-        // for it. Note 0 does not mean "unlimited" here, unlike the negative-cache TTL it
+        // enrichment in a way that looks like a data problem: a non-positive pool width leaves
+        // no permit, so every walk is deferred forever with only a meter to show for it, and
+        // non-positive expiry or exporter bound make every trackAndResolve() return empty. Note 0 does not mean "unlimited" here, unlike the negative-cache TTL it
         // replaces, so check rather than reinterpreting.
         // cadence is no longer settable here (retired keys fail startup; profiles cut
         // over in a later story), so these two name the value, not a configurable key
         requirePositive(config.getRefreshIntervalMs(), "snmp poll refresh interval (built-in)");
         requirePositive(config.getSnapshotExpiryMs(), "snmp poll snapshot expiry (built-in)");
         requirePositive(config.getPoolWidth(), "riptide.snmp.poll.pool-width");
+        requirePositive(config.getSuspectPoolWidth(), "riptide.snmp.poll.suspect-pool-width");
         requirePositive(config.getDeregisterAfter(), "riptide.snmp.poll.deregister-after");
         requirePositive(config.getDeadEndpointBaseMs(), "riptide.snmp.poll.dead-endpoint-base-ms");
         requirePositive(config.getDeadEndpointCeilingMs(), "riptide.snmp.poll.dead-endpoint-ceiling-ms");
@@ -255,12 +275,8 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                     config.getSnapshotExpiryMs(), config.getRefreshIntervalMs());
         }
 
-        this.walkers = Executors.newFixedThreadPool(config.getPoolWidth(),
-                runnable -> {
-                    final Thread thread = new Thread(runnable, "snmp-walker");
-                    thread.setDaemon(true);
-                    return thread;
-                });
+        this.permits = new Semaphore(config.getPoolWidth());
+        this.suspectPermits = new Semaphore(config.getSuspectPoolWidth());
 
         this.registered = metrics.meter(MetricRegistry.name("snmp", "poller", "registered"));
         this.reresolved = metrics.meter(MetricRegistry.name("snmp", "poller", "reresolved"));
@@ -273,6 +289,13 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         metrics.gauge(MetricRegistry.name("snmp", "poller", "inventoryRefused"), () -> this.inventoryRefused::get);
         this.samplesEmitted = metrics.meter(MetricRegistry.name("snmp", "poller", "samplesEmitted"));
         this.collectsFailed = metrics.meter(MetricRegistry.name("snmp", "poller", "collectsFailed"));
+        this.deferred = metrics.meter(MetricRegistry.name("snmp", "poller", "deferred"));
+        final int poolWidth = config.getPoolWidth();
+        final int suspectPoolWidth = config.getSuspectPoolWidth();
+        metrics.gauge(MetricRegistry.name("snmp", "poller", "inFlight"),
+                () -> () -> poolWidth - this.permits.availablePermits());
+        metrics.gauge(MetricRegistry.name("snmp", "poller", "suspectInFlight"),
+                () -> () -> suspectPoolWidth - this.suspectPermits.availablePermits());
 
         if (startScheduler) {
             // poll: always entries are registered at boot, not on the first reload. The inventory
@@ -442,8 +465,8 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     }
 
     /**
-     * Test seam. Walks complete on the pool after {@link #tick} returns, and a registration's next
-     * walk time is only set once the walk finishes — so a test that merely counted issued walks
+     * Test seam. Walks complete on snmp4j's threads after {@link #tick} returns, and a registration's
+     * next walk time is only set once the walk finishes. A test that merely counted issued walks
      * would race the bookkeeping and see a stale schedule.
      */
     boolean anyWalkInFlight() {
@@ -662,11 +685,10 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 // Not while a walk is running: the in-flight flag lives on this object, so
                 // removing it lets a re-registration mint a fresh flag and start a second
                 // concurrent walk against an agent whose first walk is still parked in its
-                // timeout. Deregistration can wait a tick — boundedly: snmp4j's timeout
-                // bounds each round-trip, and the walker's own bounded wait plus the
-                // session close on return bound the walk itself (SnmpUtils.WALK_BUDGET,
-                // #536), so "wait a tick" cannot become "wait forever" even against an
-                // agent that never stops answering.
+                // timeout. Deregistration can wait a tick, boundedly: snmp4j's timeout
+                // bounds each round-trip, and the walk's own deadline completes the walk
+                // regardless (SnmpUtils.WALK_BUDGET, #536), so "wait a tick" cannot become
+                // "wait forever" even against an agent that never stops answering.
                 if (!registration.walkInFlight.get()
                         && this.registrations.remove(entry.getKey(), registration)) {
                     if (registration.source == RegistrationSource.INVENTORY) {
@@ -688,12 +710,22 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             if (!registration.walkInFlight.compareAndSet(false, true)) {
                 continue;
             }
-            try {
-                this.walkers.execute(() -> walk(registration));
-            } catch (final Exception e) {
+            // suspect is judged here, at submission: a walk that fails takes its permit back
+            // from the healthy budget, and only the next one draws from the suspect budget
+            final Semaphore budget = registration.consecutiveFailures.get() > 0
+                    ? this.suspectPermits
+                    : this.permits;
+            if (!budget.tryAcquire()) {
+                this.deferred.mark();
                 registration.walkInFlight.set(false);
-                log.warn("Failed to submit SNMP walk task for endpoint {}: {}", registration.endpoint, e.getMessage());
+                // stays due: nextWalkNanos is untouched, so the next tick tries again
+                continue;
             }
+            registration.walk = walkAsync(registration).whenComplete((ignored, failure) -> {
+                // the permit first: a caller that sees the flag clear must also find the permit back
+                budget.release();
+                registration.walkInFlight.set(false);
+            });
         }
         if (stoppedHere > 0) {
             log.info("Stopped polling {} registration(s) that no longer resolve to a pollable agent "
@@ -711,70 +743,98 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         }
     }
 
-    private void walk(final Registration registration) {
+    /**
+     * Starts one walk and returns a future that completes once its result is recorded. The future
+     * never completes exceptionally: every failure, thrown or completed, ends in a back-off here,
+     * so the caller's only job is returning the permit.
+     */
+    private CompletableFuture<Void> walkAsync(final Registration registration) {
         // captured before the walk: a re-resolution landing mid-walk asks for an immediate
         // re-walk on the new endpoint, and writing this walk's schedule back afterwards
         // would silently defer the new credentials by a whole interval
         final int resolution = registration.resolution.get();
+        // read once: a re-resolution between the check and the collect could otherwise
+        // hand collect an endpoint with no collections, and it would store an empty table
+        final SnmpEndpoint endpoint = registration.endpoint;
+        final List<Sample> samples = new ArrayList<>();
+        CompletableFuture<SnmpService.InterfaceTable> table;
         try {
-            // read once: a re-resolution between the check and the collect could otherwise
-            // hand collect an endpoint with no collections, and it would store an empty table
-            final SnmpEndpoint endpoint = registration.endpoint;
-            final List<Sample> samples = new ArrayList<>();
-            final SnmpService.InterfaceTable table = endpoint.getCollections().isEmpty()
-                    ? this.snmpService.walkInterfaces(endpoint)
-                    : collect(registration, endpoint, samples);
-            final long now = this.nanoTime.getAsLong();
-
-            if (table.walkFailed()) {
-                if (registration.resolution.get() == resolution) {
-                    // a re-resolution during this walk already scheduled the new endpoint;
-                    // backing off here would charge the replacement for the old one's failure
-                    backOff(registration, now);
-                }
-                if (!registration.unreachable) {
-                    registration.unreachable = true;
-                    // transitions are logged, not attempts: a per-retry warning would scale with
-                    // how long a device stays down
-                    // "did not produce", not "did not answer": an abandoned walk (budget or
-                    // row cap) is an agent that answered too much, and the walk-level warn
-                    // already named which; this transition log must not contradict it
-                    log.warn("SNMP endpoint {} did not produce a usable interface table, backing off",
-                            registration.endpoint);
-                }
-                return;
-            }
-
-            if (registration.unreachable) {
-                registration.unreachable = false;
-                log.info("SNMP endpoint {} answers again", registration.endpoint);
-            }
-            registration.consecutiveFailures.set(0);
-            final Map<Integer, IfInfo> rows = table.rows() != null ? table.rows() : Map.of();
-            registration.snapshot = new Snapshot(Map.copyOf(rows), now);
-            registration.warnedMissing.clear();
-            if (registration.resolution.get() == resolution) {
-                registration.nextWalkNanos = nextWalkAt(registration.endpoint, now);
-            }
-            emit(endpoint, samples);
+            table = endpoint.getCollections().isEmpty()
+                    ? this.snmpService.walkInterfacesAsync(endpoint)
+                    : collectAsync(registration, endpoint, samples);
         } catch (final RuntimeException e) {
-            // Without this the schedule is never advanced for a registration whose walk throws
-            // something the SNMP layer does not degrade — an snmp4j target construction failure,
-            // say — and the 1 Hz scheduler would re-submit that endpoint every second forever,
-            // with a stack trace each time. Back off exactly as a failed walk does, so an
-            // endpoint that throws is treated no more kindly than one that does not answer.
+            table = CompletableFuture.failedFuture(e);
+        }
+        return table.handle((result, failure) -> {
+            if (failure != null) {
+                // a stage that threw arrives wrapped; the log should name what actually threw
+                failedUnexpectedly(registration, resolution,
+                        failure instanceof CompletionException && failure.getCause() != null ? failure.getCause() : failure);
+                return null;
+            }
+            try {
+                recordWalk(registration, resolution, endpoint, result, samples);
+            } catch (final RuntimeException e) {
+                failedUnexpectedly(registration, resolution, e);
+            }
+            return null;
+        });
+    }
+
+    private void recordWalk(final Registration registration, final int resolution, final SnmpEndpoint endpoint,
+                        final SnmpService.InterfaceTable table, final List<Sample> samples) {
+        final long now = this.nanoTime.getAsLong();
+
+        if (table.walkFailed()) {
             if (registration.resolution.get() == resolution) {
-                // same guard as the success path: a re-resolution that landed mid-walk asked
-                // for an immediate re-walk on the new endpoint, and backing off the endpoint
-                // that just failed would defer the operator's fix
-                backOff(registration, this.nanoTime.getAsLong());
+                // a re-resolution during this walk already scheduled the new endpoint;
+                // backing off here would charge the replacement for the old one's failure
+                backOff(registration, now);
             }
             if (!registration.unreachable) {
                 registration.unreachable = true;
-                log.warn("Interface walk of {} failed unexpectedly, backing off", registration.endpoint, e);
+                // transitions are logged, not attempts: a per-retry warning would scale with
+                // how long a device stays down
+                // "did not produce", not "did not answer": an abandoned walk (budget or
+                // row cap) is an agent that answered too much, and the walk-level warn
+                // already named which; this transition log must not contradict it
+                log.warn("SNMP endpoint {} did not produce a usable interface table, backing off",
+                        registration.endpoint);
             }
-        } finally {
-            registration.walkInFlight.set(false);
+            return;
+        }
+
+        if (registration.unreachable) {
+            registration.unreachable = false;
+            log.info("SNMP endpoint {} answers again", registration.endpoint);
+        }
+        registration.consecutiveFailures.set(0);
+        final Map<Integer, IfInfo> rows = table.rows() != null ? table.rows() : Map.of();
+        registration.snapshot = new Snapshot(Map.copyOf(rows), now);
+        registration.warnedMissing.clear();
+        if (registration.resolution.get() == resolution) {
+            registration.nextWalkNanos = nextWalkAt(registration.endpoint, now);
+        }
+        emit(endpoint, samples);
+    }
+
+    /**
+     * Without this the schedule is never advanced for a registration whose walk throws
+     * something the SNMP layer does not degrade (an snmp4j target construction failure, say),
+     * and the 1 Hz scheduler would re-submit that endpoint every second forever, with a stack
+     * trace each time. Back off exactly as a failed walk does, so an endpoint that throws is
+     * treated no more kindly than one that does not answer.
+     */
+    private void failedUnexpectedly(final Registration registration, final int resolution, final Throwable e) {
+        if (registration.resolution.get() == resolution) {
+            // same guard as the success path: a re-resolution that landed mid-walk asked
+            // for an immediate re-walk on the new endpoint, and backing off the endpoint
+            // that just failed would defer the operator's fix
+            backOff(registration, this.nanoTime.getAsLong());
+        }
+        if (!registration.unreachable) {
+            registration.unreachable = true;
+            log.warn("Interface walk of {} failed unexpectedly, backing off", registration.endpoint, e);
         }
     }
 
@@ -782,49 +842,79 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      * Walks every collection the endpoint's profile names and returns the enrichment table built
      * from the same rows, so a collecting endpoint is walked once per cycle rather than twice.
      * Samples go into {@code samples}. A failed collect leaves it empty, so the sink never sees
-     * a partial walk.
+     * a partial walk. The collections run one after another, each starting when the previous one
+     * came back clean.
      */
-    private SnmpService.InterfaceTable collect(final Registration registration, final SnmpEndpoint endpoint,
-                                               final List<Sample> samples) {
+    private CompletableFuture<SnmpService.InterfaceTable> collectAsync(final Registration registration,
+                                                                       final SnmpEndpoint endpoint,
+                                                                       final List<Sample> samples) {
         // captured before the collect, once per walk: the sample time is when the walk started
         final long wallMs = this.wallClockMs.getAsLong();
         final Duration budget = PollingProfile.walkBudget(Duration.ofMillis(refreshMsFor(endpoint)));
         final Map<String, String> labels = labelsFor(endpoint);
+        // written by one collect's completion at a time; the chain orders them
         final Map<Integer, IfInfo> rows = new TreeMap<>();
-        boolean anyIfName = false;
+        final AtomicBoolean anyIfName = new AtomicBoolean();
+        CompletableFuture<Boolean> clean = CompletableFuture.completedFuture(true);
         for (final CollectionDefinition definition : endpoint.getCollections()) {
-            final CollectedTable collected;
-            try {
-                collected = this.snmpService.collect(endpoint, definition, budget);
-            } catch (final RuntimeException e) {
-                // counted here, where only a collect can have thrown. walk's catch does the back-off
-                this.collectsFailed.mark();
-                throw e;
-            }
-            if (collected.walkFailed()) {
-                this.collectsFailed.mark();
-                samples.clear();
+            clean = clean.thenCompose(ok -> !ok
+                    ? CompletableFuture.completedFuture(false)
+                    : collectOne(endpoint, definition, budget).thenApply(collected -> {
+                        if (collected.walkFailed()) {
+                            this.collectsFailed.mark();
+                            samples.clear();
+                            return false;
+                        }
+                        for (final Map.Entry<Integer, CollectedTable.CollectedRow> row : collected.rows().entrySet()) {
+                            rows.put(row.getKey(), SampleMapper.toIfInfo(row.getValue()));
+                            if (row.getValue().info().containsKey("ifName")) {
+                                anyIfName.set(true);
+                            }
+                        }
+                        samples.addAll(SampleMapper.toSamples(definition, labels, collected, wallMs));
+                        return true;
+                    }));
+        }
+        return clean.thenApply(ok -> {
+            if (!ok) {
                 return new SnmpService.InterfaceTable(Map.of(), true);
             }
-            for (final Map.Entry<Integer, CollectedTable.CollectedRow> row : collected.rows().entrySet()) {
-                rows.put(row.getKey(), SampleMapper.toIfInfo(row.getValue()));
-                anyIfName |= row.getValue().info().containsKey("ifName");
+            if (anyIfName.get()) {
+                registration.warnedNoIfXTable = false;
+            } else if (!rows.isEmpty() && !registration.warnedNoIfXTable) {
+                registration.warnedNoIfXTable = true;
+                log.warn("SNMP endpoint {} answers ifTable but not ifXTable, so no octet series will exist for it",
+                        endpoint);
             }
-            samples.addAll(SampleMapper.toSamples(definition, labels, collected, wallMs));
+            return new SnmpService.InterfaceTable(rows, false);
+        });
+    }
+
+    /**
+     * One collect, counted as failed here when it throws or completes exceptionally, where only a
+     * collect can have done so. {@link #walkAsync} does the back-off.
+     */
+    private CompletableFuture<CollectedTable> collectOne(final SnmpEndpoint endpoint,
+                                                         final CollectionDefinition definition,
+                                                         final Duration budget) {
+        final CompletableFuture<CollectedTable> collected;
+        try {
+            collected = this.snmpService.collectAsync(endpoint, definition, budget);
+        } catch (final RuntimeException e) {
+            this.collectsFailed.mark();
+            throw e;
         }
-        if (anyIfName) {
-            registration.warnedNoIfXTable = false;
-        } else if (!rows.isEmpty() && !registration.warnedNoIfXTable) {
-            registration.warnedNoIfXTable = true;
-            log.warn("SNMP endpoint {} answers ifTable but not ifXTable, so no octet series will exist for it",
-                    endpoint);
-        }
-        return new SnmpService.InterfaceTable(rows, false);
+        return collected.whenComplete((table, failure) -> {
+            if (failure != null) {
+                this.collectsFailed.mark();
+            }
+        });
     }
 
     /**
      * Hands one walk's samples to the sink in a single call. A sink failure is caught here, not
-     * in walk: the walk succeeded, so the agent must not be backed off or marked unreachable for it.
+     * in {@link #walkAsync}: the walk succeeded, so the agent must not be backed off or marked
+     * unreachable for it.
      */
     private void emit(final SnmpEndpoint endpoint, final List<Sample> samples) {
         if (samples.isEmpty()) {
@@ -862,8 +952,9 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
 
     /**
      * Doubling back-off to a ceiling. Load-bearing rather than cosmetic: a walk against an
-     * unreachable agent holds a pool slot for its whole timeout, so retrying at a fixed interval
-     * lets a population of dead exporters starve the live ones of slots.
+     * unreachable agent holds a permit for its whole timeout, so retrying at a fixed interval
+     * lets a population of dead exporters exhaust the suspect budget and keep every other
+     * suspect, including one that has recovered, waiting for a permit.
      */
     private long backoffNanos(final int consecutiveFailures) {
         final long base = Math.max(1L, this.config.getDeadEndpointBaseMs());
@@ -891,8 +982,9 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      * demand-filled design produced when every cache entry expired at once.
      *
      * <p>The phase comes from the endpoint address, so it is stable across restarts and needs no
-     * stored state. It distributes only statistically and collisions are expected; the walker pool
-     * absorbs those as a brief queue rather than a burst at any one agent.
+     * stored state. It distributes only statistically and collisions are expected; a walk that finds
+     * no permit stays due for the next tick, so those become a brief queue rather than a burst at
+     * any one agent.
      *
      * <p>A small jitter on top serves a different purpose: a perfectly fixed phase would poll a
      * device at the same moment in every cycle and collide repeatedly with anything the device does
@@ -934,16 +1026,26 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 .orElse(0L);
     }
 
+    /**
+     * Stops ticking and waits up to three seconds for the walks in flight. A walk still running
+     * when the wait ends completes through its own deadline or the SNMP service's close, and
+     * returns its permit then.
+     */
     @PreDestroy
     public void stop() {
         if (this.scheduler != null) {
             this.scheduler.shutdownNow();
         }
-        this.walkers.shutdownNow();
+        final CompletableFuture<?>[] walks = this.registrations.values().stream()
+                .map(registration -> registration.walk)
+                .toArray(CompletableFuture<?>[]::new);
         try {
-            if (!this.walkers.awaitTermination(3, TimeUnit.SECONDS)) {
-                log.debug("Walker pool did not terminate within 3 seconds");
-            }
+            CompletableFuture.allOf(walks).get(3, TimeUnit.SECONDS);
+        } catch (final TimeoutException e) {
+            log.debug("SNMP walks were still in flight after 3 seconds");
+        } catch (final ExecutionException e) {
+            // unreachable: a walk future never completes exceptionally, walkAsync backs off instead
+            log.debug("SNMP walk failed during shutdown: {}", e.getMessage());
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
         }
@@ -971,8 +1073,8 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      *
      * <p>Spread across the registration's own refresh interval, using the same
      * address-derived phase the ordinary schedule uses, so the re-walk arrives on the
-     * cadence the operator asked for rather than compressed into a burst the pool then
-     * drains at its width.</p>
+     * cadence the operator asked for rather than compressed into a burst the permits then
+     * drain at their count.</p>
      */
     private long spreadWalkAt(final SnmpEndpoint endpoint, final long now) {
         final long interval = millisToNanos(Math.max(1, refreshMsFor(endpoint)));
