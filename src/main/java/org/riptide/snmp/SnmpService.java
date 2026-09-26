@@ -39,9 +39,16 @@ public interface SnmpService {
     }
 
     /**
-     * Walks the columns of {@code definition} and returns every row. Unlike
-     * {@link #walkInterfaces} there is no ifTable fallback: a device without ifXTable yields a
-     * failed table and no series, which is the spec's "no 32-bit fallback".
+     * Walks every column of {@code definition} and returns every row. Unlike
+     * {@link #walkInterfaces} there is no ifTable fallback for a missing ifXTable — but "no
+     * fallback" does not mean "always failed". On v2c/v3, a device without ifXTable answers a
+     * clean, empty GETBULK for it (see {@code shouldFallback}'s javadoc): {@code walkFailed} is
+     * {@code false}, the ifTable-only columns (ifOperStatus, the error/discard counters) are
+     * still populated, and the ifXTable-only columns — including ifName and every HC octet
+     * counter — are simply absent from every row. Only v1 fails the whole collect here, because
+     * v1 answers a missing ifXTable with a noSuchName error PDU. This is the spec's "no 32-bit
+     * fallback": rather than substituting ifTable's 32-bit octet counters, collect omits the
+     * octet series entirely.
      */
     CollectedTable collect(SnmpEndpoint snmpEndpoint, CollectionDefinition definition, Duration budget);
 }
