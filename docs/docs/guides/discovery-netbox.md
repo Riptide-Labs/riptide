@@ -162,6 +162,15 @@ This is a NetBox tag rather than a `netbox-api`-only feature: the renderer keys 
 3. Restart the collector and read the inventory line, as in the earlier steps.
    The composed exporters tree is not written anywhere an operator can read directly; `poll: always` on the tagged device is what SNMP polling reads to poll it without waiting for a flow.
 
+4. Verify the device is actually being polled, on the management port.
+
+   ```bash
+   curl -s http://localhost:8080/metrics | grep snmp_poller_inventoryRegistered
+   ```
+
+   A count at or above 1 means at least one `poll: always` entry, tagged device included, is registered and walked.
+   The gauge does not name which device; if you need that, and `riptide.metrics.remote-write.url` is set, query the store for `riptide_interface_info{exporter="<name>"}` instead, which carries the tagged device's own name.
+
 If you run more than one riptide collector against the same NetBox, each collector's `riptide.discovery.filter` names its own shard, for example `tag=riptide-shard-a` on one collector and `tag=riptide-shard-b` on another.
 Moving a device between shards is a retag in NetBox, not a config change on either collector.
 A dead collector's shard stays unpolled until it comes back or an operator retags its devices onto a live one; nothing here reassigns a shard automatically.
@@ -177,3 +186,4 @@ A dead collector's shard stays unpolled until it comes back or an operator retag
 - The output above was captured on 2026-09-23 against a local stand-in serving a three-device NetBox page, not against a NetBox server; the inventory path and the URL in the quoted lines were substituted for the stand-in's. An earlier session verified this source against a real NetBox; this page's output was not captured there.
 - `journalctl` was not run; the lines were read from the collector's stdout.
 - The devices-and-virtual-machines output was captured on 2026-09-25 against a real NetBox `v4.7-5.1.1` lab on `http://localhost:18000`, with 7 tagged devices and 3 tagged virtual machines, one without a primary IP. The URL and the inventory path in the quoted line were substituted.
+- Step 4 of "Poll devices that send no flows" names `snmp_poller_inventoryRegistered` and `riptide_interface_info` from source, not from a captured run against a tagged device; no expected output is quoted for it.
