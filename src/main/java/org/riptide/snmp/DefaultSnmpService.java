@@ -105,6 +105,21 @@ public class DefaultSnmpService implements SnmpService {
      * {@code SnmpBuilder} is kept alongside the session because {@link SnmpVersion#getTarget}
      * configures the target on the already-built builder, which is why every builder sets
      * {@code allowIncrementalConfigAfterBuild()}.
+     *
+     * <p><strong>Known limitation</strong>: {@code builder.build()} can throw {@code IOException}
+     * from {@code Snmp.listen()} after the builder's earlier {@code .udp()}/{@code .threads(2)}
+     * calls have already opened the UDP socket and started the two dispatcher threads, and on
+     * that failure this method leaks both, because snmp4j 3.13.1's {@code SnmpBuilder} gives no
+     * public way to reach or close that pre-built {@code Snmp}: its {@code snmp} field is
+     * {@code protected}, there is no getter, and the only constructor that accepts an
+     * externally-supplied {@code Snmp} is also {@code protected} (verified by disassembling
+     * {@code SnmpBuilder.build()}: it is exactly one field read plus {@code snmp.listen()}).
+     * Reaching it would require subclassing into those protected internals, which is leaning on
+     * an implementation detail rather than a supported extension point — not done here. Every
+     * later {@code collect} against this version retries {@code getSnmpBuilder().build()} and
+     * leaks another socket/thread pair until {@code build()} succeeds. {@code build()} failing
+     * at all is rare in practice ({@code listen()} mostly fails when the earlier {@code .udp()}
+     * call would already have failed), but this is a real, undischarged bound.
      */
     private synchronized Snmp session(final SnmpVersion version) throws IOException {
         Snmp snmp = this.sessions.get(version);

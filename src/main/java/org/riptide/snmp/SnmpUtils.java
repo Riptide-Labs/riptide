@@ -303,11 +303,17 @@ public final class SnmpUtils {
          * The wait being ours is the whole point: no failure mode inside snmp4j —
          * undelivered response, dead dispatcher — can keep the walker thread.
          *
-         * <p>What actually stops the round-trips after an abandonment is
-         * {@code getIfInfoMap}'s try-with-resources: {@code Snmp.close()} cancels the
-         * pending request and delivers a final refused event. TableUtils never consults
-         * {@code isFinished()} on its own, so the refusing {@code next} plus the close are
-         * the whole mechanism — an invariant this class depends on and must keep.</p>
+         * <p>What actually stops the round-trips after an abandonment depends on who owns the
+         * session. {@code getIfInfoMap} opens a session per walk: its try-with-resources calls
+         * {@code Snmp.close()} on abandonment, which cancels the pending request and delivers a
+         * final refused event straight away. {@code collect} runs on a shared, never-closed
+         * session instead: nothing cancels the in-flight GETBULK, so it simply runs to its own
+         * timeout-times-retries and snmp4j delivers the response (or a timeout) to
+         * {@code next()} in due course — which by then answers {@code false} because
+         * {@code isFinished()} is already {@code true}, so the late delivery is refused and
+         * dropped rather than reopening this collector. Either way, TableUtils never consults
+         * {@code isFinished()} on its own; the refusing {@code next} is what actually stops
+         * this collector from being reused by a stale response, whichever path produced it.</p>
          */
         boolean await(final long remainingNanos) {
             if (remainingNanos <= 0) {
@@ -359,11 +365,19 @@ public final class SnmpUtils {
         return vb.getVariable().toString();
     }
 
-    private static Long number(final VariableBinding vb) {
+    /** Package-private, not private: {@code SnmpCollectTest} pins the non-numeric case directly. */
+    static Long number(final VariableBinding vb) {
         if (vb == null || vb.getVariable() == null || vb.getVariable().isException()) {
             return null;
         }
-        return vb.getVariable().toLong();
+        try {
+            return vb.getVariable().toLong();
+        } catch (final UnsupportedOperationException e) {
+            // an agent answering a counter/gauge column with something non-numeric (e.g. an
+            // OctetString) must not turn into an exception the walker has to catch: the cell
+            // is simply absent, the same as a null or exception value
+            return null;
+        }
     }
 
     /**
@@ -381,6 +395,11 @@ public final class SnmpUtils {
         // one deadline for the whole call: the fallback walk shares the budget rather than
         // doubling it
         final long deadlineNanos = System.nanoTime() + budgetNanos;
+        // Known limitation, shared with DefaultSnmpService.session(): if snmpBuilder.build()
+        // throws here, the socket and two dispatcher threads that its earlier .udp()/.threads(2)
+        // calls already created leak, because snmp4j 3.13.1's SnmpBuilder exposes no public way
+        // to reach or close that pre-built Snmp (see session()'s javadoc for the full case). Not
+        // worked around here for the same reason: no supported extension point offers one.
         try (Snmp snmp = snmpBuilder.build()) {
             final Target<?> target = snmpEndpoint.getSnmpDefinition().getSnmpVersion().getTarget(snmp, snmpBuilder, snmpEndpoint, secretResolvers);
             final var ifXTable = walkColumns(snmp, target, snmpEndpoint, new OID[]{IFX_NAME, IFX_HIGH_SPEED, IFX_ALIAS}, SnmpUtils::ifXRow, deadlineNanos);
