@@ -42,7 +42,7 @@ A failed batch is logged by the flusher and counted in `persister.batch.failedRo
 The synchronous per-insert error, such as the `469 VIOLATED_CONSTRAINT` rejection in provisioned mode, only exists with `batch.enabled=false` and coalescing off.
 
 The signals are the flusher's ERROR line, `Failed to persist a batch of N flows, flusher does not retry, some may be committed`, and the `persister.batch.*` metrics on the management server's [`/metrics` endpoint](../reference/management.md#metrics-endpoint).
-Alert on a sustained `droppedRows` or `failedRows` rate and on `queueDepth` approaching `queue-capacity`.
+Alert on a sustained `droppedRows` or `failedRows` rate and on `queueDepth` over `queueCapacity` approaching 1.
 Treat `failedRows` as a signal rather than a loss figure, for the reason below.
 The [readiness contract](../reference/management.md#health-endpoints--probes) deliberately keeps ClickHouse out of `/readyz`, so these metrics are the whole story.
 

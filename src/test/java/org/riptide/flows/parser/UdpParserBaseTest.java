@@ -201,7 +201,11 @@ class UdpParserBaseTest {
                 MetricRegistry.name("parsers", "stub", "templateCount"),
                 // the ParserBase half of the same contract: left registered, this one reads 0
                 // once the executor is nulled, i.e. "queue empty, healthy" for a stopped parser
-                MetricRegistry.name("parsers", "stub", "dispatchQueueDepth"));
+                MetricRegistry.name("parsers", "stub", "dispatchQueueDepth"),
+                // and its siblings would keep describing a pool that no longer exists
+                MetricRegistry.name("parsers", "stub", "dispatchQueueCapacity"),
+                MetricRegistry.name("parsers", "stub", "dispatchPoolSize"),
+                MetricRegistry.name("parsers", "stub", "dispatchActiveWorkers"));
     }
 
     /**
@@ -267,8 +271,11 @@ class UdpParserBaseTest {
             assertThat(gauge(registry, "sessionCount"))
                     .as("the live parser's gauge survives its predecessor stopping")
                     .isEqualTo(1);
-            assertThat(registry.getGauges())
-                    .containsKey(MetricRegistry.name("parsers", "stub", "dispatchQueueDepth"));
+            assertThat(registry.getGauges()).containsKeys(
+                    MetricRegistry.name("parsers", "stub", "dispatchQueueDepth"),
+                    MetricRegistry.name("parsers", "stub", "dispatchQueueCapacity"),
+                    MetricRegistry.name("parsers", "stub", "dispatchPoolSize"),
+                    MetricRegistry.name("parsers", "stub", "dispatchActiveWorkers"));
         } finally {
             second.stop();
         }

@@ -507,6 +507,24 @@ class BatchingFlowRepositoryTest {
     }
 
     @Test
+    void queueCapacityIsReportedBesideTheDepthAndRemovedOnStop() {
+        final var config = batchConfig(10, Duration.ofMillis(100));
+        config.setQueueCapacity(40_000);
+        this.repository = repository(config);
+        this.repository.start();
+
+        Assertions.assertThat(this.metricRegistry.getGauges()
+                        .get(MetricRegistry.name("persister", "batch", "queueCapacity")).getValue())
+                .isEqualTo(40_000);
+
+        this.repository.stop();
+
+        Assertions.assertThat(this.metricRegistry.getGauges()).doesNotContainKeys(
+                MetricRegistry.name("persister", "batch", "queueDepth"),
+                MetricRegistry.name("persister", "batch", "queueCapacity"));
+    }
+
+    @Test
     void rejectsNonPositiveMaxRows() {
         final var config = batchConfig(0, Duration.ofMillis(100));
         Assertions.assertThatThrownBy(() -> repository(config))

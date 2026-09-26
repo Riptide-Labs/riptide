@@ -18,7 +18,9 @@ import org.riptide.pipeline.Identity;
 import org.riptide.pipeline.Source;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.RejectedExecutionException;
@@ -63,8 +65,8 @@ public abstract class ParserBase implements Parser {
     /** protected: subclasses register their own gauges against the same registry. */
     protected final MetricRegistry metricRegistry;
 
-    /** The depth gauge this instance registered, so stop() removes only its own. */
-    private Gauge<Integer> depthGauge;
+    /** The dispatch gauges this instance registered, by name, so stop() removes only its own. */
+    private final Map<String, Gauge<?>> dispatchGauges = new LinkedHashMap<>();
 
     /** volatile: written on the wiring thread, read by start() and by the event loops. */
     private volatile int threads = DEFAULT_NUM_THREADS;
@@ -156,14 +158,27 @@ public abstract class ParserBase implements Parser {
         this.executor = pool;
 
         // Depth alongside drops, matching BatchingFlowRepository's queueDepth gauge: a rising depth
-        // is the early warning, the drop counter is the damage report.
-        final String depthGauge = MetricRegistry.name("parsers", this.name, "dispatchQueueDepth");
-        this.metricRegistry.remove(depthGauge);
-        this.depthGauge = (Gauge<Integer>) () -> {
+        // is the early warning, the drop counter is the damage report. Capacity and pool size sit
+        // beside it so fill and worker use are ratios of two scraped series, never of a limit
+        // hard-coded in a rule or a dashboard. Capacity is this pool's own bound, captured here:
+        // the field can be set again, but the queue built from it cannot change size.
+        final int capacity = this.queueCapacity;
+        this.dispatchGauges.clear();
+        this.dispatchGauges.put(dispatchGaugeName("dispatchQueueDepth"), (Gauge<Integer>) () -> {
             final var p = this.executor;
             return p != null ? p.getQueue().size() : 0;
-        };
-        this.metricRegistry.register(depthGauge, this.depthGauge);
+        });
+        this.dispatchGauges.put(dispatchGaugeName("dispatchQueueCapacity"), (Gauge<Integer>) () -> capacity);
+        this.dispatchGauges.put(dispatchGaugeName("dispatchPoolSize"), (Gauge<Integer>) pool::getMaximumPoolSize);
+        this.dispatchGauges.put(dispatchGaugeName("dispatchActiveWorkers"), (Gauge<Integer>) pool::getActiveCount);
+        this.dispatchGauges.forEach((gauge, metric) -> {
+            this.metricRegistry.remove(gauge);
+            this.metricRegistry.register(gauge, metric);
+        });
+    }
+
+    private String dispatchGaugeName(final String gauge) {
+        return MetricRegistry.name("parsers", this.name, gauge);
     }
 
     @Override
@@ -188,8 +203,7 @@ public abstract class ParserBase implements Parser {
             // draining?" is a live question — removing the gauge first blinds the operator for
             // the one window that matters. Same contract as the session gauges in UdpParserBase:
             // once stopped, a parser publishes nothing rather than a 0 that reads as healthy.
-            deregisterIfOwned(this.metricRegistry, MetricRegistry.name("parsers", this.name, "dispatchQueueDepth"),
-                    this.depthGauge);
+            this.dispatchGauges.forEach((gauge, metric) -> deregisterIfOwned(this.metricRegistry, gauge, metric));
             this.executor = null;
         }
     }

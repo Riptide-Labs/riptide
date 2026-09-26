@@ -50,14 +50,18 @@ What each of these counts, and the delivery arithmetic between them, is in [Wher
 | --- | --- | --- | --- |
 | **`listeners.<name>.socketDrops`** | gauge | datagrams the kernel discarded because the socket receive buffer was full; read from `/proc/net/udp`, Linux only, absent elsewhere | rising |
 | **`parsers.<name>.undecodableSets`** | counter | Data Sets discarded because their IPFIX or NetFlow v9 Template was not known; counts Sets, not records, and includes Options Data Sets | sustained non-zero rate; a burst at startup is normal |
-| **`parsers.<name>.dispatchQueueDepth`** | gauge | packets waiting to be enriched; registered while the parser runs | approaching 4096 |
+| **`parsers.<name>.dispatchQueueDepth`** | gauge | packets waiting to be enriched; registered while the parser runs | over `dispatchQueueCapacity`, approaching 1 |
+| **`parsers.<name>.dispatchQueueCapacity`** | gauge | the dispatch queue's bound in packets, 4096 unless configured; registered while the parser runs | not an alert; the denominator for fill |
+| **`parsers.<name>.dispatchPoolSize`** | gauge | dispatch workers in the pool; registered while the parser runs | not an alert; the denominator for worker use |
+| **`parsers.<name>.dispatchActiveWorkers`** | gauge | dispatch workers running a task at the scrape; registered while the parser runs | at `dispatchPoolSize` while the queue fills |
 | **`parsers.<name>.dispatchDrops`** | counter | records discarded because enrichment or persistence fell behind, or discarded at shutdown | `> 0` |
 | **`parsers.<name>.unmodelledElementTemplates`** | counter | IPFIX templates announcing an information element riptide parses and then discards (today IE 390 to 399); not an error | the total, not a rate |
 | **`parsers.<name>.recordsReceived`** | meter | records parsed | the base of the delivery arithmetic |
 | **`parsers.<name>.recordsScheduled`** | meter | records handed to the dispatch queue; excludes queue-full drops | not an alert |
 | **`parsers.<name>.recordsDispatched`** | meter | records the dispatcher returned from, errors included | not a delivery confirmation |
 | **`pipeline.dispatchErrors`** | counter | records lost because enrichment or persistence threw; with batching off, a refused insert counts here | `> 0` |
-| **`persister.batch.queueDepth`** | gauge | rows waiting to be inserted | approaching `riptide.clickhouse.batch.queue-capacity` |
+| **`persister.batch.queueDepth`** | gauge | rows waiting to be inserted | over `persister.batch.queueCapacity`, approaching 1 |
+| **`persister.batch.queueCapacity`** | gauge | the queue's bound in rows, `riptide.clickhouse.batch.queue-capacity` | not an alert; the denominator for fill |
 | **`persister.batch.droppedRows`** | counter | rows the queue never handed to an insert: queue full, repository stopping, producer interrupted, offered after the shutdown drain; exact | sustained rate |
 | **`persister.batch.failedRows`** | counter | rows an insert was attempted for and lost; charges the whole batch, so an upper bound for a refused insert | sustained rate, as a signal and not a loss figure |
 | **`persister.batch.deadLetteredRows`** | counter | rows of a refused batch kept in `flows_dead_letter` instead of being dropped | not an alert; read with `failedRows` |
