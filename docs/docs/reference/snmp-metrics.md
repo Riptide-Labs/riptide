@@ -37,6 +37,8 @@ With `collect` set, the permits needed are about walks per second times walk lat
 For example, 5,000 devices at a 60 s `refresh-interval` is about 83 walks per second.
 At 200 ms per walk that needs about 17 permits, so `32` is a safe start.
 `riptide.snmp.poll.suspect-pool-width` is a separate budget for agents whose last walk failed, so it does not come out of this figure.
+A due walk that finds every permit busy waits in a due queue and starts the moment one frees, in due order, so no device can be skipped for ever.
+An inventory-registered device's first walk is spread across the interval by the same address-derived offset as its re-walks, so a restart with thousands of `poll: always` entries produces its first sweep at the steady rate rather than as one burst.
 Watch `snmp.poller.deferred` and `snmp.poller.inFlight` on `/metrics`.
 A sustained `deferred` rate while `inFlight` is pinned at `pool-width` means the permits are too few.
 Both keys are described on the [SNMP agent reference](agent-configuration.md).
