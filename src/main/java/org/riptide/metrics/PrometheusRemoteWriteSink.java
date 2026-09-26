@@ -37,8 +37,8 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Buffers samples in a bounded queue and POSTs them to a Prometheus remote-write 1.0 endpoint,
  * one background flusher at a time. Mirrors {@code BatchingFlowRepository}'s shape (bounded
- * queue, drop-not-block, {@code Queues.drain}, shutdown sweep) for an unrelated element type —
- * see that class for the loss-model rationale this repeats rather than re-derives.
+ * queue, drop-not-block, {@code Queues.drain}, shutdown sweep) for an unrelated element type.
+ * See that class for the loss-model rationale this repeats rather than re-derives.
  *
  * <p>A batch that a non-2xx, non-retryable status refuses, or that exhausts {@code max-attempts}
  * on a retryable one, is dropped and counted ({@code failedSamples}); nothing here retries a

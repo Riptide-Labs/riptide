@@ -7,7 +7,7 @@ package org.riptide.metrics;
 
 import com.google.protobuf.CodedInputStream;
 import com.google.protobuf.WireFormat;
-import io.airlift.compress.snappy.SnappyDecompressor;
+import io.airlift.compress.v3.snappy.SnappyJavaDecompressor;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -40,7 +40,7 @@ class RemoteWriteEncoderTest {
         final byte[] plain = RemoteWriteEncoder.encode(List.of(new Sample("x", Map.of("a", "b"), 1d, 2L)));
         final byte[] packed = RemoteWriteEncoder.snappy(plain);
         final byte[] out = new byte[plain.length];
-        final int n = new SnappyDecompressor().decompress(packed, 0, packed.length, out, 0, out.length);
+        final int n = new SnappyJavaDecompressor().decompress(packed, 0, packed.length, out, 0, out.length);
         assertThat(n).isEqualTo(plain.length);
         assertThat(out).isEqualTo(plain);
     }

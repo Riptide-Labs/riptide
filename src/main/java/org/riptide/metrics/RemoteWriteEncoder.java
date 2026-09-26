@@ -5,7 +5,7 @@
 
 package org.riptide.metrics;
 
-import io.airlift.compress.snappy.SnappyCompressor;
+import io.airlift.compress.v3.snappy.SnappyJavaCompressor;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -46,7 +46,10 @@ public final class RemoteWriteEncoder {
     }
 
     public static byte[] snappy(final byte[] plain) {
-        final SnappyCompressor compressor = new SnappyCompressor();
+        // Constructed directly, not through SnappyCompressor.create(): the factory prefers a
+        // native library bundled in the jar and reaches for it through the Foreign Function
+        // API, which warns on every call. This class never touches that loader.
+        final SnappyJavaCompressor compressor = new SnappyJavaCompressor();
         final byte[] out = new byte[compressor.maxCompressedLength(plain.length)];
         final int n = compressor.compress(plain, 0, plain.length, out, 0, out.length);
         return Arrays.copyOf(out, n);

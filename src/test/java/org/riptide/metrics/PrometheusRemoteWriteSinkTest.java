@@ -9,7 +9,7 @@ import com.codahale.metrics.MetricRegistry;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
-import io.airlift.compress.snappy.SnappyDecompressor;
+import io.airlift.compress.v3.snappy.SnappyJavaDecompressor;
 import org.junit.jupiter.api.Test;
 import org.riptide.config.OutboundHttpTrust;
 import org.riptide.secrets.SecretRef;
@@ -57,7 +57,7 @@ class PrometheusRemoteWriteSinkTest {
                     .containsEntry("X-Prometheus-Remote-Write-Version", "0.1.0")
                     .containsEntry("Authorization", "Bearer plain-token");
             final byte[] plain = new byte[4096];
-            final int n = new SnappyDecompressor().decompress(r.body(), 0, r.body().length, plain, 0, plain.length);
+            final int n = new SnappyJavaDecompressor().decompress(r.body(), 0, r.body().length, plain, 0, plain.length);
             assertThat(n).isGreaterThan(0);
         }
     }
