@@ -232,11 +232,14 @@ class InterfaceSnapshotPollerTest {
                             "new-community", community("new-community"),
                             "rotated", community("rotated")),
                     Map.of("slow", new org.riptide.inventory.PollingProfile(
-                                    java.time.Duration.ofMinutes(30), java.time.Duration.ofMinutes(90), 500, 1),
+                                    java.time.Duration.ofMinutes(30), java.time.Duration.ofMinutes(90), 500, 1,
+                                    java.util.List.of()),
                             "brisk", new org.riptide.inventory.PollingProfile(
-                                    java.time.Duration.ofMinutes(1), java.time.Duration.ofMinutes(30), 500, 1),
+                                    java.time.Duration.ofMinutes(1), java.time.Duration.ofMinutes(30), 500, 1,
+                                    java.util.List.of()),
                             "sedate", new org.riptide.inventory.PollingProfile(
-                                    java.time.Duration.ofMinutes(10), java.time.Duration.ofMinutes(30), 500, 1)));
+                                    java.time.Duration.ofMinutes(10), java.time.Duration.ofMinutes(30), 500, 1,
+                                    java.util.List.of())));
 
     private static org.riptide.inventory.InventorySnapshot inventory(final String agentsBlock) {
         return org.riptide.inventory.InventoryLoader.parse(PROFILES, """
