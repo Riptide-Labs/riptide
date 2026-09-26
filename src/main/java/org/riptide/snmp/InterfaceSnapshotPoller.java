@@ -568,6 +568,9 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                     continue;
                 }
                 registration.source = RegistrationSource.INVENTORY;
+                // the other half of the silence race in tick: a tick that removed this
+                // registration before it saw INVENTORY does not put it back, so put it back here
+                this.registrations.putIfAbsent(endpoint.get().getInetSocketAddress(), registration);
                 wanted.add(endpoint.get().getInetSocketAddress());
             }
         }
@@ -664,9 +667,17 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 // session close on return bound the walk itself (SnmpUtils.WALK_BUDGET,
                 // #536), so "wait a tick" cannot become "wait forever" even against an
                 // agent that never stops answering.
-                if (!registration.walkInFlight.get()) {
-                    this.registrations.remove(entry.getKey(), registration);
-                    this.deregistered.mark();
+                if (!registration.walkInFlight.get()
+                        && this.registrations.remove(entry.getKey(), registration)) {
+                    if (registration.source == RegistrationSource.INVENTORY) {
+                        // a reload's sweep marked it poll: always after this tick judged it
+                        // silent. Dropping it would leave the device unpolled until the next
+                        // reload, since no flow comes to re-register it. The sweep re-checks
+                        // from its side too, so one of the two always sees the other
+                        this.registrations.putIfAbsent(entry.getKey(), registration);
+                    } else {
+                        this.deregistered.mark();
+                    }
                 }
                 continue;
             }
@@ -745,7 +756,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             if (registration.resolution.get() == resolution) {
                 registration.nextWalkNanos = nextWalkAt(registration.endpoint, now);
             }
-            emit(samples);
+            emit(endpoint, samples);
         } catch (final RuntimeException e) {
             // Without this the schedule is never advanced for a registration whose walk throws
             // something the SNMP layer does not degrade — an snmp4j target construction failure,
@@ -782,7 +793,14 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         final Map<Integer, IfInfo> rows = new TreeMap<>();
         boolean anyIfName = false;
         for (final CollectionDefinition definition : endpoint.getCollections()) {
-            final CollectedTable collected = this.snmpService.collect(endpoint, definition, budget);
+            final CollectedTable collected;
+            try {
+                collected = this.snmpService.collect(endpoint, definition, budget);
+            } catch (final RuntimeException e) {
+                // counted here, where only a collect can have thrown. walk's catch does the back-off
+                this.collectsFailed.mark();
+                throw e;
+            }
             if (collected.walkFailed()) {
                 this.collectsFailed.mark();
                 samples.clear();
@@ -804,13 +822,21 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         return new SnmpService.InterfaceTable(rows, false);
     }
 
-    /** Hands one walk's samples to the sink in a single call. */
-    private void emit(final List<Sample> samples) {
+    /**
+     * Hands one walk's samples to the sink in a single call. A sink failure is caught here, not
+     * in walk: the walk succeeded, so the agent must not be backed off or marked unreachable for it.
+     */
+    private void emit(final SnmpEndpoint endpoint, final List<Sample> samples) {
         if (samples.isEmpty()) {
             return;
         }
-        this.sink.accept(samples);
-        this.samplesEmitted.mark(samples.size());
+        try {
+            this.sink.accept(samples);
+            this.samplesEmitted.mark(samples.size());
+        } catch (final RuntimeException e) {
+            log.warn("Metric sink {} failed to accept {} samples from {}. The walk itself succeeded.",
+                    this.sink.getClass().getSimpleName(), samples.size(), endpoint, e);
+        }
     }
 
     /**

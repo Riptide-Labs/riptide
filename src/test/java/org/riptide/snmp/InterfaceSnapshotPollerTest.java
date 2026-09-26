@@ -58,6 +58,7 @@ class InterfaceSnapshotPollerTest {
         final AtomicInteger collects = new AtomicInteger();
         /** When set, collected rows carry no ifName: a device answering ifTable but not ifXTable. */
         private volatile boolean noIfXTable;
+        private volatile boolean throwOnCollect;
         private final Set<String> walked = ConcurrentHashMap.newKeySet();
         private final Map<String, AtomicInteger> walksPerEndpoint = new ConcurrentHashMap<>();
         final java.util.List<SnmpEndpoint> walkedEndpoints = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -100,6 +101,9 @@ class InterfaceSnapshotPollerTest {
         public org.riptide.snmp.collect.CollectedTable collect(final SnmpEndpoint endpoint,
                 final org.riptide.snmp.collect.CollectionDefinition definition, final Duration budget) {
             final int collected = this.collects.incrementAndGet();
+            if (this.throwOnCollect) {
+                throw new IllegalStateException("snmp4j target construction blew up");
+            }
             if (this.timeout) {
                 return new org.riptide.snmp.collect.CollectedTable(Map.of(), true);
             }
@@ -1452,5 +1456,74 @@ class InterfaceSnapshotPollerTest {
         assertThat(this.metrics.gauge("snmp.poller.inventoryRefused").getValue()).isEqualTo(3);
         assertThat(this.metrics.gauge("snmp.poller.inventoryRegistered").getValue()).isEqualTo(0);
         assertThat(this.metrics.getGauges().get("snmp.poller.exporters").getValue()).isEqualTo(0);
+    }
+
+    @Test
+    void pollAlwaysEntriesAreRegisteredAtBootWithoutARefresh() throws Exception {
+        final var snmp = new FakeSnmp();
+        serve(parse(ALWAYS_INVENTORY));
+        // the constructor's boot path only runs with the scheduler started
+        final var poller = new InterfaceSnapshotPoller(snmp, config(), this.metrics, this.serving,
+                new RecordingSink(), identity(), this.clock::get, true, () -> WALL_CLOCK_MS);
+        try {
+            assertThat(this.metrics.gauge("snmp.poller.inventoryRegistered").getValue()).isEqualTo(1);
+            assertThat(this.metrics.getGauges().get("snmp.poller.exporters").getValue()).isEqualTo(1);
+        } finally {
+            poller.stop();
+        }
+    }
+
+    @Test
+    void aCollectThatThrowsCountsAsAFailedCollectAndBacksOff() throws Exception {
+        final var snmp = new FakeSnmp();
+        snmp.throwOnCollect = true;
+        final var sink = new RecordingSink();
+        final var poller = poller(snmp, config(), sink);
+        final var endpoint = endpoint("10.0.0.12", "polling: counters");
+        poller.trackAndResolve(endpoint, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        assertThat(this.metrics.meter("snmp.poller.collectsFailed").getCount()).isEqualTo(1);
+        assertThat(sink.calls.get()).isEqualTo(0);
+        poller.tick(this.clock.get());
+        awaitQuiet(poller);
+        assertThat(snmp.collects.get()).as("backed off").isEqualTo(1);
+    }
+
+    @Test
+    void aSinkThatThrowsIsNotChargedToTheAgent() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var config = config();
+        // a back-off far longer than the one-minute profile, so a backed-off agent is visible
+        config.setDeadEndpointBaseMs(1_800_000);
+        final MetricSink throwing = samples -> {
+            throw new IllegalStateException("queue exploded");
+        };
+        final var poller = poller(snmp, config, throwing);
+        final var endpoint = endpoint("10.0.0.13", "polling: counters");
+
+        final var logger = (Logger) LoggerFactory.getLogger(InterfaceSnapshotPoller.class);
+        final var appender = LogCapture.startedAppender();
+        logger.addAppender(appender);
+        try {
+            poller.trackAndResolve(endpoint, 1);
+            poller.tick(this.clock.get());
+            awaitWalks(poller, snmp, 1);
+
+            // not backed off: the next cycle collects on the profile's own cadence
+            advanceMs(60_000L * 2);
+            poller.trackAndResolve(endpoint, 1);
+            poller.tick(this.clock.get());
+            awaitWalks(poller, snmp, 2);
+
+            assertThat(appender.list).extracting(ILoggingEvent::getFormattedMessage)
+                    .anySatisfy(m -> assertThat(m).contains("Metric sink").contains("failed to accept"))
+                    .noneSatisfy(m -> assertThat(m).contains("failed unexpectedly"))
+                    .noneSatisfy(m -> assertThat(m).contains("did not produce a usable interface table"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+        assertThat(poller.trackAndResolve(endpoint, 1)).contains(new IfInfo("eth0", "uplink", 1000L));
     }
 }
