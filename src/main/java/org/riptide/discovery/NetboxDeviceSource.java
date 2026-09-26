@@ -18,6 +18,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 /**
  * Reads exporter identities from NetBox's own device API, so a site that cannot install a NetBox
@@ -36,12 +38,13 @@ import java.util.function.Supplier;
  * then matches every host in the subnet and one device's name is attributed to all of them. The
  * plugin strips it server-side for the same reason.</p>
  *
- * <p><b>What it reads, and what it does not.</b> Only {@code name}, {@code primary_ip4} and
- * {@code primary_ip6}, the last two as nested objects carrying an {@code address}. It does not read
- * {@code role} or {@code status}: those matter only inside an operator's filter, which NetBox
- * itself evaluates. Worth saying because NetBox has moved those names before — {@code device_role}
- * was removed from the device serializer in 4.0 while the component endpoints kept it — so a filter
- * written against an older NetBox can stop matching without anything here changing.</p>
+ * <p><b>What it reads, and what it does not.</b> {@code name}, {@code primary_ip4} and
+ * {@code primary_ip6}, the last two as nested objects carrying an {@code address}, plus
+ * {@code tags} for its slugs, joined into one label. It does not read {@code role} or
+ * {@code status}: those matter only inside an operator's filter, which NetBox itself evaluates.
+ * Worth saying because NetBox has moved those names before — {@code device_role} was removed from
+ * the device serializer in 4.0 while the component endpoints kept it — so a filter written
+ * against an older NetBox can stop matching without anything here changing.</p>
  */
 public final class NetboxDeviceSource implements DiscoverySource {
 
@@ -51,6 +54,9 @@ public final class NetboxDeviceSource implements DiscoverySource {
     /** The labels the renderer reads for an address, in the order its default consults them. */
     static final String IPV4_LABEL = "__meta_netbox_primary_ip4";
     static final String IPV6_LABEL = "__meta_netbox_primary_ip6";
+
+    /** The device's tag slugs, comma-joined; absent when the device has no tags or no slugs. */
+    static final String TAGS_LABEL = "__meta_netbox_tags";
 
     /**
      * The address labels this source emits, which the renderer must be reading for any device to
@@ -189,7 +195,21 @@ public final class NetboxDeviceSource implements DiscoverySource {
         labels.put(NAME_LABEL, name);
         host(device, "primary_ip4").ifPresent(address -> labels.put(IPV4_LABEL, address));
         host(device, "primary_ip6").ifPresent(address -> labels.put(IPV6_LABEL, address));
+        tags(device).ifPresent(joined -> labels.put(TAGS_LABEL, joined));
         return java.util.Optional.of(new TargetGroup(List.of(name), labels));
+    }
+
+    /** The device's tag slugs, comma-joined; empty when it has none or none carry a slug. */
+    private static java.util.Optional<String> tags(final JsonNode device) {
+        final JsonNode tags = device.get("tags");
+        if (tags == null || !tags.isArray() || tags.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+        final String joined = StreamSupport.stream(tags.spliterator(), false)
+                .map(tag -> tag.path("slug").asText(null))
+                .filter(Objects::nonNull)
+                .collect(Collectors.joining(","));
+        return joined.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(joined);
     }
 
     /**

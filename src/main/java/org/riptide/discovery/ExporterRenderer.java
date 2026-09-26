@@ -8,9 +8,12 @@ package org.riptide.discovery;
 import org.riptide.inventory.StrictAddresses;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Maps service discovery target groups onto exporter entries.
@@ -58,7 +61,21 @@ public final class ExporterRenderer {
     public static RenderedExporters render(final List<TargetGroup> groups,
                                            final List<String> addressLabels,
                                            final String sourceName) {
-        return render(List.of(new EndpointGroups(sourceName, groups)), addressLabels);
+        return render(groups, addressLabels, sourceName, null);
+    }
+
+    /**
+     * Same as the three-argument overload, with a NetBox tag slug that marks a claiming group's
+     * name for {@code poll: always}.
+     *
+     * @param pollAlwaysTag the configured {@code riptide.discovery.poll-always-tag}, or {@code null}
+     *     when unset, in which case nothing is marked
+     */
+    public static RenderedExporters render(final List<TargetGroup> groups,
+                                           final List<String> addressLabels,
+                                           final String sourceName,
+                                           final String pollAlwaysTag) {
+        return renderEndpoints(List.of(new EndpointGroups(sourceName, groups)), addressLabels, pollAlwaysTag);
     }
 
     /**
@@ -79,6 +96,28 @@ public final class ExporterRenderer {
      */
     public static RenderedExporters render(final List<EndpointGroups> endpoints,
                                            final List<String> addressLabels) {
+        return renderEndpoints(endpoints, addressLabels, null);
+    }
+
+    /**
+     * Same as {@link #render(List, List)}, with a NetBox tag slug that marks a claiming group's
+     * name for {@code poll: always}.
+     *
+     * <p>Not named {@code render}: {@code render(List<EndpointGroups>, List<String>, String)} would
+     * erase to the same parameter types as {@link #render(List, List, String)} above — both lists
+     * erase to {@code List} regardless of their element type, so both would read as
+     * {@code (List, List, String)} — and the JLS forbids two methods of one name sharing an erased
+     * signature. Package-private because the only caller outside this class is
+     * {@code ComposedInventoryDocument}, in the same package.</p>
+     *
+     * @param pollAlwaysTag the configured {@code riptide.discovery.poll-always-tag}, or {@code null}
+     *     when unset, in which case nothing is marked
+     * @throws IllegalStateException when two entries claim one name, when two entries claim one
+     *     address, or when any endpoint yields no entries
+     */
+    static RenderedExporters renderEndpoints(final List<EndpointGroups> endpoints,
+                                             final List<String> addressLabels,
+                                             final String pollAlwaysTag) {
         final boolean annotate = endpoints.size() > 1;
         final String sourceName = String.join(", ", endpoints.stream().map(EndpointGroups::name).toList());
         // NOT sorted here: RenderedExporters normalises into a sorted map as its type invariant,
@@ -93,6 +132,7 @@ public final class ExporterRenderer {
         final Map<String, Map<String, String>> claims = new LinkedHashMap<>();
         // the same map inverted, for the same reason: an address and every distinct name claiming it
         final Map<String, Map<String, String>> addressClaims = new LinkedHashMap<>();
+        final Set<String> pollAlways = new LinkedHashSet<>();
         final List<String> empty = new ArrayList<>();
         int skipped = 0;
 
@@ -119,6 +159,9 @@ public final class ExporterRenderer {
                     // own address twice, which is one claimant, not a collision
                     addressClaims.computeIfAbsent(address, key -> new LinkedHashMap<>()).putIfAbsent(name, endpoint.name());
                     byName.put(name, address);
+                    if (pollAlwaysTag != null && hasTag(group.labels().get(NetboxDeviceSource.TAGS_LABEL), pollAlwaysTag)) {
+                        pollAlways.add(name);
+                    }
                     endpointEntries++;
                 }
             }
@@ -141,7 +184,15 @@ public final class ExporterRenderer {
                     + " Keeping the running inventory: a source of truth that answers with nothing "
                     + "is more often a filter or permission mistake than an emptied fleet.");
         }
-        return new RenderedExporters(byName, skipped);
+        return new RenderedExporters(byName, pollAlways, skipped);
+    }
+
+    /**
+     * Whether one of the comma-joined {@code __meta_netbox_tags} slugs is exactly {@code tag}.
+     * {@code null} (the label absent, or the tag unconfigured) never matches.
+     */
+    private static boolean hasTag(final String joined, final String tag) {
+        return joined != null && Arrays.asList(joined.split(",")).contains(tag);
     }
 
     /**

@@ -133,6 +133,38 @@ Riptide reads the endpoints in order on every poll and publishes only when both 
 One endpoint that is down, answers 404 or answers empty keeps the last good inventory serving for both, and the log names that endpoint.
 A device and a virtual machine with the same name and different addresses are refused as a collision, each address followed by its endpoint.
 
+## Poll devices that send no flows
+
+A device with no flows of its own, such as an access switch that only aggregates other traffic, never gets an exporter entry from a flow.
+Tag it in NetBox and name the tag in `riptide.discovery.poll-always-tag`, and discovery composes it with `poll: always` instead, so it is polled for SNMP metrics as soon as the inventory loads.
+
+1. Tag the device in NetBox, for example `snmp-poll`.
+
+2. Name the tag in `/etc/riptide/config.yaml`.
+
+   ```yaml
+   riptide:
+     discovery:
+       type: netbox-api
+       url: https://netbox.example.com/api/dcim/devices/
+       token: vault://secret/netbox#token
+       filter: tag=flow-exporter
+       poll-always-tag: snmp-poll
+       interval: 60s
+     inventory:
+       file: /etc/riptide/inventory.yaml
+   ```
+
+   A device carries the tag or not; nothing here narrows which devices `filter` returns.
+   `poll-always-tag` only decides which of the returned devices are marked, and needs a primary IP like any other device.
+
+3. Restart the collector and read the inventory line, as in the earlier steps.
+   The composed exporters tree is not written anywhere an operator can read directly; `poll: always` on the tagged device is what SNMP polling reads to poll it without waiting for a flow.
+
+If you run more than one riptide collector against the same NetBox, each collector's `riptide.discovery.filter` names its own shard, for example `tag=riptide-shard-a` on one collector and `tag=riptide-shard-b` on another.
+Moving a device between shards is a retag in NetBox, not a config change on either collector.
+A dead collector's shard stays unpolled until it comes back or an operator retags its devices onto a live one; nothing here reassigns a shard automatically.
+
 ## Related
 
 - [Discovery reference](../reference/discovery.md): every key, the limits, and every message.
