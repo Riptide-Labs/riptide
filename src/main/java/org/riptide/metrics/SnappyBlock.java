@@ -22,9 +22,10 @@ import java.util.Arrays;
  * 61..256 is the marker byte {@code 60 << 2} followed by one length byte, {@code length - 1}.
  * 257..65536 is the marker byte {@code 61 << 2} followed by two little-endian length bytes,
  * {@code length - 1}. A single run longer than 65536 is emitted as several such tags back to
- * back; the 3- and 4-byte extra-length forms the format also defines are never produced. {@link
- * #compress} refuses an input over {@link #MAX_INPUT_LENGTH} instead, since the 4- and 3-byte
- * forms would be needed above that.
+ * back, so the 3- and 4-byte extra-length forms the format also defines are never needed at any
+ * input size. {@link #compress} refuses an input over {@link #MAX_INPUT_LENGTH} for a different
+ * reason. That ceiling is a chosen bound, far above any remote-write batch this sink builds, not
+ * a limit of the tag forms.
  *
  * <p><b>Copy tags.</b> Every copy this encoder emits carries a 2-byte offset (the 1- and 4-byte
  * offset copy tags are never produced): length 4..64, tag byte {@code ((length - 1) << 2) | 2},
@@ -32,16 +33,17 @@ import java.util.Arrays;
  * chunks of 64 with a final chunk of at least 4, since a copy tag cannot encode a length outside
  * 4..64.
  *
- * <p>The hash table is sized and indexed exactly as the reference implementation's: {@code
- * 2^14} entries, keyed by a multiplicative hash of each 4-byte window, storing the last position
- * seen at that hash. A collision (same hash, different 4 bytes) is simply not a match; nothing
+ * <p>The hash table has {@code 2^14} entries, keyed by a multiplicative hash of each 4-byte
+ * window, storing the last position seen at that hash. It is one fixed table over the whole
+ * input. The reference implementation instead compresses in 64 KiB fragments, each with its own
+ * table sized to the fragment, so the two produce different, equally valid blocks. A collision (same hash, different 4 bytes) is simply not a match; nothing
  * chains or probes.
  */
 public final class SnappyBlock {
 
     /**
-     * Above this, a literal run could need the 3- or 4-byte extra-length forms this encoder does
-     * not implement (see the class javadoc).
+     * A chosen bound on one remote-write batch, not a limit of the tag forms: literals are chunked
+     * at 65536, so no input size needs the 3- or 4-byte extra-length forms (see the class javadoc).
      */
     private static final int MAX_INPUT_LENGTH = 1 << 24;
 
@@ -77,7 +79,7 @@ public final class SnappyBlock {
         if (n > MAX_INPUT_LENGTH) {
             throw new IllegalArgumentException(
                     "SnappyBlock.compress refuses input over " + MAX_INPUT_LENGTH + " bytes (got " + n
-                            + "); the literal-length forms above that are not implemented, see the class javadoc");
+                            + "). That is a chosen bound on one remote-write batch.");
         }
 
         final byte[] output = new byte[32 + n + n / 6];

@@ -70,10 +70,11 @@ public class SnmpPollConfig {
     private int suspectPoolWidth = 8;
 
     /**
-     * Refresh intervals of silence after which an exporter stops being polled.
+     * Refresh intervals of silence after which a flow-registered exporter stops being polled.
      *
-     * <p>Registration is driven by flow arrival, so this is what stops riptide polling a
-     * device that has gone quiet.
+     * <p>For a flow-registered exporter still inside a polled range, this is what stops riptide
+     * polling a device that has gone quiet. An exporter registered from a {@code poll: always}
+     * inventory entry is never removed for silence. Only the inventory dropping the entry ends it.
      */
     private int deregisterAfter = 3;
 
@@ -92,8 +93,8 @@ public class SnmpPollConfig {
     /**
      * Ceiling on retained snapshots, counted in exporters.
      *
-     * <p>Registration follows flow arrival, so the population is whatever sends flows — including
-     * a spoofed source spraying addresses. The bound is expressed in exporters rather than in
+     * <p>Flow-arrival registration makes the population whatever sends flows, including a spoofed
+     * source spraying addresses. Every inventory entry marked {@code poll: always} counts too. The bound is expressed in exporters rather than in
      * interface entries because that is the dimension an attacker controls here; the row count per
      * exporter is bounded by the device's real interface count.
      */

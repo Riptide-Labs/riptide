@@ -42,9 +42,9 @@ import java.util.stream.StreamSupport;
  * {@code primary_ip6}, the last two as nested objects carrying an {@code address}, plus
  * {@code tags} for its slugs, joined into one label. It does not read {@code role} or
  * {@code status}: those matter only inside an operator's filter, which NetBox itself evaluates.
- * Worth saying because NetBox has moved those names before — {@code device_role} was removed from
- * the device serializer in 4.0 while the component endpoints kept it — so a filter written
- * against an older NetBox can stop matching without anything here changing.</p>
+ * Worth saying because NetBox has moved those names before. {@code device_role} was removed from
+ * the device serializer in 4.0 while the component endpoints kept it. A filter written against an
+ * older NetBox can therefore stop matching without anything here changing.</p>
  */
 public final class NetboxDeviceSource implements DiscoverySource {
 

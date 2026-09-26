@@ -90,6 +90,24 @@ class MetricsConfigTest {
     }
 
     @Test
+    void validateRefusesAUrlWhoseSchemeIsNotHttpOrHttps() {
+        final var remoteWrite = new MetricsConfig.RemoteWrite();
+        remoteWrite.setUrl("ftp://vminsert:8480/api/v1/write");
+
+        assertThatThrownBy(remoteWrite::validate)
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("riptide.metrics.remote-write.url must be an http or https URL (got scheme ftp)");
+    }
+
+    @Test
+    void validateAcceptsAnHttpsUrl() {
+        final var remoteWrite = new MetricsConfig.RemoteWrite();
+        remoteWrite.setUrl("https://vminsert:8480/api/v1/write");
+
+        assertThatCode(remoteWrite::validate).doesNotThrowAnyException();
+    }
+
+    @Test
     void validatePassesWithDefaults() {
         assertThatCode(() -> new MetricsConfig.RemoteWrite().validate()).doesNotThrowAnyException();
     }

@@ -21,7 +21,7 @@ public final class MetricsConfig {
     private RemoteWrite remoteWrite = new RemoteWrite();
 
     /**
-     * A Prometheus remote-write 1.0 sink. Unset {@link #url} disables it — samples then go to
+     * A Prometheus remote-write 1.0 sink. Unset {@link #url} disables it. Samples then go to
      * {@link NoopMetricSink} instead ({@code MetricsConfiguration}).
      */
     @Data
@@ -77,11 +77,20 @@ public final class MetricsConfig {
                                 + ") must be at least twice batch.max-latency (" + maxLatency + ")");
             }
             if (this.enabled()) {
+                final URI uri;
                 try {
-                    new URI(this.url).toURL();
+                    uri = new URI(this.url);
+                    uri.toURL();
                 } catch (final URISyntaxException | MalformedURLException | IllegalArgumentException e) {
                     throw new IllegalArgumentException(
                             "riptide.metrics.remote-write.url is not a URL: " + e.getMessage(), e);
+                }
+                // toURL() accepts every scheme the JDK has a handler for (file, ftp, jar), and the
+                // sink's HTTP client can send none of them
+                if (!"http".equalsIgnoreCase(uri.getScheme()) && !"https".equalsIgnoreCase(uri.getScheme())) {
+                    throw new IllegalArgumentException(
+                            "riptide.metrics.remote-write.url must be an http or https URL (got scheme "
+                                    + uri.getScheme() + ")");
                 }
             }
         }
