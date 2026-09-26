@@ -43,6 +43,7 @@ class RuntimeMetricsExpositionTest {
         final var registry = new MetricRegistry();
         RuntimeMetrics.register(registry);
 
+        final long wallStart = System.nanoTime();
         final double before = sample(PrometheusExposition.render(registry), "jvm_cpu_processSeconds");
         final long burnNanos = 200_000_000L;
         final long threadCpuStart = ManagementFactory.getThreadMXBean().getCurrentThreadCpuTime();
@@ -51,10 +52,15 @@ class RuntimeMetricsExpositionTest {
             sink += System.nanoTime() % 7;
         }
         final double after = sample(PrometheusExposition.render(registry), "jvm_cpu_processSeconds");
+        final double wallSeconds = (System.nanoTime() - wallStart) / 1e9d;
 
         assertThat(sink).isNotNegative();
         // this thread alone burned 0.2 s of CPU, so the process total rose by at least that
         assertThat(after - before).isGreaterThanOrEqualTo(0.2d);
+        // and by no more than every core busy for the whole window: a unit slip (ms read as ns)
+        // would pass the lower bound alone
+        assertThat(after - before)
+                .isLessThanOrEqualTo(wallSeconds * Runtime.getRuntime().availableProcessors() + 0.1d);
     }
 
     private static double sample(final String rendered, final String name) {
