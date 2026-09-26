@@ -65,10 +65,13 @@ The column-by-column mapping is on the [enrichment reference](../reference/enric
 ### Interface tables are polled, not looked up
 
 Riptide never issues SNMP on the flow path.
-An exporter is registered the first time a flow arrives from it, its whole interface table is then walked on a schedule, and enrichment reads the resulting snapshot.
+An exporter is registered one of two ways: the first time a flow arrives from it, or immediately at load for an inventory entry marked `poll: always`, which is how a device with no flows of its own, such as an access switch, gets walked at all.
+Either way the whole interface table is then walked on a schedule, and enrichment reads the resulting snapshot.
+When the endpoint's polling profile also names a collection (`collect: [if-mib-interfaces]`), the same walk turns its rows into interface-counter samples for the metrics sink as well; see the [SNMP metrics reference](../reference/snmp-metrics.md).
 
 Load on a device's SNMP agent is therefore a function of the poll schedule, not of how many distinct interfaces its flows reference.
 Before this design each `(exporter, ifIndex)` pair cost its own full table walk, so a busy device with many active interfaces was polled hardest, and walks for different interfaces on the same device could run at the same time.
+Only a flow-registered exporter is ever deregistered for silence; a `poll: always` entry keeps being walked until the inventory entry itself is removed or disabled.
 
 Cadence (refresh and expiry) is per polling profile.
 Profiles live under `riptide.snmp.polling.<name>` and are referenced from agent ranges in the inventory file.

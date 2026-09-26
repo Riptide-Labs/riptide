@@ -29,11 +29,12 @@ Credential sets and polling profiles are maps keyed by a name of your choice.
 | **`riptide.snmp.polling.<name>.snapshot-expiry`** | duration | `PT30M` | How long the last walked snapshot keeps serving after refreshes stop succeeding. Positive, at most `PT24H`. Shorter than the refresh interval logs a warning at startup. |
 | **`riptide.snmp.polling.<name>.timeout`** | int, milliseconds | `500` | Per-request timeout. Positive. |
 | **`riptide.snmp.polling.<name>.retries`** | int | `1` | Per-request retries. Zero or more. |
+| **`riptide.snmp.polling.<name>.collect`** | list of strings | empty | Collection names this profile walks for counters, in addition to interface-name enrichment. `if-mib-interfaces` is the only accepted value; an unknown name fails the bind at startup. Non-empty makes `refresh-interval` the counter interval and the walk budget 80 percent of it: `timeout x (retries + 1)` must fit inside that budget. Settings, series and messages are on the [SNMP metrics reference](snmp-metrics.md). |
 | **`riptide.snmp.poll.pool-width`** | int | `4` | Walks in flight across the whole fleet. Per-agent concurrency is always one. |
-| **`riptide.snmp.poll.deregister-after`** | int | `3` | Refresh intervals of flow silence after which an agent stops being polled. |
+| **`riptide.snmp.poll.deregister-after`** | int | `3` | Refresh intervals of silence after which a flow-registered agent stops being polled. An entry registered from the inventory because it is `poll: always` is never deregistered for silence; only removing or disabling the entry stops it. |
 | **`riptide.snmp.poll.dead-endpoint-base-ms`** | long, milliseconds | `60000` | First retry delay after a failed walk. Doubles on every further failure. |
 | **`riptide.snmp.poll.dead-endpoint-ceiling-ms`** | long, milliseconds | `1800000` | Longest retry delay for an agent that keeps failing. |
-| **`riptide.snmp.poll.max-exporters`** | int | `4096` | Registered agents. At the cap a new exporter is rejected and counted on `snmp.poller.rejectedLookups`; nothing is evicted. |
+| **`riptide.snmp.poll.max-exporters`** | int | `4096` | Registered agents, flow-registered and `poll: always` alike. At the cap a new flow-registered exporter is rejected and counted on `snmp.poller.rejectedLookups`; nothing is evicted. If the inventory's `poll: always` entries alone exceed this cap, none of them is registered, and the refusal is logged and counted on `snmp.poller.inventoryRefused`. |
 
 A range that names no profile uses the profile called exactly `default`: yours if you define one, otherwise the built-in values above.
 The USM security level follows from the fields you set: none for noAuthNoPriv, auth for authNoPriv, both for authPriv.
@@ -198,6 +199,7 @@ Every message below fails startup, or fails a reload while the last good invento
 | `Credential set 'X' (v3) sets priv without auth: USM has no priv-only security level.` | | Add the auth pair |
 | `Polling profile 'X' has a non-positive timeout (0 ms).`, `... has negative retries (-1).`, `... has a non-positive refresh-interval (PT0S).`, `... has a non-positive snapshot-expiry (...)` | Zero or negative value | Use a positive value |
 | `Polling profile 'X' has a refresh-interval of PT48H, over the PT24H maximum.` | Cadence over one day | Shorten it |
+| `riptide.snmp.polling.X: timeout N ms x M attempts exceeds the walk budget of K ms (80% of refresh-interval); lower the timeout or lengthen refresh-interval.` | `collect` is set and `timeout x (retries + 1)` does not fit in 80 percent of `refresh-interval` | Lower `timeout` or `retries`, or lengthen `refresh-interval` |
 | `Polling profile 'Default': the default profile must be spelled exactly 'default', because agent ranges without a 'polling' key resolve that name.` | Mis-cased `default` | Rename it |
 | `Retired per-agent poll key found ('riptide.snmp.poll.refresh-interval-ms'): refresh and expiry moved into named polling profiles ...` | Pre-0.9 cadence keys | Move the values to a profile |
 | `Inventory file /path is not readable: /path` | `riptide.inventory.file` names a missing or unreadable file | Fix the path or its permissions |
