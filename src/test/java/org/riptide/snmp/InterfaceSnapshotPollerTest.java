@@ -86,8 +86,12 @@ class InterfaceSnapshotPollerTest {
                     return thread;
                 });
 
+        /** The thread each walk or collect was started on. */
+        final List<String> startThreads = new CopyOnWriteArrayList<>();
+
         @Override
         public java.util.concurrent.CompletableFuture<InterfaceTable> walkInterfacesAsync(final SnmpEndpoint endpoint) {
+            this.startThreads.add(Thread.currentThread().getName());
             if (this.block) {
                 return java.util.concurrent.CompletableFuture.supplyAsync(() -> walkInterfaces(endpoint), this.completer);
             }
@@ -98,6 +102,7 @@ class InterfaceSnapshotPollerTest {
         public java.util.concurrent.CompletableFuture<org.riptide.snmp.collect.CollectedTable> collectAsync(
                 final SnmpEndpoint endpoint, final org.riptide.snmp.collect.CollectionDefinition definition,
                 final Duration budget) {
+            this.startThreads.add(Thread.currentThread().getName());
             if (this.block) {
                 return java.util.concurrent.CompletableFuture.supplyAsync(
                         () -> collect(endpoint, definition, budget), this.completer);
@@ -161,10 +166,13 @@ class InterfaceSnapshotPollerTest {
     private static final class RecordingSink implements MetricSink {
         final List<Sample> samples = new CopyOnWriteArrayList<>();
         final AtomicInteger calls = new AtomicInteger();
+        /** The thread each accept ran on. */
+        final List<String> threads = new CopyOnWriteArrayList<>();
 
         @Override
         public void accept(final List<Sample> batch) {
             this.calls.incrementAndGet();
+            this.threads.add(Thread.currentThread().getName());
             this.samples.addAll(batch);
         }
     }
@@ -757,13 +765,11 @@ class InterfaceSnapshotPollerTest {
     @Test
     void suspectEndpointsDrawFromTheirOwnBudgetSoHealthyOnesAreNeverStarved() throws Exception {
         final var snmp = new FakeSnmp();
-        snmp.entered = new CountDownLatch(1);
-        snmp.release = new CountDownLatch(1);
         final var config = config();
         config.setPoolWidth(2);
         config.setSuspectPoolWidth(1);
         final var poller = poller(snmp, config, new RecordingSink());
-        // three endpoints that have already failed once each, and one healthy endpoint
+        // three endpoints that fail, and one healthy endpoint
         for (final String ip : List.of("10.0.0.1", "10.0.0.2", "10.0.0.3")) {
             final var ep = endpoint(ip);
             snmp.failing.add(ep);
@@ -771,17 +777,57 @@ class InterfaceSnapshotPollerTest {
         }
         final var healthy = endpoint("10.0.0.9");
         poller.trackAndResolve(healthy, 1);
-        poller.tick(this.clock.get());
-        awaitQuiet(poller);
-        // all four first walks ran (nobody was a suspect yet); now the three are suspects
-        advanceMs(config.getDeadEndpointBaseMs() + 1);
-        snmp.block = true;
-        poller.tick(this.clock.get());
-        snmp.entered.await(2, TimeUnit.SECONDS);
+        // every first walk runs from the healthy budget, nobody being a suspect yet. Two
+        // permits for four due walks takes more than one tick, so tick until all four ran
+        final long deadline = System.currentTimeMillis() + 5_000;
+        while (snmp.walks.get() < 4 && System.currentTimeMillis() < deadline) {
+            poller.tick(this.clock.get());
+            awaitQuiet(poller);
+        }
+        assertThat(snmp.walks.get()).isEqualTo(4);
 
+        // one full refresh interval later everybody is due: the three suspects after their
+        // back-off, the healthy one at its next phase (at most one interval plus the jitter)
+        advanceMs(config.getRefreshIntervalMs() + config.getRefreshIntervalMs() / 50 + 1);
+        poller.trackAndResolve(healthy, 1);
+        snmp.block = true;
+        snmp.entered = new CountDownLatch(2);
+        snmp.release = new CountDownLatch(1);
+        final long deferredBefore = this.metrics.meter("snmp.poller.deferred").getCount();
+        poller.tick(this.clock.get());
+        assertThat(snmp.entered.await(2, TimeUnit.SECONDS)).as("the healthy walk and one suspect started").isTrue();
+
+        assertThat(this.metrics.gauge("snmp.poller.inFlight").getValue())
+                .as("the healthy endpoint got a healthy permit").isEqualTo(1);
         assertThat(this.metrics.gauge("snmp.poller.suspectInFlight").getValue()).isEqualTo(1);
-        assertThat(this.metrics.meter("snmp.poller.deferred").getCount()).isEqualTo(2);
+        assertThat(this.metrics.meter("snmp.poller.deferred").getCount() - deferredBefore)
+                .as("the other two suspects wait, and did not take the free healthy permit").isEqualTo(2);
         snmp.release.countDown();
+    }
+
+    /**
+     * Neither the tick thread nor snmp4j's threads do riptide's side of a walk: the start (secret
+     * resolution, session setup) and the sink hand-off both run on the walk executor.
+     */
+    @Test
+    void walkStartsAndSinkHandOffsRunOnTheWalkExecutor() throws Exception {
+        final var snmp = new FakeSnmp();
+        // completes every walk on the fake's own thread, as snmp4j completes a real one on its
+        // dispatcher; released up front, so nothing waits
+        snmp.block = true;
+        snmp.entered = new CountDownLatch(3);
+        snmp.release = new CountDownLatch(0);
+        final var sink = new RecordingSink();
+        final var poller = poller(snmp, config(), sink);
+        poller.trackAndResolve(endpoint("10.0.0.10", "polling: counters"), 1);
+        poller.trackAndResolve(endpoint("10.0.0.11", "polling: counters"), 1);
+        poller.trackAndResolve(endpoint("10.0.0.12"), 1);
+
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 3);
+
+        assertThat(snmp.startThreads).hasSize(3).allSatisfy(name -> assertThat(name).startsWith("snmp-walk-io"));
+        assertThat(sink.threads).hasSize(2).allSatisfy(name -> assertThat(name).startsWith("snmp-walk-io"));
     }
 
     /** A due walk that finds no permit is not dropped: it stays due and the next tick runs it. */
@@ -797,7 +843,7 @@ class InterfaceSnapshotPollerTest {
         poller.trackAndResolve(endpoint("10.0.0.1"), 1);
         poller.trackAndResolve(endpoint("10.0.0.2"), 1);
         poller.tick(this.clock.get());
-        snmp.entered.await(2, TimeUnit.SECONDS);
+        assertThat(snmp.entered.await(2, TimeUnit.SECONDS)).isTrue();
         assertThat(this.metrics.gauge("snmp.poller.inFlight").getValue()).isEqualTo(1);
         snmp.release.countDown();
         awaitWalks(poller, snmp, 1);
@@ -1276,14 +1322,16 @@ class InterfaceSnapshotPollerTest {
     void reWalksSpreadAcrossTheIntervalInsteadOfArrivingAsOneHerd() throws Exception {
         final var snmp = new FakeSnmp();
         final var config = config();
-        config.setPoolWidth(8);
+        // a permit for every exporter: with fewer, a herd would be deferred across ticks and
+        // spread over slices by the permits alone, and this test could no longer see it
+        config.setPoolWidth(40);
         final var poller = poller(snmp, config);
 
         for (int i = 1; i <= 40; i++) {
             poller.trackAndResolve(endpoint("10.4.0." + i), 1);
         }
         poller.tick(this.clock.get());
-        awaitWalks(poller, snmp, 40); // the cold-start burst, drained through the permits
+        awaitWalks(poller, snmp, 40); // the cold-start burst, one tick
 
         // step through one refresh interval in twentieths and record when re-walks land
         int busiestSlice = 0;

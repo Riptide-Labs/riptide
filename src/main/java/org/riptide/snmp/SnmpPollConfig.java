@@ -53,7 +53,8 @@ public class SnmpPollConfig {
 
     /**
      * Ceiling on interface walks in flight across the whole fleet, for endpoints whose last walk
-     * succeeded. A permit count, not a thread count: no thread waits on a walk.
+     * succeeded. A permit count, not a thread count: no thread waits on a walk. It also sizes
+     * the {@code snmp-walk-io} executor that starts walks and records their results.
      *
      * <p>Fixed rather than scaled with exporter count: a fixed ceiling is the bound actually
      * wanted, and it is what turns a mass restart from a burst into a drain. Per-endpoint

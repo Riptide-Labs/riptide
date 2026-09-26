@@ -43,9 +43,12 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -76,7 +79,11 @@ import java.util.function.LongSupplier;
  *       waits on a walk: a walk takes a permit when it starts and returns it when its future
  *       completes. An endpoint whose last walk failed draws from a separate, smaller suspect
  *       budget, so dead agents holding permits for their whole timeout cannot take the permits a
- *       healthy endpoint needs.</li>
+ *       healthy endpoint needs. Starting a walk (secret resolution, session setup, the first
+ *       request) and handling its result run on a small {@code snmp-walk-io} executor, never on
+ *       the tick thread or on snmp4j's threads, which only complete futures. That executor is
+ *       as wide as {@code pool-width}; when it is saturated, work queues on it, which is the
+ *       intended back-pressure.</li>
  *   <li>An inventory-registered exporter is never removed for silence; only the inventory removes it.</li>
  * </ul>
  *
@@ -184,6 +191,12 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      */
     private final Semaphore suspectPermits;
     private final ScheduledExecutorService scheduler;
+    /**
+     * Where riptide's side of a walk runs: its start, the per-table chain, and the recording of
+     * its result. Nothing on it waits on an agent. A task it rejects after {@link #stop} runs on
+     * the submitting thread instead, so a late walk still returns its permit.
+     */
+    private final ExecutorService walkIo;
 
     private final Meter registered;
     private final Meter reresolved;
@@ -277,6 +290,15 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
 
         this.permits = new Semaphore(config.getPoolWidth());
         this.suspectPermits = new Semaphore(config.getSuspectPoolWidth());
+        final AtomicInteger walkIoThreads = new AtomicInteger();
+        this.walkIo = new ThreadPoolExecutor(config.getPoolWidth(), config.getPoolWidth(),
+                0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
+                runnable -> {
+                    final Thread thread = new Thread(runnable, "snmp-walk-io-" + walkIoThreads.incrementAndGet());
+                    thread.setDaemon(true);
+                    return thread;
+                },
+                (task, executor) -> task.run());
 
         this.registered = metrics.meter(MetricRegistry.name("snmp", "poller", "registered"));
         this.reresolved = metrics.meter(MetricRegistry.name("snmp", "poller", "reresolved"));
@@ -721,11 +743,15 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 // stays due: nextWalkNanos is untouched, so the next tick tries again
                 continue;
             }
-            registration.walk = walkAsync(registration).whenComplete((ignored, failure) -> {
-                // the permit first: a caller that sees the flag clear must also find the permit back
-                budget.release();
-                registration.walkInFlight.set(false);
-            });
+            // the tick only takes the permit and hands off: the start resolves secrets and
+            // builds sessions, and one slow resolver must not stall every other endpoint
+            registration.walk = CompletableFuture.completedFuture(registration)
+                    .thenComposeAsync(this::walkAsync, this.walkIo)
+                    .whenCompleteAsync((ignored, failure) -> {
+                        // the permit first: a caller that sees the flag clear must also find the permit back
+                        budget.release();
+                        registration.walkInFlight.set(false);
+                    }, this.walkIo);
         }
         if (stoppedHere > 0) {
             log.info("Stopped polling {} registration(s) that no longer resolve to a pollable agent "
@@ -765,7 +791,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         } catch (final RuntimeException e) {
             table = CompletableFuture.failedFuture(e);
         }
-        return table.handle((result, failure) -> {
+        return table.handleAsync((result, failure) -> {
             if (failure != null) {
                 // a stage that threw arrives wrapped; the log should name what actually threw
                 failedUnexpectedly(registration, resolution,
@@ -778,7 +804,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 failedUnexpectedly(registration, resolution, e);
             }
             return null;
-        });
+        }, this.walkIo);
     }
 
     private void recordWalk(final Registration registration, final int resolution, final SnmpEndpoint endpoint,
@@ -857,9 +883,11 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         final AtomicBoolean anyIfName = new AtomicBoolean();
         CompletableFuture<Boolean> clean = CompletableFuture.completedFuture(true);
         for (final CollectionDefinition definition : endpoint.getCollections()) {
-            clean = clean.thenCompose(ok -> !ok
+            // both hops onto walkIo: the next collect resolves secrets, and the fold is ours,
+            // so neither may run on the snmp4j thread that completed the previous collect
+            clean = clean.thenComposeAsync(ok -> !ok
                     ? CompletableFuture.completedFuture(false)
-                    : collectOne(endpoint, definition, budget).thenApply(collected -> {
+                    : collectOne(endpoint, definition, budget).thenApplyAsync(collected -> {
                         if (collected.walkFailed()) {
                             this.collectsFailed.mark();
                             samples.clear();
@@ -873,7 +901,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                         }
                         samples.addAll(SampleMapper.toSamples(definition, labels, collected, wallMs));
                         return true;
-                    }));
+                    }, this.walkIo), this.walkIo);
         }
         return clean.thenApply(ok -> {
             if (!ok) {
@@ -1027,9 +1055,10 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     }
 
     /**
-     * Stops ticking and waits up to three seconds for the walks in flight. A walk still running
-     * when the wait ends completes through its own deadline or the SNMP service's close, and
-     * returns its permit then.
+     * Stops ticking and waits up to three seconds for the walks in flight, then stops the
+     * {@code snmp-walk-io} executor taking new work. A walk still running when the wait ends
+     * completes through its own deadline or the SNMP service's close, and returns its permit then,
+     * on the completing thread since the executor rejects it.
      */
     @PreDestroy
     public void stop() {
@@ -1049,6 +1078,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         } catch (final InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+        this.walkIo.shutdown();
     }
 
     private static void requirePositive(final long value, final String property) {
