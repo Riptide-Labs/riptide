@@ -5,11 +5,8 @@
 
 package org.riptide.metrics;
 
-import io.airlift.compress.v3.snappy.SnappyJavaCompressor;
-
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -45,14 +42,12 @@ public final class RemoteWriteEncoder {
         return request.toByteArray();
     }
 
+    /**
+     * Delegates to {@link SnappyBlock}, which encodes the block by hand rather than depend on a
+     * library implementing it through {@code sun.misc.Unsafe} (see that class's javadoc).
+     */
     public static byte[] snappy(final byte[] plain) {
-        // Constructed directly, not through SnappyCompressor.create(): the factory prefers a
-        // native library bundled in the jar and reaches for it through the Foreign Function
-        // API, which warns on every call. This class never touches that loader.
-        final SnappyJavaCompressor compressor = new SnappyJavaCompressor();
-        final byte[] out = new byte[compressor.maxCompressedLength(plain.length)];
-        final int n = compressor.compress(plain, 0, plain.length, out, 0, out.length);
-        return Arrays.copyOf(out, n);
+        return SnappyBlock.compress(plain);
     }
 
     private static byte[] timeSeries(final Sample sample) {
