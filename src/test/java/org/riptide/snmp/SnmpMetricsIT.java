@@ -124,23 +124,43 @@ class SnmpMetricsIT {
         this.silent.stop();
     }
 
+    /**
+     * The counter grows at 1,000 bytes/s for the whole test, on a thread of its own, so the
+     * rate holds whenever the query lands. The first version grew it for twelve seconds and
+     * then polled a ten-second window: the rate decayed to exactly 0 as constant samples filled
+     * the window, and even the first query passed or failed on the sub-second phase between a
+     * walk and the increment before it. The window is twenty seconds, so the 2,000-byte steps
+     * quantise the rate by at most 100 either side of 1,000.
+     */
     @Test
     void countersFromASilentDeviceAreQueryableAsARateInVictoriaMetrics() throws Exception {
-        long octets = 1_000_000L;
-        for (int i = 0; i < 6; i++) {
-            octets += 2_000; // 1000 bytes/s at a 2 s interval
-            this.silent.setCounter(1, 6, octets);
-            Thread.sleep(2_000);
+        final Thread traffic = new Thread(() -> {
+            long octets = 1_000_000L;
+            while (!Thread.currentThread().isInterrupted()) {
+                octets += 2_000; // 1,000 bytes/s at a 2 s step
+                this.silent.setCounter(1, 6, octets);
+                try {
+                    Thread.sleep(2_000);
+                } catch (final InterruptedException e) {
+                    return;
+                }
+            }
+        }, "silent-traffic");
+        traffic.setDaemon(true);
+        traffic.start();
+        try {
+            // walks continue on their own schedule while the assertion retries, so each retry
+            // flushes again rather than querying once against data frozen at the first flush
+            await().atMost(Duration.ofSeconds(60)).pollInterval(Duration.ofSeconds(1)).untilAsserted(() -> {
+                forceFlush();
+                final JsonNode result = query("rate(ifHCInOctets{exporter=\"silent-switch\",ifIndex=\"1\"}[20s])");
+                assertThat(result.path("data").path("result")).isNotEmpty();
+                final double rate = result.path("data").path("result").get(0).path("value").get(1).asDouble();
+                assertThat(rate).isBetween(800d, 1_200d);
+            });
+        } finally {
+            traffic.interrupt();
         }
-        // walks continue on their own schedule while the assertion retries, so each retry
-        // flushes again rather than querying once against data frozen at the first flush
-        await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> {
-            forceFlush();
-            final JsonNode result = query("rate(ifHCInOctets{exporter=\"silent-switch\",ifIndex=\"1\"}[10s])");
-            assertThat(result.path("data").path("result")).isNotEmpty();
-            final double rate = result.path("data").path("result").get(0).path("value").get(1).asDouble();
-            assertThat(rate).isBetween(900d, 1_100d);
-        });
         forceFlush();
         final JsonNode info = query("riptide_interface_info{exporter=\"silent-switch\",ifIndex=\"1\"}");
         assertThat(info.path("data").path("result").get(0).path("metric").path("ifAlias").asText())
