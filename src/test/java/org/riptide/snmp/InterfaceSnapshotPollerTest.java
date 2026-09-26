@@ -72,6 +72,11 @@ class InterfaceSnapshotPollerTest {
         final Set<SnmpEndpoint> failing = ConcurrentHashMap.newKeySet();
         /** When set, each walk counts down {@code entered} and then waits on {@code release}. */
         private volatile boolean block;
+        /**
+         * Endpoints whose start parks the calling thread on {@code release} before the future is
+         * even returned, the way an SNMPv3 engine-ID discovery parks a walk-io thread.
+         */
+        final Set<SnmpEndpoint> startBlocking = ConcurrentHashMap.newKeySet();
         private volatile CountDownLatch entered;
         private volatile CountDownLatch release;
         /**
@@ -92,6 +97,9 @@ class InterfaceSnapshotPollerTest {
         @Override
         public java.util.concurrent.CompletableFuture<InterfaceTable> walkInterfacesAsync(final SnmpEndpoint endpoint) {
             this.startThreads.add(Thread.currentThread().getName());
+            if (this.startBlocking.contains(endpoint)) {
+                park();
+            }
             if (this.block) {
                 return java.util.concurrent.CompletableFuture.supplyAsync(() -> walkInterfaces(endpoint), this.completer);
             }
@@ -103,6 +111,9 @@ class InterfaceSnapshotPollerTest {
                 final SnmpEndpoint endpoint, final org.riptide.snmp.collect.CollectionDefinition definition,
                 final Duration budget) {
             this.startThreads.add(Thread.currentThread().getName());
+            if (this.startBlocking.contains(endpoint)) {
+                park();
+            }
             if (this.block) {
                 return java.util.concurrent.CompletableFuture.supplyAsync(
                         () -> collect(endpoint, definition, budget), this.completer);
@@ -112,12 +123,16 @@ class InterfaceSnapshotPollerTest {
 
         private void gate() {
             if (this.block) {
-                this.entered.countDown();
-                try {
-                    this.release.await(10, TimeUnit.SECONDS);
-                } catch (final InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
+                park();
+            }
+        }
+
+        private void park() {
+            this.entered.countDown();
+            try {
+                this.release.await(10, TimeUnit.SECONDS);
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
         }
 
@@ -865,6 +880,72 @@ class InterfaceSnapshotPollerTest {
         snmp.release.countDown();
         assertThat(snmp.entered.await(2, TimeUnit.SECONDS)).as("second walk started on the freed permit").isTrue();
         awaitWalks(poller, snmp, 2);
+    }
+
+    /**
+     * The bulkhead at the executor, not only at the permits. An SNMPv3 start parks its
+     * {@code snmp-walk-io} thread in engine-ID discovery for up to a second, and a suspect walk
+     * starts on the same executor as a healthy one. With only {@code pool-width} threads,
+     * {@code suspect-pool-width} dead v3 agents in discovery park every thread, and a healthy
+     * walk can neither start nor return its permit, although its own budget is untouched.
+     */
+    @Test
+    void aSuspectWalkParkedInItsStartDoesNotHoldUpAHealthyWalksStart() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var config = config();
+        config.setPoolWidth(1);
+        config.setSuspectPoolWidth(1);
+        final var poller = poller(snmp, config, new RecordingSink());
+        final var suspect = endpoint("10.0.0.1");
+        snmp.failing.add(suspect);
+        poller.trackAndResolve(suspect, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        // due again after its back-off, from the suspect budget now, and its start parks inline
+        advanceMs(config.getDeadEndpointBaseMs() + 1);
+        snmp.startBlocking.add(suspect);
+        snmp.entered = new CountDownLatch(1);
+        snmp.release = new CountDownLatch(1);
+        poller.tick(this.clock.get());
+        assertThat(snmp.entered.await(2, TimeUnit.SECONDS)).as("the suspect start is parked on a walk-io thread").isTrue();
+
+        final var healthy = endpoint("10.0.0.2");
+        poller.trackAndResolve(healthy, 1);
+        poller.tick(this.clock.get());
+        final long deadline = System.currentTimeMillis() + 2_000;
+        while (snmp.walksFor(healthy) < 1 && System.currentTimeMillis() < deadline) {
+            Thread.sleep(5);
+        }
+        assertThat(snmp.walksFor(healthy)).as("the healthy walk started while the suspect start was parked").isEqualTo(1);
+        snmp.release.countDown();
+        awaitWalks(poller, snmp, 3);
+    }
+
+    /**
+     * A completion after {@link InterfaceSnapshotPoller#stop} returns its permit and nothing
+     * more. The executor is shut down by then, so a queued walk it started would run inline on
+     * the completing thread against an SNMP service that is being closed.
+     */
+    @Test
+    void aWalkStillQueuedAtStopIsNotStartedByALaterCompletion() throws Exception {
+        final var snmp = new FakeSnmp();
+        snmp.block = true;
+        snmp.entered = new CountDownLatch(1);
+        snmp.release = new CountDownLatch(1);
+        final var config = config();
+        config.setPoolWidth(1);
+        final var poller = poller(snmp, config, new RecordingSink());
+        poller.trackAndResolve(endpoint("10.0.0.1"), 1);
+        poller.trackAndResolve(endpoint("10.0.0.2"), 1);
+        poller.tick(this.clock.get());
+        assertThat(snmp.entered.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(snmp.walks.get()).as("one walk in flight, one queued").isEqualTo(1);
+
+        poller.stop(); // gives up on the parked walk after three seconds
+        snmp.release.countDown();
+        awaitQuiet(poller);
+        assertThat(snmp.walks.get()).as("the queued walk never starts after stop").isEqualTo(1);
     }
 
     /**
@@ -1616,6 +1697,26 @@ class InterfaceSnapshotPollerTest {
         poller.tick(this.clock.get());
         awaitWalks(poller, snmp, 2);
         assertThat(sink.samples).extracting(s -> s.labels().get("exporter")).contains("silent-switch");
+    }
+
+    /**
+     * The exporter label comes from the entry that marked the address {@code poll: always},
+     * even when that entry is pinned to an observation domain. A lookup keyed on the address
+     * with domain 0 never sees a pinned entry, and the samples carried the bare address.
+     */
+    @Test
+    void aPollAlwaysEntryPinnedToAnObservationDomainStillNamesTheExporter() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var sink = new RecordingSink();
+        final var poller = poller(snmp, config(), sink);
+        serve(parse(ALWAYS_INVENTORY.replace("poll: always", "poll: always, observation-domain: 7")));
+        poller.refreshRegistrations();
+        advanceMs(60_000L + 60_000L / 50 + 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        assertThat(sink.samples).isNotEmpty();
+        assertThat(sink.samples).extracting(s -> s.labels().get("exporter")).containsOnly("silent-switch");
     }
 
     @Test

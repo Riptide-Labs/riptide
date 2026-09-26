@@ -37,6 +37,8 @@ public class DefaultSnmpService implements SnmpService {
     private final SecretResolvers secretResolvers;
     private final Map<SnmpVersion, Snmp> sessions = new EnumMap<>(SnmpVersion.class);
     private final Map<SnmpVersion, SnmpBuilder> builders = new EnumMap<>(SnmpVersion.class);
+    /** Guarded by this. Once closed, {@link #session} opens nothing: a session opened then leaks. */
+    private boolean closed;
     /**
      * Fires every walk's deadline, and closes each per-walk session once its walk completes. One
      * thread for the whole service: neither job waits on an agent.
@@ -156,7 +158,10 @@ public class DefaultSnmpService implements SnmpService {
      * at all is rare in practice ({@code listen()} mostly fails when the earlier {@code .udp()}
      * call would already have failed), but this is a real, undischarged bound.
      */
-    private synchronized Snmp session(final SnmpVersion version) throws IOException {
+    private synchronized Shared session(final SnmpVersion version) throws IOException {
+        if (this.closed) {
+            throw new IOException("SNMP service is closed");
+        }
         Snmp snmp = this.sessions.get(version);
         if (snmp == null) {
             final SnmpBuilder builder = version.getSnmpBuilder();
@@ -164,7 +169,12 @@ public class DefaultSnmpService implements SnmpService {
             this.builders.put(version, builder);
             this.sessions.put(version, snmp);
         }
-        return snmp;
+        // the builder is read under the same lock: a close between two reads would hand out a null one
+        return new Shared(snmp, this.builders.get(version));
+    }
+
+    /** A shared session and the builder that configures targets on it. */
+    private record Shared(Snmp snmp, SnmpBuilder builder) {
     }
 
     @Override
@@ -179,8 +189,9 @@ public class DefaultSnmpService implements SnmpService {
         final Target<?> target;
         final CompletableFuture<CollectedTable> collect;
         try {
-            snmp = session(version);
-            target = version.getTarget(snmp, this.builders.get(version), endpoint, this.secretResolvers);
+            final Shared shared = session(version);
+            snmp = shared.snmp();
+            target = version.getTarget(snmp, shared.builder(), endpoint, this.secretResolvers);
             collect = SnmpUtils.collectAsync(snmp, target, endpoint, definition, deadline, this.deadlines);
         } catch (IOException | IllegalArgumentException e) {
             timing.stop();
@@ -224,6 +235,7 @@ public class DefaultSnmpService implements SnmpService {
     public void close() {
         final List<Snmp> open;
         synchronized (this) {
+            this.closed = true;
             open = new ArrayList<>(this.sessions.values());
             this.sessions.clear();
             this.builders.clear();

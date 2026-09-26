@@ -148,7 +148,7 @@ The one exception is an SNMPv3 walk whose session does not yet know the agent's 
 On the shared collect session the engine ID is cached after the first discovery and evicted after any failed walk, so discovery runs on the first walk and again on the walk after a failure.
 The eviction is what lets a device whose engine ID changed be walked again, because snmp4j keeps the cached value when the unknown-engine-ID report arrives.
 Enrichment-only walks open a fresh session each time and discover on every walk.
-Riptide's side of a walk runs on a small `snmp-walk-io` executor, as wide as `poolWidth`, never on the scheduler tick thread or on snmp4j's threads.
+Riptide's side of a walk runs on a small `snmp-walk-io` executor, as wide as `poolWidth` plus `suspectPoolWidth` (one thread per permit, so parked SNMPv3 discoveries on suspect walks cannot take every thread from healthy ones), never on the scheduler tick thread or on snmp4j's threads.
 The tick only finds due registrations and appends them to a due queue per permit budget; a walk's completion returns its permit and starts the head of that queue at once, so throughput is permits divided by walk latency and a queued device is never overtaken for ever.
 An inventory-registered device's first walk is spread across the interval by its address-derived offset, like every re-walk; only a flow-registered exporter is walked immediately.
 An endpoint whose last walk failed draws from a separate suspect bulkhead, `suspect-pool-width` permits, so dead agents waiting out their timeouts cannot hold the permits healthy endpoints need.

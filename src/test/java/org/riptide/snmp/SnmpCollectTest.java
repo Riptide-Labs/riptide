@@ -68,6 +68,23 @@ class SnmpCollectTest {
         assertThat(eth0.info()).containsEntry("ifName", "eth0-x").containsEntry("ifHighSpeed", "14");
     }
 
+    /**
+     * A collect that reaches the service after {@code close()} fails instead of opening a fresh
+     * session nothing will ever close. The poller can complete a walk, and dispatch the next,
+     * after the context has started tearing down.
+     */
+    @Test
+    void aCollectAfterCloseFailsAndOpensNoSession() {
+        final SnmpEndpoint endpoint = SnmpTest.communityV2c(new IPAddressString("127.0.0.1"), PORT, TestSnmpAgent.COMMUNITY);
+        this.service.close();
+
+        final CollectedTable table = this.service.collect(endpoint, CollectionDefinitions.IF_MIB_INTERFACES,
+                Duration.ofSeconds(10));
+
+        assertThat(table.walkFailed()).isTrue();
+        assertThat(this.service.openSessions()).as("a closed service opens nothing").isEqualTo(0);
+    }
+
     @Test
     void twoCollectsReuseTheSameSessionAndSeeAMovedCounter() {
         final SnmpEndpoint endpoint = SnmpTest.communityV2c(new IPAddressString("127.0.0.1"), PORT, TestSnmpAgent.COMMUNITY);

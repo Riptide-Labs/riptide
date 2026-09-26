@@ -53,8 +53,21 @@ public final class SampleMapper {
     }
 
     public static IfInfo toIfInfo(final CollectedTable.CollectedRow row) {
-        final String speed = row.info().get("ifHighSpeed");
-        return new IfInfo(row.info().get("ifName"), row.info().get("ifAlias"),
-                speed == null ? null : Long.valueOf(speed));
+        return new IfInfo(row.info().get("ifName"), row.info().get("ifAlias"), speed(row.info().get("ifHighSpeed")));
+    }
+
+    /**
+     * An agent answering the column with text is an agent that answered, so the cell is absent
+     * rather than the collect failed; the enrichment walk treats the same answer the same way.
+     */
+    private static Long speed(final String text) {
+        if (text == null) {
+            return null;
+        }
+        try {
+            return Long.valueOf(text);
+        } catch (final NumberFormatException e) {
+            return null;
+        }
     }
 }

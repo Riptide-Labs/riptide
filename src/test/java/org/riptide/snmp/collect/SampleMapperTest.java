@@ -72,6 +72,18 @@ class SampleMapperTest {
         assertThat(samples.get(0).labels()).doesNotContainKey("ifName").containsEntry("ifIndex", "7");
     }
 
+    /**
+     * An agent answering ifHighSpeed with text is still an agent that answered every table.
+     * The enrichment walk drops such a cell; a thrown NumberFormatException here would instead
+     * fail the whole collect and back the device off as unreachable.
+     */
+    @Test
+    void toIfInfoLeavesTheSpeedNullWhenTheAgentAnsweredText() {
+        final var row = new CollectedTable.CollectedRow(
+                Map.of("ifName", "Gi0/0/3", "ifAlias", "uplink", "ifHighSpeed", "1 Gbps"), Map.of());
+        assertThat(SampleMapper.toIfInfo(row)).isEqualTo(new org.riptide.snmp.IfInfo("Gi0/0/3", "uplink", null));
+    }
+
     @Test
     void toIfInfoReadsTheThreeEnrichmentColumns() {
         final var row = new CollectedTable.CollectedRow(

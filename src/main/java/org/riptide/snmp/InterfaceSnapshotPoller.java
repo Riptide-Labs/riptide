@@ -9,6 +9,7 @@ import com.codahale.metrics.Meter;
 import inet.ipaddr.IPAddressString;
 import org.riptide.config.DaemonConfig;
 import org.riptide.inventory.ExporterEntry;
+import org.riptide.inventory.ExporterView;
 import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventorySnapshot;
 import org.riptide.inventory.PollMode;
@@ -91,8 +92,11 @@ import java.util.function.LongSupplier;
  *       healthy endpoint needs. Starting a walk (secret resolution, session setup, the first
  *       request) and handling its result run on a small {@code snmp-walk-io} executor, never on
  *       the tick thread or on snmp4j's threads, which only complete futures. That executor is
- *       as wide as {@code pool-width}; when it is saturated, work queues on it, which is the
- *       intended back-pressure.</li>
+ *       as wide as {@code pool-width} plus {@code suspect-pool-width}: at most that many walks
+ *       hold a permit, so at most that many starts can be parked in discovery at once, and a
+ *       healthy walk's start or completion always finds a thread even while every suspect
+ *       permit is parked. When it is saturated, work queues on it, which is the intended
+ *       back-pressure.</li>
  *   <li>An inventory-registered exporter is never removed for silence; only the inventory removes it.</li>
  * </ul>
  *
@@ -219,6 +223,8 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      * the submitting thread instead, so a late walk still returns its permit.
      */
     private final ExecutorService walkIo;
+    /** Set by {@link #stop}; a completion after it returns its permit and dispatches nothing. */
+    private volatile boolean stopped;
 
     private final Meter registered;
     private final Meter reresolved;
@@ -313,7 +319,11 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         this.permits = new Semaphore(config.getPoolWidth());
         this.suspectPermits = new Semaphore(config.getSuspectPoolWidth());
         final AtomicInteger walkIoThreads = new AtomicInteger();
-        this.walkIo = new ThreadPoolExecutor(config.getPoolWidth(), config.getPoolWidth(),
+        // one thread per permit across both budgets: a start parked in v3 engine-ID discovery
+        // holds a thread for up to a second, and with only pool-width threads the suspect
+        // permits alone could park them all, so no healthy walk could start or complete
+        final int walkIoWidth = config.getPoolWidth() + config.getSuspectPoolWidth();
+        this.walkIo = new ThreadPoolExecutor(walkIoWidth, walkIoWidth,
                 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
                 runnable -> {
                     final Thread thread = new Thread(runnable, "snmp-walk-io-" + walkIoThreads.incrementAndGet());
@@ -792,14 +802,22 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     /**
      * Starts queued walks while the budget has permits. Runs from the tick and from every walk's
      * completion, so a freed permit goes straight to the next due registration instead of waiting
-     * for the next tick. A registration removed from the map while it waited is skipped.
+     * for the next tick. A registration removed from the map while it waited is skipped. After
+     * {@link #stop} it starts nothing: the executor is shut down, and a walk started then would
+     * run inline on the completing thread against a service being closed.
      */
     private void dispatch(final Semaphore budget, final ConcurrentLinkedQueue<Registration> queue) {
-        while (budget.tryAcquire()) {
+        while (!this.stopped && budget.tryAcquire()) {
             final Registration registration = queue.poll();
             if (registration == null) {
                 budget.release();
-                return;
+                // re-check after the release: a tick that queued between this poll and the
+                // release saw the permit taken and gave up, and nobody else would start its
+                // walk before the next tick
+                if (queue.isEmpty()) {
+                    return;
+                }
+                continue;
             }
             registration.queued.set(false);
             if (this.registrations.get(registration.endpoint.getInetSocketAddress()) != registration
@@ -1021,14 +1039,18 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     /**
      * Identity plus the exporter. Read from the serving inventory on every walk, so renaming an
      * entry reaches the next sample without touching the registration. The exporter is the
-     * inventory name when an entry covers the address, else the address itself.
+     * inventory name when an entry covers the address, else the address itself. The
+     * {@code poll: always} entry at the address is asked first: it may be pinned to an
+     * observation domain, and a lookup keyed on the address alone can only see domain 0 and
+     * wildcard entries.
      */
     private Map<String, String> labelsFor(final SnmpEndpoint endpoint) {
         final InetAddress address = endpoint.getInetSocketAddress().getAddress();
         final String hostAddress = address.getHostAddress();
         final Map<String, String> labels = new HashMap<>(this.identityLabels);
-        labels.put("exporter", this.inventory.snapshot().exporterView()
-                .match(new ExporterIdentity.NetflowIpfix(address, 0L))
+        final ExporterView exporters = this.inventory.snapshot().exporterView();
+        labels.put("exporter", exporters.alwaysPolledAt(address)
+                .or(() -> exporters.match(new ExporterIdentity.NetflowIpfix(address, 0L)))
                 .map(ExporterEntry::name)
                 .orElse(hostAddress));
         labels.put("exporter_address", hostAddress);
@@ -1123,6 +1145,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      */
     @PreDestroy
     public void stop() {
+        this.stopped = true;
         if (this.scheduler != null) {
             this.scheduler.shutdownNow();
         }

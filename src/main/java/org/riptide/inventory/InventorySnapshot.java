@@ -8,9 +8,12 @@ package org.riptide.inventory;
 import inet.ipaddr.IPAddressString;
 import org.riptide.pipeline.ExporterIdentity;
 
+import java.net.InetAddress;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * Both configuration trees, compiled off the hot path into one immutable object.
@@ -25,6 +28,7 @@ public final class InventorySnapshot {
     private final PinnedPrefixMatcher<AgentEntry> agents;
     private final PinnedPrefixMatcher<ExporterEntry> exporters;
     private final List<ExporterEntry> alwaysPolled;
+    private final Map<InetAddress, ExporterEntry> alwaysPolledByAddress;
     private final AgentView agentView;
     private final ExporterView exporterView;
     /** The tree's key was written as a mapping in the source; see {@link #isRegressiveOver}. */
@@ -46,6 +50,10 @@ public final class InventorySnapshot {
         this.alwaysPolled = alwaysPolled.stream()
                 .sorted(Comparator.comparing(ExporterEntry::name))
                 .toList();
+        // the loader refuses a duplicate address, so the first-by-name merge never decides
+        this.alwaysPolledByAddress = this.alwaysPolled.stream()
+                .collect(Collectors.toUnmodifiableMap(entry -> entry.address().getAddress().toInetAddress(),
+                        entry -> entry, (first, second) -> first));
         this.agentsDeclared = agentsDeclared;
         this.exportersDeclared = exportersDeclared;
         // built once here rather than per call: a consumer that captures a view per
@@ -60,6 +68,11 @@ public final class InventorySnapshot {
             @Override
             public List<ExporterEntry> alwaysPolled() {
                 return InventorySnapshot.this.alwaysPolled;
+            }
+
+            @Override
+            public Optional<ExporterEntry> alwaysPolledAt(final InetAddress address) {
+                return Optional.ofNullable(InventorySnapshot.this.alwaysPolledByAddress.get(address));
             }
         };
     }
