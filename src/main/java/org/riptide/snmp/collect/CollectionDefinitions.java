@@ -8,16 +8,16 @@ package org.riptide.snmp.collect;
 import org.snmp4j.smi.OID;
 
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.TreeSet;
 
 import static org.riptide.snmp.collect.CollectionDefinition.ColumnType.COUNTER64;
 import static org.riptide.snmp.collect.CollectionDefinition.ColumnType.GAUGE;
 import static org.riptide.snmp.collect.CollectionDefinition.ColumnType.INFO;
 
-/** The built-in definitions a polling profile may name in {@code collect}. */
+/**
+ * The built-in collection definitions. {@code org.riptide.inventory.CollectionName} names these
+ * in configuration without this package's classes reaching across the AD-10 boundary;
+ * {@code AgentEndpointFactory} maps each name back onto its definition here.
+ */
 public final class CollectionDefinitions {
 
     private static final String IFX = "1.3.6.1.2.1.31.1.1.1.";
@@ -45,18 +45,7 @@ public final class CollectionDefinitions {
                     col(IF + "7", "ifAdminStatus", GAUGE)),
             5);
 
-    private static final Map<String, CollectionDefinition> BY_NAME = Map.of(
-            IF_MIB_INTERFACES.name(), IF_MIB_INTERFACES);
-
     private CollectionDefinitions() {
-    }
-
-    public static Optional<CollectionDefinition> byName(final String name) {
-        return Optional.ofNullable(BY_NAME.get(name));
-    }
-
-    public static Set<String> names() {
-        return new TreeSet<>(BY_NAME.keySet());
     }
 
     private static CollectionDefinition.Column col(final String oid, final String metric,

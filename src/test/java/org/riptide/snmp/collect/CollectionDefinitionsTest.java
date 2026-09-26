@@ -12,13 +12,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 class CollectionDefinitionsTest {
 
     @Test
-    void theBuiltInDefinitionIsFoundByNameAndNothingElseIs() {
-        assertThat(CollectionDefinitions.byName("if-mib-interfaces")).contains(CollectionDefinitions.IF_MIB_INTERFACES);
-        assertThat(CollectionDefinitions.byName("ip-mib")).isEmpty();
-        assertThat(CollectionDefinitions.names()).containsExactly("if-mib-interfaces");
-    }
-
-    @Test
     void ifMibInterfacesHasFourteenValueColumnsAndThreeInfoColumns() {
         final var def = CollectionDefinitions.IF_MIB_INTERFACES;
         assertThat(def.columns().stream().filter(c -> c.type() != CollectionDefinition.ColumnType.INFO)).hasSize(14);

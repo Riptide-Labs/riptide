@@ -6,7 +6,9 @@
 package org.riptide.inventory;
 
 import org.junit.jupiter.api.Test;
-import org.riptide.snmp.collect.CollectionDefinitions;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
+import org.springframework.mock.env.MockEnvironment;
 
 import java.time.Duration;
 
@@ -43,32 +45,45 @@ class PollingProfileTest {
     }
 
     @Test
-    void collectDefaultsToEmptyAndResolvesBuiltInNames() {
+    void collectDefaultsToEmptyAndRoundTripsACollectionName() {
         final var profile = PollingProfile.builtInDefault();
         assertThat(profile.collect()).isEmpty();
-        assertThat(profile.definitions()).isEmpty();
 
         final var counters = new PollingProfile(Duration.ofSeconds(60), Duration.ofMinutes(30), 500, 1,
-                List.of("if-mib-interfaces"));
-        assertThat(counters.definitions()).containsExactly(CollectionDefinitions.IF_MIB_INTERFACES);
+                List.of(CollectionName.IF_MIB_INTERFACES));
+        assertThat(counters.collect()).containsExactly(CollectionName.IF_MIB_INTERFACES);
     }
 
     @Test
-    void anUnknownCollectionNameIsRefusedByValidate() {
-        final var profile = new PollingProfile(Duration.ofSeconds(60), Duration.ofMinutes(30), 500, 1,
-                List.of("ip-mib"));
-        assertThatThrownBy(() -> profile.validate("brisk"))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("riptide.snmp.polling.brisk.collect")
-                .hasMessageContaining("'ip-mib'")
-                .hasMessageContaining("if-mib-interfaces");
+    void anUnknownCollectionNameFailsTheBindItself() {
+        // collect is now List<CollectionName>: an unknown value can never reach validate(),
+        // because Spring's binder refuses the conversion before the record is even constructed
+        final var environment = new MockEnvironment()
+                .withProperty("riptide.snmp.polling.brisk.collect[0]", "ip-mib");
+
+        assertThatThrownBy(() -> new Binder(ConfigurationPropertySources.get(environment))
+                .bind("riptide.snmp", SnmpProfilesConfig.class))
+                .hasMessageContaining("collect")
+                .hasStackTraceContaining("ip-mib");
+    }
+
+    @Test
+    void aKnownCollectionNameBindsToItsEnumConstant() {
+        final var environment = new MockEnvironment()
+                .withProperty("riptide.snmp.polling.brisk.collect[0]", "if-mib-interfaces");
+
+        final var bound = new Binder(ConfigurationPropertySources.get(environment))
+                .bind("riptide.snmp", SnmpProfilesConfig.class)
+                .orElseThrow(() -> new AssertionError("nothing bound from riptide.snmp.*"));
+
+        assertThat(bound.polling().get("brisk").collect()).containsExactly(CollectionName.IF_MIB_INTERFACES);
     }
 
     @Test
     void aTimeoutThatCannotFitTheWalkBudgetIsRefusedWhenCollecting() {
         // 20 s timeout x 2 attempts = 40 s per PDU, budget is 80% of 30 s = 24 s
         final var profile = new PollingProfile(Duration.ofSeconds(30), Duration.ofMinutes(30), 20_000, 1,
-                List.of("if-mib-interfaces"));
+                List.of(CollectionName.IF_MIB_INTERFACES));
         assertThatThrownBy(() -> profile.validate("brisk"))
                 .hasMessageContaining("timeout")
                 .hasMessageContaining("24");
