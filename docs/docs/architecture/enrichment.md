@@ -93,7 +93,8 @@ That warmup window is expected behaviour, not a fault: it is the cost of never b
 A newly added interface likewise becomes visible at the next poll rather than within a minute.
 An unresolvable `ifIndex` deliberately does not trigger an early walk, because that would put agent load back under the control of flow traffic.
 
-Unreachable endpoints back off exponentially between `dead-endpoint-base-ms` and `dead-endpoint-ceiling-ms` instead of retrying at a fixed interval, because a walk against a dead agent holds a pool slot for its whole timeout.
+Unreachable endpoints back off exponentially between `dead-endpoint-base-ms` and `dead-endpoint-ceiling-ms` instead of retrying at a fixed interval, because a walk against a dead agent holds a permit for its whole timeout.
+An endpoint whose last walk failed draws from its own `suspect-pool-width` budget, so a population of dead agents cannot take the permits healthy ones need.
 Misses are not cached separately: an `ifIndex` absent from a polled snapshot is a known absence, so there is nothing to expire.
 
 ## Reverse-DNS hostnames

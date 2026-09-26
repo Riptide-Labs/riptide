@@ -24,6 +24,9 @@ import java.util.EnumMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 
 @Service
 @Slf4j
@@ -32,6 +35,26 @@ public class DefaultSnmpService implements SnmpService {
     private final SecretResolvers secretResolvers;
     private final Map<SnmpVersion, Snmp> sessions = new EnumMap<>(SnmpVersion.class);
     private final Map<SnmpVersion, SnmpBuilder> builders = new EnumMap<>(SnmpVersion.class);
+    /**
+     * Fires every walk's deadline, and closes each per-walk session once its walk completes. One
+     * thread for the whole service: neither job waits on an agent.
+     */
+    private final ScheduledExecutorService deadlines = deadlineTimer();
+
+    /**
+     * Remove-on-cancel, because nearly every deadline is cancelled: the walk finishes first. A
+     * cancelled task left queued until its delay passes would keep its collector, and every row
+     * that collector holds, reachable for the whole walk budget.
+     */
+    private static ScheduledExecutorService deadlineTimer() {
+        final ScheduledThreadPoolExecutor timer = new ScheduledThreadPoolExecutor(1, runnable -> {
+            final Thread thread = new Thread(runnable, "snmp-walk-deadline");
+            thread.setDaemon(true);
+            return thread;
+        });
+        timer.setRemoveOnCancelPolicy(true);
+        return timer;
+    }
 
     /**
      * Walk accounting. This is the layer where a walk actually happens, so every increment here is
@@ -78,26 +101,33 @@ public class DefaultSnmpService implements SnmpService {
     }
 
     @Override
-    public InterfaceTable walkInterfaces(final SnmpEndpoint snmpEndpoint) {
+    public CompletableFuture<InterfaceTable> walkInterfacesAsync(final SnmpEndpoint snmpEndpoint) {
         this.walks.mark();
-        try (var ignored = this.walkDuration.time()) {
-            final var walk = SnmpUtils.getIfInfoMap(snmpEndpoint, this.secretResolvers);
-            switch (walk.outcome()) {
-                case OK -> this.walksSucceeded.mark();
-                case TIMEOUT -> this.walksTimedOut.mark();
-                case ERROR -> this.walksFailed.mark();
-                case ABANDONED -> this.walksAbandoned.mark();
-            }
-            // any non-OK outcome is a failed walk: an error PDU is no more worth retrying
-            // immediately than a timeout, and the meters above keep the distinction
-            return new InterfaceTable(walk.rows(), walk.outcome() != SnmpUtils.WalkOutcome.OK);
+        final Timer.Context timing = this.walkDuration.time();
+        final CompletableFuture<SnmpUtils.WalkResult> walk;
+        try {
+            walk = SnmpUtils.getIfInfoMapAsync(snmpEndpoint, this.secretResolvers,
+                    SnmpUtils.WALK_BUDGET.toNanos(), this.deadlines);
         } catch (IOException | IllegalArgumentException e) {
             // IllegalArgumentException: an unresolvable secret reference must degrade to an
             // unenriched flow, never fail the pipeline and drop the batch.
+            timing.stop();
             this.walksFailed.mark();
             log.warn("Error walking the interface table of {}: {}", snmpEndpoint, e.getMessage());
-            return new InterfaceTable(Map.of(), true);
+            return CompletableFuture.completedFuture(new InterfaceTable(Map.of(), true));
         }
+        return walk.whenComplete((result, failure) -> timing.stop())
+                .thenApply(result -> {
+                    switch (result.outcome()) {
+                        case OK -> this.walksSucceeded.mark();
+                        case TIMEOUT -> this.walksTimedOut.mark();
+                        case ERROR -> this.walksFailed.mark();
+                        case ABANDONED -> this.walksAbandoned.mark();
+                    }
+                    // any non-OK outcome is a failed walk: an error PDU is no more worth retrying
+                    // immediately than a timeout, and the meters above keep the distinction
+                    return new InterfaceTable(result.rows(), result.outcome() != SnmpUtils.WalkOutcome.OK);
+                });
     }
 
     /**
@@ -133,24 +163,30 @@ public class DefaultSnmpService implements SnmpService {
     }
 
     @Override
-    public CollectedTable collect(final SnmpEndpoint endpoint, final CollectionDefinition definition,
-                                  final Duration budget) {
+    public CompletableFuture<CollectedTable> collectAsync(final SnmpEndpoint endpoint,
+                                                          final CollectionDefinition definition,
+                                                          final Duration budget) {
         this.collects.mark();
         final long deadline = System.nanoTime() + budget.toNanos();
-        try (var ignored = this.collectDuration.time()) {
+        final Timer.Context timing = this.collectDuration.time();
+        final CompletableFuture<CollectedTable> collect;
+        try {
             final SnmpVersion version = endpoint.getSnmpDefinition().getSnmpVersion();
             final Snmp snmp = session(version);
             final Target<?> target = version.getTarget(snmp, this.builders.get(version), endpoint, this.secretResolvers);
-            final CollectedTable table = SnmpUtils.collect(snmp, target, endpoint, definition, deadline);
-            if (table.walkFailed()) {
-                this.collectsFailed.mark();
-            }
-            return table;
+            collect = SnmpUtils.collectAsync(snmp, target, endpoint, definition, deadline, this.deadlines);
         } catch (IOException | IllegalArgumentException e) {
+            timing.stop();
             this.collectsFailed.mark();
             log.warn("SNMP collect against {} failed: {}", endpoint, e.getMessage());
-            return new CollectedTable(Map.of(), true);
+            return CompletableFuture.completedFuture(new CollectedTable(Map.of(), true));
         }
+        return collect.whenComplete((table, failure) -> {
+            timing.stop();
+            if (table != null && table.walkFailed()) {
+                this.collectsFailed.mark();
+            }
+        });
     }
 
     /** Test seam. */
@@ -158,6 +194,11 @@ public class DefaultSnmpService implements SnmpService {
         return this.sessions.size();
     }
 
+    /**
+     * Closes the shared sessions, which completes every walk still pending on them, then stops
+     * the deadline timer. A walk still pending on a per-walk session completes at snmp4j's own
+     * timeout and closes its session on a thread of its own.
+     */
     @PreDestroy
     public synchronized void close() {
         for (final Snmp snmp : this.sessions.values()) {
@@ -168,5 +209,6 @@ public class DefaultSnmpService implements SnmpService {
             }
         }
         this.sessions.clear();
+        this.deadlines.shutdownNow();
     }
 }

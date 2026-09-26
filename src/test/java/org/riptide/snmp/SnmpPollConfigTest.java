@@ -45,6 +45,7 @@ class SnmpPollConfigTest {
                 .withProperty("riptide.snmp.poll.refresh-interval-ms", "1000")
                 .withProperty("riptide.snmp.poll.snapshot-expiry-ms", "2000")
                 .withProperty("riptide.snmp.poll.pool-width", "9")
+                .withProperty("riptide.snmp.poll.suspect-pool-width", "7")
                 .withProperty("riptide.snmp.poll.deregister-after", "5")
                 .withProperty("riptide.snmp.poll.dead-endpoint-base-ms", "3000")
                 .withProperty("riptide.snmp.poll.dead-endpoint-ceiling-ms", "4000");
@@ -56,6 +57,7 @@ class SnmpPollConfigTest {
         assertThat(bound.getRefreshIntervalMs()).isEqualTo(1000L);
         assertThat(bound.getSnapshotExpiryMs()).isEqualTo(2000L);
         assertThat(bound.getPoolWidth()).isEqualTo(9);
+        assertThat(bound.getSuspectPoolWidth()).isEqualTo(7);
         assertThat(bound.getDeregisterAfter()).isEqualTo(5);
         assertThat(bound.getDeadEndpointBaseMs()).isEqualTo(3000L);
         assertThat(bound.getDeadEndpointCeilingMs()).isEqualTo(4000L);
