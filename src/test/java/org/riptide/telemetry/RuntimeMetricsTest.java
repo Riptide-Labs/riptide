@@ -27,13 +27,14 @@ import static org.mockito.Mockito.when;
 class RuntimeMetricsTest {
 
     @Test
-    void g1ConcurrentCycleTimeIsNotCountedAsPauseTime() {
+    void g1RemarkAndCleanupPausesAreCountedDespiteTheConcurrentBeanName() {
         final Map<String, Long> beans = new LinkedHashMap<>();
         beans.put("G1 Young Generation", 1_500L);
         beans.put("G1 Old Generation", 250L);
-        beans.put("G1 Concurrent GC", 9_000L);
+        // JDK 20+: this bean times G1's Remark and Cleanup pauses, which stop the application
+        beans.put("G1 Concurrent GC", 30L);
 
-        assertThat(RuntimeMetrics.pauseSeconds(beans)).isEqualTo(1.75d);
+        assertThat(RuntimeMetrics.pauseSeconds(beans)).isEqualTo(1.78d);
     }
 
     @Test

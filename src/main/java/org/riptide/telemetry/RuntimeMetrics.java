@@ -90,16 +90,19 @@ public final class RuntimeMetrics {
     /**
      * Stop-the-world time, in seconds, summed over the collector beans.
      *
-     * <p>Beans named {@code ...Concurrent...} (G1's concurrent cycle) or {@code ...Cycles} (ZGC and
-     * Shenandoah whole cycles) measure work that runs beside the application, not time it was
-     * stopped, and are left out. Any other bean is counted: over-counting an unknown collector beats
-     * hiding its pauses. A negative time is the bean's "undefined" and is skipped.
+     * <p>Beans named {@code ...Cycles} (ZGC and Shenandoah) time whole concurrent cycles, work that
+     * runs beside the application, and are left out; their {@code ...Pauses} siblings are counted.
+     * {@code G1 Concurrent GC} is <em>not</em> left out despite its name: since JDK 20 it reports
+     * G1's Remark and Cleanup pauses, which stop the application (checked on JDK 25 against
+     * {@code -Xlog:gc}: its count equals the logged Remark plus Cleanup pauses). Any other bean is
+     * counted: over-counting an unknown collector beats hiding its pauses. A negative time is the
+     * bean's "undefined" and is skipped.
      */
     static double pauseSeconds(final Map<String, Long> collectionMillisByName) {
         long total = 0;
         for (final Map.Entry<String, Long> bean : collectionMillisByName.entrySet()) {
             final String name = bean.getKey();
-            if (name.contains("Concurrent") || name.contains("Cycles") || bean.getValue() < 0) {
+            if (name.contains("Cycles") || bean.getValue() < 0) {
                 continue;
             }
             total += bean.getValue();
