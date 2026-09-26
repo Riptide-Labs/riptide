@@ -20,7 +20,9 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -196,19 +198,32 @@ public class DefaultSnmpService implements SnmpService {
 
     /**
      * Closes the shared sessions, which completes every walk still pending on them, then stops
-     * the deadline timer. A walk still pending on a per-walk session completes at snmp4j's own
-     * timeout and closes its session on a thread of its own.
+     * the deadline timer taking new work. A walk still pending on a per-walk session completes at
+     * snmp4j's own timeout and closes its session on a thread of its own.
+     *
+     * <p>The sessions are closed outside the monitor. {@code Snmp.close()} joins snmp4j's
+     * dispatcher threads, and a dispatcher thread running a continuation that calls
+     * {@link #session} would wait on this monitor forever, so the join would never return.</p>
      */
     @PreDestroy
-    public synchronized void close() {
-        for (final Snmp snmp : this.sessions.values()) {
+    public void close() {
+        final List<Snmp> open;
+        synchronized (this) {
+            open = new ArrayList<>(this.sessions.values());
+            this.sessions.clear();
+            this.builders.clear();
+        }
+        for (final Snmp snmp : open) {
             try {
                 snmp.close();
             } catch (final IOException e) {
                 log.debug("Closing SNMP session: {}", e.getMessage());
             }
         }
-        this.sessions.clear();
-        this.deadlines.shutdownNow();
+        // shutdown, not shutdownNow: queued tasks still run. A per-walk session's close is
+        // queued here with execute, and draining it unrun would leave that walk's session
+        // open and its future, and the poller permit behind it, never completed. Delayed
+        // deadlines still fire too. The thread is a daemon, so none of this delays exit
+        this.deadlines.shutdown();
     }
 }
