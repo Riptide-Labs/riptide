@@ -6,14 +6,11 @@
 package org.riptide.inventory;
 
 import lombok.extern.slf4j.Slf4j;
-import org.riptide.snmp.collect.CollectionDefinition;
-import org.riptide.snmp.collect.CollectionDefinitions;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 import java.time.Duration;
 
 import java.util.List;
-import java.util.Optional;
 
 /**
  * A named set of poll-behaviour parameters, configured under
@@ -31,22 +28,17 @@ import java.util.Optional;
  * @param snapshotExpiry how long a snapshot stays usable, the staleness backstop
  * @param timeout the per-walk SNMP timeout in milliseconds
  * @param retries the per-walk SNMP retry count, zero meaning a single attempt
- * @param collect the names of the {@link CollectionDefinitions} this profile walks, empty by default
+ * @param collect the {@link CollectionName}s this profile walks, empty by default
  */
 @Slf4j
 public record PollingProfile(@DefaultValue(DEFAULT_REFRESH_INTERVAL) Duration refreshInterval,
                              @DefaultValue(DEFAULT_SNAPSHOT_EXPIRY) Duration snapshotExpiry,
                              @DefaultValue("" + DEFAULT_TIMEOUT_MS) int timeout,
                              @DefaultValue("" + DEFAULT_RETRIES) int retries,
-                             @DefaultValue List<String> collect) {
+                             @DefaultValue List<CollectionName> collect) {
 
     public PollingProfile {
         collect = collect == null ? List.of() : List.copyOf(collect);
-    }
-
-    /** The {@link CollectionDefinition}s named by {@link #collect}; unknown names resolve to nothing. */
-    public List<CollectionDefinition> definitions() {
-        return this.collect.stream().map(CollectionDefinitions::byName).flatMap(Optional::stream).toList();
     }
 
     /**
@@ -116,13 +108,6 @@ public record PollingProfile(@DefaultValue(DEFAULT_REFRESH_INTERVAL) Duration re
         if (expiryShorterThanRefresh()) {
             log.warn("Polling profile '{}' expires snapshots ({}) faster than it refreshes them ({}): "
                     + "a single missed walk blanks enrichment for its exporters", name, this.snapshotExpiry, this.refreshInterval);
-        }
-        for (final String collection : this.collect) {
-            if (CollectionDefinitions.byName(collection).isEmpty()) {
-                throw new IllegalStateException(
-                        "riptide.snmp.polling.%s.collect names an unknown collection '%s'; known collections are %s."
-                                .formatted(name, collection, CollectionDefinitions.names()));
-            }
         }
         if (!this.collect.isEmpty()) {
             final long perPduMs = (long) this.timeout * (this.retries + 1);
