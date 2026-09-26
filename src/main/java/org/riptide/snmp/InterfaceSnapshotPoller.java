@@ -7,52 +7,75 @@ package org.riptide.snmp;
 
 import com.codahale.metrics.Meter;
 import inet.ipaddr.IPAddressString;
+import org.riptide.config.DaemonConfig;
+import org.riptide.inventory.ExporterEntry;
 import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventorySnapshot;
+import org.riptide.inventory.PollMode;
+import org.riptide.inventory.PollingProfile;
+import org.riptide.metrics.MetricSink;
+import org.riptide.metrics.Sample;
 import org.riptide.pipeline.ExporterIdentity;
+import org.riptide.pipeline.Identity;
+import org.riptide.snmp.collect.CollectedTable;
+import org.riptide.snmp.collect.CollectionDefinition;
+import org.riptide.snmp.collect.SampleMapper;
 import com.codahale.metrics.MetricRegistry;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongSupplier;
 
 /**
  * Walks each exporter's interface table on a schedule and serves enrichment from the result.
+ * When the endpoint's polling profile names collections, the walk goes through
+ * {@link SnmpService#collect} instead and the same rows also become samples for the
+ * {@link MetricSink}.
  *
- * <p>Replaces demand-filled caching. The difference that matters is not that walks are cached
- * but that <em>flow traffic no longer triggers them</em>: an exporter is registered when its
- * first flow arrives, and from then on its table is re-walked on a timer regardless of how many
- * interfaces its flows reference. Load on an exporter's agent therefore depends on the schedule,
- * not on traffic diversity — which is the opposite of the demand-filled design, where load peaked
+ * <p>An exporter is registered in one of two ways, chosen per inventory entry by
+ * {@link PollMode}. By default it is registered when its first flow arrives. An entry marked
+ * {@code poll: always} is registered from the inventory when it loads, without waiting for a
+ * flow. From then on its table is re-walked on a timer regardless of how many interfaces its
+ * flows reference. Load on an exporter's agent therefore depends on the schedule, not on traffic
+ * diversity. That is the opposite of the demand-filled design this replaced, where load peaked
  * exactly when the device was busiest because that is when unseen ifIndexes appear.
  *
- * <p>Three properties are structural rather than enforced:
+ * <p>Four properties are structural rather than enforced:
  * <ul>
  *   <li>Enrichment never walks. {@link #trackAndResolve} registers and reads but never issues SNMP,
  *       so no parser thread can block on it.</li>
  *   <li>At most one walk per endpoint is in flight, because each registration carries a single
  *       in-flight flag.</li>
  *   <li>Fleet-wide concurrency is bounded by the walker pool, independently of exporter count.</li>
+ *   <li>An inventory-registered exporter is never removed for silence; only the inventory removes it.</li>
  * </ul>
  *
  * <p>Walks are spread across the refresh interval by an offset derived from the endpoint address,
  * so the schedule survives a restart without stored state, plus a small per-cycle jitter. The
- * offset only distributes statistically and collisions are expected; the pool absorbs them as a
- * brief queue rather than a burst at the agent. Jitter exists for a different reason — a fixed
+ * offset only distributes statistically and collisions are expected. The pool absorbs them as a
+ * brief queue rather than a burst at the agent. Jitter exists for a different reason. A fixed
  * offset would poll a device at an identical phase forever and collide every cycle with anything
  * the device does on its own schedule.
  */
@@ -69,6 +92,8 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
     /** One exporter's interface table as a single walk produced it. */
     private record Snapshot(Map<Integer, IfInfo> rows, long takenAtNanos) {
     }
+
+    enum RegistrationSource { FLOW_ARRIVAL, INVENTORY }
 
     private static final class Registration {
         // not final: an inventory reload can repoint the range this was built from, and
@@ -101,6 +126,10 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 new java.util.concurrent.atomic.AtomicInteger();
         /** Cleared whenever a new snapshot lands, so a diagnosis repeats at most once per walk. */
         private final Set<Integer> warnedMissing = ConcurrentHashMap.newKeySet();
+        /** Only a flow-arrival registration is removed for silence. The inventory owns the other kind. */
+        private volatile RegistrationSource source = RegistrationSource.FLOW_ARRIVAL;
+        /** Set once a collect found ifTable rows but no ifXTable. Cleared when ifName comes back. */
+        private volatile boolean warnedNoIfXTable;
 
         private Registration(final SnmpEndpoint endpoint, final long nowNanos) {
             this.endpoint = endpoint;
@@ -149,15 +178,27 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
      */
     private final Meter rejected;
 
+    private final MetricSink sink;
+    /** tenant, organisation and zone, stamped on every sample. */
+    private final Map<String, String> identityLabels;
+    private final LongSupplier wallClockMs;
+    private final AtomicInteger inventoryRegistered = new AtomicInteger();
+    private final AtomicInteger inventoryRefused = new AtomicInteger();
+    private final Meter samplesEmitted;
+    private final Meter collectsFailed;
+
     @Autowired
     public InterfaceSnapshotPoller(final SnmpService snmpService,
                                    final SnmpPollConfig config,
                                    final MetricRegistry metrics,
-                                   final Inventory inventory) {
-        this(snmpService, config, metrics, inventory, System::nanoTime, true);
+                                   final Inventory inventory,
+                                   final MetricSink sink,
+                                   final DaemonConfig daemonConfig) {
+        this(snmpService, config, metrics, inventory, sink, daemonConfig, System::nanoTime, true,
+                System::currentTimeMillis);
     }
 
-    /** Test seam: a controllable clock, and the option not to start the background scheduler. */
+    /** Test seam: controllable clocks, and the option not to start the background scheduler. */
     // The ScheduledFuture is deliberately discarded: tickQuietly catches RuntimeException, so no
     // ordinary tick failure can cancel the schedule, and the executor is held in a field and shut
     // down with the component.
@@ -172,12 +213,24 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                             final SnmpPollConfig config,
                             final MetricRegistry metrics,
                             final Inventory inventory,
+                            final MetricSink sink,
+                            final DaemonConfig daemonConfig,
                             final LongSupplier nanoTime,
-                            final boolean startScheduler) {
+                            final boolean startScheduler,
+                            final LongSupplier wallClockMs) {
         this.snmpService = Objects.requireNonNull(snmpService);
         this.config = Objects.requireNonNull(config);
         this.inventory = Objects.requireNonNull(inventory);
         this.nanoTime = Objects.requireNonNull(nanoTime);
+        this.sink = Objects.requireNonNull(sink);
+        this.wallClockMs = Objects.requireNonNull(wallClockMs);
+        // resolved the way flows resolve it, so a sample and a flow from one daemon carry the
+        // same identity: unset becomes "default", and the legacy riptide.location still maps to zone
+        final Identity identity = daemonConfig.resolveIdentity();
+        this.identityLabels = Map.of(
+                "tenant", identity.tenant(),
+                "organisation", identity.organisation(),
+                "zone", identity.zone());
 
         // Fail loudly at startup rather than silently. Each of these otherwise disables SNMP
         // enrichment in a way that looks like a data problem: a non-positive pool width throws
@@ -216,8 +269,17 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         metrics.gauge(MetricRegistry.name("snmp", "poller", "exporters"), () -> this.registrations::size);
         metrics.gauge(MetricRegistry.name("snmp", "poller", "queueDepth"), () -> this::dueCount);
         metrics.gauge(MetricRegistry.name("snmp", "poller", "oldestSnapshotAgeMs"), () -> this::oldestSnapshotAgeMs);
+        metrics.gauge(MetricRegistry.name("snmp", "poller", "inventoryRegistered"), () -> this.inventoryRegistered::get);
+        metrics.gauge(MetricRegistry.name("snmp", "poller", "inventoryRefused"), () -> this.inventoryRefused::get);
+        this.samplesEmitted = metrics.meter(MetricRegistry.name("snmp", "poller", "samplesEmitted"));
+        this.collectsFailed = metrics.meter(MetricRegistry.name("snmp", "poller", "collectsFailed"));
 
         if (startScheduler) {
+            // poll: always entries are registered at boot, not on the first reload. The inventory
+            // is loaded by now: it is a constructor dependency and loads in its own @PostConstruct.
+            // The sweep rather than refreshRegistrations(), which a subclass may override. There are
+            // no registrations yet, so the sweep is all refreshRegistrations() would do
+            sweepInventory(this.inventory.snapshot(), this.nanoTime.getAsLong());
             this.scheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
                 final Thread thread = new Thread(runnable, "snmp-poll-scheduler");
                 thread.setDaemon(true);
@@ -465,6 +527,60 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             log.info("Inventory refresh: {} registration(s) re-resolved, {} stopped, of {} polled",
                     reresolved, stopped, this.registrations.size());
         }
+        sweepInventory(snapshot, now);
+    }
+
+    /**
+     * Registers every {@code poll: always} entry the inventory lists, and hands every
+     * inventory registration the inventory no longer lists back to the flow lifecycle.
+     *
+     * <p>The set is registered whole or not at all. Admitting the first {@code max-exporters}
+     * by name would poll an arbitrary subset and look healthy. Refusing all of them is visible
+     * on the gauge and in the log.</p>
+     *
+     * <p>A dropped entry is downgraded rather than removed. Silence then counts from now, so a
+     * device still sending flows keeps its registration and a silent one goes after
+     * {@code deregister-after} intervals.</p>
+     */
+    private void sweepInventory(final InventorySnapshot snapshot, final long now) {
+        final List<ExporterEntry> always = snapshot.exporterView().alwaysPolled();
+        final int maxExporters = this.config.getMaxExporters();
+        final Set<InetSocketAddress> wanted = new HashSet<>();
+        if (always.size() > maxExporters) {
+            this.inventoryRefused.set(always.size());
+            log.error("The inventory marks {} entries poll: always, but riptide.snmp.poll.max-exporters is {}. "
+                            + "None of them is polled. Raise the limit or narrow the discovery filter.",
+                    always.size(), maxExporters);
+        } else {
+            this.inventoryRefused.set(0);
+            for (final ExporterEntry entry : always) {
+                final Optional<SnmpEndpoint> endpoint = snapshot.agentView()
+                        .match(new ExporterIdentity.NetflowIpfix(entry.address().getAddress().toInetAddress(), 0L))
+                        .flatMap(agent -> AgentEndpointFactory.endpointFor(agent, entry.address()));
+                if (endpoint.isEmpty()) {
+                    log.warn("Exporter '{}' ({}) is poll: always, but no agent range with credentials covers it. "
+                            + "It is not polled.", entry.name(), entry.address());
+                    continue;
+                }
+                final Registration registration = register(endpoint.get(), now);
+                if (registration == null) {
+                    // the flow-arrival registrations already fill max-exporters; counted on rejectedLookups
+                    continue;
+                }
+                registration.source = RegistrationSource.INVENTORY;
+                wanted.add(endpoint.get().getInetSocketAddress());
+            }
+        }
+        for (final Map.Entry<InetSocketAddress, Registration> entry : this.registrations.entrySet()) {
+            final Registration registration = entry.getValue();
+            if (registration.source == RegistrationSource.INVENTORY && !wanted.contains(entry.getKey())) {
+                // silence counts from here, not from before. Written before the source, so the
+                // tick never sees a flow registration carrying the stale timestamp
+                registration.lastSeenNanos = now;
+                registration.source = RegistrationSource.FLOW_ARRIVAL;
+            }
+        }
+        this.inventoryRegistered.set(wanted.size());
     }
 
     /**
@@ -538,7 +654,8 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
                 timeoutNanos = Long.MAX_VALUE;
             }
 
-            if (now - registration.lastSeenNanos > timeoutNanos) {
+            if (registration.source == RegistrationSource.FLOW_ARRIVAL
+                    && now - registration.lastSeenNanos > timeoutNanos) {
                 // Not while a walk is running: the in-flight flag lives on this object, so
                 // removing it lets a re-registration mint a fresh flag and start a second
                 // concurrent walk against an agent whose first walk is still parked in its
@@ -589,7 +706,13 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         // would silently defer the new credentials by a whole interval
         final int resolution = registration.resolution.get();
         try {
-            final SnmpService.InterfaceTable table = this.snmpService.walkInterfaces(registration.endpoint);
+            // read once: a re-resolution between the check and the collect could otherwise
+            // hand collect an endpoint with no collections, and it would store an empty table
+            final SnmpEndpoint endpoint = registration.endpoint;
+            final List<Sample> samples = new ArrayList<>();
+            final SnmpService.InterfaceTable table = endpoint.getCollections().isEmpty()
+                    ? this.snmpService.walkInterfaces(endpoint)
+                    : collect(registration, endpoint, samples);
             final long now = this.nanoTime.getAsLong();
 
             if (table.walkFailed()) {
@@ -622,6 +745,7 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
             if (registration.resolution.get() == resolution) {
                 registration.nextWalkNanos = nextWalkAt(registration.endpoint, now);
             }
+            emit(samples);
         } catch (final RuntimeException e) {
             // Without this the schedule is never advanced for a registration whose walk throws
             // something the SNMP layer does not degrade — an snmp4j target construction failure,
@@ -641,6 +765,69 @@ public class InterfaceSnapshotPoller implements InterfaceSource {
         } finally {
             registration.walkInFlight.set(false);
         }
+    }
+
+    /**
+     * Walks every collection the endpoint's profile names and returns the enrichment table built
+     * from the same rows, so a collecting endpoint is walked once per cycle rather than twice.
+     * Samples go into {@code samples}. A failed collect leaves it empty, so the sink never sees
+     * a partial walk.
+     */
+    private SnmpService.InterfaceTable collect(final Registration registration, final SnmpEndpoint endpoint,
+                                               final List<Sample> samples) {
+        // captured before the collect, once per walk: the sample time is when the walk started
+        final long wallMs = this.wallClockMs.getAsLong();
+        final Duration budget = PollingProfile.walkBudget(Duration.ofMillis(refreshMsFor(endpoint)));
+        final Map<String, String> labels = labelsFor(endpoint);
+        final Map<Integer, IfInfo> rows = new TreeMap<>();
+        boolean anyIfName = false;
+        for (final CollectionDefinition definition : endpoint.getCollections()) {
+            final CollectedTable collected = this.snmpService.collect(endpoint, definition, budget);
+            if (collected.walkFailed()) {
+                this.collectsFailed.mark();
+                samples.clear();
+                return new SnmpService.InterfaceTable(Map.of(), true);
+            }
+            for (final Map.Entry<Integer, CollectedTable.CollectedRow> row : collected.rows().entrySet()) {
+                rows.put(row.getKey(), SampleMapper.toIfInfo(row.getValue()));
+                anyIfName |= row.getValue().info().containsKey("ifName");
+            }
+            samples.addAll(SampleMapper.toSamples(definition, labels, collected, wallMs));
+        }
+        if (anyIfName) {
+            registration.warnedNoIfXTable = false;
+        } else if (!rows.isEmpty() && !registration.warnedNoIfXTable) {
+            registration.warnedNoIfXTable = true;
+            log.warn("SNMP endpoint {} answers ifTable but not ifXTable, so no octet series will exist for it",
+                    endpoint);
+        }
+        return new SnmpService.InterfaceTable(rows, false);
+    }
+
+    /** Hands one walk's samples to the sink in a single call. */
+    private void emit(final List<Sample> samples) {
+        if (samples.isEmpty()) {
+            return;
+        }
+        this.sink.accept(samples);
+        this.samplesEmitted.mark(samples.size());
+    }
+
+    /**
+     * Identity plus the exporter. Read from the serving inventory on every walk, so renaming an
+     * entry reaches the next sample without touching the registration. The exporter is the
+     * inventory name when an entry covers the address, else the address itself.
+     */
+    private Map<String, String> labelsFor(final SnmpEndpoint endpoint) {
+        final InetAddress address = endpoint.getInetSocketAddress().getAddress();
+        final String hostAddress = address.getHostAddress();
+        final Map<String, String> labels = new HashMap<>(this.identityLabels);
+        labels.put("exporter", this.inventory.snapshot().exporterView()
+                .match(new ExporterIdentity.NetflowIpfix(address, 0L))
+                .map(ExporterEntry::name)
+                .orElse(hostAddress));
+        labels.put("exporter_address", hostAddress);
+        return labels;
     }
 
     private void backOff(final Registration registration, final long now) {

@@ -11,16 +11,21 @@ import ch.qos.logback.core.read.ListAppender;
 import com.codahale.metrics.MetricRegistry;
 import inet.ipaddr.IPAddressString;
 import org.junit.jupiter.api.Test;
+import org.riptide.config.DaemonConfig;
+import org.riptide.metrics.MetricSink;
+import org.riptide.metrics.Sample;
 import org.riptide.secrets.SecretRef;
 import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetAddress;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -32,6 +37,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class InterfaceSnapshotPollerTest {
 
     private static final long MS = 1_000_000L;
+
+    /** Wall-clock milliseconds stamped on samples; fixed so a test can assert the timestamp. */
+    private static final long WALL_CLOCK_MS = 1_790_000_000_000L;
 
     private final AtomicLong clock = new AtomicLong(1_000_000_000L);
     private final MetricRegistry metrics = new MetricRegistry();
@@ -47,6 +55,9 @@ class InterfaceSnapshotPollerTest {
     /** Counts walks and records which endpoints were walked; never touches a network. */
     private static class FakeSnmp implements SnmpService {
         final AtomicInteger walks = new AtomicInteger();
+        final AtomicInteger collects = new AtomicInteger();
+        /** When set, collected rows carry no ifName: a device answering ifTable but not ifXTable. */
+        private volatile boolean noIfXTable;
         private final Set<String> walked = ConcurrentHashMap.newKeySet();
         private final Map<String, AtomicInteger> walksPerEndpoint = new ConcurrentHashMap<>();
         final java.util.List<SnmpEndpoint> walkedEndpoints = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -88,8 +99,39 @@ class InterfaceSnapshotPollerTest {
         @Override
         public org.riptide.snmp.collect.CollectedTable collect(final SnmpEndpoint endpoint,
                 final org.riptide.snmp.collect.CollectionDefinition definition, final Duration budget) {
-            return new org.riptide.snmp.collect.CollectedTable(Map.of(), false);
+            final int collected = this.collects.incrementAndGet();
+            if (this.timeout) {
+                return new org.riptide.snmp.collect.CollectedTable(Map.of(), true);
+            }
+            final Map<String, String> info = this.noIfXTable
+                    ? Map.of()
+                    : Map.of("ifName", "eth0", "ifAlias", "uplink", "ifHighSpeed", "1000");
+            final Map<String, Long> values = this.noIfXTable
+                    ? Map.of("ifInErrors", 0L)
+                    : Map.of("ifHCInOctets", 100L * collected);
+            return new org.riptide.snmp.collect.CollectedTable(
+                    Map.of(1, new org.riptide.snmp.collect.CollectedTable.CollectedRow(info, values)), false);
         }
+    }
+
+    /** Keeps every batch the poller hands over, in order. */
+    private static final class RecordingSink implements MetricSink {
+        final List<Sample> samples = new CopyOnWriteArrayList<>();
+        final AtomicInteger calls = new AtomicInteger();
+
+        @Override
+        public void accept(final List<Sample> batch) {
+            this.calls.incrementAndGet();
+            this.samples.addAll(batch);
+        }
+    }
+
+    private static DaemonConfig identity() {
+        final var daemon = new DaemonConfig();
+        daemon.getIdentity().setTenant("t1");
+        daemon.getIdentity().setOrganisation("o1");
+        daemon.getIdentity().setZone("z1");
+        return daemon;
     }
 
     private SnmpPollConfig config() {
@@ -104,7 +146,13 @@ class InterfaceSnapshotPollerTest {
     }
 
     private InterfaceSnapshotPoller poller(final SnmpService snmp, final SnmpPollConfig config) {
-        return new InterfaceSnapshotPoller(snmp, config, this.metrics, this.serving, this.clock::get, false);
+        return poller(snmp, config, new RecordingSink());
+    }
+
+    private InterfaceSnapshotPoller poller(final SnmpService snmp, final SnmpPollConfig config,
+                                           final MetricSink sink) {
+        return new InterfaceSnapshotPoller(snmp, config, this.metrics, this.serving, sink, identity(),
+                this.clock::get, false, () -> WALL_CLOCK_MS);
     }
 
     /**
@@ -239,7 +287,24 @@ class InterfaceSnapshotPollerTest {
                                     java.util.List.of()),
                             "sedate", new org.riptide.inventory.PollingProfile(
                                     java.time.Duration.ofMinutes(10), java.time.Duration.ofMinutes(30), 500, 1,
-                                    java.util.List.of())));
+                                    java.util.List.of()),
+                            "counters", new org.riptide.inventory.PollingProfile(
+                                    java.time.Duration.ofMinutes(1), java.time.Duration.ofMinutes(30), 500, 1,
+                                    java.util.List.of(org.riptide.inventory.CollectionName.IF_MIB_INTERFACES))));
+
+    // corp-v3 on the /24 because the loader refuses a v2c community on a range wider than one address
+    private static final String ALWAYS_INVENTORY = """
+            riptide:
+              snmp:
+                agents:
+                  10.0.0.0/24: { credentials: corp-v3, polling: counters }
+              exporters:
+                silent-switch: { address: 10.0.0.20, poll: always }
+            """;
+
+    private static org.riptide.inventory.InventorySnapshot parse(final String yaml) {
+        return org.riptide.inventory.InventoryLoader.parse(PROFILES, yaml, "poller.yaml");
+    }
 
     private static org.riptide.inventory.InventorySnapshot inventory(final String agentsBlock) {
         return org.riptide.inventory.InventoryLoader.parse(PROFILES, """
@@ -622,12 +687,13 @@ class InterfaceSnapshotPollerTest {
      */
     private static void awaitWalks(final InterfaceSnapshotPoller poller, final FakeSnmp snmp,
                                    final int expected) throws InterruptedException {
+        // walks and collects both count: a collecting profile goes through collect instead
         final long deadline = System.currentTimeMillis() + 5_000;
-        while ((snmp.walks.get() < expected || poller.anyWalkInFlight())
+        while ((snmp.walks.get() + snmp.collects.get() < expected || poller.anyWalkInFlight())
                 && System.currentTimeMillis() < deadline) {
             Thread.sleep(5);
         }
-        assertThat(snmp.walks.get()).isEqualTo(expected);
+        assertThat(snmp.walks.get() + snmp.collects.get()).isEqualTo(expected);
         assertThat(poller.anyWalkInFlight()).isFalse();
     }
 
@@ -1142,7 +1208,8 @@ class InterfaceSnapshotPollerTest {
         final var first = new FakeSnmp();
         final var pollerA = poller(first, config);
         final var second = new FakeSnmp();
-        final var pollerB = new InterfaceSnapshotPoller(second, config, new MetricRegistry(), this.serving, this.clock::get, false);
+        final var pollerB = new InterfaceSnapshotPoller(second, config, new MetricRegistry(), this.serving,
+                new RecordingSink(), identity(), this.clock::get, false, () -> WALL_CLOCK_MS);
 
         pollerA.trackAndResolve(endpoint, 1);
         pollerB.trackAndResolve(endpoint, 1);
@@ -1170,5 +1237,220 @@ class InterfaceSnapshotPollerTest {
 
         assertThat(dueSliceA).isNotNull();
         assertThat(dueSliceB).isEqualTo(dueSliceA);
+    }
+
+    @Test
+    void aCollectingProfileWalksThroughCollectAndEmitsSamplesWithTheIdentityLabels() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var sink = new RecordingSink();
+        final var poller = poller(snmp, config(), sink);
+        final var endpoint = endpoint("10.0.0.10", "polling: counters");
+
+        poller.trackAndResolve(endpoint, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        assertThat(snmp.collects.get()).isEqualTo(1);
+        assertThat(snmp.walks.get()).as("no second walk for enrichment").isEqualTo(0);
+        assertThat(sink.calls.get()).as("one sink call per walk").isEqualTo(1);
+        assertThat(sink.samples).extracting(Sample::name).contains("ifHCInOctets", "riptide_interface_info");
+        final Sample octets = sink.samples.stream().filter(s -> s.name().equals("ifHCInOctets")).findFirst().orElseThrow();
+        assertThat(octets.labels()).containsEntry("tenant", "t1").containsEntry("organisation", "o1")
+                .containsEntry("zone", "z1").containsEntry("exporter_address", "10.0.0.10")
+                .containsEntry("exporter", "10.0.0.10")
+                .containsEntry("ifIndex", "1").containsEntry("ifName", "eth0");
+        assertThat(octets.value()).isEqualTo(100d);
+        assertThat(octets.timestampMs()).isEqualTo(WALL_CLOCK_MS);
+        assertThat(this.metrics.meter("snmp.poller.samplesEmitted").getCount()).isEqualTo(sink.samples.size());
+        // and the enrichment snapshot was refreshed from the same rows
+        assertThat(poller.trackAndResolve(endpoint, 1)).contains(new IfInfo("eth0", "uplink", 1000L));
+    }
+
+    @Test
+    void theExporterLabelIsTheInventoryNameWhenAnEntryCoversTheAddress() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var sink = new RecordingSink();
+        final var poller = poller(snmp, config(), sink);
+        final var snapshot = serve(parse("""
+                riptide:
+                  snmp:
+                    agents:
+                      10.0.0.0/24: { credentials: corp-v3, polling: counters }
+                  exporters:
+                    edge-01: { address: 10.0.0.10 }
+                """));
+        final var endpoint = resolveOnly(snapshot, "10.0.0.10");
+        poller.trackAndResolve(endpoint, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+        assertThat(sink.samples).isNotEmpty();
+        assertThat(sink.samples.get(0).labels()).containsEntry("exporter", "edge-01");
+    }
+
+    @Test
+    void aFailedCollectEmitsNothingAndBacksOff() throws Exception {
+        final var snmp = new FakeSnmp();
+        snmp.timeout = true;
+        final var sink = new RecordingSink();
+        final var poller = poller(snmp, config(), sink);
+        final var endpoint = endpoint("10.0.0.10", "polling: counters");
+        poller.trackAndResolve(endpoint, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+        assertThat(sink.samples).isEmpty();
+        assertThat(sink.calls.get()).isEqualTo(0);
+        assertThat(this.metrics.meter("snmp.poller.collectsFailed").getCount()).isEqualTo(1);
+
+        // backed off: the next tick does not collect again
+        poller.tick(this.clock.get());
+        awaitQuiet(poller);
+        assertThat(snmp.collects.get()).isEqualTo(1);
+    }
+
+    @Test
+    void aDeviceWithoutIfXTableIsWarnedOnceNotPerCollect() throws Exception {
+        final var snmp = new FakeSnmp();
+        snmp.noIfXTable = true;
+        final var poller = poller(snmp, config());
+        final var endpoint = endpoint("10.0.0.11", "polling: counters");
+
+        final var logger = (Logger) LoggerFactory.getLogger(InterfaceSnapshotPoller.class);
+        final var appender = LogCapture.startedAppender();
+        logger.addAppender(appender);
+        try {
+            poller.trackAndResolve(endpoint, 1);
+            poller.tick(this.clock.get());
+            awaitWalks(poller, snmp, 1);
+            advanceMs(60_000L * 2);
+            poller.trackAndResolve(endpoint, 1);
+            poller.tick(this.clock.get());
+            awaitWalks(poller, snmp, 2);
+            assertThat(ifXTableWarnings(appender)).isEqualTo(1);
+
+            // a later collect that carries ifName re-arms it
+            snmp.noIfXTable = false;
+            advanceMs(60_000L * 2);
+            poller.trackAndResolve(endpoint, 1);
+            poller.tick(this.clock.get());
+            awaitWalks(poller, snmp, 3);
+            snmp.noIfXTable = true;
+            advanceMs(60_000L * 2);
+            poller.trackAndResolve(endpoint, 1);
+            poller.tick(this.clock.get());
+            awaitWalks(poller, snmp, 4);
+            assertThat(ifXTableWarnings(appender)).isEqualTo(2);
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    private static long ifXTableWarnings(final ListAppender<ILoggingEvent> appender) {
+        return appender.list.stream()
+                .filter(event -> event.getFormattedMessage().contains("not ifXTable"))
+                .count();
+    }
+
+    @Test
+    void aPollAlwaysEntryIsRegisteredFromTheInventoryAndSurvivesSilence() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var sink = new RecordingSink();
+        final var poller = poller(snmp, config(), sink);
+        serve(parse(ALWAYS_INVENTORY));
+        poller.refreshRegistrations();
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        assertThat(this.metrics.gauge("snmp.poller.inventoryRegistered").getValue()).isEqualTo(1);
+        // silent for far longer than deregisterAfter intervals: still polled
+        advanceMs(60_000L * 10);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 2);
+        assertThat(sink.samples).extracting(s -> s.labels().get("exporter")).contains("silent-switch");
+    }
+
+    @Test
+    void anAlwaysEntryWithoutACoveringAgentRangeIsWarnedAndSkipped() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config(), new RecordingSink());
+        serve(parse("""
+                riptide:
+                  snmp:
+                    agents: {}
+                  exporters:
+                    orphan: { address: 10.9.9.9, poll: always }
+                """));
+        final var logger = (Logger) LoggerFactory.getLogger(InterfaceSnapshotPoller.class);
+        final var appender = LogCapture.startedAppender();
+        logger.addAppender(appender);
+        try {
+            poller.refreshRegistrations();
+            assertThat(appender.list).extracting(ILoggingEvent::getFormattedMessage)
+                    .anySatisfy(m -> assertThat(m).contains("orphan").contains("no agent range"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+        poller.tick(this.clock.get());
+        awaitQuiet(poller);
+        assertThat(snmp.collects.get() + snmp.walks.get()).isEqualTo(0);
+        assertThat(this.metrics.gauge("snmp.poller.inventoryRegistered").getValue()).isEqualTo(0);
+    }
+
+    @Test
+    void anAlwaysEntryRemovedFromTheInventoryFallsBackToFlowLifecycle() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config(), new RecordingSink());
+        serve(parse(ALWAYS_INVENTORY));
+        poller.refreshRegistrations();
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        // silent long enough that a flow registration would already be gone
+        advanceMs(60_000L * 10);
+        serve(parse(ALWAYS_INVENTORY.replace(", poll: always", "")));
+        poller.refreshRegistrations();
+        // silence counts from the downgrade, not from registration: still here one tick later
+        poller.tick(this.clock.get());
+        awaitQuiet(poller);
+        assertThat(this.metrics.getGauges().get("snmp.poller.exporters").getValue()).isEqualTo(1);
+
+        // no flows and silent for deregisterAfter intervals: now it goes
+        advanceMs(60_000L * 3 + 1_000);
+        poller.tick(this.clock.get());
+        awaitQuiet(poller);
+        assertThat(this.metrics.getGauges().get("snmp.poller.exporters").getValue()).isEqualTo(0);
+        assertThat(this.metrics.gauge("snmp.poller.inventoryRegistered").getValue()).isEqualTo(0);
+    }
+
+    @Test
+    void moreAlwaysEntriesThanMaxExportersRefusesTheWholeSet() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var config = config();
+        config.setMaxExporters(2);
+        final var poller = poller(snmp, config, new RecordingSink());
+        serve(parse("""
+                riptide:
+                  snmp:
+                    agents:
+                      10.0.0.0/24: { credentials: corp-v3, polling: counters }
+                  exporters:
+                    a: { address: 10.0.0.1, poll: always }
+                    b: { address: 10.0.0.2, poll: always }
+                    c: { address: 10.0.0.3, poll: always }
+                """));
+        final var logger = (Logger) LoggerFactory.getLogger(InterfaceSnapshotPoller.class);
+        final var appender = LogCapture.startedAppender();
+        logger.addAppender(appender);
+        try {
+            poller.refreshRegistrations();
+            assertThat(appender.list)
+                    .filteredOn(event -> event.getLevel() == ch.qos.logback.classic.Level.ERROR)
+                    .extracting(ILoggingEvent::getFormattedMessage)
+                    .anySatisfy(m -> assertThat(m).contains("3 entries").contains("riptide.snmp.poll.max-exporters"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+        assertThat(this.metrics.gauge("snmp.poller.inventoryRefused").getValue()).isEqualTo(3);
+        assertThat(this.metrics.gauge("snmp.poller.inventoryRegistered").getValue()).isEqualTo(0);
+        assertThat(this.metrics.getGauges().get("snmp.poller.exporters").getValue()).isEqualTo(0);
     }
 }

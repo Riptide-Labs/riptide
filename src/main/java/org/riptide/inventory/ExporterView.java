@@ -21,9 +21,8 @@ public interface ExporterView {
     Optional<ExporterEntry> match(ExporterIdentity identity);
 
     /**
-     * Every entry declaring {@code poll: always}, sorted by name. Registering these
-     * from the inventory is a later story; this is only the enumeration a poller
-     * would read.
+     * Every entry declaring {@code poll: always}, sorted by name. The SNMP poller registers
+     * these at boot and on every reload, without waiting for a flow.
      */
     List<ExporterEntry> alwaysPolled();
 }
