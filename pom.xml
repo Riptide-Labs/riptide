@@ -29,6 +29,17 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- io.airlift:aircompressor, not aircompressor-v3: the v3 line (3.10, the newest
+             release there) bundles native Snappy libraries for linux/macOS directly in the jar
+             and tries to load one via the Foreign Function API before falling back to Java,
+             which throws a JDK "restricted method" warning on every call and is not the pure-Java
+             behaviour this encoder wants. The classic (non-v3) line's last release, 2.0.2, has no
+             native path at all and no compile-scope dependency of its own (confirmed with
+             `mvn -o dependency:tree -Dincludes=io.airlift`). -->
+        <aircompressor.version>2.0.2</aircompressor.version>
+        <!-- protobuf-java is test scope only, used by RemoteWriteEncoderTest to decode what the
+             hand-written encoder produces with an implementation other than the one under test. -->
+        <protobuf.version>4.35.0</protobuf.version>
         <build-helper-maven-plugin.version>3.6.2</build-helper-maven-plugin.version>
         <caffeine.version>3.2.4</caffeine.version>
         <common-csv.version>1.14.1</common-csv.version>
@@ -246,10 +257,27 @@
             <version>${spring-vault.version}</version>
         </dependency>
 
+        <!-- Snappy compression for the Prometheus remote-write sink (RemoteWriteEncoder.snappy).
+             The only new runtime dependency this task adds. -->
+        <dependency>
+            <groupId>io.airlift</groupId>
+            <artifactId>aircompressor</artifactId>
+            <version>${aircompressor.version}</version>
+        </dependency>
+
         <!-- Test scope -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- RemoteWriteEncoderTest decodes the hand-written protobuf encoder's output with
+             protobuf-java's wire reader, so the varints and tags are checked by an
+             implementation other than the one under test. -->
+        <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java</artifactId>
+            <version>${protobuf.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
