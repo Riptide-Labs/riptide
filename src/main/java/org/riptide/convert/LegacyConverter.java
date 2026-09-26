@@ -202,7 +202,7 @@ public final class LegacyConverter {
         new PollingProfile(PollingProfile.builtInDefault().refreshInterval(),
                 PollingProfile.builtInDefault().snapshotExpiry(),
                 snmp.timeout() == null ? DEFAULT_TIMEOUT_MS : snmp.timeout(),
-                snmp.retries() == null ? DEFAULT_RETRIES : snmp.retries())
+                snmp.retries() == null ? DEFAULT_RETRIES : snmp.retries(), List.of())
                 .validate("the polling settings of node '" + node.name() + "'");
     }
 
@@ -260,7 +260,7 @@ public final class LegacyConverter {
         // passed above and an unwritten one is a default the record already accepts, so there is
         // nothing left to throw — what is left is the one non-fatal verdict, and it is worth
         // naming the operator's own keys for
-        if (!new PollingProfile(refresh, expiry, DEFAULT_TIMEOUT_MS, DEFAULT_RETRIES)
+        if (!new PollingProfile(refresh, expiry, DEFAULT_TIMEOUT_MS, DEFAULT_RETRIES, List.of())
                 .expiryShorterThanRefresh()) {
             return Optional.empty();
         }
@@ -288,7 +288,7 @@ public final class LegacyConverter {
     private static void checkCadence(final Duration refresh, final Duration expiry,
                                      final String key, final long written) {
         try {
-            new PollingProfile(refresh, expiry, DEFAULT_TIMEOUT_MS, DEFAULT_RETRIES)
+            new PollingProfile(refresh, expiry, DEFAULT_TIMEOUT_MS, DEFAULT_RETRIES, List.of())
                     .validate("the converted polling cadence");
         } catch (final IllegalStateException e) {
             throw new IllegalStateException(

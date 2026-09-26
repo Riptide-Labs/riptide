@@ -66,7 +66,8 @@ public final class AgentEndpointFactory {
         // address and cannot resolve a range itself
         return Optional.of(entry.polling() == null
                 ? endpoint
-                : endpoint.withCadence(entry.polling().refreshInterval(), entry.polling().snapshotExpiry()));
+                : endpoint.withCadence(entry.polling().refreshInterval(), entry.polling().snapshotExpiry())
+                        .withCollections(entry.polling().definitions()));
     }
 
     private static SnmpVersion version(final CredentialVersion version) {
