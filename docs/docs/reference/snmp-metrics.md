@@ -31,7 +31,8 @@ Requests carry `Content-Type: application/x-protobuf`, `Content-Encoding: snappy
 
 ## Series
 
-Every series below carries the labels `tenant`, `organisation`, `zone`, `exporter`, `exporter_address`, `ifIndex`, `ifName`; `riptide_interface_info` additionally carries `ifAlias` and `ifHighSpeed`.
+Every series below carries the labels `tenant`, `organisation`, `zone`, `exporter`, `exporter_address`, `ifIndex`; `riptide_interface_info` additionally carries `ifAlias` and `ifHighSpeed`.
+`ifName` is present only when the device answers ifXTable; the info columns (`ifName`, `ifAlias`, `ifHighSpeed`) all live there, and a row that ifXTable never answered for carries none of them.
 `tenant`, `organisation` and `zone` come from `riptide.identity.*`, each defaulting to `default`.
 `exporter` is the inventory entry name when one covers the address, otherwise the address itself; `exporter_address` is always the address.
 Counters are the raw monotonic value the agent reports; a reboot resets them, so read them with PromQL `rate()` rather than as an absolute level.
@@ -54,8 +55,8 @@ Counters are the raw monotonic value the agent reports; a reboot resets them, so
 | **`ifAdminStatus`** | gauge | ifTable administrative status, the numeric IF-MIB code |
 | **`riptide_interface_info`** | gauge | always `1`; carries `ifAlias` and `ifHighSpeed` (Mbit/s) as extra labels, for a join against the counters above by `exporter` and `ifIndex` |
 
-A device that answers ifTable but not ifXTable produces `ifInErrors`, `ifOutErrors`, `ifInDiscards`, `ifOutDiscards`, `ifOperStatus`, `ifAdminStatus` and `riptide_interface_info` only.
-The eight octet and packet counters above do not exist for it, and the poller logs a warning once per registration rather than once per walk.
+A device that answers ifTable but not ifXTable produces `ifInErrors`, `ifOutErrors`, `ifInDiscards`, `ifOutDiscards`, `ifOperStatus` and `ifAdminStatus` only, each without an `ifName` label.
+The eight octet and packet counters above do not exist for it, `riptide_interface_info` is never emitted for it either (it carries no row with an info column to build one from), and the poller logs a warning once per registration rather than once per walk.
 
 ## VictoriaMetrics cluster URL
 

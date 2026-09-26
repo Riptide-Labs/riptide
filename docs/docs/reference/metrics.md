@@ -152,15 +152,15 @@ Settings, the series it sends and its validation messages are on the [SNMP metri
 | Metric | Type | Meaning | Alert on |
 | --- | --- | --- | --- |
 | **`metrics.sink.queueDepth`** | gauge | Samples buffered, waiting to be sent. | approaching `riptide.metrics.remote-write.queue-capacity` |
-| **`metrics.sink.droppedSamples`** | counter | Samples offered while the queue was full, the sink was stopping, or the shutdown grace period expired first. | `> 0` |
-| **`metrics.sink.failedSamples`** | counter | Samples in a batch a non-2xx, non-retryable status refused, or that exhausted `max-attempts` on a retryable one. | sustained rate |
+| **`metrics.sink.droppedSamples`** | counter | Samples offered while the queue was full, or offered while the sink had already begun stopping. | `> 0` |
+| **`metrics.sink.failedSamples`** | counter | Samples in a batch a non-2xx, non-retryable status refused, that exhausted `max-attempts` on a retryable one, that were still queued when the shutdown grace period expired, that the flusher had drained but not yet flushed when its thread was interrupted, or that were lost to an unexpected error inside the flusher. | sustained rate |
 | **`metrics.sink.sentSamples`** | counter | Samples in a batch the endpoint accepted with a 2xx status. | the base of the delivery arithmetic |
 | **`metrics.sink.batchSize`** | histogram | Samples per flushed batch. | not an alert |
 | **`metrics.sink.flush`** | timer | Time to encode and POST one batch, retries included. | not an alert |
 
 ### SNMP counter collection
 
-Registered whether or not any polling profile sets `collect`; `snmp.collects` and `snmp.collectDuration` are shared with a plain interface-name walk that carries no counters.
+Registered whether or not any polling profile sets `collect`, but only marked when one does: a plain interface-name walk with no `collect` set goes through a separate path and moves `snmp.walks`/`snmp.walkDuration` instead.
 
 | Metric | Type | Meaning | Alert on |
 | --- | --- | --- | --- |
