@@ -31,7 +31,7 @@
       "type": "link",
       "icon": "dashboard",
       "keepTime": true,
-      "url": "/d/riptide-stage-detail/riptide-stage-detail?${stage:queryparam}&var-datasource=${prometheus}"
+      "url": "/d/riptide-stage-detail/riptide-stage-detail?var-datasource=${prometheus}"
     },
     {
       "title": "Riptide - Health",
@@ -351,7 +351,7 @@
           "refId": "A",
           "queryType": "metrics",
           "profileTypeId": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
-          "labelSelector": "{service_name=\"riptide\", collector=~\"$collector\"}",
+          "labelSelector": "{service_name=\"riptide\", collector=~\"${collector:regex}\"}",
           "groupBy": [
             "stage"
           ]
@@ -452,7 +452,7 @@
           "refId": "A",
           "queryType": "metrics",
           "profileTypeId": "memory:alloc_in_new_tlab_bytes:bytes:space:bytes",
-          "labelSelector": "{service_name=\"riptide\", collector=~\"$collector\"}",
+          "labelSelector": "{service_name=\"riptide\", collector=~\"${collector:regex}\"}",
           "groupBy": [
             "stage"
           ]
@@ -553,7 +553,7 @@
           "refId": "A",
           "queryType": "metrics",
           "profileTypeId": "mutex:delay:nanoseconds:mutex:count",
-          "labelSelector": "{service_name=\"riptide\", collector=~\"$collector\"}",
+          "labelSelector": "{service_name=\"riptide\", collector=~\"${collector:regex}\"}",
           "groupBy": [
             "stage"
           ]
@@ -596,7 +596,7 @@
           "refId": "A",
           "queryType": "profile",
           "profileTypeId": "$profile",
-          "labelSelector": "{service_name=\"riptide\", collector=~\"$collector\", stage=~\"$stage\", component=~\"$component\"}",
+          "labelSelector": "{service_name=\"riptide\", collector=~\"${collector:regex}\", stage=~\"$stage\", component=~\"${component:regex}\"}",
           "groupBy": [],
           "maxNodes": 16384
         }
@@ -919,7 +919,7 @@
               "refId": "A",
               "queryType": "profile",
               "profileTypeId": "$profile",
-              "labelSelector": "{service_name=\"riptide\", collector=~\"$collector\", stage=~\"$stage\", component=~\"$component\"}",
+              "labelSelector": "{service_name=\"riptide\", collector=~\"${collector:regex}\", stage=~\"$stage\", component=~\"${component:regex}\"}",
               "groupBy": [],
               "maxNodes": 16384
             }
@@ -961,7 +961,7 @@
               "refId": "A",
               "queryType": "profile",
               "profileTypeId": "$profile",
-              "labelSelector": "{service_name=\"riptide\", collector=~\"$collector\", stage=~\"$stage\", component=~\"$component\"}",
+              "labelSelector": "{service_name=\"riptide\", collector=~\"${collector:regex}\", stage=~\"$stage\", component=~\"${component:regex}\"}",
               "groupBy": [],
               "maxNodes": 16384
             }
