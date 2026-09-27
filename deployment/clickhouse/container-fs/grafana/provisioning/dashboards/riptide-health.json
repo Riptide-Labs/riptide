@@ -26,7 +26,7 @@
       "icon": "doc"
     },
     {
-      "title": "Riptide - Stage detail",
+      "title": "Riptide - Pipeline Diagnostics",
       "type": "link",
       "url": "/d/riptide-stage-detail/riptide-stage-detail",
       "includeVars": true,
@@ -329,7 +329,7 @@
           },
           "links": [
             {
-              "title": "Open ${__field.labels.stage} in Riptide stage detail",
+              "title": "Open ${__field.labels.stage} in Riptide - Pipeline Diagnostics",
               "url": "/d/riptide-stage-detail/riptide-stage-detail?var-stage=${__field.labels.stage}&${instance:queryparam}&${datasource:queryparam}&${__url_time_range}"
             },
             {
@@ -597,7 +597,7 @@
           },
           "links": [
             {
-              "title": "Open ${__field.labels.stage} in Riptide stage detail",
+              "title": "Open ${__field.labels.stage} in Riptide - Pipeline Diagnostics",
               "url": "/d/riptide-stage-detail/riptide-stage-detail?var-stage=${__field.labels.stage}&${instance:queryparam}&${datasource:queryparam}&${__url_time_range}"
             }
           ]
@@ -763,7 +763,7 @@
           },
           "links": [
             {
-              "title": "Open ${__field.labels.stage} in Riptide stage detail",
+              "title": "Open ${__field.labels.stage} in Riptide - Pipeline Diagnostics",
               "url": "/d/riptide-stage-detail/riptide-stage-detail?var-stage=${__field.labels.stage}&${instance:queryparam}&${datasource:queryparam}&${__url_time_range}"
             },
             {
@@ -855,7 +855,7 @@
           },
           "links": [
             {
-              "title": "Open ${__field.labels.stage} in Riptide stage detail",
+              "title": "Open ${__field.labels.stage} in Riptide - Pipeline Diagnostics",
               "url": "/d/riptide-stage-detail/riptide-stage-detail?var-stage=${__field.labels.stage}&${instance:queryparam}&${datasource:queryparam}&${__url_time_range}"
             },
             {

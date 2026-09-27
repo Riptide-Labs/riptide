@@ -19,7 +19,7 @@ The set is the dashboards in the table below and one provisioning file. Grafana'
 | **Riptide - Traffic Composition** | ClickHouse | Country maps, VLAN and DSCP mix, flow duration, IPv4 versus IPv6, prefix lengths, core services. |
 | **Riptide - Data Trust** | ClickHouse | Sampling configuration per exporter, clock corrections, tenant and zone labelling, exporter identity. |
 | **Riptide - Health** | Prometheus | Is riptide itself healthy, and which stage is losing flows or about to: instances up, flows lost, stage fill, firing alerts, JVM and host pressure. For NOC operators. |
-| **Riptide - Stage detail** | Prometheus | What saturates one pipeline stage, and is it the stage or the host: queue, worker, loss, insert latency and the JVM on one time axis. For engineers, opened from Riptide - Health. |
+| **Riptide - Pipeline Diagnostics** | Prometheus | What saturates one pipeline stage, and is it the stage or the host: queue, worker, loss, insert latency and the JVM on one time axis. For engineers, opened from Riptide - Health. |
 
 The ClickHouse dashboards have a **Datasource** and a **Database** variable, so the same JSON works against any ClickHouse datasource and any riptide database name.
 The two Prometheus dashboards have a **Prometheus** datasource variable and read riptide's own `/metrics` through the recording rules in `riptide-alerts.yml`, so the Prometheus they point at must scrape riptide as `job="riptide"` and load that file.

@@ -1,6 +1,6 @@
 {
   "uid": "riptide-stage-detail",
-  "title": "Riptide - Stage detail",
+  "title": "Riptide - Pipeline Diagnostics",
   "description": "What is saturating this riptide stage, and is it the stage or the host? For network engineers following a stage from Riptide - Health: the stage's verdict on top, what moved in the middle, the JVM and host on the same time axis at the bottom. Reads riptide's own metrics through the recording rules in riptide-alerts.yml.",
   "tags": [
     "riptide",
