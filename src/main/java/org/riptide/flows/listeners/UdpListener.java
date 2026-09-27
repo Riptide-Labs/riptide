@@ -26,6 +26,7 @@ import io.netty.channel.socket.DatagramPacket;
 import io.netty.channel.socket.nio.NioDatagramChannel;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.internal.SocketUtils;
+import org.riptide.telemetry.BusyTime;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,6 +43,13 @@ public class UdpListener implements Listener {
 
     private final Meter packetsReceived;
     private final MetricRegistry metrics;
+
+    /**
+     * Time the read loop spent inside the pipeline: parse plus the dispatch hand-off, including the
+     * bounded wait on a full dispatch queue. Netty's own select and receive calls happen outside
+     * the pipeline and are not counted, so this under-reads the loop's true utilization.
+     */
+    private final BusyTime busy = new BusyTime();
 
     private EventLoopGroup bossGroup;
     private ChannelFuture socketFuture;
@@ -95,6 +103,11 @@ public class UdpListener implements Listener {
                 .syncUninterruptibly();
 
         registerSocketDrops();
+
+        // Remove-then-register, like socketDrops: a restarted listener must publish its own time.
+        final String busySeconds = MetricRegistry.name("listeners", this.name, "busySeconds");
+        this.metrics.remove(busySeconds);
+        this.metrics.register(busySeconds, this.busy);
     }
 
     /**
@@ -132,6 +145,8 @@ public class UdpListener implements Listener {
         // gauge in stop().
         teardown.attempt(
                 () -> this.metrics.remove(MetricRegistry.name("listeners", this.name, "socketDrops")));
+        teardown.attempt(
+                () -> this.metrics.remove(MetricRegistry.name("listeners", this.name, "busySeconds")));
 
         teardown.attemptIfPresent(this.socketFuture, () -> {
             final var ch = this.socketFuture.channel();
@@ -214,8 +229,14 @@ public class UdpListener implements Listener {
     private class AccountingHandler extends ChannelInboundHandlerAdapter {
         @Override
         public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
-            packetsReceived.mark();
-            super.channelRead(ctx, msg);
+            // First in the pipeline, so this brackets every handler after it on the read loop.
+            final long start = System.nanoTime();
+            try {
+                packetsReceived.mark();
+                super.channelRead(ctx, msg);
+            } finally {
+                busy.addSince(start);
+            }
         }
     }
 

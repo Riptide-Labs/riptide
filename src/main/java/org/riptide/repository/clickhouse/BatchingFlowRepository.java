@@ -17,6 +17,7 @@ import org.riptide.config.ClickhouseConfig;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
 import org.riptide.repository.FlowRepository;
+import org.riptide.telemetry.BusyTime;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -88,6 +89,8 @@ public class BatchingFlowRepository implements FlowRepository {
 
     private final MetricRegistry metricRegistry;
     private final String queueDepthGauge;
+    private final String flusherBusyName;
+    private final BusyTime flusherBusy = new BusyTime();
     private final String queueCapacityGauge;
     private final Counter droppedRows;
     private final Counter failedRows;
@@ -138,6 +141,11 @@ public class BatchingFlowRepository implements FlowRepository {
         // instance's dead queue — worse than no gauge at all. stop() unregisters it again.
         metricRegistry.remove(this.queueDepthGauge);
         metricRegistry.register(this.queueDepthGauge, (Gauge<Integer>) this.queue::size);
+        // The single flusher is this stage's ceiling, and its queue covers only seconds of load at
+        // capacity, so busy time is the early warning and depth is not. Same lifecycle as queueDepth.
+        this.flusherBusyName = MetricRegistry.name("persister", "batch", "flusherBusySeconds");
+        metricRegistry.remove(this.flusherBusyName);
+        metricRegistry.register(this.flusherBusyName, this.flusherBusy);
         // Beside the depth, so fill is a ratio of two scraped series rather than of a limit
         // hard-coded in a rule. Same lifecycle as queueDepth.
         final int capacity = config.getQueueCapacity();
@@ -248,7 +256,14 @@ public class BatchingFlowRepository implements FlowRepository {
                     }
                 }
                 if (!batch.isEmpty()) {
-                    flush(batch);
+                    // From the drain returning to the insert completing; the drain's wait for rows
+                    // is not work and is not counted (see BusyTime).
+                    final long start = System.nanoTime();
+                    try {
+                        flush(batch);
+                    } finally {
+                        this.flusherBusy.addSince(start);
+                    }
                 }
             } catch (final Throwable e) {
                 // Throwable on purpose: this is the only flusher, and a silent death (a metrics
@@ -407,6 +422,7 @@ public class BatchingFlowRepository implements FlowRepository {
 
         // Unregister the gauges: left behind, they would describe this dead instance's queue forever.
         this.metricRegistry.remove(this.queueDepthGauge);
+        this.metricRegistry.remove(this.flusherBusyName);
         this.metricRegistry.remove(this.queueCapacityGauge);
     }
 

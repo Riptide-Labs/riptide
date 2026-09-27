@@ -19,6 +19,7 @@ import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
 import org.riptide.repository.FlowRepository;
 import org.riptide.repository.TestRepository;
+import org.riptide.telemetry.SecondsCounter;
 import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 
@@ -525,6 +526,52 @@ class BatchingFlowRepositoryTest {
     }
 
     @Test
+    void flusherBusySecondsCountsInsertTime() throws Exception {
+        this.delegate.insertMillis = 200;
+        this.repository = repository(batchConfig(10, Duration.ofMillis(50)));
+        this.repository.start();
+
+        // five full batches, each one 200 ms insert
+        this.repository.persist(flows(50));
+        // Wait on the busy time itself, not on the delegate's count: the count reaches 50 inside
+        // the fifth insert, before the flusher adds that insert's time on its way out of flush.
+        await(Duration.ofSeconds(10), "five inserts timed", () -> flusherBusySeconds() >= 1.0d);
+
+        Assertions.assertThat(flusherBusySeconds())
+                .as("five 200 ms inserts; the upper bound leaves room for a slow CI host's sleeps")
+                .isGreaterThanOrEqualTo(1.0d)
+                .isLessThan(2.0d);
+    }
+
+    @Test
+    void flusherBusySecondsDoesNotCountWaitingForRows() throws Exception {
+        // maxRows is out of reach, so every drain below waits the full 200 ms for rows that never
+        // come and then flushes one row with an instant insert: a second of waiting, no real work
+        this.repository = repository(batchConfig(10, Duration.ofMillis(200)));
+        this.repository.start();
+
+        for (int round = 1; round <= 5; round++) {
+            this.repository.persist(flows(1));
+            final int expected = round;
+            await(Duration.ofSeconds(5), "round " + round + " inserted", () -> this.delegate.count() == expected);
+        }
+
+        Assertions.assertThat(flusherBusySeconds()).isLessThan(0.05d);
+    }
+
+    @Test
+    void flusherBusySecondsIsRemovedOnStop() {
+        this.repository = repository(batchConfig(10, Duration.ofMillis(50)));
+        this.repository.start();
+        final String name = MetricRegistry.name("persister", "batch", "flusherBusySeconds");
+        Assertions.assertThat(this.metricRegistry.getMetrics()).containsKey(name);
+
+        this.repository.stop();
+
+        Assertions.assertThat(this.metricRegistry.getMetrics()).doesNotContainKey(name);
+    }
+
+    @Test
     void rejectsNonPositiveMaxRows() {
         final var config = batchConfig(0, Duration.ofMillis(100));
         Assertions.assertThatThrownBy(() -> repository(config))
@@ -554,6 +601,11 @@ class BatchingFlowRepositoryTest {
 
     private BatchingFlowRepository repository(final ClickhouseConfig.BatchConfig config) {
         return new BatchingFlowRepository(this.delegate, config, this.metricRegistry);
+    }
+
+    private double flusherBusySeconds() {
+        return ((SecondsCounter) this.metricRegistry.getMetrics()
+                .get(MetricRegistry.name("persister", "batch", "flusherBusySeconds"))).seconds();
     }
 
     private long droppedRows() {
@@ -661,6 +713,9 @@ class BatchingFlowRepositoryTest {
 
         private volatile CountDownLatch blockOn;
 
+        /** How long each insert takes, to give the flusher a known amount of work. */
+        private volatile long insertMillis;
+
         long count() {
             return this.store.count();
         }
@@ -679,6 +734,14 @@ class BatchingFlowRepositoryTest {
         @Override
         public void persist(final List<EnrichedFlow> flows) throws FlowException {
             this.inserts.incrementAndGet();
+            if (this.insertMillis > 0) {
+                try {
+                    Thread.sleep(this.insertMillis);
+                } catch (final InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new FlowException(e);
+                }
+            }
             final var latch = this.blockOn;
             if (latch != null) {
                 try {
