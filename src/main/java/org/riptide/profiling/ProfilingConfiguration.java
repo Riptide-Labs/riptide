@@ -16,6 +16,7 @@ import org.springframework.context.annotation.Configuration;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.Predicate;
 
 /**
  * The consumer of {@code riptide.profiling.enabled}, and the only thing that starts the profiler.
@@ -33,6 +34,12 @@ import java.util.Map;
 @Slf4j
 @Configuration
 public class ProfilingConfiguration {
+
+    /** Allocation sampling interval when {@code PYROSCOPE_PROFILER_ALLOC} is absent. */
+    static final String DEFAULT_ALLOC = "512k";
+
+    /** Lock contention threshold when {@code PYROSCOPE_PROFILER_LOCK} is absent. */
+    static final String DEFAULT_LOCK = "10ms";
 
     /**
      * A stable name when the operator has not chosen one.
@@ -93,12 +100,29 @@ public class ProfilingConfiguration {
      * riptide.profiling.enabled} is the switch this project documents.
      */
     static Config buildConfig(final Identity identity) {
+        return buildConfig(identity, System.getenv().keySet()::contains);
+    }
+
+    /**
+     * As above, with allocation and lock profiling on by default: sampled every {@value #DEFAULT_ALLOC}
+     * allocated and on contention over {@value #DEFAULT_LOCK}. The defaults apply only when the profiler's
+     * own variable is absent from the environment; a variable that is present wins, empty included, since
+     * empty is how an operator turns either off. Presence is checked on the environment, not on the parsed
+     * config, because the parsed config cannot tell "unset" from "set to empty".
+     */
+    static Config buildConfig(final Identity identity, final Predicate<String> environmentHas) {
         final Config base = Config.build();
-        return base.newBuilder()
+        final Config.Builder config = base.newBuilder()
                 .setAgentEnabled(true)
                 .setApplicationName(applicationName(base.applicationName))
-                .setLabels(mergedLabels(base.labels, identity))
-                .build();
+                .setLabels(mergedLabels(base.labels, identity));
+        if (!environmentHas.test("PYROSCOPE_PROFILER_ALLOC")) {
+            config.setProfilingAlloc(DEFAULT_ALLOC);
+        }
+        if (!environmentHas.test("PYROSCOPE_PROFILER_LOCK")) {
+            config.setProfilingLock(DEFAULT_LOCK);
+        }
+        return config.build();
     }
 
     private ProfilingStatus start(final Identity identity) {

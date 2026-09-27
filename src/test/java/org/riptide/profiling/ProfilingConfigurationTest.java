@@ -87,6 +87,26 @@ class ProfilingConfigurationTest {
     }
 
     @Test
+    void allocationAndLockProfilesAreOnByDefault() {
+        final var config = ProfilingConfiguration.buildConfig(new Identity("t", "o", "z", "s"), name -> false);
+
+        assertThat(config.profilingAlloc).as("allocation sampled every 512 KiB").isEqualTo("512k");
+        assertThat(config.profilingLock).as("lock contention over 10 ms").isEqualTo("10ms");
+    }
+
+    @Test
+    void aProfilerVariableThatIsPresentWinsEvenWhenEmpty() {
+        // PYROSCOPE_PROFILER_LOCK set, whatever its value (empty is the agent's "off"); ALLOC absent
+        final var config = ProfilingConfiguration.buildConfig(new Identity("t", "o", "z", "s"),
+                "PYROSCOPE_PROFILER_LOCK"::equals);
+
+        assertThat(config.profilingLock)
+                .as("the operator's value, here the unset environment's empty one, not riptide's default")
+                .isEmpty();
+        assertThat(config.profilingAlloc).as("the absent one still gets its default").isEqualTo("512k");
+    }
+
+    @Test
     void theLabelGateStaysShutWhileProfilingIsOff() {
         new ProfilingConfiguration().profilingStatus(new RiptideProfilingProperties(), new DaemonConfig());
 
