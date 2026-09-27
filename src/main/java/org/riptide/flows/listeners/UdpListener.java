@@ -131,9 +131,11 @@ public class UdpListener implements Listener {
         this.metrics.remove(gauge);
         this.metrics.register(gauge, (Gauge<Long>) () -> UdpSocketDrops.forSocket(bound));
 
-        // The fill beside the loss: the kernel drops a datagram once rx_queue exceeds the socket's
-        // granted SO_RCVBUF, so these two are its own drop test as a ratio. The buffer is read back
-        // from the socket, because riptide asks for Integer.MAX_VALUE and the kernel clamps it.
+        // The fill beside the loss. The ratio is a lower bound, not the kernel's drop test: the
+        // kernel drops on sk_rmem_alloc against SO_RCVBUF, but rx_queue is sk_rmem_alloc minus
+        // memory the reader consumed and has not released yet, up to a quarter of the buffer (see
+        // UdpSocketDrops.receiveQueueBytes). The buffer is read back from the socket, because
+        // riptide asks for Integer.MAX_VALUE and the kernel clamps it.
         final String queue = MetricRegistry.name("listeners", this.name, "receiveQueueBytes");
         this.metrics.remove(queue);
         this.metrics.register(queue, (Gauge<Long>) () -> UdpSocketDrops.receiveQueueBytes(bound));

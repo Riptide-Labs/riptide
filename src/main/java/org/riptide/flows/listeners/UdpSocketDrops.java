@@ -82,8 +82,14 @@ final class UdpSocketDrops {
 
     /**
      * Bytes waiting in the receive queue ({@code rx_queue}) of the UDP socket bound to exactly this
-     * address and port: the kernel's {@code sk_rmem_alloc}, which it compares with the socket's
-     * {@code SO_RCVBUF} to decide a drop. Rows are matched as {@link #forSocket} matches them.
+     * address and port. Rows are matched as {@link #forSocket} matches them.
+     *
+     * <p><strong>A lower bound on what the kernel drops against.</strong> The kernel prints
+     * {@code udp_rqueue_get()}, which is {@code sk_rmem_alloc} minus {@code forward_deficit}: memory
+     * of datagrams the reader already took, released in batches once it reaches a quarter of the
+     * buffer. The enqueue path drops on the raw {@code sk_rmem_alloc} (plus, on recent kernels, the
+     * per-NUMA producer queue) against {@code SO_RCVBUF}. So divided by the buffer this can read about
+     * 0.75 while the kernel is already dropping, and the deficit builds exactly when a reader is busy.
      *
      * <p>The maximum over matching rows, not the sum: a fill ratio is per socket, and adding up the
      * queues of {@code SO_REUSEPORT} siblings against one socket's buffer would overstate it.
