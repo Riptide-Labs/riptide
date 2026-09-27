@@ -1,0 +1,159 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Prometheus alert rules for riptide itself (#902). Every rule selects job="riptide".
+# Runbooks: https://riptide.space/docs/operations/monitoring
+#
+# Riptide's exposition has no labels: a listener or parser name is part of the metric name, for
+# example listeners_flows_busySeconds. The recording rules below lift that name into a
+# `component` label, and the stage into a `stage` label. They work on the raw series, because
+# rate() and increase() drop __name__, so label_replace can no longer read it after them.
+# Thresholds here are the only copy. The health dashboards of #909 and #910 will repeat them, with
+# a test pinning that the two agree.
+---
+groups:
+  - name: riptide-components
+    rules:
+      # Every counter of flows that did not reach the flows table, one series per stage and
+      # component. failedRows charges a refused batch in full, including rows then kept in
+      # flows_dead_letter, and it already holds every row deadLetterFailedRows counts; so
+      # deadLetterFailedRows is left out, or one refused batch would raise two alerts.
+      - record: riptide:lost_total
+        expr: |
+          label_replace(label_replace(
+            {job="riptide", __name__=~"listeners_.+_socketDrops"},
+            "component", "$1", "__name__", "listeners_(.+)_socketDrops"), "stage", "listener", "", "")
+          or label_replace(label_replace(
+            {job="riptide", __name__=~"parsers_.+_dispatchDrops"},
+            "component", "$1", "__name__", "parsers_(.+)_dispatchDrops"), "stage", "parser-dispatch", "", "")
+          or label_replace(label_replace(
+            pipeline_dispatchErrors{job="riptide"},
+            "component", "dispatchErrors", "", ""), "stage", "pipeline", "", "")
+          or label_replace(label_replace(
+            {job="riptide", __name__=~"persister_batch_(droppedRows|failedRows)"},
+            "component", "$1", "__name__", "persister_batch_(.+)"), "stage", "batch-writer", "", "")
+
+      - record: riptide:queue_depth
+        expr: |
+          label_replace(label_replace(
+            {job="riptide", __name__=~"parsers_.+_dispatchQueueDepth"},
+            "component", "$1", "__name__", "parsers_(.+)_dispatchQueueDepth"), "stage", "parser-dispatch", "", "")
+          or label_replace(label_replace(
+            persister_batch_queueDepth{job="riptide"},
+            "component", "queue", "", ""), "stage", "batch-writer", "", "")
+
+      - record: riptide:queue_capacity
+        expr: |
+          label_replace(label_replace(
+            {job="riptide", __name__=~"parsers_.+_dispatchQueueCapacity"},
+            "component", "$1", "__name__", "parsers_(.+)_dispatchQueueCapacity"), "stage", "parser-dispatch", "", "")
+          or label_replace(label_replace(
+            persister_batch_queueCapacity{job="riptide"},
+            "component", "queue", "", ""), "stage", "batch-writer", "", "")
+
+      # Seconds a single-threaded worker spent on work; rate() of it reads 0 to 1.
+      - record: riptide:busy_seconds_total
+        expr: |
+          label_replace(label_replace(
+            {job="riptide", __name__=~"listeners_.+_busySeconds"},
+            "component", "$1", "__name__", "listeners_(.+)_busySeconds"), "stage", "listener", "", "")
+          or label_replace(label_replace(
+            persister_batch_flusherBusySeconds{job="riptide"},
+            "component", "flusher", "", ""), "stage", "batch-writer", "", "")
+
+      - record: riptide:reload_failures_total
+        expr: |
+          label_replace(
+            {job="riptide", __name__=~"(config|inventory|classification)_reload_failures"},
+            "component", "$1", "__name__", "(.+)_reload_failures")
+
+  - name: riptide-alerts
+    rules:
+      - alert: RiptideDown
+        expr: up{job="riptide"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "riptide on {{ $labels.instance }} is not answering scrapes"
+          description: "Prometheus has not reached {{ $labels.instance }}/metrics for 2 minutes. No flow from its exporters is being counted, and none may be stored."
+          runbook_url: https://riptide.space/docs/operations/monitoring#riptidedown
+
+      - alert: RiptideDataLoss
+        expr: sum by (instance, job, stage, component) (increase(riptide:lost_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "riptide on {{ $labels.instance }}: flows are not reaching storage at the {{ $labels.stage }} stage ({{ $labels.component }})"
+          description: "{{ $value | humanize }} flows in the last 5 minutes counted by {{ $labels.stage }}/{{ $labels.component }}, still rising after 5 minutes. For batch-writer/failedRows, rows kept in flows_dead_letter count too; the runbook shows how to tell kept from lost."
+          runbook_url: https://riptide.space/docs/operations/monitoring#riptidedataloss
+
+      - alert: RiptideQueueFilling
+        expr: riptide:queue_depth / riptide:queue_capacity > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "riptide on {{ $labels.instance }}: the {{ $labels.stage }} queue ({{ $labels.component }}) is over 80% full"
+          description: "The queue has held {{ $value | humanizePercentage }} of its capacity for 10 minutes. Past 100% it drops."
+          runbook_url: https://riptide.space/docs/operations/monitoring#riptidequeuefilling
+
+      - alert: RiptideWorkerSaturated
+        expr: rate(riptide:busy_seconds_total[5m]) > 0.8
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "riptide on {{ $labels.instance }}: the {{ $labels.stage }} worker ({{ $labels.component }}) is over 80% busy"
+          description: "This single thread has been busy {{ $value | humanizePercentage }} of the time for 15 minutes. At 100% the stage behind it starts to drop."
+          runbook_url: https://riptide.space/docs/operations/monitoring#riptideworkersaturated
+
+      - alert: RiptideHeapPressure
+        expr: jvm_heap_used{job="riptide"} / jvm_heap_max{job="riptide"} > 0.9
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "riptide on {{ $labels.instance }} has used over 90% of its heap for 15 minutes"
+          description: "Heap in use is {{ $value | humanizePercentage }} of the maximum. The threshold is a default, not a value measured on riptide."
+          runbook_url: https://riptide.space/docs/operations/monitoring#riptideheappressure
+
+      - alert: RiptideGcPressure
+        expr: rate(jvm_gc_seconds{job="riptide"}[5m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "riptide on {{ $labels.instance }} spends over 10% of its time in GC pauses"
+          description: "The application has been stopped for GC {{ $value | humanizePercentage }} of the time for 10 minutes. The threshold is a default, not a value measured on riptide."
+          runbook_url: https://riptide.space/docs/operations/monitoring#riptidegcpressure
+
+      - alert: RiptideCpuPressure
+        expr: rate(jvm_cpu_processSeconds{job="riptide"}[5m]) / jvm_cpu_availableProcessors{job="riptide"} > 0.85
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "riptide on {{ $labels.instance }} is using over 85% of its CPUs"
+          description: "The process has used {{ $value | humanizePercentage }} of its available CPUs for 15 minutes. The threshold is a default, not a value measured on riptide."
+          runbook_url: https://riptide.space/docs/operations/monitoring#riptidecpupressure
+
+      - alert: RiptideFileDescriptors
+        expr: process_openFds{job="riptide"} / process_maxFds{job="riptide"} > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "riptide on {{ $labels.instance }} has used over 80% of its file descriptor limit"
+          description: "Open file descriptors are {{ $value | humanizePercentage }} of the limit. The threshold is a default, not a value measured on riptide."
+          runbook_url: https://riptide.space/docs/operations/monitoring#riptidefiledescriptors
+
+      - alert: RiptideReloadFailing
+        expr: increase(riptide:reload_failures_total[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "riptide on {{ $labels.instance }}: a {{ $labels.component }} reload failed"
+          description: "The {{ $labels.component }} reload failed in the last 15 minutes. The previous version is still serving."
+          runbook_url: https://riptide.space/docs/operations/monitoring#riptidereloadfailing

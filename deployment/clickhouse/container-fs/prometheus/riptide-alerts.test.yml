@@ -1,0 +1,325 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# promtool test rules suite for riptide-alerts.yml, run by `make alerts-test`.
+# Each alert has a case that fires it and one just under its threshold, or short of its hold
+# time, that does not. Series names are the rendered names from a real /metrics scrape, including
+# the colon riptide's multi-receiver parser names carry (parsers_flows:ipfix_...).
+---
+rule_files:
+  - riptide-alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # --- RiptideDown ----------------------------------------------------------------------------
+  - name: down fires after 2 minutes without a scrape
+    interval: 1m
+    input_series:
+      - series: 'up{job="riptide", instance="riptide:8080"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: RiptideDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: riptide, instance: "riptide:8080"}
+            exp_annotations:
+              summary: "riptide on riptide:8080 is not answering scrapes"
+              description: "Prometheus has not reached riptide:8080/metrics for 2 minutes. No flow from its exporters is being counted, and none may be stored."
+              runbook_url: https://riptide.space/docs/operations/monitoring#riptidedown
+
+  - name: down does not fire inside its 2 minute hold
+    interval: 1m
+    input_series:
+      - series: 'up{job="riptide", instance="riptide:8080"}'
+        values: '1 0 0 1 1 1 1 1'
+    alert_rule_test:
+      # down since 1m, so pending and not yet firing at 2m
+      - eval_time: 2m
+        alertname: RiptideDown
+        exp_alerts: []
+
+  # --- RiptideDataLoss ------------------------------------------------------------------------
+  - name: batch writer loss fires and names the stage
+    interval: 1m
+    input_series:
+      - series: 'persister_batch_droppedRows{job="riptide", instance="riptide:8080"}'
+        values: '0+100x20'
+      - series: 'persister_batch_failedRows{job="riptide", instance="riptide:8080"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: RiptideDataLoss
+        exp_alerts:
+          - exp_labels: {severity: critical, job: riptide, instance: "riptide:8080", stage: batch-writer, component: droppedRows}
+            exp_annotations:
+              summary: "riptide on riptide:8080: flows are not reaching storage at the batch-writer stage (droppedRows)"
+              description: "500 flows in the last 5 minutes counted by batch-writer/droppedRows, still rising after 5 minutes. For batch-writer/failedRows, rows kept in flows_dead_letter count too; the runbook shows how to tell kept from lost."
+              runbook_url: https://riptide.space/docs/operations/monitoring#riptidedataloss
+
+  - name: kernel and dispatch loss name their component, colon included
+    interval: 1m
+    input_series:
+      - series: 'listeners_flows_socketDrops{job="riptide", instance="riptide:8080"}'
+        values: '0+3x20'
+      - series: 'parsers_flows:ipfix_dispatchDrops{job="riptide", instance="riptide:8080"}'
+        values: '0+24x20'
+      - series: 'parsers_flows:netflow9_dispatchDrops{job="riptide", instance="riptide:8080"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: RiptideDataLoss
+        exp_alerts:
+          - exp_labels: {severity: critical, job: riptide, instance: "riptide:8080", stage: listener, component: flows}
+            exp_annotations:
+              summary: "riptide on riptide:8080: flows are not reaching storage at the listener stage (flows)"
+              description: "15 flows in the last 5 minutes counted by listener/flows, still rising after 5 minutes. For batch-writer/failedRows, rows kept in flows_dead_letter count too; the runbook shows how to tell kept from lost."
+              runbook_url: https://riptide.space/docs/operations/monitoring#riptidedataloss
+          - exp_labels: {severity: critical, job: riptide, instance: "riptide:8080", stage: parser-dispatch, component: "flows:ipfix"}
+            exp_annotations:
+              summary: "riptide on riptide:8080: flows are not reaching storage at the parser-dispatch stage (flows:ipfix)"
+              description: "120 flows in the last 5 minutes counted by parser-dispatch/flows:ipfix, still rising after 5 minutes. For batch-writer/failedRows, rows kept in flows_dead_letter count too; the runbook shows how to tell kept from lost."
+              runbook_url: https://riptide.space/docs/operations/monitoring#riptidedataloss
+
+  - name: a refused batch raises one alert, not one per counter
+    interval: 1m
+    input_series:
+      # ClickHouse refuses every batch and the dead-letter write fails too: both counters move
+      - series: 'persister_batch_failedRows{job="riptide", instance="riptide:8080"}'
+        values: '0+40x20'
+      - series: 'persister_batch_deadLetterFailedRows{job="riptide", instance="riptide:8080"}'
+        values: '0+40x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: RiptideDataLoss
+        exp_alerts:
+          - exp_labels: {severity: critical, job: riptide, instance: "riptide:8080", stage: batch-writer, component: failedRows}
+            exp_annotations:
+              summary: "riptide on riptide:8080: flows are not reaching storage at the batch-writer stage (failedRows)"
+              description: "200 flows in the last 5 minutes counted by batch-writer/failedRows, still rising after 5 minutes. For batch-writer/failedRows, rows kept in flows_dead_letter count too; the runbook shows how to tell kept from lost."
+              runbook_url: https://riptide.space/docs/operations/monitoring#riptidedataloss
+
+  - name: data loss does not fire while every loss counter is flat
+    interval: 1m
+    input_series:
+      - series: 'persister_batch_droppedRows{job="riptide", instance="riptide:8080"}'
+        values: '7x20'
+      - series: 'pipeline_dispatchErrors{job="riptide", instance="riptide:8080"}'
+        values: '2x20'
+      - series: 'listeners_flows_socketDrops{job="riptide", instance="riptide:8080"}'
+        values: '40x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: RiptideDataLoss
+        exp_alerts: []
+
+  # --- RiptideQueueFilling --------------------------------------------------------------------
+  - name: queues over 80 percent fire per stage
+    interval: 1m
+    input_series:
+      - series: 'persister_batch_queueDepth{job="riptide", instance="riptide:8080"}'
+        values: '36000x20'
+      - series: 'persister_batch_queueCapacity{job="riptide", instance="riptide:8080"}'
+        values: '40000x20'
+      - series: 'parsers_flows:netflow9_dispatchQueueDepth{job="riptide", instance="riptide:8080"}'
+        values: '3500x20'
+      - series: 'parsers_flows:netflow9_dispatchQueueCapacity{job="riptide", instance="riptide:8080"}'
+        values: '4096x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: RiptideQueueFilling
+        exp_alerts:
+          - exp_labels: {severity: warning, job: riptide, instance: "riptide:8080", stage: batch-writer, component: queue}
+            exp_annotations:
+              summary: "riptide on riptide:8080: the batch-writer queue (queue) is over 80% full"
+              description: "The queue has held 90% of its capacity for 10 minutes. Past 100% it drops."
+              runbook_url: https://riptide.space/docs/operations/monitoring#riptidequeuefilling
+          - exp_labels: {severity: warning, job: riptide, instance: "riptide:8080", stage: parser-dispatch, component: "flows:netflow9"}
+            exp_annotations:
+              summary: "riptide on riptide:8080: the parser-dispatch queue (flows:netflow9) is over 80% full"
+              description: "The queue has held 85.45% of its capacity for 10 minutes. Past 100% it drops."
+              runbook_url: https://riptide.space/docs/operations/monitoring#riptidequeuefilling
+
+  - name: a queue at 75 percent does not fire
+    interval: 1m
+    input_series:
+      - series: 'persister_batch_queueDepth{job="riptide", instance="riptide:8080"}'
+        values: '30000x20'
+      - series: 'persister_batch_queueCapacity{job="riptide", instance="riptide:8080"}'
+        values: '40000x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: RiptideQueueFilling
+        exp_alerts: []
+
+  # --- RiptideWorkerSaturated -----------------------------------------------------------------
+  - name: a worker busy 90 percent of the time fires
+    interval: 1m
+    input_series:
+      - series: 'persister_batch_flusherBusySeconds{job="riptide", instance="riptide:8080"}'
+        values: '0+54x30'
+      - series: 'listeners_flows_busySeconds{job="riptide", instance="riptide:8080"}'
+        values: '0+6x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: RiptideWorkerSaturated
+        exp_alerts:
+          - exp_labels: {severity: warning, job: riptide, instance: "riptide:8080", stage: batch-writer, component: flusher}
+            exp_annotations:
+              summary: "riptide on riptide:8080: the batch-writer worker (flusher) is over 80% busy"
+              description: "This single thread has been busy 90% of the time for 15 minutes. At 100% the stage behind it starts to drop."
+              runbook_url: https://riptide.space/docs/operations/monitoring#riptideworkersaturated
+
+  - name: a worker busy 75 percent of the time does not fire
+    interval: 1m
+    input_series:
+      - series: 'listeners_flows_busySeconds{job="riptide", instance="riptide:8080"}'
+        values: '0+45x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: RiptideWorkerSaturated
+        exp_alerts: []
+
+  # --- RiptideHeapPressure --------------------------------------------------------------------
+  - name: heap over 90 percent fires
+    interval: 1m
+    input_series:
+      - series: 'jvm_heap_used{job="riptide", instance="riptide:8080"}'
+        values: '950x20'
+      - series: 'jvm_heap_max{job="riptide", instance="riptide:8080"}'
+        values: '1000x20'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: RiptideHeapPressure
+        exp_alerts:
+          - exp_labels: {severity: warning, job: riptide, instance: "riptide:8080"}
+            exp_annotations:
+              summary: "riptide on riptide:8080 has used over 90% of its heap for 15 minutes"
+              description: "Heap in use is 95% of the maximum. The threshold is a default, not a value measured on riptide."
+              runbook_url: https://riptide.space/docs/operations/monitoring#riptideheappressure
+
+  - name: heap at 85 percent does not fire
+    interval: 1m
+    input_series:
+      - series: 'jvm_heap_used{job="riptide", instance="riptide:8080"}'
+        values: '850x20'
+      - series: 'jvm_heap_max{job="riptide", instance="riptide:8080"}'
+        values: '1000x20'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: RiptideHeapPressure
+        exp_alerts: []
+
+  # --- RiptideGcPressure ----------------------------------------------------------------------
+  - name: GC pauses over 10 percent of the time fire
+    interval: 1m
+    input_series:
+      - series: 'jvm_gc_seconds{job="riptide", instance="riptide:8080"}'
+        values: '0+7.2x20'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: RiptideGcPressure
+        exp_alerts:
+          - exp_labels: {severity: warning, job: riptide, instance: "riptide:8080"}
+            exp_annotations:
+              summary: "riptide on riptide:8080 spends over 10% of its time in GC pauses"
+              description: "The application has been stopped for GC 12% of the time for 10 minutes. The threshold is a default, not a value measured on riptide."
+              runbook_url: https://riptide.space/docs/operations/monitoring#riptidegcpressure
+
+  - name: GC pauses at 9 percent do not fire
+    interval: 1m
+    input_series:
+      - series: 'jvm_gc_seconds{job="riptide", instance="riptide:8080"}'
+        values: '0+5.4x20'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: RiptideGcPressure
+        exp_alerts: []
+
+  # --- RiptideCpuPressure ---------------------------------------------------------------------
+  - name: CPU over 85 percent of the available cores fires
+    interval: 1m
+    input_series:
+      - series: 'jvm_cpu_processSeconds{job="riptide", instance="riptide:8080"}'
+        values: '0+216x25'
+      - series: 'jvm_cpu_availableProcessors{job="riptide", instance="riptide:8080"}'
+        values: '4x25'
+    alert_rule_test:
+      - eval_time: 22m
+        alertname: RiptideCpuPressure
+        exp_alerts:
+          - exp_labels: {severity: warning, job: riptide, instance: "riptide:8080"}
+            exp_annotations:
+              summary: "riptide on riptide:8080 is using over 85% of its CPUs"
+              description: "The process has used 90% of its available CPUs for 15 minutes. The threshold is a default, not a value measured on riptide."
+              runbook_url: https://riptide.space/docs/operations/monitoring#riptidecpupressure
+
+  - name: CPU at 75 percent of the available cores does not fire
+    interval: 1m
+    input_series:
+      - series: 'jvm_cpu_processSeconds{job="riptide", instance="riptide:8080"}'
+        values: '0+180x25'
+      - series: 'jvm_cpu_availableProcessors{job="riptide", instance="riptide:8080"}'
+        values: '4x25'
+    alert_rule_test:
+      - eval_time: 22m
+        alertname: RiptideCpuPressure
+        exp_alerts: []
+
+  # --- RiptideFileDescriptors -----------------------------------------------------------------
+  - name: file descriptors over 80 percent of the limit fire
+    interval: 1m
+    input_series:
+      - series: 'process_openFds{job="riptide", instance="riptide:8080"}'
+        values: '900x20'
+      - series: 'process_maxFds{job="riptide", instance="riptide:8080"}'
+        values: '1000x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: RiptideFileDescriptors
+        exp_alerts:
+          - exp_labels: {severity: warning, job: riptide, instance: "riptide:8080"}
+            exp_annotations:
+              summary: "riptide on riptide:8080 has used over 80% of its file descriptor limit"
+              description: "Open file descriptors are 90% of the limit. The threshold is a default, not a value measured on riptide."
+              runbook_url: https://riptide.space/docs/operations/monitoring#riptidefiledescriptors
+
+  - name: file descriptors at 70 percent do not fire
+    interval: 1m
+    input_series:
+      - series: 'process_openFds{job="riptide", instance="riptide:8080"}'
+        values: '700x20'
+      - series: 'process_maxFds{job="riptide", instance="riptide:8080"}'
+        values: '1000x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: RiptideFileDescriptors
+        exp_alerts: []
+
+  # --- RiptideReloadFailing -------------------------------------------------------------------
+  - name: a failed config reload fires and names the source
+    interval: 1m
+    input_series:
+      - series: 'config_reload_failures{job="riptide", instance="riptide:8080"}'
+        values: '0 0 0 1 1 1 1 1'
+      - series: 'inventory_reload_failures{job="riptide", instance="riptide:8080"}'
+        values: '0x8'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: RiptideReloadFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, job: riptide, instance: "riptide:8080", component: config}
+            exp_annotations:
+              summary: "riptide on riptide:8080: a config reload failed"
+              description: "The config reload failed in the last 15 minutes. The previous version is still serving."
+              runbook_url: https://riptide.space/docs/operations/monitoring#riptidereloadfailing
+
+  - name: reload failures do not fire while flat
+    interval: 1m
+    input_series:
+      - series: 'classification_reload_failures{job="riptide", instance="riptide:8080"}'
+        values: '3x20'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: RiptideReloadFailing
+        exp_alerts: []
