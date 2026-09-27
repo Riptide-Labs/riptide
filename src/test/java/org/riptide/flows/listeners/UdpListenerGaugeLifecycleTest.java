@@ -49,6 +49,12 @@ class UdpListenerGaugeLifecycleTest {
                 .doesNotContainKeys(gauge, queue, buffer);
     }
 
+    @Test
+    void theJdksHalvedLinuxBufferIsDoubledBackAndOtherPlatformsAreLeftAlone() {
+        assertThat(UdpListener.kernelReceiveBuffer(7_500_000, true)).isEqualTo(15_000_000);
+        assertThat(UdpListener.kernelReceiveBuffer(7_500_000, false)).isEqualTo(7_500_000);
+    }
+
     private static UdpParser parser() {
         return new UdpParser() {
             @Override

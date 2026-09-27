@@ -145,12 +145,26 @@ public class UdpListener implements Listener {
         this.metrics.remove(buffer);
         this.metrics.register(buffer, (Gauge<Integer>) () -> {
             try {
-                return config.getReceiveBufferSize();
+                return kernelReceiveBuffer(config.getReceiveBufferSize(), LINUX);
             } catch (final ChannelException e) {
                 // a scrape racing stop() on a closed socket: publish nothing, never fail the scrape
                 return null;
             }
         });
+    }
+
+    private static final boolean LINUX = System.getProperty("os.name", "").startsWith("Linux");
+
+    /**
+     * The kernel's {@code sk_rcvbuf}, the value {@code rx_queue} is compared with to decide a drop.
+     *
+     * <p>Linux doubles a requested {@code SO_RCVBUF} for its own bookkeeping, and the JDK halves the
+     * value it reads back on Linux only ({@code NET_GetSockOpt}), so the channel reports the request,
+     * not the buffer. Reported as is, the fill ratio read 1.0 with the socket half full; measured on
+     * the #902 rig, {@code ss} showed {@code rb33554432} where the channel said 16777216.
+     */
+    static int kernelReceiveBuffer(final int reportedByJdk, final boolean linux) {
+        return linux ? reportedByJdk * 2 : reportedByJdk;
     }
 
     // socketFuture and bossGroup are assigned in start(), which runs in a later lifecycle phase

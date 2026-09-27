@@ -63,6 +63,50 @@ class UdpListenerReceiveQueueTest {
         }
     }
 
+    /**
+     * The buffer gauge must be the kernel's own {@code sk_rcvbuf}, the value {@code rx_queue} is
+     * compared with to decide a drop. On Linux the JDK halves {@code SO_RCVBUF} on read, to hide the
+     * kernel doubling the request, so a gauge that reports the JDK's figure is half the real buffer
+     * and the fill ratio reads 1.0 with the socket half full. Push a blocked listener until the kernel
+     * drops: the queue then sits near the real buffer, above half of it, and never above it.
+     */
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    void theBufferGaugeIsTheKernelsBufferNotTheJdksHalf() throws Exception {
+        final var registry = new MetricRegistry();
+        final var entered = new CountDownLatch(1);
+        final var release = new CountDownLatch(1);
+        final var listener = new UdpListener("full", blockingParser(entered, release), registry)
+                .withHost("127.0.0.1")
+                .withPort(0);
+        listener.start();
+        try {
+            final String description = listener.getDescription();
+            final int port = Integer.parseInt(description.substring(description.lastIndexOf(':') + 1));
+            final var drops = registry.getGauges().get(MetricRegistry.name("listeners", "full", "socketDrops"));
+            try (var socket = new DatagramSocket()) {
+                final var loopback = InetAddress.getLoopbackAddress();
+                socket.send(new DatagramPacket(new byte[1200], 1200, loopback, port));
+                assertThat(entered.await(10, TimeUnit.SECONDS)).as("read loop holds the first datagram").isTrue();
+                // until the kernel has dropped some: the queue is then as full as the buffer allows
+                for (int i = 0; i < 200_000 && ((Long) drops.getValue()) == 0L; i++) {
+                    socket.send(new DatagramPacket(new byte[1200], 1200, loopback, port));
+                }
+            }
+            assertThat((Long) drops.getValue()).as("the kernel dropped datagrams").isPositive();
+
+            final long queue = (Long) registry.getGauges()
+                    .get(MetricRegistry.name("listeners", "full", "receiveQueueBytes")).getValue();
+            final long buffer = ((Integer) registry.getGauges()
+                    .get(MetricRegistry.name("listeners", "full", "receiveBufferBytes")).getValue()).longValue();
+            assertThat(queue).as("a full queue never exceeds the kernel's buffer").isLessThanOrEqualTo(buffer);
+            assertThat(queue).as("a full queue is well past half the buffer").isGreaterThan(buffer / 2);
+        } finally {
+            release.countDown();
+            listener.stop();
+        }
+    }
+
     private static UdpParser blockingParser(final CountDownLatch entered, final CountDownLatch release) {
         return new UdpParser() {
             @Override
