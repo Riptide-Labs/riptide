@@ -16,6 +16,7 @@ import org.riptide.flows.parser.session.SequenceNumberTracker;
 import org.riptide.flows.parser.session.Session;
 import org.riptide.pipeline.Identity;
 import org.riptide.pipeline.Source;
+import org.riptide.profiling.ProfilingLabels;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -61,6 +62,9 @@ public abstract class ParserBase implements Parser {
     private final Meter recordsDispatched;
 
     private final Counter sequenceErrors;
+
+    /** This parser's profiling labels, entered around every dispatch task. */
+    private final ProfilingLabels.Component profiling;
 
     /** protected: subclasses register their own gauges against the same registry. */
     protected final MetricRegistry metricRegistry;
@@ -120,6 +124,7 @@ public abstract class ParserBase implements Parser {
                       final MetricRegistry metricRegistry) {
         this.protocol = Objects.requireNonNull(protocol);
         this.name = Objects.requireNonNull(name);
+        this.profiling = ProfilingLabels.component("parser-dispatch", name);
         this.dispatcher = Objects.requireNonNull(dispatcher);
         this.identity = Objects.requireNonNull(identity);
         this.metricRegistry = Objects.requireNonNull(metricRegistry);
@@ -360,7 +365,7 @@ public abstract class ParserBase implements Parser {
 
         @Override
         public void run() {
-            try {
+            try (ProfilingLabels.Scope ignored = ParserBase.this.profiling.enter()) {
                 if (log.isTraceEnabled()) {
                     this.flows.forEach(flow -> log.trace("Received flow: {}", flow));
                 }

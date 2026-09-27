@@ -125,6 +125,10 @@ public class ProfilingConfiguration {
             return ProfilingStatus.disabled();
         }
 
+        // Only now: a component that entered a label scope before the agent ran would call into a
+        // profiler that is not there.
+        ProfilingLabels.enable();
+
         // profilingEvent, not profilerType, is the sampling mode: profilerType is ASYNC vs JFR and says
         // nothing about what is being sampled. The default event is ITIMER, which measures CPU time via
         // setitimer(ITIMER_PROF) and needs no perf_event_open. Wall clock is the separate `wall` event.

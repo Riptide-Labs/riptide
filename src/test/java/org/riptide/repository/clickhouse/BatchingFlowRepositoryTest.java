@@ -44,6 +44,8 @@ class BatchingFlowRepositoryTest {
 
     private final MetricRegistry metricRegistry = new MetricRegistry();
 
+    private final List<List<String>> persistLabels = new java.util.concurrent.CopyOnWriteArrayList<>();
+
     private BatchingFlowRepository repository;
 
     private Logger repositoryLog;
@@ -508,6 +510,27 @@ class BatchingFlowRepositoryTest {
     }
 
     @Test
+    void theFlushRunsUnderTheFlushersLabels() throws Exception {
+        final var recorder = org.riptide.profiling.RecordingScopes.install();
+        try {
+            this.delegate.onPersist = () -> this.persistLabels.add(recorder.active());
+            this.repository = repository(batchConfig(10, Duration.ofMillis(50)));
+            this.repository.start();
+
+            this.repository.persist(flows(30));
+            await(Duration.ofSeconds(5), "three batches inserted", () -> this.delegate.count() == 30);
+
+            Assertions.assertThat(this.persistLabels).as("every insert ran inside the flusher's scope")
+                    .isNotEmpty()
+                    .allSatisfy(labels -> Assertions.assertThat(labels)
+                            .containsExactly("stage=batch-writer", "component=flusher"));
+            Assertions.assertThat(recorder.distinctLabelSets()).as("one label set for the flusher").isEqualTo(1);
+        } finally {
+            org.riptide.profiling.RecordingScopes.uninstall();
+        }
+    }
+
+    @Test
     void queueCapacityIsReportedBesideTheDepthAndRemovedOnStop() {
         final var config = batchConfig(10, Duration.ofMillis(100));
         config.setQueueCapacity(40_000);
@@ -716,6 +739,9 @@ class BatchingFlowRepositoryTest {
         /** How long each insert takes, to give the flusher a known amount of work. */
         private volatile long insertMillis;
 
+        /** Runs at the start of every insert, on the flusher's thread. */
+        private volatile Runnable onPersist = () -> { };
+
         long count() {
             return this.store.count();
         }
@@ -734,6 +760,7 @@ class BatchingFlowRepositoryTest {
         @Override
         public void persist(final List<EnrichedFlow> flows) throws FlowException {
             this.inserts.incrementAndGet();
+            this.onPersist.run();
             if (this.insertMillis > 0) {
                 try {
                     Thread.sleep(this.insertMillis);

@@ -86,6 +86,30 @@ class ProfilingConfigurationTest {
                 .isFalse();
     }
 
+    @Test
+    void theLabelGateStaysShutWhileProfilingIsOff() {
+        new ProfilingConfiguration().profilingStatus(new RiptideProfilingProperties(), new DaemonConfig());
+
+        assertThat(ProfilingLabels.component("listener", "flows").enter())
+                .as("no agent, so no component may enter a profiler scope")
+                .isSameAs(ProfilingLabels.NONE);
+    }
+
+    @Test
+    void theLabelGateStaysShutWhenTheProfilerCannotStart() {
+        final var properties = new RiptideProfilingProperties();
+        properties.setEnabled(true);
+        final var exploding = Mockito.mock(DaemonConfig.class);
+        Mockito.when(exploding.resolveIdentity())
+                .thenThrow(new IllegalStateException("simulated failure on the profiler start path"));
+
+        new ProfilingConfiguration().profilingStatus(properties, exploding);
+
+        assertThat(ProfilingLabels.component("listener", "flows").enter())
+                .as("an agent that never started cannot take labels")
+                .isSameAs(ProfilingLabels.NONE);
+    }
+
     /**
      * Operator labels survive. {@code Config.build()} reads {@code PYROSCOPE_LABELS}, and {@code setLabels}
      * replaces the map wholesale — so an operator following Pyroscope's own documentation would have had

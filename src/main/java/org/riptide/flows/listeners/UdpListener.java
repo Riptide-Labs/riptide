@@ -27,6 +27,7 @@ import io.netty.channel.socket.DatagramPacket;
 import io.netty.channel.socket.nio.NioDatagramChannel;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.internal.SocketUtils;
+import org.riptide.profiling.ProfilingLabels;
 import org.riptide.telemetry.BusyTime;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,6 +52,8 @@ public class UdpListener implements Listener {
      * the pipeline and are not counted, so this under-reads the loop's true utilization.
      */
     private final BusyTime busy = new BusyTime();
+    /** This listener's profiling labels, entered around every datagram the read loop handles. */
+    private final ProfilingLabels.Component profiling;
 
     private EventLoopGroup bossGroup;
     private ChannelFuture socketFuture;
@@ -67,6 +70,7 @@ public class UdpListener implements Listener {
 
         this.packetsReceived = metrics.meter(MetricRegistry.name("listeners", name, "packetsReceived"));
         this.metrics = metrics;
+        this.profiling = ProfilingLabels.component("listener", name);
     }
 
     @Override
@@ -270,13 +274,15 @@ public class UdpListener implements Listener {
     private class AccountingHandler extends ChannelInboundHandlerAdapter {
         @Override
         public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
-            // First in the pipeline, so this brackets every handler after it on the read loop.
-            final long start = System.nanoTime();
-            try {
-                packetsReceived.mark();
-                super.channelRead(ctx, msg);
-            } finally {
-                busy.addSince(start);
+            // First in the pipeline, so the scope and the busy time cover every handler after it on the read loop.
+            try (ProfilingLabels.Scope ignored = profiling.enter()) {
+                final long start = System.nanoTime();
+                try {
+                    packetsReceived.mark();
+                    super.channelRead(ctx, msg);
+                } finally {
+                    busy.addSince(start);
+                }
             }
         }
     }
