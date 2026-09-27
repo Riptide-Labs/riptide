@@ -203,6 +203,24 @@ For questions like "which method dominates a rebuild" it is adequate.
 The agent is a dependency, so it ships in every artefact whether or not you enable it: about 5.5 MB of jar, of which roughly 2.3 MB is async-profiler's bundled native libraries.
 Nothing is loaded, no thread starts and no connection is opened unless the setting is on.
 
+## What it costs when it is on
+
+Measured on a 4-core VM storing about 12,000 flows per second into ClickHouse, with inserts delayed so the batch flusher was the bottleneck.
+Each row is the last 8 minutes of a 10-minute step; profiling off ran twice, first and last, and the two runs give the run-to-run spread.
+
+| Profiling | Flusher busy, 12,185 flows/s offered | CPU, share of 4 cores | Stored at the ceiling |
+| --- | --- | --- | --- |
+| Off, first run | 0.852 | 0.033 | 13,710 rows/s |
+| On, CPU, allocation and lock, without stage labels | 0.856 | 0.037 | 13,598 rows/s |
+| On, with stage labels | 0.856 | 0.035 | 13,676 rows/s |
+| Off, last run | 0.854 | 0.035 | 13,595 rows/s |
+
+- The ceiling moved by less than the spread between the two runs without profiling, 115 rows/s or 0.8%.
+- Busy time and CPU rose by at most 0.004, against a spread of 0.002: at most about 0.01 cores.
+- The stage labels add nothing distinguishable.
+
+One load, one repeat: a cost under about 1% of the ceiling would not show here.
+
 ## The two JDK warnings
 
 The restricted-method warning above is profiling-only.
