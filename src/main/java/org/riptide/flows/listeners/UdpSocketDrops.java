@@ -18,9 +18,11 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.function.LongBinaryOperator;
 
 /**
  * Datagrams the kernel discarded because the socket receive buffer was full, read per socket from
@@ -57,6 +59,7 @@ final class UdpSocketDrops {
 
     /** {@code sl local_address rem_address st tx_queue rx_queue ... inode ref pointer drops} */
     private static final int LOCAL_ADDRESS = 1;
+    private static final int QUEUES = 4;
     private static final int MIN_FIELDS = 13;
 
     /** The all-zeros address halves a wildcard bind shows in each table. */
@@ -74,33 +77,55 @@ final class UdpSocketDrops {
      *         exists (a closed socket has no drop count, which is distinct from having zero)
      */
     static Long forSocket(final InetSocketAddress bound) {
+        return acrossTables(bound, UdpSocketDrops::sumDrops, Long::sum);
+    }
+
+    /**
+     * Bytes waiting in the receive queue ({@code rx_queue}) of the UDP socket bound to exactly this
+     * address and port: the kernel's {@code sk_rmem_alloc}, which it compares with the socket's
+     * {@code SO_RCVBUF} to decide a drop. Rows are matched as {@link #forSocket} matches them.
+     *
+     * <p>The maximum over matching rows, not the sum: a fill ratio is per socket, and adding up the
+     * queues of {@code SO_REUSEPORT} siblings against one socket's buffer would overstate it.
+     *
+     * @return the queue in bytes, or {@code null} when procfs is unavailable or no socket matches
+     */
+    static Long receiveQueueBytes(final InetSocketAddress bound) {
+        return acrossTables(bound, UdpSocketDrops::maxReceiveQueue, Math::max);
+    }
+
+    /** What one table's lines yield for the matching rows, or {@code null} when none matched. */
+    @FunctionalInterface
+    private interface RowReader {
+        Long read(List<String> lines, Set<String> addresses, int port);
+    }
+
+    private static Long acrossTables(final InetSocketAddress bound, final RowReader reader,
+                                     final LongBinaryOperator combine) {
         final Set<String> addresses = procAddressForms(bound.getAddress());
         final int port = bound.getPort();
 
-        long total = 0;
-        boolean found = false;
-
+        Long result = null;
         for (final Path table : List.of(UDP4, UDP6)) {
-            final Long drops = dropsIn(table, addresses, port);
-            if (drops != null) {
-                total += drops;
-                found = true;
+            final Long value = readTable(table, reader, addresses, port);
+            if (value != null) {
+                result = result == null ? value : combine.applyAsLong(result, value);
             }
         }
-
-        return found ? total : null;
+        return result;
     }
 
-    private static Long dropsIn(final Path table, final Set<String> addresses, final int port) {
+    private static Long readTable(final Path table, final RowReader reader,
+                                  final Set<String> addresses, final int port) {
         if (!Files.isReadable(table)) {
             return null;
         }
 
         try {
-            return sumDrops(Files.readAllLines(table, StandardCharsets.US_ASCII), addresses, port);
+            return reader.read(Files.readAllLines(table, StandardCharsets.US_ASCII), addresses, port);
         } catch (final IOException e) {
             // procfs reads can fail transiently; a metrics scrape must never propagate that
-            LOG.debug("Could not read {} for socket drop counts", table, e);
+            LOG.debug("Could not read {} for socket counters", table, e);
             return null;
         }
     }
@@ -123,6 +148,45 @@ final class UdpSocketDrops {
         long total = 0;
         boolean found = false;
 
+        for (final List<String> fields : matchingRows(lines, addresses, port)) {
+            final long drops = parseUnsigned(fields.get(fields.size() - 1));
+            if (drops >= 0) {
+                total += drops;
+                found = true;
+            }
+        }
+
+        return found ? total : null;
+    }
+
+    /**
+     * The largest {@code rx_queue} over every matching row. The column is {@code tx_queue:rx_queue},
+     * two hex numbers joined by a colon, so the value is the half after the colon, parsed as hex.
+     *
+     * @return the queue in bytes, or {@code null} if no row matched
+     */
+    static Long maxReceiveQueue(final List<String> lines, final Set<String> addresses, final int port) {
+        Long max = null;
+
+        for (final List<String> fields : matchingRows(lines, addresses, port)) {
+            final String queues = fields.get(QUEUES);
+            final int colon = queues.indexOf(':');
+            if (colon < 0) {
+                continue;
+            }
+            final long rx = parseHex(queues.substring(colon + 1));
+            if (rx >= 0 && (max == null || rx > max)) {
+                max = rx;
+            }
+        }
+
+        return max;
+    }
+
+    /** Split fields of every row whose local address half is in {@code addresses} and port is {@code port}. */
+    private static List<List<String>> matchingRows(final List<String> lines, final Set<String> addresses,
+                                                   final int port) {
+        final List<List<String>> rows = new ArrayList<>();
         for (final String line : lines) {
             // Guava's splitter rather than String.split: the latter is regex-compiled per line and
             // silently drops trailing empty fields, which is the behaviour Error Prone flags. Here
@@ -133,17 +197,11 @@ final class UdpSocketDrops {
             if (fields.size() < MIN_FIELDS) {
                 continue;
             }
-            if (!matchesLocal(fields.get(LOCAL_ADDRESS), addresses, port)) {
-                continue;
-            }
-            final long drops = parseUnsigned(fields.get(fields.size() - 1));
-            if (drops >= 0) {
-                total += drops;
-                found = true;
+            if (matchesLocal(fields.get(LOCAL_ADDRESS), addresses, port)) {
+                rows.add(fields);
             }
         }
-
-        return found ? total : null;
+        return rows;
     }
 
     /**
@@ -206,6 +264,14 @@ final class UdpSocketDrops {
     private static int localPort(final String localAddress, final int colon) {
         try {
             return Integer.parseInt(localAddress.substring(colon + 1), 16);
+        } catch (final NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    private static long parseHex(final String value) {
+        try {
+            return Long.parseLong(value, 16);
         } catch (final NumberFormatException e) {
             return -1;
         }

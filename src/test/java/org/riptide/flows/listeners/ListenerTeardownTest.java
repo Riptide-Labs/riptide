@@ -83,8 +83,8 @@ class ListenerTeardownTest {
 
         // Fails on the gauge removal (first step) as well as on the parser, so two steps fail in
         // one teardown — unreachable before this change, because the first failure ended it.
-        // Armed only after start(), since registerSocketDrops() also calls remove() to rebind the
-        // gauge to the live socket.
+        // Armed only after start(), since registerSocketGauges() also calls remove() to rebind the
+        // gauges to the live socket.
         final var armed = new java.util.concurrent.atomic.AtomicBoolean();
         final var metrics = new MetricRegistry() {
             @Override

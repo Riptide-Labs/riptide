@@ -47,7 +47,13 @@ class UdpSocketDropsTest {
 
     /** A socket row bound to {@code hexAddr:hexPort} reporting {@code drops}. */
     private static String row(final String hexAddr, final String hexPort, final long drops, final int inode) {
-        return "  123: " + hexAddr + ":" + hexPort + " 00000000:0000 07 00000000:00000000 00:00000000 00000000"
+        return row(hexAddr, hexPort, "00000000", drops, inode);
+    }
+
+    /** As above, with {@code rxQueue} as the hex half after the colon of {@code tx_queue:rx_queue}. */
+    private static String row(final String hexAddr, final String hexPort, final String rxQueue,
+                              final long drops, final int inode) {
+        return "  123: " + hexAddr + ":" + hexPort + " 00000000:0000 07 00000000:" + rxQueue + " 00:00000000 00000000"
                 + "     0        0 " + inode + " 2 0000000000000000 " + drops;
     }
 
@@ -137,6 +143,27 @@ class UdpSocketDropsTest {
         assertThat(UdpSocketDrops.procAddressForms(null))
                 .as("a wildcard bind matches the all-zeros form in either table")
                 .containsExactlyInAnyOrder("00000000", "0".repeat(32));
+    }
+
+    @Test
+    void readsTheReceiveQueueAsTheHexHalfAfterTheColon() {
+        final var lines = List.of(HEADER, row("00000000", "270F", "0001F400", 0, 34567));
+
+        assertThat(UdpSocketDrops.maxReceiveQueue(lines, WILDCARD, 9999))
+                .as("0x0001F400 is 128000 bytes, read from rx_queue, not tx_queue or drops")
+                .isEqualTo(128_000L);
+    }
+
+    @Test
+    void theReceiveQueueIsTheLargestOfTheMatchingSocketsNotTheirSum() {
+        final var lines = List.of(HEADER,
+                row("00000000", "270F", "00000100", 0, 1),
+                row("00000000", "270F", "00000300", 0, 2),
+                row("00000000", "2710", "00FFFFFF", 0, 3));
+
+        assertThat(UdpSocketDrops.maxReceiveQueue(lines, WILDCARD, 9999))
+                .as("a fill ratio is per socket; the other port's row is not ours")
+                .isEqualTo(0x300L);
     }
 
     @Test
@@ -289,12 +316,40 @@ class UdpSocketDropsTest {
         }
     }
 
+    /**
+     * The receive queue against a real kernel: a receiver that never reads, and enough loopback
+     * datagrams to leave bytes queued. The queue must be above 0 and at most the buffer the kernel
+     * granted, which is what makes the two a fill ratio.
+     */
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    void kernelReceiveQueueIsTheNumberWeReadAndFitsTheBuffer() throws IOException {
+        try (var receiver = DatagramChannel.open(StandardProtocolFamily.INET);
+             var sender = DatagramChannel.open(StandardProtocolFamily.INET)) {
+            receiver.setOption(StandardSocketOptions.SO_RCVBUF, 65_536);
+            receiver.bind(new InetSocketAddress(addr("127.0.0.1"), 0));
+            final var bound = (InetSocketAddress) receiver.getLocalAddress();
+
+            final ByteBuffer payload = ByteBuffer.allocate(512);
+            for (int i = 0; i < 20; i++) {
+                payload.clear();
+                sender.send(payload, bound);
+            }
+
+            assertThat(UdpSocketDrops.receiveQueueBytes(bound))
+                    .as("20 unread datagrams sit in rx_queue")
+                    .isGreaterThan(0L)
+                    .isLessThanOrEqualTo(receiver.getOption(StandardSocketOptions.SO_RCVBUF).longValue());
+        }
+    }
+
     @Test
     @DisabledOnOs(OS.LINUX)
     void procfsAbsenceYieldsNullRatherThanZero() {
         // Without /proc/net/udp the gauge must publish no value. Reporting 0 here would assert
         // "no kernel drops" on a platform that cannot know.
         assertThat(UdpSocketDrops.forSocket(new InetSocketAddress(9999))).isNull();
+        assertThat(UdpSocketDrops.receiveQueueBytes(new InetSocketAddress(9999))).isNull();
     }
 
     @Test
