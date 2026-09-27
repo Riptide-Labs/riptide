@@ -13,8 +13,8 @@ import type {PluginOptions} from '@docusaurus/plugin-content-docs';
 const GROUPS = [
   {
     label: 'Deploy',
-    description: 'Install riptide and its dashboards with Docker Compose, the plain jar, DEB and RPM packages or NixOS.',
-    docs: ['docker-compose', 'plain-jar', 'linux-packages', 'nixos', 'grafana-dashboards'],
+    description: 'Install riptide and its dashboards with Docker Compose, the plain jar, DEB and RPM packages or NixOS, and monitor riptide itself with Prometheus.',
+    docs: ['docker-compose', 'plain-jar', 'linux-packages', 'nixos', 'grafana-dashboards', 'monitor-riptide'],
   },
   {
     label: 'Discover exporters',
