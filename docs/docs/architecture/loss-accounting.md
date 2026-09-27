@@ -26,6 +26,7 @@ Once the receive buffer overflows, the datagram is gone before riptide runs, so 
 It is read per socket from `/proc/net/udp`, matched on the bound address and port, so it attributes to this receiver rather than to the whole host or to another socket sharing the port number.
 It publishes no value on non-Linux platforms; absent is not the same as zero.
 A rising value means the collector cannot drain the socket fast enough: raise `net.core.rmem_max`, or reduce offered load.
+`listeners.<name>.receiveQueueBytes` over `listeners.<name>.receiveBufferBytes` shows how close the socket is to that point before any datagram is lost; it is the kernel's own drop test as a ratio.
 
 `undecodableSets` counts Data Sets thrown away because their Template had not arrived.
 RFC 7011 §8 permits discarding these, so it is not a protocol error, but it is still lost data.

@@ -54,6 +54,7 @@ persister_batch_failedRows 0.0
 | WARN naming a ruleset that exceeds the supported size | `classification.rules.preprocessed` above 25,000 | see [Classification tree build cost](../architecture/classification-build-cost.md); nothing fails |
 | A ruleset edited often never publishes | a poll that finds changed bytes cancels a build in progress and starts again | keep `riptide.classification.reload-interval` comfortably above the build time |
 | `listeners_<name>_socketDrops` rising | the kernel receive buffer overflowed before riptide ran | raise `net.core.rmem_max`, or reduce offered load |
+| `listeners_<name>_receiveQueueBytes` near `listeners_<name>_receiveBufferBytes` | the read loop is not draining the socket as fast as datagrams arrive; drops start when the queue passes the buffer | raise `net.core.rmem_max` for more burst room, or reduce offered load |
 | `listeners_<name>_socketDrops` absent | non-Linux platform; the value comes from `/proc/net/udp` | nothing to fix; absent is not zero |
 | `parsers_<name>_undecodableSets` rising after startup | Data Sets arriving before their Template; a burst at startup is normal, a sustained rate is not | shorten the exporter's template refresh; the count includes Options Data Sets, so it is not proof of flow loss |
 | `parsers_<name>_dispatchDrops` rising | enrichment or persistence fell behind the UDP receiver | see [Where flows can be lost](../architecture/loss-accounting.md); an IPFIX over TCP receiver blocks instead of dropping |
