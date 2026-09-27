@@ -6,6 +6,8 @@ description: Symptom, cause and fix for what an operator sees in the probes, the
 
 # Troubleshooting
 
+When a riptide alert fired, start from its runbook in [Respond to riptide alerts](monitoring.md) instead.
+
 ## Check
 
 ```bash

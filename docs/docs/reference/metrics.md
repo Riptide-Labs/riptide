@@ -10,6 +10,7 @@ Names below are the registry's dotted names.
 At `GET /metrics` every character outside `[a-zA-Z0-9_:]` becomes `_`, so `config.reload.stale` is scraped as `config_reload_stale`; the exposition rules are in [Management endpoints and ports](management.md#metrics-endpoint).
 Types: a counter only rises, a meter is a counter with `_rate_1m` and `_rate_5m` gauges beside it, a gauge is a current reading, a timer is a summary in seconds.
 The counters this page lists in seconds keep their fraction, so `rate()` of one reads in seconds per second.
+The alerts riptide ships read these series; which alert reads which, and what to do when it fires, is in [Respond to riptide alerts](../operations/monitoring.md).
 
 ## JVM and process
 
