@@ -51,8 +51,8 @@ What each of these counts, and the delivery arithmetic between them, is in [Wher
 | **`listeners.<name>.socketDrops`** | gauge | datagrams the kernel discarded because the socket receive buffer was full; read from `/proc/net/udp`, Linux only, absent elsewhere | rising |
 | **`parsers.<name>.undecodableSets`** | counter | Data Sets discarded because their IPFIX or NetFlow v9 Template was not known; counts Sets, not records, and includes Options Data Sets | sustained non-zero rate; a burst at startup is normal |
 | **`parsers.<name>.dispatchQueueDepth`** | gauge | packets waiting to be enriched; registered while the parser runs | over `dispatchQueueCapacity`, approaching 1 |
-| **`parsers.<name>.dispatchQueueCapacity`** | gauge | the dispatch queue's bound in packets, 4096 unless configured; registered while the parser runs | not an alert; the denominator for fill |
-| **`parsers.<name>.dispatchPoolSize`** | gauge | dispatch workers in the pool; registered while the parser runs | not an alert; the denominator for worker use |
+| **`parsers.<name>.dispatchQueueCapacity`** | gauge | the dispatch queue's bound in packets, 4096; not an operator setting today; registered while the parser runs | not an alert; the denominator for fill |
+| **`parsers.<name>.dispatchPoolSize`** | gauge | dispatch workers in the pool, one per available core; registered while the parser runs | not an alert; the denominator for worker use |
 | **`parsers.<name>.dispatchActiveWorkers`** | gauge | dispatch workers running a task at the scrape; registered while the parser runs | at `dispatchPoolSize` while the queue fills |
 | **`parsers.<name>.dispatchDrops`** | counter | records discarded because enrichment or persistence fell behind, or discarded at shutdown | `> 0` |
 | **`parsers.<name>.unmodelledElementTemplates`** | counter | IPFIX templates announcing an information element riptide parses and then discards (today IE 390 to 399); not an error | the total, not a rate |
