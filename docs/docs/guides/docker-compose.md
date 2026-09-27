@@ -88,7 +88,7 @@ The ClickHouse `default` user holds `access_management`, so change its password 
 | --- | --- | --- | --- |
 | **`riptide`** | `ghcr.io/riptide-labs/riptide:latest` | `9999/udp` | One `multi` [receiver](../reference/receivers.md) parses every protocol on that port. Starts only after ClickHouse reports healthy. Health is `/readyz` on the container's port 8080, which is not published. Logs at `WARN`. |
 | **`clickhouse`** | `clickhouse/clickhouse-server:26.7`, pinned by digest | `127.0.0.1:8123`, `127.0.0.1:9000` | Database `riptide`, user `default`. 26.7 is the version the integration suite runs against, see [server versions](../reference/clickhouse.md#server-versions). |
-| **`grafana`** | `grafana/grafana-oss:13.0.2`, pinned by digest | `3000` | ClickHouse and Prometheus datasources and nine dashboards provisioned; plugins `grafana-clickhouse-datasource` and `netsage-sankey-panel`. |
+| **`grafana`** | `grafana/grafana-oss:13.0.2`, pinned by digest | `3000` | ClickHouse and Prometheus datasources and the riptide dashboards provisioned; plugins `grafana-clickhouse-datasource` and `netsage-sankey-panel`. |
 | **`prometheus`** | `prom/prometheus:v3.15.0`, pinned by digest | `127.0.0.1:9090` | Scrapes riptide's `/metrics` every 15 s as `job="riptide"` and evaluates riptide's alert rules. Targets come from `container-fs/prometheus/targets/`; no Alertmanager ships. |
 
 Dependabot moves the three digest pins.
@@ -130,7 +130,7 @@ Riptide and Grafana connect from a compose bridge address that varies by network
 
 ## Dashboards
 
-Grafana provisions the nine riptide dashboards from `deployment/clickhouse/container-fs/grafana/provisioning/dashboards/` into the folder **Flow Analytics** under **Riptide**; the `grafana-folders` one-shot service nests the folder after Grafana is healthy.
+Grafana provisions the riptide dashboards from `deployment/clickhouse/container-fs/grafana/provisioning/dashboards/` into the folder **Flow Analytics** under **Riptide**; the `grafana-folders` one-shot service nests the folder after Grafana is healthy.
 What each dashboard answers, how the same set installs into a Grafana you run yourself, and what an upgrade does to UI edits is on the [Grafana dashboards](grafana-dashboards.md) page.
 
 The set carries its own version, shown as a `Dashboards vX.Y.Z` link in every dashboard's top bar, independent of the riptide version.

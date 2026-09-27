@@ -59,6 +59,7 @@ help:
 	@echo "  dashboards-version-check: Every dashboard carries the same version; with DASHBOARDS_BASE_REF=<ref>, that it moved when a dashboard changed"
 	@echo "  dashboards-version-test: Run the fixture tests of the dashboard tooling (version checker and API import)"
 	@echo "  alerts-test:          Check riptide's Prometheus alert rules and run their promtool test suite"
+	@echo "  dashboards-lint:      Lint the two self-monitoring dashboards with the vendored netops linter"
 	@echo "  dashboards-import-asset: Copy the API import script to target/riptide-dashboards-import.py, the release asset"
 	@echo "  dashboards-bundle: Write target/riptide-dashboards-<set version>.tar.gz, the release asset"
 	@echo "  dashboards-helm-values: Write target/riptide-dashboards-helm-values.yaml for the Grafana Helm chart; DASHBOARDS_REF=<tag>"
@@ -372,6 +373,17 @@ alerts-test: deps-oci
 	@test -n "$(PROMETHEUS_IMAGE)" || { echo "alerts-test: could not read the prom/prometheus image pin from deployment/clickhouse/compose.yml" >&2; exit 2; }
 	docker run --rm -v "$(CURDIR)/$(PROMETHEUS_RULES):/rules:ro" -w /rules --entrypoint promtool "$(PROMETHEUS_IMAGE)" check rules riptide-alerts.yml
 	docker run --rm -v "$(CURDIR)/$(PROMETHEUS_RULES):/rules:ro" -w /rules --entrypoint promtool "$(PROMETHEUS_IMAGE)" test rules riptide-alerts.test.yml
+
+# The self-monitoring dashboards (#909, #910) against the netops-dashboard-design
+# linter, vendored beside the version tool: units, labels, colour contrast and
+# colour-vision safety, and the fit to each dashboard's declared audience.
+# Warnings fail too. The nine flow dashboards predate the linter and are not
+# checked here, so a clean run says nothing about them.
+.PHONY: dashboards-lint
+dashboards-lint:
+	python3 deployment/clickhouse/lint_dashboard.py --check-colors --fail-on warn \
+		deployment/clickhouse/container-fs/grafana/provisioning/dashboards/riptide-health.json \
+		deployment/clickhouse/container-fs/grafana/provisioning/dashboards/riptide-stage-detail.json
 
 .PHONY: deps-nix
 deps-nix:

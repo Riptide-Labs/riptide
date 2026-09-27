@@ -14,6 +14,10 @@ VERSION="${1:?usage: smoke-test.sh <package-version>}"
 test -f "target/riptide_${VERSION}_all.deb" || { echo "deb for ${VERSION} missing — run make packages first"; exit 1; }
 ls target/riptide-"${VERSION}"-*.noarch.rpm >/dev/null || { echo "rpm for ${VERSION} missing — run make packages first"; exit 1; }
 
+# Every dashboard in the source tree must be packaged; counted here rather than
+# hard-coded, so adding a dashboard cannot leave this check asserting the old set.
+DASHBOARDS="$(ls deployment/clickhouse/container-fs/grafana/provisioning/dashboards/riptide-*.json | wc -l | tr -d ' ')"
+
 # Shared assertions; runs inside both containers after package installation.
 ASSERTIONS='
   java --version | head -1 | grep -q "openjdk 25" || { echo "FAIL: no Java 25 runtime"; exit 1; }
@@ -21,7 +25,7 @@ ASSERTIONS='
   test -f /usr/lib/systemd/system/riptide.service
   grep -q "^License: GPL-3.0-or-later" /usr/share/doc/riptide/copyright || { echo "FAIL: copyright file missing or wrong license"; exit 1; }
   test -f /usr/share/riptide/grafana/dashboards/dashboards.yml || { echo "FAIL: dashboards.yml not packaged"; exit 1; }
-  [ "$(ls /usr/share/riptide/grafana/dashboards/riptide-*.json | wc -l)" -eq 9 ] || { echo "FAIL: expected 9 dashboards, got: $(ls /usr/share/riptide/grafana/dashboards)"; exit 1; }
+  [ "$(ls /usr/share/riptide/grafana/dashboards/riptide-*.json | wc -l)" -eq '"$DASHBOARDS"' ] || { echo "FAIL: expected '"$DASHBOARDS"' dashboards, got: $(ls /usr/share/riptide/grafana/dashboards)"; exit 1; }
   [ "$(stat -c "%U:%G %a" /etc/riptide/config.yaml)" = "root:riptide 640" ]
   [ "$(stat -c "%U:%G %a" /etc/riptide/riptide.env)" = "root:riptide 640" ]
   id riptide >/dev/null

@@ -1,0 +1,1440 @@
+{
+  "uid": "riptide-stage-detail",
+  "title": "Riptide - Stage detail",
+  "description": "What is saturating this riptide stage, and is it the stage or the host? For network engineers following a stage from Riptide - Health: the stage's verdict on top, what moved in the middle, the JVM and host on the same time axis at the bottom. Reads riptide's own metrics through the recording rules in riptide-alerts.yml.",
+  "tags": [
+    "riptide",
+    "self-monitoring",
+    "audience:engineer"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [
+    {
+      "title": "Monitoring guide and runbooks",
+      "type": "link",
+      "url": "https://riptide.space/docs/operations/monitoring",
+      "targetBlank": true,
+      "icon": "doc"
+    },
+    {
+      "title": "Riptide - Health",
+      "type": "link",
+      "url": "/d/riptide-health/riptide-health",
+      "includeVars": true,
+      "keepTime": true,
+      "icon": "dashboard"
+    },
+    {
+      "title": "Riptide dashboards",
+      "type": "dashboards",
+      "tags": [
+        "riptide"
+      ],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true
+    },
+    {
+      "title": "Dashboards v1.1.0",
+      "type": "link",
+      "url": "https://riptide.space/docs/guides/grafana-dashboards",
+      "tooltip": "Version of the provisioned dashboard set, independent of the riptide version. Opens the install and upgrade guide.",
+      "icon": "info",
+      "targetBlank": true
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "enable": true,
+        "name": "Config changes (reloads)",
+        "iconColor": "#3B7DD8",
+        "expr": "sum by (component) (increase(label_replace({__name__=~\"(config|inventory|classification)_reload_successes\", job=\"riptide\", instance=~\"$instance\"}, \"component\", \"$1\", \"__name__\", \"(.+)_reload_successes\")[1m:])) > 0",
+        "step": "60s",
+        "titleFormat": "{{component}} reloaded",
+        "textFormat": "riptide applied a changed {{component}}. Saturation or loss that starts here may come from the change."
+      }
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "refresh": 1,
+        "description": "The Prometheus that scrapes riptide as job=\"riptide\" and loads riptide-alerts.yml."
+      },
+      {
+        "name": "instance",
+        "label": "Riptide instance",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "query_result(up{job=\"riptide\"})",
+          "refId": "instances"
+        },
+        "definition": "query_result(up{job=\"riptide\"})",
+        "refresh": 2,
+        "sort": 1,
+        "regex": "/(?:collector=\"(?<text>[^\"]+)\".*)?instance=\"(?<value>[^\"]+)\"/",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "description": "Which riptide collectors to show: by their collector label, or by scrape address where a target has none."
+      },
+      {
+        "name": "stage",
+        "label": "Stage",
+        "type": "custom",
+        "query": "listener,parser-dispatch,batch-writer",
+        "current": {
+          "selected": true,
+          "text": "batch-writer",
+          "value": "batch-writer"
+        },
+        "options": [
+          {
+            "selected": false,
+            "text": "listener",
+            "value": "listener"
+          },
+          {
+            "selected": false,
+            "text": "parser-dispatch",
+            "value": "parser-dispatch"
+          },
+          {
+            "selected": true,
+            "text": "batch-writer",
+            "value": "batch-writer"
+          }
+        ],
+        "multi": false,
+        "includeAll": false,
+        "description": "The pipeline stage to inspect: a listener read loop, the parser dispatch queues, or the ClickHouse batch writer."
+      },
+      {
+        "name": "component",
+        "label": "Component",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values({__name__=~\"riptide:.+\", stage=\"$stage\", instance=~\"$instance\"}, component)",
+          "refId": "components"
+        },
+        "definition": "label_values({__name__=~\"riptide:.+\", stage=\"$stage\", instance=~\"$instance\"}, component)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "description": "Listeners or parsers within the stage, by their configured name; for the batch writer, its queue, flusher and counters."
+      },
+      {
+        "name": "filter",
+        "label": "Filter",
+        "type": "adhoc",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "description": "Add any label filter to every query, for a label this dashboard does not offer a picker for."
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "How full is this stage's queue?",
+      "description": "Depth over capacity of the fullest selected queue in this stage. Normal: near 0%. Amber at 80%, where RiptideQueueFilling warns; red at 100%, where the queue drops. Listeners have no queue of their own; see the socket receive queue beside it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 0,
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2E9E63",
+                "value": null
+              },
+              {
+                "color": "#C08215",
+                "value": 0.8
+              },
+              {
+                "color": "#D9414B",
+                "value": 1
+              }
+            ]
+          },
+          "noValue": "No queue at this stage",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "No queue at this stage",
+                  "color": "#8A8F98",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "links": [
+            {
+              "title": "Runbook: RiptideQueueFilling",
+              "url": "https://riptide.space/docs/operations/monitoring#riptidequeuefilling",
+              "targetBlank": true
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "expr": "max(riptide:queue_depth{instance=~\"$instance\", stage=\"$stage\", component=~\"$component\"} / riptide:queue_capacity{instance=~\"$instance\", stage=\"$stage\", component=~\"$component\"})",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "How busy is this stage's worker?",
+      "description": "Share of time the busiest selected single-threaded worker spent on work: a listener read loop or the batch flusher. Normal: well below 80%. Amber at 80%, where RiptideWorkerSaturated warns; at 100% the stage drops. The listener figure leaves out socket reads and reads a little low.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 0,
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2E9E63",
+                "value": null
+              },
+              {
+                "color": "#C08215",
+                "value": 0.8
+              },
+              {
+                "color": "#D9414B",
+                "value": 1
+              }
+            ]
+          },
+          "noValue": "No single worker at this stage",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "No single worker at this stage",
+                  "color": "#8A8F98",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "links": [
+            {
+              "title": "Runbook: RiptideWorkerSaturated",
+              "url": "https://riptide.space/docs/operations/monitoring#riptideworkersaturated",
+              "targetBlank": true
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "expr": "max(rate(riptide:busy_seconds_total{instance=~\"$instance\", stage=\"$stage\", component=~\"$component\"}[5m]))",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Is this stage losing flows?",
+      "description": "Flows per second this stage counted as not reaching the flows table. Normal: 0. Red at any loss; RiptideDataLoss pages when it lasts 5 minutes. batch-writer failedRows includes rows kept in flows_dead_letter.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cps",
+          "decimals": 1,
+          "min": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2E9E63",
+                "value": null
+              },
+              {
+                "color": "#D9414B",
+                "value": 0.001
+              }
+            ]
+          },
+          "noValue": "No loss counter",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "No loss counter",
+                  "color": "#8A8F98",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "links": [
+            {
+              "title": "Runbook: RiptideDataLoss",
+              "url": "https://riptide.space/docs/operations/monitoring#riptidedataloss",
+              "targetBlank": true
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "expr": "sum(rate(riptide:lost_total{instance=~\"$instance\", stage=\"$stage\", component=~\"$component\"}[5m])) or vector(0)",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "How full is the socket receive queue?",
+      "description": "For a listener stage on Linux: bytes waiting in the socket over the receive buffer the kernel granted. A lower bound: the kernel leaves out memory the reader took but has not released, up to a quarter of the buffer, so it can drop while this reads 75%. Amber at 70%, red at 100%. Raise net.core.rmem_max for burst room.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 0,
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2E9E63",
+                "value": null
+              },
+              {
+                "color": "#C08215",
+                "value": 0.7
+              },
+              {
+                "color": "#D9414B",
+                "value": 1
+              }
+            ]
+          },
+          "noValue": "Not a listener, or not Linux",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "Not a listener, or not Linux",
+                  "color": "#8A8F98",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "links": [
+            {
+              "title": "Runbook: kernel socket drops",
+              "url": "https://riptide.space/docs/operations/monitoring#riptidedataloss",
+              "targetBlank": true
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "expr": "max((label_replace({__name__=~\"listeners_.+_receiveQueueBytes\", job=\"riptide\", instance=~\"$instance\"}, \"component\", \"$1\", \"__name__\", \"listeners_(.+)_receiveQueueBytes\") / label_replace({__name__=~\"listeners_.+_receiveBufferBytes\", job=\"riptide\", instance=~\"$instance\"}, \"component\", \"$1\", \"__name__\", \"listeners_(.+)_receiveBufferBytes\")) and on (component) rate(riptide:busy_seconds_total{instance=~\"$instance\", stage=\"$stage\", component=~\"$component\"}[5m]))",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Queue depth against its capacity",
+      "description": "Each selected queue's depth, with its capacity drawn as a dashed line of the same name. Normal: depth far below capacity. A depth that climbs and stays up means the stage behind the queue cannot keep up; one that touches capacity means drops.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#8A8F98",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "links": [
+            {
+              "title": "Back to Riptide - Health",
+              "url": "/d/riptide-health/riptide-health?${instance:queryparam}&${datasource:queryparam}&${__url_time_range}"
+            }
+          ],
+          "noValue": "No queue at this stage"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* capacity$"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "expr": "riptide:queue_depth{instance=~\"$instance\", stage=\"$stage\", component=~\"$component\"}",
+          "legendFormat": "{{component}} depth",
+          "range": true,
+          "instant": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "B",
+          "expr": "riptide:queue_capacity{instance=~\"$instance\", stage=\"$stage\", component=~\"$component\"}",
+          "legendFormat": "{{component}} capacity",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Worker busy share over time",
+      "description": "Share of time each selected single-threaded worker spent on work. Normal: well below the dashed 80% line. Compare with the host row below: a busy worker while CPU is also high points at the host, a busy worker on a quiet host points at the stage.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2E9E63",
+                "value": null
+              },
+              {
+                "color": "#C08215",
+                "value": 0.8
+              },
+              {
+                "color": "#D9414B",
+                "value": 1
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "links": [
+            {
+              "title": "Back to Riptide - Health",
+              "url": "/d/riptide-health/riptide-health?${instance:queryparam}&${datasource:queryparam}&${__url_time_range}"
+            }
+          ],
+          "max": 1,
+          "noValue": "No single worker at this stage"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "expr": "rate(riptide:busy_seconds_total{instance=~\"$instance\", stage=\"$stage\", component=~\"$component\"}[5m])",
+          "legendFormat": "{{component}}",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Is output keeping up with input?",
+      "description": "Flow records each parser received against records it handed on to enrichment, and datagrams each listener read, per second. Normal: received and dispatched track each other. A gap that opens means records are waiting or being dropped at dispatch. Offered load rising here explains saturation below.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cps",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#8A8F98",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "links": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "expr": "sum by (component) (rate(label_replace({__name__=~\"parsers_.+_recordsReceived\", job=\"riptide\", instance=~\"$instance\"}, \"component\", \"$1\", \"__name__\", \"parsers_(.+)_recordsReceived\")[5m:]))",
+          "legendFormat": "{{component}} records received",
+          "range": true,
+          "instant": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "B",
+          "expr": "sum by (component) (rate(label_replace({__name__=~\"parsers_.+_recordsDispatched\", job=\"riptide\", instance=~\"$instance\"}, \"component\", \"$1\", \"__name__\", \"parsers_(.+)_recordsDispatched\")[5m:]))",
+          "legendFormat": "{{component}} records dispatched",
+          "range": true,
+          "instant": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "C",
+          "expr": "sum by (component) (rate(label_replace({__name__=~\"listeners_.+_packetsReceived\", job=\"riptide\", instance=~\"$instance\"}, \"component\", \"$1\", \"__name__\", \"listeners_(.+)_packetsReceived\")[5m:]))",
+          "legendFormat": "{{component}} datagrams read",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "How long does each insert take?",
+      "description": "The batch writer's insert duration per batch, as the 50th, 95th and 99th percentile over the collector's recent batches. Normal: well under the batch max-latency. Rising p99 with a busy flusher points at ClickHouse; flat duration with a busy flusher means more batches, not slower ones. Batch writer only: other stages have no timer.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#8A8F98",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "links": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "expr": "persister_batch_flush_seconds{job=\"riptide\", instance=~\"$instance\"}",
+          "legendFormat": "p{{quantile}}",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Where in this stage are flows lost?",
+      "description": "Flows per second not reaching the flows table, by the counter that saw them, for the selected stage. Normal: nothing above zero. Read with the queue and worker panels above: loss after a full queue is saturation, loss with an idle queue is an error.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cps",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2E9E63",
+                "value": null
+              },
+              {
+                "color": "#D9414B",
+                "value": 0.001
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "links": [
+            {
+              "title": "Runbook: RiptideDataLoss",
+              "url": "https://riptide.space/docs/operations/monitoring#riptidedataloss",
+              "targetBlank": true
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "expr": "sum by (component) (rate(riptide:lost_total{instance=~\"$instance\", stage=\"$stage\", component=~\"$component\"}[5m]))",
+          "legendFormat": "{{component}}",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Which errors does this stage see without losing flows?",
+      "description": "Errors that do not drop flows, per second: packets a parser could not parse, IPFIX or NetFlow v9 data sets skipped because their template was not known yet, and refused batch rows kept in flows_dead_letter. Normal: nothing above zero after the first minutes of a start. Rows kept in flows_dead_letter can be replayed; see the dead letters guide.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cps",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2E9E63",
+                "value": null
+              },
+              {
+                "color": "#C08215",
+                "value": 0.001
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "links": [
+            {
+              "title": "Dead letters guide",
+              "url": "https://riptide.space/docs/operations/dead-letters",
+              "targetBlank": true
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "expr": "sum by (component) (rate(label_replace({__name__=~\"parsers_.+_parserErrors\", job=\"riptide\", instance=~\"$instance\"}, \"component\", \"$1\", \"__name__\", \"parsers_(.+)_parserErrors\")[5m:]))",
+          "legendFormat": "{{component}} parser errors",
+          "range": true,
+          "instant": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "B",
+          "expr": "sum by (component) (rate(label_replace({__name__=~\"parsers_.+_undecodableSets\", job=\"riptide\", instance=~\"$instance\"}, \"component\", \"$1\", \"__name__\", \"parsers_(.+)_undecodableSets\")[5m:]))",
+          "legendFormat": "{{component}} undecodable sets",
+          "range": true,
+          "instant": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "C",
+          "expr": "rate(persister_batch_deadLetteredRows{job=\"riptide\", instance=~\"$instance\"}[5m])",
+          "legendFormat": "batch-writer rows kept in flows_dead_letter",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "CPU used of the available cores",
+      "description": "The host row, on the same time axis as the stage above, so a saturated stage and host pressure line up. Normal: below the dashed line at 85%, where RiptideCpuPressure warns; that threshold is a default, not a value measured on riptide.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 0,
+        "y": 29
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2E9E63",
+                "value": null
+              },
+              {
+                "color": "#C08215",
+                "value": 0.85
+              },
+              {
+                "color": "#D9414B",
+                "value": 1
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "links": [
+            {
+              "title": "Runbook: RiptideCpuPressure",
+              "url": "https://riptide.space/docs/operations/monitoring#riptidecpupressure",
+              "targetBlank": true
+            }
+          ],
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "expr": "label_replace(label_replace(rate(jvm_cpu_processSeconds{job=\"riptide\", instance=~\"$instance\"}[5m]) / jvm_cpu_availableProcessors{job=\"riptide\", instance=~\"$instance\"}, \"name\", \"$1\", \"instance\", \"(.+)\"), \"name\", \"$1\", \"collector\", \"(.+)\")",
+          "legendFormat": "{{name}}",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Heap used of the maximum",
+      "description": "The host row, on the same time axis as the stage above, so a saturated stage and host pressure line up. Normal: below the dashed line at 90%, where RiptideHeapPressure warns; that threshold is a default, not a value measured on riptide.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 6,
+        "y": 29
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2E9E63",
+                "value": null
+              },
+              {
+                "color": "#C08215",
+                "value": 0.9
+              },
+              {
+                "color": "#D9414B",
+                "value": 1
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "links": [
+            {
+              "title": "Runbook: RiptideHeapPressure",
+              "url": "https://riptide.space/docs/operations/monitoring#riptideheappressure",
+              "targetBlank": true
+            }
+          ],
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "expr": "label_replace(label_replace(jvm_heap_used{job=\"riptide\", instance=~\"$instance\"} / jvm_heap_max{job=\"riptide\", instance=~\"$instance\"}, \"name\", \"$1\", \"instance\", \"(.+)\"), \"name\", \"$1\", \"collector\", \"(.+)\")",
+          "legendFormat": "{{name}}",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Share of time stopped in GC pauses",
+      "description": "The host row, on the same time axis as the stage above, so a saturated stage and host pressure line up. Normal: below the dashed line at 10%, where RiptideGcPressure warns; that threshold is a default, not a value measured on riptide.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 12,
+        "y": 29
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2E9E63",
+                "value": null
+              },
+              {
+                "color": "#C08215",
+                "value": 0.1
+              },
+              {
+                "color": "#D9414B",
+                "value": 1
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "links": [
+            {
+              "title": "Runbook: RiptideGcPressure",
+              "url": "https://riptide.space/docs/operations/monitoring#riptidegcpressure",
+              "targetBlank": true
+            }
+          ],
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "expr": "label_replace(label_replace(rate(jvm_gc_seconds{job=\"riptide\", instance=~\"$instance\"}[5m]), \"name\", \"$1\", \"instance\", \"(.+)\"), \"name\", \"$1\", \"collector\", \"(.+)\")",
+          "legendFormat": "{{name}}",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Live threads",
+      "description": "Live JVM threads per collector. Normal: flat after start. Steady growth is a leak; a step up after a reload is expected when receivers were added. No alert reads this.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 18,
+        "y": 29
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#8A8F98",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "links": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "refId": "A",
+          "expr": "label_replace(label_replace(jvm_threads_live{job=\"riptide\", instance=~\"$instance\"}, \"name\", \"$1\", \"instance\", \"(.+)\"), \"name\", \"$1\", \"collector\", \"(.+)\")",
+          "legendFormat": "{{name}}",
+          "range": true,
+          "instant": false
+        }
+      ]
+    }
+  ]
+}

@@ -79,6 +79,11 @@ jobs:
       - name: Alert rules check and promtool tests
         run: |
           make alerts-test
+      # The two self-monitoring dashboards (#909, #910) against the vendored
+      # netops-dashboard-design linter, warnings included.
+      - name: Self-monitoring dashboards lint
+        run: |
+          make dashboards-lint
       - name: Build with tests
         run: |
           make
