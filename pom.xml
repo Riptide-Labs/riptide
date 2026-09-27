@@ -30,7 +30,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <build-helper-maven-plugin.version>3.6.2</build-helper-maven-plugin.version>
-        <caffeine.version>3.2.4</caffeine.version>
+        <caffeine.version>3.3.0</caffeine.version>
         <common-csv.version>1.14.1</common-csv.version>
         <dnsjava.version>3.6.5</dnsjava.version>
         <guava.version>33.7.1-jre</guava.version>
@@ -68,7 +68,7 @@
              log4j-to-slf4j bridge. 2.25.5 patches the MapMessage JSON serialization issue
              in Scorecard alert #120 (GHSA-qv9r-c865-cp47). -->
         <log4j2.version>2.25.5</log4j2.version>
-        <org-eclipse-persistence-moxy.version>5.0.1</org-eclipse-persistence-moxy.version>
+        <org-eclipse-persistence-moxy.version>5.0.2</org-eclipse-persistence-moxy.version>
         <resilience4j.version>2.4.0</resilience4j.version>
         <snmp4j.version>3.13.1</snmp4j.version>
         <error-prone.version>2.50.0</error-prone.version>
