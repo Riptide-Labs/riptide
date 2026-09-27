@@ -52,7 +52,9 @@ public class SnmpPollConfig {
     private long snapshotExpiryMs = 1_800_000;
 
     /**
-     * Ceiling on interface walks in flight across the whole fleet.
+     * Ceiling on interface walks in flight across the whole fleet, for endpoints whose last walk
+     * succeeded. A permit count, not a thread count: no thread waits on a walk. It also sizes
+     * the {@code snmp-walk-io} executor that starts walks and records their results.
      *
      * <p>Fixed rather than scaled with exporter count: a fixed ceiling is the bound actually
      * wanted, and it is what turns a mass restart from a burst into a drain. Per-endpoint
@@ -61,10 +63,18 @@ public class SnmpPollConfig {
     private int poolWidth = 4;
 
     /**
-     * Refresh intervals of silence after which an exporter stops being polled.
+     * Ceiling on walks in flight for suspect endpoints, those whose last walk failed. Drawn from
+     * separately from {@link #poolWidth}, so dead agents holding permits for their whole timeout
+     * never take the permits healthy endpoints need.
+     */
+    private int suspectPoolWidth = 8;
+
+    /**
+     * Refresh intervals of silence after which a flow-registered exporter stops being polled.
      *
-     * <p>Registration is driven by flow arrival, so this is what stops riptide polling a
-     * device that has gone quiet.
+     * <p>For a flow-registered exporter still inside a polled range, this is what stops riptide
+     * polling a device that has gone quiet. An exporter registered from a {@code poll: always}
+     * inventory entry is never removed for silence. Only the inventory dropping the entry ends it.
      */
     private int deregisterAfter = 3;
 
@@ -72,8 +82,8 @@ public class SnmpPollConfig {
      * First retry delay after a walk times out, doubling up to {@link #deadEndpointCeilingMs}.
      *
      * <p>Inherits the old flat {@code dead-endpoint-retention-ms} default. Back-off is not
-     * cosmetic here: a walk against an unreachable agent holds a pool slot for its whole
-     * timeout, so retrying at a fixed interval lets dead exporters starve live ones.
+     * cosmetic here: a walk against an unreachable agent holds a permit for its whole
+     * timeout, so retrying at a fixed interval lets dead exporters exhaust the suspect budget.
      */
     private long deadEndpointBaseMs = 60_000;
 
@@ -83,8 +93,8 @@ public class SnmpPollConfig {
     /**
      * Ceiling on retained snapshots, counted in exporters.
      *
-     * <p>Registration follows flow arrival, so the population is whatever sends flows — including
-     * a spoofed source spraying addresses. The bound is expressed in exporters rather than in
+     * <p>Flow-arrival registration makes the population whatever sends flows, including a spoofed
+     * source spraying addresses. Every inventory entry marked {@code poll: always} counts too. The bound is expressed in exporters rather than in
      * interface entries because that is the dimension an attacker controls here; the row count per
      * exporter is bounded by the device's real interface count.
      */

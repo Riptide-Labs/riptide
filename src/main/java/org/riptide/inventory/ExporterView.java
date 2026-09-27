@@ -7,6 +7,8 @@ package org.riptide.inventory;
 
 import org.riptide.pipeline.ExporterIdentity;
 
+import java.net.InetAddress;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -18,4 +20,17 @@ import java.util.Optional;
 public interface ExporterView {
 
     Optional<ExporterEntry> match(ExporterIdentity identity);
+
+    /**
+     * Every entry declaring {@code poll: always}, sorted by name. The SNMP poller registers
+     * these at boot and on every reload, without waiting for a flow.
+     */
+    List<ExporterEntry> alwaysPolled();
+
+    /**
+     * The {@code poll: always} entry at exactly this address, whatever observation domain it is
+     * pinned to. A polled sample carries no domain, so {@link #match} cannot find a pinned entry
+     * for it; this can, because {@code poll: always} entries are host addresses.
+     */
+    Optional<ExporterEntry> alwaysPolledAt(InetAddress address);
 }

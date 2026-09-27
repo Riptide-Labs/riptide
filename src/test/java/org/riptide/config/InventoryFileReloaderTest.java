@@ -61,8 +61,17 @@ class InventoryFileReloaderTest {
         }
 
         @Override
-        public InterfaceTable walkInterfaces(final org.riptide.snmp.SnmpEndpoint endpoint) {
-            return new InterfaceTable(java.util.Map.of(), false);
+        public java.util.concurrent.CompletableFuture<InterfaceTable> walkInterfacesAsync(
+                final org.riptide.snmp.SnmpEndpoint endpoint) {
+            return java.util.concurrent.CompletableFuture.completedFuture(new InterfaceTable(java.util.Map.of(), false));
+        }
+
+        @Override
+        public java.util.concurrent.CompletableFuture<org.riptide.snmp.collect.CollectedTable> collectAsync(
+                final org.riptide.snmp.SnmpEndpoint endpoint,
+                final org.riptide.snmp.collect.CollectionDefinition definition, final java.time.Duration budget) {
+            return java.util.concurrent.CompletableFuture.completedFuture(
+                    new org.riptide.snmp.collect.CollectedTable(java.util.Map.of(), false));
         }
     }
     /** Counts refreshes so the reload trigger is observable; the sweep itself is a no-op here. */
@@ -72,7 +81,8 @@ class InventoryFileReloaderTest {
         private boolean throwOnRefresh;
 
         private CountingPoller(final Inventory inventory, final MetricRegistry metrics) {
-            super(new NoSnmp(), new SnmpPollConfig(), metrics, inventory);
+            super(new NoSnmp(), new SnmpPollConfig(), metrics, inventory,
+                    new org.riptide.metrics.NoopMetricSink(), new DaemonConfig());
         }
 
         @Override

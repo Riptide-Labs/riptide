@@ -143,6 +143,15 @@ public class DiscoveryConfig {
             List.of("__meta_netbox_primary_ip4", "__meta_netbox_primary_ip6");
 
     /**
+     * A NetBox tag slug. A discovered device carrying it is composed with {@code poll: always}.
+     * Unset means no device is marked. Read by the exporter renderer, which matches it against the
+     * {@code __meta_netbox_tags} label, not against the source. netbox-api emits that label from a
+     * device's tag slugs. A prometheus-sd document that carries it is honoured the same way.
+     * mapped-json never carries it, so its entries always stay {@code poll: on-flow}.
+     */
+    private String pollAlwaysTag;
+
+    /**
      * The source an operator selected, defaulting to the Prometheus service discovery reader.
      *
      * @throws IllegalStateException naming the key, the value and every accepted value

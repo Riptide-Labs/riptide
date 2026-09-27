@@ -7,9 +7,13 @@ package org.riptide.snmp;
 
 import inet.ipaddr.IPAddressString;
 import org.riptide.inventory.AgentEntry;
+import org.riptide.inventory.CollectionName;
 import org.riptide.inventory.CredentialSet;
 import org.riptide.inventory.CredentialVersion;
+import org.riptide.snmp.collect.CollectionDefinition;
+import org.riptide.snmp.collect.CollectionDefinitions;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -66,7 +70,8 @@ public final class AgentEndpointFactory {
         // address and cannot resolve a range itself
         return Optional.of(entry.polling() == null
                 ? endpoint
-                : endpoint.withCadence(entry.polling().refreshInterval(), entry.polling().snapshotExpiry()));
+                : endpoint.withCadence(entry.polling().refreshInterval(), entry.polling().snapshotExpiry())
+                        .withCollections(definitionsFor(entry.polling().collect())));
     }
 
     private static SnmpVersion version(final CredentialVersion version) {
@@ -75,5 +80,14 @@ public final class AgentEndpointFactory {
             case V2C -> SnmpVersion.v2c;
             case V3 -> SnmpVersion.v3;
         };
+    }
+
+    /** Maps the profile's inventory-owned names onto the snmp-side definitions they name. */
+    private static List<CollectionDefinition> definitionsFor(final List<CollectionName> collect) {
+        return collect.stream()
+                .map(name -> switch (name) {
+                    case IF_MIB_INTERFACES -> CollectionDefinitions.IF_MIB_INTERFACES;
+                })
+                .toList();
     }
 }

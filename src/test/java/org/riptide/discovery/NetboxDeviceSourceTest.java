@@ -50,12 +50,20 @@ class NetboxDeviceSourceTest {
     }
 
     private static String device(final String name, final String ip4) {
+        return device(name, ip4, new String[0]);
+    }
+
+    private static String device(final String name, final String ip4, final String... tagSlugs) {
+        final String tags = String.join(",", java.util.Arrays.stream(tagSlugs)
+                .map(slug -> "{\"id\": 1, \"name\": \"%s\", \"slug\": \"%s\"}".formatted(slug, slug))
+                .toArray(String[]::new));
         return """
                 {"id": 1, "name": "%s", "status": {"value": "active", "label": "Active"},
                  "role": {"id": 3, "name": "Edge router", "slug": "edge-router"},
                  "device_type": {"model": "SRX345", "manufacturer": {"slug": "juniper"}},
+                 "tags": [%s],
                  "primary_ip4": %s}
-                """.formatted(name, ip4 == null ? "null" : "{\"address\": \"" + ip4 + "\"}");
+                """.formatted(name, tags, ip4 == null ? "null" : "{\"address\": \"" + ip4 + "\"}");
     }
 
     private static NetboxDeviceSource source(final Map<String, String> pages) {
@@ -113,6 +121,20 @@ class NetboxDeviceSourceTest {
         return snapshot.exporterView()
                 .match(new ExporterIdentity.NetflowIpfix(InetAddress.getByName(address), 0L))
                 .isPresent();
+    }
+
+    @Test
+    void tagSlugsAreCarriedAsOneCommaJoinedLabel() throws Exception {
+        final var groups = source(Map.of("http://netbox.test/api/dcim/devices/",
+                page(null, device("edge-01", "10.0.0.1/24", "flow-exporter", "snmp-poll")))).targets();
+        assertThat(groups.get(0).labels()).containsEntry("__meta_netbox_tags", "flow-exporter,snmp-poll");
+    }
+
+    @Test
+    void aDeviceWithoutTagsHasNoTagsLabel() throws Exception {
+        final var groups = source(Map.of("http://netbox.test/api/dcim/devices/",
+                page(null, device("edge-01", "10.0.0.1/24")))).targets();
+        assertThat(groups.get(0).labels()).doesNotContainKey("__meta_netbox_tags");
     }
 
     @Test

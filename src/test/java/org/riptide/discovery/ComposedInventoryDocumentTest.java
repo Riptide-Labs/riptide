@@ -10,6 +10,7 @@ import ch.qos.logback.core.read.ListAppender;
 import com.codahale.metrics.MetricRegistry;
 import org.junit.jupiter.api.Test;
 import org.riptide.config.FileWatchTrigger;
+import org.riptide.inventory.ExporterEntry;
 import org.riptide.inventory.Inventory;
 import org.riptide.inventory.InventoryDocument;
 import org.riptide.inventory.InventoryLoader;
@@ -37,6 +38,16 @@ class ComposedInventoryDocumentTest {
                         "__meta_netbox_primary_ip4":"10.0.0.1"}}]
             """;
 
+    private static final String TAGGED_AND_PLAIN_DEVICES = """
+            [{"targets":["sw-1"],
+              "labels":{"__meta_netbox_name":"sw-1",
+                        "__meta_netbox_primary_ip4":"10.0.0.1",
+                        "__meta_netbox_tags":"snmp-poll"}},
+             {"targets":["sw-2"],
+              "labels":{"__meta_netbox_name":"sw-2",
+                        "__meta_netbox_primary_ip4":"10.0.0.2"}}]
+            """;
+
     /** A file document answering fixed text, standing in for riptide.inventory.file. */
     private record FixedFile(String text) implements InventoryDocument {
         @Override
@@ -48,6 +59,21 @@ class ComposedInventoryDocumentTest {
     private static ComposedInventoryDocument composed(final String fileText, final String json) {
         final DiscoveryConfig config = new DiscoveryConfig();
         config.setUrl("https://netbox.example.com/api/devices/");
+        return new ComposedInventoryDocument(
+                new FixedFile(fileText),
+                new ServiceDiscoverySource(() -> json.getBytes(StandardCharsets.UTF_8), () -> "the endpoint"),
+                () -> "the endpoint",
+                config,
+                new MetricRegistry());
+    }
+
+    /** Same as {@link #composed} with {@code riptide.discovery.poll-always-tag} also set. */
+    private static ComposedInventoryDocument composedWithTag(final String pollAlwaysTag,
+                                                              final String fileText,
+                                                              final String json) {
+        final DiscoveryConfig config = new DiscoveryConfig();
+        config.setUrl("https://netbox.example.com/api/devices/");
+        config.setPollAlwaysTag(pollAlwaysTag);
         return new ComposedInventoryDocument(
                 new FixedFile(fileText),
                 new ServiceDiscoverySource(() -> json.getBytes(StandardCharsets.UTF_8), () -> "the endpoint"),
@@ -68,6 +94,18 @@ class ComposedInventoryDocumentTest {
 
         assertThat(text).contains("10.0.0.0/8").contains("corp-v3");
         assertThat(text).contains("firewall-01").contains("10.0.0.1");
+    }
+
+    @Test
+    void aTaggedDeviceComposesWithPollAlways() throws Exception {
+        final String yaml = composedWithTag("snmp-poll", null, TAGGED_AND_PLAIN_DEVICES).text();
+
+        assertThat(yaml).contains("sw-1:\n      address: 10.0.0.1\n      poll: always\n");
+        assertThat(yaml).contains("sw-2:\n      address: 10.0.0.2\n");
+        assertThat(yaml).doesNotContain("sw-2:\n      address: 10.0.0.2\n      poll");
+
+        final var snapshot = InventoryLoader.parse(new SnmpProfilesConfig(Map.of(), Map.of()), yaml, "probe");
+        assertThat(snapshot.exporterView().alwaysPolled()).extracting(ExporterEntry::name).containsExactly("sw-1");
     }
 
     @Test

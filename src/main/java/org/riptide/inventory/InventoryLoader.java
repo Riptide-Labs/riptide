@@ -44,7 +44,7 @@ public final class InventoryLoader {
     private static final Set<String> RIPTIDE_KEYS = Set.of("snmp", "exporters");
     private static final Set<String> SNMP_KEYS = Set.of("agents");
     private static final Set<String> AGENT_KEYS = Set.of("credentials", "polling", "enabled", "port");
-    private static final Set<String> EXPORTER_KEYS = Set.of("address", "observation-domain", "interfaces");
+    private static final Set<String> EXPORTER_KEYS = Set.of("address", "observation-domain", "interfaces", "poll");
 
     private static final Set<String> PIN_KEYS = Set.of("name", "alias", "high-speed");
 
@@ -175,8 +175,11 @@ public final class InventoryLoader {
             // (#805). Change the rule here and that translation has to move with it.
             final boolean riptideEmpty = root.get("riptide") instanceof java.util.Map<?, ?> r && r.isEmpty();
             final boolean snmpEmpty = riptide.get("snmp") instanceof java.util.Map<?, ?> m && m.isEmpty();
+            final List<ExporterEntry> alwaysPolled = exporterCandidates.stream()
+                    .filter(candidate -> candidate.poll() == PollMode.ALWAYS)
+                    .toList();
             return new ParseResult(new InventorySnapshot(
-                    agents(agentCandidates), exporters(exporterCandidates),
+                    agents(agentCandidates), exporters(exporterCandidates), alwaysPolled,
                     snmp.get("agents") instanceof java.util.Map || snmpEmpty || riptideEmpty,
                     riptide.get("exporters") instanceof java.util.Map || riptideEmpty), warnings);
         } catch (final IllegalStateException e) {
@@ -553,13 +556,19 @@ public final class InventoryLoader {
                 // tree. Most specific still wins, so a bare host beats a prefix covering it
                 final IPAddressString parsedAddress = strictAddress(String.valueOf(address),
                         "exporter '%s' address".formatted(entry.getKey()), false);
+                final PollMode poll = PollMode.parse(entry.getKey(), entryBody.get("poll"));
+                if (poll == PollMode.ALWAYS && parsedAddress.isPrefixed()) {
+                    throw new IllegalStateException(
+                            ("Exporter '%s' has poll: always on the prefix %s; polling needs a host address, "
+                                    + "one entry per device.").formatted(entry.getKey(), parsedAddress));
+                }
                 final Long pin = observationDomain(entry.getKey(), entryBody.get("observation-domain"));
                 final Map<Integer, InterfacePin> pins =
                         interfacePins(entry.getKey(), entryBody.get("interfaces"), warnings, collected);
                 if (collected.isEmpty()) {
                     // skipped here, not three call frames away: an entry whose pins failed
                     // is not a candidate, whatever the guard before pass 2 decides
-                    candidates.add(new ExporterEntry(entry.getKey(), parsedAddress, pin, pins));
+                    candidates.add(new ExporterEntry(entry.getKey(), parsedAddress, pin, pins, poll));
                 }
             } catch (final IllegalStateException e) {
                 collected.add(problemText(e, "exporter", entry.getKey()), e);

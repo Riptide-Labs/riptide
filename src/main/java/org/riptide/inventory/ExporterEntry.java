@@ -23,11 +23,14 @@ import java.util.Map;
  * @param interfaces static per-ifIndex pins, empty when the entry declares none;
  *         never {@code null}, and immutable, so a published snapshot cannot be
  *         edited behind the loader's back
+ * @param poll when this entry is polled: on its first flow, or from the moment the
+ *         inventory loads. Defaults to {@link PollMode#ON_FLOW} when {@code null}
  */
 public record ExporterEntry(String name, IPAddressString address, Long observationDomain,
-                            Map<Integer, InterfacePin> interfaces) {
+                            Map<Integer, InterfacePin> interfaces, PollMode poll) {
 
     public ExporterEntry {
         interfaces = interfaces != null ? Map.copyOf(interfaces) : Map.of();
+        poll = poll != null ? poll : PollMode.ON_FLOW;
     }
 }

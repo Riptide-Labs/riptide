@@ -11,7 +11,10 @@ import org.snmp4j.util.TableEvent;
 
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -155,5 +158,54 @@ class WalkBoundsTest {
         assertThat(collector.await(Duration.ofSeconds(1).toNanos())).isTrue();
         assertThat(collector.events()).hasSize(1);
         assertThat(collector.events().getFirst().isError()).isTrue();
+    }
+
+    /**
+     * The deadline and the agent race to finish a walk, and exactly one of them may complete it.
+     * An abandonment that wins must leave a late {@code finished} completing nothing.
+     */
+    @Test
+    void anAbandonedWalkIgnoresALateFinish() {
+        final AtomicInteger completions = new AtomicInteger();
+        final var collector = new SnmpUtils.WalkCollector(100, done -> completions.incrementAndGet());
+        collector.next(row(1));
+
+        assertThat(collector.abandon()).as("the deadline got there first").isTrue();
+        collector.finished(Mockito.mock(TableEvent.class));
+
+        assertThat(completions.get()).as("the late finish completes nothing").isZero();
+        assertThat(collector.abandon()).as("a second abandonment is not a second winner").isFalse();
+    }
+
+    /** And the other way round: a finished walk cannot be abandoned after the fact. */
+    @Test
+    void aFinishedWalkCannotBeAbandoned() {
+        final AtomicInteger completions = new AtomicInteger();
+        final var collector = new SnmpUtils.WalkCollector(100, done -> completions.incrementAndGet());
+        collector.next(row(1));
+        collector.finished(Mockito.mock(TableEvent.class));
+
+        assertThat(completions.get()).isEqualTo(1);
+        assertThat(collector.abandon()).as("the agent finished first; the deadline must complete nothing").isFalse();
+    }
+
+    /**
+     * The true-hang defense without a waiting thread: an agent that never answers (here, a
+     * session that never sends) still completes the walk, from the deadline timer, as ABANDONED.
+     */
+    @Test
+    void aWalkNobodyAnswersCompletesAbandonedAtItsDeadline() throws Exception {
+        final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor();
+        try {
+            final var walk = SnmpUtils.walkRawAsync(Mockito.mock(org.snmp4j.Snmp.class),
+                    Mockito.mock(org.snmp4j.Target.class), null,
+                    new org.snmp4j.smi.OID[] {new org.snmp4j.smi.OID("1.3.6.1.2.1.31.1.1.1.1")}, 10,
+                    System.nanoTime() + Duration.ofMillis(50).toNanos(), timer);
+
+            assertThat(walk.get(5, TimeUnit.SECONDS).outcome()).isEqualTo(SnmpUtils.WalkOutcome.ABANDONED);
+            assertThat(walk.get().rows()).isEmpty();
+        } finally {
+            timer.shutdownNow();
+        }
     }
 }

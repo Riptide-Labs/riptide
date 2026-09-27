@@ -10,6 +10,8 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 
 import java.time.Duration;
 
+import java.util.List;
+
 /**
  * A named set of poll-behaviour parameters, configured under
  * {@code riptide.snmp.polling.<name>} and referenced by agent ranges. The profile
@@ -26,12 +28,26 @@ import java.time.Duration;
  * @param snapshotExpiry how long a snapshot stays usable, the staleness backstop
  * @param timeout the per-walk SNMP timeout in milliseconds
  * @param retries the per-walk SNMP retry count, zero meaning a single attempt
+ * @param collect the {@link CollectionName}s this profile walks, empty by default
  */
 @Slf4j
 public record PollingProfile(@DefaultValue(DEFAULT_REFRESH_INTERVAL) Duration refreshInterval,
                              @DefaultValue(DEFAULT_SNAPSHOT_EXPIRY) Duration snapshotExpiry,
                              @DefaultValue("" + DEFAULT_TIMEOUT_MS) int timeout,
-                             @DefaultValue("" + DEFAULT_RETRIES) int retries) {
+                             @DefaultValue("" + DEFAULT_RETRIES) int retries,
+                             @DefaultValue List<CollectionName> collect) {
+
+    public PollingProfile {
+        collect = collect == null ? List.of() : List.copyOf(collect);
+    }
+
+    /**
+     * The share of a refresh interval a walk may spend, leaving headroom for scheduling jitter
+     * and the enrichment work sharing the same tick.
+     */
+    public static Duration walkBudget(final Duration refreshInterval) {
+        return refreshInterval.multipliedBy(80).dividedBy(100);
+    }
 
     /** Mirrors SnmpPollConfig.refreshIntervalMs, which inherited the old cache retention. */
     static final String DEFAULT_REFRESH_INTERVAL = "PT10M";
@@ -55,7 +71,8 @@ public record PollingProfile(@DefaultValue(DEFAULT_REFRESH_INTERVAL) Duration re
         return new PollingProfile(Duration.parse(DEFAULT_REFRESH_INTERVAL),
                 Duration.parse(DEFAULT_SNAPSHOT_EXPIRY),
                 DEFAULT_TIMEOUT_MS,
-                DEFAULT_RETRIES);
+                DEFAULT_RETRIES,
+                List.of());
     }
 
     /**
@@ -91,6 +108,16 @@ public record PollingProfile(@DefaultValue(DEFAULT_REFRESH_INTERVAL) Duration re
         if (expiryShorterThanRefresh()) {
             log.warn("Polling profile '{}' expires snapshots ({}) faster than it refreshes them ({}): "
                     + "a single missed walk blanks enrichment for its exporters", name, this.snapshotExpiry, this.refreshInterval);
+        }
+        if (!this.collect.isEmpty()) {
+            final long perPduMs = (long) this.timeout * (this.retries + 1);
+            final long budgetMs = walkBudget(this.refreshInterval).toMillis();
+            if (perPduMs > budgetMs) {
+                throw new IllegalStateException(
+                        ("riptide.snmp.polling.%s: timeout %d ms x %d attempts exceeds the walk budget of %d ms "
+                                + "(80%% of refresh-interval); lower the timeout or lengthen refresh-interval.")
+                                .formatted(name, this.timeout, this.retries + 1, budgetMs));
+            }
         }
     }
 

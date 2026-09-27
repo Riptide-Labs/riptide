@@ -19,7 +19,9 @@ import org.snmp4j.agent.mo.MOAccessImpl;
 import org.snmp4j.agent.mo.MOColumn;
 import org.snmp4j.agent.mo.MOMutableColumn;
 import org.snmp4j.agent.mo.MOMutableTableModel;
+import org.snmp4j.agent.mo.MOMutableTableRow;
 import org.snmp4j.agent.mo.MOTableIndex;
+import org.snmp4j.agent.mo.MOTableRow;
 import org.snmp4j.agent.mo.MOTableSubIndex;
 import org.snmp4j.agent.mo.snmp.RowStatus;
 import org.snmp4j.agent.mo.snmp.SnmpCommunityMIB;
@@ -36,6 +38,8 @@ import org.snmp4j.security.SecurityModel;
 import org.snmp4j.security.SecurityProtocols;
 import org.snmp4j.security.USM;
 import org.snmp4j.security.UsmUser;
+import org.snmp4j.smi.Counter32;
+import org.snmp4j.smi.Counter64;
 import org.snmp4j.smi.Gauge32;
 import org.snmp4j.smi.GenericAddress;
 import org.snmp4j.smi.Integer32;
@@ -57,6 +61,7 @@ public class TestSnmpAgent extends BaseAgent {
 
     public static final String NOAUTHNOPRIV_USERNAME = "userNoAuthNoPriv";
     private String address;
+    private DefaultMOTable ifXTable;
 
     public TestSnmpAgent(final String address, final Path temporaryFolder) throws IOException {
         super(temporaryFolder.resolve("conf.agent").toFile(), temporaryFolder.resolve("bootCounter.agent").toFile(), new CommandProcessor(new OctetString(MPv3.createLocalEngineID())));
@@ -164,14 +169,14 @@ public class TestSnmpAgent extends BaseAgent {
         columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_COUNTER32, MOAccessImpl.ACCESS_READ_ONLY); // ifInBroadcastPkts
         columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_COUNTER32, MOAccessImpl.ACCESS_READ_ONLY); // ifOutMulticastPkts
         columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_COUNTER32, MOAccessImpl.ACCESS_READ_ONLY); // ifOutBroadcastPkts
-        columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_COUNTER32, MOAccessImpl.ACCESS_READ_ONLY); // ifHCInOctets
-        columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_COUNTER32, MOAccessImpl.ACCESS_READ_ONLY); // ifHCInUcastPkts
-        columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_COUNTER32, MOAccessImpl.ACCESS_READ_ONLY); // ifHCInMulticastPkts
-        columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_COUNTER32, MOAccessImpl.ACCESS_READ_ONLY); // ifHCInBroadcastPkts
-        columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_COUNTER32, MOAccessImpl.ACCESS_READ_ONLY); // ifHCOutOctets
-        columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_COUNTER32, MOAccessImpl.ACCESS_READ_ONLY); // ifHCOutUcastPkts
-        columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_COUNTER32, MOAccessImpl.ACCESS_READ_ONLY); // ifHCOutMulticastPkts
-        columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_COUNTER32, MOAccessImpl.ACCESS_READ_ONLY); // ifHCOutBroadcastPkts
+        columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_COUNTER64, MOAccessImpl.ACCESS_READ_ONLY); // ifHCInOctets
+        columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_COUNTER64, MOAccessImpl.ACCESS_READ_ONLY); // ifHCInUcastPkts
+        columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_COUNTER64, MOAccessImpl.ACCESS_READ_ONLY); // ifHCInMulticastPkts
+        columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_COUNTER64, MOAccessImpl.ACCESS_READ_ONLY); // ifHCInBroadcastPkts
+        columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_COUNTER64, MOAccessImpl.ACCESS_READ_ONLY); // ifHCOutOctets
+        columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_COUNTER64, MOAccessImpl.ACCESS_READ_ONLY); // ifHCOutUcastPkts
+        columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_COUNTER64, MOAccessImpl.ACCESS_READ_ONLY); // ifHCOutMulticastPkts
+        columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_COUNTER64, MOAccessImpl.ACCESS_READ_ONLY); // ifHCOutBroadcastPkts
         columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_INTEGER, MOAccessImpl.ACCESS_READ_WRITE); // ifLinkUpDownTrapEnable
         columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_GAUGE32, MOAccessImpl.ACCESS_READ_ONLY); // ifHighSpeed
         columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_INTEGER, MOAccessImpl.ACCESS_READ_WRITE); // ifPromiscuousMode
@@ -187,14 +192,14 @@ public class TestSnmpAgent extends BaseAgent {
                 new Integer32(2),
                 new Integer32(3),
                 new Integer32(4),
-                new Integer32(5),
-                new Integer32(6),
-                new Integer32(7),
-                new Integer32(8),
-                new Integer32(9),
-                new Integer32(10),
-                new Integer32(11),
-                new Integer32(12),
+                new Counter64(5),
+                new Counter64(6),
+                new Counter64(7),
+                new Counter64(8),
+                new Counter64(9),
+                new Counter64(10),
+                new Counter64(11),
+                new Counter64(12),
                 new Integer32(13),
                 new Integer32(14),
                 new Integer32(15),
@@ -208,14 +213,14 @@ public class TestSnmpAgent extends BaseAgent {
                 new Integer32(22),
                 new Integer32(23),
                 new Integer32(24),
-                new Integer32(25),
-                new Integer32(26),
-                new Integer32(27),
-                new Integer32(28),
-                new Integer32(29),
-                new Integer32(30),
-                new Integer32(31),
-                new Integer32(32),
+                new Counter64(25),
+                new Counter64(26),
+                new Counter64(27),
+                new Counter64(28),
+                new Counter64(29),
+                new Counter64(30),
+                new Counter64(31),
+                new Counter64(32),
                 new Integer32(33),
                 new Integer32(34),
                 new Integer32(35),
@@ -232,7 +237,7 @@ public class TestSnmpAgent extends BaseAgent {
     private DefaultMOTable createStaticIfTable() {
         final MOTableSubIndex[] subIndexes = new MOTableSubIndex[]{new MOTableSubIndex(SMIConstants.SYNTAX_INTEGER)};
         final MOTableIndex indexDef = new MOTableIndex(subIndexes, false);
-        final MOColumn[] columns = new MOColumn[8];
+        final MOColumn[] columns = new MOColumn[12];
         int c = 0;
         columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_INTEGER, MOAccessImpl.ACCESS_READ_ONLY); // ifIndex
         columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_OCTET_STRING, MOAccessImpl.ACCESS_READ_ONLY); // ifDescr
@@ -242,6 +247,14 @@ public class TestSnmpAgent extends BaseAgent {
         columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_OCTET_STRING, MOAccessImpl.ACCESS_READ_ONLY); // ifPhysAddress
         columns[c++] = new MOMutableColumn(c, SMIConstants.SYNTAX_INTEGER, MOAccessImpl.ACCESS_READ_WRITE, null); // ifAdminStatus
         columns[c++] = new MOColumn(c, SMIConstants.SYNTAX_INTEGER, MOAccessImpl.ACCESS_READ_ONLY); // ifOperStatus
+        // ifTable columns 9-12 (ifLastChange, ifInOctets, ifInUcastPkts, ifInNUcastPkts) are not
+        // modeled: nothing in riptide reads them. 13/14/19/20 are, for CollectionDefinitions'
+        // ifInDiscards/ifInErrors/ifOutDiscards/ifOutErrors (32-bit; only the ifXTable "HC"
+        // variants are 64-bit), so the gaps below are real, not omissions.
+        columns[c] = new MOColumn(13, SMIConstants.SYNTAX_COUNTER32, MOAccessImpl.ACCESS_READ_ONLY); // ifInDiscards
+        columns[c + 1] = new MOColumn(14, SMIConstants.SYNTAX_COUNTER32, MOAccessImpl.ACCESS_READ_ONLY); // ifInErrors
+        columns[c + 2] = new MOColumn(19, SMIConstants.SYNTAX_COUNTER32, MOAccessImpl.ACCESS_READ_ONLY); // ifOutDiscards
+        columns[c + 3] = new MOColumn(20, SMIConstants.SYNTAX_COUNTER32, MOAccessImpl.ACCESS_READ_ONLY); // ifOutErrors
 
         final DefaultMOTable ifTable = new DefaultMOTable(new OID("1.3.6.1.2.1.2.2.1"), indexDef, columns);
         final MOMutableTableModel model = (MOMutableTableModel) ifTable.getModel();
@@ -253,7 +266,11 @@ public class TestSnmpAgent extends BaseAgent {
                 new Gauge32(100000000),
                 new OctetString("00:00:00:00:01"),
                 new Integer32(1),
-                new Integer32(1)
+                new Integer32(1),
+                new Counter32(13),
+                new Counter32(14),
+                new Counter32(19),
+                new Counter32(20)
         };
         final Variable[] rowValues2 = new Variable[]{
                 new Integer32(2),
@@ -263,7 +280,11 @@ public class TestSnmpAgent extends BaseAgent {
                 new Gauge32(10000000),
                 new OctetString("00:00:00:00:02"),
                 new Integer32(1),
-                new Integer32(1)
+                new Integer32(1),
+                new Counter32(33),
+                new Counter32(34),
+                new Counter32(39),
+                new Counter32(40)
         };
         model.addRow(new DefaultMOMutableRow2PC(new OID("1"), rowValues1));
         model.addRow(new DefaultMOMutableRow2PC(new OID("2"), rowValues2));
@@ -276,6 +297,13 @@ public class TestSnmpAgent extends BaseAgent {
     }
 
     public void registerIfXTable() {
-        registerManagedObject(createStaticIfXTable());
+        this.ifXTable = createStaticIfXTable();
+        registerManagedObject(this.ifXTable);
+    }
+
+    /** Overwrites one ifXTable cell so a test can make a counter move between walks. */
+    public void setCounter(final int ifIndex, final int column, final long value) {
+        final MOTableRow row = this.ifXTable.getModel().getRow(new OID(new int[]{ifIndex}));
+        ((MOMutableTableRow) row).setValue(column - 1, new Counter64(value));
     }
 }

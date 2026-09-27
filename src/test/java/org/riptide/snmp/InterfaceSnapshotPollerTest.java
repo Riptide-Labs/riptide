@@ -11,15 +11,21 @@ import ch.qos.logback.core.read.ListAppender;
 import com.codahale.metrics.MetricRegistry;
 import inet.ipaddr.IPAddressString;
 import org.junit.jupiter.api.Test;
+import org.riptide.config.DaemonConfig;
+import org.riptide.metrics.MetricSink;
+import org.riptide.metrics.Sample;
 import org.riptide.secrets.SecretRef;
 import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetAddress;
+import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -31,6 +37,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class InterfaceSnapshotPollerTest {
 
     private static final long MS = 1_000_000L;
+
+    /** Wall-clock milliseconds stamped on samples; fixed so a test can assert the timestamp. */
+    private static final long WALL_CLOCK_MS = 1_790_000_000_000L;
 
     private final AtomicLong clock = new AtomicLong(1_000_000_000L);
     private final MetricRegistry metrics = new MetricRegistry();
@@ -46,6 +55,10 @@ class InterfaceSnapshotPollerTest {
     /** Counts walks and records which endpoints were walked; never touches a network. */
     private static class FakeSnmp implements SnmpService {
         final AtomicInteger walks = new AtomicInteger();
+        final AtomicInteger collects = new AtomicInteger();
+        /** When set, collected rows carry no ifName: a device answering ifTable but not ifXTable. */
+        private volatile boolean noIfXTable;
+        private volatile boolean throwOnCollect;
         private final Set<String> walked = ConcurrentHashMap.newKeySet();
         private final Map<String, AtomicInteger> walksPerEndpoint = new ConcurrentHashMap<>();
         final java.util.List<SnmpEndpoint> walkedEndpoints = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -55,8 +68,73 @@ class InterfaceSnapshotPollerTest {
             return count == null ? 0 : count.get();
         }
         private volatile boolean timeout;
+        /** Endpoints whose walks and collects answer with a failed table. */
+        final Set<SnmpEndpoint> failing = ConcurrentHashMap.newKeySet();
+        /** When set, each walk counts down {@code entered} and then waits on {@code release}. */
+        private volatile boolean block;
+        /**
+         * Endpoints whose start parks the calling thread on {@code release} before the future is
+         * even returned, the way an SNMPv3 engine-ID discovery parks a walk-io thread.
+         */
+        final Set<SnmpEndpoint> startBlocking = ConcurrentHashMap.newKeySet();
         private volatile CountDownLatch entered;
         private volatile CountDownLatch release;
+        /**
+         * Runs the blocking walks off the caller's thread, the way snmp4j completes a real walk
+         * on its own. An unblocked walk completes inline, so a tick's permits come back before
+         * it examines the next registration.
+         */
+        private final java.util.concurrent.ExecutorService completer = java.util.concurrent.Executors.newCachedThreadPool(
+                runnable -> {
+                    final Thread thread = new Thread(runnable, "fake-snmp-completer");
+                    thread.setDaemon(true);
+                    return thread;
+                });
+
+        /** The thread each walk or collect was started on. */
+        final List<String> startThreads = new CopyOnWriteArrayList<>();
+
+        @Override
+        public java.util.concurrent.CompletableFuture<InterfaceTable> walkInterfacesAsync(final SnmpEndpoint endpoint) {
+            this.startThreads.add(Thread.currentThread().getName());
+            if (this.startBlocking.contains(endpoint)) {
+                park();
+            }
+            if (this.block) {
+                return java.util.concurrent.CompletableFuture.supplyAsync(() -> walkInterfaces(endpoint), this.completer);
+            }
+            return java.util.concurrent.CompletableFuture.completedFuture(walkInterfaces(endpoint));
+        }
+
+        @Override
+        public java.util.concurrent.CompletableFuture<org.riptide.snmp.collect.CollectedTable> collectAsync(
+                final SnmpEndpoint endpoint, final org.riptide.snmp.collect.CollectionDefinition definition,
+                final Duration budget) {
+            this.startThreads.add(Thread.currentThread().getName());
+            if (this.startBlocking.contains(endpoint)) {
+                park();
+            }
+            if (this.block) {
+                return java.util.concurrent.CompletableFuture.supplyAsync(
+                        () -> collect(endpoint, definition, budget), this.completer);
+            }
+            return java.util.concurrent.CompletableFuture.completedFuture(collect(endpoint, definition, budget));
+        }
+
+        private void gate() {
+            if (this.block) {
+                park();
+            }
+        }
+
+        private void park() {
+            this.entered.countDown();
+            try {
+                this.release.await(10, TimeUnit.SECONDS);
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
 
         @Override
         public Optional<IfInfo> getIfInfo(final SnmpEndpoint endpoint, final int ifIndex) {
@@ -70,19 +148,56 @@ class InterfaceSnapshotPollerTest {
             this.walksPerEndpoint.computeIfAbsent(endpoint.getInetSocketAddress().toString(),
                     key -> new AtomicInteger()).incrementAndGet();
             this.walkedEndpoints.add(endpoint);
-            if (this.entered != null) {
-                this.entered.countDown();
-                try {
-                    this.release.await(10, TimeUnit.SECONDS);
-                } catch (final InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-            if (this.timeout) {
+            gate();
+            if (this.timeout || this.failing.contains(endpoint)) {
                 return new InterfaceTable(Map.of(), true);
             }
             return new InterfaceTable(Map.of(1, new IfInfo("eth0", "uplink", 1000L)), false);
         }
+
+        @Override
+        public org.riptide.snmp.collect.CollectedTable collect(final SnmpEndpoint endpoint,
+                final org.riptide.snmp.collect.CollectionDefinition definition, final Duration budget) {
+            final int collected = this.collects.incrementAndGet();
+            if (this.throwOnCollect) {
+                throw new IllegalStateException("snmp4j target construction blew up");
+            }
+            gate();
+            if (this.timeout || this.failing.contains(endpoint)) {
+                return new org.riptide.snmp.collect.CollectedTable(Map.of(), true);
+            }
+            final Map<String, String> info = this.noIfXTable
+                    ? Map.of()
+                    : Map.of("ifName", "eth0", "ifAlias", "uplink", "ifHighSpeed", "1000");
+            final Map<String, Long> values = this.noIfXTable
+                    ? Map.of("ifInErrors", 0L)
+                    : Map.of("ifHCInOctets", 100L * collected);
+            return new org.riptide.snmp.collect.CollectedTable(
+                    Map.of(1, new org.riptide.snmp.collect.CollectedTable.CollectedRow(info, values)), false);
+        }
+    }
+
+    /** Keeps every batch the poller hands over, in order. */
+    private static final class RecordingSink implements MetricSink {
+        final List<Sample> samples = new CopyOnWriteArrayList<>();
+        final AtomicInteger calls = new AtomicInteger();
+        /** The thread each accept ran on. */
+        final List<String> threads = new CopyOnWriteArrayList<>();
+
+        @Override
+        public void accept(final List<Sample> batch) {
+            this.calls.incrementAndGet();
+            this.threads.add(Thread.currentThread().getName());
+            this.samples.addAll(batch);
+        }
+    }
+
+    private static DaemonConfig identity() {
+        final var daemon = new DaemonConfig();
+        daemon.getIdentity().setTenant("t1");
+        daemon.getIdentity().setOrganisation("o1");
+        daemon.getIdentity().setZone("z1");
+        return daemon;
     }
 
     private SnmpPollConfig config() {
@@ -97,7 +212,13 @@ class InterfaceSnapshotPollerTest {
     }
 
     private InterfaceSnapshotPoller poller(final SnmpService snmp, final SnmpPollConfig config) {
-        return new InterfaceSnapshotPoller(snmp, config, this.metrics, this.serving, this.clock::get, false);
+        return poller(snmp, config, new RecordingSink());
+    }
+
+    private InterfaceSnapshotPoller poller(final SnmpService snmp, final SnmpPollConfig config,
+                                           final MetricSink sink) {
+        return new InterfaceSnapshotPoller(snmp, config, this.metrics, this.serving, sink, identity(),
+                this.clock::get, false, () -> WALL_CLOCK_MS);
     }
 
     /**
@@ -225,11 +346,31 @@ class InterfaceSnapshotPollerTest {
                             "new-community", community("new-community"),
                             "rotated", community("rotated")),
                     Map.of("slow", new org.riptide.inventory.PollingProfile(
-                                    java.time.Duration.ofMinutes(30), java.time.Duration.ofMinutes(90), 500, 1),
+                                    java.time.Duration.ofMinutes(30), java.time.Duration.ofMinutes(90), 500, 1,
+                                    java.util.List.of()),
                             "brisk", new org.riptide.inventory.PollingProfile(
-                                    java.time.Duration.ofMinutes(1), java.time.Duration.ofMinutes(30), 500, 1),
+                                    java.time.Duration.ofMinutes(1), java.time.Duration.ofMinutes(30), 500, 1,
+                                    java.util.List.of()),
                             "sedate", new org.riptide.inventory.PollingProfile(
-                                    java.time.Duration.ofMinutes(10), java.time.Duration.ofMinutes(30), 500, 1)));
+                                    java.time.Duration.ofMinutes(10), java.time.Duration.ofMinutes(30), 500, 1,
+                                    java.util.List.of()),
+                            "counters", new org.riptide.inventory.PollingProfile(
+                                    java.time.Duration.ofMinutes(1), java.time.Duration.ofMinutes(30), 500, 1,
+                                    java.util.List.of(org.riptide.inventory.CollectionName.IF_MIB_INTERFACES))));
+
+    // corp-v3 on the /24 because the loader refuses a v2c community on a range wider than one address
+    private static final String ALWAYS_INVENTORY = """
+            riptide:
+              snmp:
+                agents:
+                  10.0.0.0/24: { credentials: corp-v3, polling: counters }
+              exporters:
+                silent-switch: { address: 10.0.0.20, poll: always }
+            """;
+
+    private static org.riptide.inventory.InventorySnapshot parse(final String yaml) {
+        return org.riptide.inventory.InventoryLoader.parse(PROFILES, yaml, "poller.yaml");
+    }
 
     private static org.riptide.inventory.InventorySnapshot inventory(final String agentsBlock) {
         return org.riptide.inventory.InventoryLoader.parse(PROFILES, """
@@ -437,6 +578,7 @@ class InterfaceSnapshotPollerTest {
                       "10.41.0.7":
                         credentials: corp-v3
                 """));
+        snmp.block = true;
         snmp.entered = new CountDownLatch(1);
         snmp.release = new CountDownLatch(1);
 
@@ -606,27 +748,274 @@ class InterfaceSnapshotPollerTest {
     }
 
     /**
-     * Walks run on the pool, so tests wait for the effect rather than assuming it landed. Waiting
+     * Walks complete after the tick returns, so tests wait for the effect rather than assuming it landed. Waiting
      * on the issued-walk count alone is not enough: the poller sets the next walk time only after
      * the walk returns, so a test that raced that would then see a stale schedule.
      */
     private static void awaitWalks(final InterfaceSnapshotPoller poller, final FakeSnmp snmp,
                                    final int expected) throws InterruptedException {
+        // walks and collects both count: a collecting profile goes through collect instead
         final long deadline = System.currentTimeMillis() + 5_000;
-        while ((snmp.walks.get() < expected || poller.anyWalkInFlight())
+        while ((snmp.walks.get() + snmp.collects.get() < expected || poller.anyWalkInFlight())
                 && System.currentTimeMillis() < deadline) {
             Thread.sleep(5);
         }
-        assertThat(snmp.walks.get()).isEqualTo(expected);
+        assertThat(snmp.walks.get() + snmp.collects.get()).isEqualTo(expected);
         assertThat(poller.anyWalkInFlight()).isFalse();
     }
 
-    /** Waits for pool work to settle without asserting a count, for loops that only step time. */
+    /** Waits for walks to settle without asserting a count, for loops that only step time. */
     private static void awaitQuiet(final InterfaceSnapshotPoller poller) throws InterruptedException {
         final long deadline = System.currentTimeMillis() + 5_000;
         while (poller.anyWalkInFlight() && System.currentTimeMillis() < deadline) {
             Thread.sleep(5);
         }
+    }
+
+    /**
+     * The bulkhead. An endpoint that has failed at least once draws from its own, smaller permit
+     * budget, so a population of dead agents parked in their timeouts cannot take the permits a
+     * healthy endpoint needs.
+     */
+    @Test
+    void suspectEndpointsDrawFromTheirOwnBudgetSoHealthyOnesAreNeverStarved() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var config = config();
+        config.setPoolWidth(2);
+        config.setSuspectPoolWidth(1);
+        final var poller = poller(snmp, config, new RecordingSink());
+        // three endpoints that fail, and one healthy endpoint
+        for (final String ip : List.of("10.0.0.1", "10.0.0.2", "10.0.0.3")) {
+            final var ep = endpoint(ip);
+            snmp.failing.add(ep);
+            poller.trackAndResolve(ep, 1);
+        }
+        final var healthy = endpoint("10.0.0.9");
+        poller.trackAndResolve(healthy, 1);
+        // every first walk runs from the healthy budget, nobody being a suspect yet. Two
+        // permits for four due walks takes more than one tick, so tick until all four ran
+        final long deadline = System.currentTimeMillis() + 5_000;
+        while (snmp.walks.get() < 4 && System.currentTimeMillis() < deadline) {
+            poller.tick(this.clock.get());
+            awaitQuiet(poller);
+        }
+        assertThat(snmp.walks.get()).isEqualTo(4);
+
+        // one full refresh interval later everybody is due: the three suspects after their
+        // back-off, the healthy one at its next phase (at most one interval plus the jitter)
+        advanceMs(config.getRefreshIntervalMs() + config.getRefreshIntervalMs() / 50 + 1);
+        poller.trackAndResolve(healthy, 1);
+        snmp.block = true;
+        snmp.entered = new CountDownLatch(2);
+        snmp.release = new CountDownLatch(1);
+        final long deferredBefore = this.metrics.meter("snmp.poller.deferred").getCount();
+        poller.tick(this.clock.get());
+        assertThat(snmp.entered.await(2, TimeUnit.SECONDS)).as("the healthy walk and one suspect started").isTrue();
+
+        assertThat(this.metrics.gauge("snmp.poller.inFlight").getValue())
+                .as("the healthy endpoint got a healthy permit").isEqualTo(1);
+        assertThat(this.metrics.gauge("snmp.poller.suspectInFlight").getValue()).isEqualTo(1);
+        // the two other suspects are queued behind the one suspect permit; a second tick finds
+        // them still waiting, and they did not take the free healthy permit
+        poller.tick(this.clock.get());
+        assertThat(this.metrics.gauge("snmp.poller.inFlight").getValue()).isEqualTo(1);
+        assertThat(this.metrics.meter("snmp.poller.deferred").getCount() - deferredBefore)
+                .as("the other two suspects waited a whole tick").isEqualTo(2);
+        snmp.release.countDown();
+    }
+
+    /**
+     * Neither the tick thread nor snmp4j's threads do riptide's side of a walk: the start (secret
+     * resolution, session setup) and the sink hand-off both run on the walk executor.
+     */
+    @Test
+    void walkStartsAndSinkHandOffsRunOnTheWalkExecutor() throws Exception {
+        final var snmp = new FakeSnmp();
+        // completes every walk on the fake's own thread, as snmp4j completes a real one on its
+        // dispatcher; released up front, so nothing waits
+        snmp.block = true;
+        snmp.entered = new CountDownLatch(3);
+        snmp.release = new CountDownLatch(0);
+        final var sink = new RecordingSink();
+        final var poller = poller(snmp, config(), sink);
+        poller.trackAndResolve(endpoint("10.0.0.10", "polling: counters"), 1);
+        poller.trackAndResolve(endpoint("10.0.0.11", "polling: counters"), 1);
+        poller.trackAndResolve(endpoint("10.0.0.12"), 1);
+
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 3);
+
+        assertThat(snmp.startThreads).hasSize(3).allSatisfy(name -> assertThat(name).startsWith("snmp-walk-io"));
+        assertThat(sink.threads).hasSize(2).allSatisfy(name -> assertThat(name).startsWith("snmp-walk-io"));
+    }
+
+    /**
+     * A due walk that finds no permit waits in the due queue, and the permit that frees starts it
+     * at once: no second tick is needed (#899). Before the queue, a tick could start at most
+     * pool-width walks, so the fleet's ceiling was pool-width walks per second however fast the
+     * agents answered.
+     */
+    @Test
+    void aFreedPermitStartsTheNextDueWalkWithoutWaitingForATick() throws Exception {
+        final var snmp = new FakeSnmp();
+        snmp.block = true;
+        snmp.entered = new CountDownLatch(1);
+        snmp.release = new CountDownLatch(1);
+        final var config = config();
+        config.setPoolWidth(1);
+        final var poller = poller(snmp, config, new RecordingSink());
+        poller.trackAndResolve(endpoint("10.0.0.1"), 1);
+        poller.trackAndResolve(endpoint("10.0.0.2"), 1);
+        poller.tick(this.clock.get());
+        assertThat(snmp.entered.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(this.metrics.gauge("snmp.poller.inFlight").getValue()).isEqualTo(1);
+        assertThat(this.metrics.meter("snmp.poller.deferred").getCount())
+                .as("waiting milliseconds for a permit is not a deferral").isEqualTo(0);
+        // a second tick finds the queued walk still waiting: that is a deferral
+        poller.tick(this.clock.get());
+        assertThat(this.metrics.meter("snmp.poller.deferred").getCount()).as("one walk waited a whole tick").isEqualTo(1);
+
+        // free the permit: the queued walk must start with no tick in between
+        snmp.entered = new CountDownLatch(1);
+        snmp.release.countDown();
+        assertThat(snmp.entered.await(2, TimeUnit.SECONDS)).as("second walk started on the freed permit").isTrue();
+        awaitWalks(poller, snmp, 2);
+    }
+
+    /**
+     * The bulkhead at the executor, not only at the permits. An SNMPv3 start parks its
+     * {@code snmp-walk-io} thread in engine-ID discovery for up to a second, and a suspect walk
+     * starts on the same executor as a healthy one. With only {@code pool-width} threads,
+     * {@code suspect-pool-width} dead v3 agents in discovery park every thread, and a healthy
+     * walk can neither start nor return its permit, although its own budget is untouched.
+     */
+    @Test
+    void aSuspectWalkParkedInItsStartDoesNotHoldUpAHealthyWalksStart() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var config = config();
+        config.setPoolWidth(1);
+        config.setSuspectPoolWidth(1);
+        final var poller = poller(snmp, config, new RecordingSink());
+        final var suspect = endpoint("10.0.0.1");
+        snmp.failing.add(suspect);
+        poller.trackAndResolve(suspect, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        // due again after its back-off, from the suspect budget now, and its start parks inline
+        advanceMs(config.getDeadEndpointBaseMs() + 1);
+        snmp.startBlocking.add(suspect);
+        snmp.entered = new CountDownLatch(1);
+        snmp.release = new CountDownLatch(1);
+        poller.tick(this.clock.get());
+        assertThat(snmp.entered.await(2, TimeUnit.SECONDS)).as("the suspect start is parked on a walk-io thread").isTrue();
+
+        final var healthy = endpoint("10.0.0.2");
+        poller.trackAndResolve(healthy, 1);
+        poller.tick(this.clock.get());
+        final long deadline = System.currentTimeMillis() + 2_000;
+        while (snmp.walksFor(healthy) < 1 && System.currentTimeMillis() < deadline) {
+            Thread.sleep(5);
+        }
+        assertThat(snmp.walksFor(healthy)).as("the healthy walk started while the suspect start was parked").isEqualTo(1);
+        snmp.release.countDown();
+        awaitWalks(poller, snmp, 3);
+    }
+
+    /**
+     * A completion after {@link InterfaceSnapshotPoller#stop} returns its permit and nothing
+     * more. The executor is shut down by then, so a queued walk it started would run inline on
+     * the completing thread against an SNMP service that is being closed.
+     */
+    @Test
+    void aWalkStillQueuedAtStopIsNotStartedByALaterCompletion() throws Exception {
+        final var snmp = new FakeSnmp();
+        snmp.block = true;
+        snmp.entered = new CountDownLatch(1);
+        snmp.release = new CountDownLatch(1);
+        final var config = config();
+        config.setPoolWidth(1);
+        final var poller = poller(snmp, config, new RecordingSink());
+        poller.trackAndResolve(endpoint("10.0.0.1"), 1);
+        poller.trackAndResolve(endpoint("10.0.0.2"), 1);
+        poller.tick(this.clock.get());
+        assertThat(snmp.entered.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(snmp.walks.get()).as("one walk in flight, one queued").isEqualTo(1);
+
+        poller.stop(); // gives up on the parked walk after three seconds
+        snmp.release.countDown();
+        awaitQuiet(poller);
+        assertThat(snmp.walks.get()).as("the queued walk never starts after stop").isEqualTo(1);
+    }
+
+    /**
+     * Fairness. With one permit and four due devices, one tick per interval walks every device
+     * once before any device is walked twice. Before the due queue the same map-order winner took
+     * the permit every tick and the rest were never polled.
+     */
+    @Test
+    void everyDueDeviceIsWalkedOnceBeforeAnyIsWalkedTwice() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var config = config();
+        config.setPoolWidth(1);
+        final var poller = poller(snmp, config, new RecordingSink());
+        final var endpoints = List.of(endpoint("10.0.0.1"), endpoint("10.0.0.2"), endpoint("10.0.0.3"), endpoint("10.0.0.4"));
+        for (final var ep : endpoints) {
+            poller.trackAndResolve(ep, 1);
+        }
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 4);
+        for (final var ep : endpoints) {
+            assertThat(snmp.walksFor(ep)).as("first round, %s", ep).isEqualTo(1);
+        }
+
+        // one interval plus the jitter later every device is due again; still one tick, one permit
+        advanceMs(config.getRefreshIntervalMs() + config.getRefreshIntervalMs() / 50 + 1);
+        for (final var ep : endpoints) {
+            poller.trackAndResolve(ep, 1);
+        }
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 8);
+        for (final var ep : endpoints) {
+            assertThat(snmp.walksFor(ep)).as("second round, %s", ep).isEqualTo(2);
+        }
+    }
+
+    /**
+     * A sweep registers a whole fleet at once, so the first walks are spread across the interval
+     * the way re-walks are (#900). All due on the first tick, 5,000 devices produced their first
+     * sweep in 40 seconds and overflowed the sink queue.
+     */
+    @Test
+    void pollAlwaysEntriesSpreadTheirFirstWalkAcrossTheInterval() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var config = config();
+        config.setPoolWidth(64);
+        final var poller = poller(snmp, config, new RecordingSink());
+        final var yaml = new StringBuilder("""
+                riptide:
+                  snmp:
+                    agents:
+                      10.7.0.0/24: { credentials: corp-v3, polling: counters }
+                  exporters:
+                """);
+        for (int i = 1; i <= 16; i++) {
+            yaml.append("    sw-").append(i).append(": { address: 10.7.0.").append(i).append(", poll: always }\n");
+        }
+        serve(parse(yaml.toString()));
+        poller.refreshRegistrations();
+        assertThat(this.metrics.gauge("snmp.poller.inventoryRegistered").getValue()).isEqualTo(16);
+
+        poller.tick(this.clock.get());
+        awaitQuiet(poller);
+        final int firstTick = snmp.collects.get();
+        assertThat(firstTick).as("not the whole fleet on the first tick").isLessThan(16);
+
+        // by the end of one interval (plus jitter) every device has had its first walk
+        advanceMs(60_000L + 60_000L / 50 + 1);
+        poller.tick(this.clock.get());
+        awaitQuiet(poller);
+        assertThat(snmp.collects.get()).isGreaterThanOrEqualTo(16);
     }
 
     /**
@@ -697,6 +1086,7 @@ class InterfaceSnapshotPollerTest {
     @Test
     void anExporterIsNotDeregisteredWhileItsWalkIsStillRunning() throws Exception {
         final var snmp = new FakeSnmp();
+        snmp.block = true;
         snmp.entered = new CountDownLatch(1);
         snmp.release = new CountDownLatch(1);
         final var poller = poller(snmp, config());
@@ -724,6 +1114,17 @@ class InterfaceSnapshotPollerTest {
         assertThatThrownBy(() -> poller(new FakeSnmp(), config))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("riptide.snmp.poll.pool-width");
+    }
+
+    /** No suspect permit would leave every failed endpoint deferred forever, silently. */
+    @Test
+    void aNonPositiveSuspectPoolWidthFailsFastAndNamesTheProperty() {
+        final var config = config();
+        config.setSuspectPoolWidth(0);
+
+        assertThatThrownBy(() -> poller(new FakeSnmp(), config))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("riptide.snmp.poll.suspect-pool-width must be greater than 0");
     }
 
     /**
@@ -901,6 +1302,7 @@ class InterfaceSnapshotPollerTest {
     @Test
     void noSecondWalkIsIssuedWhileOneIsStillRunning() throws Exception {
         final var snmp = new FakeSnmp();
+        snmp.block = true;
         snmp.entered = new CountDownLatch(1);
         snmp.release = new CountDownLatch(1);
         final var poller = poller(snmp, config());
@@ -922,6 +1324,7 @@ class InterfaceSnapshotPollerTest {
     @Test
     void poolWidthBoundsWalksInFlightAcrossTheFleet() throws Exception {
         final var snmp = new FakeSnmp();
+        snmp.block = true;
         snmp.entered = new CountDownLatch(2);
         snmp.release = new CountDownLatch(1);
         final var config = config();
@@ -1086,14 +1489,16 @@ class InterfaceSnapshotPollerTest {
     void reWalksSpreadAcrossTheIntervalInsteadOfArrivingAsOneHerd() throws Exception {
         final var snmp = new FakeSnmp();
         final var config = config();
-        config.setPoolWidth(8);
+        // a permit for every exporter: with fewer, a herd would be deferred across ticks and
+        // spread over slices by the permits alone, and this test could no longer see it
+        config.setPoolWidth(40);
         final var poller = poller(snmp, config);
 
         for (int i = 1; i <= 40; i++) {
             poller.trackAndResolve(endpoint("10.4.0." + i), 1);
         }
         poller.tick(this.clock.get());
-        awaitWalks(poller, snmp, 40); // the cold-start burst, drained by the pool
+        awaitWalks(poller, snmp, 40); // the cold-start burst, one tick
 
         // step through one refresh interval in twentieths and record when re-walks land
         int busiestSlice = 0;
@@ -1132,7 +1537,8 @@ class InterfaceSnapshotPollerTest {
         final var first = new FakeSnmp();
         final var pollerA = poller(first, config);
         final var second = new FakeSnmp();
-        final var pollerB = new InterfaceSnapshotPoller(second, config, new MetricRegistry(), this.serving, this.clock::get, false);
+        final var pollerB = new InterfaceSnapshotPoller(second, config, new MetricRegistry(), this.serving,
+                new RecordingSink(), identity(), this.clock::get, false, () -> WALL_CLOCK_MS);
 
         pollerA.trackAndResolve(endpoint, 1);
         pollerB.trackAndResolve(endpoint, 1);
@@ -1160,5 +1566,353 @@ class InterfaceSnapshotPollerTest {
 
         assertThat(dueSliceA).isNotNull();
         assertThat(dueSliceB).isEqualTo(dueSliceA);
+    }
+
+    @Test
+    void aCollectingProfileWalksThroughCollectAndEmitsSamplesWithTheIdentityLabels() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var sink = new RecordingSink();
+        final var poller = poller(snmp, config(), sink);
+        final var endpoint = endpoint("10.0.0.10", "polling: counters");
+
+        poller.trackAndResolve(endpoint, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        assertThat(snmp.collects.get()).isEqualTo(1);
+        assertThat(snmp.walks.get()).as("no second walk for enrichment").isEqualTo(0);
+        assertThat(sink.calls.get()).as("one sink call per walk").isEqualTo(1);
+        assertThat(sink.samples).extracting(Sample::name).contains("ifHCInOctets", "riptide_interface_info");
+        final Sample octets = sink.samples.stream().filter(s -> s.name().equals("ifHCInOctets")).findFirst().orElseThrow();
+        assertThat(octets.labels()).containsEntry("tenant", "t1").containsEntry("organisation", "o1")
+                .containsEntry("zone", "z1").containsEntry("exporter_address", "10.0.0.10")
+                .containsEntry("exporter", "10.0.0.10")
+                .containsEntry("ifIndex", "1").containsEntry("ifName", "eth0");
+        assertThat(octets.value()).isEqualTo(100d);
+        assertThat(octets.timestampMs()).isEqualTo(WALL_CLOCK_MS);
+        assertThat(this.metrics.meter("snmp.poller.samplesEmitted").getCount()).isEqualTo(sink.samples.size());
+        // and the enrichment snapshot was refreshed from the same rows
+        assertThat(poller.trackAndResolve(endpoint, 1)).contains(new IfInfo("eth0", "uplink", 1000L));
+    }
+
+    @Test
+    void theExporterLabelIsTheInventoryNameWhenAnEntryCoversTheAddress() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var sink = new RecordingSink();
+        final var poller = poller(snmp, config(), sink);
+        final var snapshot = serve(parse("""
+                riptide:
+                  snmp:
+                    agents:
+                      10.0.0.0/24: { credentials: corp-v3, polling: counters }
+                  exporters:
+                    edge-01: { address: 10.0.0.10 }
+                """));
+        final var endpoint = resolveOnly(snapshot, "10.0.0.10");
+        poller.trackAndResolve(endpoint, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+        assertThat(sink.samples).isNotEmpty();
+        assertThat(sink.samples.get(0).labels()).containsEntry("exporter", "edge-01");
+    }
+
+    @Test
+    void aFailedCollectEmitsNothingAndBacksOff() throws Exception {
+        final var snmp = new FakeSnmp();
+        snmp.timeout = true;
+        final var sink = new RecordingSink();
+        final var poller = poller(snmp, config(), sink);
+        final var endpoint = endpoint("10.0.0.10", "polling: counters");
+        poller.trackAndResolve(endpoint, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+        assertThat(sink.samples).isEmpty();
+        assertThat(sink.calls.get()).isEqualTo(0);
+        assertThat(this.metrics.meter("snmp.poller.collectsFailed").getCount()).isEqualTo(1);
+
+        // backed off: the next tick does not collect again
+        poller.tick(this.clock.get());
+        awaitQuiet(poller);
+        assertThat(snmp.collects.get()).isEqualTo(1);
+    }
+
+    @Test
+    void aDeviceWithoutIfXTableIsWarnedOnceNotPerCollect() throws Exception {
+        final var snmp = new FakeSnmp();
+        snmp.noIfXTable = true;
+        final var poller = poller(snmp, config());
+        final var endpoint = endpoint("10.0.0.11", "polling: counters");
+
+        final var logger = (Logger) LoggerFactory.getLogger(InterfaceSnapshotPoller.class);
+        final var appender = LogCapture.startedAppender();
+        logger.addAppender(appender);
+        try {
+            poller.trackAndResolve(endpoint, 1);
+            poller.tick(this.clock.get());
+            awaitWalks(poller, snmp, 1);
+            advanceMs(60_000L * 2);
+            poller.trackAndResolve(endpoint, 1);
+            poller.tick(this.clock.get());
+            awaitWalks(poller, snmp, 2);
+            assertThat(ifXTableWarnings(appender)).isEqualTo(1);
+
+            // a later collect that carries ifName re-arms it
+            snmp.noIfXTable = false;
+            advanceMs(60_000L * 2);
+            poller.trackAndResolve(endpoint, 1);
+            poller.tick(this.clock.get());
+            awaitWalks(poller, snmp, 3);
+            snmp.noIfXTable = true;
+            advanceMs(60_000L * 2);
+            poller.trackAndResolve(endpoint, 1);
+            poller.tick(this.clock.get());
+            awaitWalks(poller, snmp, 4);
+            assertThat(ifXTableWarnings(appender)).isEqualTo(2);
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    private static long ifXTableWarnings(final ListAppender<ILoggingEvent> appender) {
+        return appender.list.stream()
+                .filter(event -> event.getFormattedMessage().contains("not ifXTable"))
+                .count();
+    }
+
+    @Test
+    void aPollAlwaysEntryIsRegisteredFromTheInventoryAndSurvivesSilence() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var sink = new RecordingSink();
+        final var poller = poller(snmp, config(), sink);
+        serve(parse(ALWAYS_INVENTORY));
+        poller.refreshRegistrations();
+        // the first walk of an inventory registration is spread across the interval (#900)
+        advanceMs(60_000L + 60_000L / 50 + 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        assertThat(this.metrics.gauge("snmp.poller.inventoryRegistered").getValue()).isEqualTo(1);
+        // silent for far longer than deregisterAfter intervals: still polled
+        advanceMs(60_000L * 10);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 2);
+        assertThat(sink.samples).extracting(s -> s.labels().get("exporter")).contains("silent-switch");
+    }
+
+    /**
+     * The exporter label comes from the entry that marked the address {@code poll: always},
+     * even when that entry is pinned to an observation domain. A lookup keyed on the address
+     * with domain 0 never sees a pinned entry, and the samples carried the bare address.
+     */
+    @Test
+    void aPollAlwaysEntryPinnedToAnObservationDomainStillNamesTheExporter() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var sink = new RecordingSink();
+        final var poller = poller(snmp, config(), sink);
+        serve(parse(ALWAYS_INVENTORY.replace("poll: always", "poll: always, observation-domain: 7")));
+        poller.refreshRegistrations();
+        advanceMs(60_000L + 60_000L / 50 + 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        assertThat(sink.samples).isNotEmpty();
+        assertThat(sink.samples).extracting(s -> s.labels().get("exporter")).containsOnly("silent-switch");
+    }
+
+    @Test
+    void anAlwaysEntryWithoutACoveringAgentRangeIsWarnedAndSkipped() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config(), new RecordingSink());
+        serve(parse("""
+                riptide:
+                  snmp:
+                    agents: {}
+                  exporters:
+                    orphan: { address: 10.9.9.9, poll: always }
+                """));
+        final var logger = (Logger) LoggerFactory.getLogger(InterfaceSnapshotPoller.class);
+        final var appender = LogCapture.startedAppender();
+        logger.addAppender(appender);
+        try {
+            poller.refreshRegistrations();
+            assertThat(appender.list).extracting(ILoggingEvent::getFormattedMessage)
+                    .anySatisfy(m -> assertThat(m).contains("orphan").contains("no agent range"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+        poller.tick(this.clock.get());
+        awaitQuiet(poller);
+        assertThat(snmp.collects.get() + snmp.walks.get()).isEqualTo(0);
+        assertThat(this.metrics.gauge("snmp.poller.inventoryRegistered").getValue()).isEqualTo(0);
+    }
+
+    @Test
+    void anAlwaysEntryRemovedFromTheInventoryFallsBackToFlowLifecycle() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var poller = poller(snmp, config(), new RecordingSink());
+        serve(parse(ALWAYS_INVENTORY));
+        poller.refreshRegistrations();
+        // the first walk of an inventory registration is spread across the interval (#900)
+        advanceMs(60_000L + 60_000L / 50 + 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        // silent long enough that a flow registration would already be gone
+        advanceMs(60_000L * 10);
+        serve(parse(ALWAYS_INVENTORY.replace(", poll: always", "")));
+        poller.refreshRegistrations();
+        // silence counts from the downgrade, not from registration: still here one tick later
+        poller.tick(this.clock.get());
+        awaitQuiet(poller);
+        assertThat(this.metrics.getGauges().get("snmp.poller.exporters").getValue()).isEqualTo(1);
+
+        // no flows and silent for deregisterAfter intervals: now it goes
+        advanceMs(60_000L * 3 + 1_000);
+        poller.tick(this.clock.get());
+        awaitQuiet(poller);
+        assertThat(this.metrics.getGauges().get("snmp.poller.exporters").getValue()).isEqualTo(0);
+        assertThat(this.metrics.gauge("snmp.poller.inventoryRegistered").getValue()).isEqualTo(0);
+    }
+
+    @Test
+    void moreAlwaysEntriesThanMaxExportersRefusesTheWholeSet() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var config = config();
+        config.setMaxExporters(2);
+        final var poller = poller(snmp, config, new RecordingSink());
+        serve(parse("""
+                riptide:
+                  snmp:
+                    agents:
+                      10.0.0.0/24: { credentials: corp-v3, polling: counters }
+                  exporters:
+                    a: { address: 10.0.0.1, poll: always }
+                    b: { address: 10.0.0.2, poll: always }
+                    c: { address: 10.0.0.3, poll: always }
+                """));
+        final var logger = (Logger) LoggerFactory.getLogger(InterfaceSnapshotPoller.class);
+        final var appender = LogCapture.startedAppender();
+        logger.addAppender(appender);
+        try {
+            poller.refreshRegistrations();
+            assertThat(appender.list)
+                    .filteredOn(event -> event.getLevel() == ch.qos.logback.classic.Level.ERROR)
+                    .extracting(ILoggingEvent::getFormattedMessage)
+                    .anySatisfy(m -> assertThat(m).contains("3 entries").contains("riptide.snmp.poll.max-exporters"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+        assertThat(this.metrics.gauge("snmp.poller.inventoryRefused").getValue()).isEqualTo(3);
+        assertThat(this.metrics.gauge("snmp.poller.inventoryRegistered").getValue()).isEqualTo(0);
+        assertThat(this.metrics.getGauges().get("snmp.poller.exporters").getValue()).isEqualTo(0);
+    }
+
+    /**
+     * The set fits under the cap, but flow registrations already fill it. The entry that finds no
+     * room must show on the gauge and in the log, not only on rejectedLookups.
+     */
+    @Test
+    void anAlwaysEntryRefusedBecauseFlowsFillTheCapIsCountedAndWarned() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var config = config();
+        config.setMaxExporters(2);
+        final var poller = poller(snmp, config, new RecordingSink());
+        final var live = serve(parse("""
+                riptide:
+                  snmp:
+                    agents:
+                      10.0.0.0/24: { credentials: corp-v3, polling: counters }
+                  exporters:
+                    c: { address: 10.0.0.3, poll: always }
+                """));
+        poller.trackAndResolve(resolveOnly(live, "10.0.0.1"), 1);
+        poller.trackAndResolve(resolveOnly(live, "10.0.0.2"), 1);
+        assertThat(this.metrics.getGauges().get("snmp.poller.exporters").getValue()).isEqualTo(2);
+
+        final var logger = (Logger) LoggerFactory.getLogger(InterfaceSnapshotPoller.class);
+        final var appender = LogCapture.startedAppender();
+        logger.addAppender(appender);
+        try {
+            poller.refreshRegistrations();
+            assertThat(appender.list)
+                    .filteredOn(event -> event.getLevel() == ch.qos.logback.classic.Level.WARN)
+                    .extracting(ILoggingEvent::getFormattedMessage)
+                    .anySatisfy(m -> assertThat(m).startsWith("1 of 1 poll: always entries are not polled")
+                            .contains("riptide.snmp.poll.max-exporters (2)"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+        assertThat(this.metrics.gauge("snmp.poller.inventoryRefused").getValue()).isEqualTo(1);
+        assertThat(this.metrics.gauge("snmp.poller.inventoryRegistered").getValue()).isEqualTo(0);
+        assertThat(this.metrics.getGauges().get("snmp.poller.exporters").getValue()).isEqualTo(2);
+    }
+
+    @Test
+    void pollAlwaysEntriesAreRegisteredAtBootWithoutARefresh() throws Exception {
+        final var snmp = new FakeSnmp();
+        serve(parse(ALWAYS_INVENTORY));
+        // the constructor's boot path only runs with the scheduler started
+        final var poller = new InterfaceSnapshotPoller(snmp, config(), this.metrics, this.serving,
+                new RecordingSink(), identity(), this.clock::get, true, () -> WALL_CLOCK_MS);
+        try {
+            assertThat(this.metrics.gauge("snmp.poller.inventoryRegistered").getValue()).isEqualTo(1);
+            assertThat(this.metrics.getGauges().get("snmp.poller.exporters").getValue()).isEqualTo(1);
+        } finally {
+            poller.stop();
+        }
+    }
+
+    @Test
+    void aCollectThatThrowsCountsAsAFailedCollectAndBacksOff() throws Exception {
+        final var snmp = new FakeSnmp();
+        snmp.throwOnCollect = true;
+        final var sink = new RecordingSink();
+        final var poller = poller(snmp, config(), sink);
+        final var endpoint = endpoint("10.0.0.12", "polling: counters");
+        poller.trackAndResolve(endpoint, 1);
+        poller.tick(this.clock.get());
+        awaitWalks(poller, snmp, 1);
+
+        assertThat(this.metrics.meter("snmp.poller.collectsFailed").getCount()).isEqualTo(1);
+        assertThat(sink.calls.get()).isEqualTo(0);
+        poller.tick(this.clock.get());
+        awaitQuiet(poller);
+        assertThat(snmp.collects.get()).as("backed off").isEqualTo(1);
+    }
+
+    @Test
+    void aSinkThatThrowsIsNotChargedToTheAgent() throws Exception {
+        final var snmp = new FakeSnmp();
+        final var config = config();
+        // a back-off far longer than the one-minute profile, so a backed-off agent is visible
+        config.setDeadEndpointBaseMs(1_800_000);
+        final MetricSink throwing = samples -> {
+            throw new IllegalStateException("queue exploded");
+        };
+        final var poller = poller(snmp, config, throwing);
+        final var endpoint = endpoint("10.0.0.13", "polling: counters");
+
+        final var logger = (Logger) LoggerFactory.getLogger(InterfaceSnapshotPoller.class);
+        final var appender = LogCapture.startedAppender();
+        logger.addAppender(appender);
+        try {
+            poller.trackAndResolve(endpoint, 1);
+            poller.tick(this.clock.get());
+            awaitWalks(poller, snmp, 1);
+
+            // not backed off: the next cycle collects on the profile's own cadence
+            advanceMs(60_000L * 2);
+            poller.trackAndResolve(endpoint, 1);
+            poller.tick(this.clock.get());
+            awaitWalks(poller, snmp, 2);
+
+            assertThat(appender.list).extracting(ILoggingEvent::getFormattedMessage)
+                    .anySatisfy(m -> assertThat(m).contains("Metric sink").contains("failed to accept"))
+                    .noneSatisfy(m -> assertThat(m).contains("failed unexpectedly"))
+                    .noneSatisfy(m -> assertThat(m).contains("did not produce a usable interface table"));
+        } finally {
+            logger.detachAppender(appender);
+        }
+        assertThat(poller.trackAndResolve(endpoint, 1)).contains(new IfInfo("eth0", "uplink", 1000L));
     }
 }

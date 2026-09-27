@@ -8,6 +8,7 @@ package org.riptide.snmp;
 import inet.ipaddr.IPAddressString;
 import org.junit.jupiter.api.Test;
 import org.riptide.inventory.AgentEntry;
+import org.riptide.inventory.CollectionName;
 import org.riptide.inventory.CredentialSet;
 import org.riptide.inventory.CredentialVersion;
 import org.riptide.inventory.InventoryLoader;
@@ -15,7 +16,10 @@ import org.riptide.inventory.InventorySnapshot;
 import org.riptide.inventory.PollingProfile;
 import org.riptide.inventory.SnmpProfilesConfig;
 import org.riptide.secrets.SecretRef;
+import org.riptide.snmp.collect.CollectionDefinitions;
 import org.snmp4j.fluent.TargetBuilder;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -69,7 +73,7 @@ class AgentEndpointFactoryTest {
     @Test
     void pollingValuesApplyAndDefaultsHoldWithoutAProfile() {
         final PollingProfile polling = new PollingProfile(
-                java.time.Duration.ofMinutes(10), java.time.Duration.ofMinutes(30), 2_000, 3);
+                java.time.Duration.ofMinutes(10), java.time.Duration.ofMinutes(30), 2_000, 3, List.of());
 
         final var withProfile = AgentEndpointFactory.endpointFor(
                 new AgentEntry("10.0.0.7", v2c(SecretRef.of("public")), polling, true, 161), ADDRESS);
@@ -171,6 +175,15 @@ class AgentEndpointFactoryTest {
         assertThat(AgentEndpointFactory.endpointFor(
                 new AgentEntry("10.0.0.7", v2c(SecretRef.of("public")), null, false, 161), ADDRESS))
                 .isEmpty();
+    }
+
+    @Test
+    void theEndpointCarriesTheProfilesDefinitions() {
+        final var profile = new PollingProfile(java.time.Duration.ofSeconds(60), java.time.Duration.ofMinutes(30),
+                500, 1, List.of(CollectionName.IF_MIB_INTERFACES));
+        final var entry = new AgentEntry("10.0.0.0/24", v2c(SecretRef.of("public")), profile, true, 161);
+        final SnmpEndpoint endpoint = AgentEndpointFactory.endpointFor(entry, ADDRESS).orElseThrow();
+        assertThat(endpoint.getCollections()).containsExactly(CollectionDefinitions.IF_MIB_INTERFACES);
     }
 
     @Test

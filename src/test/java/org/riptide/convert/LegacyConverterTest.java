@@ -1413,7 +1413,7 @@ class LegacyConverterTest {
         assertThat(agent.polling())
                 .as("every polling key carries a @DefaultValue, so a mis-spelled one binds to the"
                         + " default rather than failing and only the value can catch it")
-                .isEqualTo(new PollingProfile(Duration.ofMinutes(5), Duration.ofMinutes(15), 4000, 7));
+                .isEqualTo(new PollingProfile(Duration.ofMinutes(5), Duration.ofMinutes(15), 4000, 7, List.of()));
         assertThat(agent.polling())
                 .as("and the fixture must differ from the built-in default, or a mis-spelling"
                         + " would be indistinguishable from a correct bind")

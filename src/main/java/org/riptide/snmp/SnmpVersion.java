@@ -9,6 +9,7 @@ import org.riptide.secrets.SecretResolvers;
 import org.snmp4j.Snmp;
 import org.snmp4j.Target;
 import org.snmp4j.fluent.SnmpBuilder;
+import org.snmp4j.mp.MPv3;
 import org.snmp4j.security.SecurityProtocols;
 import org.snmp4j.smi.Address;
 import org.snmp4j.smi.OctetString;
@@ -85,7 +86,18 @@ enum SnmpVersion {
         @Override
         Target<?> getTarget(final Snmp snmp, final SnmpBuilder snmpBuilder, final SnmpEndpoint snmpEndpoint, final SecretResolvers secretResolvers) throws UnknownHostException {
             final Address targetAddress = getTargetAddress(snmpEndpoint);
-            final byte[] targetEngineID = snmp.discoverAuthoritativeEngineID(targetAddress, 1000);
+            // Discovery evicts the cached engine ID and time and blocks this thread on a synchronous
+            // request, so it runs only when the session holds no engine ID for this agent: on the
+            // first walk, and on the walk after a failed one, because forgetAfterFailedWalk evicts
+            // it. snmp4j does not relearn a changed engine ID by itself. The unknown-engine-ID
+            // report arrives at noAuthNoPriv, and MPv3 then keeps the cached value rather than
+            // overwrite it, so without the eviction a device whose engine ID changed would fail
+            // every walk on a long-lived session.
+            final MPv3 mpv3 = (MPv3) snmp.getMessageProcessingModel(MPv3.ID);
+            final OctetString cachedEngineID = mpv3.getEngineID(targetAddress);
+            final byte[] targetEngineID = cachedEngineID != null
+                    ? cachedEngineID.getValue()
+                    : snmp.discoverAuthoritativeEngineID(targetAddress, 1000);
             var userBuilder = snmpBuilder
                     .v3()
                     .target(targetAddress)
@@ -106,9 +118,22 @@ enum SnmpVersion {
                     .build();
 
         }
+
+        @Override
+        void forgetAfterFailedWalk(final Snmp snmp, final Address address) {
+            ((MPv3) snmp.getMessageProcessingModel(MPv3.ID)).removeEngineID(address);
+        }
     };
 
     abstract SnmpBuilder getSnmpBuilder() throws IOException;
+
+    /**
+     * Drops whatever {@code snmp} learned about the agent at {@code address}, so the next walk
+     * starts from scratch. Only v3 caches anything per agent.
+     */
+    void forgetAfterFailedWalk(final Snmp snmp, final Address address) {
+        // v1 and v2c keep no per-agent state on the session
+    }
 
     abstract Target<?> getTarget(Snmp snmp, SnmpBuilder snmpBuilder, SnmpEndpoint snmpEndpoint, SecretResolvers secretResolvers) throws UnknownHostException;
 

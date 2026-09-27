@@ -169,3 +169,42 @@ Collector-wide; nothing here names an exporter. `offered` always equals the sum 
 
 Both exist only while `riptide.discovery.url` or `riptide.discovery.urls` is set.
 `discovery.skipped` is summed across every endpoint in `riptide.discovery.urls`.
+
+### Remote-write sink
+
+Registered only while `riptide.metrics.remote-write.url` is set.
+Settings, the series it sends and its validation messages are on the [SNMP metrics reference](snmp-metrics.md).
+
+| Metric | Type | Meaning | Alert on |
+| --- | --- | --- | --- |
+| **`metrics.sink.queueDepth`** | gauge | Samples buffered, waiting to be sent. | approaching `riptide.metrics.remote-write.queue-capacity` |
+| **`metrics.sink.droppedSamples`** | counter | Samples offered while the queue was full, or offered while the sink had already begun stopping. | `> 0` |
+| **`metrics.sink.failedSamples`** | counter | Samples in a batch a non-2xx, non-retryable status refused, that exhausted `max-attempts` on a retryable one, that were still queued when the shutdown grace period expired, that the flusher had drained but not yet flushed when its thread was interrupted, or that were lost to an unexpected error inside the flusher. | sustained rate |
+| **`metrics.sink.sentSamples`** | counter | Samples in a batch the endpoint accepted with a 2xx status. | the base of the delivery arithmetic |
+| **`metrics.sink.batchSize`** | histogram | Samples per flushed batch. | not an alert |
+| **`metrics.sink.flush`** | timer | Time to encode and POST one batch, retries included. | not an alert |
+
+### SNMP counter collection
+
+Registered whether or not any polling profile sets `collect`, but only marked when one does: a plain interface-name walk with no `collect` set goes through a separate path and moves `snmp.walks`/`snmp.walkDuration` instead.
+
+| Metric | Type | Meaning | Alert on |
+| --- | --- | --- | --- |
+| **`snmp.collects`** | meter | Collect attempts against one endpoint's collection definition. | the base of the delivery arithmetic |
+| **`snmp.collectDuration`** | timer | Duration of one collect. | not an alert |
+| **`snmp.collects.failed`** | meter | Collects that came back with no usable table: a walk failure, timeout, or an `IOException` opening the session. | sustained rate |
+| **`snmp.poller.inventoryRegistered`** | gauge | `poll: always` entries currently registered and walked. | a drop below the count the inventory names |
+| **`snmp.poller.inventoryRefused`** | gauge | `poll: always` entries that are not polled because of `riptide.snmp.poll.max-exporters`. When the set alone exceeds the cap, this is the whole set. Otherwise it counts the entries that found the cap already filled by flow-registered exporters. `0` when every entry fits. | `> 0` |
+| **`snmp.poller.samplesEmitted`** | meter | Samples a walk handed to the metric sink. | compare against `metrics.sink.sentSamples` and `.droppedSamples` |
+| **`snmp.poller.collectsFailed`** | meter | Collects the poller itself saw fail: a returned table with no usable rows, or an unexpected exception the collect did not degrade on its own. | sustained rate |
+
+### SNMP poller concurrency
+
+Every poller walk, collecting or not, holds one permit while it is in flight.
+An agent whose last walk failed draws from the suspect budget, `riptide.snmp.poll.suspect-pool-width`; every other agent draws from `riptide.snmp.poll.pool-width`.
+
+| Metric | Type | Meaning | Alert on |
+| --- | --- | --- | --- |
+| **`snmp.poller.inFlight`** | gauge | Walks in flight for agents in good standing. | pinned at `pool-width` together with a rising `deferred` |
+| **`snmp.poller.suspectInFlight`** | gauge | Walks in flight for agents whose last walk failed. | not an alert: pinned at `suspect-pool-width` is the bulkhead doing its job |
+| **`snmp.poller.deferred`** | meter | Due walks that were still waiting for a permit when the next tick came, one mark per such walk per second. A walk that waits milliseconds for a permit is not counted. | sustained rate while `inFlight` is pinned |

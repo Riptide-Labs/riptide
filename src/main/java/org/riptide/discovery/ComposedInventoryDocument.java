@@ -12,6 +12,7 @@ import org.riptide.config.FileWatchTrigger;
 import org.riptide.config.PacedInventorySource;
 import org.riptide.inventory.InventoryDocument;
 import org.riptide.inventory.InventoryLoader;
+import org.riptide.inventory.PollMode;
 import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.Yaml;
 
@@ -234,7 +235,8 @@ public class ComposedInventoryDocument implements InventoryDocument, PacedInvent
     }
 
     private String compose(final List<ExporterRenderer.EndpointGroups> groups) {
-        final RenderedExporters rendered = ExporterRenderer.render(groups, this.config.getAddressLabels());
+        final RenderedExporters rendered = ExporterRenderer.renderEndpoints(
+                groups, this.config.getAddressLabels(), this.config.getPollAlwaysTag());
         // Only skipped is set here. discovery.targets is derived from the published inventory by
         // DiscoveryTargetsGauge, because a value set at this point describes a candidate that the
         // merge, the loader, the regression guard or a lost profile race may still reject (#807).
@@ -429,7 +431,14 @@ public class ComposedInventoryDocument implements InventoryDocument, PacedInvent
                 riptide.put("snmp", new LinkedHashMap<>(Map.of("agents", new LinkedHashMap<>())));
             }
             final Map<String, Object> exporters = new LinkedHashMap<>();
-            rendered.byName().forEach((name, address) -> exporters.put(name, Map.of("address", address)));
+            rendered.byName().forEach((name, address) -> {
+                final Map<String, Object> entry = new LinkedHashMap<>();
+                entry.put("address", address);
+                if (rendered.pollAlways().contains(name)) {
+                    entry.put("poll", PollMode.ALWAYS.key());
+                }
+                exporters.put(name, entry);
+            });
             riptide.put("exporters", exporters);
         }
         // a riptide tree the file did not write is added only to carry exporters: an empty one
