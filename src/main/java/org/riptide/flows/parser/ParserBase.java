@@ -170,6 +170,8 @@ public abstract class ParserBase implements Parser {
         });
         this.dispatchGauges.put(dispatchGaugeName("dispatchQueueCapacity"), (Gauge<Integer>) () -> capacity);
         this.dispatchGauges.put(dispatchGaugeName("dispatchPoolSize"), (Gauge<Integer>) pool::getMaximumPoolSize);
+        // getActiveCount() is approximate by contract, and counts a just-prestarted worker as active
+        // until its thread reaches the run loop; it over-reads for a moment after start, never after.
         this.dispatchGauges.put(dispatchGaugeName("dispatchActiveWorkers"), (Gauge<Integer>) pool::getActiveCount);
         this.dispatchGauges.forEach((gauge, metric) -> {
             this.metricRegistry.remove(gauge);

@@ -285,7 +285,15 @@ class ParserDispatchTest {
         assertThat(entered.await(10, TimeUnit.SECONDS)).as("both workers must hold a packet").isTrue();
 
         try {
-            // two of four workers are parked inside the dispatcher; the other two are idle
+            // Two of four workers are parked inside the dispatcher and the other two are idle.
+            // Polled, not read once: getActiveCount() counts a prestarted worker whose thread has
+            // not reached its run loop yet, so on a slow host an idle worker can briefly read as
+            // active. The reading settles at 2; a gauge reading the wrong source never does.
+            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (!Integer.valueOf(2).equals(gauge(registry, "udp", "dispatchActiveWorkers"))
+                    && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
             assertThat(gauge(registry, "udp", "dispatchActiveWorkers")).isEqualTo(2);
         } finally {
             gate.countDown();
