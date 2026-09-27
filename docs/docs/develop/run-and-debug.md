@@ -17,27 +17,31 @@ description: Start ClickHouse and Grafana from the shipped stack, run riptide fr
 
 ## Steps
 
-1. Start ClickHouse and Grafana:
+1. Start ClickHouse, Grafana and Prometheus, with Prometheus pointed at the riptide you are about to run on the host:
 
    ```bash
-   docker compose -f deployment/clickhouse/compose.yml up -d
+   PROMETHEUS_TARGETS=./container-fs/prometheus/targets-host docker compose -f deployment/clickhouse/compose.yml up -d
    ```
 
    Expected output on the first start:
 
    ```text
     Network clickhouse_default Created
-    Container clickhouse-clickhouse-1 Created
-    Container clickhouse-grafana-1 Created
-    Container clickhouse-clickhouse-1 Started
+    Volume clickhouse_prometheus-data Created
+    Volume clickhouse_clickhouse-data Created
+    Volume clickhouse_gf-data Created
+    Container clickhouse-prometheus-1 Started
     Container clickhouse-clickhouse-1 Healthy
-    Container clickhouse-grafana-1 Started
+    Container clickhouse-grafana-1 Healthy
+    Container clickhouse-grafana-folders-1 Started
    ```
 
    ClickHouse is published on `127.0.0.1:8123`, which riptide's default endpoint `http://localhost:8123` reaches, as user `default` with password `riptide`.
    Grafana is at `http://localhost:3000`, user `admin`, password `admin`, and its port is published on every interface.
    Set **`CLICKHOUSE_PASSWORD`** or **`GF_SECURITY_ADMIN_PASSWORD`** in the environment before `up` to change either.
-   This is the ClickHouse and Grafana half of the [shipped stack](../guides/docker-compose.md#what-the-stack-runs), without the riptide container.
+   Prometheus is at `http://127.0.0.1:9090` and scrapes `host.docker.internal:8080`, the management port of the riptide started in the next step.
+   Without `PROMETHEUS_TARGETS` it scrapes `riptide:8080`, which only exists in the full stack, and `RiptideDown` fires.
+   This is the [shipped stack](../guides/docker-compose.md#what-the-stack-runs) without the riptide container.
 
 2. Start riptide with one receiver.
    From the IDE, run `org.riptide.RiptideApplication` with the arguments below as program arguments.

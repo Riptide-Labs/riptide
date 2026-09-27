@@ -98,6 +98,7 @@ The riptide image follows `:latest`, so `docker compose pull` moves the collecto
 | --- | --- | --- | --- |
 | **`CLICKHOUSE_PASSWORD`** | ClickHouse, riptide (as `env://CLICKHOUSE_PASSWORD`), Grafana's datasource | `riptide` | On `docker compose up -d`, all three follow. Anything else that connected with the old password needs the new one. |
 | **`GF_SECURITY_ADMIN_PASSWORD`** | Grafana, only when it initialises its database | `admin` | First start only. To change it later, remove the `gf-data` volume, or change it in Grafana. |
+| **`PROMETHEUS_TARGETS`** | Prometheus, the directory of scrape targets | `./container-fs/prometheus/targets`, the `riptide` service | On `docker compose up -d`. Set `./container-fs/prometheus/targets-host` for a riptide running on the host instead. |
 
 Volumes `clickhouse-data`, `gf-data` and `prometheus-data` hold the flows, Grafana's state and riptide's own metrics.
 `docker compose down` keeps them; `docker compose down -v` deletes them.

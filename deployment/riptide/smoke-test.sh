@@ -6,10 +6,11 @@
 # by hand, which nothing else in CI covers:
 #   - users.xml's from_env password merges over the entrypoint's generated
 #     default-user.xml, and default keeps access_management
-#   - ClickHouse's published ports are bound to loopback only (#651)
+#   - ClickHouse's and Prometheus's published ports are bound to loopback only (#651)
 #   - an unauthenticated request is refused and a credentialled one is served
 #   - riptide provisions its schema through the env:// SecretRef indirection
-#   - Grafana's provisioned datasource reports healthy
+#   - Grafana's provisioned ClickHouse and Prometheus datasources report healthy
+#   - Prometheus scrapes riptide as job="riptide" and loads the 9 alert rules (#908)
 #   - the nine dashboards sit in Flow Analytics under Riptide, none in General (#864)
 #
 # It gates the compose wiring, not riptide's own code: the stack runs the

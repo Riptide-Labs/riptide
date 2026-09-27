@@ -369,6 +369,7 @@ PROMETHEUS_RULES := deployment/clickhouse/container-fs/prometheus
 
 .PHONY: alerts-test
 alerts-test: deps-oci
+	@test -n "$(PROMETHEUS_IMAGE)" || { echo "alerts-test: could not read the prom/prometheus image pin from deployment/clickhouse/compose.yml" >&2; exit 2; }
 	docker run --rm -v "$(CURDIR)/$(PROMETHEUS_RULES):/rules:ro" -w /rules --entrypoint promtool "$(PROMETHEUS_IMAGE)" check rules riptide-alerts.yml
 	docker run --rm -v "$(CURDIR)/$(PROMETHEUS_RULES):/rules:ro" -w /rules --entrypoint promtool "$(PROMETHEUS_IMAGE)" test rules riptide-alerts.test.yml
 

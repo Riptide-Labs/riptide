@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Scrapes riptide's /metrics and evaluates its alert rules (#908). The target
-# list is a file of its own so a riptide running outside this stack is one file
-# to swap, not a config edit; see the monitoring guide. No Alertmanager ships:
-# alerts show here and in Grafana.
+# list is a directory of its own, chosen by PROMETHEUS_TARGETS in compose.yml,
+# so a riptide running on the host is one variable, not a config edit. No
+# Alertmanager ships: alerts show here and in Grafana.
 ---
 global:
   scrape_interval: 15s

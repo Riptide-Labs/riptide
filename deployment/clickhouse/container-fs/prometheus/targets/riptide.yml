@@ -1,9 +1,9 @@
 # Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# The riptide service of deployment/riptide/compose.yml. For a riptide running on
-# the host, mount a file naming host.docker.internal:8080 over this directory
-# instead; the monitoring guide shows the override.
+# The riptide service of deployment/riptide/compose.yml, the default. For a
+# riptide running on the host, start the stack with
+# PROMETHEUS_TARGETS=./container-fs/prometheus/targets-host instead.
 ---
 - targets:
     - riptide:8080

@@ -80,7 +80,14 @@ services:
       - prometheus-data:/prometheus
       - ./container-fs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./container-fs/prometheus/riptide-alerts.yml:/etc/prometheus/riptide-alerts.yml:ro
-      - ./container-fs/prometheus/targets:/etc/prometheus/targets:ro
+      # targets/ names the riptide service of deployment/riptide/compose.yml. A riptide
+      # on the host (the developer setup, or the jar beside this stack) is
+      # PROMETHEUS_TARGETS=./container-fs/prometheus/targets-host; otherwise
+      # RiptideDown fires for a target that can never resolve.
+      - ${PROMETHEUS_TARGETS:-./container-fs/prometheus/targets}:/etc/prometheus/targets:ro
+    # host.docker.internal is built in on Docker Desktop and OrbStack, not on Linux.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: wget --no-verbose --tries=1 --spider http://localhost:9090/-/ready
       interval: 2s
