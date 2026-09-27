@@ -264,6 +264,43 @@ class ParserDispatchTest {
     }
 
     @Test
+    void capacityAndPoolSizeAreReportedBesideTheDepth() {
+        final var registry = new MetricRegistry();
+        start(new StubParser("udp", registry, true, (source, flows) -> { }), 4, 1024);
+
+        assertThat(gauge(registry, "udp", "dispatchQueueCapacity")).isEqualTo(1024);
+        assertThat(gauge(registry, "udp", "dispatchPoolSize")).isEqualTo(4);
+        assertThat(gauge(registry, "udp", "dispatchQueueDepth")).isEqualTo(0);
+    }
+
+    @Test
+    void activeWorkersCountTasksInsideTheDispatcher() throws Exception {
+        final var registry = new MetricRegistry();
+        final var gate = new CountDownLatch(1);
+        final var entered = new CountDownLatch(2);
+        final var parser = start(new StubParser("udp", registry, true, gated(entered, gate, new AtomicInteger())), 4, 16);
+
+        parser.dispatch();
+        parser.dispatch();
+        assertThat(entered.await(10, TimeUnit.SECONDS)).as("both workers must hold a packet").isTrue();
+
+        try {
+            // Two of four workers are parked inside the dispatcher and the other two are idle.
+            // Polled, not read once: getActiveCount() counts a prestarted worker whose thread has
+            // not reached its run loop yet, so on a slow host an idle worker can briefly read as
+            // active. The reading settles at 2; a gauge reading the wrong source never does.
+            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (!Integer.valueOf(2).equals(gauge(registry, "udp", "dispatchActiveWorkers"))
+                    && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
+            assertThat(gauge(registry, "udp", "dispatchActiveWorkers")).isEqualTo(2);
+        } finally {
+            gate.countDown();
+        }
+    }
+
+    @Test
     void sizingIsFixedOnceStarted() {
         final var parser = start(new StubParser("fixed", new MetricRegistry(), true, (s2, f2) -> { }), 2, 8);
         assertThat(parser.getQueueCapacity()).isEqualTo(8);
@@ -419,6 +456,12 @@ class ParserDispatchTest {
         final var c = r.getCounters().get(MetricRegistry.name("parsers", parser, name));
         assertThat(c).as("counter parsers.%s.%s", parser, name).isNotNull();
         return c.getCount();
+    }
+
+    private static Object gauge(final MetricRegistry r, final String parser, final String name) {
+        final var g = r.getGauges().get(MetricRegistry.name("parsers", parser, name));
+        assertThat(g).as("gauge parsers.%s.%s", parser, name).isNotNull();
+        return g.getValue();
     }
 
     private static long meter(final MetricRegistry r, final String parser, final String name) {

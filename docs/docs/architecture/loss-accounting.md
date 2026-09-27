@@ -140,7 +140,7 @@ Two gauges describe what a UDP parser is holding, and until 0.7.0 `sessionCount`
 | `parsers.<name>.sessionCount` | exporters: one per `(session, observation domain)` pair |
 | `parsers.<name>.templateCount` | templates held across all exporters |
 
-These two and `dispatchQueueDepth` are registered while the parser runs and deregistered when it stops, so a stopped receiver publishes no series at all rather than a final or zero reading.
+These two and the dispatch gauges (`dispatchQueueDepth`, `dispatchQueueCapacity`, `dispatchPoolSize`, `dispatchActiveWorkers`) are registered while the parser runs and deregistered when it stops, so a stopped receiver publishes no series at all rather than a final or zero reading.
 Alert on absence, not on a value: a rule like `parsers_<name>_sessionCount == 0` goes stale instead of firing.
 A stopped parser used to report its last counts forever while a stopped dispatch queue read `0`, which is indistinguishable from healthy.
 

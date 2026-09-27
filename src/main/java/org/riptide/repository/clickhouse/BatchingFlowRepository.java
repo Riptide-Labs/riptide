@@ -88,6 +88,7 @@ public class BatchingFlowRepository implements FlowRepository {
 
     private final MetricRegistry metricRegistry;
     private final String queueDepthGauge;
+    private final String queueCapacityGauge;
     private final Counter droppedRows;
     private final Counter failedRows;
 
@@ -132,10 +133,16 @@ public class BatchingFlowRepository implements FlowRepository {
         this.flushTimer = metricRegistry.timer(MetricRegistry.name("persister", "batch", "flush"));
 
         this.queueDepthGauge = MetricRegistry.name("persister", "batch", "queueDepth");
+        this.queueCapacityGauge = MetricRegistry.name("persister", "batch", "queueCapacity");
         // Replace, don't keep: a stale gauge left by a previous instance would keep reading that
         // instance's dead queue — worse than no gauge at all. stop() unregisters it again.
         metricRegistry.remove(this.queueDepthGauge);
         metricRegistry.register(this.queueDepthGauge, (Gauge<Integer>) this.queue::size);
+        // Beside the depth, so fill is a ratio of two scraped series rather than of a limit
+        // hard-coded in a rule. Same lifecycle as queueDepth.
+        final int capacity = config.getQueueCapacity();
+        metricRegistry.remove(this.queueCapacityGauge);
+        metricRegistry.register(this.queueCapacityGauge, (Gauge<Integer>) () -> capacity);
     }
 
     @Override
@@ -398,8 +405,9 @@ public class BatchingFlowRepository implements FlowRepository {
             log.warn("Dropping {} flows offered after the shutdown drain", residue.size());
         }
 
-        // Unregister the gauge: left behind, it would read this dead instance's queue forever.
+        // Unregister the gauges: left behind, they would describe this dead instance's queue forever.
         this.metricRegistry.remove(this.queueDepthGauge);
+        this.metricRegistry.remove(this.queueCapacityGauge);
     }
 
     /**
