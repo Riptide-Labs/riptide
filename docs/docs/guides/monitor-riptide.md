@@ -14,7 +14,7 @@ The steps below are for your own Prometheus.
 
 ## Prerequisites
 
-- Prometheus 2.x or 3.x. Everything on this page was verified on Prometheus 3.15.0.
+- Prometheus 3.x. Everything on this page was verified on Prometheus 3.15.0; 2.x is (unverified).
 - Network access from Prometheus to riptide's management port, **`8080`** by default (**`riptide.management.port`**).
 - `jq` for the verify step.
 
@@ -36,8 +36,10 @@ The steps below are for your own Prometheus.
 
 2. Download **`riptide-alerts.yml`** for the riptide version you run into the directory of **`prometheus.yml`**, and load it:
 
+   Set **`V`** to the riptide version you run, without the leading `v`:
+
    ```bash
-   V=0.17.0  # (unverified): the first release that ships the file
+   V=<version>
    curl -fsSLO "https://raw.githubusercontent.com/Riptide-Labs/riptide/v$V/deployment/clickhouse/container-fs/prometheus/riptide-alerts.yml"
    ```
 
@@ -87,8 +89,8 @@ After one scrape interval:
 
 ```bash
 PROM=http://127.0.0.1:9090
-curl -s "$PROM/api/v1/targets?state=active" | jq -r '.data.activeTargets[] | "\(.labels.job) \(.labels.collector) \(.health)"'
-curl -s "$PROM/api/v1/rules?type=alert" | jq '[.data.groups[].rules[]] | length'
+curl -s "$PROM/api/v1/targets?state=active" | jq -r '.data.activeTargets[] | select(.labels.job == "riptide") | "\(.labels.job) \(.labels.collector) \(.health)"'
+curl -s "$PROM/api/v1/rules?type=alert" | jq '[.data.groups[] | select(.name == "riptide-alerts") | .rules[]] | length'
 ```
 
 Expected output:
@@ -100,4 +102,5 @@ riptide collector-1 up
 
 ## Open questions
 
-- Step 2 downloads the rules from a release tag. No release contains the file yet, so the URL is (unverified) until the first release after this page.
+- Step 2 downloads the rules from a release tag. No release contains the file yet, so the URL is (unverified) until the first release that ships it.
+- Prometheus 2.x is (unverified): the rules use no 3.x-only feature, but nothing on this page ran against 2.x.

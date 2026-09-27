@@ -10,7 +10,8 @@ Each section is the runbook an alert's `runbook_url` opens.
 To set up the scrape, the rules and the dashboards, see [Monitor riptide with Prometheus](../guides/monitor-riptide.md).
 
 Every check runs against the Prometheus that loads **`riptide-alerts.yml`**; set **`PROM`** to its address.
-The checks read the recording rules `riptide:*`, which carry a `stage` and a `component` label.
+The checks read the recording rules `riptide:*`, which carry a `stage` and a `component` label, and print each collector by its `collector` label, or by its scrape address where the target has none.
+The healthy outputs were captured on macOS, which has no per-socket kernel counters: on Linux every listener adds a `listener <name>` line to the loss check.
 **Riptide - Health** shows the same signals on one screen, and **Riptide - Stage detail** shows one stage against the JVM.
 
 | Alert | Severity | Fires when | Threshold |
@@ -37,13 +38,13 @@ Nothing on that instance is being counted, and flows sent to it may not be store
 ```bash
 PROM=http://127.0.0.1:9090
 curl -s "$PROM/api/v1/targets?state=active" \
-  | jq -r '.data.activeTargets[] | select(.labels.job == "riptide") | "\(.labels.instance) \(.health)"'
+  | jq -r '.data.activeTargets[] | select(.labels.job == "riptide") | "\(.labels.collector // .labels.instance) \(.labels.instance) \(.health)"'
 ```
 
-Healthy output, from the compose stack with one riptide running on the host:
+Healthy output, captured from the compose stack with one riptide, collector `riptide-on-host`, running on a macOS host:
 
 ```text
-host.docker.internal:8080 up
+riptide-on-host host.docker.internal:8080 up
 ```
 
 ### Diagnose
@@ -65,20 +66,20 @@ For `batch-writer`/`failedRows` the count includes rows kept in `flows_dead_lett
 
 ```bash
 PROM=http://127.0.0.1:9090
-curl -s "$PROM/api/v1/query" --data-urlencode 'query=sum by (stage, component) (increase(riptide:lost_total[5m]))' \
-  | jq -r '.data.result[] | "\(.metric.stage) \(.metric.component) \(.value[1] | tonumber * 1000 | round / 1000)"'
+curl -s "$PROM/api/v1/query" --data-urlencode 'query=sum by (collector, instance, stage, component) (increase(riptide:lost_total[5m]))' \
+  | jq -r '.data.result[] | "\(.metric.collector // .metric.instance) \(.metric.stage) \(.metric.component) \(.value[1] | tonumber * 1000 | round / 1000)"'
 ```
 
-Healthy output, from the compose stack with one riptide running on the host:
+Healthy output, captured from the compose stack with one riptide, collector `riptide-on-host`, running on a macOS host:
 
 ```text
-parser-dispatch flows:ipfix 0
-parser-dispatch flows:netflow5 0
-parser-dispatch flows:netflow9 0
-parser-dispatch flows:sflow 0
-pipeline dispatchErrors 0
-batch-writer droppedRows 0
-batch-writer failedRows 0
+riptide-on-host parser-dispatch flows:ipfix 0
+riptide-on-host parser-dispatch flows:netflow5 0
+riptide-on-host parser-dispatch flows:netflow9 0
+riptide-on-host parser-dispatch flows:sflow 0
+riptide-on-host pipeline dispatchErrors 0
+riptide-on-host batch-writer droppedRows 0
+riptide-on-host batch-writer failedRows 0
 ```
 
 Any value above 0 names a stage that counted flows it could not store in the last 5 minutes.
@@ -102,17 +103,17 @@ A bounded queue has held over 80% of its capacity for 10 minutes; at 100% it dro
 ```bash
 PROM=http://127.0.0.1:9090
 curl -s "$PROM/api/v1/query" --data-urlencode 'query=riptide:queue_depth / riptide:queue_capacity' \
-  | jq -r '.data.result[] | "\(.metric.stage) \(.metric.component) \(.value[1] | tonumber * 1000 | round / 1000)"'
+  | jq -r '.data.result[] | "\(.metric.collector // .metric.instance) \(.metric.stage) \(.metric.component) \(.value[1] | tonumber * 1000 | round / 1000)"'
 ```
 
-Healthy output, from the compose stack with one riptide running on the host:
+Healthy output, captured from the compose stack with one riptide, collector `riptide-on-host`, running on a macOS host:
 
 ```text
-batch-writer queue 0
-parser-dispatch flows:ipfix 0
-parser-dispatch flows:netflow5 0
-parser-dispatch flows:netflow9 0
-parser-dispatch flows:sflow 0
+riptide-on-host batch-writer queue 0
+riptide-on-host parser-dispatch flows:ipfix 0
+riptide-on-host parser-dispatch flows:netflow5 0
+riptide-on-host parser-dispatch flows:netflow9 0
+riptide-on-host parser-dispatch flows:sflow 0
 ```
 
 ### Diagnose
@@ -133,21 +134,22 @@ A single-threaded worker has been busy over 80% of the time for 15 minutes; at 1
 ```bash
 PROM=http://127.0.0.1:9090
 curl -s "$PROM/api/v1/query" --data-urlencode 'query=rate(riptide:busy_seconds_total[5m])' \
-  | jq -r '.data.result[] | "\(.metric.stage) \(.metric.component) \(.value[1] | tonumber * 1000 | round / 1000)"'
+  | jq -r '.data.result[] | "\(.metric.collector // .metric.instance) \(.metric.stage) \(.metric.component) \(.value[1] | tonumber * 1000 | round / 1000)"'
 ```
 
-Healthy output, from the compose stack with one riptide running on the host:
+Healthy output, captured from the compose stack with one riptide, collector `riptide-on-host`, running on a macOS host:
 
 ```text
-batch-writer flusher 0.018
-listener flows 0.003
+riptide-on-host batch-writer flusher 0.026
+riptide-on-host listener flows 0.005
 ```
 
 ### Diagnose
 
 | Finding | Likely cause | Fix |
 | --- | --- | --- |
-| `batch-writer flusher` above 0.8 | ClickHouse inserts take most of the flusher's time | Open **Riptide - Stage detail** for `batch-writer`: a rising insert p99 points at ClickHouse; flat insert time means more batches, so raise **`riptide.clickhouse.batch.max-rows`** for fewer, larger inserts |
+| `batch-writer flusher` above 0.8, insert p99 rising | ClickHouse is slowing down | Open **Riptide - Stage detail** for `batch-writer` and fix ClickHouse; riptide settings will not help |
+| `batch-writer flusher` above 0.8, insert time flat | the flusher issues many small inserts | Raise **`riptide.clickhouse.batch.max-rows`** for fewer, larger inserts, with two limits: a batch only grows past `max-rows` when rows arrive faster than `max-rows` per **`riptide.clickhouse.batch.max-latency`**, and **`riptide.clickhouse.batch.queue-capacity`** must stay several batches deep, or rows drop while an insert runs |
 | `listener <name>` above 0.8 | one read loop parses everything that arrives on that port | Split exporters across more receivers on separate ports, or give riptide faster cores; the figure leaves out socket reads, so the real share is a little higher |
 
 ## RiptideHeapPressure {/* #riptideheappressure */}
@@ -160,13 +162,13 @@ Sustained, this ends in long GC pauses or an `OutOfMemoryError`.
 ```bash
 PROM=http://127.0.0.1:9090
 curl -s "$PROM/api/v1/query" --data-urlencode 'query=jvm_heap_used{job="riptide"} / jvm_heap_max{job="riptide"}' \
-  | jq -r '.data.result[] | "\(.metric.instance) \(.value[1] | tonumber * 1000 | round / 1000)"'
+  | jq -r '.data.result[] | "\(.metric.collector // .metric.instance) \(.value[1] | tonumber * 1000 | round / 1000)"'
 ```
 
-Healthy output, from the compose stack with one riptide running on the host:
+Healthy output, captured from the compose stack with one riptide, collector `riptide-on-host`, running on a macOS host:
 
 ```text
-host.docker.internal:8080 0.009
+riptide-on-host 0.004
 ```
 
 ### Diagnose
@@ -174,7 +176,7 @@ host.docker.internal:8080 0.009
 | Finding | Likely cause | Fix |
 | --- | --- | --- |
 | Above 0.9 and [RiptideGcPressure](#riptidegcpressure) fires too | the heap is too small for the load | Raise `-Xmx` in **`JAVA_OPTS`** (**`/etc/riptide/riptide.env`** for a package) and restart |
-| Above 0.9 while GC time is low | the heap is full of live data between collections, normal for a large heap under steady load | Watch GC time; act only if it rises |
+| Above 0.9 while GC time is low | used heap includes garbage not collected yet, and collections are reclaiming it cheaply | Watch GC time; act only when it rises |
 
 ## RiptideGcPressure {/* #riptidegcpressure */}
 
@@ -186,13 +188,13 @@ Every stage stops with it, so this shows up as saturation everywhere at once.
 ```bash
 PROM=http://127.0.0.1:9090
 curl -s "$PROM/api/v1/query" --data-urlencode 'query=rate(jvm_gc_seconds{job="riptide"}[5m])' \
-  | jq -r '.data.result[] | "\(.metric.instance) \(.value[1] | tonumber * 1000 | round / 1000)"'
+  | jq -r '.data.result[] | "\(.metric.collector // .metric.instance) \(.value[1] | tonumber * 1000 | round / 1000)"'
 ```
 
-Healthy output, from the compose stack with one riptide running on the host:
+Healthy output, captured from the compose stack with one riptide, collector `riptide-on-host`, running on a macOS host:
 
 ```text
-host.docker.internal:8080 0.001
+riptide-on-host 0.001
 ```
 
 ### Diagnose
@@ -212,13 +214,13 @@ The available cores honour a container's CPU limit.
 ```bash
 PROM=http://127.0.0.1:9090
 curl -s "$PROM/api/v1/query" --data-urlencode 'query=rate(jvm_cpu_processSeconds{job="riptide"}[5m]) / jvm_cpu_availableProcessors{job="riptide"}' \
-  | jq -r '.data.result[] | "\(.metric.instance) \(.value[1] | tonumber * 1000 | round / 1000)"'
+  | jq -r '.data.result[] | "\(.metric.collector // .metric.instance) \(.value[1] | tonumber * 1000 | round / 1000)"'
 ```
 
-Healthy output, from the compose stack with one riptide running on the host:
+Healthy output, captured from the compose stack with one riptide, collector `riptide-on-host`, running on a macOS host:
 
 ```text
-host.docker.internal:8080 0.006
+riptide-on-host 0.004
 ```
 
 ### Diagnose
@@ -238,13 +240,13 @@ At the limit riptide cannot open sockets or files.
 ```bash
 PROM=http://127.0.0.1:9090
 curl -s "$PROM/api/v1/query" --data-urlencode 'query=process_openFds{job="riptide"} / process_maxFds{job="riptide"}' \
-  | jq -r '.data.result[] | "\(.metric.instance) \(.value[1] | tonumber * 1000 | round / 1000)"'
+  | jq -r '.data.result[] | "\(.metric.collector // .metric.instance) \(.value[1] | tonumber * 1000 | round / 1000)"'
 ```
 
-Healthy output, from the compose stack with one riptide running on the host:
+Healthy output, captured from the compose stack with one riptide, collector `riptide-on-host`, running on a macOS host:
 
 ```text
-host.docker.internal:8080 0
+riptide-on-host 0
 ```
 
 ### Diagnose
@@ -264,15 +266,15 @@ The previous version keeps serving, so nothing is lost, but the change you made 
 ```bash
 PROM=http://127.0.0.1:9090
 curl -s "$PROM/api/v1/query" --data-urlencode 'query=increase(riptide:reload_failures_total[15m])' \
-  | jq -r '.data.result[] | "\(.metric.component) \(.value[1] | tonumber | round)"'
+  | jq -r '.data.result[] | "\(.metric.collector // .metric.instance) \(.metric.component) \(.value[1] | tonumber | round)"'
 ```
 
-Healthy output, from the compose stack with one riptide running on the host:
+Healthy output, captured from the compose stack with one riptide, collector `riptide-on-host`, running on a macOS host:
 
 ```text
-classification 0
-config 0
-inventory 0
+riptide-on-host classification 0
+riptide-on-host config 0
+riptide-on-host inventory 0
 ```
 
 A `0` for every component is healthy.
