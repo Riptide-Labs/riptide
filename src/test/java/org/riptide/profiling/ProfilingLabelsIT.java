@@ -141,10 +141,13 @@ class ProfilingLabelsIT {
                 "{service_name=\"" + SERVICE + "\", stage=\"\"}");
         System.out.println("ProfilingLabelsIT stage=\"\" frames: " + outside.size()
                 + ", flush among them: " + outside.stream().anyMatch(f -> f.endsWith("BatchingFlowRepository.flush")));
+        // Only frames that run wholly inside a scope: the read handler's scope opens inside
+        // AccountingHandler.channelRead, so a sample in that method's own code before enter() or
+        // after close() is rightly unlabelled with it on the stack (CI on Linux sampled one).
         assertThat(outside).as("stage=\"\" selects the unlabelled samples, outside the pipeline")
                 .isNotEmpty()
                 .noneMatch(f -> f.endsWith("BatchingFlowRepository.flush"))
-                .noneMatch(f -> f.contains("UdpListener$AccountingHandler.channelRead"));
+                .noneMatch(f -> f.endsWith("UdpListener$SingleDatagramPacketParserHandler.channelRead0"));
     }
 
     /** NetFlow v5 with 30 records per datagram, as fast as one thread sends for {@code duration}. */
