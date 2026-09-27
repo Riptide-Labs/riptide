@@ -12,7 +12,7 @@ To set up the scrape, the rules and the dashboards, see [Monitor riptide with Pr
 Every check runs against the Prometheus that loads **`riptide-alerts.yml`**; set **`PROM`** to its address.
 The checks read the recording rules `riptide:*`, which carry a `stage` and a `component` label, and print each collector by its `collector` label, or by its scrape address where the target has none.
 The healthy outputs were captured on macOS, which has no per-socket kernel counters: on Linux every listener adds a `listener <name>` line to the loss check.
-**Riptide - Health** shows the same signals on one screen, and **Riptide - Stage detail** shows one stage against the JVM.
+**Riptide - Health** shows the same signals on one screen, and **Riptide - Pipeline Diagnostics** shows one stage against the JVM.
 
 | Alert | Severity | Fires when | Threshold |
 | --- | --- | --- | --- |
@@ -90,7 +90,7 @@ Any value above 0 names a stage that counted flows it could not store in the las
 | Finding | Likely cause | Fix |
 | --- | --- | --- |
 | `listener <name>` | the kernel dropped datagrams because the socket receive buffer was full | Raise **`net.core.rmem_max`** for more burst room; if [RiptideWorkerSaturated](#riptideworkersaturated) fires for the same listener, the read loop is the limit, so split exporters across more receivers |
-| `parser-dispatch <name>` | the dispatch queue was full: enrichment or persistence fell behind | Open **Riptide - Stage detail** for `parser-dispatch`; if the batch writer is saturated too, fix that first, otherwise give riptide more cores, since it runs one dispatch worker per core |
+| `parser-dispatch <name>` | the dispatch queue was full: enrichment or persistence fell behind | Open **Riptide - Pipeline Diagnostics** for `parser-dispatch`; if the batch writer is saturated too, fix that first, otherwise give riptide more cores, since it runs one dispatch worker per core |
 | `pipeline dispatchErrors` | enrichment or persistence threw | Search the log for the WARN lines around the start of the loss |
 | `batch-writer droppedRows` | the batch writer queue was full | The flusher is the limit: see [RiptideWorkerSaturated](#riptideworkersaturated) |
 | `batch-writer failedRows` | ClickHouse refused or did not answer inserts | Compare with `persister_batch_deadLetteredRows`: rows kept there are recoverable, see [Inspect and replay dead letters](dead-letters.md); then fix ClickHouse, whose own logs name the refusal |
@@ -155,7 +155,7 @@ riptide-on-host listener flows 0.005
 
 | Finding | Likely cause | Fix |
 | --- | --- | --- |
-| `batch-writer flusher` above 0.8, insert p99 rising | ClickHouse is slowing down | Open **Riptide - Stage detail** for `batch-writer` and fix ClickHouse; riptide settings will not help |
+| `batch-writer flusher` above 0.8, insert p99 rising | ClickHouse is slowing down | Open **Riptide - Pipeline Diagnostics** for `batch-writer` and fix ClickHouse; riptide settings will not help |
 | `batch-writer flusher` above 0.8, insert time flat | the flusher issues many small inserts | Raise **`riptide.clickhouse.batch.max-rows`** for fewer, larger inserts, with two limits: a batch only grows past `max-rows` when rows arrive faster than `max-rows` per **`riptide.clickhouse.batch.max-latency`**, and **`riptide.clickhouse.batch.queue-capacity`** must stay several batches deep, or rows drop while an insert runs |
 | `listener <name>` above 0.8, dispatch queue full | the read loop waits for room in the dispatch queue, which counts as busy | Fix the stage behind it first; see [RiptideDataLoss](#riptidedataloss) on how overload spreads back |
 | `listener <name>` above 0.8, dispatch queue empty | one read loop parses everything that arrives on that port | Split exporters across more receivers on separate ports, or give riptide faster cores; the figure leaves out socket reads, so the real share is a little higher |

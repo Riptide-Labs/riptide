@@ -81,7 +81,7 @@ The steps below are for your own Prometheus.
 
 5. Reload Prometheus: restart it, send it `SIGHUP`, or `curl -X POST http://<prometheus>:9090/-/reload` when it runs with `--web.enable-lifecycle`.
 
-6. Add the **Riptide - Health** and **Riptide - Stage detail** dashboards with the rest of the set, as [Grafana dashboards](grafana-dashboards.md) describes, and point their **Prometheus** variable at this Prometheus.
+6. Add the **Riptide - Health** and **Riptide - Pipeline Diagnostics** dashboards with the rest of the set, as [Grafana dashboards](grafana-dashboards.md) describes, and point their **Prometheus** variable at this Prometheus.
 
 ## Verify
 
