@@ -330,6 +330,13 @@
         {
           "id": "renameByRegex",
           "options": {
+            "regex": "^cpu (.+)$",
+            "renamePattern": "$1"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
             "regex": "^cpu$",
             "renamePattern": "outside the pipeline"
           }
@@ -424,6 +431,13 @@
         {
           "id": "renameByRegex",
           "options": {
+            "regex": "^alloc_in_new_tlab_bytes (.+)$",
+            "renamePattern": "$1"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
             "regex": "^alloc_in_new_tlab_bytes$",
             "renamePattern": "outside the pipeline"
           }
@@ -515,6 +529,13 @@
         }
       },
       "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "^delay (.+)$",
+            "renamePattern": "$1"
+          }
+        },
         {
           "id": "renameByRegex",
           "options": {
@@ -755,8 +776,8 @@
             "uid": "${prometheus}"
           },
           "refId": "A",
-          "expr": "label_replace(rate(jvm_gc_seconds{job=\"riptide\", collector=~\"$collector\"}[5m]), \"collector\", \"$1\", \"instance\", \"(.+)\") or rate(jvm_gc_seconds{job=\"riptide\", collector=~\"$collector\", collector!=\"\"}[5m])",
-          "legendFormat": "{{collector}}",
+          "expr": "label_replace(label_replace(rate(jvm_gc_seconds{job=\"riptide\", collector=~\"$collector\"}[5m]), \"name\", \"$1\", \"instance\", \"(.+)\"), \"name\", \"$1\", \"collector\", \"(.+)\")",
+          "legendFormat": "{{name}}",
           "range": true,
           "instant": false
         }
