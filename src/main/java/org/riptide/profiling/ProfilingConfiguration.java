@@ -7,6 +7,7 @@ package org.riptide.profiling;
 
 import io.pyroscope.javaagent.PyroscopeAgent;
 import io.pyroscope.javaagent.config.Config;
+import io.pyroscope.javaagent.impl.DefaultConfigurationProvider;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.riptide.config.DaemonConfig;
@@ -14,8 +15,15 @@ import org.riptide.pipeline.Identity;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Properties;
 import java.util.function.Predicate;
 
 /**
@@ -104,13 +112,49 @@ public class ProfilingConfiguration {
     }
 
     /**
-     * Whether the agent will find {@code name} set: in the environment, or as the system property the
-     * agent derives from it ({@code PYROSCOPE_PROFILER_ALLOC} to {@code pyroscope.profiler.alloc}).
-     * Checking only the environment would let a riptide default override an operator's system property.
+     * Whether the agent will find {@code name} set, in any of the sources it reads, in its own order:
+     * system properties, the environment, then its properties file. The agent looks a name up both as
+     * given and in dotted lower case ({@code PYROSCOPE_PROFILER_ALLOC}, {@code pyroscope.profiler.alloc}).
+     *
+     * <p>Riptide checks presence itself because the agent cannot answer it: its provider returns an empty
+     * string for an absent name and for one set to empty alike, and empty is how an operator turns a profile
+     * off. Checking fewer sources than the agent reads lets a riptide default override an operator's setting.
      */
     static boolean agentSettingPresent(final String name) {
-        return System.getenv().containsKey(name)
-                || System.getProperties().containsKey(name.toLowerCase(java.util.Locale.ROOT).replace('_', '.'));
+        return presentIn(System.getProperties(), name)
+                || System.getenv().containsKey(name)
+                || presentIn(agentPropertiesFile(), name);
+    }
+
+    private static boolean presentIn(final Properties properties, final String name) {
+        return properties.containsKey(name) || properties.containsKey(dotted(name));
+    }
+
+    private static String dotted(final String name) {
+        return name.toLowerCase(Locale.ROOT).replace('_', '.');
+    }
+
+    /**
+     * The agent's properties file, found as the agent finds it: named by {@code PYROSCOPE_CONFIGURATION_FILE}
+     * (a system property or the environment), else {@code pyroscope.properties}; read from disk, else as a
+     * resource beside the agent's own class. Empty when there is none or it cannot be read.
+     */
+    private static Properties agentPropertiesFile() {
+        final String configured = Optional.ofNullable(System.getProperty("PYROSCOPE_CONFIGURATION_FILE"))
+                .or(() -> Optional.ofNullable(System.getProperty("pyroscope.configuration.file")))
+                .or(() -> Optional.ofNullable(System.getenv("PYROSCOPE_CONFIGURATION_FILE")))
+                .orElse("pyroscope.properties");
+        final Properties properties = new Properties();
+        try (InputStream in = Files.exists(Path.of(configured))
+                ? Files.newInputStream(Path.of(configured))
+                : DefaultConfigurationProvider.class.getResourceAsStream(configured)) {
+            if (in != null) {
+                properties.load(in);
+            }
+        } catch (final IOException | RuntimeException e) {
+            log.debug("Could not read the profiling agent's properties file {}", configured, e);
+        }
+        return properties;
     }
 
     /**

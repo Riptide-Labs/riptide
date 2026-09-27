@@ -6,6 +6,7 @@
 package org.riptide.profiling;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mockito;
 import org.riptide.config.DaemonConfig;
 import org.riptide.pipeline.Identity;
@@ -116,6 +117,34 @@ class ProfilingConfigurationTest {
             assertThat(ProfilingConfiguration.agentSettingPresent("PYROSCOPE_PROFILER_ALLOC")).isFalse();
         } finally {
             System.clearProperty("pyroscope.profiler.lock");
+        }
+    }
+
+    @Test
+    void theLiteralSystemPropertyCountsAsPresentToo() {
+        // the agent reads -DPYROSCOPE_PROFILER_LOCK as well as -Dpyroscope.profiler.lock
+        System.setProperty("PYROSCOPE_PROFILER_LOCK", "50ms");
+        try {
+            assertThat(ProfilingConfiguration.agentSettingPresent("PYROSCOPE_PROFILER_LOCK")).isTrue();
+        } finally {
+            System.clearProperty("PYROSCOPE_PROFILER_LOCK");
+        }
+    }
+
+    @Test
+    void theAgentsPropertiesFileCountsAsPresentEvenWhenEmpty(@TempDir final java.nio.file.Path dir)
+            throws java.io.IOException {
+        final var file = dir.resolve("agent.properties");
+        java.nio.file.Files.writeString(file, "pyroscope.profiler.alloc=\n");
+        System.setProperty("PYROSCOPE_CONFIGURATION_FILE", file.toString());
+        try {
+            assertThat(ProfilingConfiguration.agentSettingPresent("PYROSCOPE_PROFILER_ALLOC"))
+                    .as("an empty value in the agent's file turns allocation profiling off; riptide must not"
+                            + " default over it")
+                    .isTrue();
+            assertThat(ProfilingConfiguration.agentSettingPresent("PYROSCOPE_PROFILER_LOCK")).isFalse();
+        } finally {
+            System.clearProperty("PYROSCOPE_CONFIGURATION_FILE");
         }
     }
 

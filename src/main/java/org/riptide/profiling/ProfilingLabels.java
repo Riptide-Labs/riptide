@@ -24,7 +24,13 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class ProfilingLabels {
 
-    /** A scope that is left on close. Declares no checked exception, so it fits any try-with-resources. */
+    /**
+     * A scope that is left on close. Declares no checked exception, so it fits any try-with-resources.
+     *
+     * <p>Do not nest two scopes on one thread: leaving the inner one clears the thread's labels rather
+     * than restoring the outer ones, so the rest of the outer unit of work would go unlabelled. No
+     * pipeline path nests today; dispatch and the flush each run on their own threads.
+     */
     public interface Scope extends AutoCloseable {
         @Override
         void close();

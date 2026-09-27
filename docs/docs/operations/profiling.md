@@ -156,7 +156,7 @@ With profiling on, riptide sends allocation and lock-contention profiles beside 
 | allocation | a sample every **`512k`** allocated | **`PYROSCOPE_PROFILER_ALLOC`** |
 | lock contention | every wait over **`10ms`** | **`PYROSCOPE_PROFILER_LOCK`** |
 
-Riptide applies a default only when the setting is absent, as an environment variable or as the agent's system property (`-Dpyroscope.profiler.alloc`).
+Riptide applies a default only when the setting is absent from every source the agent reads: system properties (`-DPYROSCOPE_PROFILER_ALLOC` or `-Dpyroscope.profiler.alloc`), the environment, and the agent's properties file (`pyroscope.properties`, or the file named by `PYROSCOPE_CONFIGURATION_FILE`).
 A setting that is present wins, even when empty, and empty turns that profile off:
 
 ```properties
