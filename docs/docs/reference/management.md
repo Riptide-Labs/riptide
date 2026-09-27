@@ -139,6 +139,7 @@ A scrape that loses the race is shed with `503`, which Prometheus records as a f
 | **`8080`** | HTTP | management endpoints (`/livez`, `/readyz`, `/metrics`); `riptide.management.port` |
 | **`8123`** | HTTP | ClickHouse (the compose stack publishes it on loopback only; password from `CLICKHOUSE_PASSWORD`) |
 | **`9000`** | TCP | ClickHouse native protocol (the compose stack publishes it on loopback only) |
+| **`9090`** | HTTP | Prometheus in the compose stack, scraping riptide and evaluating its alert rules (published on loopback only) |
 
 ## Image tags
 

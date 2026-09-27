@@ -48,15 +48,17 @@ echo "=== smoke: bringing the stack up ==="
 # services are named because --wait counts the grafana-folders one-shot's
 # clean exit as a failure; that one runs in the foreground below so its exit
 # code is the assertion.
-docker compose -f "$COMPOSE_FILE" up --detach --wait --wait-timeout 300 clickhouse grafana riptide
+docker compose -f "$COMPOSE_FILE" up --detach --wait --wait-timeout 300 clickhouse grafana prometheus riptide
 docker compose -f "$COMPOSE_FILE" run --rm --no-deps grafana-folders
 
-echo "=== smoke: ClickHouse ports are loopback only (#651) ==="
-for port in 8123 9000; do
-    published="$(docker compose -f "$COMPOSE_FILE" port clickhouse "$port")"
+echo "=== smoke: ClickHouse and Prometheus ports are loopback only (#651) ==="
+for service_port in clickhouse:8123 clickhouse:9000 prometheus:9090; do
+    service="${service_port%%:*}"
+    port="${service_port##*:}"
+    published="$(docker compose -f "$COMPOSE_FILE" port "$service" "$port")"
     case "$published" in
-        127.0.0.1:*) echo "  ok  $port -> $published" ;;
-        *) fail "clickhouse $port is published on '$published', not loopback" ;;
+        127.0.0.1:*) echo "  ok  $service $port -> $published" ;;
+        *) fail "$service $port is published on '$published', not loopback" ;;
     esac
 done
 
@@ -94,6 +96,31 @@ case "$health" in
     *) fail "datasource health returned '$health'" ;;
 esac
 
+echo "=== smoke: Prometheus scrapes riptide and loads its alert rules (#908) ==="
+# The first scrape lands within one 15 s interval of the target appearing; poll
+# rather than sleep so a healthy stack does not wait out a fixed guess.
+target_up=""
+for _ in $(seq 1 30); do
+    targets="$(curl -s "http://127.0.0.1:9090/api/v1/targets?state=active")"
+    case "$targets" in
+        *'"job":"riptide"'*'"health":"up"'*) target_up=yes; break ;;
+    esac
+    sleep 2
+done
+[ -n "$target_up" ] || fail "Prometheus has no healthy riptide target: '$targets'"
+echo "  ok  job riptide target is up"
+# One line of JSON again, so grep -o into wc -l, and || true for the same reason
+# as count_riptide_dashboards below.
+alerts="$(curl -s "http://127.0.0.1:9090/api/v1/rules?type=alert" \
+    | { grep -o '"type":"alerting"' || true; } | wc -l | tr -d ' ')"
+[ "$alerts" = "9" ] || fail "Prometheus loaded $alerts alert rules, expected 9"
+echo "  ok  9 alert rules loaded"
+prometheus_health="$(curl -s -u admin:admin "http://127.0.0.1:3000/api/datasources/uid/riptide-prometheus/health")"
+case "$prometheus_health" in
+    *'"status":"OK"'*) echo "  ok  datasource riptide-prometheus reports OK" ;;
+    *) fail "Prometheus datasource health returned '$prometheus_health'" ;;
+esac
+
 echo "=== smoke: the dashboards sit in Riptide / Flow Analytics, none in General (#864) ==="
 # The provider creates the child folder; the grafana-folders one-shot nests it. Both are
 # addressed by uid so a renamed folder fails here rather than passing by title. The
@@ -123,4 +150,4 @@ in_general="$(count_riptide_dashboards general)"
 [ "$in_general" = "0" ] || fail "$in_general riptide dashboards are still in General"
 echo "  ok  none in General"
 
-echo "=== smoke: OK (compose stack, ClickHouse auth and grants, schema, Grafana datasource, dashboard folder) ==="
+echo "=== smoke: OK (compose stack, ClickHouse auth and grants, schema, Grafana datasources, Prometheus scrape and rules, dashboard folder) ==="

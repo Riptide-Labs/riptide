@@ -1,16 +1,16 @@
 ---
 title: Docker Compose
-description: Start riptide, ClickHouse and Grafana from the shipped compose stack, set its passwords, reach ClickHouse from another host, and pick an image variant.
+description: Start riptide, ClickHouse, Grafana and Prometheus from the shipped compose stack, set its passwords, reach ClickHouse from another host, and pick an image variant.
 ---
 
 # Run the Docker Compose stack
 
-The stack starts riptide from the published image, ClickHouse pinned to the version the integration tests run against, and Grafana with the riptide dashboards provisioned.
+The stack starts riptide from the published image, ClickHouse pinned to the version the integration tests run against, Grafana with the riptide dashboards provisioned, and Prometheus scraping riptide's own metrics and evaluating its alert rules.
 
 ## Prerequisites
 
 - Docker with the Compose plugin.
-- Ports free on the host: `9999/udp`, `3000/tcp`, and `8123/tcp` and `9000/tcp` on loopback.
+- Ports free on the host: `9999/udp`, `3000/tcp`, and `8123/tcp`, `9000/tcp` and `9090/tcp` on loopback.
 
 ## Steps
 
@@ -35,8 +35,10 @@ The stack starts riptide from the published image, ClickHouse pinned to the vers
 
    ```text
     Network riptide_default Created
-    Volume riptide_gf-data Created
     Volume riptide_clickhouse-data Created
+    Volume riptide_gf-data Created
+    Volume riptide_prometheus-data Created
+    Container riptide-prometheus-1 Started
     Container riptide-clickhouse-1 Healthy
     Container riptide-riptide-1 Started
     Container riptide-grafana-1 Healthy
@@ -53,9 +55,10 @@ The stack starts riptide from the published image, ClickHouse pinned to the vers
 
    ```text
    SERVICE      STATUS
-   clickhouse   Up 30 seconds (healthy)
-   grafana      Up 20 seconds (healthy)
-   riptide      Up 20 seconds (healthy)
+   clickhouse   Up 42 seconds (healthy)
+   grafana      Up 35 seconds (healthy)
+   prometheus   Up 42 seconds (healthy)
+   riptide      Up 35 seconds (healthy)
    ```
 
 4. Point a NetFlow v5, NetFlow v9, IPFIX or sFlow exporter at UDP port `9999` of the host, then count rows:
@@ -71,6 +74,7 @@ The stack starts riptide from the published image, ClickHouse pinned to the vers
    ```
 
    Grafana is at `http://localhost:3000`, user `admin`. Its Explore view runs ad-hoc queries against the provisioned ClickHouse datasource.
+   Prometheus is at `http://127.0.0.1:9090`; its **Alerts** page lists riptide's alert rules.
 
 :::warning
 Without a `.env` file the stack starts with ClickHouse's `default` user at password `riptide` and Grafana's `admin` at `admin`.
@@ -84,9 +88,10 @@ The ClickHouse `default` user holds `access_management`, so change its password 
 | --- | --- | --- | --- |
 | **`riptide`** | `ghcr.io/riptide-labs/riptide:latest` | `9999/udp` | One `multi` [receiver](../reference/receivers.md) parses every protocol on that port. Starts only after ClickHouse reports healthy. Health is `/readyz` on the container's port 8080, which is not published. Logs at `WARN`. |
 | **`clickhouse`** | `clickhouse/clickhouse-server:26.7`, pinned by digest | `127.0.0.1:8123`, `127.0.0.1:9000` | Database `riptide`, user `default`. 26.7 is the version the integration suite runs against, see [server versions](../reference/clickhouse.md#server-versions). |
-| **`grafana`** | `grafana/grafana-oss:13.0.2`, pinned by digest | `3000` | ClickHouse datasource and nine dashboards provisioned; plugins `grafana-clickhouse-datasource` and `netsage-sankey-panel`. |
+| **`grafana`** | `grafana/grafana-oss:13.0.2`, pinned by digest | `3000` | ClickHouse and Prometheus datasources and nine dashboards provisioned; plugins `grafana-clickhouse-datasource` and `netsage-sankey-panel`. |
+| **`prometheus`** | `prom/prometheus:v3.15.0`, pinned by digest | `127.0.0.1:9090` | Scrapes riptide's `/metrics` every 15 s as `job="riptide"` and evaluates riptide's alert rules. Targets come from `container-fs/prometheus/targets/`; no Alertmanager ships. |
 
-Dependabot moves the two digest pins.
+Dependabot moves the three digest pins.
 The riptide image follows `:latest`, so `docker compose pull` moves the collector forward on its own.
 
 | Variable | Read by | Default | When a change takes effect |
@@ -94,7 +99,7 @@ The riptide image follows `:latest`, so `docker compose pull` moves the collecto
 | **`CLICKHOUSE_PASSWORD`** | ClickHouse, riptide (as `env://CLICKHOUSE_PASSWORD`), Grafana's datasource | `riptide` | On `docker compose up -d`, all three follow. Anything else that connected with the old password needs the new one. |
 | **`GF_SECURITY_ADMIN_PASSWORD`** | Grafana, only when it initialises its database | `admin` | First start only. To change it later, remove the `gf-data` volume, or change it in Grafana. |
 
-Volumes `clickhouse-data` and `gf-data` hold the flows and Grafana's state.
+Volumes `clickhouse-data`, `gf-data` and `prometheus-data` hold the flows, Grafana's state and riptide's own metrics.
 `docker compose down` keeps them; `docker compose down -v` deletes them.
 
 ## Configure riptide further

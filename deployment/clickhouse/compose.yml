@@ -6,6 +6,8 @@ volumes:
     driver: local
   gf-data:
     driver: local
+  prometheus-data:
+    driver: local
 
 services:
   clickhouse:
@@ -68,6 +70,25 @@ services:
       retries: 20
     ports:
       - "3000:3000/tcp"
+
+  prometheus:
+    # Scrapes riptide's /metrics and evaluates its alert rules (#908). Pinned by
+    # digest like the images around it; `make alerts-test` reads this line, so the
+    # rules are tested by the promtool that ships with the server that runs them.
+    image: docker.io/prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+    volumes:
+      - prometheus-data:/prometheus
+      - ./container-fs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./container-fs/prometheus/riptide-alerts.yml:/etc/prometheus/riptide-alerts.yml:ro
+      - ./container-fs/prometheus/targets:/etc/prometheus/targets:ro
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:9090/-/ready
+      interval: 2s
+      timeout: 1s
+      retries: 20
+    # Loopback only, like ClickHouse: Grafana reaches it over the compose network.
+    ports:
+      - "127.0.0.1:9090:9090/tcp"
 
   grafana-folders:
     # One-shot: nests the provisioned "Flow Analytics" folder under "Riptide" once Grafana is
