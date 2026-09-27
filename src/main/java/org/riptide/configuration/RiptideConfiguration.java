@@ -23,6 +23,7 @@ import org.riptide.flows.parser.ipfix.IpfixRawFlow;
 import org.riptide.flows.parser.netflow9.Netflow9RawFlow;
 import org.riptide.pipeline.FlowPersister;
 import org.riptide.repository.FlowRepository;
+import org.riptide.telemetry.RuntimeMetrics;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -37,7 +38,9 @@ public class RiptideConfiguration {
 
     @Bean
     MetricRegistry metricRegistry() {
-        return new MetricRegistry();
+        final var registry = new MetricRegistry();
+        RuntimeMetrics.register(registry);
+        return registry;
     }
 
     @Bean

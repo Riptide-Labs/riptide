@@ -120,6 +120,7 @@ The [metrics reference](metrics.md) lists every series by its registry name.
 | --- | --- |
 | Gauge (numeric) | `gauge`. Non-numeric gauges are skipped: they have no valid representation, and emitting one would break the entire scrape rather than one series. |
 | Counter | `counter` |
+| Seconds counter (riptide's own type, for CPU, GC and busy time) | `counter` with a fractional value in seconds |
 | Meter | `counter`, plus `_rate_1m` and `_rate_5m` gauges carrying Dropwizard's own moving averages |
 | Histogram | `summary` with p50/p95/p99 and `_count` |
 | Timer | `summary` named `<name>_seconds` with p50/p95/p99 and `_count`. Durations are converted from nanoseconds to seconds. |
