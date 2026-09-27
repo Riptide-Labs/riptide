@@ -369,7 +369,7 @@ Everything below was verified on Grafana 13.2.2.
 The script prints one line per dashboard and exits non-zero if any was not imported.
 
 | Line | Meaning |
-| --- | --- | --- |
+| --- | --- |
 | **`created`** | The dashboard was not on this instance. |
 | **`updated 1.0.0 -> 1.0.2`** | Replaced. The previous body stays in the dashboard's *Settings* > *Versions*, where a replaced UI edit can be restored. |
 | **`unchanged (1.0.2)`** | Identical to what the instance already had; Grafana saved nothing. |
@@ -402,7 +402,7 @@ folder 'Riptide Flow Analytics' (efsybbe4ozv28c) is now empty: no dashboards, fo
 Replace the files; Grafana does the rest within one 30-second provisioning interval and needs no restart.
 
 | Install path | Upgrade step |
-| --- | --- | --- |
+| --- | --- |
 | Compose stack | Update the checkout, then `docker compose up -d`. |
 | Release tarball | Extract the new archive over the old files. If you changed `path` in `dashboards.yml`, add `--exclude dashboards/dashboards.yml` to the `tar` command so the shipped provider does not replace yours. |
 | deb or rpm | Install the new package; it replaces the directory. |
@@ -412,7 +412,7 @@ Replace the files; Grafana does the rest within one 30-second provisioning inter
 What happens to what is already in Grafana, as observed on 13.0.2:
 
 | Already in Grafana | After the files change |
-| --- | --- | --- |
+| --- | --- |
 | A riptide dashboard from an older set | Replaced under the same uid and URL; the dashboard's version counter moves by one. |
 | A riptide dashboard edited in the UI | The edit is overwritten. Use *Save as* before upgrading to keep it. |
 | A copy made with *Save as* | Untouched; it has its own uid. |

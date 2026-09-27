@@ -431,6 +431,18 @@
           {
             "matcher": {
               "id": "byName",
+              "options": "runbook"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
               "options": "Alert"
             },
             "properties": [
@@ -439,7 +451,7 @@
                 "value": [
                   {
                     "title": "Runbook for ${__value.raw}",
-                    "url": "https://riptide.space/docs/operations/monitoring#${__value.raw:lowercase}",
+                    "url": "https://riptide.space/docs/operations/monitoring#${__data.fields.runbook}",
                     "targetBlank": true
                   }
                 ]
@@ -465,7 +477,7 @@
             "uid": "${datasource}"
           },
           "refId": "A",
-          "expr": "ALERTS{alertstate=\"firing\", alertname=~\"Riptide.+\", instance=~\"$instance\"}",
+          "expr": "label_replace(label_replace(label_replace(label_replace(label_replace(label_replace(label_replace(label_replace(label_replace(ALERTS{alertstate=\"firing\", alertname=~\"Riptide.+\", instance=~\"$instance\"}, \"runbook\", \"riptidedown\", \"alertname\", \"RiptideDown\"), \"runbook\", \"riptidedataloss\", \"alertname\", \"RiptideDataLoss\"), \"runbook\", \"riptidequeuefilling\", \"alertname\", \"RiptideQueueFilling\"), \"runbook\", \"riptideworkersaturated\", \"alertname\", \"RiptideWorkerSaturated\"), \"runbook\", \"riptideheappressure\", \"alertname\", \"RiptideHeapPressure\"), \"runbook\", \"riptidegcpressure\", \"alertname\", \"RiptideGcPressure\"), \"runbook\", \"riptidecpupressure\", \"alertname\", \"RiptideCpuPressure\"), \"runbook\", \"riptidefiledescriptors\", \"alertname\", \"RiptideFileDescriptors\"), \"runbook\", \"riptidereloadfailing\", \"alertname\", \"RiptideReloadFailing\")",
           "legendFormat": "__table",
           "range": false,
           "instant": true,
