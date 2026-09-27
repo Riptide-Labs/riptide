@@ -4,7 +4,7 @@
 
 """The version of the provisioned Grafana dashboard set.
 
-The nine dashboards ship together and link to each other by uid and variable
+The dashboards ship together and link to each other by uid and variable
 name, so they carry one version, independent of the riptide version in
 pom.xml. It lives in exactly one place: a link titled "Dashboards vX.Y.Z" in
 every dashboard's top link bar, where a user reads it without opening

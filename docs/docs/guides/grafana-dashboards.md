@@ -5,21 +5,25 @@ description: Install the riptide dashboard set into Grafana from the compose sta
 
 # Install and upgrade the Grafana dashboards
 
-The set is nine dashboards and one provisioning file. Grafana's file provider loads it into the folder **Flow Analytics** (uid `riptide-flow-analytics`), which sits under **Riptide**. The set carries its own version, shown as a **`Dashboards vX.Y.Z`** link in every dashboard's top bar; that link opens this page.
+The set is the dashboards in the table below and one provisioning file. Grafana's file provider loads it into the folder **Flow Analytics** (uid `riptide-flow-analytics`), which sits under **Riptide**. The set carries its own version, shown as a **`Dashboards vX.Y.Z`** link in every dashboard's top bar; that link opens this page.
 
-| Dashboard | Answers |
-| --- | --- |
-| **Riptide - Top 10** | Top talkers by AS, host, application, service, protocol, exporter and interface, with a source-AS table carrying a 95th percentile. |
-| **Riptide - Traffic Paths (Sankey)** | Where traffic enters and leaves: AS peering, geo origination and termination, ultimate exit, filterable by exporter and direction. |
-| **Riptide - Flow Forensics** | One slice of flows by tenant, zone, exporter, application, HTTP host and URI, protocol, address and port, down to the raw records. |
-| **Riptide - Collection Health** | Is every exporter delivering: reporting and silent verdicts, activity timeline, collection lag, exporter inventory. |
-| **Riptide - Interface Traffic Analysis** | Throughput and usage per exporter interface, by application, conversation, host and DSCP, in versus out. |
-| **Riptide - Capacity & Routing** | Headroom against SNMP-reported link speed, next-hop distribution, prefix volume, one-directional conversations. |
-| **Riptide - Behavioural Anomalies** | Scanning, sweeps, repeated attempts on service ports, SYN-only ratio, fan-in targets, packet-size outliers, with thresholds as variables. |
-| **Riptide - Traffic Composition** | Country maps, VLAN and DSCP mix, flow duration, IPv4 versus IPv6, prefix lengths, core services. |
-| **Riptide - Data Trust** | Sampling configuration per exporter, clock corrections, tenant and zone labelling, exporter identity. |
+| Dashboard | Reads | Answers |
+| --- | --- | --- |
+| **Riptide - Top 10** | ClickHouse | Top talkers by AS, host, application, service, protocol, exporter and interface, with a source-AS table carrying a 95th percentile. |
+| **Riptide - Traffic Paths (Sankey)** | ClickHouse | Where traffic enters and leaves: AS peering, geo origination and termination, ultimate exit, filterable by exporter and direction. |
+| **Riptide - Flow Forensics** | ClickHouse | One slice of flows by tenant, zone, exporter, application, HTTP host and URI, protocol, address and port, down to the raw records. |
+| **Riptide - Collection Health** | ClickHouse | Is every exporter delivering: reporting and silent verdicts, activity timeline, collection lag, exporter inventory. |
+| **Riptide - Interface Traffic Analysis** | ClickHouse | Throughput and usage per exporter interface, by application, conversation, host and DSCP, in versus out. |
+| **Riptide - Capacity & Routing** | ClickHouse | Headroom against SNMP-reported link speed, next-hop distribution, prefix volume, one-directional conversations. |
+| **Riptide - Behavioural Anomalies** | ClickHouse | Scanning, sweeps, repeated attempts on service ports, SYN-only ratio, fan-in targets, packet-size outliers, with thresholds as variables. |
+| **Riptide - Traffic Composition** | ClickHouse | Country maps, VLAN and DSCP mix, flow duration, IPv4 versus IPv6, prefix lengths, core services. |
+| **Riptide - Data Trust** | ClickHouse | Sampling configuration per exporter, clock corrections, tenant and zone labelling, exporter identity. |
+| **Riptide - Health** | Prometheus | Is riptide itself healthy, and which stage is losing flows or about to: instances up, flows lost, stage fill, firing alerts, JVM and host pressure. For NOC operators. |
+| **Riptide - Pipeline Diagnostics** | Prometheus | What saturates one pipeline stage, and is it the stage or the host: queue, worker, loss, insert latency and the JVM on one time axis. For engineers, opened from Riptide - Health. |
 
-Every dashboard has a **Datasource** and a **Database** variable, so the same JSON works against any ClickHouse datasource and any riptide database name.
+The ClickHouse dashboards have a **Datasource** and a **Database** variable, so the same JSON works against any ClickHouse datasource and any riptide database name.
+The two Prometheus dashboards have a **Prometheus** datasource variable and read riptide's own `/metrics` through the recording rules in `riptide-alerts.yml`, so the Prometheus they point at must scrape riptide as `job="riptide"` and load that file.
+The compose stack does both.
 
 ## Prerequisites
 
@@ -166,7 +170,7 @@ The package puts the same files under **`/usr/share/riptide/grafana/dashboards/`
 ## Install with the Grafana Helm chart
 
 Use this for a Grafana deployed with the [grafana-community Helm chart](https://github.com/grafana-community/helm-charts).
-Every release after v0.15.1 carries **`riptide-dashboards-helm-values.yaml`**, a values file that makes the chart download the nine dashboards of that release.
+Every release after v0.15.1 carries **`riptide-dashboards-helm-values.yaml`**, a values file that makes the chart download every dashboard of that release.
 Everything below was verified with chart 13.2.5.
 
 The Grafana pod needs outbound HTTPS to `raw.githubusercontent.com`.

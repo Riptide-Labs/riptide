@@ -11,7 +11,7 @@
 #   - riptide provisions its schema through the env:// SecretRef indirection
 #   - Grafana's provisioned ClickHouse and Prometheus datasources report healthy
 #   - Prometheus scrapes riptide as job="riptide" and loads the 9 alert rules (#908)
-#   - the nine dashboards sit in Flow Analytics under Riptide, none in General (#864)
+#   - every dashboard in the source tree sits in Flow Analytics under Riptide, none in General (#864)
 #
 # It gates the compose wiring, not riptide's own code: the stack runs the
 # published image, so a code change is covered by `make e2e`, not by this.
@@ -144,9 +144,11 @@ count_riptide_dashboards() {
         | { grep -o '"uid":"riptide-' || true; } | wc -l | tr -d ' '
 }
 
+# Counted from the source tree, so adding a dashboard cannot leave this asserting the old set.
+shipped="$(ls deployment/clickhouse/container-fs/grafana/provisioning/dashboards/riptide-*.json | wc -l | tr -d ' ')"
 in_folder="$(count_riptide_dashboards riptide-flow-analytics)"
-[ "$in_folder" = "9" ] || fail "expected 9 riptide dashboards in Flow Analytics, found $in_folder"
-echo "  ok  9 dashboards in Flow Analytics"
+[ "$in_folder" = "$shipped" ] || fail "expected $shipped riptide dashboards in Flow Analytics, found $in_folder"
+echo "  ok  $shipped dashboards in Flow Analytics"
 in_general="$(count_riptide_dashboards general)"
 [ "$in_general" = "0" ] || fail "$in_general riptide dashboards are still in General"
 echo "  ok  none in General"
