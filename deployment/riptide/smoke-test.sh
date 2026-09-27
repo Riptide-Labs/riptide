@@ -6,11 +6,12 @@
 # by hand, which nothing else in CI covers:
 #   - users.xml's from_env password merges over the entrypoint's generated
 #     default-user.xml, and default keeps access_management
-#   - ClickHouse's and Prometheus's published ports are bound to loopback only (#651)
+#   - ClickHouse's, Prometheus's and Pyroscope's published ports are bound to loopback only (#651)
 #   - an unauthenticated request is refused and a credentialled one is served
 #   - riptide provisions its schema through the env:// SecretRef indirection
 #   - Grafana's provisioned ClickHouse and Prometheus datasources report healthy
 #   - Prometheus scrapes riptide as job="riptide" and loads the 9 alert rules (#908)
+#   - riptide's profiles reach Pyroscope and its Grafana datasource is healthy (#921)
 #   - every dashboard in the source tree sits in Flow Analytics under Riptide, none in General (#864)
 #
 # It gates the compose wiring, not riptide's own code: the stack runs the
@@ -49,11 +50,11 @@ echo "=== smoke: bringing the stack up ==="
 # services are named because --wait counts the grafana-folders one-shot's
 # clean exit as a failure; that one runs in the foreground below so its exit
 # code is the assertion.
-docker compose -f "$COMPOSE_FILE" up --detach --wait --wait-timeout 300 clickhouse grafana prometheus riptide
+docker compose -f "$COMPOSE_FILE" up --detach --wait --wait-timeout 300 clickhouse grafana prometheus pyroscope riptide
 docker compose -f "$COMPOSE_FILE" run --rm --no-deps grafana-folders
 
-echo "=== smoke: ClickHouse and Prometheus ports are loopback only (#651) ==="
-for service_port in clickhouse:8123 clickhouse:9000 prometheus:9090; do
+echo "=== smoke: ClickHouse, Prometheus and Pyroscope ports are loopback only (#651) ==="
+for service_port in clickhouse:8123 clickhouse:9000 prometheus:9090 pyroscope:4040; do
     service="${service_port%%:*}"
     port="${service_port##*:}"
     published="$(docker compose -f "$COMPOSE_FILE" port "$service" "$port")"
@@ -122,6 +123,37 @@ case "$prometheus_health" in
     *) fail "Prometheus datasource health returned '$prometheus_health'" ;;
 esac
 
+echo "=== smoke: riptide's profiles reach Pyroscope (#921) ==="
+# Pyroscope has no healthcheck (its image is distroless), so wait on /ready from here: about a
+# minute after start, once its ingester has joined the ring. Then the agent's first upload.
+pyroscope_ready=""
+for _ in $(seq 1 60); do
+    [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:4040/ready")" = "200" ] && { pyroscope_ready=yes; break; }
+    sleep 3
+done
+[ -n "$pyroscope_ready" ] || fail "Pyroscope never reported ready on 127.0.0.1:4040"
+echo "  ok  Pyroscope ready"
+services=""
+for _ in $(seq 1 40); do
+    now_ms="$(($(date +%s) * 1000))"
+    services="$(curl -s -X POST "http://127.0.0.1:4040/querier.v1.QuerierService/LabelValues" \
+        -H 'Content-Type: application/json' \
+        -d "{\"name\":\"service_name\",\"start\":$((now_ms - 3600000)),\"end\":${now_ms}}")"
+    case "$services" in
+        *'"riptide"'*) break ;;
+    esac
+    sleep 3
+done
+case "$services" in
+    *'"riptide"'*) echo "  ok  Pyroscope lists service_name=riptide" ;;
+    *) fail "riptide's profiles never reached Pyroscope: '$services'" ;;
+esac
+pyroscope_health="$(curl -s -u admin:admin "http://127.0.0.1:3000/api/datasources/uid/riptide-pyroscope/health")"
+case "$pyroscope_health" in
+    *'"status":"OK"'*) echo "  ok  datasource riptide-pyroscope reports OK" ;;
+    *) fail "Pyroscope datasource health returned '$pyroscope_health'" ;;
+esac
+
 echo "=== smoke: the dashboards sit in Riptide / Flow Analytics, none in General (#864) ==="
 # The provider creates the child folder; the grafana-folders one-shot nests it. Both are
 # addressed by uid so a renamed folder fails here rather than passing by title. The
@@ -153,4 +185,4 @@ in_general="$(count_riptide_dashboards general)"
 [ "$in_general" = "0" ] || fail "$in_general riptide dashboards are still in General"
 echo "  ok  none in General"
 
-echo "=== smoke: OK (compose stack, ClickHouse auth and grants, schema, Grafana datasources, Prometheus scrape and rules, dashboard folder) ==="
+echo "=== smoke: OK (compose stack, ClickHouse auth and grants, schema, Grafana datasources, Prometheus scrape and rules, Pyroscope profiles, dashboard folder) ==="

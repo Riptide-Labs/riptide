@@ -34,3 +34,11 @@ datasources:
     url: http://prometheus:9090
     jsonData:
       timeInterval: 15s
+
+  - name: Pyroscope
+    # Riptide's continuous profiles (#921). Riptide - Profiling selects its datasource through a
+    # variable, so this uid is a default, not a requirement.
+    uid: riptide-pyroscope
+    type: grafana-pyroscope-datasource
+    isDefault: false
+    url: http://pyroscope:4040
