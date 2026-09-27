@@ -111,8 +111,6 @@ persister_batch_droppedRows 0.0
 persister_batch_failedRows 0.0
 # TYPE persister_batch_flusherBusySeconds counter
 persister_batch_flusherBusySeconds 0.0
-# TYPE persister_batch_batchSize summary
-persister_batch_batchSize{quantile="0.5"} 0.0
 ```
 
 Registry names contain dots; Prometheus metric names may not.
