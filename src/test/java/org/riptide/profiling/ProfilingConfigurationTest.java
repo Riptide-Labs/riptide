@@ -107,6 +107,19 @@ class ProfilingConfigurationTest {
     }
 
     @Test
+    void aSystemPropertyCountsAsPresentLikeTheAgentReadsIt() {
+        System.setProperty("pyroscope.profiler.lock", "");
+        try {
+            assertThat(ProfilingConfiguration.agentSettingPresent("PYROSCOPE_PROFILER_LOCK"))
+                    .as("the agent reads -Dpyroscope.profiler.lock, so riptide must not default over it")
+                    .isTrue();
+            assertThat(ProfilingConfiguration.agentSettingPresent("PYROSCOPE_PROFILER_ALLOC")).isFalse();
+        } finally {
+            System.clearProperty("pyroscope.profiler.lock");
+        }
+    }
+
+    @Test
     void theLabelGateStaysShutWhileProfilingIsOff() {
         new ProfilingConfiguration().profilingStatus(new RiptideProfilingProperties(), new DaemonConfig());
 

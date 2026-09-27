@@ -100,15 +100,25 @@ public class ProfilingConfiguration {
      * riptide.profiling.enabled} is the switch this project documents.
      */
     static Config buildConfig(final Identity identity) {
-        return buildConfig(identity, System.getenv().keySet()::contains);
+        return buildConfig(identity, ProfilingConfiguration::agentSettingPresent);
+    }
+
+    /**
+     * Whether the agent will find {@code name} set: in the environment, or as the system property the
+     * agent derives from it ({@code PYROSCOPE_PROFILER_ALLOC} to {@code pyroscope.profiler.alloc}).
+     * Checking only the environment would let a riptide default override an operator's system property.
+     */
+    static boolean agentSettingPresent(final String name) {
+        return System.getenv().containsKey(name)
+                || System.getProperties().containsKey(name.toLowerCase(java.util.Locale.ROOT).replace('_', '.'));
     }
 
     /**
      * As above, with allocation and lock profiling on by default: sampled every {@value #DEFAULT_ALLOC}
      * allocated and on contention over {@value #DEFAULT_LOCK}. The defaults apply only when the profiler's
-     * own variable is absent from the environment; a variable that is present wins, empty included, since
-     * empty is how an operator turns either off. Presence is checked on the environment, not on the parsed
-     * config, because the parsed config cannot tell "unset" from "set to empty".
+     * own setting is absent; a setting that is present wins, empty included, since empty is how an operator
+     * turns either off. Presence is checked on the agent's sources, not on the parsed config, because the
+     * parsed config cannot tell "unset" from "set to empty".
      */
     static Config buildConfig(final Identity identity, final Predicate<String> environmentHas) {
         final Config base = Config.build();
