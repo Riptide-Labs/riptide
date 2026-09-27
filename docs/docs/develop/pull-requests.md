@@ -62,7 +62,7 @@ These run as well, by path or on every pull request, and are not required by bra
 | **`analyze`** (CodeQL) | every pull request | The `security-and-quality` query suite over the Java sources. | not available |
 | **`review`** (dependency review) | every pull request | No new dependency with a known vulnerability of severity high or above. | not available |
 | **`build`** (Docs) | `docs/`, `landing/`, `Makefile`, `docs.yml` | The site builds with broken links and anchors as errors, and no rendered page shows admonition markup as body copy. | `make docs` |
-| **`compose-smoke`** | `deployment/riptide/`, `deployment/clickhouse/`, `Makefile` | The shipped compose stack starts and its ClickHouse and Grafana wiring works. | `make compose-smoke` |
+| **`compose-smoke`** | `deployment/riptide/`, `deployment/clickhouse/`, `Makefile` | The shipped compose stack starts and its ClickHouse and Grafana wiring works, then starts again without self-monitoring on the same volumes. | `make compose-smoke` |
 | **`packages`** | `nfpm.yaml`, `deployment/package/`, `Makefile` | The DEB and RPM build and install. | `make packages packages-smoke` |
 | **`nix`** | `flake.nix`, `flake.lock`, `nix/`, `pom.xml` | The flake package builds and the NixOS module evaluates. | `make nix-check` |
 

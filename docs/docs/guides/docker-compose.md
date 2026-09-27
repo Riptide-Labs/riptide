@@ -6,10 +6,11 @@ description: Start riptide, ClickHouse, Grafana and Prometheus from the shipped 
 # Run the Docker Compose stack
 
 The stack starts riptide from the published image, ClickHouse pinned to the version the integration tests run against, Grafana with the riptide dashboards provisioned, Prometheus scraping riptide's own metrics and evaluating its alert rules, and Pyroscope receiving riptide's continuous profiles.
+Prometheus and Pyroscope serve riptide's self-monitoring only; [one command](#run-without-self-monitoring) starts the stack without them.
 
 ## Prerequisites
 
-- Docker with the Compose plugin.
+- Docker with the Compose plugin, version 2.24.4 or later.
 - Ports free on the host: `9999/udp`, `3000/tcp`, and `8123/tcp`, `9000/tcp`, `9090/tcp` and `4040/tcp` on loopback.
 
 ## Steps
@@ -88,11 +89,18 @@ The ClickHouse `default` user holds `access_management`, so change its password 
 
 ## What the stack runs
 
+Always:
+
 | Service | Image | Published ports | Notes |
 | --- | --- | --- | --- |
 | **`riptide`** | `ghcr.io/riptide-labs/riptide:latest` | `9999/udp` | One `multi` [receiver](../reference/receivers.md) parses every protocol on that port. Starts only after ClickHouse reports healthy. Health is `/readyz` on the container's port 8080, which is not published. Logs at `WARN`. |
 | **`clickhouse`** | `clickhouse/clickhouse-server:26.7`, pinned by digest | `127.0.0.1:8123`, `127.0.0.1:9000` | Database `riptide`, user `default`. 26.7 is the version the integration suite runs against, see [server versions](../reference/clickhouse.md#server-versions). |
-| **`grafana`** | `grafana/grafana-oss:13.0.2`, pinned by digest | `3000` | ClickHouse, Prometheus and Pyroscope datasources and the riptide dashboards provisioned; plugins `grafana-clickhouse-datasource` and `netsage-sankey-panel`. |
+| **`grafana`** | `grafana/grafana-oss:13.0.2`, pinned by digest | `3000` | ClickHouse datasource, the Prometheus and Pyroscope datasources with self-monitoring, and the riptide dashboards provisioned; plugins `grafana-clickhouse-datasource` and `netsage-sankey-panel`. |
+
+Self-monitoring, from **`deployment/clickhouse/compose.self-monitoring.yml`**, unless [dropped](#run-without-self-monitoring):
+
+| Service | Image | Published ports | Notes |
+| --- | --- | --- | --- |
 | **`prometheus`** | `prom/prometheus:v3.15.0`, pinned by digest | `127.0.0.1:9090` | Scrapes riptide's `/metrics` every 15 s as `job="riptide"` and evaluates riptide's alert rules. Targets come from `container-fs/prometheus/targets/`; no Alertmanager ships. |
 | **`pyroscope`** | `grafana/pyroscope:2.3.1`, pinned by digest | `127.0.0.1:4040` | Receives riptide's profiles; the compose riptide runs with [continuous profiling](../operations/profiling.md) on and the label `collector=riptide`. No health check: the image has no shell, and it reports ready about a minute after start. |
 
@@ -107,6 +115,7 @@ The riptide image follows `:latest`, so `docker compose pull` moves the collecto
 
 Volumes `clickhouse-data`, `gf-data`, `prometheus-data` and `pyroscope-data` hold the flows, Grafana's state, riptide's own metrics and its profiles.
 `docker compose down` keeps them; `docker compose down -v` deletes them.
+Run both without the override file: with it, Compose leaves Prometheus and Pyroscope running and keeps their volumes.
 
 ## Configure riptide further
 
@@ -148,6 +157,66 @@ A contributor bumps it with `make dashboards-version DASHBOARDS_VERSION=x.y.z`; 
 | `docker compose up -d` | `ghcr.io/riptide-labs/riptide:latest`, the last release |
 | `docker compose -f compose.yml -f compose.override.rc.yml up -d` | `ghcr.io/riptide-labs/riptide:rc`, rebuilt on every merge to main; not for production |
 | `docker compose -f compose.yml -f compose.override.dev.yml up -d` | `riptide:local`, built by `make oci` |
+| `docker compose -f compose.yml -f compose.override.no-self-monitoring.yml up -d` | The last release, without Prometheus and Pyroscope, see [below](#run-without-self-monitoring) |
+
+Combine an image variant with the self-monitoring override by naming all three files, the override last:
+
+```bash
+docker compose -f compose.yml -f compose.override.dev.yml -f compose.override.no-self-monitoring.yml up -d
+```
+
+## Run without self-monitoring
+
+1. Stop a running stack first, without the override file. Compose leaves a running Prometheus and Pyroscope alone when the override names them, so `up` with it would not stop them. The volumes stay.
+
+   ```bash
+   docker compose down
+   ```
+
+2. Start the stack with **`compose.override.no-self-monitoring.yml`**:
+
+   ```bash
+   docker compose -f compose.yml -f compose.override.no-self-monitoring.yml up -d
+   ```
+
+   Expected output, after the image pull:
+
+   ```text
+    Network riptide_default Created
+    Volume riptide_clickhouse-data Created
+    Volume riptide_gf-data Created
+    Container riptide-clickhouse-1 Healthy
+    Container riptide-riptide-1 Started
+    Container riptide-grafana-1 Healthy
+    Container riptide-grafana-folders-1 Started
+   ```
+
+3. Verify:
+
+   ```bash
+   docker compose -f compose.yml -f compose.override.no-self-monitoring.yml ps --format 'table {{.Service}}\t{{.Status}}'
+   ```
+
+   Expected output, once Grafana's health check has passed:
+
+   ```text
+   SERVICE      STATUS
+   clickhouse   Up 47 seconds (healthy)
+   grafana      Up 42 seconds (healthy)
+   riptide      Up 42 seconds (healthy)
+   ```
+
+Riptide runs with continuous profiling off.
+Grafana holds only the ClickHouse datasource: the override deletes the Prometheus and Pyroscope datasources that an earlier run provisioned.
+**Riptide - Health**, **Riptide - Pipeline Diagnostics** and **Riptide - Profiling** stay in Flow Analytics and show no data.
+The `prometheus-data` and `pyroscope-data` volumes stay until a `docker compose down -v` without the override file.
+
+To switch self-monitoring back on, stop the stack with the same override and start it without:
+
+```bash
+docker compose -f compose.yml -f compose.override.no-self-monitoring.yml down
+docker compose up -d
+```
 
 ## Upgrade from a stack that included ch-ui
 

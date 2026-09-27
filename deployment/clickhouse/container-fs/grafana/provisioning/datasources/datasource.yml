@@ -22,23 +22,3 @@ datasources:
     secureJsonData:
       # Interpolated by Grafana from the container environment; set in compose.yml (#651).
       password: ${CLICKHOUSE_PASSWORD}
-
-  - name: Prometheus
-    # Riptide's own health: the compose Prometheus scraping /metrics (#908). The
-    # health dashboards select their datasource by type through a variable, so
-    # this uid is a default, not a requirement. Not the default datasource: see
-    # the ClickHouse entry above.
-    uid: riptide-prometheus
-    type: prometheus
-    isDefault: false
-    url: http://prometheus:9090
-    jsonData:
-      timeInterval: 15s
-
-  - name: Pyroscope
-    # Riptide's continuous profiles (#921). Riptide - Profiling selects its datasource through a
-    # variable, so this uid is a default, not a requirement.
-    uid: riptide-pyroscope
-    type: grafana-pyroscope-datasource
-    isDefault: false
-    url: http://pyroscope:4040

@@ -2,7 +2,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 ---
 include:
-  - ../clickhouse/compose.yml
+  # A path list merges the two files like -f, so the self-monitoring file's grafana fragment applies.
+  # To run without Prometheus and Pyroscope, add compose.override.no-self-monitoring.yml (#927).
+  - path:
+      - ../clickhouse/compose.yml
+      - ../clickhouse/compose.self-monitoring.yml
 
 services:
   riptide:
@@ -14,6 +18,8 @@ services:
       # uploads, so waiting would delay the quickstart for a convenience.
       pyroscope:
         condition: service_started
+        # Resolves when compose.override.no-self-monitoring.yml keeps Pyroscope from starting.
+        required: false
     environment:
       TZ: UTC
       LOGGING_LEVEL_ROOT: WARN

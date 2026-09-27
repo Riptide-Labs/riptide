@@ -365,12 +365,13 @@ dashboards-version-test:
 # threshold once. Run through the Prometheus image, pinned by digest, so the
 # rules are tested by the same promtool that ships with the server. The pin is
 # read from the compose stack, the one place Dependabot keeps it current.
-PROMETHEUS_IMAGE ?= $(shell awk '/image: .*prom\/prometheus:/ {print $$2; exit}' deployment/clickhouse/compose.yml)
+PROMETHEUS_COMPOSE := deployment/clickhouse/compose.self-monitoring.yml
+PROMETHEUS_IMAGE ?= $(shell awk '/image: .*prom\/prometheus:/ {print $$2; exit}' $(PROMETHEUS_COMPOSE))
 PROMETHEUS_RULES := deployment/clickhouse/container-fs/prometheus
 
 .PHONY: alerts-test
 alerts-test: deps-oci
-	@test -n "$(PROMETHEUS_IMAGE)" || { echo "alerts-test: could not read the prom/prometheus image pin from deployment/clickhouse/compose.yml" >&2; exit 2; }
+	@test -n "$(PROMETHEUS_IMAGE)" || { echo "alerts-test: could not read the prom/prometheus image pin from $(PROMETHEUS_COMPOSE)" >&2; exit 2; }
 	docker run --rm -v "$(CURDIR)/$(PROMETHEUS_RULES):/rules:ro" -w /rules --entrypoint promtool "$(PROMETHEUS_IMAGE)" check rules riptide-alerts.yml
 	docker run --rm -v "$(CURDIR)/$(PROMETHEUS_RULES):/rules:ro" -w /rules --entrypoint promtool "$(PROMETHEUS_IMAGE)" test rules riptide-alerts.test.yml
 

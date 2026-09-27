@@ -1,0 +1,14 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+---
+# Mounted by compose.override.no-self-monitoring.yml. Removes the self-monitoring datasources that an
+# earlier default run provisioned into Grafana's database, so the stack keeps no datasource for a
+# service it no longer runs (#927). Grafana runs this before it provisions, and a name it does not
+# hold is skipped, so it is safe on a fresh volume too.
+apiVersion: 1
+
+deleteDatasources:
+  - name: Prometheus
+    orgId: 1
+  - name: Pyroscope
+    orgId: 1

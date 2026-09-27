@@ -20,19 +20,36 @@ description: Start ClickHouse and Grafana from the shipped stack, run riptide fr
 1. Start ClickHouse, Grafana, Prometheus and Pyroscope, with Prometheus pointed at the riptide you are about to run on the host:
 
    ```bash
-   PROMETHEUS_TARGETS=./container-fs/prometheus/targets-host docker compose -f deployment/clickhouse/compose.yml up -d
+   PROMETHEUS_TARGETS=./container-fs/prometheus/targets-host docker compose -f deployment/clickhouse/compose.yml -f deployment/clickhouse/compose.self-monitoring.yml up -d
    ```
 
    Expected output on the first start:
 
    ```text
     Network clickhouse_default Created
-    Volume clickhouse_prometheus-data Created
     Volume clickhouse_clickhouse-data Created
     Volume clickhouse_gf-data Created
+    Volume clickhouse_prometheus-data Created
     Volume clickhouse_pyroscope-data Created
-    Container clickhouse-prometheus-1 Started
     Container clickhouse-pyroscope-1 Started
+    Container clickhouse-prometheus-1 Started
+    Container clickhouse-clickhouse-1 Healthy
+    Container clickhouse-grafana-1 Healthy
+    Container clickhouse-grafana-folders-1 Started
+   ```
+
+   For ClickHouse and Grafana only, name the first file alone:
+
+   ```bash
+   docker compose -f deployment/clickhouse/compose.yml up -d
+   ```
+
+   Expected output on the first start:
+
+   ```text
+    Network clickhouse_default Created
+    Volume clickhouse_gf-data Created
+    Volume clickhouse_clickhouse-data Created
     Container clickhouse-clickhouse-1 Healthy
     Container clickhouse-grafana-1 Healthy
     Container clickhouse-grafana-folders-1 Started
@@ -44,6 +61,7 @@ description: Start ClickHouse and Grafana from the shipped stack, run riptide fr
    Prometheus is at `http://127.0.0.1:9090` and scrapes `host.docker.internal:8080`, the management port of the riptide started in the next step.
    Without `PROMETHEUS_TARGETS` it scrapes `riptide:8080`, which only exists in the full stack, and `RiptideDown` fires.
    Pyroscope is at `http://127.0.0.1:4040`; step 2 sends it profiles when profiling is on.
+   Prometheus, Pyroscope and their Grafana datasources come from **`compose.self-monitoring.yml`**; without it, Grafana holds only the ClickHouse datasource.
    This is the [shipped stack](../guides/docker-compose.md#what-the-stack-runs) without the riptide container.
 
 2. Start riptide with one receiver.
