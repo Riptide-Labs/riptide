@@ -179,12 +179,10 @@ docker compose -f compose.yml -f compose.override.dev.yml -f compose.override.no
    docker compose -f compose.yml -f compose.override.no-self-monitoring.yml up -d
    ```
 
-   Expected output, after the image pull:
+   Expected output, on the volumes step 1 kept:
 
    ```text
     Network riptide_default Created
-    Volume riptide_clickhouse-data Created
-    Volume riptide_gf-data Created
     Container riptide-clickhouse-1 Healthy
     Container riptide-riptide-1 Started
     Container riptide-grafana-1 Healthy
@@ -208,6 +206,8 @@ docker compose -f compose.yml -f compose.override.dev.yml -f compose.override.no
 
 Riptide runs with continuous profiling off.
 Grafana holds only the ClickHouse datasource: the override deletes the Prometheus and Pyroscope datasources that an earlier run provisioned.
+It deletes by name, on every start, so a datasource you add yourself named `Prometheus` or `Pyroscope` in the main organisation goes too.
+Give your own a different name.
 **Riptide - Health**, **Riptide - Pipeline Diagnostics** and **Riptide - Profiling** stay in Flow Analytics and show no data.
 The `prometheus-data` and `pyroscope-data` volumes stay until a `docker compose down -v` without the override file.
 

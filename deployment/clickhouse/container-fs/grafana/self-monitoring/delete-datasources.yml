@@ -4,7 +4,10 @@
 # Mounted by compose.override.no-self-monitoring.yml. Removes the self-monitoring datasources that an
 # earlier default run provisioned into Grafana's database, so the stack keeps no datasource for a
 # service it no longer runs (#927). Grafana runs this before it provisions, and a name it does not
-# hold is skipped, so it is safe on a fresh volume too.
+# hold is skipped, so it is safe on a fresh volume too. It matches by name only, so it also deletes
+# an operator's own datasource of the same name; the compose guide says so. prune: true on
+# datasources.yml would target only provisioned rows, but Grafana 13.0.2 stores them with
+# is_prunable = 0 and prunes nothing (measured on PR #928).
 apiVersion: 1
 
 deleteDatasources:
