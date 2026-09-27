@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.riptide.config.ClickhouseConfig;
 import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
+import org.riptide.profiling.ProfilingLabels;
 import org.riptide.repository.FlowRepository;
 import org.riptide.telemetry.BusyTime;
 
@@ -92,6 +93,9 @@ public class BatchingFlowRepository implements FlowRepository {
     private final String flusherBusyName;
     private final BusyTime flusherBusy = new BusyTime();
     private final String queueCapacityGauge;
+
+    /** The flusher's profiling labels, entered around every batch it inserts. */
+    private final ProfilingLabels.Component profiling = ProfilingLabels.component("batch-writer", "flusher");
     private final Counter droppedRows;
     private final Counter failedRows;
 
@@ -256,13 +260,15 @@ public class BatchingFlowRepository implements FlowRepository {
                     }
                 }
                 if (!batch.isEmpty()) {
-                    // From the drain returning to the insert completing; the drain's wait for rows
-                    // is not work and is not counted (see BusyTime).
-                    final long start = System.nanoTime();
-                    try {
-                        flush(batch);
-                    } finally {
-                        this.flusherBusy.addSince(start);
+                    // From the drain returning to the insert completing, inside the flusher's
+                    // profiling scope; the drain's wait for rows is not work and is not counted (see BusyTime).
+                    try (ProfilingLabels.Scope ignored = this.profiling.enter()) {
+                        final long start = System.nanoTime();
+                        try {
+                            flush(batch);
+                        } finally {
+                            this.flusherBusy.addSince(start);
+                        }
                     }
                 }
             } catch (final Throwable e) {

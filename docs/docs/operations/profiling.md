@@ -126,6 +126,47 @@ On a deployment running the shipped unit file (`User=riptide`, `NoNewPrivileges=
 What that does not establish is which mechanism `cpu` used.
 async-profiler can fall back internally without saying so, and the agent's API exposes only the event that was configured, so the startup line names what was requested and says so explicitly.
 
+## Read one pipeline stage's profile
+
+With profiling on, riptide labels the samples taken inside its pipeline with **`stage`** and **`component`**, the names its metrics use:
+
+| `stage` | `component` | Covers |
+| --- | --- | --- |
+| **`listener`** | the receiver's name, for example `flows` | the UDP read loop handling one datagram: parsing and the hand-off to dispatch |
+| **`parser-dispatch`** | the parser's name, for example `flows:netflow9` | a dispatch worker enriching one packet's records and handing them to persistence |
+| **`batch-writer`** | `flusher` | the batch flusher inserting one batch into ClickHouse |
+
+Everything else carries no `stage`: garbage collection, the JIT, reloads, SNMP polling and the idle parts of each loop.
+Select it with `stage=""`, which Pyroscope matches like `stage!~".+"`.
+
+In Pyroscope or Grafana, filter by label to see one stage:
+
+```text
+{service_name="riptide", stage="batch-writer"}
+```
+
+Labels add to the identity labels above, so a stage can be narrowed to one collector with `system`, `zone` or any `PYROSCOPE_LABELS` entry.
+
+## Turn allocation and lock profiles off
+
+With profiling on, riptide sends allocation and lock-contention profiles beside the CPU profile:
+
+| Profile | Default | Set by |
+| --- | --- | --- |
+| allocation | a sample every **`512k`** allocated | **`PYROSCOPE_PROFILER_ALLOC`** |
+| lock contention | every wait over **`10ms`** | **`PYROSCOPE_PROFILER_LOCK`** |
+
+Riptide applies a default only when the setting is absent from every source the agent reads: system properties (`-DPYROSCOPE_PROFILER_ALLOC` or `-Dpyroscope.profiler.alloc`), the environment, and the agent's properties file (`pyroscope.properties`, or the file named by `PYROSCOPE_CONFIGURATION_FILE`).
+A setting that is present wins, even when empty, and empty turns that profile off:
+
+```properties
+PYROSCOPE_PROFILER_ALLOC=
+PYROSCOPE_PROFILER_LOCK=
+```
+
+A lock profile appears only once a thread has waited longer than the threshold, so a quiet collector can show none.
+Pyroscope lists the allocation profile as `memory:alloc_in_new_tlab_*` and the lock profile as `mutex:*` and `block:*` profile types.
+
 ## Give the service a stable name
 
 If **`PYROSCOPE_APPLICATION_NAME`** is unset, riptide uses `riptide`.
@@ -161,6 +202,24 @@ For questions like "which method dominates a rebuild" it is adequate.
 
 The agent is a dependency, so it ships in every artefact whether or not you enable it: about 5.5 MB of jar, of which roughly 2.3 MB is async-profiler's bundled native libraries.
 Nothing is loaded, no thread starts and no connection is opened unless the setting is on.
+
+## What it costs when it is on
+
+Measured on a 4-core VM storing about 12,000 flows per second into ClickHouse, with inserts delayed so the batch flusher was the bottleneck.
+Each row is the last 8 minutes of a 10-minute step; profiling off ran twice, first and last, and the two runs give the run-to-run spread.
+
+| Profiling | Flusher busy, 12,185 flows/s offered | CPU, share of 4 cores | Stored at the ceiling |
+| --- | --- | --- | --- |
+| Off, first run | 0.852 | 0.033 | 13,710 rows/s |
+| On, CPU, allocation and lock, without stage labels | 0.856 | 0.037 | 13,598 rows/s |
+| On, with stage labels | 0.856 | 0.035 | 13,676 rows/s |
+| Off, last run | 0.854 | 0.035 | 13,595 rows/s |
+
+- The ceiling moved by less than the spread between the two runs without profiling, 115 rows/s or 0.8%.
+- Busy time and CPU rose by at most 0.004, against a spread of 0.002: at most about 0.01 cores.
+- The stage labels add nothing distinguishable.
+
+One load, one repeat: a cost under about 1% of the ceiling would not show here.
 
 ## The two JDK warnings
 

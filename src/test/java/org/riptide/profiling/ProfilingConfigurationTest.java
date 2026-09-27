@@ -6,6 +6,7 @@
 package org.riptide.profiling;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mockito;
 import org.riptide.config.DaemonConfig;
 import org.riptide.pipeline.Identity;
@@ -84,6 +85,91 @@ class ProfilingConfigurationTest {
                 .as("an optional profiler that cannot start must not abort the context; ingest is not"
                         + " optional and must survive it")
                 .isFalse();
+    }
+
+    @Test
+    void allocationAndLockProfilesAreOnByDefault() {
+        final var config = ProfilingConfiguration.buildConfig(new Identity("t", "o", "z", "s"), name -> false);
+
+        assertThat(config.profilingAlloc).as("allocation sampled every 512 KiB").isEqualTo("512k");
+        assertThat(config.profilingLock).as("lock contention over 10 ms").isEqualTo("10ms");
+    }
+
+    @Test
+    void aProfilerVariableThatIsPresentWinsEvenWhenEmpty() {
+        // PYROSCOPE_PROFILER_LOCK set, whatever its value (empty is the agent's "off"); ALLOC absent
+        final var config = ProfilingConfiguration.buildConfig(new Identity("t", "o", "z", "s"),
+                "PYROSCOPE_PROFILER_LOCK"::equals);
+
+        assertThat(config.profilingLock)
+                .as("the operator's value, here the unset environment's empty one, not riptide's default")
+                .isEmpty();
+        assertThat(config.profilingAlloc).as("the absent one still gets its default").isEqualTo("512k");
+    }
+
+    @Test
+    void aSystemPropertyCountsAsPresentLikeTheAgentReadsIt() {
+        System.setProperty("pyroscope.profiler.lock", "");
+        try {
+            assertThat(ProfilingConfiguration.agentSettingPresent("PYROSCOPE_PROFILER_LOCK"))
+                    .as("the agent reads -Dpyroscope.profiler.lock, so riptide must not default over it")
+                    .isTrue();
+            assertThat(ProfilingConfiguration.agentSettingPresent("PYROSCOPE_PROFILER_ALLOC")).isFalse();
+        } finally {
+            System.clearProperty("pyroscope.profiler.lock");
+        }
+    }
+
+    @Test
+    void theLiteralSystemPropertyCountsAsPresentToo() {
+        // the agent reads -DPYROSCOPE_PROFILER_LOCK as well as -Dpyroscope.profiler.lock
+        System.setProperty("PYROSCOPE_PROFILER_LOCK", "50ms");
+        try {
+            assertThat(ProfilingConfiguration.agentSettingPresent("PYROSCOPE_PROFILER_LOCK")).isTrue();
+        } finally {
+            System.clearProperty("PYROSCOPE_PROFILER_LOCK");
+        }
+    }
+
+    @Test
+    void theAgentsPropertiesFileCountsAsPresentEvenWhenEmpty(@TempDir final java.nio.file.Path dir)
+            throws java.io.IOException {
+        final var file = dir.resolve("agent.properties");
+        java.nio.file.Files.writeString(file, "pyroscope.profiler.alloc=\n");
+        System.setProperty("PYROSCOPE_CONFIGURATION_FILE", file.toString());
+        try {
+            assertThat(ProfilingConfiguration.agentSettingPresent("PYROSCOPE_PROFILER_ALLOC"))
+                    .as("an empty value in the agent's file turns allocation profiling off; riptide must not"
+                            + " default over it")
+                    .isTrue();
+            assertThat(ProfilingConfiguration.agentSettingPresent("PYROSCOPE_PROFILER_LOCK")).isFalse();
+        } finally {
+            System.clearProperty("PYROSCOPE_CONFIGURATION_FILE");
+        }
+    }
+
+    @Test
+    void theLabelGateStaysShutWhileProfilingIsOff() {
+        new ProfilingConfiguration().profilingStatus(new RiptideProfilingProperties(), new DaemonConfig());
+
+        assertThat(ProfilingLabels.component("listener", "flows").enter())
+                .as("no agent, so no component may enter a profiler scope")
+                .isSameAs(ProfilingLabels.NONE);
+    }
+
+    @Test
+    void theLabelGateStaysShutWhenTheProfilerCannotStart() {
+        final var properties = new RiptideProfilingProperties();
+        properties.setEnabled(true);
+        final var exploding = Mockito.mock(DaemonConfig.class);
+        Mockito.when(exploding.resolveIdentity())
+                .thenThrow(new IllegalStateException("simulated failure on the profiler start path"));
+
+        new ProfilingConfiguration().profilingStatus(properties, exploding);
+
+        assertThat(ProfilingLabels.component("listener", "flows").enter())
+                .as("an agent that never started cannot take labels")
+                .isSameAs(ProfilingLabels.NONE);
     }
 
     /**

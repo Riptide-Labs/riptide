@@ -264,6 +264,32 @@ class ParserDispatchTest {
     }
 
     @Test
+    void theDispatchTaskRunsUnderTheParsersLabels() throws Exception {
+        final var recorder = org.riptide.profiling.RecordingScopes.install();
+        try {
+            final var registry = new MetricRegistry();
+            final var seen = new java.util.concurrent.CopyOnWriteArrayList<List<String>>();
+            final var dispatched = new CountDownLatch(3);
+            final var parser = start(new StubParser("flows:netflow9", registry, true, (source, flows) -> {
+                seen.add(recorder.active());
+                dispatched.countDown();
+            }), 2, 16);
+
+            for (int i = 0; i < 3; i++) {
+                parser.dispatch();
+            }
+            assertThat(dispatched.await(10, TimeUnit.SECONDS)).as("three packets dispatched").isTrue();
+
+            assertThat(seen).as("every dispatch ran inside the parser's scope").hasSize(3)
+                    .allSatisfy(labels -> assertThat(labels)
+                            .containsExactly("stage=parser-dispatch", "component=flows:netflow9"));
+            assertThat(recorder.distinctLabelSets()).as("one label set for the parser").isEqualTo(1);
+        } finally {
+            org.riptide.profiling.RecordingScopes.uninstall();
+        }
+    }
+
+    @Test
     void capacityAndPoolSizeAreReportedBesideTheDepth() {
         final var registry = new MetricRegistry();
         start(new StubParser("udp", registry, true, (source, flows) -> { }), 4, 1024);
