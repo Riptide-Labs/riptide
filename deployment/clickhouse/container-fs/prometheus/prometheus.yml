@@ -1,0 +1,20 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Scrapes riptide's /metrics and evaluates its alert rules (#908). The target
+# list is a directory of its own, chosen by PROMETHEUS_TARGETS in compose.yml,
+# so a riptide running on the host is one variable, not a config edit. No
+# Alertmanager ships: alerts show here and in Grafana.
+---
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/riptide-alerts.yml
+
+scrape_configs:
+  - job_name: riptide
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/*.yml

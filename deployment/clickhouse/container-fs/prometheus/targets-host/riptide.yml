@@ -1,0 +1,12 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# A riptide running on the host, outside this stack: from the IDE, the jar or a
+# package. Selected with PROMETHEUS_TARGETS=./container-fs/prometheus/targets-host;
+# compose.yml maps host.docker.internal to the host gateway so this resolves on
+# Linux as well as on Docker Desktop and OrbStack.
+---
+- targets:
+    - host.docker.internal:8080
+  labels:
+    collector: riptide-on-host
