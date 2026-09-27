@@ -533,7 +533,9 @@ class BatchingFlowRepositoryTest {
 
         // five full batches, each one 200 ms insert
         this.repository.persist(flows(50));
-        await(Duration.ofSeconds(10), "five inserts done", () -> this.delegate.count() == 50);
+        // Wait on the busy time itself, not on the delegate's count: the count reaches 50 inside
+        // the fifth insert, before the flusher adds that insert's time on its way out of flush.
+        await(Duration.ofSeconds(10), "five inserts timed", () -> flusherBusySeconds() >= 1.0d);
 
         Assertions.assertThat(flusherBusySeconds())
                 .as("five 200 ms inserts; the upper bound leaves room for a slow CI host's sleeps")
