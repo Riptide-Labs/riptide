@@ -126,6 +126,27 @@ On a deployment running the shipped unit file (`User=riptide`, `NoNewPrivileges=
 What that does not establish is which mechanism `cpu` used.
 async-profiler can fall back internally without saying so, and the agent's API exposes only the event that was configured, so the startup line names what was requested and says so explicitly.
 
+## Read one pipeline stage's profile
+
+With profiling on, riptide labels the samples taken inside its pipeline with **`stage`** and **`component`**, the names its metrics use:
+
+| `stage` | `component` | Covers |
+| --- | --- | --- |
+| **`listener`** | the receiver's name, for example `flows` | the UDP read loop handling one datagram: parsing and the hand-off to dispatch |
+| **`parser-dispatch`** | the parser's name, for example `flows:netflow9` | a dispatch worker enriching one packet's records and handing them to persistence |
+| **`batch-writer`** | `flusher` | the batch flusher inserting one batch into ClickHouse |
+
+Everything else carries no `stage`: garbage collection, the JIT, reloads, SNMP polling and the idle parts of each loop.
+Select it with `stage=""`, which Pyroscope matches like `stage!~".+"`.
+
+In Pyroscope or Grafana, filter by label to see one stage:
+
+```text
+{service_name="riptide", stage="batch-writer"}
+```
+
+Labels add to the identity labels above, so a stage can be narrowed to one collector with `system`, `zone` or any `PYROSCOPE_LABELS` entry.
+
 ## Turn allocation and lock profiles off
 
 With profiling on, riptide sends allocation and lock-contention profiles beside the CPU profile:
@@ -144,6 +165,7 @@ PYROSCOPE_PROFILER_LOCK=
 ```
 
 A lock profile appears only once a thread has waited longer than the threshold, so a quiet collector can show none.
+Pyroscope lists the allocation profile as `memory:alloc_in_new_tlab_*` and the lock profile as `mutex:*` and `block:*` profile types.
 
 ## Give the service a stable name
 
