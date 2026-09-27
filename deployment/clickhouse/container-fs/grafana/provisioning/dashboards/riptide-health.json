@@ -34,6 +34,13 @@
       "icon": "dashboard"
     },
     {
+      "title": "Riptide - Profiling",
+      "type": "link",
+      "icon": "dashboard",
+      "keepTime": true,
+      "url": "/d/riptide-profiling/riptide-profiling?var-prometheus=${datasource}"
+    },
+    {
       "title": "Riptide dashboards",
       "type": "dashboards",
       "tags": [

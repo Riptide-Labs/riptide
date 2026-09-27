@@ -243,6 +243,10 @@
               "title": "Runbook: RiptideQueueFilling",
               "url": "https://riptide.space/docs/operations/monitoring#riptidequeuefilling",
               "targetBlank": true
+            },
+            {
+              "title": "Profile this stage in Riptide - Profiling",
+              "url": "/d/riptide-profiling/riptide-profiling?var-stage=${stage}&var-prometheus=${datasource}&${__url_time_range}"
             }
           ]
         },
@@ -335,6 +339,10 @@
               "title": "Runbook: RiptideWorkerSaturated",
               "url": "https://riptide.space/docs/operations/monitoring#riptideworkersaturated",
               "targetBlank": true
+            },
+            {
+              "title": "Profile this stage in Riptide - Profiling",
+              "url": "/d/riptide-profiling/riptide-profiling?var-stage=${stage}&var-prometheus=${datasource}&${__url_time_range}"
             }
           ]
         },
@@ -422,6 +430,10 @@
               "title": "Runbook: RiptideDataLoss",
               "url": "https://riptide.space/docs/operations/monitoring#riptidedataloss",
               "targetBlank": true
+            },
+            {
+              "title": "Profile this stage in Riptide - Profiling",
+              "url": "/d/riptide-profiling/riptide-profiling?var-stage=${stage}&var-prometheus=${datasource}&${__url_time_range}"
             }
           ]
         },
@@ -514,6 +526,10 @@
               "title": "Runbook: kernel socket drops",
               "url": "https://riptide.space/docs/operations/monitoring#riptidedataloss",
               "targetBlank": true
+            },
+            {
+              "title": "Profile this stage in Riptide - Profiling",
+              "url": "/d/riptide-profiling/riptide-profiling?var-stage=${stage}&var-prometheus=${datasource}&${__url_time_range}"
             }
           ]
         },
@@ -705,6 +721,10 @@
             }
           },
           "links": [
+            {
+              "title": "Profile this stage in Riptide - Profiling",
+              "url": "/d/riptide-profiling/riptide-profiling?var-stage=${stage}&var-prometheus=${datasource}&${__url_time_range}"
+            },
             {
               "title": "Back to Riptide - Health",
               "url": "/d/riptide-health/riptide-health?${instance:queryparam}&${datasource:queryparam}&${__url_time_range}"

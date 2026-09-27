@@ -1,0 +1,953 @@
+{
+  "uid": "riptide-profiling",
+  "title": "Riptide - Profiling",
+  "description": "Which code in which riptide stage spends the CPU, allocates or waits on locks, and did it change? For network engineers following a saturated stage from Riptide - Pipeline Diagnostics: the stages side by side on top, the selected stage's flame graph in the middle, the worker and GC share from Prometheus below, and a comparison with an earlier period at the bottom. Reads the continuous profiler through Pyroscope; needs riptide.profiling.enabled.",
+  "tags": [
+    "riptide",
+    "self-monitoring",
+    "profiling",
+    "audience:engineer"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [
+    {
+      "title": "Profiling guide",
+      "type": "link",
+      "url": "https://riptide.space/docs/operations/profiling",
+      "targetBlank": true,
+      "icon": "doc"
+    },
+    {
+      "title": "Riptide - Pipeline Diagnostics",
+      "type": "link",
+      "icon": "dashboard",
+      "keepTime": true,
+      "url": "/d/riptide-stage-detail/riptide-stage-detail?${stage:queryparam}&var-datasource=${prometheus}"
+    },
+    {
+      "title": "Riptide - Health",
+      "type": "link",
+      "icon": "dashboard",
+      "keepTime": true,
+      "url": "/d/riptide-health/riptide-health?var-datasource=${prometheus}"
+    },
+    {
+      "title": "Riptide dashboards",
+      "type": "dashboards",
+      "tags": [
+        "riptide"
+      ],
+      "asDropdown": true,
+      "keepTime": true
+    },
+    {
+      "title": "Dashboards v1.1.0",
+      "type": "link",
+      "url": "https://riptide.space/docs/guides/grafana-dashboards",
+      "tooltip": "Version of the provisioned dashboard set, independent of the riptide version. Opens the install and upgrade guide.",
+      "icon": "info",
+      "targetBlank": true
+    }
+  ],
+  "annotations": {
+    "list": [
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${prometheus}"
+        },
+        "enable": true,
+        "name": "Config changes (reloads)",
+        "iconColor": "#3B7DD8",
+        "expr": "sum by (component) (increase(label_replace({__name__=~\"(config|inventory|classification)_reload_successes\", job=\"riptide\", collector=~\"$collector\"}, \"component\", \"$1\", \"__name__\", \"(.+)_reload_successes\")[1m:])) > 0",
+        "step": "60s",
+        "titleFormat": "{{component}} reloaded",
+        "textFormat": "riptide applied a changed {{component}}. A profile that shifts here may come from the change: a new classification rule set, say."
+      }
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "pyroscope",
+        "label": "Pyroscope",
+        "type": "datasource",
+        "query": "grafana-pyroscope-datasource",
+        "current": {},
+        "refresh": 1,
+        "description": "The Pyroscope that riptide's continuous profiler uploads to."
+      },
+      {
+        "name": "prometheus",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "refresh": 1,
+        "description": "The Prometheus that scrapes riptide as job=\"riptide\" and loads riptide-alerts.yml."
+      },
+      {
+        "name": "collector",
+        "label": "Collector",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-pyroscope-datasource",
+          "uid": "${pyroscope}"
+        },
+        "query": {
+          "type": "labelValue",
+          "labelName": "collector",
+          "profileTypeId": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+          "refId": "collector"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "description": "Which riptide collectors to show, by the collector label in PYROSCOPE_LABELS. Prometheus panels match the same collector label on the scrape target."
+      },
+      {
+        "name": "stage",
+        "label": "Stage",
+        "type": "custom",
+        "query": "listener,parser-dispatch,batch-writer,outside the pipeline : ()",
+        "options": [
+          {
+            "selected": false,
+            "text": "listener",
+            "value": "listener"
+          },
+          {
+            "selected": false,
+            "text": "parser-dispatch",
+            "value": "parser-dispatch"
+          },
+          {
+            "selected": false,
+            "text": "batch-writer",
+            "value": "batch-writer"
+          },
+          {
+            "selected": false,
+            "text": "outside the pipeline",
+            "value": "()"
+          }
+        ],
+        "multi": false,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "description": "The pipeline stage whose profile the flame graphs show: a listener read loop, the parser dispatch workers, the ClickHouse batch flusher, or the samples no stage covers. All is the whole process."
+      },
+      {
+        "name": "profile",
+        "label": "Profile",
+        "type": "custom",
+        "query": "CPU : process_cpu:cpu:nanoseconds:cpu:nanoseconds,Allocation : memory:alloc_in_new_tlab_bytes:bytes:space:bytes,Lock contention : mutex:delay:nanoseconds:mutex:count",
+        "options": [
+          {
+            "selected": true,
+            "text": "CPU",
+            "value": "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
+          },
+          {
+            "selected": false,
+            "text": "Allocation",
+            "value": "memory:alloc_in_new_tlab_bytes:bytes:space:bytes"
+          },
+          {
+            "selected": false,
+            "text": "Lock contention",
+            "value": "mutex:delay:nanoseconds:mutex:count"
+          }
+        ],
+        "multi": false,
+        "includeAll": false,
+        "current": {
+          "selected": true,
+          "text": "CPU",
+          "value": "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
+        },
+        "description": "What the flame graphs measure: CPU time, allocated bytes, or time waiting to enter a contended monitor."
+      },
+      {
+        "name": "component",
+        "label": "Component",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-pyroscope-datasource",
+          "uid": "${pyroscope}"
+        },
+        "query": {
+          "type": "labelValue",
+          "labelName": "component",
+          "profileTypeId": "$profile",
+          "refId": "component"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "description": "Which listener, parser or the flusher within the stage, by its configured name. Lists every profiled component: the profiler cannot filter this list by stage, so a component outside the selected stage shows an empty flame graph."
+      },
+      {
+        "name": "compare",
+        "label": "Compare with",
+        "type": "custom",
+        "query": "an hour : 1h,a day : 1d,a week : 7d",
+        "options": [
+          {
+            "selected": false,
+            "text": "an hour",
+            "value": "1h"
+          },
+          {
+            "selected": true,
+            "text": "a day",
+            "value": "1d"
+          },
+          {
+            "selected": false,
+            "text": "a week",
+            "value": "7d"
+          }
+        ],
+        "multi": false,
+        "includeAll": false,
+        "current": {
+          "selected": true,
+          "text": "a day",
+          "value": "1d"
+        },
+        "description": "How far back the comparison row moves its second flame graph."
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Which stage burns the CPU?",
+      "description": "CPU time each pipeline stage spent, in cores, from the continuous profiler. Normal: the batch writer and parser dispatch on top, the listener small. A stage that climbs while its flows per second stay flat is doing more work per flow: open its flame graph below. \"outside the pipeline\" is everything else in the process: Spring, the SNMP poller, GC and JIT threads.",
+      "datasource": {
+        "type": "grafana-pyroscope-datasource",
+        "uid": "${pyroscope}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: cores",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#8A8F98",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "links": [
+            {
+              "title": "Profile ${__field.labels.stage} below",
+              "url": "/d/riptide-profiling/riptide-profiling?var-stage=${__field.labels.stage}&${pyroscope:queryparam}&${prometheus:queryparam}&${collector:queryparam}&${profile:queryparam}&${__url_time_range}"
+            },
+            {
+              "title": "Profiling guide: read one stage's profile",
+              "url": "https://riptide.space/docs/operations/profiling#read-one-pipeline-stages-profile",
+              "targetBlank": true
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "^cpu$",
+            "renamePattern": "outside the pipeline"
+          }
+        }
+      ],
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-pyroscope-datasource",
+            "uid": "${pyroscope}"
+          },
+          "refId": "A",
+          "queryType": "metrics",
+          "profileTypeId": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+          "labelSelector": "{service_name=\"riptide\", collector=~\"$collector\"}",
+          "groupBy": [
+            "stage"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Which stage allocates the most memory?",
+      "description": "Bytes per second each stage allocated in new TLABs, sampled every 512 KiB by default. Normal: steady, rising with flows per second. Allocation that grows faster than traffic drives GC pressure: compare with the GC panel below, then open the stage's allocation flame graph.",
+      "datasource": {
+        "type": "grafana-pyroscope-datasource",
+        "uid": "${pyroscope}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "binBps",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#8A8F98",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "links": [
+            {
+              "title": "Profile ${__field.labels.stage} below",
+              "url": "/d/riptide-profiling/riptide-profiling?var-stage=${__field.labels.stage}&${pyroscope:queryparam}&${prometheus:queryparam}&${collector:queryparam}&${profile:queryparam}&${__url_time_range}"
+            },
+            {
+              "title": "Profiling guide: read one stage's profile",
+              "url": "https://riptide.space/docs/operations/profiling#read-one-pipeline-stages-profile",
+              "targetBlank": true
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "^alloc_in_new_tlab_bytes$",
+            "renamePattern": "outside the pipeline"
+          }
+        }
+      ],
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-pyroscope-datasource",
+            "uid": "${pyroscope}"
+          },
+          "refId": "A",
+          "queryType": "metrics",
+          "profileTypeId": "memory:alloc_in_new_tlab_bytes:bytes:space:bytes",
+          "labelSelector": "{service_name=\"riptide\", collector=~\"$collector\"}",
+          "groupBy": [
+            "stage"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Which stage waits on locks?",
+      "description": "Time threads of each stage waited to enter a contended monitor, as nanoseconds of waiting per second, summed over the stage's threads. Only waits of 10 ms or more are sampled by default. Normal: near zero. Waiting that rises with load means threads of the stage serialise on one lock: open its lock flame graph to find which.",
+      "datasource": {
+        "type": "grafana-pyroscope-datasource",
+        "uid": "${pyroscope}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ns",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#8A8F98",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "links": [
+            {
+              "title": "Profile ${__field.labels.stage} below",
+              "url": "/d/riptide-profiling/riptide-profiling?var-stage=${__field.labels.stage}&${pyroscope:queryparam}&${prometheus:queryparam}&${collector:queryparam}&${profile:queryparam}&${__url_time_range}"
+            },
+            {
+              "title": "Profiling guide: read one stage's profile",
+              "url": "https://riptide.space/docs/operations/profiling#read-one-pipeline-stages-profile",
+              "targetBlank": true
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "^delay$",
+            "renamePattern": "outside the pipeline"
+          }
+        }
+      ],
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-pyroscope-datasource",
+            "uid": "${pyroscope}"
+          },
+          "refId": "A",
+          "queryType": "metrics",
+          "profileTypeId": "mutex:delay:nanoseconds:mutex:count",
+          "labelSelector": "{service_name=\"riptide\", collector=~\"$collector\"}",
+          "groupBy": [
+            "stage"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "flamegraph",
+      "title": "Where does the selected stage spend it?",
+      "description": "The profile of the selected collector, stage, component and profile type, merged over the time range. Width is the share of the total; read the widest frames near the top of a tower. Normal for CPU: ClickHouse row encoding in the batch writer, decoding and classification in parser dispatch. Pick \"outside the pipeline\" for everything no stage label covers.",
+      "datasource": {
+        "type": "grafana-pyroscope-datasource",
+        "uid": "${pyroscope}"
+      },
+      "gridPos": {
+        "h": 16,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "links": [
+            {
+              "title": "Profiling guide: read one stage's profile",
+              "url": "https://riptide.space/docs/operations/profiling#read-one-pipeline-stages-profile",
+              "targetBlank": true
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-pyroscope-datasource",
+            "uid": "${pyroscope}"
+          },
+          "refId": "A",
+          "queryType": "profile",
+          "profileTypeId": "$profile",
+          "labelSelector": "{service_name=\"riptide\", collector=~\"$collector\", stage=~\"$stage\", component=~\"$component\"}",
+          "groupBy": [],
+          "maxNodes": 16384
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "How close is the stage's worker to saturation?",
+      "description": "Share of time each selected listener read loop or the batch flusher spent on work, from riptide's own metrics in Prometheus. Normal: well below the dashed 80% line, where RiptideWorkerSaturated warns. A busy worker with a flat CPU panel above means it waits on something: check the lock panel. Parser dispatch is a pool and has no single worker.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2E9E63",
+                "value": null
+              },
+              {
+                "color": "#C08215",
+                "value": 0.8
+              },
+              {
+                "color": "#D9414B",
+                "value": 1
+              }
+            ]
+          },
+          "noValue": "No single worker at this stage",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "links": [
+            {
+              "title": "Open ${__field.labels.stage} in Riptide - Pipeline Diagnostics",
+              "url": "/d/riptide-stage-detail/riptide-stage-detail?var-stage=${__field.labels.stage}&var-datasource=${prometheus}&${__url_time_range}"
+            },
+            {
+              "title": "Runbook: RiptideWorkerSaturated",
+              "url": "https://riptide.space/docs/operations/monitoring#riptideworkersaturated",
+              "targetBlank": true
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus}"
+          },
+          "refId": "A",
+          "expr": "rate(riptide:busy_seconds_total{job=\"riptide\", collector=~\"$collector\", stage=~\"$stage\"}[5m])",
+          "legendFormat": "{{stage}} {{component}}",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Share of time stopped in GC pauses",
+      "description": "Share of wall-clock time riptide's collectors spent in GC pauses, from Prometheus. Normal: below the dashed 10% line, where RiptideGcPressure warns. Rising with the allocation panel above means allocation drives it; open the allocating stage's flame graph with the Allocation profile.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2E9E63",
+                "value": null
+              },
+              {
+                "color": "#C08215",
+                "value": 0.1
+              },
+              {
+                "color": "#D9414B",
+                "value": 1
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "links": [
+            {
+              "title": "Runbook: RiptideGcPressure",
+              "url": "https://riptide.space/docs/operations/monitoring#riptidegcpressure",
+              "targetBlank": true
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus}"
+          },
+          "refId": "A",
+          "expr": "label_replace(rate(jvm_gc_seconds{job=\"riptide\", collector=~\"$collector\"}[5m]), \"collector\", \"$1\", \"instance\", \"(.+)\") or rate(jvm_gc_seconds{job=\"riptide\", collector=~\"$collector\", collector!=\"\"}[5m])",
+          "legendFormat": "{{collector}}",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "How many flows does the stage drop or fail to store?",
+      "description": "Flows per second the selected stage counted as not reaching the flows table, from Prometheus. Normal: nothing above zero. A hot frame in a stage that also loses flows is the one to fix first; RiptideDataLoss pages when loss lasts 5 minutes. Pick All to see every stage.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 24
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "cps",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#2E9E63",
+                "value": null
+              },
+              {
+                "color": "#D9414B",
+                "value": 0.001
+              }
+            ]
+          },
+          "noValue": "No loss counter at this stage",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "links": [
+            {
+              "title": "Open ${__field.labels.stage} in Riptide - Pipeline Diagnostics",
+              "url": "/d/riptide-stage-detail/riptide-stage-detail?var-stage=${__field.labels.stage}&var-datasource=${prometheus}&${__url_time_range}"
+            },
+            {
+              "title": "Runbook: RiptideDataLoss",
+              "url": "https://riptide.space/docs/operations/monitoring#riptidedataloss",
+              "targetBlank": true
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus}"
+          },
+          "refId": "A",
+          "expr": "sum by (stage, component) (rate(riptide:lost_total{job=\"riptide\", collector=~\"$collector\", stage=~\"$stage\"}[5m]))",
+          "legendFormat": "{{stage}} {{component}}",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "row",
+      "title": "Compare with $compare earlier",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "panels": [
+        {
+          "id": 8,
+          "type": "flamegraph",
+          "title": "The selected profile now",
+          "description": "The same profile as the flame graph above, at half width beside its earlier twin. Compare the widths of the same frame on both sides.",
+          "datasource": {
+            "type": "grafana-pyroscope-datasource",
+            "uid": "${pyroscope}"
+          },
+          "gridPos": {
+            "h": 16,
+            "w": 12,
+            "x": 0,
+            "y": 33
+          },
+          "fieldConfig": {
+            "defaults": {
+              "links": [
+                {
+                  "title": "Profiling guide: read one stage's profile",
+                  "url": "https://riptide.space/docs/operations/profiling#read-one-pipeline-stages-profile",
+                  "targetBlank": true
+                }
+              ]
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-pyroscope-datasource",
+                "uid": "${pyroscope}"
+              },
+              "refId": "A",
+              "queryType": "profile",
+              "profileTypeId": "$profile",
+              "labelSelector": "{service_name=\"riptide\", collector=~\"$collector\", stage=~\"$stage\", component=~\"$component\"}",
+              "groupBy": [],
+              "maxNodes": 16384
+            }
+          ]
+        },
+        {
+          "id": 9,
+          "type": "flamegraph",
+          "title": "The selected profile $compare earlier",
+          "description": "The same selection with the time range moved back by the compare interval. A frame wider here than now is work that shrank; one missing here is new work.",
+          "datasource": {
+            "type": "grafana-pyroscope-datasource",
+            "uid": "${pyroscope}"
+          },
+          "gridPos": {
+            "h": 16,
+            "w": 12,
+            "x": 12,
+            "y": 33
+          },
+          "fieldConfig": {
+            "defaults": {
+              "links": [
+                {
+                  "title": "Profiling guide: read one stage's profile",
+                  "url": "https://riptide.space/docs/operations/profiling#read-one-pipeline-stages-profile",
+                  "targetBlank": true
+                }
+              ]
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "grafana-pyroscope-datasource",
+                "uid": "${pyroscope}"
+              },
+              "refId": "A",
+              "queryType": "profile",
+              "profileTypeId": "$profile",
+              "labelSelector": "{service_name=\"riptide\", collector=~\"$collector\", stage=~\"$stage\", component=~\"$component\"}",
+              "groupBy": [],
+              "maxNodes": 16384
+            }
+          ],
+          "timeShift": "$compare"
+        }
+      ]
+    }
+  ]
+}
