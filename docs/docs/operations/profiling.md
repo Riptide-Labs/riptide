@@ -240,6 +240,7 @@ If you pin an older agent, `--sun-misc-unsafe-memory-access=allow` quiets that w
 ## Related
 
 - [Management endpoints and ports](../reference/management.md): where the collector's own metrics are.
+- [Grafana dashboards](../guides/grafana-dashboards.md): **Riptide - Profiling** shows these profiles per pipeline stage, with a flame graph and an earlier period beside it.
 
 ## Open questions
 

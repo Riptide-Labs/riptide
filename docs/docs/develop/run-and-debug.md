@@ -17,7 +17,7 @@ description: Start ClickHouse and Grafana from the shipped stack, run riptide fr
 
 ## Steps
 
-1. Start ClickHouse, Grafana and Prometheus, with Prometheus pointed at the riptide you are about to run on the host:
+1. Start ClickHouse, Grafana, Prometheus and Pyroscope, with Prometheus pointed at the riptide you are about to run on the host:
 
    ```bash
    PROMETHEUS_TARGETS=./container-fs/prometheus/targets-host docker compose -f deployment/clickhouse/compose.yml up -d
@@ -30,7 +30,9 @@ description: Start ClickHouse and Grafana from the shipped stack, run riptide fr
     Volume clickhouse_prometheus-data Created
     Volume clickhouse_clickhouse-data Created
     Volume clickhouse_gf-data Created
+    Volume clickhouse_pyroscope-data Created
     Container clickhouse-prometheus-1 Started
+    Container clickhouse-pyroscope-1 Started
     Container clickhouse-clickhouse-1 Healthy
     Container clickhouse-grafana-1 Healthy
     Container clickhouse-grafana-folders-1 Started
@@ -41,6 +43,7 @@ description: Start ClickHouse and Grafana from the shipped stack, run riptide fr
    Set **`CLICKHOUSE_PASSWORD`** or **`GF_SECURITY_ADMIN_PASSWORD`** in the environment before `up` to change either.
    Prometheus is at `http://127.0.0.1:9090` and scrapes `host.docker.internal:8080`, the management port of the riptide started in the next step.
    Without `PROMETHEUS_TARGETS` it scrapes `riptide:8080`, which only exists in the full stack, and `RiptideDown` fires.
+   Pyroscope is at `http://127.0.0.1:4040`; step 2 sends it profiles when profiling is on.
    This is the [shipped stack](../guides/docker-compose.md#what-the-stack-runs) without the riptide container.
 
 2. Start riptide with one receiver.
@@ -62,6 +65,26 @@ description: Start ClickHouse and Grafana from the shipped stack, run riptide fr
    org.riptide.RiptideApplication           : Started RiptideApplication in 1.612 seconds (process running for 1.971)
    org.riptide.flows.Daemon                 : Receiver 'ipfix' listening on UDP 127.0.0.1:9999
    org.riptide.flows.Daemon                 : Listening for flows with 1 receivers \o/
+   ```
+
+   To see the run in **Riptide - Profiling**, start the jar with [continuous profiling](../operations/profiling.md) on, and the same collector name that `targets-host` gives Prometheus:
+
+   ```bash
+   RIPTIDE_PROFILING_ENABLED=true \
+   PYROSCOPE_SERVER_ADDRESS=http://127.0.0.1:4040 \
+   PYROSCOPE_LABELS=collector=riptide-on-host \
+   JDK_JAVA_OPTIONS=--enable-native-access=ALL-UNNAMED \
+   java -jar target/riptide-flows-*.jar \
+     --riptide.clickhouse.password=riptide \
+     --riptide.receivers.ipfix.type=ipfix \
+     --riptide.receivers.ipfix.host=127.0.0.1 \
+     --riptide.receivers.ipfix.port=9999
+   ```
+
+   Expected output, the line that matters:
+
+   ```text
+   o.r.profiling.ProfilingConfiguration     : Continuous profiling started: application=riptide event=ITIMER profiler=ASYNC server=http://127.0.0.1:4040 labels={collector=riptide-on-host, tenant=default, organisation=default, zone=default, system=<host name>}. The event named here is the one configured; the agent exposes no reading of what the process actually obtained.
    ```
 
    No receiver is configured by default.

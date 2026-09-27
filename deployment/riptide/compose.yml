@@ -10,6 +10,10 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
+      # started, not healthy: Pyroscope takes about a minute to report ready and the agent retries its
+      # uploads, so waiting would delay the quickstart for a convenience.
+      pyroscope:
+        condition: service_started
     environment:
       TZ: UTC
       LOGGING_LEVEL_ROOT: WARN
@@ -23,6 +27,14 @@ services:
       RIPTIDE_RECEIVERS_FLOWS_TYPE: multi
       RIPTIDE_RECEIVERS_FLOWS_HOST: 0.0.0.0
       RIPTIDE_RECEIVERS_FLOWS_PORT: "9999"
+      # Continuous profiling into the stack's Pyroscope (#921), on here as a quickstart convenience;
+      # it is off by default everywhere else. collector matches the Prometheus target label, so the
+      # three health dashboards name this riptide the same way.
+      RIPTIDE_PROFILING_ENABLED: "true"
+      PYROSCOPE_SERVER_ADDRESS: http://pyroscope:4040
+      PYROSCOPE_APPLICATION_NAME: riptide
+      PYROSCOPE_LABELS: collector=riptide
+      JDK_JAVA_OPTIONS: --enable-native-access=ALL-UNNAMED
     ports:
       - "9999:9999/udp"
     healthcheck:

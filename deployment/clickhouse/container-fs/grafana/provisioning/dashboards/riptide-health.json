@@ -34,6 +34,13 @@
       "icon": "dashboard"
     },
     {
+      "title": "Riptide - Profiling",
+      "type": "link",
+      "icon": "dashboard",
+      "keepTime": true,
+      "url": "/d/riptide-profiling/riptide-profiling?var-prometheus=${datasource}"
+    },
+    {
       "title": "Riptide dashboards",
       "type": "dashboards",
       "tags": [
@@ -44,7 +51,7 @@
       "keepTime": true
     },
     {
-      "title": "Dashboards v1.1.0",
+      "title": "Dashboards v1.1.1",
       "type": "link",
       "url": "https://riptide.space/docs/guides/grafana-dashboards",
       "tooltip": "Version of the provisioned dashboard set, independent of the riptide version. Opens the install and upgrade guide.",

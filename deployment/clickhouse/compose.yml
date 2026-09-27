@@ -8,6 +8,8 @@ volumes:
     driver: local
   prometheus-data:
     driver: local
+  pyroscope-data:
+    driver: local
 
 services:
   clickhouse:
@@ -96,6 +98,19 @@ services:
     # Loopback only, like ClickHouse: Grafana reaches it over the compose network.
     ports:
       - "127.0.0.1:9090:9090/tcp"
+
+  pyroscope:
+    # Receives riptide's continuous profiles (#921): CPU, allocation and lock, labelled by pipeline
+    # stage. Pinned by digest like the images around it. The image is distroless (no shell, no wget),
+    # so it has no healthcheck; it reports ready on /ready about a minute after start, once its
+    # ingester has joined the ring, and the smoke test waits on that from the host.
+    image: docker.io/grafana/pyroscope:2.3.1@sha256:86a9ee7448487409ead8ada78789de7b78b739711b92b5d7224a1a54abf3eeb2
+    volumes:
+      - pyroscope-data:/data
+    # Loopback only, like ClickHouse and Prometheus. A riptide on the host sends to
+    # http://127.0.0.1:4040; the riptide service of deployment/riptide/compose.yml to pyroscope:4040.
+    ports:
+      - "127.0.0.1:4040:4040/tcp"
 
   grafana-folders:
     # One-shot: nests the provisioned "Flow Analytics" folder under "Riptide" once Grafana is

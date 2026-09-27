@@ -40,7 +40,7 @@ class AlertThresholdParityTest {
 
     private static final Path RULES = Path.of("deployment/clickhouse/container-fs/prometheus/riptide-alerts.yml");
     private static final Path DASHBOARDS = Path.of("deployment/clickhouse/container-fs/grafana/provisioning/dashboards");
-    private static final List<String> MIRRORING = List.of("riptide-health.json", "riptide-stage-detail.json");
+    private static final List<String> MIRRORING = List.of("riptide-health.json", "riptide-profiling.json", "riptide-stage-detail.json");
 
     /** "... > 0.8" at the end of an alert expression. */
     private static final Pattern THRESHOLD = Pattern.compile(">\\s*([0-9.]+)\\s*$");

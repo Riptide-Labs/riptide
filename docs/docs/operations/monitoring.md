@@ -13,6 +13,7 @@ Every check runs against the Prometheus that loads **`riptide-alerts.yml`**; set
 The checks read the recording rules `riptide:*`, which carry a `stage` and a `component` label, and print each collector by its `collector` label, or by its scrape address where the target has none.
 The healthy outputs were captured on macOS, which has no per-socket kernel counters: on Linux every listener adds a `listener <name>` line to the loss check.
 **Riptide - Health** shows the same signals on one screen, and **Riptide - Pipeline Diagnostics** shows one stage against the JVM.
+**Riptide - Profiling** shows which code in a stage spends the CPU, allocates or waits on locks; it needs [continuous profiling](profiling.md) on.
 
 | Alert | Severity | Fires when | Threshold |
 | --- | --- | --- | --- |
@@ -159,6 +160,7 @@ riptide-on-host listener flows 0.005
 | `batch-writer flusher` above 0.8, insert time flat | the flusher issues many small inserts | Raise **`riptide.clickhouse.batch.max-rows`** for fewer, larger inserts, with two limits: a batch only grows past `max-rows` when rows arrive faster than `max-rows` per **`riptide.clickhouse.batch.max-latency`**, and **`riptide.clickhouse.batch.queue-capacity`** must stay several batches deep, or rows drop while an insert runs |
 | `listener <name>` above 0.8, dispatch queue full | the read loop waits for room in the dispatch queue, which counts as busy | Fix the stage behind it first; see [RiptideDataLoss](#riptidedataloss) on how overload spreads back |
 | `listener <name>` above 0.8, dispatch queue empty | one read loop parses everything that arrives on that port | Split exporters across more receivers on separate ports, or give riptide faster cores; the figure leaves out socket reads, so the real share is a little higher |
+| Above 0.8 and none of the causes above | the worker spends its time in code no metric names | Follow **Profile this stage** on **Riptide - Pipeline Diagnostics** and read the widest frames of the stage's CPU and lock flame graphs |
 
 Measured on the rig, the flusher sat at 0.85 to 0.88 without losing a row and this alert fired 15 minutes later; the flusher's loss started only when offered load went past its ceiling.
 The listener figure reached 0.88 only while it waited on a full dispatch queue; the rig never drove a read loop that hard by parsing alone, so its 0.8 is not validated for that case.
@@ -238,8 +240,8 @@ riptide-on-host 0.004
 
 | Finding | Likely cause | Fix |
 | --- | --- | --- |
-| Above 0.85 with a saturated stage | offered load exceeds what the host can process | Raise the CPU limit or move exporters to another collector |
-| Above 0.85 with every stage idle | CPU goes somewhere other than the flow path | Collect a profile with [continuous profiling](profiling.md) |
+| Above 0.85 with a saturated stage | offered load exceeds what the host can process | Raise the CPU limit or move exporters to another collector; **Riptide - Profiling** shows which stage holds the cores |
+| Above 0.85 with every stage idle | CPU goes somewhere other than the flow path | Open **Riptide - Profiling** with stage **outside the pipeline**; turn on [continuous profiling](profiling.md) first if it is off |
 
 ## RiptideFileDescriptors {/* #riptidefiledescriptors */}
 
