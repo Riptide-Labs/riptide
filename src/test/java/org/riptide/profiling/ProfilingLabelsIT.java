@@ -141,13 +141,19 @@ class ProfilingLabelsIT {
                 "{service_name=\"" + SERVICE + "\", stage=\"\"}");
         System.out.println("ProfilingLabelsIT stage=\"\" frames: " + outside.size()
                 + ", flush among them: " + outside.stream().anyMatch(f -> f.endsWith("BatchingFlowRepository.flush")));
-        // Only frames that run wholly inside a scope: the read handler's scope opens inside
-        // AccountingHandler.channelRead, so a sample in that method's own code before enter() or
-        // after close() is rightly unlabelled with it on the stack (CI on Linux sampled one).
-        assertThat(outside).as("stage=\"\" selects the unlabelled samples, outside the pipeline")
-                .isNotEmpty()
-                .noneMatch(f -> f.endsWith("BatchingFlowRepository.flush"))
-                .noneMatch(f -> f.endsWith("UdpListener$SingleDatagramPacketParserHandler.channelRead0"));
+        assertThat(outside).as("stage=\"\" selects the unlabelled samples, outside the pipeline").isNotEmpty();
+        // A share, not "none": on Linux a few samples of code wholly inside a scope arrive unlabelled
+        // (CI saw the parse handler among them), while a scope that never takes leaves nearly all of
+        // them unlabelled. Only frames that run wholly inside a scope: the read handler's scope opens
+        // inside AccountingHandler.channelRead, so that method's own code is rightly unlabelled.
+        for (final String frame : List.of("BatchingFlowRepository.flush",
+                "UdpListener$SingleDatagramPacketParserHandler.channelRead0")) {
+            final long all = frameTotal(service + "}", frame);
+            final long unlabelled = frameTotal(service + ", stage=\"\"}", frame);
+            System.out.println("ProfilingLabelsIT " + frame + ": unlabelled " + unlabelled / 1e9 + " s of " + all / 1e9 + " s");
+            assertThat(all).as("%s was sampled", frame).isPositive();
+            assertThat((double) unlabelled / all).as("unlabelled share of %s", frame).isLessThan(0.1);
+        }
     }
 
     /** NetFlow v5 with 30 records per datagram, as fast as one thread sends for {@code duration}. */
@@ -205,6 +211,26 @@ class ProfilingLabelsIT {
                 .put("profileTypeID", "process_cpu:cpu:nanoseconds:cpu:nanoseconds").put("labelSelector", selector)
                 .put("start", now - 3_600_000).put("end", now).put("maxNodes", 16_384))
                 .path("flamegraph").path("total").asLong();
+    }
+
+    /** CPU nanoseconds under frames ending in {@code frame}, none of which recurse, for {@code selector}. */
+    private static long frameTotal(final String selector, final String frame) throws Exception {
+        final long now = System.currentTimeMillis();
+        final JsonNode body = post("/querier.v1.QuerierService/SelectMergeStacktraces", JSON.createObjectNode()
+                .put("profileTypeID", "process_cpu:cpu:nanoseconds:cpu:nanoseconds").put("labelSelector", selector)
+                .put("start", now - 3_600_000).put("end", now).put("maxNodes", 16_384));
+        final List<String> names = new ArrayList<>();
+        body.path("flamegraph").path("names").forEach(v -> names.add(v.asText()));
+        long sum = 0;
+        for (final JsonNode level : body.path("flamegraph").path("levels")) {
+            final JsonNode values = level.path("values");
+            for (int i = 3; i < values.size(); i += 4) {
+                if (names.get(values.get(i).asInt()).endsWith(frame)) {
+                    sum += values.get(i - 2).asLong();
+                }
+            }
+        }
+        return sum;
     }
 
     /** Whether any frame of the merged flame graph for {@code selector} names {@code method}. */
