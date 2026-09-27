@@ -126,6 +126,25 @@ On a deployment running the shipped unit file (`User=riptide`, `NoNewPrivileges=
 What that does not establish is which mechanism `cpu` used.
 async-profiler can fall back internally without saying so, and the agent's API exposes only the event that was configured, so the startup line names what was requested and says so explicitly.
 
+## Turn allocation and lock profiles off
+
+With profiling on, riptide sends allocation and lock-contention profiles beside the CPU profile:
+
+| Profile | Default | Set by |
+| --- | --- | --- |
+| allocation | a sample every **`512k`** allocated | **`PYROSCOPE_PROFILER_ALLOC`** |
+| lock contention | every wait over **`10ms`** | **`PYROSCOPE_PROFILER_LOCK`** |
+
+Riptide applies a default only when the setting is absent, as an environment variable or as the agent's system property (`-Dpyroscope.profiler.alloc`).
+A setting that is present wins, even when empty, and empty turns that profile off:
+
+```properties
+PYROSCOPE_PROFILER_ALLOC=
+PYROSCOPE_PROFILER_LOCK=
+```
+
+A lock profile appears only once a thread has waited longer than the threshold, so a quiet collector can show none.
+
 ## Give the service a stable name
 
 If **`PYROSCOPE_APPLICATION_NAME`** is unset, riptide uses `riptide`.

@@ -6,9 +6,11 @@
 package org.riptide.profiling;
 
 import io.pyroscope.labels.v2.LabelsSet;
-import io.pyroscope.labels.v2.ScopedContext;
+import io.pyroscope.labels.v2.ConstantContext;
 
+import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Labels a pipeline component's work in the continuous profile with {@code stage} and
@@ -36,9 +38,22 @@ public final class ProfilingLabels {
 
     static final Scope NONE = () -> { };
 
+    /**
+     * One registered context per label set, activated and deactivated per unit of work.
+     *
+     * <p>Not {@code ScopedContext}: that registers a fresh context id per instance and drops the mapping
+     * when it closes, so a scope that lives for microseconds (one datagram) is usually gone before the
+     * agent's next upload and its samples arrive unlabelled. Measured in {@code ProfilingLabelsIT}: with a
+     * scope per unit of work only 18.3 s of 326.65 s of CPU samples carried a stage, and the flusher's and
+     * the listener's own frames appeared unlabelled. A {@code ConstantContext} is registered once and never
+     * dropped. {@code LabelsSet} keeps identity equality, so the map is keyed per component.
+     */
+    private static final Map<LabelsSet, ConstantContext> CONTEXTS = new ConcurrentHashMap<>();
+
     private static final Scopes PROFILER = labels -> {
-        final ScopedContext context = new ScopedContext(labels);
-        return context::close;
+        final ConstantContext context = CONTEXTS.computeIfAbsent(labels, ConstantContext::of);
+        context.activate();
+        return context::deactivate;
     };
 
     /** Null while profiling is off: the gate. */
