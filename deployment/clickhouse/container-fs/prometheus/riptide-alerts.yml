@@ -8,12 +8,16 @@
 # example listeners_flows_busySeconds. The recording rules below lift that name into a
 # `component` label, and the stage into a `stage` label. They work on the raw series, because
 # rate() and increase() drop __name__, so label_replace can no longer read it after them.
-# Thresholds here are the only copy; the dashboards repeat them and a test pins that they agree.
+# Thresholds here are the only copy. The health dashboards of #909 and #910 will repeat them, with
+# a test pinning that the two agree.
 ---
 groups:
   - name: riptide-components
     rules:
-      # Every counter that means lost flows, one series per stage and component.
+      # Every counter of flows that did not reach the flows table, one series per stage and
+      # component. failedRows charges a refused batch in full, including rows then kept in
+      # flows_dead_letter, and it already holds every row deadLetterFailedRows counts; so
+      # deadLetterFailedRows is left out, or one refused batch would raise two alerts.
       - record: riptide:lost_total
         expr: |
           label_replace(label_replace(
@@ -26,7 +30,7 @@ groups:
             pipeline_dispatchErrors{job="riptide"},
             "component", "dispatchErrors", "", ""), "stage", "pipeline", "", "")
           or label_replace(label_replace(
-            {job="riptide", __name__=~"persister_batch_(droppedRows|failedRows|deadLetterFailedRows)"},
+            {job="riptide", __name__=~"persister_batch_(droppedRows|failedRows)"},
             "component", "$1", "__name__", "persister_batch_(.+)"), "stage", "batch-writer", "", "")
 
       - record: riptide:queue_depth
@@ -81,8 +85,8 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: "riptide on {{ $labels.instance }} is losing flows at the {{ $labels.stage }} stage ({{ $labels.component }})"
-          description: "{{ $value | humanize }} lost in the last 5 minutes at {{ $labels.stage }}/{{ $labels.component }}, and still losing after 5 minutes."
+          summary: "riptide on {{ $labels.instance }}: flows are not reaching storage at the {{ $labels.stage }} stage ({{ $labels.component }})"
+          description: "{{ $value | humanize }} flows in the last 5 minutes counted by {{ $labels.stage }}/{{ $labels.component }}, still rising after 5 minutes. For batch-writer/failedRows, rows kept in flows_dead_letter count too; the runbook shows how to tell kept from lost."
           runbook_url: https://riptide.space/docs/operations/monitoring#riptidedataloss
 
       - alert: RiptideQueueFilling

@@ -53,8 +53,8 @@ tests:
         exp_alerts:
           - exp_labels: {severity: critical, job: riptide, instance: "riptide:8080", stage: batch-writer, component: droppedRows}
             exp_annotations:
-              summary: "riptide on riptide:8080 is losing flows at the batch-writer stage (droppedRows)"
-              description: "500 lost in the last 5 minutes at batch-writer/droppedRows, and still losing after 5 minutes."
+              summary: "riptide on riptide:8080: flows are not reaching storage at the batch-writer stage (droppedRows)"
+              description: "500 flows in the last 5 minutes counted by batch-writer/droppedRows, still rising after 5 minutes. For batch-writer/failedRows, rows kept in flows_dead_letter count too; the runbook shows how to tell kept from lost."
               runbook_url: https://riptide.space/docs/operations/monitoring#riptidedataloss
 
   - name: kernel and dispatch loss name their component, colon included
@@ -72,13 +72,31 @@ tests:
         exp_alerts:
           - exp_labels: {severity: critical, job: riptide, instance: "riptide:8080", stage: listener, component: flows}
             exp_annotations:
-              summary: "riptide on riptide:8080 is losing flows at the listener stage (flows)"
-              description: "15 lost in the last 5 minutes at listener/flows, and still losing after 5 minutes."
+              summary: "riptide on riptide:8080: flows are not reaching storage at the listener stage (flows)"
+              description: "15 flows in the last 5 minutes counted by listener/flows, still rising after 5 minutes. For batch-writer/failedRows, rows kept in flows_dead_letter count too; the runbook shows how to tell kept from lost."
               runbook_url: https://riptide.space/docs/operations/monitoring#riptidedataloss
           - exp_labels: {severity: critical, job: riptide, instance: "riptide:8080", stage: parser-dispatch, component: "flows:ipfix"}
             exp_annotations:
-              summary: "riptide on riptide:8080 is losing flows at the parser-dispatch stage (flows:ipfix)"
-              description: "120 lost in the last 5 minutes at parser-dispatch/flows:ipfix, and still losing after 5 minutes."
+              summary: "riptide on riptide:8080: flows are not reaching storage at the parser-dispatch stage (flows:ipfix)"
+              description: "120 flows in the last 5 minutes counted by parser-dispatch/flows:ipfix, still rising after 5 minutes. For batch-writer/failedRows, rows kept in flows_dead_letter count too; the runbook shows how to tell kept from lost."
+              runbook_url: https://riptide.space/docs/operations/monitoring#riptidedataloss
+
+  - name: a refused batch raises one alert, not one per counter
+    interval: 1m
+    input_series:
+      # ClickHouse refuses every batch and the dead-letter write fails too: both counters move
+      - series: 'persister_batch_failedRows{job="riptide", instance="riptide:8080"}'
+        values: '0+40x20'
+      - series: 'persister_batch_deadLetterFailedRows{job="riptide", instance="riptide:8080"}'
+        values: '0+40x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: RiptideDataLoss
+        exp_alerts:
+          - exp_labels: {severity: critical, job: riptide, instance: "riptide:8080", stage: batch-writer, component: failedRows}
+            exp_annotations:
+              summary: "riptide on riptide:8080: flows are not reaching storage at the batch-writer stage (failedRows)"
+              description: "200 flows in the last 5 minutes counted by batch-writer/failedRows, still rising after 5 minutes. For batch-writer/failedRows, rows kept in flows_dead_letter count too; the runbook shows how to tell kept from lost."
               runbook_url: https://riptide.space/docs/operations/monitoring#riptidedataloss
 
   - name: data loss does not fire while every loss counter is flat
