@@ -65,6 +65,7 @@ What each of these counts, and the delivery arithmetic between them, is in [Wher
 
 | Metric | Type | Meaning | Alert on |
 | --- | --- | --- | --- |
+| **`listeners.<name>.busySeconds`** | counter | seconds the listener's single read thread spent parsing and handing packets to dispatch, including a wait on a full dispatch queue; excludes Netty's own socket reads, so it under-reads | `rate()` sustained above 0.8 |
 | **`listeners.<name>.socketDrops`** | gauge | datagrams the kernel discarded because the socket receive buffer was full; read from `/proc/net/udp`, Linux only, absent elsewhere | rising |
 | **`parsers.<name>.undecodableSets`** | counter | Data Sets discarded because their IPFIX or NetFlow v9 Template was not known; counts Sets, not records, and includes Options Data Sets | sustained non-zero rate; a burst at startup is normal |
 | **`parsers.<name>.dispatchQueueDepth`** | gauge | packets waiting to be enriched; registered while the parser runs | over `dispatchQueueCapacity`, approaching 1 |
@@ -83,6 +84,7 @@ What each of these counts, and the delivery arithmetic between them, is in [Wher
 | **`persister.batch.failedRows`** | counter | rows an insert was attempted for and lost; charges the whole batch, so an upper bound for a refused insert | sustained rate, as a signal and not a loss figure |
 | **`persister.batch.deadLetteredRows`** | counter | rows of a refused batch kept in `flows_dead_letter` instead of being dropped | not an alert; read with `failedRows` |
 | **`persister.batch.deadLetterFailedRows`** | counter | rows of a refused batch that could not be kept either | any movement |
+| **`persister.batch.flusherBusySeconds`** | counter | seconds the single flusher spent inserting, from a non-empty drain to the insert completing; waiting for rows is not counted | `rate()` sustained above 0.8; the batch writer's early warning, since its queue covers only seconds of load |
 | **`persister.batch.batchSize`** | histogram | rows per flushed batch | not an alert |
 | **`persister.batch.flush`** | timer | insert duration per batch | not an alert |
 | **`logPersisting.persister`** | timer | the enqueue latency, the hand-off into the buffer, normally microseconds; not the insert duration | not an alert |
