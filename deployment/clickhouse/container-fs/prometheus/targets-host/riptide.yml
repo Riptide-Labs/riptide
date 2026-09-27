@@ -8,3 +8,5 @@
 ---
 - targets:
     - host.docker.internal:8080
+  labels:
+    collector: riptide-on-host

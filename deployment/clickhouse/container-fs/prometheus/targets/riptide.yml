@@ -4,6 +4,11 @@
 # The riptide service of deployment/riptide/compose.yml, the default. For a
 # riptide running on the host, start the stack with
 # PROMETHEUS_TARGETS=./container-fs/prometheus/targets-host instead.
+#
+# `collector` is the name the health dashboards show for this riptide instead of
+# its scrape address; give each collector its own when you scrape several.
 ---
 - targets:
     - riptide:8080
+  labels:
+    collector: riptide
