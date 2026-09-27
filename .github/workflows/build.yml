@@ -74,6 +74,11 @@ jobs:
       - name: Build-cost docs checker fixture tests
         run: |
           make build-cost-docs-test
+      # Every shipped alert fires once and stays quiet once, under the promtool
+      # of the pinned Prometheus image (#907).
+      - name: Alert rules check and promtool tests
+        run: |
+          make alerts-test
       - name: Build with tests
         run: |
           make

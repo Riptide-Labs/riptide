@@ -58,6 +58,7 @@ help:
 	@echo "  dashboards-version: Stamp the Grafana dashboard set with DASHBOARDS_VERSION=<x.y.z>"
 	@echo "  dashboards-version-check: Every dashboard carries the same version; with DASHBOARDS_BASE_REF=<ref>, that it moved when a dashboard changed"
 	@echo "  dashboards-version-test: Run the fixture tests of the dashboard tooling (version checker and API import)"
+	@echo "  alerts-test:          Check riptide's Prometheus alert rules and run their promtool test suite"
 	@echo "  dashboards-import-asset: Copy the API import script to target/riptide-dashboards-import.py, the release asset"
 	@echo "  dashboards-bundle: Write target/riptide-dashboards-<set version>.tar.gz, the release asset"
 	@echo "  dashboards-helm-values: Write target/riptide-dashboards-helm-values.yaml for the Grafana Helm chart; DASHBOARDS_REF=<tag>"
@@ -357,6 +358,18 @@ dashboards-import-asset:
 .PHONY: dashboards-version-test
 dashboards-version-test:
 	python3 -m unittest discover -s deployment/clickhouse
+
+# Riptide's own alert rules (#907): promtool checks the rules file, then runs its
+# test suite, which fires every alert once and holds each just under its
+# threshold once. Run through the Prometheus image, pinned by digest, so the
+# rules are tested by the same promtool that ships with the server.
+PROMETHEUS_IMAGE ?= docker.io/prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+PROMETHEUS_RULES := deployment/clickhouse/container-fs/prometheus
+
+.PHONY: alerts-test
+alerts-test: deps-oci
+	docker run --rm -v "$(CURDIR)/$(PROMETHEUS_RULES):/rules:ro" -w /rules --entrypoint promtool "$(PROMETHEUS_IMAGE)" check rules riptide-alerts.yml
+	docker run --rm -v "$(CURDIR)/$(PROMETHEUS_RULES):/rules:ro" -w /rules --entrypoint promtool "$(PROMETHEUS_IMAGE)" test rules riptide-alerts.test.yml
 
 .PHONY: deps-nix
 deps-nix:
