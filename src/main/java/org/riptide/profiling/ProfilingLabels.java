@@ -47,12 +47,11 @@ public final class ProfilingLabels {
     /**
      * One registered context per label set, activated and deactivated per unit of work.
      *
-     * <p>Not {@code ScopedContext}: that registers a fresh context id per instance and drops the mapping
-     * when it closes, so a scope that lives for microseconds (one datagram) is usually gone before the
-     * agent's next upload and its samples arrive unlabelled. Measured in {@code ProfilingLabelsIT}: with a
-     * scope per unit of work only 18.3 s of 326.65 s of CPU samples carried a stage, and the flusher's and
-     * the listener's own frames appeared unlabelled. A {@code ConstantContext} is registered once and never
-     * dropped. {@code LabelsSet} keeps identity equality, so the map is keyed per component.
+     * <p>Not {@code ScopedContext}: that registers a fresh context id per instance, one registration and
+     * one release per datagram on the read loop, where a {@code ConstantContext} is registered once. The
+     * choice rests on that cost, not on correctness: an early run seemed to show per-unit scopes losing
+     * labels, but a later {@code ProfilingLabelsIT} run with them labelled as much CPU as this does
+     * (28.5 s against 25.7 s). {@code LabelsSet} keeps identity equality, so the map is keyed per component.
      */
     private static final Map<LabelsSet, ConstantContext> CONTEXTS = new ConcurrentHashMap<>();
 
