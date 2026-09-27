@@ -29,6 +29,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class UdpListenerReceiveQueueTest {
 
+    /** The kernel's accounting size of one 1,200-byte loopback datagram, with headroom: far below half a buffer. */
+    private static final long ONE_DATAGRAM_ALLOCATION = 4_096;
+
     @Test
     @EnabledOnOs(OS.LINUX)
     void aBlockedReadLoopLeavesBytesQueuedWithinTheGrantedBuffer() throws Exception {
@@ -68,7 +71,9 @@ class UdpListenerReceiveQueueTest {
      * compared with to decide a drop. On Linux the JDK halves {@code SO_RCVBUF} on read, to hide the
      * kernel doubling the request, so a gauge that reports the JDK's figure is half the real buffer
      * and the fill ratio reads 1.0 with the socket half full. Push a blocked listener until the kernel
-     * drops: the queue then sits near the real buffer, above half of it, and never above it.
+     * drops: the queue then sits near the real buffer, above half of it. It can pass the buffer by
+     * one datagram: the kernel refuses a datagram only when the queue is already over, so the last one
+     * it admits may cross it (CI saw 2,098,944 against 2,097,152, one 1,792-byte allocation over).
      */
     @Test
     @EnabledOnOs(OS.LINUX)
@@ -99,7 +104,8 @@ class UdpListenerReceiveQueueTest {
                     .get(MetricRegistry.name("listeners", "full", "receiveQueueBytes")).getValue();
             final long buffer = ((Integer) registry.getGauges()
                     .get(MetricRegistry.name("listeners", "full", "receiveBufferBytes")).getValue()).longValue();
-            assertThat(queue).as("a full queue never exceeds the kernel's buffer").isLessThanOrEqualTo(buffer);
+            assertThat(queue).as("a full queue passes the kernel's buffer by at most one datagram")
+                    .isLessThanOrEqualTo(buffer + ONE_DATAGRAM_ALLOCATION);
             assertThat(queue).as("a full queue is well past half the buffer").isGreaterThan(buffer / 2);
         } finally {
             release.countDown();
