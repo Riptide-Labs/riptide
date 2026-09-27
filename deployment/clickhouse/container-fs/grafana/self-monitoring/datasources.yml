@@ -1,0 +1,28 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+---
+# Riptide's self-monitoring datasources. Mounted by compose.self-monitoring.yml beside
+# provisioning/datasources/datasource.yml, so a stack started without self-monitoring
+# provisions no datasource for a service it does not run (#927).
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    # Riptide's own health: the compose Prometheus scraping /metrics (#908). The
+    # health dashboards select their datasource by type through a variable, so
+    # this uid is a default, not a requirement. Not the default datasource: see
+    # the ClickHouse entry in provisioning/datasources/datasource.yml.
+    uid: riptide-prometheus
+    type: prometheus
+    isDefault: false
+    url: http://prometheus:9090
+    jsonData:
+      timeInterval: 15s
+
+  - name: Pyroscope
+    # Riptide's continuous profiles (#921). Riptide - Profiling selects its datasource through a
+    # variable, so this uid is a default, not a requirement.
+    uid: riptide-pyroscope
+    type: grafana-pyroscope-datasource
+    isDefault: false
+    url: http://pyroscope:4040

@@ -8,7 +8,8 @@ description: Scrape riptide's /metrics, load its alert rules, send the alerts to
 Scrape riptide's **`/metrics`** as `job="riptide"`, load **`riptide-alerts.yml`**, and riptide pages you on flow loss and warns you before a stage saturates.
 What each alert means and what to do about it is in [Respond to riptide alerts](../operations/monitoring.md).
 
-The compose stack does all of this already: its Prometheus scrapes the riptide service and loads the rules.
+The compose stack does all of this already: its Prometheus, defined in **`deployment/clickhouse/compose.self-monitoring.yml`**, scrapes the riptide service and loads the rules.
+The stack started [without self-monitoring](docker-compose.md#run-without-self-monitoring) runs no Prometheus.
 For a riptide running on the host beside it, start the stack with **`PROMETHEUS_TARGETS=./container-fs/prometheus/targets-host`**, as the [compose guide](docker-compose.md) shows.
 The steps below are for your own Prometheus.
 

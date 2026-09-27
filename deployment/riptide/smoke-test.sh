@@ -13,6 +13,12 @@
 #   - Prometheus scrapes riptide as job="riptide" and loads the 9 alert rules (#908)
 #   - riptide's profiles reach Pyroscope and its Grafana datasource is healthy (#921)
 #   - every dashboard in the source tree sits in Flow Analytics under Riptide, none in General (#864)
+# Then it stops the stack, keeping its volumes, and starts it again with
+# compose.override.no-self-monitoring.yml (#927), asserting:
+#   - no prometheus or pyroscope container exists and riptide does not profile
+#   - Grafana holds only the ClickHouse datasource, the two a default run provisioned deleted
+#   - riptide still provisions its schema, and every dashboard is still in Flow Analytics
+#   - neither variant leaves a mountpoint file behind in the source tree
 #
 # It gates the compose wiring, not riptide's own code: the stack runs the
 # published image, so a code change is covered by `make e2e`, not by this.
@@ -22,6 +28,11 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 COMPOSE_FILE="deployment/riptide/compose.yml"
+DROP_FILE="deployment/riptide/compose.override.no-self-monitoring.yml"
+# The files the current phase runs with, for the failure logs. The trap's `down` always uses the
+# plain file: with the override, Compose neither stops nor removes the services and volumes of a
+# disabled profile.
+PHASE_FILES=(-f "$COMPOSE_FILE")
 # Not the compose default: a real value proves the from_env indirection carried it
 # rather than the entrypoint's fallback happening to match.
 export CLICKHOUSE_PASSWORD="${CLICKHOUSE_PASSWORD:-smoke-$RANDOM-Xy9}"
@@ -30,8 +41,8 @@ cleanup() {
     local status=$?
     if [ "$status" -ne 0 ]; then
         echo "=== smoke: FAILED, container logs follow ==="
-        docker compose -f "$COMPOSE_FILE" ps || true
-        docker compose -f "$COMPOSE_FILE" logs --no-color --tail 100 || true
+        docker compose "${PHASE_FILES[@]}" ps || true
+        docker compose "${PHASE_FILES[@]}" logs --no-color --tail 100 || true
     fi
     docker compose -f "$COMPOSE_FILE" down --volumes --remove-orphans >/dev/null 2>&1 || true
     exit "$status"
@@ -42,6 +53,11 @@ fail() {
     echo "FAIL: $1" >&2
     exit 1
 }
+
+tree_state() {
+    git status --porcelain --untracked-files=all -- deployment/clickhouse
+}
+tree_before="$(tree_state)"
 
 echo "=== smoke: bringing the stack up ==="
 # --wait blocks on the healthchecks the compose files already declare, so the
@@ -185,4 +201,87 @@ in_general="$(count_riptide_dashboards general)"
 [ "$in_general" = "0" ] || fail "$in_general riptide dashboards are still in General"
 echo "  ok  none in General"
 
-echo "=== smoke: OK (compose stack, ClickHouse auth and grants, schema, Grafana datasources, Prometheus scrape and rules, Pyroscope profiles, dashboard folder) ==="
+# The positive control for the drop phase's "does not profile" check: the agent logs this token
+# itself, outside riptide's WARN root logger, so a drop phase without it is evidence only because
+# this phase shows it.
+# Read into a variable before grep: grep -q exits on its first match, `docker compose logs` then
+# exits 255 on the closed pipe, and under pipefail a match reads as no match.
+riptide_log="$(docker compose -f "$COMPOSE_FILE" logs --no-color riptide)"
+grep -q 'Profiling started' <<<"$riptide_log" \
+    || fail "riptide logged no 'Profiling started' with profiling on"
+echo "  ok  riptide logged 'Profiling started'"
+
+# A file mounted inside a directory bind makes Docker create the mountpoint on the host (#927).
+# Compared with the tree as the script found it, so a developer's uncommitted work is not a failure.
+assert_clean_tree() {
+    local now
+    now="$(tree_state)"
+    [ "$now" = "$tree_before" ] || fail "the stack left files in the source tree: $(diff <(echo "$tree_before") <(echo "$now") || true)"
+    echo "  ok  no mountpoint files in deployment/clickhouse"
+}
+assert_clean_tree
+
+echo "=== smoke: default stack OK (compose stack, ClickHouse auth and grants, schema, Grafana datasources, Prometheus scrape and rules, Pyroscope profiles, dashboard folder) ==="
+
+echo "=== smoke: restarting without self-monitoring on the same volumes (#927) ==="
+# A plain down, as the compose guide says: with the override, Compose would leave the running
+# Prometheus and Pyroscope alone. Without -v, so Grafana keeps the two datasources the default run
+# provisioned and the delete file has something to delete.
+docker compose -f "$COMPOSE_FILE" down
+PHASE_FILES=(-f "$COMPOSE_FILE" -f "$DROP_FILE")
+docker compose "${PHASE_FILES[@]}" up --detach --wait --wait-timeout 300 clickhouse grafana riptide
+docker compose "${PHASE_FILES[@]}" run --rm --no-deps grafana-folders
+
+echo "=== smoke: no self-monitoring services, and riptide does not profile ==="
+# What the documented command starts: `up` above names its services, so it would never start
+# Prometheus, which nothing depends on, whatever the override says. A disabled profile drops a
+# service from this list.
+active="$(docker compose "${PHASE_FILES[@]}" config --services)"
+for service in prometheus pyroscope; do
+    ! grep -qx "$service" <<<"$active" || fail "the override leaves $service enabled: $(tr '\n' ' ' <<<"$active")"
+    echo "  ok  $service not enabled"
+done
+for service in prometheus pyroscope; do
+    # The plain file, which still names the service; with the override it is in a disabled profile.
+    running="$(docker compose -f "$COMPOSE_FILE" ps --all --quiet "$service")"
+    [ -z "$running" ] || fail "a $service container exists without self-monitoring"
+    echo "  ok  no $service container"
+done
+riptide_log="$(docker compose "${PHASE_FILES[@]}" logs --no-color riptide)"
+if grep -q 'Profiling started' <<<"$riptide_log"; then
+    fail "riptide logged 'Profiling started' without self-monitoring"
+fi
+echo "  ok  riptide logged no 'Profiling started'"
+
+echo "=== smoke: riptide still provisioned its schema ==="
+tables="$(curl -s -u "default:${CLICKHOUSE_PASSWORD}" \
+    --data-binary "SELECT count() FROM system.tables WHERE database = 'riptide'" \
+    "http://127.0.0.1:8123/")"
+[ "${tables:-0}" -gt 0 ] || fail "database 'riptide' holds $tables tables without self-monitoring"
+echo "  ok  riptide database holds $tables tables"
+
+echo "=== smoke: Grafana holds only the ClickHouse datasource ==="
+datasources="$(curl -s -u admin:admin "http://127.0.0.1:3000/api/datasources" \
+    | { grep -o '"uid":"[^"]*"' || true; } | tr '\n' ' ')"
+[ "$datasources" = '"uid":"riptide-clickhouse" ' ] \
+    || fail "expected only riptide-clickhouse, Grafana lists: $datasources"
+echo "  ok  only riptide-clickhouse"
+health="$(curl -s -u admin:admin "http://127.0.0.1:3000/api/datasources/uid/riptide-clickhouse/health")"
+case "$health" in
+    *'"status":"OK"'*) echo "  ok  datasource riptide-clickhouse reports OK" ;;
+    *) fail "datasource health returned '$health'" ;;
+esac
+
+echo "=== smoke: the dashboards are still in Riptide / Flow Analytics ==="
+# The drop override restates Grafana's volume list; losing the dashboards mount there fails here.
+# The provider has already read its files by the time Grafana reports healthy, and the folder
+# survived the default phase's 35 s wait, so no second wait.
+in_folder="$(count_riptide_dashboards riptide-flow-analytics)"
+[ "$in_folder" = "$shipped" ] || fail "expected $shipped riptide dashboards in Flow Analytics without self-monitoring, found $in_folder"
+echo "  ok  $shipped dashboards in Flow Analytics"
+in_general="$(count_riptide_dashboards general)"
+[ "$in_general" = "0" ] || fail "$in_general riptide dashboards are in General without self-monitoring"
+echo "  ok  none in General"
+assert_clean_tree
+
+echo "=== smoke: OK (default stack, then without self-monitoring on its volumes) ==="

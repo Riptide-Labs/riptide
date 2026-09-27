@@ -1,0 +1,59 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+---
+# Riptide's self-monitoring: Prometheus scraping /metrics (#908) and Pyroscope receiving profiles
+# (#921). Never used alone. deployment/riptide/compose.yml includes it beside compose.yml, and a
+# developer adds it with `-f compose.yml -f compose.self-monitoring.yml`. To run the stack
+# without it, see deployment/riptide/compose.override.no-self-monitoring.yml (#927).
+volumes:
+  prometheus-data:
+    driver: local
+  pyroscope-data:
+    driver: local
+
+services:
+  grafana:
+    # Merged onto the grafana service of compose.yml: the datasources for the two services below.
+    # A file mount into the image's own datasources directory, not into a bind mount, so Docker
+    # creates no mountpoint file in the source tree.
+    volumes:
+      - ./container-fs/grafana/self-monitoring/datasources.yml:/etc/grafana/provisioning/datasources/self-monitoring.yml:ro
+
+  prometheus:
+    # Scrapes riptide's /metrics and evaluates its alert rules (#908). Pinned by
+    # digest like the images around it; `make alerts-test` reads this line, so the
+    # rules are tested by the promtool that ships with the server that runs them.
+    image: docker.io/prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+    volumes:
+      - prometheus-data:/prometheus
+      - ./container-fs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./container-fs/prometheus/riptide-alerts.yml:/etc/prometheus/riptide-alerts.yml:ro
+      # targets/ names the riptide service of deployment/riptide/compose.yml. A riptide
+      # on the host (the developer setup, or the jar beside this stack) is
+      # PROMETHEUS_TARGETS=./container-fs/prometheus/targets-host; otherwise
+      # RiptideDown fires for a target that can never resolve.
+      - ${PROMETHEUS_TARGETS:-./container-fs/prometheus/targets}:/etc/prometheus/targets:ro
+    # host.docker.internal is built in on Docker Desktop and OrbStack, not on Linux.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:9090/-/ready
+      interval: 2s
+      timeout: 1s
+      retries: 20
+    # Loopback only, like ClickHouse: Grafana reaches it over the compose network.
+    ports:
+      - "127.0.0.1:9090:9090/tcp"
+
+  pyroscope:
+    # Receives riptide's continuous profiles (#921): CPU, allocation and lock, labelled by pipeline
+    # stage. Pinned by digest like the images around it. The image is distroless (no shell, no wget),
+    # so it has no healthcheck; it reports ready on /ready about a minute after start, once its
+    # ingester has joined the ring, and the smoke test waits on that from the host.
+    image: docker.io/grafana/pyroscope:2.3.1@sha256:86a9ee7448487409ead8ada78789de7b78b739711b92b5d7224a1a54abf3eeb2
+    volumes:
+      - pyroscope-data:/data
+    # Loopback only, like ClickHouse and Prometheus. A riptide on the host sends to
+    # http://127.0.0.1:4040; the riptide service of deployment/riptide/compose.yml to pyroscope:4040.
+    ports:
+      - "127.0.0.1:4040:4040/tcp"

@@ -1,0 +1,27 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+---
+# Runs the stack without riptide's self-monitoring: no Prometheus, no Pyroscope, no profiling, and
+# no Grafana datasource for either (#927):
+#   docker compose -f compose.yml -f compose.override.no-self-monitoring.yml up -d
+# Relative paths below resolve from this directory, not from ../clickhouse.
+services:
+  # In a profile nothing enables, so a plain `up` does not start them.
+  prometheus:
+    profiles: [self-monitoring]
+  pyroscope:
+    profiles: [self-monitoring]
+
+  riptide:
+    environment:
+      RIPTIDE_PROFILING_ENABLED: "false"
+
+  grafana:
+    # The grafana volume list of ../clickhouse/compose.yml, restated without the self-monitoring
+    # datasources mount, plus the file that deletes those datasources from a Grafana volume an
+    # earlier default run provisioned.
+    volumes: !override
+      - gf-data:/var/lib/grafana
+      - ../clickhouse/container-fs/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ../clickhouse/container-fs/grafana/provisioning/datasources/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
+      - ../clickhouse/container-fs/grafana/self-monitoring/delete-datasources.yml:/etc/grafana/provisioning/datasources/delete-self-monitoring.yml:ro

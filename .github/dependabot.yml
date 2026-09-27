@@ -53,7 +53,7 @@ updates:
   # what reads image references out of a compose file. The digests it bumps are the ones
   # `make compose-smoke` then exercises, so an upstream change arrives as a gated PR
   # rather than silently on the next operator's pull (#672).
-  - package-ecosystem: "docker-compose" # the shipped stack's ClickHouse, Grafana, Prometheus and Pyroscope pins
+  - package-ecosystem: "docker-compose" # ClickHouse and Grafana pins in compose.yml, Prometheus and Pyroscope in compose.self-monitoring.yml
     directory: "/deployment/clickhouse"
     target-branch: "main"
     labels:
