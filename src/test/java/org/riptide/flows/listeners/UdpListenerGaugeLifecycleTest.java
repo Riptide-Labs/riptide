@@ -32,17 +32,27 @@ class UdpListenerGaugeLifecycleTest {
                 .withHost("127.0.0.1")
                 .withPort(0); // ephemeral: the gauge must attribute to the port actually bound
         final String gauge = MetricRegistry.name("listeners", "lifecycle", "socketDrops");
+        final String queue = MetricRegistry.name("listeners", "lifecycle", "receiveQueueBytes");
+        final String buffer = MetricRegistry.name("listeners", "lifecycle", "receiveBufferBytes");
 
         listener.start();
         try {
-            assertThat(registry.getGauges()).containsKey(gauge);
+            assertThat(registry.getGauges()).containsKeys(gauge, queue, buffer);
+            // the buffer is readable on every platform: the kernel's grant, never unset
+            assertThat((Integer) registry.getGauges().get(buffer).getValue()).isPositive();
         } finally {
             listener.stop();
         }
 
         assertThat(registry.getGauges())
                 .as("a stopped listener must not keep publishing a closure over a port it no longer owns")
-                .doesNotContainKey(gauge);
+                .doesNotContainKeys(gauge, queue, buffer);
+    }
+
+    @Test
+    void theJdksHalvedLinuxBufferIsDoubledBackAndOtherPlatformsAreLeftAlone() {
+        assertThat(UdpListener.kernelReceiveBuffer(7_500_000, true)).isEqualTo(15_000_000);
+        assertThat(UdpListener.kernelReceiveBuffer(7_500_000, false)).isEqualTo(7_500_000);
     }
 
     private static UdpParser parser() {

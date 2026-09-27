@@ -11,6 +11,7 @@ import com.codahale.metrics.MetricRegistry;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
+import io.netty.channel.ChannelException;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
@@ -102,7 +103,7 @@ public class UdpListener implements Listener {
                 .bind(address)
                 .syncUninterruptibly();
 
-        registerSocketDrops();
+        registerSocketGauges();
 
         // Remove-then-register, like socketDrops: a restarted listener must publish its own time.
         final String busySeconds = MetricRegistry.name("listeners", this.name, "busySeconds");
@@ -111,7 +112,8 @@ public class UdpListener implements Listener {
     }
 
     /**
-     * Publish the kernel's per-socket drop count for the port we actually bound.
+     * Publish the kernel's per-socket drop count, receive queue and receive buffer for the port we
+     * actually bound.
      *
      * <p>Read from the bound channel rather than {@link #port} so that an ephemeral bind
      * ({@code port = 0}) still attributes correctly. Registered after {@code bind} for the same
@@ -120,7 +122,7 @@ public class UdpListener implements Listener {
      * <p>Remove-then-register, so a restarted listener rebinds the gauge to its live socket instead of
      * leaving the previous instance's closure in place.
      */
-    private void registerSocketDrops() {
+    private void registerSocketGauges() {
         final java.net.SocketAddress local = this.socketFuture.channel().localAddress();
         if (!(local instanceof InetSocketAddress bound)) {
             return;
@@ -128,6 +130,41 @@ public class UdpListener implements Listener {
         final String gauge = MetricRegistry.name("listeners", this.name, "socketDrops");
         this.metrics.remove(gauge);
         this.metrics.register(gauge, (Gauge<Long>) () -> UdpSocketDrops.forSocket(bound));
+
+        // The fill beside the loss. The ratio is a lower bound, not the kernel's drop test: the
+        // kernel drops on sk_rmem_alloc against SO_RCVBUF, but rx_queue is sk_rmem_alloc minus
+        // memory the reader consumed and has not released yet, up to a quarter of the buffer (see
+        // UdpSocketDrops.receiveQueueBytes). The buffer is read back from the socket, because
+        // riptide asks for Integer.MAX_VALUE and the kernel clamps it.
+        final String queue = MetricRegistry.name("listeners", this.name, "receiveQueueBytes");
+        this.metrics.remove(queue);
+        this.metrics.register(queue, (Gauge<Long>) () -> UdpSocketDrops.receiveQueueBytes(bound));
+
+        final var config = ((DatagramChannel) this.socketFuture.channel()).config();
+        final String buffer = MetricRegistry.name("listeners", this.name, "receiveBufferBytes");
+        this.metrics.remove(buffer);
+        this.metrics.register(buffer, (Gauge<Integer>) () -> {
+            try {
+                return kernelReceiveBuffer(config.getReceiveBufferSize(), LINUX);
+            } catch (final ChannelException e) {
+                // a scrape racing stop() on a closed socket: publish nothing, never fail the scrape
+                return null;
+            }
+        });
+    }
+
+    private static final boolean LINUX = System.getProperty("os.name", "").startsWith("Linux");
+
+    /**
+     * The kernel's {@code sk_rcvbuf}, the value {@code rx_queue} is compared with to decide a drop.
+     *
+     * <p>Linux doubles a requested {@code SO_RCVBUF} for its own bookkeeping, and the JDK halves the
+     * value it reads back on Linux only ({@code NET_GetSockOpt}), so the channel reports the request,
+     * not the buffer. Reported as is, the fill ratio read 1.0 with the socket half full; measured on
+     * the #902 rig, {@code ss} showed {@code rb33554432} where the channel said 16777216.
+     */
+    static int kernelReceiveBuffer(final int reportedByJdk, final boolean linux) {
+        return linux ? reportedByJdk * 2 : reportedByJdk;
     }
 
     // socketFuture and bossGroup are assigned in start(), which runs in a later lifecycle phase
@@ -147,6 +184,10 @@ public class UdpListener implements Listener {
                 () -> this.metrics.remove(MetricRegistry.name("listeners", this.name, "socketDrops")));
         teardown.attempt(
                 () -> this.metrics.remove(MetricRegistry.name("listeners", this.name, "busySeconds")));
+        teardown.attempt(
+                () -> this.metrics.remove(MetricRegistry.name("listeners", this.name, "receiveQueueBytes")));
+        teardown.attempt(
+                () -> this.metrics.remove(MetricRegistry.name("listeners", this.name, "receiveBufferBytes")));
 
         teardown.attemptIfPresent(this.socketFuture, () -> {
             final var ch = this.socketFuture.channel();
