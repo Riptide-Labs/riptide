@@ -327,7 +327,7 @@
           "links": [
             {
               "title": "Profile ${__field.labels.stage} below",
-              "url": "/d/riptide-profiling/riptide-profiling?var-stage=${__field.labels.stage}&${pyroscope:queryparam}&${prometheus:queryparam}&${collector:queryparam}&${profile:queryparam}&${__url_time_range}"
+              "url": "/d/riptide-profiling/riptide-profiling?var-stage=${__field.labels.stage}&${pyroscope:queryparam}&${service:queryparam}&${prometheus:queryparam}&${collector:queryparam}&${profile:queryparam}&${__url_time_range}"
             },
             {
               "title": "Profiling guide: read one stage's profile",
@@ -428,7 +428,7 @@
           "links": [
             {
               "title": "Profile ${__field.labels.stage} below",
-              "url": "/d/riptide-profiling/riptide-profiling?var-stage=${__field.labels.stage}&${pyroscope:queryparam}&${prometheus:queryparam}&${collector:queryparam}&${profile:queryparam}&${__url_time_range}"
+              "url": "/d/riptide-profiling/riptide-profiling?var-stage=${__field.labels.stage}&${pyroscope:queryparam}&${service:queryparam}&${prometheus:queryparam}&${collector:queryparam}&${profile:queryparam}&${__url_time_range}"
             },
             {
               "title": "Profiling guide: read one stage's profile",
@@ -529,7 +529,7 @@
           "links": [
             {
               "title": "Profile ${__field.labels.stage} below",
-              "url": "/d/riptide-profiling/riptide-profiling?var-stage=${__field.labels.stage}&${pyroscope:queryparam}&${prometheus:queryparam}&${collector:queryparam}&${profile:queryparam}&${__url_time_range}"
+              "url": "/d/riptide-profiling/riptide-profiling?var-stage=${__field.labels.stage}&${pyroscope:queryparam}&${service:queryparam}&${prometheus:queryparam}&${collector:queryparam}&${profile:queryparam}&${__url_time_range}"
             },
             {
               "title": "Profiling guide: read one stage's profile",

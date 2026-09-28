@@ -50,6 +50,18 @@ class ProfilingServiceSelectionTest {
     }
 
     @Test
+    void aLinkBackIntoTheDashboardKeepsTheService() throws IOException {
+        final List<String> links = new ArrayList<>();
+        for (final JsonNode url : new ObjectMapper().readTree(DASHBOARDS.resolve("riptide-profiling.json").toFile()).findValues("url")) {
+            if (url.asText().contains("/d/riptide-profiling/")) {
+                links.add(url.asText());
+            }
+        }
+        assertThat(links).as("stage drill-down links").hasSizeGreaterThanOrEqualTo(3);
+        assertThat(links).as("links that reset Service to its default").allMatch(link -> link.contains("${service:queryparam}"));
+    }
+
+    @Test
     void theServiceVariableListsEveryCollectorButPyroscopeItself() throws IOException {
         final JsonNode service = variable("riptide-profiling.json", "service");
         assertThat(service.path("type").asText()).isEqualTo("query");
