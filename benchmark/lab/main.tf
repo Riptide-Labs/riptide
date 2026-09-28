@@ -28,10 +28,24 @@ locals {
 
   clickhouse = try(one([for s, v in local.services : s if v.role == "clickhouse"]), null)
 
-  scrape_targets = local.ok ? {
-    node    = [for s in sort(keys(local.services)) : "${local.services[s].addresses.mgmt}:9100"]
-    riptide = ["${local.services[module.declaration.sut].addresses.mgmt}:8080"]
-  } : {}
+  # Prometheus's scrape jobs, every target on its observe address with the
+  # labels a query needs to pick a slice of the lab.
+  target_labels = { for s, v in local.services : s => { experiment = local.name, service = s, role = v.role, host = v.host } }
+  prometheus_jobs = !local.ok || module.declaration.observability == null ? {} : merge(
+    { node = [for s in sort(keys(local.services)) : { target = "${local.services[s].addresses.observe}:9100", labels = local.target_labels[s] }] },
+    { riptide = [{ target = "${local.services[module.declaration.sut].addresses.observe}:8080", labels = local.target_labels[module.declaration.sut] }] },
+    { clickhouse = [{ target = "${local.services[local.clickhouse].addresses.observe}:9363", labels = local.target_labels[local.clickhouse] }] },
+    { for s, v in local.services : "victoriametrics" => [{ target = "${v.addresses.observe}:8428", labels = local.target_labels[s] }] if v.role == "victoriametrics" },
+    { prometheus = [{ target = "localhost:9090", labels = local.target_labels[module.declaration.observability] }] },
+    { pyroscope = [{ target = "localhost:4040", labels = local.target_labels[module.declaration.observability] }] },
+  )
+
+  # The self-monitoring dashboards, read at plan time so a lab shows the
+  # repository's current ones.
+  grafana_dashboards = {
+    for f in ["riptide-health.json", "riptide-stage-detail.json", "riptide-profiling.json"] :
+    f => file("${path.module}/../../deployment/clickhouse/container-fs/grafana/provisioning/dashboards/${f}")
+  }
 }
 
 # Every rule in modules/declaration reports here, so one failed plan lists
@@ -45,6 +59,11 @@ resource "terraform_data" "checks" {
       error_message = "The declaration is rejected:\n- ${join("\n- ", module.declaration.violations)}"
     }
   }
+}
+
+resource "random_password" "grafana" {
+  length  = 32
+  special = false
 }
 
 resource "random_password" "clickhouse" {
@@ -62,6 +81,12 @@ module "cloud_init" {
   images              = local.images
   clickhouse_password = random_password.clickhouse.result
   exporters_cidr      = module.declaration.cidrs.exporters
+  pyroscope_url       = local.pyroscope_url
+
+  prometheus_jobs        = each.value.role == "observability" ? local.prometheus_jobs : {}
+  grafana_admin_password = each.value.role == "observability" ? random_password.grafana.result : ""
+  grafana_dashboards     = each.value.role == "observability" ? local.grafana_dashboards : {}
+  alert_rules            = each.value.role == "observability" ? file("${path.module}/../../deployment/clickhouse/container-fs/prometheus/riptide-alerts.yml") : ""
   clickhouse_files = {
     config_xml = file("${path.module}/../../deployment/clickhouse/container-fs/clickhouse/config.xml")
     users_xml  = file("${path.module}/../../deployment/clickhouse/container-fs/clickhouse/users.xml")

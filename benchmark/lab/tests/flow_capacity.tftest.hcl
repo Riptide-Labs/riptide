@@ -149,7 +149,7 @@ run "riptide_env_points_at_clickhouse_on_store" {
     error_message = "env file lacks the generated ClickHouse password"
   }
   assert {
-    condition     = strcontains(nonsensitive(local.riptide_env_file), "JAVA_OPTS=\"-Xmx8g\"\n")
+    condition     = strcontains(nonsensitive(local.riptide_env_file), "JAVA_OPTS=\"-Xmx8g --enable-native-access=ALL-UNNAMED\"\n")
     error_message = "env file lacks the declared JAVA_OPTS"
   }
 }
@@ -161,7 +161,7 @@ run "inventory_carries_the_capture_manifest_sut_fields" {
     values = { result = "test-password" }
   }
   assert {
-    condition     = local.inventory.sut.version_identity.version == "0.16.2" && local.inventory.sut.jvm.heap == "-Xmx8g"
+    condition     = local.inventory.sut.version_identity.version == "0.16.2" && local.inventory.sut.jvm.heap == "-Xmx8g --enable-native-access=ALL-UNNAMED"
     error_message = "inventory sut: ${jsonencode(local.inventory.sut)}"
   }
   assert {
@@ -204,5 +204,49 @@ run "observability_data_disk_lives_outside_the_domain" {
   assert {
     condition     = module.libvirt_vm["observe"].domain.disks == 3 && module.libvirt_vm["metrics"].domain.disks == 3 && module.libvirt_vm["observe"].domain.data_disk == "bench-flow-capacity-observe-observability-data.qcow2"
     error_message = "disks: observe ${module.libvirt_vm["observe"].domain.disks}, metrics ${module.libvirt_vm["metrics"].domain.disks}"
+  }
+}
+
+run "riptide_profiles_and_serves_metrics_on_observe" {
+  command = plan
+  override_resource {
+    target = random_password.clickhouse
+    values = { result = "test-password" }
+  }
+  assert {
+    condition     = strcontains(nonsensitive(local.riptide_env_file), "PYROSCOPE_SERVER_ADDRESS=\"http://172.26.0.13:4040\"\n") && strcontains(nonsensitive(local.riptide_env_file), "RIPTIDE_PROFILING_ENABLED=\"true\"\n") && strcontains(nonsensitive(local.riptide_env_file), "RIPTIDE_MANAGEMENT_BIND_ADDRESS=\"172.26.0.14\"\n")
+    error_message = "riptide.env lacks the profiling or bind settings"
+  }
+  assert {
+    condition     = strcontains(nonsensitive(local.riptide_env_file), "JAVA_OPTS=\"-Xmx8g --enable-native-access=ALL-UNNAMED\"\n")
+    error_message = "JAVA_OPTS not appended once"
+  }
+}
+
+run "prometheus_jobs_cover_every_vm_and_service" {
+  command = plan
+  assert {
+    condition     = jsonencode(sort(keys(local.prometheus_jobs))) == jsonencode(["clickhouse", "node", "prometheus", "pyroscope", "riptide", "victoriametrics"]) && length(local.prometheus_jobs.node) == 5
+    error_message = "jobs: ${jsonencode({ for k, v in local.prometheus_jobs : k => length(v) })}"
+  }
+  assert {
+    condition     = local.prometheus_jobs.riptide[0].target == "172.26.0.14:8080" && local.prometheus_jobs.clickhouse[0].target == "172.26.0.10:9363" && local.prometheus_jobs.victoriametrics[0].target == "172.26.0.12:8428"
+    error_message = "targets: ${jsonencode([local.prometheus_jobs.riptide, local.prometheus_jobs.clickhouse, local.prometheus_jobs.victoriametrics])}"
+  }
+  assert {
+    condition     = jsonencode(local.prometheus_jobs.riptide[0].labels) == jsonencode({ experiment = "flow-capacity", host = "pve-1", role = "riptide", service = "sut" })
+    error_message = "labels: ${jsonencode(local.prometheus_jobs.riptide[0].labels)}"
+  }
+}
+
+run "observability_outputs_for_the_operator" {
+  command = plan
+  assert {
+    condition     = length(local_file.grafana_admin) == 1 && local_file.grafana_admin[0].file_permission == "0600"
+    error_message = "grafana-admin file missing or not 0600"
+  }
+  assert {
+    condition     = local.inventory.observability.grafana == "http://192.0.2.203:3000" && local.inventory.observability.prometheus == "http://192.0.2.203:9090"
+    error_message = "inventory observability: ${jsonencode(local.inventory.observability)}"
   }
 }
