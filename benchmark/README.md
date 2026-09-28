@@ -139,7 +139,7 @@ A key neither table names is rejected, so a typo cannot fall back to a default.
    Expected output (last lines, on hosts without the base image):
 
    ```text
-   Plan: 28 to add, 0 to change, 0 to destroy.
+   Plan: 36 to add, 0 to change, 0 to destroy.
    ```
 
    `bench` resolves `riptide.source` first: a release is downloaded to `benchmark/.cache/` and verified against its cosign bundle and the release workflow's identity, every run.
@@ -155,8 +155,8 @@ A key neither table names is rejected, so a typo cannot fall back to a default.
    Expected output (last lines, 2026-09-28, base images already on both hosts):
 
    ```text
-   Apply complete! Resources: 25 added, 0 changed, 0 destroyed.
-   bench: flow-capacity ready in 132 s; inventory at .../benchmark/runs/flow-capacity/inventory.json
+   Apply complete! Resources: 32 added, 0 changed, 0 destroyed.
+   bench: flow-capacity ready in 204 s; inventory at .../benchmark/runs/flow-capacity/inventory.json
    ```
 
    OpenTofu asks for approval.
@@ -190,6 +190,7 @@ A key neither table names is rejected, so a typo cannot fall back to a default.
    pve-1        proxmox   bench-flow-capacity-clickhouse           running
    kvm-1        libvirt   bench-flow-capacity-loadgen              running
    kvm-1        libvirt   bench-flow-capacity-metrics              running
+   kvm-1        libvirt   bench-flow-capacity-observe              running
    ```
 
    Proxmox VMs are matched by the `exp-<name>` tag through `pvesh`; libvirt domains by their metadata, read with `virsh metadata <domain> https://riptide-labs.github.io/benchmark/1`.
@@ -218,10 +219,11 @@ make bench-destroy EXP=flow-capacity
 Expected output (last line):
 
 ```text
-Destroy complete! Resources: 21 destroyed.
+Destroy complete! Resources: 32 destroyed.
 ```
 
 Destroy removes the experiment's VMs, disks, cloud-init media and snippets and keeps its downloaded base images and the observability data disk, so the next apply skips the download and Prometheus and Pyroscope keep their history.
+Grafana, Pyroscope and Prometheus are stopped before their VM is removed, since a powered-off Pyroscope leaves empty blocks that fail every later query.
 It uses the files saved in `runs/<name>/`, not the editable ones: a host deleted from the site file after apply still has its VMs removed.
 A re-apply may add hosts but refuses to drop one, or to change its provider, while it still has VMs: destroy first.
 `benchmark/bin/bench purge <name>` also removes the base images, the observability data, the workspace and the run files.
@@ -237,6 +239,8 @@ A re-apply may add hosts but refuses to drop one, or to change its provider, whi
   Container images live in **`benchmark/images/compose.yml`**, which Dependabot keeps current; ClickHouse is read from `deployment/clickhouse/compose.yml`.
 - nl6 hardcodes its veth pair at `10.254.0.1` and `10.254.0.2`.
   The link stays inside the loadgen VM and is never routed out.
+- The Grafana dashboards come from this checkout, not from the riptide release under test.
+  A release older than the checkout lacks series they read: on 2026-09-28, 21 of the 36 Prometheus panel queries returned nothing with `release:0.16.2`, against 4 with a package built from the checkout.
 - `make bench-check` runs no host.
   A green check says nothing about VMs booting, pinning on a real host or services answering.
 
