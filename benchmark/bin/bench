@@ -64,6 +64,9 @@ check() {
   command -v shellcheck >/dev/null 2>&1 || die "shellcheck is needed for bench check"
   shellcheck "${BENCH_DIR}"/bin/*
 
+  echo "== ladder unit tests"
+  python3 -B -m unittest discover -s "${BENCH_DIR}/ladder"
+
   echo "== tofu fmt"
   tofu fmt -check -recursive -diff "${BENCH_DIR}"
 
