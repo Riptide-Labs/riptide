@@ -22,9 +22,12 @@ provider "libvirt" {
   uri      = try(each.value.uri, null)
 }
 
-# Endpoint and credentials come from PROXMOX_VE_ENDPOINT, PROXMOX_VE_USERNAME
-# (root@pam, needed for cpu.affinity and hugepages) and PROXMOX_VE_PASSWORD.
-# Snippet upload goes over SSH as root with the agent's keys.
+# Credentials come from the environment, set by benchmark/bin/bench: a root@pam
+# ticket (PROXMOX_VE_AUTH_TICKET, PROXMOX_VE_CSRF_PREVENTION_TOKEN) fetched
+# from the node over root SSH, or PROXMOX_VE_USERNAME=root@pam with
+# PROXMOX_VE_PASSWORD when set. An API token cannot set cpu.affinity, so bench
+# unsets it. PROXMOX_VE_ENDPOINT defaults to the node's address. Snippet upload
+# goes over SSH as root with the agent's keys.
 provider "proxmox" {
   alias    = "pve"
   for_each = length(local.proxmox_hosts) > 0 ? { pve = true } : {}

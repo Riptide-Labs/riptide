@@ -39,7 +39,8 @@ rejected_no_clickhouse:tests/rejected-no-clickhouse.tfvars"
 check() {
   # Unset, so a test that leaves one backend unmocked proves that backend is
   # never configured rather than finding credentials in the environment.
-  unset PROXMOX_VE_ENDPOINT PROXMOX_VE_USERNAME PROXMOX_VE_PASSWORD PROXMOX_VE_API_TOKEN LIBVIRT_DEFAULT_URI
+  unset PROXMOX_VE_ENDPOINT PROXMOX_VE_USERNAME PROXMOX_VE_PASSWORD PROXMOX_VE_API_TOKEN \
+    PROXMOX_VE_AUTH_TICKET PROXMOX_VE_CSRF_PREVENTION_TOKEN LIBVIRT_DEFAULT_URI
 
   echo "== shellcheck"
   command -v shellcheck >/dev/null 2>&1 || die "shellcheck is needed for bench check"
@@ -155,6 +156,8 @@ proxmox_login() {
     die "cannot get a root@pam ticket from ${target}; set PROXMOX_VE_USERNAME=root@pam and PROXMOX_VE_PASSWORD instead"
   PROXMOX_VE_AUTH_TICKET="$(printf '%s\n' "${out}" | sed -n 1p)"
   PROXMOX_VE_CSRF_PREVENTION_TOKEN="$(printf '%s\n' "${out}" | sed -n 2p)"
+  case "${PROXMOX_VE_AUTH_TICKET}" in PVE:root@pam:*) ;; *) die "${target} returned no root@pam ticket; set PROXMOX_VE_USERNAME=root@pam and PROXMOX_VE_PASSWORD instead" ;; esac
+  [ -n "${PROXMOX_VE_CSRF_PREVENTION_TOKEN}" ] || die "${target} returned no CSRF prevention token"
   export PROXMOX_VE_AUTH_TICKET PROXMOX_VE_CSRF_PREVENTION_TOKEN
   # A token or username in the environment would take precedence over the ticket.
   unset PROXMOX_VE_API_TOKEN PROXMOX_VE_USERNAME
@@ -201,7 +204,6 @@ plan_or_apply() {
   local cmd="$1" name="$2" varfile="${BENCH_DIR}/experiments/$2.tfvars" source deb base
   shift 2
   select_experiment "${name}" "${varfile}"
-  proxmox_login "${varfile}"
   source="$(declared "${varfile}" "var.experiment.riptide.source")"
   deb="$(resolve_riptide "${source}")"
   base=""
@@ -216,11 +218,17 @@ plan_or_apply() {
     mkdir -p "${RUNS_DIR}/${name}"
     cp "${varfile}" "${RUNS_DIR}/${name}/applied.tfvars"
   fi
+  # Last before tofu: downloads above can take a while, the ticket lives 2 h.
+  proxmox_login "${varfile}"
   SECONDS=0
   tf "${cmd}" -input=false -var-file="${varfile}" \
     -var "riptide_deb=${deb}" -var "riptide_deb_sha256=$(sha256 "${deb}")" \
     -var "base_image_path=${base}" -var "agent_ssh_keys=$(agent_keys_hcl)" "$@"
-  [ "${cmd}" = apply ] && echo "bench: ${name} ready in ${SECONDS} s; inventory at ${RUNS_DIR}/${name}/inventory.json"
+  if [ "${cmd}" = apply ]; then
+    # Apply may have replaced a VM at the same address, with a new host key.
+    rm -f "${RUNS_DIR}/${name}/known_hosts"
+    echo "bench: ${name} ready in ${SECONDS} s; inventory at ${RUNS_DIR}/${name}/inventory.json"
+  fi
   return 0
 }
 

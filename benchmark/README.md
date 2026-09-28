@@ -10,16 +10,21 @@ Driving load, capturing measurements and writing reports stay with the benchmark
 
 - OpenTofu 1.9 or later (provider `for_each`), `cosign`, `jq`, `curl`, `shellcheck` and an SSH agent holding the key you connect with.
 - SSH as root to every libvirt host and Proxmox node, with the agent's key.
-- For Proxmox, nothing by default: `bench` asks the node for a `root@pam` login ticket over root SSH on every run. Proxmox accepts `cpu.affinity` only from `root@pam` logged in that way or with a password; an API token, even `root@pam`'s, is refused with `only root can set 'affinity' config`. To use a password instead, set **`PROXMOX_VE_USERNAME=root@pam`** and **`PROXMOX_VE_PASSWORD`**.
-- **`PROXMOX_VE_INSECURE=true`** when the node's API certificate is self-signed, as on `lechuck`. **`PROXMOX_VE_ENDPOINT`** defaults to `https://<address or node>:8006/`.
+- For Proxmox, nothing by default: `bench` asks the node for a `root@pam` login ticket over root SSH on every run.
+  Proxmox accepts `cpu.affinity` only from `root@pam` logged in that way or with a password; an API token, even `root@pam`'s, is refused with `only root can set 'affinity' config`.
+  To use a password instead, set **`PROXMOX_VE_USERNAME=root@pam`** and **`PROXMOX_VE_PASSWORD`**.
+- **`PROXMOX_VE_INSECURE=true`** when the node's API certificate is self-signed, as on `lechuck`.
+  **`PROXMOX_VE_ENDPOINT`** defaults to `https://<address or node>:8006/`.
 - A route from your workstation to the `mgmt` network: apply installs riptide and waits for health checks over SSH on `mgmt`.
 
 ### One-time lab setup
 
 Done for mad-monkey and `lechuck` on 2026-09-28; repeat for a new host.
 
-1. Create VLAN 24 (`ingest`, `172.24.0.0/16`) and VLAN 25 (`store`, `172.25.0.0/16`) and trunk both to mad-monkey and `lechuck`. `mgmt` is VLAN 11.
-2. On mad-monkey, create a bridge per VLAN: `br-vlan24`, `br-vlan25`, in **`/etc/netplan/20-bench-vlans.yaml`** (VLAN subinterfaces `enp2s0.24` and `enp2s0.25`, no address). `br0` already carries VLAN 11.
+1. Create VLAN 24 (`ingest`, `172.24.0.0/16`) and VLAN 25 (`store`, `172.25.0.0/16`) and trunk both to mad-monkey and `lechuck`.
+   `mgmt` is VLAN 11.
+2. On mad-monkey, create a bridge per VLAN: `br-vlan24`, `br-vlan25`, in **`/etc/netplan/20-bench-vlans.yaml`** (VLAN subinterfaces `enp2s0.24` and `enp2s0.25`, no address).
+   `br0` already carries VLAN 11.
 3. On mad-monkey, move Docker's address pools out of `172.24.0.0/14` in **`/etc/docker/daemon.json`**:
 
    ```json
@@ -127,7 +132,9 @@ A key the table does not name is rejected, so a typo cannot fall back to a defau
    bench: flow-capacity ready in 132 s; inventory at .../benchmark/runs/flow-capacity/inventory.json
    ```
 
-   OpenTofu asks for approval. For an unattended run, pass tofu arguments through: `make bench-apply EXP=flow-capacity BENCH_TOFU_ARGS=-auto-approve`, or `benchmark/bin/bench apply flow-capacity -auto-approve`.
+   OpenTofu asks for approval.
+   For an unattended run, pass tofu arguments through: `make bench-apply EXP=flow-capacity BENCH_TOFU_ARGS=-auto-approve`, or `benchmark/bin/bench apply flow-capacity -auto-approve`.
+   `make` hands **`BENCH_TOFU_ARGS`** to `bench-apply` and `bench-destroy` only; `tofu plan` rejects `-auto-approve`.
 
    Apply waits for cloud-init and then for ClickHouse `/ping`, VictoriaMetrics `/health` and nl6 `/api/v1/status`, installs riptide over SSH, and waits for its `/readyz`.
    A service that misses its deadline (**`ready_timeout_seconds`**, 600) fails the apply with its name and URL.
@@ -178,12 +185,16 @@ A re-apply may add hosts but refuses to drop one, or to change its provider, whi
 
 ## Limits
 
-- One experiment per host at a time. Checks run within one declaration, so two experiments can pin the same cores.
+- One experiment per host at a time.
+  Checks run within one declaration, so two experiments can pin the same cores.
 - On Proxmox, `cpu.affinity` pins the whole QEMU process to the service's cores, so emulator threads share them; the guest sees `vcpus` cores without SMT topology. libvirt pins each vCPU to one thread and emulator threads to the reserved core.
 - The `dmacvicar/libvirt` provider's signature is not checked, because its registry entry carries no GPG key; `.terraform.lock.hcl` pins its hashes.
-- Image digests in **`benchmark/lab/images.auto.tfvars`** are bumped by hand; Dependabot does not read `.tfvars`. The ClickHouse image is read from `deployment/clickhouse/compose.yml`.
-- nl6 hardcodes its veth pair at `10.254.0.1` and `10.254.0.2` (DN42 space). The link stays inside the loadgen VM and is never routed out.
-- `make bench-check` runs no host. A green check says nothing about VMs booting, pinning on a real host or services answering.
+- Image digests in **`benchmark/lab/images.auto.tfvars`** are bumped by hand; Dependabot does not read `.tfvars`.
+  The ClickHouse image is read from `deployment/clickhouse/compose.yml`.
+- nl6 hardcodes its veth pair at `10.254.0.1` and `10.254.0.2` (DN42 space).
+  The link stays inside the loadgen VM and is never routed out.
+- `make bench-check` runs no host.
+  A green check says nothing about VMs booting, pinning on a real host or services answering.
 
 ## Open questions
 

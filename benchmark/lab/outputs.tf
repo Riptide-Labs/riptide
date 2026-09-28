@@ -60,8 +60,10 @@ locals {
       "  HostName ${local.services[s].addresses.mgmt}",
       "  User bench",
       # A rebuilt VM has a new host key; keep this run's keys apart from
-      # ~/.ssh/known_hosts. bench destroy removes the file.
-      "  UserKnownHostsFile ${abspath(local.run_dir)}/known_hosts",
+      # ~/.ssh/known_hosts. bench apply and destroy remove the file, since
+      # either may replace a VM at the same address. Quoted: ssh_config
+      # splits an unquoted value at spaces into several files.
+      "  UserKnownHostsFile \"${abspath(local.run_dir)}/known_hosts\"",
       "  StrictHostKeyChecking accept-new",
       "",
     ])

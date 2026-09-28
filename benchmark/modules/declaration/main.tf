@@ -70,7 +70,9 @@ locals {
     if !can(regex("^[A-Za-z_][A-Za-z0-9_]*$", k))
   ]
 
-  dns_violations = length(local.x.networks.mgmt.dns) > 0 ? [] : ["network mgmt: dns is empty; VMs need a resolver to install packages"]
+  # The gateway is not assumed to answer DNS: VLAN 11's does not, and the first
+  # real apply failed at package installation on every VM because of it.
+  dns_violations = length(coalesce(local.x.networks.mgmt.dns, [])) > 0 ? [] : ["network mgmt: declare dns, the resolvers the VMs install packages through"]
 
   ssh_keys           = distinct(concat(var.agent_ssh_keys, local.x.ssh_keys))
   ssh_key_violations = length(local.ssh_keys) > 0 ? [] : ["no SSH key: ssh_keys is empty and the SSH agent holds none; apply reaches every VM over SSH as user bench"]
@@ -288,7 +290,7 @@ locals {
   }
 
   mgmt_gateway = coalesce(local.x.networks.mgmt.gateway, try(cidrhost(local.cidrs.mgmt, 1), ""))
-  mgmt_dns     = local.x.networks.mgmt.dns
+  mgmt_dns     = coalesce(local.x.networks.mgmt.dns, [])
 
   sut     = try(one([for s, v in local.x.services : s if v.role == "riptide"]), null)
   loadgen = try(one([for s, v in local.x.services : s if v.role == "nl6"]), null)
