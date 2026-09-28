@@ -41,7 +41,7 @@ run "sut_network_config_routes_exporters_via_loadgen" {
     expected_mac = run.declaration.services.sut.macs.store
   }
   assert {
-    condition     = yamldecode(output.network_config).ethernets.ingest.routes[0].to == "172.26.0.0/16" && yamldecode(output.network_config).ethernets.ingest.routes[0].via == "172.24.0.11"
+    condition     = try(yamldecode(output.network_config).ethernets.ingest.routes[0].to, null) == "172.26.0.0/16" && try(yamldecode(output.network_config).ethernets.ingest.routes[0].via, null) == "172.24.0.11"
     error_message = "sut network-config: ${output.network_config}"
   }
   assert {
@@ -49,7 +49,7 @@ run "sut_network_config_routes_exporters_via_loadgen" {
     error_message = "sut mgmt: ${jsonencode(yamldecode(output.network_config).ethernets.mgmt)}"
   }
   assert {
-    condition     = yamldecode(output.network_config).ethernets.store.match.macaddress == var.expected_mac && !contains(keys(yamldecode(output.network_config).ethernets.store), "routes")
+    condition     = try(yamldecode(output.network_config).ethernets.store.match.macaddress, null) == var.expected_mac && !contains(keys(yamldecode(output.network_config).ethernets.store), "routes")
     error_message = "sut store: ${jsonencode(yamldecode(output.network_config).ethernets.store)}"
   }
 }
