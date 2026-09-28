@@ -117,7 +117,9 @@ resource "libvirt_volume" "observability_data" {
   for_each = { for s, v in local.libvirt_services : s => v if v.role == "observability" }
   provider = libvirt.host[each.value.host]
 
-  name     = "bench-${local.name}-${each.key}-data.qcow2"
+  # Distinct from the -data.qcow2 a VM creates for itself, so the two can
+  # never share a name in one pool.
+  name     = "bench-${local.name}-${each.key}-observability-data.qcow2"
   pool     = local.x.hosts[each.value.host].pool
   capacity = each.value.disk_gb * 1073741824
   target   = { format = { type = "qcow2" } }
