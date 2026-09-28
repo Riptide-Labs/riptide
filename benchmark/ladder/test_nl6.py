@@ -85,8 +85,11 @@ class Grow(unittest.TestCase):
 
     def test_a_failed_device_stops_the_ladder(self):
         fleet = self.fleet(FakeNl6(fail=1))
-        with self.assertRaises(nl6.FleetError):
+        with self.assertRaises(nl6.FleetError) as caught:
             fleet.grow_to(1000)
+        # Stopped at the batch that failed, before creating the other two.
+        self.assertIn("1 failed", str(caught.exception))
+        self.assertEqual(len(self.posts()), 1)
 
     def test_shrinking_is_refused(self):
         fleet = self.fleet(FakeNl6())
