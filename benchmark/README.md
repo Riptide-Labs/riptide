@@ -242,6 +242,63 @@ benchmark/bin/bench apply <name> -auto-approve \
 
 On Proxmox, replace `module.proxmox_vm["<service>"].proxmox_virtual_environment_vm.this`, which imports a new root disk.
 
+## Find a flow knee
+
+The ladder in `benchmark/ladder/` finds the largest nl6 fleet riptide keeps up with, for an experiment such as `flow-knee`.
+It runs on the lab's observability VM, so a sleeping workstation cannot stop it.
+
+It starts at 1,000 Cisco CRS-X devices, split 1:1:2 into NetFlow v5, NetFlow v9 and IPFIX exporters.
+Each step discards a 120 s warm-up and measures a 600 s hold.
+The fleet doubles until riptide loses or lags, then bisects until the gap is at most 5% of the fleet.
+The knee is the largest fleet that passes.
+
+Each hold is judged in this order, and the first match is the step's verdict:
+
+| Verdict | When |
+| --- | --- |
+| `inconclusive` | A scrape gap over 30 s, a ClickHouse query not issued by the ladder, no flows at all, or a metric that returned nothing. |
+| `network-bound` | The libvirt host's uplink above 70% of 1 Gbit/s. |
+| `clickhouse-bound` | ClickHouse above 90% CPU, or a rising flush p99, while a queue grows. |
+| `riptide-bound` | UDP receive errors, socket drops, pipeline drops, or a queue that more than doubles and ends above 10% full. This is the knee signal. |
+| `unexplained-loss` | More than 1% difference between packets sent and received on `ingest`, or between flows riptide dispatched and rows ClickHouse holds, while riptide reports no loss. |
+| `nl6-bound` | Flows per device more than 5% below the first step's, or the loadgen VM above 85% CPU. |
+| `pass` | None of the above. |
+
+Every verdict except `pass` and `riptide-bound` stops the ladder and waits for a human.
+
+Keep the flow dashboards closed during a hold.
+They query ClickHouse, which is part of the measured path, and the step becomes `inconclusive`.
+The self-monitoring dashboards read Prometheus and may stay open.
+
+1. Build the lab, then start the ladder:
+
+   ```bash
+   make bench-ladder EXP=flow-knee
+   ```
+
+2. Follow it:
+
+   ```bash
+   benchmark/bin/ladder-run status flow-knee
+   ```
+
+   Each judged step is one JSON line in `/var/lib/bench/ladder/flow-knee.jsonl` on the observability VM.
+   A restarted ladder resumes after the last complete line.
+
+3. Copy the records to `benchmark/runs/flow-knee/`:
+
+   ```bash
+   benchmark/bin/ladder-run fetch flow-knee
+   ```
+
+4. Hold the baseline, 80% of the knee rounded down to a multiple of 4, for an hour:
+
+   ```bash
+   make bench-ladder EXP=flow-knee BASELINE=<devices>
+   ```
+
+nl6 cannot remove devices cleanly, so a smaller fleet restarts the nl6 service on the loadgen VM first.
+
 ## Remove the lab
 
 ```bash

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Runs the flow knee ladder on a lab's observability VM, detached from this
+# workstation (a suspended workstation must not stop a campaign).
+#   ladder-run start <name> [--baseline <devices> --hold <seconds>]
+#   ladder-run status <name>
+#   ladder-run fetch <name>
+set -euo pipefail
+
+BENCH_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+die() { echo "ladder-run: $*" >&2; exit 1; }
+
+[ $# -ge 2 ] || die "usage: ladder-run start|status|fetch <name> [driver args]"
+cmd="$1" name="$2"
+shift 2
+run_dir="${BENCH_DIR}/runs/${name}"
+[ -f "${run_dir}/inventory.json" ] || die "no lab ${name}: ${run_dir}/inventory.json is missing"
+ssh_obs=(ssh -F "${run_dir}/ssh_config" "bench-${name}-observe")
+loadgen_mgmt="$(jq -r '.services.loadgen.addresses.mgmt' "${run_dir}/inventory.json")"
+remote=/var/lib/bench/ladder
+
+case "${cmd}" in
+  start)
+    # The driver restarts nl6 over SSH long after this session ends, so the
+    # observe VM gets its own key on the loadgen instead of a forwarded agent.
+    pub="$("${ssh_obs[@]}" 'test -f ~/.ssh/id_ed25519 || ssh-keygen -q -t ed25519 -N "" -f ~/.ssh/id_ed25519; cat ~/.ssh/id_ed25519.pub')"
+    ssh -F "${run_dir}/ssh_config" "bench-${name}-loadgen" \
+      "grep -qxF '${pub}' ~/.ssh/authorized_keys || echo '${pub}' >> ~/.ssh/authorized_keys"
+    "${ssh_obs[@]}" "sudo mkdir -p ${remote} && sudo chown bench: ${remote}"
+    scp -F "${run_dir}/ssh_config" "${BENCH_DIR}"/ladder/*.py "${run_dir}/inventory.json" "${run_dir}/clickhouse-password" \
+      "bench-${name}-observe:${remote}/"
+    "${ssh_obs[@]}" "sudo systemd-run --unit bench-ladder-${name} --working-directory=${remote} --uid=bench \
+      python3 ladder.py --inventory inventory.json --clickhouse-password-file clickhouse-password \
+      --records ${name}.jsonl --loadgen-ssh bench@${loadgen_mgmt} $*"
+    echo "ladder-run: started bench-ladder-${name}; follow with: ladder-run status ${name}"
+    ;;
+  status)
+    "${ssh_obs[@]}" "systemctl status --no-pager bench-ladder-${name} | head -5; tail -n 3 ${remote}/${name}.jsonl 2>/dev/null"
+    ;;
+  fetch)
+    scp -F "${run_dir}/ssh_config" "bench-${name}-observe:${remote}/${name}.jsonl" "${run_dir}/"
+    echo "ladder-run: ${run_dir}/${name}.jsonl"
+    ;;
+  *) die "unknown command ${cmd}" ;;
+esac

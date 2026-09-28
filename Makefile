@@ -80,6 +80,7 @@ help:
 	@echo "  bench-apply:  Build a benchmark lab and wait for every health check; EXP=<name>"
 	@echo "  bench-destroy: Remove a benchmark lab's VMs, disks and snippets, keeping base images; EXP=<name>"
 	@echo "  bench-list:   List a benchmark lab's VMs on every declared host; EXP=<name>"
+	@echo "  bench-ladder: Start the flow knee ladder on a lab's observability VM; EXP=<name>, BASELINE=<devices> to hold a baseline (HOLD=<seconds>, default 3600)"
 	@echo "  lint-actions: Lint the GitHub Actions workflows (actionlint + zizmor)"
 	@echo "  contributors: Regenerate the README contributor badge and table from .all-contributorsrc"
 	@echo "  contributors-check: Fail if the README contributor section is out of sync with .all-contributorsrc"
@@ -196,6 +197,11 @@ bench-check: deps-bench-check
 bench-plan bench-apply bench-destroy bench-list: deps-bench
 	@test -n "$(EXP)" || { echo "EXP=<name> is required, for benchmark/experiments/<name>.tfvars"; exit 1; }
 	benchmark/bin/bench $(patsubst bench-%,%,$@) $(EXP) $(if $(filter bench-apply bench-destroy,$@),$(BENCH_TOFU_ARGS))
+
+.PHONY: bench-ladder
+bench-ladder:
+	@test -n "$(EXP)" || { echo "EXP=<name> is required, for benchmark/runs/<name>/"; exit 1; }
+	benchmark/bin/ladder-run start $(EXP) $(if $(BASELINE),--baseline $(BASELINE) --hold $(or $(HOLD),3600))
 
 .PHONY: deps-lint-actions
 deps-lint-actions:
