@@ -242,7 +242,7 @@ A re-apply may add hosts but refuses to drop one, or to change its provider, whi
   The link stays inside the loadgen VM and is never routed out.
 - The Grafana dashboards come from this checkout, not from the riptide release under test.
   A release older than the checkout lacks series they read: on 2026-09-28, 21 of the 36 Prometheus panel queries returned nothing with `release:0.16.2`, against 4 with a package built from the checkout.
-- On Proxmox, the kept observability volume is allocated by a name without a format extension; this was verified on a ZFS pool.
+- On Proxmox, the kept observability volume is allocated by a name without a format extension; ZFS and LVM-thin were verified, Ceph RBD was not.
   A file-based datastore (directory, NFS, CIFS) needs a `.raw` or `.qcow2` name, so `pvesm alloc` fails there.
 - Prometheus keeps at most half the observability data disk. Pyroscope 2.3.1 has no size cap for its storage, so its retention is derived from the disk: half the disk at 2 GB a day, at most 30 days (25 days for 100 GB).
   2 GB a day is twice the 0.96 GB a day measured at 4.2k flows/s on 2026-09-28; a higher profile rate can take more than its half.

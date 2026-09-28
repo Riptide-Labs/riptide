@@ -180,8 +180,8 @@ resource "terraform_data" "proxmox_observability_data" {
     inline = ["${self.input.exists} || pvesm alloc ${self.input.datastore} 999999 ${self.input.volume} ${self.input.size}"]
   }
 
-  # No existence check: on a ZFS pool (PVE 9.2.2), freeing a volume already
-  # gone reports it removed and exits 0.
+  # No existence check: freeing a volume already gone reports it removed and
+  # exits 0 on ZFS and LVM-thin (PVE 9.2.2). Ceph RBD is untested.
   provisioner "remote-exec" {
     when   = destroy
     inline = ["pvesm free ${self.input.datastore}:${self.input.volume}"]
