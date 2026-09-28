@@ -145,9 +145,17 @@ resource "terraform_data" "observability_ready" {
 
   triggers_replace = [local.vm_ids[each.key]]
 
+  # A destroy-time provisioner may only read self. bench destroy powers the VM
+  # off, and Pyroscope's unflushed blocks would reach the kept disk as empty
+  # files that fail every later query, so the containers stop first.
+  input = {
+    host = each.value.addresses.mgmt
+    stop = "sudo systemctl stop grafana pyroscope prometheus && sync"
+  }
+
   connection {
     type    = "ssh"
-    host    = each.value.addresses.mgmt
+    host    = self.input.host
     user    = "bench"
     agent   = true
     timeout = "10m"
@@ -155,6 +163,12 @@ resource "terraform_data" "observability_ready" {
 
   provisioner "remote-exec" {
     inline = [local.wait_cloud_init[each.key], local.wait_healthy[each.key]]
+  }
+
+  provisioner "remote-exec" {
+    when       = destroy
+    on_failure = continue
+    inline     = [self.input.stop]
   }
 }
 

@@ -223,6 +223,22 @@ run "riptide_profiles_and_serves_metrics_on_observe" {
   }
 }
 
+# bench destroy powers the VM off. Without a clean stop, Pyroscope's last
+# seconds of blocks reach the kept disk as empty files, and every later query
+# that touches one fails. The destroy-time provisioner runs self.input.stop;
+# that the provisioner exists is only shown by a real destroy and re-apply.
+run "observability_stops_cleanly_before_destroy" {
+  command = plan
+  assert {
+    condition     = terraform_data.observability_ready["observe"].input.host == "192.0.2.203"
+    error_message = "observability_ready input: ${jsonencode(terraform_data.observability_ready["observe"].input)}"
+  }
+  assert {
+    condition     = terraform_data.observability_ready["observe"].input.stop == "sudo systemctl stop grafana pyroscope prometheus && sync"
+    error_message = "stop: ${jsonencode(terraform_data.observability_ready["observe"].input)}"
+  }
+}
+
 run "prometheus_jobs_cover_every_vm_and_service" {
   command = plan
   assert {
