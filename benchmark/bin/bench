@@ -44,6 +44,7 @@ use_declaration() {
 # evaluated from (tofu test evaluates them before any run block). The
 # committed experiment is planned against the example site.
 LAB_TESTS="flow_capacity:../site.example.tfvars,../experiments/flow-capacity.tfvars
+flow_knee:../site.example.tfvars,../experiments/flow-knee.tfvars
 libvirt_only:tests/libvirt-only.tfvars
 proxmox_only:tests/proxmox-only.tfvars
 rejected:tests/rejected.tfvars
