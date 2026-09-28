@@ -50,7 +50,7 @@
       "keepTime": true
     },
     {
-      "title": "Dashboards v1.1.1",
+      "title": "Dashboards v1.1.2",
       "type": "link",
       "url": "https://riptide.space/docs/guides/grafana-dashboards",
       "tooltip": "Version of the provisioned dashboard set, independent of the riptide version. Opens the install and upgrade guide.",
@@ -85,6 +85,32 @@
         "current": {},
         "refresh": 1,
         "description": "The Pyroscope that riptide's continuous profiler uploads to."
+      },
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-pyroscope-datasource",
+          "uid": "${pyroscope}"
+        },
+        "query": {
+          "type": "labelValue",
+          "labelName": "service_name",
+          "profileTypeId": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+          "refId": "service"
+        },
+        "regex": "/^(?!pyroscope$)/",
+        "refresh": 2,
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "current": {
+          "selected": true,
+          "text": "riptide",
+          "value": "riptide"
+        },
+        "description": "The Pyroscope service riptide reports under: PYROSCOPE_APPLICATION_NAME, riptide when unset. Pyroscope's own service is left out."
       },
       {
         "name": "prometheus",
@@ -351,7 +377,7 @@
           "refId": "A",
           "queryType": "metrics",
           "profileTypeId": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
-          "labelSelector": "{service_name=\"riptide\", collector=~\"${collector:regex}\"}",
+          "labelSelector": "{service_name=\"$service\", collector=~\"${collector:regex}\"}",
           "groupBy": [
             "stage"
           ]
@@ -452,7 +478,7 @@
           "refId": "A",
           "queryType": "metrics",
           "profileTypeId": "memory:alloc_in_new_tlab_bytes:bytes:space:bytes",
-          "labelSelector": "{service_name=\"riptide\", collector=~\"${collector:regex}\"}",
+          "labelSelector": "{service_name=\"$service\", collector=~\"${collector:regex}\"}",
           "groupBy": [
             "stage"
           ]
@@ -553,7 +579,7 @@
           "refId": "A",
           "queryType": "metrics",
           "profileTypeId": "mutex:delay:nanoseconds:mutex:count",
-          "labelSelector": "{service_name=\"riptide\", collector=~\"${collector:regex}\"}",
+          "labelSelector": "{service_name=\"$service\", collector=~\"${collector:regex}\"}",
           "groupBy": [
             "stage"
           ]
@@ -596,7 +622,7 @@
           "refId": "A",
           "queryType": "profile",
           "profileTypeId": "$profile",
-          "labelSelector": "{service_name=\"riptide\", collector=~\"${collector:regex}\", stage=~\"$stage\", component=~\"${component:regex}\"}",
+          "labelSelector": "{service_name=\"$service\", collector=~\"${collector:regex}\", stage=~\"$stage\", component=~\"${component:regex}\"}",
           "groupBy": [],
           "maxNodes": 16384
         }
@@ -919,7 +945,7 @@
               "refId": "A",
               "queryType": "profile",
               "profileTypeId": "$profile",
-              "labelSelector": "{service_name=\"riptide\", collector=~\"${collector:regex}\", stage=~\"$stage\", component=~\"${component:regex}\"}",
+              "labelSelector": "{service_name=\"$service\", collector=~\"${collector:regex}\", stage=~\"$stage\", component=~\"${component:regex}\"}",
               "groupBy": [],
               "maxNodes": 16384
             }
@@ -961,7 +987,7 @@
               "refId": "A",
               "queryType": "profile",
               "profileTypeId": "$profile",
-              "labelSelector": "{service_name=\"riptide\", collector=~\"${collector:regex}\", stage=~\"$stage\", component=~\"${component:regex}\"}",
+              "labelSelector": "{service_name=\"$service\", collector=~\"${collector:regex}\", stage=~\"$stage\", component=~\"${component:regex}\"}",
               "groupBy": [],
               "maxNodes": 16384
             }

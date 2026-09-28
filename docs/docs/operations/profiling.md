@@ -172,6 +172,7 @@ Pyroscope lists the allocation profile as `memory:alloc_in_new_tlab_*` and the l
 If **`PYROSCOPE_APPLICATION_NAME`** is unset, riptide uses `riptide`.
 Left to the agent it would generate `javaspy.<random>` afresh on every start, so each restart would appear as a new service nobody can search for.
 Set it explicitly if you run more than one collector against one server, or rely on the identity labels to tell them apart.
+**Riptide - Profiling** opens on `riptide`; pick another name in its **Service** variable, which lists every service on the server but Pyroscope's own.
 
 ## Fall back to JFR when a profile looks wrong
 
