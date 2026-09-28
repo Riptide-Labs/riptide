@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Entry point for benchmark labs; the Makefile's bench-* targets call it.
+#
+#   bench check                host-free checks: fmt, validate, tofu test
+#   bench plan    <name>       plan experiments/<name>.tfvars
+#   bench apply   <name>       apply it; returns when every health check answers
+#   bench destroy <name>       destroy its VMs, disks and snippets; keeps base images
+#   bench purge   <name>       destroy everything, base images included, and the workspace
+#   bench list    <name>       list its VMs on every declared host
+#
+# Written for bash 3.2 (macOS): no associative arrays, no mapfile.
+set -euo pipefail
+
+BENCH_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_DIR="$(cd "${BENCH_DIR}/.." && pwd)"
+LAB_DIR="${BENCH_DIR}/lab"
+CACHE_DIR="${BENCH_DIR}/.cache"
+RUNS_DIR="${BENCH_DIR}/runs"
+METADATA_NS="https://riptide-labs.github.io/benchmark/1"
+
+die() { echo "bench: $*" >&2; exit 1; }
+tf() { tofu -chdir="${LAB_DIR}" "$@"; }
+
+# Lab tests: each test file with the var file its provider for_each is
+# evaluated from (tofu test evaluates it before any run block).
+LAB_TESTS="flow_capacity:../experiments/flow-capacity.tfvars
+libvirt_only:tests/libvirt-only.tfvars
+proxmox_only:tests/proxmox-only.tfvars
+rejected:tests/rejected.tfvars
+rejected_many:tests/rejected-many.tfvars
+rejected_no_clickhouse:tests/rejected-no-clickhouse.tfvars"
+
+check() {
+  # Unset, so a test that leaves one backend unmocked proves that backend is
+  # never configured rather than finding credentials in the environment.
+  unset PROXMOX_VE_ENDPOINT PROXMOX_VE_USERNAME PROXMOX_VE_PASSWORD PROXMOX_VE_API_TOKEN LIBVIRT_DEFAULT_URI
+
+  echo "== shellcheck"
+  command -v shellcheck >/dev/null 2>&1 || die "shellcheck is needed for bench check"
+  shellcheck "${BENCH_DIR}"/bin/*
+
+  echo "== tofu fmt"
+  tofu fmt -check -recursive -diff "${BENCH_DIR}"
+
+  local m
+  for m in declaration cloud-init libvirt-vm proxmox-vm; do
+    echo "== modules/${m}"
+    tofu -chdir="${BENCH_DIR}/modules/${m}" init -input=false -no-color >/dev/null
+    tofu -chdir="${BENCH_DIR}/modules/${m}" validate -no-color
+    if [ -d "${BENCH_DIR}/modules/${m}/tests" ]; then
+      tofu -chdir="${BENCH_DIR}/modules/${m}" test -no-color
+    fi
+  done
+
+  local entry test varfile
+  for entry in ${LAB_TESTS}; do
+    test="${entry%%:*}"
+    varfile="${entry#*:}"
+    echo "== lab: tests/${test}.tftest.hcl with ${varfile}"
+    tf init -input=false -no-color -var-file="${varfile}" >/dev/null
+    tf validate -no-color -var-file="${varfile}"
+    tf test -no-color -filter="tests/${test}.tftest.hcl" -var-file="${varfile}"
+  done
+}
+
+# Reads one expression from a declaration through tofu console, unquoted.
+# console prints configuration warnings to stdout ahead of the value, so only
+# the last line is the value.
+declared() {
+  local varfile="$1" expr="$2" out
+  out="$(echo "${expr}" | tf console -no-color -var-file="${varfile}")" || die "cannot read ${expr} from ${varfile}"
+  out="$(printf '%s\n' "${out}" | tail -n 1)"
+  out="${out#\"}"
+  echo "${out%\"}"
+}
+
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+
+# Resolves riptide.source to a verified local .deb; prints its path.
+resolve_riptide() {
+  local source="$1" version deb bundle base
+  case "${source}" in
+    release:*)
+      version="${source#release:}"
+      deb="${CACHE_DIR}/riptide_${version}_all.deb"
+      bundle="${deb}.sigstore.json"
+      base="https://github.com/Riptide-Labs/riptide/releases/download/v${version}"
+      mkdir -p "${CACHE_DIR}"
+      if [ ! -f "${deb}" ]; then
+        curl -fsSL -o "${deb}.part" "${base}/riptide_${version}_all.deb" || die "cannot download riptide ${version}"
+        mv "${deb}.part" "${deb}"
+      fi
+      if [ ! -f "${bundle}" ]; then
+        curl -fsSL -o "${bundle}" "${base}/riptide_${version}_all.deb.sigstore.json" || die "cannot download the signature bundle of riptide ${version}"
+      fi
+      command -v cosign >/dev/null 2>&1 || die "cosign is needed to verify ${deb}"
+      # Verified on every run, cached or not: the cache is not trusted.
+      cosign verify-blob --bundle "${bundle}" \
+        --certificate-identity "https://github.com/Riptide-Labs/riptide/.github/workflows/release.yml@refs/tags/v${version}" \
+        --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+        "${deb}" >&2 || die "${deb} does not match its signature bundle; not installing it"
+      ;;
+    deb:*)
+      deb="${source#deb:}"
+      case "${deb}" in /*) ;; *) deb="${REPO_DIR}/${deb}" ;; esac
+      [ -f "${deb}" ] || die "riptide source ${source}: ${deb} does not exist"
+      ;;
+    *) die "riptide source \"${source}\" must be release:X.Y.Z or deb:<path>" ;;
+  esac
+  echo "${deb}"
+}
+
+# Downloads the base image once into the cache and checks its pinned SHA-512
+# on every run; prints its path. Only libvirt needs it: Proxmox downloads the
+# image on the node and checks the same SHA-512 there.
+resolve_base_image() {
+  local varfile="$1" url file sha512 path actual
+  url="$(declared "${varfile}" "var.base_image.url")"
+  file="$(declared "${varfile}" "var.base_image.file")"
+  sha512="$(declared "${varfile}" "var.base_image.sha512")"
+  path="${CACHE_DIR}/${file}"
+  mkdir -p "${CACHE_DIR}"
+  if [ ! -f "${path}" ]; then
+    curl -fsSL -o "${path}.part" "${url}" || die "cannot download ${url}"
+    mv "${path}.part" "${path}"
+  fi
+  if command -v sha512sum >/dev/null 2>&1; then actual="$(sha512sum "${path}" | cut -d' ' -f1)"; else actual="$(shasum -a 512 "${path}" | cut -d' ' -f1)"; fi
+  [ "${actual}" = "${sha512}" ] || die "${path} does not match the pinned SHA-512; delete it to download again"
+  echo "${path}"
+}
+
+agent_keys_hcl() {
+  local all line keys="[" sep=""
+  all="$(ssh-add -L 2>/dev/null)" || all=""
+  while IFS= read -r line; do
+    case "${line}" in ssh-* | ecdsa-* | sk-*) keys="${keys}${sep}\"${line}\""; sep="," ;; esac
+  done <<< "${all}"
+  echo "${keys}]"
+}
+
+# A provider instance must outlive its resources, and hosts map to provider
+# instances. So a re-apply may add hosts but never drop one, or change its
+# provider, while the saved declaration still names it: destroy first.
+keep_hosts() {
+  local name="$1" varfile="$2" saved="${RUNS_DIR}/$1/applied.tfvars" expr before after h
+  [ -f "${saved}" ] || return 0
+  # shellcheck disable=SC2016 # an HCL expression; ${...} is for tofu, not the shell
+  expr='join(" ", sort([for k, v in var.experiment.hosts : "${k}=${try(v.provider, "")}"]))'
+  before="$(declared "${saved}" "${expr}")"
+  after=" $(declared "${varfile}" "${expr}") "
+  for h in ${before}; do
+    case "${after}" in
+      *" ${h} "*) ;;
+      *) die "${name} was applied with host ${h%%=*} (${h#*=}), which ${varfile} drops or changes; run make bench-destroy EXP=${name} first" ;;
+    esac
+  done
+}
+
+# Selects the experiment: init with its declaration, then its workspace.
+select_experiment() {
+  local name="$1" varfile="$2" declared_name
+  [ -f "${varfile}" ] || die "no declaration at ${varfile}"
+  tf init -input=false -no-color -var-file="${varfile}" >/dev/null
+  declared_name="$(declared "${varfile}" "var.experiment.name")"
+  [ "${declared_name}" = "${name}" ] || die "${varfile} declares name \"${declared_name}\"; the file and the name must match"
+  tf workspace select -or-create "${name}" >/dev/null
+}
+
+plan_or_apply() {
+  local cmd="$1" name="$2" varfile="${BENCH_DIR}/experiments/$2.tfvars" source deb base
+  select_experiment "${name}" "${varfile}"
+  source="$(declared "${varfile}" "var.experiment.riptide.source")"
+  deb="$(resolve_riptide "${source}")"
+  base=""
+  if [ "$(declared "${varfile}" 'length([for h in values(var.experiment.hosts) : h if try(h.provider, "") == "libvirt"])')" != 0 ]; then
+    base="$(resolve_base_image "${varfile}")"
+  fi
+  if [ "${cmd}" = apply ]; then
+    keep_hosts "${name}" "${varfile}"
+    # Saved before apply, so a partly applied experiment is destroyed with
+    # the declaration that created it. keep_hosts makes overwriting safe: the
+    # new declaration still names every host the saved one did.
+    mkdir -p "${RUNS_DIR}/${name}"
+    cp "${varfile}" "${RUNS_DIR}/${name}/applied.tfvars"
+  fi
+  SECONDS=0
+  tf "${cmd}" -input=false -var-file="${varfile}" \
+    -var "riptide_deb=${deb}" -var "riptide_deb_sha256=$(sha256 "${deb}")" \
+    -var "base_image_path=${base}" -var "agent_ssh_keys=$(agent_keys_hcl)"
+  [ "${cmd}" = apply ] && echo "bench: ${name} ready in ${SECONDS} s; inventory at ${RUNS_DIR}/${name}/inventory.json"
+  return 0
+}
+
+destroy() {
+  local mode="$1" name="$2" saved="${RUNS_DIR}/$2/applied.tfvars"
+  [ -f "${saved}" ] || die "no saved declaration at ${saved}; was ${name} applied from this checkout?"
+  select_experiment "${name}" "${saved}"
+  if [ "${mode}" = keep-base ]; then
+    tf destroy -input=false -var-file="${saved}" \
+      -exclude=libvirt_volume.base -exclude=proxmox_download_file.base
+  else
+    tf destroy -input=false -var-file="${saved}"
+    tf workspace select default >/dev/null
+    tf workspace delete "${name}"
+    rm -rf "${RUNS_DIR:?}/${name}"
+  fi
+}
+
+list() {
+  local name="$1" saved="${RUNS_DIR}/$1/applied.tfvars" hosts h provider target node
+  [ -f "${saved}" ] || die "no saved declaration at ${saved}; was ${name} applied from this checkout?"
+  select_experiment "${name}" "${saved}"
+  hosts="$(tf output -json hosts)"
+  printf '%-12s %-9s %-40s %s\n' HOST BACKEND VM STATE
+  for h in $(echo "${hosts}" | jq -r 'keys[]'); do
+    provider="$(echo "${hosts}" | jq -r --arg h "$h" '.[$h].provider')"
+    if [ "${provider}" = proxmox ]; then
+      node="$(echo "${hosts}" | jq -r --arg h "$h" '.[$h].node')"
+      target="$(echo "${hosts}" | jq -r --arg h "$h" '.[$h].address // .[$h].node')"
+      # /cluster/resources is cluster-wide; keep only this node's VMs so two
+      # nodes of one cluster do not list each other's.
+      ssh -o BatchMode=yes "root@${target}" pvesh get /cluster/resources --type vm --output-format json |
+        jq -r --arg h "$h" --arg node "${node}" --arg tag "exp-${name}" \
+          '.[] | select(.node == $node) | select((.tags // "") | split(";") | index($tag)) | [$h, "proxmox", .name, .status] | @tsv' |
+        while IFS="$(printf '\t')" read -r a b c d; do printf '%-12s %-9s %-40s %s\n' "$a" "$b" "$c" "$d"; done
+    else
+      # qemu+ssh://user@host/system -> user@host
+      target="$(echo "${hosts}" | jq -r --arg h "$h" '.[$h].uri' | sed -E 's#^[a-z+]+://([^/]+)/.*#\1#')"
+      # libvirt cannot filter by metadata, so read every domain's.
+      ssh -o BatchMode=yes "${target}" "for d in \$(virsh list --all --name); do
+          if virsh metadata \"\$d\" ${METADATA_NS} 2>/dev/null | grep -F -e '>exp-${name}<' >/dev/null; then
+            echo \"\$d \$(virsh domstate \"\$d\")\"
+          fi
+        done" |
+        while read -r d state; do printf '%-12s %-9s %-40s %s\n' "$h" libvirt "$d" "$state"; done
+    fi
+  done
+}
+
+cmd="${1:-}"
+case "${cmd}" in
+  check) check ;;
+  plan | apply) [ -n "${2:-}" ] || die "usage: bench ${cmd} <name>"; plan_or_apply "${cmd}" "$2" ;;
+  destroy) [ -n "${2:-}" ] || die "usage: bench destroy <name>"; destroy keep-base "$2" ;;
+  purge) [ -n "${2:-}" ] || die "usage: bench purge <name>"; destroy all "$2" ;;
+  list) [ -n "${2:-}" ] || die "usage: bench list <name>"; list "$2" ;;
+  *) sed -n '5,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
