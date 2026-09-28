@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # No ClickHouse service: riptide has nothing to write to.
+# Pins the try() lookups of the SUT and ClickHouse in services.tf, which the
+# gate in main.tf leaves with an empty services map.
 
 experiment = {
   name = "rejected-no-clickhouse"

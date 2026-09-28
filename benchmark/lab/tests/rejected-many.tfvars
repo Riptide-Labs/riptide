@@ -4,6 +4,7 @@
 # Several rejections at once, each of which used to crash a root lookup before
 # the violations list could report: two ClickHouse services, an unknown role,
 # an undeclared host and an ingest range too small for its services.
+# Pins the gate in main.tf (services is empty while the declaration is rejected).
 
 experiment = {
   name = "rejected-many"
