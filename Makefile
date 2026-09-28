@@ -195,7 +195,7 @@ bench-check: deps-bench-check
 .PHONY: bench-plan bench-apply bench-destroy bench-list
 bench-plan bench-apply bench-destroy bench-list: deps-bench
 	@test -n "$(EXP)" || { echo "EXP=<name> is required, for benchmark/experiments/<name>.tfvars"; exit 1; }
-	benchmark/bin/bench $(patsubst bench-%,%,$@) $(EXP)
+	benchmark/bin/bench $(patsubst bench-%,%,$@) $(EXP) $(if $(filter bench-apply bench-destroy,$@),$(BENCH_TOFU_ARGS))
 
 .PHONY: deps-lint-actions
 deps-lint-actions:

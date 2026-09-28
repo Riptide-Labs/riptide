@@ -11,6 +11,9 @@
 #   bench purge   <name>       destroy everything, base images included, and the workspace
 #   bench list    <name>       list its VMs on every declared host
 #
+# plan, apply, destroy and purge pass further arguments to tofu, for example
+# -auto-approve for an unattended run.
+#
 # Written for bash 3.2 (macOS): no associative arrays, no mapfile.
 set -euo pipefail
 
@@ -36,7 +39,8 @@ rejected_no_clickhouse:tests/rejected-no-clickhouse.tfvars"
 check() {
   # Unset, so a test that leaves one backend unmocked proves that backend is
   # never configured rather than finding credentials in the environment.
-  unset PROXMOX_VE_ENDPOINT PROXMOX_VE_USERNAME PROXMOX_VE_PASSWORD PROXMOX_VE_API_TOKEN LIBVIRT_DEFAULT_URI
+  unset PROXMOX_VE_ENDPOINT PROXMOX_VE_USERNAME PROXMOX_VE_PASSWORD PROXMOX_VE_API_TOKEN \
+    PROXMOX_VE_AUTH_TICKET PROXMOX_VE_CSRF_PREVENTION_TOKEN LIBVIRT_DEFAULT_URI
 
   echo "== shellcheck"
   command -v shellcheck >/dev/null 2>&1 || die "shellcheck is needed for bench check"
@@ -134,6 +138,31 @@ resolve_base_image() {
   echo "${path}"
 }
 
+# Proxmox accepts cpu.affinity only from root@pam logged in with a password;
+# an API token, even root@pam's, is refused ("only root can set 'affinity'
+# config", 2026-09-28). Without PROXMOX_VE_PASSWORD, bench asks the node
+# itself for a root@pam ticket over the root SSH that snippet upload already
+# needs. A ticket lives two hours, so it is fetched on every run.
+proxmox_login() {
+  local varfile="$1" target out
+  [ "$(declared "${varfile}" 'length([for h in values(var.experiment.hosts) : h if try(h.provider, "") == "proxmox"])')" != 0 ] || return 0
+  # shellcheck disable=SC2016 # an HCL expression; ${...} is for tofu, not the shell
+  target="$(declared "${varfile}" '[for h in values(var.experiment.hosts) : try(h.address, null) != null ? h.address : h.node if try(h.provider, "") == "proxmox"][0]')"
+  : "${PROXMOX_VE_ENDPOINT:=https://${target}:8006/}"
+  export PROXMOX_VE_ENDPOINT
+  [ -z "${PROXMOX_VE_PASSWORD:-}" ] || return 0
+  out="$(ssh -o BatchMode=yes "root@${target}" \
+    "perl -MPVE::AccessControl -e 'print PVE::AccessControl::assemble_ticket(q{root@pam}), qq{\\n}, PVE::AccessControl::assemble_csrf_prevention_token(q{root@pam}), qq{\\n}'")" ||
+    die "cannot get a root@pam ticket from ${target}; set PROXMOX_VE_USERNAME=root@pam and PROXMOX_VE_PASSWORD instead"
+  PROXMOX_VE_AUTH_TICKET="$(printf '%s\n' "${out}" | sed -n 1p)"
+  PROXMOX_VE_CSRF_PREVENTION_TOKEN="$(printf '%s\n' "${out}" | sed -n 2p)"
+  case "${PROXMOX_VE_AUTH_TICKET}" in PVE:root@pam:*) ;; *) die "${target} returned no root@pam ticket; set PROXMOX_VE_USERNAME=root@pam and PROXMOX_VE_PASSWORD instead" ;; esac
+  [ -n "${PROXMOX_VE_CSRF_PREVENTION_TOKEN}" ] || die "${target} returned no CSRF prevention token"
+  export PROXMOX_VE_AUTH_TICKET PROXMOX_VE_CSRF_PREVENTION_TOKEN
+  # A token or username in the environment would take precedence over the ticket.
+  unset PROXMOX_VE_API_TOKEN PROXMOX_VE_USERNAME
+}
+
 agent_keys_hcl() {
   local all line keys="[" sep=""
   all="$(ssh-add -L 2>/dev/null)" || all=""
@@ -173,6 +202,7 @@ select_experiment() {
 
 plan_or_apply() {
   local cmd="$1" name="$2" varfile="${BENCH_DIR}/experiments/$2.tfvars" source deb base
+  shift 2
   select_experiment "${name}" "${varfile}"
   source="$(declared "${varfile}" "var.experiment.riptide.source")"
   deb="$(resolve_riptide "${source}")"
@@ -188,23 +218,32 @@ plan_or_apply() {
     mkdir -p "${RUNS_DIR}/${name}"
     cp "${varfile}" "${RUNS_DIR}/${name}/applied.tfvars"
   fi
+  # Last before tofu: downloads above can take a while, the ticket lives 2 h.
+  proxmox_login "${varfile}"
   SECONDS=0
   tf "${cmd}" -input=false -var-file="${varfile}" \
     -var "riptide_deb=${deb}" -var "riptide_deb_sha256=$(sha256 "${deb}")" \
-    -var "base_image_path=${base}" -var "agent_ssh_keys=$(agent_keys_hcl)"
-  [ "${cmd}" = apply ] && echo "bench: ${name} ready in ${SECONDS} s; inventory at ${RUNS_DIR}/${name}/inventory.json"
+    -var "base_image_path=${base}" -var "agent_ssh_keys=$(agent_keys_hcl)" "$@"
+  if [ "${cmd}" = apply ]; then
+    # Apply may have replaced a VM at the same address, with a new host key.
+    rm -f "${RUNS_DIR}/${name}/known_hosts"
+    echo "bench: ${name} ready in ${SECONDS} s; inventory at ${RUNS_DIR}/${name}/inventory.json"
+  fi
   return 0
 }
 
 destroy() {
   local mode="$1" name="$2" saved="${RUNS_DIR}/$2/applied.tfvars"
+  shift 2
   [ -f "${saved}" ] || die "no saved declaration at ${saved}; was ${name} applied from this checkout?"
   select_experiment "${name}" "${saved}"
+  proxmox_login "${saved}"
   if [ "${mode}" = keep-base ]; then
     tf destroy -input=false -var-file="${saved}" \
-      -exclude=libvirt_volume.base -exclude=proxmox_download_file.base
+      -exclude=libvirt_volume.base -exclude=proxmox_download_file.base "$@"
+    rm -f "${RUNS_DIR}/${name}/known_hosts"
   else
-    tf destroy -input=false -var-file="${saved}"
+    tf destroy -input=false -var-file="${saved}" "$@"
     tf workspace select default >/dev/null
     tf workspace delete "${name}"
     rm -rf "${RUNS_DIR:?}/${name}"
@@ -245,9 +284,9 @@ list() {
 cmd="${1:-}"
 case "${cmd}" in
   check) check ;;
-  plan | apply) [ -n "${2:-}" ] || die "usage: bench ${cmd} <name>"; plan_or_apply "${cmd}" "$2" ;;
-  destroy) [ -n "${2:-}" ] || die "usage: bench destroy <name>"; destroy keep-base "$2" ;;
-  purge) [ -n "${2:-}" ] || die "usage: bench purge <name>"; destroy all "$2" ;;
+  plan | apply) [ -n "${2:-}" ] || die "usage: bench ${cmd} <name> [tofu args]"; plan_or_apply "${cmd}" "$2" "${@:3}" ;;
+  destroy) [ -n "${2:-}" ] || die "usage: bench destroy <name> [tofu args]"; destroy keep-base "$2" "${@:3}" ;;
+  purge) [ -n "${2:-}" ] || die "usage: bench purge <name> [tofu args]"; destroy all "$2" "${@:3}" ;;
   list) [ -n "${2:-}" ] || die "usage: bench list <name>"; list "$2" ;;
-  *) sed -n '5,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '5,16p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

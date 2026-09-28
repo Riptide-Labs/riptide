@@ -22,7 +22,7 @@ experiment = {
   networks = {
     ingest = { vlan = 24 }
     store  = { vlan = 25 }
-    mgmt   = { host_range = "192.168.11.200-229" }
+    mgmt   = { host_range = "192.168.11.200-229", dns = ["192.168.10.16", "192.168.10.53"] }
   }
   services = {
     sut        = { role = "riptide", host = "guybrush", numa_node = 0, vcpus = 4, memory_gb = 8, networks = ["ingest", "store", "mgmt"] }

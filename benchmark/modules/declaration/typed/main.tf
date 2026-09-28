@@ -41,7 +41,10 @@ variable "experiment" {
         vlan       = optional(number, 11)
         cidr       = optional(string, "192.168.11.0/24")
         gateway    = optional(string)
-        dns        = optional(list(string))
+        # Required, but checked as a violation in the parent module rather
+        # than by the type: a type error would hide every other violation,
+        # and would break destroy for declarations saved before dns existed.
+        dns = optional(list(string))
       })
     })
     services = map(object({

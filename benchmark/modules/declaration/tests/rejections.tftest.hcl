@@ -440,3 +440,38 @@ run "lab_network_too_small_is_rejected" {
     error_message = "violations: ${jsonencode(output.violations)}"
   }
 }
+
+run "empty_dns_is_rejected" {
+  command = plan
+  variables {
+    raw = merge(run.fixture.raw, { networks = merge(run.fixture.raw.networks, { mgmt = merge(run.fixture.raw.networks.mgmt, { dns = [] }) }) })
+  }
+  assert {
+    condition     = length(output.violations) == 1 && contains(output.violations, "network mgmt: declare dns, the resolvers the VMs install packages through")
+    error_message = "violations: ${jsonencode(output.violations)}"
+  }
+}
+
+# A declaration saved before dns existed must still convert, so its lab can be
+# destroyed; the missing value is a violation, not a type error.
+run "missing_dns_is_rejected" {
+  command = plan
+  variables {
+    raw = merge(run.fixture.raw, { networks = merge(run.fixture.raw.networks, { mgmt = { host_range = "192.168.11.200-229" } }) })
+  }
+  assert {
+    condition     = length(output.violations) == 1 && contains(output.violations, "network mgmt: declare dns, the resolvers the VMs install packages through")
+    error_message = "violations: ${jsonencode(output.violations)}"
+  }
+}
+
+run "misspelt_dns_names_the_key" {
+  command = plan
+  variables {
+    raw = merge(run.fixture.raw, { networks = merge(run.fixture.raw.networks, { mgmt = { host_range = "192.168.11.200-229", dnss = ["192.168.10.16"] } }) })
+  }
+  assert {
+    condition     = length(output.violations) == 2 && contains(output.violations, "network mgmt: unknown key \"dnss\"") && contains(output.violations, "network mgmt: declare dns, the resolvers the VMs install packages through")
+    error_message = "violations: ${jsonencode(output.violations)}"
+  }
+}

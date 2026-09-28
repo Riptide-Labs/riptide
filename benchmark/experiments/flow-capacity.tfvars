@@ -46,7 +46,8 @@ experiment = {
   networks = {
     ingest = { vlan = 24 }
     store  = { vlan = 25 }
-    mgmt   = { host_range = "192.168.11.200-229" }
+    # 192.168.11.1 routes but does not answer DNS; these are the lab resolvers.
+    mgmt = { host_range = "192.168.11.200-229", dns = ["192.168.10.16", "192.168.10.53"] }
   }
 
   services = {
