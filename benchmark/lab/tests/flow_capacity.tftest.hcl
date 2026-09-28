@@ -30,6 +30,7 @@ variables {
   agent_ssh_keys     = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKeyOnly test"]
   riptide_deb        = "/tmp/riptide_0.16.2_all.deb"
   riptide_deb_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+  base_image_path    = "/tmp/debian-13-genericcloud-amd64.qcow2"
 }
 
 run "vms_go_to_their_backend" {

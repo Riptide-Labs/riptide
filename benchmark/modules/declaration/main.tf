@@ -210,6 +210,15 @@ locals {
     ]]),
   ) : []
 
+  # Lab networks number services from host 10; a range too small for that
+  # would leave the service without an address.
+  address_violations = local.cidrs_valid ? flatten([
+    for s, v in local.x.services : [
+      for n in v.networks : "network ${n} (${local.cidrs[n]}) has no host number ${10 + local.service_index[s]} for service ${s}"
+      if contains(["ingest", "store"], n) && !can(cidrhost(local.cidrs[n], 10 + local.service_index[s]))
+    ]
+  ]) : []
+
   # mgmt host range: "a.b.c.d-e" or "a.b.c.d-a.b.c.e".
   mgmt_range_parts = split("-", local.x.networks.mgmt.host_range)
   mgmt_start_ip    = trimspace(local.mgmt_range_parts[0])
@@ -244,6 +253,7 @@ locals {
     local.network_violations,
     local.cidr_violations,
     local.overlap_violations,
+    local.address_violations,
     local.mgmt_violations,
   )
 

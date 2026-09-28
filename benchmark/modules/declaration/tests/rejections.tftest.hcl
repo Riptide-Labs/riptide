@@ -428,3 +428,15 @@ run "invalid_env_name_is_rejected" {
     error_message = "violations: ${jsonencode(output.violations)}"
   }
 }
+
+run "lab_network_too_small_is_rejected" {
+  command = plan
+  variables {
+    raw = merge(run.fixture.raw, { networks = merge(run.fixture.raw.networks, { ingest = { vlan = 24, cidr = "172.24.0.0/29" } }) })
+  }
+  # loadgen (index 1) and sut (index 3) join ingest; a /29 has no host 11 or 13.
+  assert {
+    condition     = length(output.violations) == 2 && contains(output.violations, "network ingest (172.24.0.0/29) has no host number 11 for service loadgen") && contains(output.violations, "network ingest (172.24.0.0/29) has no host number 13 for service sut")
+    error_message = "violations: ${jsonencode(output.violations)}"
+  }
+}

@@ -75,7 +75,7 @@ help:
 	@echo "  fuzz:         Coverage-guided fuzzing of the flow parsers (Jazzer); FUZZ_TIME=<seconds> per target"
 	@echo "  bench:        Run the FR-1 budget benchmarks (src/bench) with ratio assertions"
 	@echo "  bench-jmh:    Run the JMH microbenchmarks; BENCH_TARGET=<regex> to narrow, BENCH_OPTS=<jmh flags>"
-	@echo "  bench-check:  Host-free checks of the benchmark lab (tofu fmt, validate, test; requires OpenTofu)"
+	@echo "  bench-check:  Host-free checks of the benchmark lab (tofu fmt, validate, test; requires OpenTofu and shellcheck)"
 	@echo "  bench-plan:   Plan a benchmark lab; EXP=<name> for benchmark/experiments/<name>.tfvars"
 	@echo "  bench-apply:  Build a benchmark lab and wait for every health check; EXP=<name>"
 	@echo "  bench-destroy: Remove a benchmark lab's VMs, disks and snippets, keeping base images; EXP=<name>"
@@ -180,12 +180,16 @@ bench-jmh: deps-jar
 
 # Benchmark labs (benchmark/README.md). The driver script does the work; these
 # targets only name it, so local runs and CI call the same thing.
+.PHONY: deps-bench-check
+deps-bench-check:
+	$(foreach bin,tofu shellcheck,$(if $(shell command -v $(bin) 2> /dev/null),$(info Found `$(bin)`),$(error Please install `$(bin)`)))
+
 .PHONY: deps-bench
-deps-bench:
-	$(foreach bin,tofu,$(if $(shell command -v $(bin) 2> /dev/null),$(info Found `$(bin)`),$(error Please install `$(bin)`)))
+deps-bench: deps-bench-check
+	$(foreach bin,cosign curl jq ssh-add,$(if $(shell command -v $(bin) 2> /dev/null),$(info Found `$(bin)`),$(error Please install `$(bin)`)))
 
 .PHONY: bench-check
-bench-check: deps-bench
+bench-check: deps-bench-check
 	benchmark/bin/bench check
 
 .PHONY: bench-plan bench-apply bench-destroy bench-list

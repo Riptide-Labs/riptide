@@ -26,11 +26,6 @@ output "sut" {
   value       = local.sut
 }
 
-output "loadgen" {
-  description = "Name of the nl6 service, or null."
-  value       = local.loadgen
-}
-
 output "ssh_keys" {
   description = "Keys authorized for user bench: the agent's, then the declaration's."
   value       = local.ssh_keys

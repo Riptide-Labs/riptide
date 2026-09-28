@@ -12,12 +12,12 @@ locals {
 
   # Read apart from riptide_env, which holds the ClickHouse password and so is
   # sensitive as a whole.
-  java_opts = lookup(local.x.riptide.env, "JAVA_OPTS", "-Xmx${max(1, floor(local.services[local.sut].memory_gb / 2))}g")
+  java_opts = lookup(local.x.riptide.env, "JAVA_OPTS", "-Xmx${max(1, floor(try(local.services[local.sut].memory_gb, 2) / 2))}g")
 
   riptide_env = merge(
     {
       JAVA_OPTS                          = local.java_opts
-      RIPTIDE_CLICKHOUSE_ENDPOINT        = "http://${local.services[local.clickhouse].addresses.store}:8123"
+      RIPTIDE_CLICKHOUSE_ENDPOINT        = "http://${try(local.services[local.clickhouse].addresses.store, "")}:8123"
       RIPTIDE_CLICKHOUSE_USERNAME        = "default"
       RIPTIDE_CLICKHOUSE_PASSWORD        = random_password.clickhouse.result
       RIPTIDE_CLICKHOUSE_DATABASE        = "riptide"
@@ -57,10 +57,15 @@ locals {
 }
 
 resource "terraform_data" "riptide" {
+  count = local.ok ? 1 : 0
+
+  # A re-created ClickHouse starts empty, and riptide creates its schema only
+  # at startup, so a new ClickHouse VM reinstalls and restarts riptide too.
   triggers_replace = [
     var.riptide_deb_sha256,
     sha256(local.riptide_env_file),
     local.vm_ids[local.sut],
+    local.vm_ids[local.clickhouse],
   ]
 
   connection {

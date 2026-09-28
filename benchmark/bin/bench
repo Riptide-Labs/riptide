@@ -29,7 +29,9 @@ tf() { tofu -chdir="${LAB_DIR}" "$@"; }
 LAB_TESTS="flow_capacity:../experiments/flow-capacity.tfvars
 libvirt_only:tests/libvirt-only.tfvars
 proxmox_only:tests/proxmox-only.tfvars
-rejected:tests/rejected.tfvars"
+rejected:tests/rejected.tfvars
+rejected_many:tests/rejected-many.tfvars
+rejected_no_clickhouse:tests/rejected-no-clickhouse.tfvars"
 
 check() {
   # Unset, so a test that leaves one backend unmocked proves that backend is
@@ -113,6 +115,25 @@ resolve_riptide() {
   echo "${deb}"
 }
 
+# Downloads the base image once into the cache and checks its pinned SHA-512
+# on every run; prints its path. Only libvirt needs it: Proxmox downloads the
+# image on the node and checks the same SHA-512 there.
+resolve_base_image() {
+  local varfile="$1" url file sha512 path actual
+  url="$(declared "${varfile}" "var.base_image.url")"
+  file="$(declared "${varfile}" "var.base_image.file")"
+  sha512="$(declared "${varfile}" "var.base_image.sha512")"
+  path="${CACHE_DIR}/${file}"
+  mkdir -p "${CACHE_DIR}"
+  if [ ! -f "${path}" ]; then
+    curl -fsSL -o "${path}.part" "${url}" || die "cannot download ${url}"
+    mv "${path}.part" "${path}"
+  fi
+  if command -v sha512sum >/dev/null 2>&1; then actual="$(sha512sum "${path}" | cut -d' ' -f1)"; else actual="$(shasum -a 512 "${path}" | cut -d' ' -f1)"; fi
+  [ "${actual}" = "${sha512}" ] || die "${path} does not match the pinned SHA-512; delete it to download again"
+  echo "${path}"
+}
+
 agent_keys_hcl() {
   local all line keys="[" sep=""
   all="$(ssh-add -L 2>/dev/null)" || all=""
@@ -120,6 +141,24 @@ agent_keys_hcl() {
     case "${line}" in ssh-* | ecdsa-* | sk-*) keys="${keys}${sep}\"${line}\""; sep="," ;; esac
   done <<< "${all}"
   echo "${keys}]"
+}
+
+# A provider instance must outlive its resources, and hosts map to provider
+# instances. So a re-apply may add hosts but never drop one, or change its
+# provider, while the saved declaration still names it: destroy first.
+keep_hosts() {
+  local name="$1" varfile="$2" saved="${RUNS_DIR}/$1/applied.tfvars" expr before after h
+  [ -f "${saved}" ] || return 0
+  # shellcheck disable=SC2016 # an HCL expression; ${...} is for tofu, not the shell
+  expr='join(" ", sort([for k, v in var.experiment.hosts : "${k}=${try(v.provider, "")}"]))'
+  before="$(declared "${saved}" "${expr}")"
+  after=" $(declared "${varfile}" "${expr}") "
+  for h in ${before}; do
+    case "${after}" in
+      *" ${h} "*) ;;
+      *) die "${name} was applied with host ${h%%=*} (${h#*=}), which ${varfile} drops or changes; run make bench-destroy EXP=${name} first" ;;
+    esac
+  done
 }
 
 # Selects the experiment: init with its declaration, then its workspace.
@@ -133,20 +172,26 @@ select_experiment() {
 }
 
 plan_or_apply() {
-  local cmd="$1" name="$2" varfile="${BENCH_DIR}/experiments/$2.tfvars" source deb
+  local cmd="$1" name="$2" varfile="${BENCH_DIR}/experiments/$2.tfvars" source deb base
   select_experiment "${name}" "${varfile}"
   source="$(declared "${varfile}" "var.experiment.riptide.source")"
   deb="$(resolve_riptide "${source}")"
+  base=""
+  if [ "$(declared "${varfile}" 'length([for h in values(var.experiment.hosts) : h if try(h.provider, "") == "libvirt"])')" != 0 ]; then
+    base="$(resolve_base_image "${varfile}")"
+  fi
   if [ "${cmd}" = apply ]; then
+    keep_hosts "${name}" "${varfile}"
     # Saved before apply, so a partly applied experiment is destroyed with
-    # the declaration that created it.
+    # the declaration that created it. keep_hosts makes overwriting safe: the
+    # new declaration still names every host the saved one did.
     mkdir -p "${RUNS_DIR}/${name}"
     cp "${varfile}" "${RUNS_DIR}/${name}/applied.tfvars"
   fi
   SECONDS=0
   tf "${cmd}" -input=false -var-file="${varfile}" \
     -var "riptide_deb=${deb}" -var "riptide_deb_sha256=$(sha256 "${deb}")" \
-    -var "agent_ssh_keys=$(agent_keys_hcl)"
+    -var "base_image_path=${base}" -var "agent_ssh_keys=$(agent_keys_hcl)"
   [ "${cmd}" = apply ] && echo "bench: ${name} ready in ${SECONDS} s; inventory at ${RUNS_DIR}/${name}/inventory.json"
   return 0
 }
@@ -167,7 +212,7 @@ destroy() {
 }
 
 list() {
-  local name="$1" saved="${RUNS_DIR}/$1/applied.tfvars" hosts h provider target
+  local name="$1" saved="${RUNS_DIR}/$1/applied.tfvars" hosts h provider target node
   [ -f "${saved}" ] || die "no saved declaration at ${saved}; was ${name} applied from this checkout?"
   select_experiment "${name}" "${saved}"
   hosts="$(tf output -json hosts)"
@@ -175,10 +220,13 @@ list() {
   for h in $(echo "${hosts}" | jq -r 'keys[]'); do
     provider="$(echo "${hosts}" | jq -r --arg h "$h" '.[$h].provider')"
     if [ "${provider}" = proxmox ]; then
+      node="$(echo "${hosts}" | jq -r --arg h "$h" '.[$h].node')"
       target="$(echo "${hosts}" | jq -r --arg h "$h" '.[$h].address // .[$h].node')"
+      # /cluster/resources is cluster-wide; keep only this node's VMs so two
+      # nodes of one cluster do not list each other's.
       ssh -o BatchMode=yes "root@${target}" pvesh get /cluster/resources --type vm --output-format json |
-        jq -r --arg h "$h" --arg tag "exp-${name}" \
-          '.[] | select((.tags // "") | split(";") | index($tag)) | [$h, "proxmox", .name, .status] | @tsv' |
+        jq -r --arg h "$h" --arg node "${node}" --arg tag "exp-${name}" \
+          '.[] | select(.node == $node) | select((.tags // "") | split(";") | index($tag)) | [$h, "proxmox", .name, .status] | @tsv' |
         while IFS="$(printf '\t')" read -r a b c d; do printf '%-12s %-9s %-40s %s\n' "$a" "$b" "$c" "$d"; done
     else
       # qemu+ssh://user@host/system -> user@host

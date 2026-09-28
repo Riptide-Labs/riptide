@@ -33,6 +33,12 @@ variable "base_image" {
   })
 }
 
+variable "base_image_path" {
+  description = "Local copy of base_image, checked against its SHA-512; libvirt hosts upload it. Set by benchmark/bin/bench."
+  type        = string
+  default     = ""
+}
+
 variable "images" {
   description = "Digest-pinned container images: victoriametrics, vmagent, nl6. The ClickHouse image is read from deployment/clickhouse/compose.yml."
   type        = map(string)

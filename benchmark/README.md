@@ -109,7 +109,8 @@ A key the table does not name is rejected, so a typo cannot fall back to a defau
    ```
 
    `bench` resolves `riptide.source` first: a release is downloaded to `benchmark/.cache/` and verified against its cosign bundle and the release workflow's identity, every run.
-   A package that fails verification stops the command before OpenTofu runs.
+   When a libvirt host is declared, it also downloads the Debian base image to `benchmark/.cache/` and checks it against the SHA-512 pinned in **`benchmark/lab/images.auto.tfvars`**; Proxmox nodes download it themselves and check the same SHA-512.
+   A package or image that fails verification stops the command before OpenTofu runs.
 
 2. Apply:
 
@@ -151,13 +152,14 @@ make bench-destroy EXP=flow-capacity
 
 Destroy removes the experiment's VMs, disks, cloud-init media and snippets and keeps its downloaded base images, so the next apply skips the download.
 It uses `runs/<name>/applied.tfvars`, not the editable file: a host deleted from the declaration after apply still has its VMs removed.
+A re-apply may add hosts but refuses to drop one, or to change its provider, while it still has VMs: destroy first.
 `benchmark/bin/bench purge <name>` also removes the base images, the workspace and the run files.
 
 ## Limits
 
 - One experiment per host at a time. Checks run within one declaration, so two experiments can pin the same cores.
 - On Proxmox, `cpu.affinity` pins the whole QEMU process to the service's cores, so emulator threads share them; the guest sees `vcpus` cores without SMT topology. libvirt pins each vCPU to one thread and emulator threads to the reserved core.
-- The libvirt base image is not checksum-verified: `dmacvicar/libvirt` downloads the URL without a checksum field. Proxmox verifies it with SHA-512. The provider's own signature is not checked either, because its registry entry carries no GPG key; `.terraform.lock.hcl` pins its hashes.
+- The `dmacvicar/libvirt` provider's signature is not checked, because its registry entry carries no GPG key; `.terraform.lock.hcl` pins its hashes.
 - Image digests in **`benchmark/lab/images.auto.tfvars`** are bumped by hand; Dependabot does not read `.tfvars`. The ClickHouse image is read from `deployment/clickhouse/compose.yml`.
 - nl6 hardcodes its veth pair at `10.254.0.1` and `10.254.0.2` (DN42 space). The link stays inside the loadgen VM and is never routed out.
 - `make bench-check` runs no host. A green check says nothing about VMs booting, pinning on a real host or services answering.

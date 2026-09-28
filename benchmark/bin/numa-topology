@@ -9,8 +9,9 @@
 #   ssh root@<host> sh -s < benchmark/bin/numa-topology
 set -eu
 lscpu -p=CPU,CORE,NODE | grep -v '^#' | sort -t, -k3,3n -k2,2n -k1,1n | awk -F, '
+  # A host without NUMA leaves the NODE column empty: that is node 0.
   { key = $3 "/" $2
-    if (seen[key]++) { cpus[key] = cpus[key] "," $1 } else { order[++n] = key; node[key] = "n" $3; cpus[key] = $1 } }
+    if (seen[key]++) { cpus[key] = cpus[key] "," $1 } else { order[++n] = key; node[key] = "n" ($3 == "" ? 0 : $3); cpus[key] = $1 } }
   END { print "numa = {"; cur = ""
     for (i = 1; i <= n; i++) { k = order[i]
       if (node[k] != cur) { if (cur != "") print "]"; printf "  %s = [", substr(node[k], 2); cur = node[k]; sep = "" }

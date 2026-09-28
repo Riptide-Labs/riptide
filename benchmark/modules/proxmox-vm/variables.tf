@@ -1,7 +1,7 @@
 # Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# Inputs are shared with modules/proxmox-vm except for the backend-specific
+# Inputs are shared with modules/libvirt-vm except for the backend-specific
 # location of the base image and disks.
 
 variable "experiment" {

@@ -8,9 +8,13 @@ module "declaration" {
 }
 
 locals {
-  x        = module.declaration.experiment
-  services = module.declaration.services
-  name     = local.x.name
+  x    = module.declaration.experiment
+  name = local.x.name
+
+  # A rejected declaration plans nothing, so no lookup below can fail on it
+  # before terraform_data.checks lists every violation.
+  ok       = length(module.declaration.violations) == 0
+  services = local.ok ? module.declaration.services : {}
 
   libvirt_services = { for s, v in local.services : s => v if v.provider == "libvirt" }
   proxmox_services = { for s, v in local.services : s => v if v.provider == "proxmox" }
@@ -18,13 +22,12 @@ locals {
   clickhouse_image = yamldecode(file("${path.module}/../../deployment/clickhouse/compose.yml")).services.clickhouse.image
   images           = merge(var.images, { clickhouse = local.clickhouse_image })
 
-  clickhouse = one([for s, v in local.services : s if v.role == "clickhouse"])
-  metrics    = try(one([for s, v in local.services : s if v.role == "victoriametrics"]), null)
+  clickhouse = try(one([for s, v in local.services : s if v.role == "clickhouse"]), null)
 
-  scrape_targets = merge(
-    { node = [for s in sort(keys(local.services)) : "${local.services[s].addresses.mgmt}:9100"] },
-    { riptide = ["${local.services[module.declaration.sut].addresses.mgmt}:8080"] },
-  )
+  scrape_targets = local.ok ? {
+    node    = [for s in sort(keys(local.services)) : "${local.services[s].addresses.mgmt}:9100"]
+    riptide = ["${local.services[module.declaration.sut].addresses.mgmt}:8080"]
+  } : {}
 }
 
 # Every rule in modules/declaration reports here, so one failed plan lists
@@ -64,22 +67,31 @@ module "cloud_init" {
 
 # --- base images ------------------------------------------------------------
 # Named per experiment and excluded from `bench destroy`, so re-applying an
-# experiment reuses its image instead of downloading it again.
+# experiment reuses its image instead of downloading it again. Both backends
+# get the image checked against base_image.sha512: libvirt uploads the copy
+# bin/bench verified, Proxmox checks its own download.
 
 resource "libvirt_volume" "base" {
-  for_each = local.libvirt_hosts
+  for_each = local.ok ? local.libvirt_hosts : {}
   provider = libvirt.host[each.key]
 
   name   = "bench-${local.name}-${var.base_image.file}"
   pool   = local.x.hosts[each.key].pool
   target = { format = { type = "qcow2" } }
-  create = { content = { url = var.base_image.url } }
+  create = { content = { url = var.base_image_path } }
+
+  lifecycle {
+    precondition {
+      condition     = var.base_image_path != ""
+      error_message = "base_image_path is not set: run through benchmark/bin/bench (make bench-plan / bench-apply), which downloads the base image and checks its SHA-512."
+    }
+  }
 
   depends_on = [terraform_data.checks]
 }
 
 resource "proxmox_download_file" "base" {
-  for_each = local.proxmox_hosts
+  for_each = local.ok ? local.proxmox_hosts : {}
   provider = proxmox.pve["pve"]
 
   node_name          = local.x.hosts[each.key].node
