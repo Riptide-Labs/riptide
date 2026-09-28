@@ -151,7 +151,7 @@ run "large_files_travel_compressed" {
     grafana_dashboards = { "big.json" = join("", [for i in range(600) : "{\"panel\":${i}},"]) }
   }
   assert {
-    condition     = one([for f in yamldecode(trimprefix(nonsensitive(output.user_data), "#cloud-config\n")).write_files : f.encoding if f.path == "/etc/bench/grafana/dashboards/big.json"]) == "gz+b64"
+    condition     = one([for f in yamldecode(trimprefix(nonsensitive(output.user_data), "#cloud-config\n")).write_files : try(f.encoding, "none") if f.path == "/etc/bench/grafana/dashboards/big.json"]) == "gz+b64"
     error_message = "big dashboard not compressed"
   }
 }
