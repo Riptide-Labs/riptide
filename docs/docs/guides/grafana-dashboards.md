@@ -24,6 +24,12 @@ The set is the dashboards in the table below and one provisioning file. Grafana'
 
 The ClickHouse dashboards have a **Datasource** and a **Database** variable, so the same JSON works against any ClickHouse datasource and any riptide database name.
 The three self-monitoring dashboards have a **Prometheus** datasource variable and read riptide's own `/metrics` through the recording rules in `riptide-alerts.yml`, so the Prometheus they point at must scrape riptide as `job="riptide"` and load that file.
+The variable lists only datasources of type **Prometheus**.
+If you read riptide's metrics through the VictoriaMetrics plugin (type `victoriametrics-metrics-datasource`), use one of these, both verified on Grafana 13.0.2 against a single-node VictoriaMetrics:
+
+- [Import over the API](#install-into-a-grafana-over-its-api) with `--prometheus-type victoriametrics-metrics-datasource`. The script sets that type on the three dashboards before it imports them.
+- On any install path, add a second datasource of type **Prometheus** whose URL is VictoriaMetrics' Prometheus-compatible API, `http://<host>:8428` for a single node. Every query of the three dashboards ran on it without error. For a cluster the URL is `http://<vmselect>:8481/select/<tenant>/prometheus`, which was not tested.
+
 **Riptide - Profiling** also has a **Pyroscope** datasource variable and reads the profiles riptide uploads when [continuous profiling](../operations/profiling.md) is on; Grafana ships the Pyroscope datasource, so it needs no plugin.
 Its **Service** variable selects the service the profiles arrive under, `riptide` unless the collector sets `PYROSCOPE_APPLICATION_NAME`.
 The compose stack does all of this.
@@ -354,6 +360,20 @@ Everything below was verified on Grafana 13.2.2.
    riptide-traffic-paths: created
    ```
 
+   If your metrics datasource is the VictoriaMetrics plugin, add its type:
+
+   ```bash
+   python3 riptide-dashboards-import.py --grafana "$GRAFANA" \
+     --prometheus-type victoriametrics-metrics-datasource riptide-dashboards-1.1.2.tar.gz
+   ```
+
+   The first line names the type, and the Prometheus variable of the three self-monitoring dashboards lists that datasource.
+   Expected first line, captured on Grafana 13.0.2 with the VictoriaMetrics plugin 0.26.1:
+
+   ```text
+   riptide dashboard set 1.1.2, 12 dashboards -> https://grafana.example.org, Prometheus variables -> victoriametrics-metrics-datasource
+   ```
+
 5. Verify.
 
    ```bash
@@ -388,6 +408,7 @@ The script prints one line per dashboard and exits non-zero if any was not impor
 | `error: set GRAFANA_TOKEN to a Grafana service-account token (Editor role)` | `GRAFANA_TOKEN` is not exported in this shell. | Run the `read -rs GRAFANA_TOKEN && export GRAFANA_TOKEN` line again. |
 
 To upgrade, run step 4 with the newer release's tarball.
+Pass the same `--prometheus-type` every time: an import without it sets the three variables back to type **Prometheus**.
 The output of an upgrade from dashboards imported by hand into a folder of their own:
 
 ```text
@@ -410,7 +431,7 @@ Replace the files; Grafana does the rest within one 30-second provisioning inter
 | Release tarball | Extract the new archive over the old files. If you changed `path` in `dashboards.yml`, add `--exclude dashboards/dashboards.yml` to the `tar` command so the shipped provider does not replace yours. |
 | deb or rpm | Install the new package; it replaces the directory. |
 | Helm chart | Run the `helm upgrade` from the Helm section with the newer release's URL. The pod restarts and downloads the new files. |
-| Grafana API | Run the import script again with the newer release's tarball. |
+| Grafana API | Run the import script again with the newer release's tarball, and the same `--prometheus-type` if you used it. |
 
 What happens to what is already in Grafana, as observed on 13.0.2:
 
