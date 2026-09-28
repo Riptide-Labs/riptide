@@ -62,6 +62,18 @@ application-local.properties
 result
 result-*
 
+### Benchmark labs ###
+benchmark/**/.terraform/
+benchmark/**/terraform.tfstate
+benchmark/**/terraform.tfstate.backup
+benchmark/**/terraform.tfstate.d/
+benchmark/.cache/
+benchmark/runs/
+# A lab's hosts, addresses and networks (benchmark/site.example.tfvars),
+# under any name BENCH_SITE may point at.
+benchmark/site*.tfvars
+!benchmark/site.example.tfvars
+
 ### Docker Compose ###
 compose.override.y*ml
 docker-compose.override.y*ml
