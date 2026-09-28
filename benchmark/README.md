@@ -10,22 +10,23 @@ Driving load, capturing measurements and writing reports stay with the benchmark
 
 - OpenTofu 1.9 or later (provider `for_each`), `cosign`, `jq`, `curl`, `shellcheck` and an SSH agent holding the key you connect with.
 - SSH as root to every libvirt host and Proxmox node, with the agent's key.
-- For Proxmox: **`PROXMOX_VE_ENDPOINT`**, **`PROXMOX_VE_USERNAME=root@pam`** and **`PROXMOX_VE_PASSWORD`** in the environment. `cpu.affinity` and hugepages are accepted only from the `root@pam` user; an API token plans but cannot set affinity (unverified).
+- For Proxmox, nothing by default: `bench` asks the node for a `root@pam` login ticket over root SSH on every run. Proxmox accepts `cpu.affinity` only from `root@pam` logged in that way or with a password; an API token, even `root@pam`'s, is refused with `only root can set 'affinity' config`. To use a password instead, set **`PROXMOX_VE_USERNAME=root@pam`** and **`PROXMOX_VE_PASSWORD`**.
+- **`PROXMOX_VE_INSECURE=true`** when the node's API certificate is self-signed, as on `lechuck`. **`PROXMOX_VE_ENDPOINT`** defaults to `https://<address or node>:8006/`.
 - A route from your workstation to the `mgmt` network: apply installs riptide and waits for health checks over SSH on `mgmt`.
 
 ### One-time lab setup
 
-None of these exist yet (checked 2026-09-28); apply fails until they do.
+Done for mad-monkey and `lechuck` on 2026-09-28; repeat for a new host.
 
 1. Create VLAN 24 (`ingest`, `172.24.0.0/16`) and VLAN 25 (`store`, `172.25.0.0/16`) and trunk both to mad-monkey and `lechuck`. `mgmt` is VLAN 11.
-2. On mad-monkey, create a bridge per VLAN: `br-vlan24`, `br-vlan25`. `br0` already carries VLAN 11.
+2. On mad-monkey, create a bridge per VLAN: `br-vlan24`, `br-vlan25`, in **`/etc/netplan/20-bench-vlans.yaml`** (VLAN subinterfaces `enp2s0.24` and `enp2s0.25`, no address). `br0` already carries VLAN 11.
 3. On mad-monkey, move Docker's address pools out of `172.24.0.0/14` in **`/etc/docker/daemon.json`**:
 
    ```json
    { "default-address-pools": [{ "base": "172.28.0.0/14", "size": 24 }] }
    ```
 
-4. Check that the `mgmt` host range you declare is unused, for example `192.168.11.200-229`.
+4. Check that the `mgmt` host range you declare is unused, for example `192.168.11.200-229`, and find resolvers the VMs can reach from it: `192.168.11.1` routes but does not answer DNS; `192.168.10.16` and `192.168.10.53` do.
 
 On `lechuck`, `vmbr0` is not VLAN-aware; Proxmox then creates a `vmbr0v<tag>` bridge per tagged NIC on its own.
 
@@ -83,7 +84,8 @@ On `lechuck`, `vmbr0` is not VLAN-aware; Proxmox then creates a `vmbr0v<tag>` br
 | **`networks.ingest.vlan`**, **`networks.store.vlan`** | number | required | VLAN IDs. |
 | **`networks.<n>.cidr`** | string | `172.24.0.0/16`, `172.25.0.0/16`, `172.26.0.0/16` (exporters), `192.168.11.0/24` (mgmt) | Address range. |
 | **`networks.mgmt.host_range`** | string | required | Addresses for the VMs, `192.168.11.200-229` form. |
-| **`networks.mgmt.vlan`**, **`.gateway`**, **`.dns`** | number, string, list | `11`, first host, the gateway | |
+| **`networks.mgmt.dns`** | list(string) | required | Resolvers the VMs use; cloud-init installs packages through them. |
+| **`networks.mgmt.vlan`**, **`.gateway`** | number, string | `11`, first host | |
 | **`services.<s>.role`** | string | required | `riptide` (exactly one), `clickhouse` (exactly one), `nl6`, `victoriametrics` (at most one each). |
 | **`services.<s>.host`**, **`.numa_node`** | string, number | required | Placement. |
 | **`services.<s>.vcpus`** | number | required | A multiple of the host's threads per core. The service gets `vcpus / threads` whole cores. |
@@ -98,7 +100,7 @@ A key the table does not name is rejected, so a typo cannot fall back to a defau
 1. Plan:
 
    ```bash
-   export PROXMOX_VE_ENDPOINT=https://lechuck.labmonkeys.tech:8006/ PROXMOX_VE_USERNAME=root@pam PROXMOX_VE_PASSWORD=...
+   export PROXMOX_VE_INSECURE=true
    make bench-plan EXP=flow-capacity
    ```
 
@@ -118,11 +120,14 @@ A key the table does not name is rejected, so a typo cannot fall back to a defau
    make bench-apply EXP=flow-capacity
    ```
 
-   Expected output (last line, unverified: not yet run end to end):
+   Expected output (last lines, 2026-09-28, base images already on both hosts):
 
    ```text
-   bench: flow-capacity ready in <seconds> s; inventory at .../benchmark/runs/flow-capacity/inventory.json
+   Apply complete! Resources: 25 added, 0 changed, 0 destroyed.
+   bench: flow-capacity ready in 132 s; inventory at .../benchmark/runs/flow-capacity/inventory.json
    ```
+
+   OpenTofu asks for approval. For an unattended run, pass tofu arguments through: `make bench-apply EXP=flow-capacity BENCH_TOFU_ARGS=-auto-approve`, or `benchmark/bin/bench apply flow-capacity -auto-approve`.
 
    Apply waits for cloud-init and then for ClickHouse `/ping`, VictoriaMetrics `/health` and nl6 `/api/v1/status`, installs riptide over SSH, and waits for its `/readyz`.
    A service that misses its deadline (**`ready_timeout_seconds`**, 600) fails the apply with its name and URL.
@@ -132,7 +137,7 @@ A key the table does not name is rejected, so a typo cannot fall back to a defau
    | File | Contents |
    | --- | --- |
    | `inventory.json` | Per service: host, NUMA node, pinned CPUs, emulator CPUs, addresses, MACs. riptide version and SHA-256, image digests, and the `sut` fields of a `benchmark-capture` manifest. |
-   | `ssh_config` | `Host bench-<name>-<service>` entries: `ssh -F benchmark/runs/<name>/ssh_config bench-<name>-sut`. |
+   | `ssh_config` | `Host bench-<name>-<service>` entries: `ssh -F benchmark/runs/<name>/ssh_config bench-<name>-sut`. Host keys go to `known_hosts` next to it, since a rebuilt VM has a new key. |
    | `scrape-targets.json` | Prometheus file-SD targets for riptide `/metrics` and every node_exporter. |
    | `applied.tfvars` | The declaration apply used; destroy reads it. |
 
@@ -142,12 +147,28 @@ A key the table does not name is rejected, so a typo cannot fall back to a defau
    make bench-list EXP=flow-capacity
    ```
 
+   Expected output:
+
+   ```text
+   HOST         BACKEND   VM                                       STATE
+   lechuck      proxmox   bench-flow-capacity-sut                  running
+   lechuck      proxmox   bench-flow-capacity-clickhouse           running
+   mad-monkey   libvirt   bench-flow-capacity-loadgen              running
+   mad-monkey   libvirt   bench-flow-capacity-metrics              running
+   ```
+
    Proxmox VMs are matched by the `exp-<name>` tag through `pvesh`; libvirt domains by their metadata, read with `virsh metadata <domain> https://riptide-labs.github.io/benchmark/1`.
 
 ## Remove the lab
 
 ```bash
 make bench-destroy EXP=flow-capacity
+```
+
+Expected output (last line):
+
+```text
+Destroy complete! Resources: 21 destroyed.
 ```
 
 Destroy removes the experiment's VMs, disks, cloud-init media and snippets and keeps its downloaded base images, so the next apply skips the download.
@@ -166,5 +187,4 @@ A re-apply may add hosts but refuses to drop one, or to change its provider, whi
 
 ## Open questions
 
-- The apply, list and destroy outputs above were not captured from a run: VLANs 24 and 25 do not exist yet.
-- Whether a `root@pam` API token can set `cpu.affinity`; the provider documents a password login.
+- A libvirt-only experiment has only been planned, not applied: the lab has one libvirt host, and the SUT needs a NUMA node of its own.
