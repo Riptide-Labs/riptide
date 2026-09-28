@@ -60,6 +60,7 @@ locals {
           "-v ${local.data_dir}/clickhouse:/var/lib/clickhouse",
           "-v /etc/bench/clickhouse/config.xml:/etc/clickhouse-server/config.d/config.xml:ro",
           "-v /etc/bench/clickhouse/users.xml:/etc/clickhouse-server/users.d/users.xml:ro",
+          "-v /etc/bench/clickhouse/prometheus.xml:/etc/clickhouse-server/config.d/prometheus.xml:ro",
         ]
         cmd = []
       }
@@ -69,7 +70,7 @@ locals {
         description = "nl6 load generator for benchmark ${var.experiment}"
         image       = var.images.nl6
         args        = ["--privileged", "--device /dev/net/tun"]
-        cmd         = []
+        cmd         = var.pyroscope_url == "" ? [] : ["-profiling-pyroscope=${var.pyroscope_url}"]
         # nl6 creates veth-sim-host but does not route its simulated exporters.
         post = ["/usr/local/sbin/bench-exporters-route"]
       }
@@ -88,6 +89,16 @@ locals {
     [
       { path = "/etc/docker/daemon.json", permissions = "0644", content = jsonencode(local.docker_daemon) },
     ],
+    # node_exporter listens only on observe, so metrics never leave over
+    # mgmt, ingest or store. A drop-in, not /etc/default: that file is the
+    # package's conffile, and cloud-init writes files before installing it.
+    contains(keys(local.s.addresses), "observe") ? [
+      {
+        path        = "/etc/systemd/system/prometheus-node-exporter.service.d/10-bench-listen.conf"
+        permissions = "0644"
+        content     = "[Service]\nExecStart=\nExecStart=/usr/bin/prometheus-node-exporter --web.listen-address=${local.s.addresses.observe}:9100 $ARGS\n"
+      },
+    ] : [],
     [for name, text in local.unit : { path = "/etc/systemd/system/${name}.service", permissions = "0644", content = text }],
     local.s.role == "riptide" ? [
       { path = "/etc/sysctl.d/60-bench-riptide.conf", permissions = "0644", content = "net.core.rmem_max = 33554432\nnet.core.rmem_default = 33554432\n" },
@@ -96,6 +107,12 @@ locals {
       { path = "/etc/bench/clickhouse/config.xml", permissions = "0644", content = var.clickhouse_files.config_xml },
       { path = "/etc/bench/clickhouse/users.xml", permissions = "0644", content = var.clickhouse_files.users_xml },
       { path = "/etc/bench/clickhouse.env", permissions = "0600", content = "TZ=UTC\nCLICKHOUSE_USER=default\nCLICKHOUSE_DB=riptide\nCLICKHOUSE_PASSWORD=${var.clickhouse_password}\n" },
+      # Prometheus metrics for the lab's Prometheus; the compose stack's config.xml stays untouched.
+      {
+        path        = "/etc/bench/clickhouse/prometheus.xml"
+        permissions = "0644"
+        content     = "<clickhouse>\n  <prometheus>\n    <endpoint>/metrics</endpoint>\n    <port>9363</port>\n    <metrics>true</metrics>\n    <events>true</events>\n    <asynchronous_metrics>true</asynchronous_metrics>\n  </prometheus>\n</clickhouse>\n"
+      },
     ] : [],
     local.s.role == "nl6" ? [
       { path = "/etc/sysctl.d/60-bench-nl6.conf", permissions = "0644", content = "net.ipv4.ip_forward = 1\n" },
@@ -148,6 +165,7 @@ locals {
         ],
         [for name in keys(local.units) : ["mkdir", "-p", "${local.data_dir}/${name}"]],
         local.uses_docker ? [["systemctl", "restart", "docker"], ["systemctl", "daemon-reload"]] : [],
+        contains(keys(local.s.addresses), "observe") ? [["systemctl", "daemon-reload"], ["systemctl", "restart", "prometheus-node-exporter"]] : [],
         [for name in keys(local.units) : ["systemctl", "enable", "--now", "${name}.service"]],
       )
     },

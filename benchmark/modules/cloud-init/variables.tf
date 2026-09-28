@@ -46,3 +46,9 @@ variable "exporters_cidr" {
   description = "Range nl6 allocates simulated exporters from."
   type        = string
 }
+
+variable "pyroscope_url" {
+  description = "Pyroscope push URL on the observe network, or empty when the lab has no observability service."
+  type        = string
+  default     = ""
+}

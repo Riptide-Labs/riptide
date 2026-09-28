@@ -138,3 +138,16 @@ run "sut_runs_no_container" {
     error_message = "the SUT runs containers: ${jsonencode(keys(output.units))}"
   }
 }
+
+
+
+run "without_observe_node_exporter_and_nl6_are_unchanged" {
+  command = plan
+  variables {
+    service = run.declaration.services.loadgen
+  }
+  assert {
+    condition     = !contains(keys(nonsensitive(output.files)), "/etc/systemd/system/prometheus-node-exporter.service.d/10-bench-listen.conf") && !strcontains(output.units.nl6, "-profiling-pyroscope")
+    error_message = "without observe the loadgen still binds node_exporter or profiles: ${output.units.nl6}"
+  }
+}
