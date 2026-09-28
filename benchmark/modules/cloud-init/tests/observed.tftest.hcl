@@ -32,7 +32,7 @@ variables {
     nl6             = "ghcr.io/labmonkeys-space/nl6:v0.32.0@sha256:nl6"
     prometheus      = "docker.io/prom/prometheus:v3.15.0@sha256:prom"
     pyroscope       = "docker.io/grafana/pyroscope:2.3.1@sha256:pyro"
-    grafana         = "docker.io/grafana/grafana:13.2.2-distroless-slim@sha256:graf"
+    grafana         = "docker.io/grafana/grafana:13.2.2@sha256:graf"
   }
 }
 
@@ -89,7 +89,7 @@ run "observability_runs_three_pinned_containers" {
     error_message = "retention: ${try(output.units.prometheus, "")} / ${try(output.units.pyroscope, "")}"
   }
   assert {
-    condition     = strcontains(output.units.grafana, "docker.io/grafana/grafana:13.2.2-distroless-slim@sha256:graf") && strcontains(output.units.prometheus, "--network host")
+    condition     = strcontains(output.units.grafana, "docker.io/grafana/grafana:13.2.2@sha256:graf") && strcontains(output.units.prometheus, "--network host")
     error_message = "grafana: ${try(output.units.grafana, "")}"
   }
 }
@@ -161,11 +161,11 @@ run "grafana_provisions_two_datasources_and_the_dashboards" {
     condition     = strcontains(try(output.units.grafana, ""), "GF_AUTH_ANONYMOUS_ENABLED=false")
     error_message = "grafana: ${try(output.units.grafana, "")}"
   }
-  # The distroless image starts the grafana binary without /run.sh, so no
-  # GF_*__FILE variable is read, and grafana.db on the kept disk keeps the
-  # password it was created with. Every start resets it from the file.
+  # grafana.db on the kept disk keeps the password it was created with, since
+  # GF_SECURITY_ADMIN_PASSWORD applies only when Grafana creates it. Every
+  # start resets it from the file.
   assert {
-    condition     = strcontains(try(output.units.grafana, ""), "ExecStartPre=/bin/sh -c '/usr/bin/docker run --rm -i -v /var/lib/bench/grafana:/var/lib/grafana --entrypoint grafana docker.io/grafana/grafana:13.2.2-distroless-slim@sha256:graf cli admin reset-admin-password --password-from-stdin < /etc/bench/grafana/admin-password'") && !strcontains(try(output.units.grafana, ""), "__FILE")
+    condition     = strcontains(try(output.units.grafana, ""), "ExecStartPre=/bin/sh -c '/usr/bin/docker run --rm -i -v /var/lib/bench/grafana:/var/lib/grafana --entrypoint grafana docker.io/grafana/grafana:13.2.2@sha256:graf cli admin reset-admin-password --password-from-stdin < /etc/bench/grafana/admin-password'") && !strcontains(try(output.units.grafana, ""), "__FILE")
     error_message = "grafana admin password reset: ${try(output.units.grafana, "")}"
   }
   assert {
@@ -199,5 +199,16 @@ run "large_files_travel_compressed" {
   assert {
     condition     = one([for f in yamldecode(trimprefix(nonsensitive(output.user_data), "#cloud-config\n")).write_files : try(f.encoding, "none") if f.path == "/etc/bench/grafana/dashboards/big.json"]) == "gz+b64"
     error_message = "big dashboard not compressed"
+  }
+}
+
+run "grafana_preinstalls_the_dashboard_plugins" {
+  command = plan
+  variables {
+    service = run.declaration.services.observe
+  }
+  assert {
+    condition     = strcontains(try(nonsensitive(output.files["/etc/systemd/system/grafana.service"]), ""), "-e GF_PLUGINS_PREINSTALL_SYNC=grafana-clickhouse-datasource@4.21.3,netsage-sankey-panel@1.1.4")
+    error_message = "grafana unit: ${try(nonsensitive(output.files["/etc/systemd/system/grafana.service"]), "missing")}"
   }
 }

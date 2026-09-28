@@ -109,14 +109,16 @@ locals {
       grafana = {
         description = "Grafana for benchmark ${var.experiment}"
         image       = var.images.grafana
-        # The distroless image starts the grafana binary without /run.sh, so
-        # no GF_*__FILE variable is read, and grafana.db on the kept disk keeps
-        # the password it was created with. Every start resets it instead.
+        # GF_SECURITY_ADMIN_PASSWORD applies only when Grafana creates
+        # grafana.db, and the kept data disk already holds one with the password
+        # it was created with. Every start resets it instead.
         pre = [
           "/bin/sh -c '/usr/bin/docker run --rm -i -v ${local.data_dir}/grafana:/var/lib/grafana --entrypoint grafana ${var.images.grafana} cli admin reset-admin-password --password-from-stdin < /etc/bench/grafana/admin-password'",
         ]
         args = [
           "-e GF_AUTH_ANONYMOUS_ENABLED=false",
+          # Pinned so a lab rebuilt later renders with the same plugins.
+          "-e GF_PLUGINS_PREINSTALL_SYNC=grafana-clickhouse-datasource@4.21.3,netsage-sankey-panel@1.1.4",
           "-v /etc/bench/grafana/provisioning:/etc/grafana/provisioning:ro",
           "-v /etc/bench/grafana/dashboards:/var/lib/grafana-dashboards:ro",
           "-v ${local.data_dir}/grafana:/var/lib/grafana",
