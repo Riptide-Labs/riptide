@@ -20,8 +20,11 @@ locals {
   libvirt_services = { for s, v in local.services : s => v if v.provider == "libvirt" }
   proxmox_services = { for s, v in local.services : s => v if v.provider == "proxmox" }
 
+  # Lab images from the Dependabot-tracked manifest; ClickHouse from the
+  # compose stack, so the SUT's dependency matches what operators run.
+  lab_images       = { for k, v in yamldecode(file("${path.module}/../images/compose.yml")).services : k => v.image }
   clickhouse_image = yamldecode(file("${path.module}/../../deployment/clickhouse/compose.yml")).services.clickhouse.image
-  images           = merge(var.images, { clickhouse = local.clickhouse_image })
+  images           = merge(local.lab_images, { clickhouse = local.clickhouse_image })
 
   clickhouse = try(one([for s, v in local.services : s if v.role == "clickhouse"]), null)
 
@@ -59,7 +62,6 @@ module "cloud_init" {
   images              = local.images
   clickhouse_password = random_password.clickhouse.result
   exporters_cidr      = module.declaration.cidrs.exporters
-  scrape_targets      = each.value.role == "victoriametrics" ? local.scrape_targets : {}
   clickhouse_files = {
     config_xml = file("${path.module}/../../deployment/clickhouse/container-fs/clickhouse/config.xml")
     users_xml  = file("${path.module}/../../deployment/clickhouse/container-fs/clickhouse/users.xml")

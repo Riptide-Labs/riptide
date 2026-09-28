@@ -29,7 +29,6 @@ variables {
   images = {
     clickhouse      = "clickhouse/clickhouse-server:26.7@sha256:ch"
     victoriametrics = "victoriametrics/victoria-metrics:v1@sha256:vm"
-    vmagent         = "victoriametrics/vmagent:v1@sha256:va"
     nl6             = "ghcr.io/labmonkeys-space/nl6:v0.32.0@sha256:nl6"
   }
 }
@@ -118,18 +117,13 @@ run "nl6_forwards_and_routes_its_exporters" {
   }
 }
 
-run "vmagent_scrapes_the_given_targets" {
+run "victoriametrics_runs_without_vmagent" {
   command = plan
   variables {
-    service        = run.declaration.services.metrics
-    scrape_targets = { node = ["192.0.2.200:9100"], riptide = ["192.0.2.203:8080"] }
+    service = run.declaration.services.metrics
   }
   assert {
-    condition     = jsonencode(yamldecode(nonsensitive(output.files["/etc/bench/vmagent/scrape.yml"])).scrape_configs[1]) == jsonencode({ job_name = "riptide", static_configs = [{ targets = ["192.0.2.203:8080"] }] })
-    error_message = "scrape.yml: ${nonsensitive(output.files["/etc/bench/vmagent/scrape.yml"])}"
-  }
-  assert {
-    condition     = contains(keys(output.units), "victoriametrics") && contains(keys(output.units), "vmagent")
+    condition     = jsonencode(keys(output.units)) == jsonencode(["victoriametrics"]) && !contains(keys(nonsensitive(output.files)), "/etc/bench/vmagent/scrape.yml")
     error_message = "units: ${jsonencode(keys(output.units))}"
   }
 }

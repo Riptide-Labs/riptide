@@ -81,24 +81,8 @@ locals {
         args        = ["-v ${local.data_dir}/victoriametrics:/storage"]
         cmd         = ["-storageDataPath=/storage", "-retentionPeriod=90d", "-httpListenAddr=:8428"]
       }
-      vmagent = {
-        description = "vmagent for benchmark ${var.experiment}"
-        image       = var.images.vmagent
-        args        = ["-v /etc/bench/vmagent:/etc/vmagent:ro", "-v ${local.data_dir}/vmagent:/tmp/vmagent"]
-        cmd         = ["-promscrape.config=/etc/vmagent/scrape.yml", "-remoteWrite.url=http://127.0.0.1:8428/api/v1/write", "-remoteWrite.tmpDataPath=/tmp/vmagent", "-httpListenAddr=:8429"]
-      }
     } : null,
   )
-
-  scrape_config = {
-    global = { scrape_interval = "15s" }
-    scrape_configs = [
-      for job in sort(keys(var.scrape_targets)) : {
-        job_name       = job
-        static_configs = [{ targets = var.scrape_targets[job] }]
-      }
-    ]
-  }
 
   write_files = concat(
     [
@@ -129,9 +113,6 @@ locals {
           exec ip route replace ${var.exporters_cidr} via 10.254.0.2 dev veth-sim-host
         EOT
       },
-    ] : [],
-    local.s.role == "victoriametrics" ? [
-      { path = "/etc/bench/vmagent/scrape.yml", permissions = "0644", content = yamlencode(local.scrape_config) },
     ] : [],
   )
 

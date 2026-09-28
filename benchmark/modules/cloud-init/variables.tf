@@ -27,7 +27,7 @@ variable "ssh_keys" {
 }
 
 variable "images" {
-  description = "Digest-pinned container images by role component: clickhouse, victoriametrics, vmagent, nl6."
+  description = "Digest-pinned container images by role component: clickhouse, victoriametrics, nl6, prometheus, pyroscope, grafana."
   type        = map(string)
 }
 
@@ -45,10 +45,4 @@ variable "clickhouse_files" {
 variable "exporters_cidr" {
   description = "Range nl6 allocates simulated exporters from."
   type        = string
-}
-
-variable "scrape_targets" {
-  description = "vmagent scrape targets by job name, host:port each. Only read by the victoriametrics role."
-  type        = map(list(string))
-  default     = {}
 }

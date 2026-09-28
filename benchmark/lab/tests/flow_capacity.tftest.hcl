@@ -176,3 +176,19 @@ run "every_vm_is_q35" {
     error_message = "machines: ${jsonencode(merge({ for s, m in module.proxmox_vm : s => m.vm.machine }, { for s, m in module.libvirt_vm : s => m.domain.machine }))}"
   }
 }
+
+run "every_lab_image_comes_from_the_manifest_digest_pinned" {
+  command = plan
+  assert {
+    condition     = jsonencode(sort(keys(local.images))) == jsonencode(["clickhouse", "grafana", "nl6", "prometheus", "pyroscope", "victoriametrics"])
+    error_message = "images: ${jsonencode(keys(local.images))}"
+  }
+  assert {
+    condition     = alltrue([for i in values(local.images) : can(regex("@sha256:[0-9a-f]{64}$", i))])
+    error_message = "an image is not digest-pinned: ${jsonencode(local.images)}"
+  }
+  assert {
+    condition     = local.images.grafana == "docker.io/grafana/grafana:13.2.2-distroless-slim@sha256:e71b3b20cbf56b628adce3224a51511f3989871e50074c7a0b9c5d8cbac09263"
+    error_message = "grafana: ${try(local.images.grafana, "missing")}"
+  }
+}
