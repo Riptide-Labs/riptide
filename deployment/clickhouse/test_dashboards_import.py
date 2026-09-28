@@ -29,6 +29,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 SCRIPT = Path(__file__).parent / "dashboards-import.py"
+SHIPPED = Path(__file__).parent / "container-fs/grafana/provisioning/dashboards"
+VM = "victoriametrics-metrics-datasource"
 TOKEN = "glsa_editor"
 VIEWER = "glsa_viewer"
 FOLDER = "riptide-flow-analytics"
@@ -37,6 +39,23 @@ FOLDER = "riptide-flow-analytics"
 def dashboard(uid, version="1.0.2"):
     return {"uid": uid, "title": f"Riptide - {uid}", "panels": [],
             "links": [{"title": f"Dashboards v{version}", "type": "link", "url": "https://example.org"}]}
+
+
+def refs(node):
+    """Every datasource ref object in a dashboard, wherever it sits."""
+    if isinstance(node, dict):
+        if isinstance(node.get("datasource"), dict):
+            yield node["datasource"]
+        for value in node.values():
+            yield from refs(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from refs(value)
+
+
+def prometheus_variables(dashboard):
+    return [v for v in dashboard.get("templating", {}).get("list", [])
+            if v.get("type") == "datasource" and v.get("query") == "prometheus"]
 
 
 class FakeGrafana:
@@ -442,6 +461,74 @@ class TheSource(ImportTest):
 
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("b.json", proc.stderr)
+        self.assertEqual(self.grafana.requests, [])
+
+
+class ThePrometheusType(ImportTest):
+    """Issue #940: the Prometheus variable can list a VictoriaMetrics-plugin datasource."""
+
+    def shipped(self):
+        return {json.loads(p.read_text())["uid"]: json.loads(p.read_text()) for p in sorted(SHIPPED.glob("*.json"))}
+
+    def test_sets_the_type_on_the_variable_and_every_ref_bound_to_it_and_nothing_else(self):
+        shipped = self.shipped()
+
+        proc = self.run_import(SHIPPED, "--prometheus-type", VM)
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        posted = {b["dashboard"]["uid"]: b["dashboard"] for b in self.imports()}
+        self.assertEqual(sorted(posted), sorted(shipped))
+        rewritten = set()
+        for uid, before in shipped.items():
+            names = {v["name"] for v in prometheus_variables(before)}
+            if not names:
+                self.assertEqual(posted[uid], {**before, "id": None}, f"{uid} has no Prometheus variable")
+                continue
+            rewritten.add(before["title"])
+            after = posted[uid]
+            for v in after["templating"]["list"]:
+                if v["name"] in names:
+                    self.assertEqual(v["query"], VM, f"{uid} variable {v['name']}")
+            bound = {f"${{{n}}}" for n in names}
+            before_refs, after_refs = list(refs(before)), list(refs(after))
+            self.assertEqual(len(before_refs), len(after_refs))
+            for old, new in zip(before_refs, after_refs):
+                if old.get("type") == "prometheus" and old.get("uid") in bound:
+                    self.assertEqual(new, {**old, "type": VM}, f"{uid} ref {old}")
+                else:
+                    self.assertEqual(new, old, f"{uid} ref {old} is not bound to the Prometheus variable")
+        self.assertEqual(rewritten, {"Riptide - Health", "Riptide - Pipeline Diagnostics", "Riptide - Profiling"})
+
+    def test_without_the_option_every_dashboard_is_posted_as_shipped(self):
+        shipped = self.shipped()
+
+        proc = self.run_import(SHIPPED)
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        posted = {b["dashboard"]["uid"]: b["dashboard"] for b in self.imports()}
+        self.assertEqual(posted, {uid: {**d, "id": None} for uid, d in shipped.items()})
+
+    def test_every_shipped_prometheus_ref_names_a_prometheus_variable(self):
+        # A ref in any other form ($datasource, [[datasource]], a fixed uid)
+        # would be skipped by the rewrite, so it fails here instead.
+        for uid, dashboard in self.shipped().items():
+            bound = {f"${{{v['name']}}}" for v in prometheus_variables(dashboard)}
+            for ref in refs(dashboard):
+                if ref.get("type") == "prometheus":
+                    self.assertIn(ref.get("uid"), bound, f"{uid}: {ref}")
+
+    def test_a_dry_run_names_the_type_and_writes_nothing(self):
+        proc = self.run_import(SHIPPED, "--dry-run", "--prometheus-type", VM)
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.grafana.writes(), [])
+        self.assertIn(f"Prometheus variables -> {VM}", proc.stdout.splitlines()[0])
+
+    def test_an_empty_type_stops_before_any_request(self):
+        proc = self.run_import(SHIPPED, "--prometheus-type", "")
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("--prometheus-type must not be empty", proc.stderr)
         self.assertEqual(self.grafana.requests, [])
 
 

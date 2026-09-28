@@ -19,6 +19,15 @@ imported. It deletes nothing. Grafana keeps every replaced dashboard in its
 version history, so an overwritten UI edit can be restored from the Versions
 tab. --dry-run prints the same report and writes nothing.
 
+The self-monitoring dashboards pick their metrics datasource from a variable
+that lists datasources of type "prometheus". For a Grafana that reads riptide's
+metrics through another plugin, --prometheus-type sets that plugin's type on the
+variable and on every panel bound to it, for example
+
+      --prometheus-type victoriametrics-metrics-datasource
+
+Pass it again on every upgrade: an import without it restores "prometheus".
+
 The token is read from GRAFANA_TOKEN and never from the command line, so it
 stays out of process listings and shell history. For an https URL, TLS
 certificates are verified. Redirects are never followed: a redirected POST
@@ -33,6 +42,7 @@ Guide: https://riptide.space/docs/guides/grafana-dashboards
 """
 
 import argparse
+import copy
 import http.client
 import json
 import os
@@ -139,6 +149,30 @@ def read_source(source):
         raise Stop("the dashboards do not carry one set version: "
                    + ", ".join(f"{name} has {v or 'none'}" for name, v in versions.items()))
     return dashboards, next(iter(versions.values()))
+
+
+def set_prometheus_type(dashboard, plugin):
+    """A copy with plugin as the type of every Prometheus datasource variable and every ref bound to one."""
+    dashboard = copy.deepcopy(dashboard)
+    bound = set()
+    for variable in dashboard.get("templating", {}).get("list", []):
+        if variable.get("type") == "datasource" and variable.get("query") == "prometheus":
+            variable["query"] = plugin
+            bound.add(f"${{{variable['name']}}}")
+
+    def walk(node):
+        if isinstance(node, dict):
+            ref = node.get("datasource")
+            if isinstance(ref, dict) and ref.get("type") == "prometheus" and ref.get("uid") in bound:
+                ref["type"] = plugin
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(dashboard)
+    return dashboard
 
 
 def ensure_folders(grafana, dry_run):
@@ -248,18 +282,26 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--grafana", required=True, help="Grafana base URL, e.g. https://grafana.example.org")
     parser.add_argument("--dry-run", action="store_true", help="report what would change, write nothing")
+    parser.add_argument("--prometheus-type", metavar="PLUGIN",
+                        help="datasource type for the Prometheus variable, e.g. victoriametrics-metrics-datasource")
     parser.add_argument("source", help="release tarball or directory of dashboard JSON")
     args = parser.parse_args()
 
+    if args.prometheus_type is not None and not args.prometheus_type.strip():
+        print("error: --prometheus-type must not be empty", file=sys.stderr)
+        return 1
     token = os.environ.get("GRAFANA_TOKEN", "").strip()
     if not token:
         print("error: set GRAFANA_TOKEN to a Grafana service-account token (Editor role)", file=sys.stderr)
         return 1
     try:
         dashboards, version = read_source(args.source)
+        if args.prometheus_type:
+            dashboards = {name: set_prometheus_type(d, args.prometheus_type) for name, d in dashboards.items()}
         grafana = Grafana(args.grafana, token)
         grafana.call("GET", "/api/search?limit=1")  # a wrong token stops here, before any write
         print(f"riptide dashboard set {version}, {len(dashboards)} dashboards -> {grafana.url}"
+              + (f", Prometheus variables -> {args.prometheus_type}" if args.prometheus_type else "")
               + (" (dry run, nothing is written)" if args.dry_run else ""))
         ensure_folders(grafana, args.dry_run)
         refused, left = import_all(grafana, dashboards, version, args.dry_run)
