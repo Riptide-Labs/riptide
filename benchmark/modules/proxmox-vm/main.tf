@@ -58,8 +58,11 @@ resource "proxmox_virtual_environment_vm" "this" {
   machine         = "q35"
   scsi_hardware   = "virtio-scsi-single"
   stop_on_destroy = true
-  on_boot         = false
-  started         = true
+  # A VM holding a kept data volume skips Proxmox's cleanup of unreferenced
+  # disks; every other VM keeps it, so destroy leaves nothing behind.
+  delete_unreferenced_disks_on_destroy = var.data_volume == null
+  on_boot                              = false
+  started                              = true
 
   operating_system {
     type = "l26"
@@ -98,12 +101,15 @@ resource "proxmox_virtual_environment_vm" "this" {
   dynamic "disk" {
     for_each = var.service.disk_gb == null ? [] : [var.service.disk_gb]
     content {
-      datastore_id = var.datastore
-      interface    = "virtio1"
-      size         = disk.value
-      file_format  = "raw"
-      iothread     = true
-      discard      = "on"
+      # An attached data_volume is owned by another VMID, so destroying this
+      # VM leaves it (checked on Proxmox VE 9.2, bpg/proxmox 0.114.0).
+      datastore_id      = var.data_volume == null ? var.datastore : var.data_volume.datastore
+      path_in_datastore = var.data_volume == null ? null : var.data_volume.path
+      interface         = "virtio1"
+      size              = disk.value
+      file_format       = "raw"
+      iothread          = true
+      discard           = "on"
     }
   }
 

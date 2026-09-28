@@ -1,0 +1,23 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# The benchmark lab's container images. Not a runnable stack: OpenTofu reads
+# the image of each service (benchmark/lab/main.tf), and Dependabot's
+# docker-compose ecosystem keeps the tags and digests current. ClickHouse is
+# not here: the lab reads it from deployment/clickhouse/compose.yml, so the
+# SUT's dependency matches what operators run.
+#
+# grafana: grafana/grafana, not grafana/grafana-oss, which stopped publishing
+# at 13.0.2. The distroless image has no shell, curl or /run.sh; the lab needs
+# none of them (built-in datasources only, readiness checked from the VM).
+services:
+  grafana:
+    image: docker.io/grafana/grafana:13.2.2-distroless-slim@sha256:e71b3b20cbf56b628adce3224a51511f3989871e50074c7a0b9c5d8cbac09263
+  prometheus:
+    image: docker.io/prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+  pyroscope:
+    image: docker.io/grafana/pyroscope:2.3.1@sha256:86a9ee7448487409ead8ada78789de7b78b739711b92b5d7224a1a54abf3eeb2
+  victoriametrics:
+    image: docker.io/victoriametrics/victoria-metrics:v1.153.0@sha256:5eff7af5341e401471002f58d106d399e614a62f3d240f2dbc21901e49eed5dd
+  nl6:
+    image: ghcr.io/labmonkeys-space/nl6:v0.32.0@sha256:65b53edf562ce55d564249d0f278dc84cd4d4b3a68730beb33c06b897158bab3

@@ -9,15 +9,17 @@
 # they are and what they hold.
 
 experiment = {
-  name = "flow-capacity"
+  name = "java-opts"
 
   riptide = {
     source = "release:0.16.2"
     env = {
-      JAVA_OPTS                    = "-Xmx8g"
+      JAVA_OPTS                    = "-Xmx4g --enable-native-access=ALL-UNNAMED"
       RIPTIDE_RECEIVERS_FLOWS_TYPE = "multi"
       RIPTIDE_RECEIVERS_FLOWS_HOST = "0.0.0.0"
       RIPTIDE_RECEIVERS_FLOWS_PORT = "9999"
+      # Overrides the observe address the lab sets for profiling.
+      RIPTIDE_MANAGEMENT_BIND_ADDRESS = "127.0.0.1"
     }
   }
 

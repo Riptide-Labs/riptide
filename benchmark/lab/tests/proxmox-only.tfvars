@@ -1,7 +1,8 @@
 # Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# pve-1 alone: the SUT on node 1, everything else on node 0.
+# pve-1 alone: the SUT on node 1, everything else on node 0, including the
+# observability VM (ClickHouse gives up one core for it).
 site = {
   hosts = {
     pve-1 = {
@@ -15,9 +16,10 @@ site = {
     }
   }
   networks = {
-    ingest = { vlan = 24 }
-    store  = { vlan = 25 }
-    mgmt   = { vlan = 11, cidr = "192.0.2.0/24", host_range = "192.0.2.200-229", dns = ["192.0.2.53"] }
+    ingest  = { vlan = 24 }
+    store   = { vlan = 25 }
+    observe = { vlan = 26 }
+    mgmt    = { vlan = 11, cidr = "192.0.2.0/24", host_range = "192.0.2.200-229", dns = ["192.0.2.53"] }
   }
 }
 
@@ -25,9 +27,10 @@ experiment = {
   name    = "idle-libvirt"
   riptide = { source = "release:0.16.2" }
   services = {
-    sut        = { role = "riptide", host = "pve-1", numa_node = 1, vcpus = 8, memory_gb = 16, networks = ["ingest", "store", "mgmt"] }
-    clickhouse = { role = "clickhouse", host = "pve-1", numa_node = 0, vcpus = 16, memory_gb = 64, disk_gb = 200, networks = ["store", "mgmt"] }
-    loadgen    = { role = "nl6", host = "pve-1", numa_node = 0, vcpus = 4, memory_gb = 8, networks = ["ingest", "mgmt"] }
-    metrics    = { role = "victoriametrics", host = "pve-1", numa_node = 0, vcpus = 2, memory_gb = 8, networks = ["store", "mgmt"] }
+    sut        = { role = "riptide", host = "pve-1", numa_node = 1, vcpus = 8, memory_gb = 16, networks = ["ingest", "store", "observe", "mgmt"] }
+    clickhouse = { role = "clickhouse", host = "pve-1", numa_node = 0, vcpus = 14, memory_gb = 64, disk_gb = 200, networks = ["store", "observe", "mgmt"] }
+    loadgen    = { role = "nl6", host = "pve-1", numa_node = 0, vcpus = 4, memory_gb = 8, networks = ["ingest", "observe", "mgmt"] }
+    metrics    = { role = "victoriametrics", host = "pve-1", numa_node = 0, vcpus = 2, memory_gb = 8, networks = ["store", "observe", "mgmt"] }
+    observe    = { role = "observability", host = "pve-1", numa_node = 0, vcpus = 2, memory_gb = 8, disk_gb = 100, networks = ["observe", "mgmt"] }
   }
 }

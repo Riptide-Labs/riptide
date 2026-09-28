@@ -13,7 +13,7 @@ locals {
   data_dir = "/var/lib/bench"
 
   # Container roles run their images with host networking under systemd.
-  container_roles = ["clickhouse", "nl6", "victoriametrics"]
+  container_roles = ["clickhouse", "nl6", "victoriametrics", "observability"]
   uses_docker     = contains(local.container_roles, local.s.role)
 
   # Docker's default pools reach 172.24.0.0/14 on a host with enough networks,
@@ -34,11 +34,17 @@ locals {
         "",
         "[Service]",
         "ExecStartPre=-/usr/bin/docker rm -f ${name}",
+      ],
+      [for c in lookup(spec, "pre", []) : "ExecStartPre=${c}"],
+      [
         "ExecStart=/usr/bin/docker run --rm --name ${name} --network host ${join(" ", spec.args)} ${spec.image} ${join(" ", spec.cmd)}",
       ],
       [for c in lookup(spec, "post", []) : "ExecStartPost=${c}"],
       [
-        "ExecStop=/usr/bin/docker stop ${name}",
+        # Docker's default 10 s before SIGKILL can cut a flush short, and a
+        # cut-short Pyroscope leaves empty blocks on the kept disk.
+        "ExecStop=/usr/bin/docker stop -t 60 ${name}",
+        "TimeoutStopSec=90",
         "Restart=on-failure",
         "RestartSec=5",
         "",
@@ -60,6 +66,7 @@ locals {
           "-v ${local.data_dir}/clickhouse:/var/lib/clickhouse",
           "-v /etc/bench/clickhouse/config.xml:/etc/clickhouse-server/config.d/config.xml:ro",
           "-v /etc/bench/clickhouse/users.xml:/etc/clickhouse-server/users.d/users.xml:ro",
+          "-v /etc/bench/clickhouse/prometheus.xml:/etc/clickhouse-server/config.d/prometheus.xml:ro",
         ]
         cmd = []
       }
@@ -69,7 +76,7 @@ locals {
         description = "nl6 load generator for benchmark ${var.experiment}"
         image       = var.images.nl6
         args        = ["--privileged", "--device /dev/net/tun"]
-        cmd         = []
+        cmd         = var.pyroscope_url == "" ? [] : ["-profiling-pyroscope=${var.pyroscope_url}"]
         # nl6 creates veth-sim-host but does not route its simulated exporters.
         post = ["/usr/local/sbin/bench-exporters-route"]
       }
@@ -81,29 +88,82 @@ locals {
         args        = ["-v ${local.data_dir}/victoriametrics:/storage"]
         cmd         = ["-storageDataPath=/storage", "-retentionPeriod=90d", "-httpListenAddr=:8428"]
       }
-      vmagent = {
-        description = "vmagent for benchmark ${var.experiment}"
-        image       = var.images.vmagent
-        args        = ["-v /etc/bench/vmagent:/etc/vmagent:ro", "-v ${local.data_dir}/vmagent:/tmp/vmagent"]
-        cmd         = ["-promscrape.config=/etc/vmagent/scrape.yml", "-remoteWrite.url=http://127.0.0.1:8428/api/v1/write", "-remoteWrite.tmpDataPath=/tmp/vmagent", "-httpListenAddr=:8429"]
+    } : null,
+    local.s.role == "observability" ? {
+      prometheus = {
+        description = "Prometheus for benchmark ${var.experiment}"
+        image       = var.images.prometheus
+        args        = ["-v /etc/bench/prometheus:/etc/prometheus:ro", "-v ${local.data_dir}/prometheus:/prometheus"]
+        # Half the data disk: Pyroscope and Grafana share it.
+        cmd = ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--storage.tsdb.retention.size=${floor(coalesce(local.s.disk_gb, 2) / 2)}GB", "--web.listen-address=:9090"]
+      }
+      pyroscope = {
+        description = "Pyroscope for benchmark ${var.experiment}"
+        image       = var.images.pyroscope
+        args        = ["-v ${local.data_dir}/pyroscope:/data"]
+        cmd         = ["-retention-period=720h"]
+      }
+      grafana = {
+        description = "Grafana for benchmark ${var.experiment}"
+        image       = var.images.grafana
+        # The distroless image starts the grafana binary without /run.sh, so
+        # no GF_*__FILE variable is read, and grafana.db on the kept disk keeps
+        # the password it was created with. Every start resets it instead.
+        pre = [
+          "/bin/sh -c '/usr/bin/docker run --rm -i -v ${local.data_dir}/grafana:/var/lib/grafana --entrypoint grafana ${var.images.grafana} cli admin reset-admin-password --password-from-stdin < /etc/bench/grafana/admin-password'",
+        ]
+        args = [
+          "-e GF_AUTH_ANONYMOUS_ENABLED=false",
+          "-v /etc/bench/grafana/provisioning:/etc/grafana/provisioning:ro",
+          "-v /etc/bench/grafana/dashboards:/var/lib/grafana-dashboards:ro",
+          "-v ${local.data_dir}/grafana:/var/lib/grafana",
+        ]
+        cmd = []
       }
     } : null,
   )
 
-  scrape_config = {
-    global = { scrape_interval = "15s" }
+  prometheus_config = {
+    global     = { scrape_interval = "10s", evaluation_interval = "10s" }
+    rule_files = var.alert_rules == "" ? [] : ["/etc/prometheus/riptide-alerts.yml"]
     scrape_configs = [
-      for job in sort(keys(var.scrape_targets)) : {
+      for job in sort(keys(var.prometheus_jobs)) : {
         job_name       = job
-        static_configs = [{ targets = var.scrape_targets[job] }]
+        metrics_path   = "/metrics"
+        static_configs = [for t in var.prometheus_jobs[job] : { targets = [t.target], labels = t.labels }]
       }
     ]
+  }
+
+  # Same uids as the compose stack's self-monitoring datasources.
+  grafana_datasources = {
+    apiVersion = 1
+    datasources = [
+      { name = "Prometheus", uid = "riptide-prometheus", type = "prometheus", url = "http://localhost:9090", jsonData = { timeInterval = "10s" } },
+      { name = "Pyroscope", uid = "riptide-pyroscope", type = "grafana-pyroscope-datasource", url = "http://localhost:4040" },
+    ]
+  }
+
+  grafana_dashboard_provider = {
+    apiVersion = 1
+    providers  = [{ name = "riptide", type = "file", folder = "Riptide", options = { path = "/var/lib/grafana-dashboards" } }]
   }
 
   write_files = concat(
     [
       { path = "/etc/docker/daemon.json", permissions = "0644", content = jsonencode(local.docker_daemon) },
     ],
+    # node_exporter listens only on observe, so metrics never leave over
+    # mgmt, ingest or store. A drop-in, not /etc/default: that file is the
+    # package's conffile, and cloud-init writes files before installing it.
+    # Bound to one address, it must wait for the network at boot.
+    contains(keys(local.s.addresses), "observe") ? [
+      {
+        path        = "/etc/systemd/system/prometheus-node-exporter.service.d/10-bench-listen.conf"
+        permissions = "0644"
+        content     = "[Unit]\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nExecStart=\nExecStart=/usr/bin/prometheus-node-exporter --web.listen-address=${local.s.addresses.observe}:9100 $ARGS\n"
+      },
+    ] : [],
     [for name, text in local.unit : { path = "/etc/systemd/system/${name}.service", permissions = "0644", content = text }],
     local.s.role == "riptide" ? [
       { path = "/etc/sysctl.d/60-bench-riptide.conf", permissions = "0644", content = "net.core.rmem_max = 33554432\nnet.core.rmem_default = 33554432\n" },
@@ -112,6 +172,12 @@ locals {
       { path = "/etc/bench/clickhouse/config.xml", permissions = "0644", content = var.clickhouse_files.config_xml },
       { path = "/etc/bench/clickhouse/users.xml", permissions = "0644", content = var.clickhouse_files.users_xml },
       { path = "/etc/bench/clickhouse.env", permissions = "0600", content = "TZ=UTC\nCLICKHOUSE_USER=default\nCLICKHOUSE_DB=riptide\nCLICKHOUSE_PASSWORD=${var.clickhouse_password}\n" },
+      # Prometheus metrics for the lab's Prometheus; the compose stack's config.xml stays untouched.
+      {
+        path        = "/etc/bench/clickhouse/prometheus.xml"
+        permissions = "0644"
+        content     = "<clickhouse>\n  <prometheus>\n    <endpoint>/metrics</endpoint>\n    <port>9363</port>\n    <metrics>true</metrics>\n    <events>true</events>\n    <asynchronous_metrics>true</asynchronous_metrics>\n  </prometheus>\n</clickhouse>\n"
+      },
     ] : [],
     local.s.role == "nl6" ? [
       { path = "/etc/sysctl.d/60-bench-nl6.conf", permissions = "0644", content = "net.ipv4.ip_forward = 1\n" },
@@ -130,9 +196,17 @@ locals {
         EOT
       },
     ] : [],
-    local.s.role == "victoriametrics" ? [
-      { path = "/etc/bench/vmagent/scrape.yml", permissions = "0644", content = yamlencode(local.scrape_config) },
-    ] : [],
+    local.s.role == "observability" ? concat(
+      [
+        { path = "/etc/bench/prometheus/prometheus.yml", permissions = "0644", content = yamlencode(local.prometheus_config) },
+        # 0600: only root reads it, piping it into the reset-admin-password ExecStartPre.
+        { path = "/etc/bench/grafana/admin-password", permissions = "0600", content = var.grafana_admin_password },
+        { path = "/etc/bench/grafana/provisioning/datasources/lab.yml", permissions = "0644", content = yamlencode(local.grafana_datasources) },
+        { path = "/etc/bench/grafana/provisioning/dashboards/lab.yml", permissions = "0644", content = yamlencode(local.grafana_dashboard_provider) },
+      ],
+      var.alert_rules == "" ? [] : [{ path = "/etc/bench/prometheus/riptide-alerts.yml", permissions = "0644", content = var.alert_rules }],
+      [for f in sort(keys(var.grafana_dashboards)) : { path = "/etc/bench/grafana/dashboards/${f}", permissions = "0644", content = var.grafana_dashboards[f] }],
+    ) : [],
   )
 
   packages = concat(
@@ -159,19 +233,33 @@ locals {
       }]
       package_update = true
       packages       = local.packages
-      write_files    = local.write_files
+      # Large files (the dashboards) travel compressed in the user-data.
+      write_files = [
+        for f in local.write_files : length(f.content) > 4096
+        ? { path = f.path, permissions = f.permissions, encoding = "gz+b64", content = base64gzip(f.content) }
+        : f
+      ]
       runcmd = concat(
         [
           ["sysctl", "--system"],
           ["mkdir", "-p", local.data_dir],
         ],
         [for name in keys(local.units) : ["mkdir", "-p", "${local.data_dir}/${name}"]],
+        # Each container writes as its image's user.
+        local.s.role == "observability" ? [
+          ["chown", "-R", "65534:65534", "${local.data_dir}/prometheus"],
+          ["chown", "-R", "10001:10001", "${local.data_dir}/pyroscope"],
+          ["chown", "-R", "472:472", "${local.data_dir}/grafana"],
+        ] : [],
         local.uses_docker ? [["systemctl", "restart", "docker"], ["systemctl", "daemon-reload"]] : [],
+        contains(keys(local.s.addresses), "observe") ? [["systemctl", "daemon-reload"], ["systemctl", "restart", "prometheus-node-exporter"]] : [],
         [for name in keys(local.units) : ["systemctl", "enable", "--now", "${name}.service"]],
       )
     },
     local.has_data_disk ? {
-      fs_setup = [{ label = "benchdata", filesystem = "ext4", device = "/dev/vdb" }]
+      # overwrite = false: a reattached data disk (the observability VM's)
+      # keeps its data.
+      fs_setup = [{ label = "benchdata", filesystem = "ext4", device = "/dev/vdb", overwrite = false }]
       mounts   = [["LABEL=benchdata", local.data_dir, "ext4", "defaults,nofail", "0", "2"]]
     } : null,
   )

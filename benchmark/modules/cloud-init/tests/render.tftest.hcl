@@ -24,12 +24,11 @@ variables {
   experiment          = "flow-capacity"
   ssh_keys            = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKeyOnly test"]
   clickhouse_password = "test-password"
-  exporters_cidr      = "172.26.0.0/16"
+  exporters_cidr      = "172.27.0.0/16"
   clickhouse_files    = { config_xml = "<clickhouse/>", users_xml = "<clickhouse/>" }
   images = {
     clickhouse      = "clickhouse/clickhouse-server:26.7@sha256:ch"
     victoriametrics = "victoriametrics/victoria-metrics:v1@sha256:vm"
-    vmagent         = "victoriametrics/vmagent:v1@sha256:va"
     nl6             = "ghcr.io/labmonkeys-space/nl6:v0.32.0@sha256:nl6"
   }
 }
@@ -41,7 +40,7 @@ run "sut_network_config_routes_exporters_via_loadgen" {
     expected_mac = run.declaration.services.sut.macs.store
   }
   assert {
-    condition     = try(yamldecode(output.network_config).ethernets.ingest.routes[0].to, null) == "172.26.0.0/16" && try(yamldecode(output.network_config).ethernets.ingest.routes[0].via, null) == "172.24.0.11"
+    condition     = try(yamldecode(output.network_config).ethernets.ingest.routes[0].to, null) == "172.27.0.0/16" && try(yamldecode(output.network_config).ethernets.ingest.routes[0].via, null) == "172.24.0.11"
     error_message = "sut network-config: ${output.network_config}"
   }
   assert {
@@ -109,7 +108,7 @@ run "nl6_forwards_and_routes_its_exporters" {
     error_message = "nl6 unit: ${output.units.nl6}"
   }
   assert {
-    condition     = strcontains(nonsensitive(output.files["/usr/local/sbin/bench-exporters-route"]), "ip route replace 172.26.0.0/16 via 10.254.0.2 dev veth-sim-host")
+    condition     = strcontains(nonsensitive(output.files["/usr/local/sbin/bench-exporters-route"]), "ip route replace 172.27.0.0/16 via 10.254.0.2 dev veth-sim-host")
     error_message = "route script: ${nonsensitive(output.files["/usr/local/sbin/bench-exporters-route"])}"
   }
   assert {
@@ -118,18 +117,13 @@ run "nl6_forwards_and_routes_its_exporters" {
   }
 }
 
-run "vmagent_scrapes_the_given_targets" {
+run "victoriametrics_runs_without_vmagent" {
   command = plan
   variables {
-    service        = run.declaration.services.metrics
-    scrape_targets = { node = ["192.0.2.200:9100"], riptide = ["192.0.2.203:8080"] }
+    service = run.declaration.services.metrics
   }
   assert {
-    condition     = jsonencode(yamldecode(nonsensitive(output.files["/etc/bench/vmagent/scrape.yml"])).scrape_configs[1]) == jsonencode({ job_name = "riptide", static_configs = [{ targets = ["192.0.2.203:8080"] }] })
-    error_message = "scrape.yml: ${nonsensitive(output.files["/etc/bench/vmagent/scrape.yml"])}"
-  }
-  assert {
-    condition     = contains(keys(output.units), "victoriametrics") && contains(keys(output.units), "vmagent")
+    condition     = jsonencode(keys(output.units)) == jsonencode(["victoriametrics"]) && !contains(keys(nonsensitive(output.files)), "/etc/bench/vmagent/scrape.yml")
     error_message = "units: ${jsonencode(keys(output.units))}"
   }
 }
@@ -142,5 +136,18 @@ run "sut_runs_no_container" {
   assert {
     condition     = length(output.units) == 0 && !contains(yamldecode(trimprefix(nonsensitive(output.user_data), "#cloud-config\n")).packages, "docker.io")
     error_message = "the SUT runs containers: ${jsonencode(keys(output.units))}"
+  }
+}
+
+
+
+run "without_observe_node_exporter_and_nl6_are_unchanged" {
+  command = plan
+  variables {
+    service = run.declaration.services.loadgen
+  }
+  assert {
+    condition     = !contains(keys(nonsensitive(output.files)), "/etc/systemd/system/prometheus-node-exporter.service.d/10-bench-listen.conf") && !strcontains(output.units.nl6, "-profiling-pyroscope")
+    error_message = "without observe the loadgen still binds node_exporter or profiles: ${output.units.nl6}"
   }
 }

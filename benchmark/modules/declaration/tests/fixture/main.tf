@@ -57,6 +57,23 @@ output "raw" {
   value = local.value
 }
 
+# The same lab with an observability service: the observe network (VLAN 26),
+# a br-vlan26 bridge on kvm-1, the observability VM on kvm-1's last free core,
+# and every service on observe. Services sort clickhouse, loadgen, metrics,
+# observe, sut.
+output "observed" {
+  value = merge(local.value, {
+    hosts = merge(local.value.hosts, {
+      kvm-1 = merge(local.value.hosts.kvm-1, { bridges = merge(local.value.hosts.kvm-1.bridges, { observe = "br-vlan26" }) })
+    })
+    networks = merge(local.value.networks, { observe = { vlan = 26 } })
+    services = merge(
+      { for s, v in local.value.services : s => merge(v, { networks = concat(v.networks, ["observe"]) }) },
+      { observe = { role = "observability", host = "kvm-1", numa_node = 0, vcpus = 2, memory_gb = 8, disk_gb = 100, networks = ["observe", "mgmt"] } },
+    )
+  })
+}
+
 output "site" {
   value = { for k, v in local.value : k => v if contains(["hosts", "networks", "protected_ranges"], k) }
 }

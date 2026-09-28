@@ -38,7 +38,7 @@ variables {
 run "vms_go_to_their_backend" {
   command = plan
   assert {
-    condition     = jsonencode(sort(keys(module.libvirt_vm))) == jsonencode(["loadgen", "metrics"]) && jsonencode(sort(keys(module.proxmox_vm))) == jsonencode(["clickhouse", "sut"])
+    condition     = jsonencode(sort(keys(module.libvirt_vm))) == jsonencode(["loadgen", "metrics", "observe"]) && jsonencode(sort(keys(module.proxmox_vm))) == jsonencode(["clickhouse", "sut"])
     error_message = "libvirt: ${jsonencode(keys(module.libvirt_vm))}, proxmox: ${jsonencode(keys(module.proxmox_vm))}"
   }
 }
@@ -61,6 +61,7 @@ run "proxmox_nics_carry_vlan_tags_and_macs" {
     condition = jsonencode(module.proxmox_vm["sut"].vm.nics) == jsonencode([
       { bridge = "vmbr0", vlan_id = 24, mac = upper(output.services.sut.macs.ingest), queues = 8 },
       { bridge = "vmbr0", vlan_id = 25, mac = upper(output.services.sut.macs.store), queues = 8 },
+      { bridge = "vmbr0", vlan_id = 26, mac = upper(output.services.sut.macs.observe), queues = 8 },
       { bridge = "vmbr0", vlan_id = 11, mac = upper(output.services.sut.macs.mgmt), queues = 8 },
     ])
     error_message = "sut nics: ${jsonencode(module.proxmox_vm["sut"].vm.nics)}"
@@ -114,6 +115,7 @@ run "libvirt_nics_use_declared_bridges" {
   assert {
     condition = jsonencode(module.libvirt_vm["loadgen"].domain.interfaces) == jsonencode([
       { bridge = "br-vlan24", mac = output.services.loadgen.macs.ingest, queues = 8 },
+      { bridge = "br-vlan26", mac = output.services.loadgen.macs.observe, queues = 8 },
       { bridge = "br-mgmt", mac = output.services.loadgen.macs.mgmt, queues = 8 },
     ])
     error_message = "loadgen interfaces: ${jsonencode(module.libvirt_vm["loadgen"].domain.interfaces)}"
@@ -147,7 +149,7 @@ run "riptide_env_points_at_clickhouse_on_store" {
     error_message = "env file lacks the generated ClickHouse password"
   }
   assert {
-    condition     = strcontains(nonsensitive(local.riptide_env_file), "JAVA_OPTS=\"-Xmx8g\"\n")
+    condition     = strcontains(nonsensitive(local.riptide_env_file), "JAVA_OPTS=\"-Xmx8g --enable-native-access=ALL-UNNAMED\"\n")
     error_message = "env file lacks the declared JAVA_OPTS"
   }
 }
@@ -159,7 +161,7 @@ run "inventory_carries_the_capture_manifest_sut_fields" {
     values = { result = "test-password" }
   }
   assert {
-    condition     = local.inventory.sut.version_identity.version == "0.16.2" && local.inventory.sut.jvm.heap == "-Xmx8g"
+    condition     = local.inventory.sut.version_identity.version == "0.16.2" && local.inventory.sut.jvm.heap == "-Xmx8g --enable-native-access=ALL-UNNAMED"
     error_message = "inventory sut: ${jsonencode(local.inventory.sut)}"
   }
   assert {
@@ -174,5 +176,93 @@ run "every_vm_is_q35" {
   assert {
     condition     = alltrue([for m in module.proxmox_vm : m.vm.machine == "q35"]) && alltrue([for m in module.libvirt_vm : m.domain.machine == "q35"])
     error_message = "machines: ${jsonencode(merge({ for s, m in module.proxmox_vm : s => m.vm.machine }, { for s, m in module.libvirt_vm : s => m.domain.machine }))}"
+  }
+}
+
+run "every_lab_image_comes_from_the_manifest_digest_pinned" {
+  command = plan
+  assert {
+    condition     = jsonencode(sort(keys(local.images))) == jsonencode(["clickhouse", "grafana", "nl6", "prometheus", "pyroscope", "victoriametrics"])
+    error_message = "images: ${jsonencode(keys(local.images))}"
+  }
+  assert {
+    condition     = alltrue([for i in values(local.images) : can(regex("@sha256:[0-9a-f]{64}$", i))])
+    error_message = "an image is not digest-pinned: ${jsonencode(local.images)}"
+  }
+  assert {
+    condition     = local.images.grafana == "docker.io/grafana/grafana:13.2.2-distroless-slim@sha256:e71b3b20cbf56b628adce3224a51511f3989871e50074c7a0b9c5d8cbac09263"
+    error_message = "grafana: ${try(local.images.grafana, "missing")}"
+  }
+}
+
+run "observability_data_disk_lives_outside_the_domain" {
+  command = plan
+  assert {
+    condition     = length(libvirt_volume.observability_data) == 1 && libvirt_volume.observability_data["observe"].name == "bench-flow-capacity-observe-observability-data.qcow2"
+    error_message = "observability data volumes: ${jsonencode(keys(libvirt_volume.observability_data))}"
+  }
+  assert {
+    condition     = module.libvirt_vm["observe"].domain.disks == 3 && module.libvirt_vm["metrics"].domain.disks == 3 && module.libvirt_vm["observe"].domain.data_disk == "bench-flow-capacity-observe-observability-data.qcow2"
+    error_message = "disks: observe ${module.libvirt_vm["observe"].domain.disks}, metrics ${module.libvirt_vm["metrics"].domain.disks}"
+  }
+}
+
+run "riptide_profiles_and_serves_metrics_on_observe" {
+  command = plan
+  override_resource {
+    target = random_password.clickhouse
+    values = { result = "test-password" }
+  }
+  assert {
+    condition     = strcontains(nonsensitive(local.riptide_env_file), "PYROSCOPE_SERVER_ADDRESS=\"http://172.26.0.13:4040\"\n") && strcontains(nonsensitive(local.riptide_env_file), "RIPTIDE_PROFILING_ENABLED=\"true\"\n") && strcontains(nonsensitive(local.riptide_env_file), "RIPTIDE_MANAGEMENT_BIND_ADDRESS=\"172.26.0.14\"\n")
+    error_message = "riptide.env lacks the profiling or bind settings"
+  }
+  assert {
+    condition     = strcontains(nonsensitive(local.riptide_env_file), "JAVA_OPTS=\"-Xmx8g --enable-native-access=ALL-UNNAMED\"\n")
+    error_message = "JAVA_OPTS not appended once"
+  }
+}
+
+# bench destroy powers the VM off. Without a clean stop, Pyroscope's last
+# seconds of blocks reach the kept disk as empty files, and every later query
+# that touches one fails. The destroy-time provisioner runs self.input.stop;
+# that the provisioner exists is only shown by a real destroy and re-apply.
+run "observability_stops_cleanly_before_destroy" {
+  command = plan
+  assert {
+    condition     = terraform_data.observability_ready["observe"].input.host == "192.0.2.203"
+    error_message = "observability_ready input: ${jsonencode(terraform_data.observability_ready["observe"].input)}"
+  }
+  assert {
+    condition     = terraform_data.observability_ready["observe"].input.stop == "sudo systemctl stop grafana pyroscope prometheus && sync"
+    error_message = "stop: ${jsonencode(terraform_data.observability_ready["observe"].input)}"
+  }
+}
+
+run "prometheus_jobs_cover_every_vm_and_service" {
+  command = plan
+  assert {
+    condition     = jsonencode(sort(keys(local.prometheus_jobs))) == jsonencode(["clickhouse", "node", "prometheus", "pyroscope", "riptide", "victoriametrics"]) && length(local.prometheus_jobs.node) == 5
+    error_message = "jobs: ${jsonencode({ for k, v in local.prometheus_jobs : k => length(v) })}"
+  }
+  assert {
+    condition     = local.prometheus_jobs.riptide[0].target == "172.26.0.14:8080" && local.prometheus_jobs.clickhouse[0].target == "172.26.0.10:9363" && local.prometheus_jobs.victoriametrics[0].target == "172.26.0.12:8428"
+    error_message = "targets: ${jsonencode([local.prometheus_jobs.riptide, local.prometheus_jobs.clickhouse, local.prometheus_jobs.victoriametrics])}"
+  }
+  assert {
+    condition     = jsonencode(local.prometheus_jobs.riptide[0].labels) == jsonencode({ experiment = "flow-capacity", host = "pve-1", role = "riptide", service = "sut" })
+    error_message = "labels: ${jsonencode(local.prometheus_jobs.riptide[0].labels)}"
+  }
+}
+
+run "observability_outputs_for_the_operator" {
+  command = plan
+  assert {
+    condition     = length(local_file.grafana_admin) == 1 && local_file.grafana_admin[0].file_permission == "0600"
+    error_message = "grafana-admin file missing or not 0600"
+  }
+  assert {
+    condition     = local.inventory.observability.grafana == "http://192.0.2.203:3000" && local.inventory.observability.prometheus == "http://192.0.2.203:9090"
+    error_message = "inventory observability: ${jsonencode(local.inventory.observability)}"
   }
 }

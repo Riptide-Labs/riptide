@@ -28,5 +28,6 @@ output "domain" {
     numa       = libvirt_domain.this.numa_tune.memory
     interfaces = [for i in libvirt_domain.this.devices.interfaces : { bridge = i.source.bridge.bridge, mac = i.mac.address, queues = i.driver.queues }]
     disks      = length(libvirt_domain.this.devices.disks)
+    data_disk  = try([for d in libvirt_domain.this.devices.disks : d.source.volume.volume if d.target.dev == "vdb"][0], null)
   }
 }

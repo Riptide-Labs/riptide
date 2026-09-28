@@ -20,15 +20,32 @@ locals {
   libvirt_services = { for s, v in local.services : s => v if v.provider == "libvirt" }
   proxmox_services = { for s, v in local.services : s => v if v.provider == "proxmox" }
 
+  # Lab images from the Dependabot-tracked manifest; ClickHouse from the
+  # compose stack, so the SUT's dependency matches what operators run.
+  lab_images       = { for k, v in yamldecode(file("${path.module}/../images/compose.yml")).services : k => v.image }
   clickhouse_image = yamldecode(file("${path.module}/../../deployment/clickhouse/compose.yml")).services.clickhouse.image
-  images           = merge(var.images, { clickhouse = local.clickhouse_image })
+  images           = merge(local.lab_images, { clickhouse = local.clickhouse_image })
 
   clickhouse = try(one([for s, v in local.services : s if v.role == "clickhouse"]), null)
 
-  scrape_targets = local.ok ? {
-    node    = [for s in sort(keys(local.services)) : "${local.services[s].addresses.mgmt}:9100"]
-    riptide = ["${local.services[module.declaration.sut].addresses.mgmt}:8080"]
-  } : {}
+  # Prometheus's scrape jobs, every target on its observe address with the
+  # labels a query needs to pick a slice of the lab.
+  target_labels = { for s, v in local.services : s => { experiment = local.name, service = s, role = v.role, host = v.host } }
+  prometheus_jobs = local.observability == null ? {} : merge(
+    { node = [for s in sort(keys(local.services)) : { target = "${local.services[s].addresses.observe}:9100", labels = local.target_labels[s] }] },
+    { riptide = [{ target = "${local.services[module.declaration.sut].addresses.observe}:8080", labels = local.target_labels[module.declaration.sut] }] },
+    { clickhouse = [{ target = "${local.services[local.clickhouse].addresses.observe}:9363", labels = local.target_labels[local.clickhouse] }] },
+    { for s, v in local.services : "victoriametrics" => [{ target = "${v.addresses.observe}:8428", labels = local.target_labels[s] }] if v.role == "victoriametrics" },
+    { prometheus = [{ target = "localhost:9090", labels = local.target_labels[local.observability] }] },
+    { pyroscope = [{ target = "localhost:4040", labels = local.target_labels[local.observability] }] },
+  )
+
+  # The self-monitoring dashboards, read at plan time so a lab shows the
+  # repository's current ones.
+  grafana_dashboards = {
+    for f in ["riptide-health.json", "riptide-stage-detail.json", "riptide-profiling.json"] :
+    f => file("${path.module}/../../deployment/clickhouse/container-fs/grafana/provisioning/dashboards/${f}")
+  }
 }
 
 # Every rule in modules/declaration reports here, so one failed plan lists
@@ -42,6 +59,11 @@ resource "terraform_data" "checks" {
       error_message = "The declaration is rejected:\n- ${join("\n- ", module.declaration.violations)}"
     }
   }
+}
+
+resource "random_password" "grafana" {
+  length  = 32
+  special = false
 }
 
 resource "random_password" "clickhouse" {
@@ -59,7 +81,13 @@ module "cloud_init" {
   images              = local.images
   clickhouse_password = random_password.clickhouse.result
   exporters_cidr      = module.declaration.cidrs.exporters
-  scrape_targets      = each.value.role == "victoriametrics" ? local.scrape_targets : {}
+  pyroscope_url       = local.pyroscope_url
+
+  # Read by the module for the observability role only.
+  prometheus_jobs        = local.prometheus_jobs
+  grafana_admin_password = random_password.grafana.result
+  grafana_dashboards     = local.grafana_dashboards
+  alert_rules            = file("${path.module}/../../deployment/clickhouse/container-fs/prometheus/riptide-alerts.yml")
   clickhouse_files = {
     config_xml = file("${path.module}/../../deployment/clickhouse/container-fs/clickhouse/config.xml")
     users_xml  = file("${path.module}/../../deployment/clickhouse/container-fs/clickhouse/users.xml")
@@ -106,6 +134,61 @@ resource "proxmox_download_file" "base" {
   depends_on = [terraform_data.checks]
 }
 
+# --- observability data -----------------------------------------------------
+# The observability service's data disk outlives its VM: bench destroy
+# excludes these resources, so a re-applied lab keeps its measurement
+# history; bench purge removes them.
+
+resource "libvirt_volume" "observability_data" {
+  for_each = { for s, v in local.libvirt_services : s => v if v.role == "observability" }
+  provider = libvirt.host[each.value.host]
+
+  # Distinct from the -data.qcow2 a VM creates for itself, so the two can
+  # never share a name in one pool.
+  name     = "bench-${local.name}-${each.key}-observability-data.qcow2"
+  pool     = local.x.hosts[each.value.host].pool
+  capacity = each.value.disk_gb * 1073741824
+  target   = { format = { type = "qcow2" } }
+
+  depends_on = [terraform_data.checks]
+}
+
+# Owned by holder VMID 999999, so destroying the observability VM leaves it:
+# Proxmox deletes only the volumes a VM's own VMID owns. Allocated and freed
+# over the root SSH that snippet upload already uses.
+resource "terraform_data" "proxmox_observability_data" {
+  for_each = { for s, v in local.proxmox_services : s => v if v.role == "observability" }
+
+  input = {
+    target    = coalesce(local.x.hosts[each.value.host].address, local.x.hosts[each.value.host].node)
+    datastore = local.x.hosts[each.value.host].datastore
+    volume    = "vm-999999-bench-${local.name}-${each.key}-data"
+    size      = "${each.value.disk_gb}G"
+    # The whole volid, so a volume whose name only starts the same does not count.
+    exists = "pvesm list ${local.x.hosts[each.value.host].datastore} --vmid 999999 | awk '{print $1}' | grep -qx '${local.x.hosts[each.value.host].datastore}:vm-999999-bench-${local.name}-${each.key}-data'"
+  }
+
+  connection {
+    type  = "ssh"
+    host  = self.input.target
+    user  = "root"
+    agent = true
+  }
+
+  # Idempotent: a volume kept by an earlier bench destroy is reused.
+  provisioner "remote-exec" {
+    inline = ["${self.input.exists} || pvesm alloc ${self.input.datastore} 999999 ${self.input.volume} ${self.input.size}"]
+  }
+
+  # A volume already freed by hand does not fail bench purge.
+  provisioner "remote-exec" {
+    when   = destroy
+    inline = ["if ${self.input.exists}; then pvesm free ${self.input.datastore}:${self.input.volume}; fi"]
+  }
+
+  depends_on = [terraform_data.checks]
+}
+
 # --- VMs --------------------------------------------------------------------
 
 module "libvirt_vm" {
@@ -117,6 +200,10 @@ module "libvirt_vm" {
   service          = each.value
   pool             = local.x.hosts[each.value.host].pool
   base_volume_path = libvirt_volume.base[each.value.host].path
+  data_volume = each.value.role == "observability" ? {
+    pool = libvirt_volume.observability_data[each.key].pool
+    name = libvirt_volume.observability_data[each.key].name
+  } : null
   cloud_init = {
     user_data      = module.cloud_init[each.key].user_data
     meta_data      = module.cloud_init[each.key].meta_data
@@ -136,6 +223,12 @@ module "proxmox_vm" {
   node          = local.x.hosts[each.value.host].node
   datastore     = local.x.hosts[each.value.host].datastore
   base_image_id = proxmox_download_file.base[each.value.host].id
+  data_volume = each.value.role == "observability" ? {
+    # input, not output: known at plan, and the reference still orders the
+    # VM after the volume.
+    datastore = terraform_data.proxmox_observability_data[each.key].input.datastore
+    path      = terraform_data.proxmox_observability_data[each.key].input.volume
+  } : null
   cloud_init = {
     user_data      = module.cloud_init[each.key].user_data
     meta_data      = module.cloud_init[each.key].meta_data

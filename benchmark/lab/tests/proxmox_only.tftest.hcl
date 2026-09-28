@@ -31,7 +31,29 @@ run "plans_without_libvirt" {
     error_message = "a Proxmox-only experiment planned libvirt resources"
   }
   assert {
-    condition     = jsonencode(sort(keys(module.proxmox_vm))) == jsonencode(["clickhouse", "loadgen", "metrics", "sut"])
+    condition     = jsonencode(sort(keys(module.proxmox_vm))) == jsonencode(["clickhouse", "loadgen", "metrics", "observe", "sut"])
     error_message = "Proxmox VMs: ${jsonencode(keys(module.proxmox_vm))}"
+  }
+}
+
+run "proxmox_observability_disk_is_allocated_outside_the_vm" {
+  command = plan
+  assert {
+    condition     = length(terraform_data.proxmox_observability_data) == 1 && terraform_data.proxmox_observability_data["observe"].input.volume == "vm-999999-bench-idle-libvirt-observe-data"
+    error_message = "proxmox observability data: ${jsonencode(keys(terraform_data.proxmox_observability_data))}"
+  }
+  assert {
+    condition     = module.proxmox_vm["observe"].vm.disks == 2 && module.proxmox_vm["observe"].vm.data_path == "vm-999999-bench-idle-libvirt-observe-data"
+    error_message = "observe vm: ${jsonencode(module.proxmox_vm["observe"].vm)}"
+  }
+  # Only the VM holding a kept volume skips Proxmox's cleanup of unreferenced disks.
+  assert {
+    condition     = module.proxmox_vm["observe"].vm.delete_unreferenced_disks == false && module.proxmox_vm["sut"].vm.delete_unreferenced_disks == true
+    error_message = "delete_unreferenced_disks: observe ${module.proxmox_vm["observe"].vm.delete_unreferenced_disks}, sut ${module.proxmox_vm["sut"].vm.delete_unreferenced_disks}"
+  }
+  # The volume is matched by its whole volid, and purge tolerates a volume already gone.
+  assert {
+    condition     = terraform_data.proxmox_observability_data["observe"].input.exists == "pvesm list tank --vmid 999999 | awk '{print $1}' | grep -qx 'tank:vm-999999-bench-idle-libvirt-observe-data'"
+    error_message = "exists: ${jsonencode(terraform_data.proxmox_observability_data["observe"].input)}"
   }
 }

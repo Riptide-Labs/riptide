@@ -2,17 +2,34 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # Steps that need a running VM, done over SSH on mgmt as user bench with the
-# agent's keys. Order: every dependency answers its health check, then riptide
-# is installed and its /readyz waited for. riptide exits when ClickHouse does
+# agent's keys. Order: the observability VM answers first (so no early scrape
+# or profile is lost), then every dependency, then riptide is installed and
+# its /readyz waited for. riptide exits when ClickHouse does
 # not answer within riptide.clickhouse.startup-wait (30 s), so it starts only
 # once ClickHouse is up.
 
 locals {
   sut = module.declaration.sut
 
+  # Null on a rejected declaration too, whose services map is empty: every
+  # consumer then checks this one condition and never indexes local.services.
+  observability = local.ok ? module.declaration.observability : null
+  obs_address   = try(local.services[local.observability].addresses.observe, null)
+  pyroscope_url = local.obs_address == null ? "" : "http://${local.obs_address}:4040"
+  sut_observe   = try(local.services[local.sut].addresses.observe, null)
+
+  # Where riptide's management server listens: the experiment's own value,
+  # else the observe address while profiling, else riptide's 0.0.0.0 default.
+  # Readiness is checked there, so the two cannot disagree.
+  sut_bind  = lookup(local.x.riptide.env, "RIPTIDE_MANAGEMENT_BIND_ADDRESS", local.pyroscope_url == "" ? "0.0.0.0" : local.sut_observe)
+  sut_ready = local.sut_bind == "0.0.0.0" ? coalesce(local.sut_observe, "127.0.0.1") : local.sut_bind
+
   # Read apart from riptide_env, which holds the ClickHouse password and so is
-  # sensitive as a whole.
-  java_opts = lookup(local.x.riptide.env, "JAVA_OPTS", "-Xmx${max(1, floor(try(local.services[local.sut].memory_gb, 2) / 2))}g")
+  # sensitive as a whole. Profiling needs native access; the flag is appended
+  # to the declared value once, never replacing it.
+  profiling_flag = "--enable-native-access=ALL-UNNAMED"
+  declared_java  = lookup(local.x.riptide.env, "JAVA_OPTS", "-Xmx${max(1, floor(try(local.services[local.sut].memory_gb, 2) / 2))}g")
+  java_opts      = local.pyroscope_url == "" || strcontains(local.declared_java, local.profiling_flag) ? local.declared_java : "${local.declared_java} ${local.profiling_flag}"
 
   riptide_env = merge(
     {
@@ -23,7 +40,13 @@ locals {
       RIPTIDE_CLICKHOUSE_DATABASE        = "riptide"
       RIPTIDE_ENRICHER_HOSTNAMES_ENABLED = "false"
     },
-    local.x.riptide.env,
+    local.pyroscope_url == "" ? {} : {
+      RIPTIDE_PROFILING_ENABLED       = "true"
+      PYROSCOPE_SERVER_ADDRESS        = local.pyroscope_url
+      RIPTIDE_MANAGEMENT_BIND_ADDRESS = local.sut_bind
+    },
+    # The experiment's own values win; JAVA_OPTS is merged above.
+    { for k, v in local.x.riptide.env : k => v if k != "JAVA_OPTS" },
   )
 
   # systemd EnvironmentFile syntax: every value double-quoted, so JAVA_OPTS
@@ -40,19 +63,25 @@ locals {
   }
 
   wait_healthy = {
-    for s, v in local.services : s => join(" ", [
-      "deadline=$(( $(date +%s) + ${var.ready_timeout_seconds} ));",
-      "until curl -fsS -o /dev/null --max-time 5 ${local.health_url[v.role]}; do",
-      "[ $(date +%s) -lt $deadline ] || { echo 'service ${s}: ${local.health_url[v.role]} did not answer within ${var.ready_timeout_seconds} s'; exit 1; };",
-      "sleep 5; done; echo 'service ${s}: ready'",
+    for s, v in local.services : s => join("\n", [
+      for url in local.health_urls[s] : join(" ", [
+        "deadline=$(( $(date +%s) + ${var.ready_timeout_seconds} ));",
+        "until curl -fsS -o /dev/null --max-time 5 ${url}; do",
+        "[ $(date +%s) -lt $deadline ] || { echo 'service ${s}: ${url} did not answer within ${var.ready_timeout_seconds} s'; exit 1; };",
+        "sleep 5; done; echo 'service ${s}: ${url} ready'",
+      ])
     ])
   }
 
-  health_url = {
-    riptide         = "http://127.0.0.1:8080/readyz"
-    clickhouse      = "http://127.0.0.1:8123/ping"
-    victoriametrics = "http://127.0.0.1:8428/health"
-    nl6             = "http://127.0.0.1:8080/api/v1/status"
+  # riptide is checked where it listens; the rest on the VM itself.
+  health_urls = {
+    for s, v in local.services : s => {
+      riptide         = ["http://${local.sut_ready}:8080/readyz"]
+      clickhouse      = ["http://127.0.0.1:8123/ping"]
+      victoriametrics = ["http://127.0.0.1:8428/health"]
+      nl6             = ["http://127.0.0.1:8080/api/v1/status"]
+      observability   = ["http://127.0.0.1:9090/-/ready", "http://127.0.0.1:4040/ready", "http://127.0.0.1:3000/api/health"]
+    }[v.role]
   }
 }
 
@@ -117,9 +146,42 @@ resource "terraform_data" "riptide" {
   depends_on = [terraform_data.ready]
 }
 
+# The observability VM, before anything it should measure starts.
+resource "terraform_data" "observability_ready" {
+  for_each = { for s, v in local.services : s => v if s == local.observability }
+
+  triggers_replace = [local.vm_ids[each.key]]
+
+  # A destroy-time provisioner may only read self. bench destroy powers the VM
+  # off, and Pyroscope's unflushed blocks would reach the kept disk as empty
+  # files that fail every later query, so the containers stop first.
+  input = {
+    host = each.value.addresses.mgmt
+    stop = "sudo systemctl stop grafana pyroscope prometheus && sync"
+  }
+
+  connection {
+    type    = "ssh"
+    host    = self.input.host
+    user    = "bench"
+    agent   = true
+    timeout = "10m"
+  }
+
+  provisioner "remote-exec" {
+    inline = [local.wait_cloud_init[each.key], local.wait_healthy[each.key]]
+  }
+
+  provisioner "remote-exec" {
+    when       = destroy
+    on_failure = continue
+    inline     = [self.input.stop]
+  }
+}
+
 # Every service except the SUT, which terraform_data.riptide waits for.
 resource "terraform_data" "ready" {
-  for_each = { for s, v in local.services : s => v if s != local.sut }
+  for_each = { for s, v in local.services : s => v if s != local.sut && s != local.observability }
 
   triggers_replace = [local.vm_ids[each.key]]
 
@@ -134,4 +196,6 @@ resource "terraform_data" "ready" {
   provisioner "remote-exec" {
     inline = [local.wait_cloud_init[each.key], local.wait_healthy[each.key]]
   }
+
+  depends_on = [terraform_data.observability_ready]
 }

@@ -26,7 +26,12 @@ locals {
       db_version       = local.images.clickhouse
       config_delta     = "sha256:${nonsensitive(sha256(local.riptide_env_file))} of /etc/riptide/riptide.env"
     }
-    images     = local.images
+    images = local.images
+    observability = local.observability == null ? null : {
+      grafana    = "http://${local.services[local.observability].addresses.mgmt}:3000"
+      prometheus = "http://${local.services[local.observability].addresses.mgmt}:9090"
+      pyroscope  = "http://${local.services[local.observability].addresses.mgmt}:4040"
+    }
     base_image = var.base_image
     hosts = {
       for h, v in local.x.hosts : h => {
@@ -68,13 +73,6 @@ locals {
       "",
     ])
   ])
-
-  scrape_targets_file = [
-    for job in sort(keys(local.scrape_targets)) : {
-      targets = local.scrape_targets[job]
-      labels  = { job = job, experiment = local.name }
-    }
-  ]
 }
 
 resource "local_file" "inventory" {
@@ -91,10 +89,18 @@ resource "local_file" "ssh_config" {
   depends_on      = [terraform_data.riptide]
 }
 
-resource "local_file" "scrape_targets" {
-  filename        = "${local.run_dir}/scrape-targets.json"
-  content         = jsonencode(local.scrape_targets_file)
+resource "local_file" "prometheus_jobs" {
+  filename        = "${local.run_dir}/prometheus-jobs.json"
+  content         = jsonencode(local.prometheus_jobs)
   file_permission = "0644"
+  depends_on      = [terraform_data.riptide]
+}
+
+resource "local_file" "grafana_admin" {
+  count           = local.observability == null ? 0 : 1
+  filename        = "${local.run_dir}/grafana-admin"
+  content         = random_password.grafana.result
+  file_permission = "0600"
   depends_on      = [terraform_data.riptide]
 }
 

@@ -44,11 +44,6 @@ variable "base_image_path" {
   default     = ""
 }
 
-variable "images" {
-  description = "Digest-pinned container images: victoriametrics, vmagent, nl6. The ClickHouse image is read from deployment/clickhouse/compose.yml."
-  type        = map(string)
-}
-
 variable "ready_timeout_seconds" {
   description = "How long apply waits for a service's health check before failing."
   type        = number

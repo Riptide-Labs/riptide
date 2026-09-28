@@ -73,7 +73,7 @@ run "addresses_follow_sorted_service_names" {
 run "sut_routes_exporters_through_the_loadgen" {
   command = plan
   assert {
-    condition     = jsonencode(output.services.sut.routes) == jsonencode([{ network = "ingest", to = "172.26.0.0/16", via = "172.24.0.11" }])
+    condition     = jsonencode(output.services.sut.routes) == jsonencode([{ network = "ingest", to = "172.27.0.0/16", via = "172.24.0.11" }])
     error_message = "sut routes: ${jsonencode(output.services.sut.routes)}"
   }
   assert {

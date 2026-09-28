@@ -27,7 +27,7 @@ variable "ssh_keys" {
 }
 
 variable "images" {
-  description = "Digest-pinned container images by role component: clickhouse, victoriametrics, vmagent, nl6."
+  description = "Digest-pinned container images by role component: clickhouse, victoriametrics, nl6, prometheus, pyroscope, grafana."
   type        = map(string)
 }
 
@@ -47,8 +47,33 @@ variable "exporters_cidr" {
   type        = string
 }
 
-variable "scrape_targets" {
-  description = "vmagent scrape targets by job name, host:port each. Only read by the victoriametrics role."
-  type        = map(list(string))
+variable "pyroscope_url" {
+  description = "Pyroscope push URL on the observe network, or empty when the lab has no observability service."
+  type        = string
+  default     = ""
+}
+
+variable "prometheus_jobs" {
+  description = "Prometheus scrape jobs by name, each a list of targets with their labels, on the observe network. Only read by the observability role."
+  type        = map(list(object({ target = string, labels = map(string) })))
   default     = {}
+}
+
+variable "grafana_admin_password" {
+  description = "Grafana admin password. Only read by the observability role."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "grafana_dashboards" {
+  description = "Dashboards to provision, file name to JSON. Only read by the observability role."
+  type        = map(string)
+  default     = {}
+}
+
+variable "alert_rules" {
+  description = "Prometheus rule file content, or empty. Only read by the observability role."
+  type        = string
+  default     = ""
 }

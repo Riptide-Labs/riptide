@@ -7,8 +7,8 @@
 #   bench check                host-free checks: fmt, validate, tofu test
 #   bench plan    <name>       plan experiments/<name>.tfvars
 #   bench apply   <name>       apply it; returns when every health check answers
-#   bench destroy <name>       destroy its VMs, disks and snippets; keeps base images
-#   bench purge   <name>       destroy everything, base images included, and the workspace
+#   bench destroy <name>       destroy its VMs, disks and snippets; keeps base images and observability data
+#   bench purge   <name>       destroy everything, base images and observability data included, and the workspace
 #   bench list    <name>       list its VMs on every declared host
 #
 # plan, apply, destroy and purge pass further arguments to tofu, for example
@@ -48,7 +48,9 @@ libvirt_only:tests/libvirt-only.tfvars
 proxmox_only:tests/proxmox-only.tfvars
 rejected:tests/rejected.tfvars
 rejected_many:tests/rejected-many.tfvars
-rejected_no_clickhouse:tests/rejected-no-clickhouse.tfvars"
+rejected_no_clickhouse:tests/rejected-no-clickhouse.tfvars
+java_opts:../site.example.tfvars,tests/java-opts.tfvars
+rejected_observed:../site.example.tfvars,tests/rejected-observed.tfvars"
 
 check() {
   # Unset, so a test that leaves one backend unmocked proves that backend is
@@ -280,8 +282,10 @@ destroy() {
   proxmox_login
   if [ "${mode}" = keep-base ]; then
     tf destroy -input=false "${DECL[@]}" \
-      -exclude=libvirt_volume.base -exclude=proxmox_download_file.base "$@"
+      -exclude=libvirt_volume.base -exclude=proxmox_download_file.base \
+      -exclude=libvirt_volume.observability_data -exclude=terraform_data.proxmox_observability_data "$@"
     rm -f "${RUNS_DIR}/${name}/known_hosts"
+    echo "bench: kept ${name}'s base images and observability data; bench purge ${name} removes them"
   else
     tf destroy -input=false "${DECL[@]}" "$@"
     tf workspace select default >/dev/null
