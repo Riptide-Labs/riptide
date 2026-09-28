@@ -524,6 +524,14 @@ class ThePrometheusType(ImportTest):
         self.assertEqual(self.grafana.writes(), [])
         self.assertIn(f"Prometheus variables -> {VM}", proc.stdout.splitlines()[0])
 
+    def test_surrounding_whitespace_is_not_written(self):
+        proc = self.run_import(SHIPPED, "--prometheus-type", f" {VM} ")
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        health = next(b["dashboard"] for b in self.imports() if b["dashboard"]["uid"] == "riptide-health")
+        self.assertEqual(prometheus_variables(health), [])
+        self.assertIn(VM, [v.get("query") for v in health["templating"]["list"]])
+
     def test_an_empty_type_stops_before_any_request(self):
         proc = self.run_import(SHIPPED, "--prometheus-type", "")
 

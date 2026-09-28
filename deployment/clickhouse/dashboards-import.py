@@ -287,9 +287,11 @@ def main():
     parser.add_argument("source", help="release tarball or directory of dashboard JSON")
     args = parser.parse_args()
 
-    if args.prometheus_type is not None and not args.prometheus_type.strip():
-        print("error: --prometheus-type must not be empty", file=sys.stderr)
-        return 1
+    if args.prometheus_type is not None:
+        args.prometheus_type = args.prometheus_type.strip()
+        if not args.prometheus_type:
+            print("error: --prometheus-type must not be empty", file=sys.stderr)
+            return 1
     token = os.environ.get("GRAFANA_TOKEN", "").strip()
     if not token:
         print("error: set GRAFANA_TOKEN to a Grafana service-account token (Editor role)", file=sys.stderr)
