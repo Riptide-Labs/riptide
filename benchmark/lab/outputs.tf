@@ -27,7 +27,9 @@ locals {
       config_delta     = "sha256:${nonsensitive(sha256(local.riptide_env_file))} of /etc/riptide/riptide.env"
     }
     images = local.images
-    observability = local.observability == null ? null : {
+    # Gated like every lookup of local.services: a rejected declaration
+    # plans nothing, so nothing here may index it.
+    observability = !local.ok || local.observability == null ? null : {
       grafana    = "http://${local.services[local.observability].addresses.mgmt}:3000"
       prometheus = "http://${local.services[local.observability].addresses.mgmt}:9090"
       pyroscope  = "http://${local.services[local.observability].addresses.mgmt}:4040"
@@ -97,7 +99,7 @@ resource "local_file" "prometheus_jobs" {
 }
 
 resource "local_file" "grafana_admin" {
-  count           = local.observability == null ? 0 : 1
+  count           = !local.ok || local.observability == null ? 0 : 1
   filename        = "${local.run_dir}/grafana-admin"
   content         = random_password.grafana.result
   file_permission = "0600"

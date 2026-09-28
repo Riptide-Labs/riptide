@@ -49,7 +49,8 @@ proxmox_only:tests/proxmox-only.tfvars
 rejected:tests/rejected.tfvars
 rejected_many:tests/rejected-many.tfvars
 rejected_no_clickhouse:tests/rejected-no-clickhouse.tfvars
-java_opts:../site.example.tfvars,tests/java-opts.tfvars"
+java_opts:../site.example.tfvars,tests/java-opts.tfvars
+rejected_observed:../site.example.tfvars,tests/rejected-observed.tfvars"
 
 check() {
   # Unset, so a test that leaves one backend unmocked proves that backend is
