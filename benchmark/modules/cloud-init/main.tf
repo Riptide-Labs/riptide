@@ -101,7 +101,10 @@ locals {
         description = "Pyroscope for benchmark ${var.experiment}"
         image       = var.images.pyroscope
         args        = ["-v ${local.data_dir}/pyroscope:/data"]
-        cmd         = ["-retention-period=720h"]
+        # No size cap exists for Pyroscope's v2 storage, so time bounds it to
+        # the half of the disk Prometheus leaves: 2 GB a day, twice the rate
+        # measured at 4.2k flows/s (0.96 GB/day, 2026-09-28), at most 30 days.
+        cmd = ["-retention-period=${24 * max(1, min(30, floor(coalesce(local.s.disk_gb, 2) / 2 / 2)))}h"]
       }
       grafana = {
         description = "Grafana for benchmark ${var.experiment}"

@@ -85,12 +85,37 @@ run "observability_runs_three_pinned_containers" {
     error_message = "units: ${jsonencode(keys(output.units))}"
   }
   assert {
-    condition     = strcontains(output.units.prometheus, "--storage.tsdb.retention.size=50GB") && strcontains(output.units.pyroscope, "-retention-period=720h")
+    condition     = strcontains(output.units.prometheus, "--storage.tsdb.retention.size=50GB") && strcontains(output.units.pyroscope, "-retention-period=600h")
     error_message = "retention: ${try(output.units.prometheus, "")} / ${try(output.units.pyroscope, "")}"
   }
   assert {
     condition     = strcontains(output.units.grafana, "docker.io/grafana/grafana:13.2.2-distroless-slim@sha256:graf") && strcontains(output.units.prometheus, "--network host")
     error_message = "grafana: ${try(output.units.grafana, "")}"
+  }
+}
+
+# Pyroscope has no size cap for v2 storage, so its retention keeps it inside
+# the half of the disk Prometheus leaves: 2 GB a day, twice the 0.96 GB/day
+# measured at 4.2k flows/s on 2026-09-28, capped at 30 days.
+run "pyroscope_retention_fits_a_small_disk" {
+  command = plan
+  variables {
+    service = merge(run.declaration.services.observe, { disk_gb = 20 })
+  }
+  assert {
+    condition     = strcontains(output.units.pyroscope, "-retention-period=120h") && strcontains(output.units.prometheus, "--storage.tsdb.retention.size=10GB")
+    error_message = "small disk: ${output.units.pyroscope}"
+  }
+}
+
+run "pyroscope_retention_stops_at_30_days" {
+  command = plan
+  variables {
+    service = merge(run.declaration.services.observe, { disk_gb = 500 })
+  }
+  assert {
+    condition     = strcontains(output.units.pyroscope, "-retention-period=720h")
+    error_message = "large disk: ${output.units.pyroscope}"
   }
 }
 

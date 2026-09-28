@@ -51,7 +51,7 @@ run "proxmox_observability_disk_is_allocated_outside_the_vm" {
     condition     = module.proxmox_vm["observe"].vm.delete_unreferenced_disks == false && module.proxmox_vm["sut"].vm.delete_unreferenced_disks == true
     error_message = "delete_unreferenced_disks: observe ${module.proxmox_vm["observe"].vm.delete_unreferenced_disks}, sut ${module.proxmox_vm["sut"].vm.delete_unreferenced_disks}"
   }
-  # The volume is matched by its whole volid, and purge tolerates a volume already gone.
+  # The volume is matched by its whole volid, so a decoy whose name only starts the same does not count.
   assert {
     condition     = terraform_data.proxmox_observability_data["observe"].input.exists == "pvesm list tank --vmid 999999 | awk '{print $1}' | grep -qx 'tank:vm-999999-bench-idle-libvirt-observe-data'"
     error_message = "exists: ${jsonencode(terraform_data.proxmox_observability_data["observe"].input)}"
