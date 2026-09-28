@@ -34,7 +34,7 @@ variable "experiment" {
         cidr = optional(string, "172.25.0.0/16")
       })
       exporters = optional(object({
-        cidr = optional(string, "172.26.0.0/16")
+        cidr = optional(string, "172.27.0.0/16")
       }), {})
       mgmt = object({
         host_range = string

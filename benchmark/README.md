@@ -81,7 +81,7 @@ A key in the wrong file is rejected, so a lab's addresses cannot end up in a com
 | **`hosts.<h>.address`** | string | node name | SSH and API address of a Proxmox node. |
 | **`hosts.<h>.bridges`** | map(string) | `vmbr0` per network on Proxmox | Host bridge per network. Required on libvirt. |
 | **`networks.ingest.vlan`**, **`networks.store.vlan`** | number | required | VLAN IDs. |
-| **`networks.ingest.cidr`**, **`.store.cidr`**, **`.exporters.cidr`** | string | `172.24.0.0/16`, `172.25.0.0/16`, `172.26.0.0/16` | Address ranges. |
+| **`networks.ingest.cidr`**, **`.store.cidr`**, **`.exporters.cidr`** | string | `172.24.0.0/16`, `172.25.0.0/16`, `172.27.0.0/16` | Address ranges. |
 | **`networks.mgmt.vlan`**, **`networks.mgmt.cidr`** | number, string | required | The management VLAN and its range. |
 | **`networks.mgmt.host_range`** | string | required | Addresses for the VMs, `192.0.2.200-229` form. |
 | **`networks.mgmt.dns`** | list(string) | required | Resolvers the VMs use; cloud-init installs packages through them. |
