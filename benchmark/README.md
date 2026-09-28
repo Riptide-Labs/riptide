@@ -6,6 +6,15 @@ The system under test (SUT) never shares a NUMA node with another service; a dec
 
 Driving load, capturing measurements and writing reports stay with the benchmark tooling (`benchmark-capture`, `benchmark-report`).
 
+A declaration comes from two files:
+
+| File | In git | Holds |
+| --- | --- | --- |
+| **`benchmark/site.tfvars`** | no | Your lab: hosts, their addresses, storage, NUMA layout and bridges; networks and resolvers; protected address ranges. |
+| **`benchmark/experiments/<name>.tfvars`** | yes | One experiment: the riptide build and which service runs on which host key and NUMA node, with what resources. |
+
+A key in the wrong file is rejected, so a lab's addresses cannot end up in a committed experiment.
+
 ## Prerequisites
 
 - OpenTofu 1.9 or later (provider `for_each`), `cosign`, `jq`, `curl`, `shellcheck` and an SSH agent holding the key you connect with.
@@ -13,37 +22,39 @@ Driving load, capturing measurements and writing reports stay with the benchmark
 - For Proxmox, nothing by default: `bench` asks the node for a `root@pam` login ticket over root SSH on every run.
   Proxmox accepts `cpu.affinity` only from `root@pam` logged in that way or with a password; an API token, even `root@pam`'s, is refused with `only root can set 'affinity' config`.
   To use a password instead, set **`PROXMOX_VE_USERNAME=root@pam`** and **`PROXMOX_VE_PASSWORD`**.
-- **`PROXMOX_VE_INSECURE=true`** when the node's API certificate is self-signed, as on `lechuck`.
+- **`PROXMOX_VE_INSECURE=true`** when the node's API certificate is self-signed.
   **`PROXMOX_VE_ENDPOINT`** defaults to `https://<address or node>:8006/`.
 - A route from your workstation to the `mgmt` network: apply installs riptide and waits for health checks over SSH on `mgmt`.
 
 ### One-time lab setup
 
-Done for mad-monkey and `lechuck` on 2026-09-28; repeat for a new host.
-
-1. Create VLAN 24 (`ingest`, `172.24.0.0/16`) and VLAN 25 (`store`, `172.25.0.0/16`) and trunk both to mad-monkey and `lechuck`.
-   `mgmt` is VLAN 11.
-2. On mad-monkey, create a bridge per VLAN: `br-vlan24`, `br-vlan25`, in **`/etc/netplan/20-bench-vlans.yaml`** (VLAN subinterfaces `enp2s0.24` and `enp2s0.25`, no address).
-   `br0` already carries VLAN 11.
-3. On mad-monkey, move Docker's address pools out of `172.24.0.0/14` in **`/etc/docker/daemon.json`**:
+1. Create a VLAN for `ingest` and one for `store` (24 and 25 in the example) and trunk both, and the `mgmt` VLAN, to every host.
+2. On a libvirt host, create an address-less bridge per VLAN, for example with netplan: VLAN subinterfaces `<nic>.24` and `<nic>.25` in bridges `br-vlan24` and `br-vlan25`.
+   A Proxmox node needs nothing: a NIC tagged on `vmbr0` gets a `vmbr0v<tag>` bridge when `vmbr0` is not VLAN-aware.
+3. On a libvirt host that runs Docker, move Docker's address pools out of `172.24.0.0/14` in **`/etc/docker/daemon.json`**:
 
    ```json
    { "default-address-pools": [{ "base": "172.28.0.0/14", "size": 24 }] }
    ```
 
-4. Check that the `mgmt` host range you declare is unused, for example `192.168.11.200-229`, and find resolvers the VMs can reach from it: `192.168.11.1` routes but does not answer DNS; `192.168.10.16` and `192.168.10.53` do.
+4. Pick an unused `mgmt` host range, one address per service, and resolvers the VMs can reach from `mgmt`.
+   The `mgmt` gateway is not assumed to answer DNS.
 
-On `lechuck`, `vmbr0` is not VLAN-aware; Proxmox then creates a `vmbr0v<tag>` bridge per tagged NIC on its own.
+## Describe your lab
 
-## Declare an experiment
-
-1. Print each host's NUMA layout on the host itself:
+1. Copy the example site file:
 
    ```bash
-   ssh root@lechuck.labmonkeys.tech sh -s < benchmark/bin/numa-topology
+   cp benchmark/site.example.tfvars benchmark/site.tfvars
    ```
 
-   Expected output:
+2. Print each host's NUMA layout on the host itself and paste it into the host's `numa`:
+
+   ```bash
+   ssh root@pve-1.example.org sh -s < benchmark/bin/numa-topology
+   ```
+
+   Expected output, for a two-socket host that interleaves its nodes:
 
    ```text
    numa = {
@@ -53,11 +64,37 @@ On `lechuck`, `vmbr0` is not VLAN-aware; Proxmox then creates a `vmbr0v<tag>` br
    ```
 
    Each entry is one physical core, written as its thread siblings.
-   `lechuck` interleaves its nodes: node 0 holds the even CPUs.
 
-2. Copy **`benchmark/experiments/flow-capacity.tfvars`** to `benchmark/experiments/<name>.tfvars` and set `name` to `<name>`.
+3. Keep the host keys the experiments use (`pve-1`, `kvm-1` in `flow-capacity`) and point them at your machines.
+   `BENCH_SITE=<path>` selects another site file.
+
+### Site file
+
+| Name | Type | Default | Description |
+| --- | --- | --- | --- |
+| **`hosts.<h>.provider`** | string | required | `libvirt` or `proxmox`. |
+| **`hosts.<h>.numa`** | map(list(string)) | required | Output of `bin/numa-topology`. The last core of each node is reserved for emulator threads and the host. |
+| **`hosts.<h>.uri`** | string | required on libvirt | libvirt connection URI, for example `qemu+ssh://root@kvm-1.example.org/system`. |
+| **`hosts.<h>.pool`** | string | `default` | libvirt storage pool for disks. |
+| **`hosts.<h>.node`** | string | required on Proxmox | Proxmox node name. |
+| **`hosts.<h>.datastore`** | string | required on Proxmox | Datastore for VM disks, for example `local-zfs`. Snippets and the base image go to `local`. |
+| **`hosts.<h>.address`** | string | node name | SSH and API address of a Proxmox node. |
+| **`hosts.<h>.bridges`** | map(string) | `vmbr0` per network on Proxmox | Host bridge per network. Required on libvirt. |
+| **`networks.ingest.vlan`**, **`networks.store.vlan`** | number | required | VLAN IDs. |
+| **`networks.ingest.cidr`**, **`.store.cidr`**, **`.exporters.cidr`** | string | `172.24.0.0/16`, `172.25.0.0/16`, `172.26.0.0/16` | Address ranges. |
+| **`networks.mgmt.vlan`**, **`networks.mgmt.cidr`** | number, string | required | The management VLAN and its range. |
+| **`networks.mgmt.host_range`** | string | required | Addresses for the VMs, `192.0.2.200-229` form. |
+| **`networks.mgmt.dns`** | list(string) | required | Resolvers the VMs use; cloud-init installs packages through them. |
+| **`networks.mgmt.gateway`** | string | first host of `cidr` | Default route. |
+| **`protected_ranges`** | map(string) | `{}` | Name to CIDR of ranges no lab network may overlap: other networks, clusters, overlays. The Docker ranges `172.17.0.0/16` and `172.28.0.0/14` are always protected. |
+
+`exporters` is not a VLAN: nl6 allocates its simulated exporters from that range inside the loadgen VM, and the SUT routes it through the loadgen's `ingest` address.
+
+## Declare an experiment
+
+1. Copy **`benchmark/experiments/flow-capacity.tfvars`** to `benchmark/experiments/<name>.tfvars` and set `name` to `<name>`.
    The file name and `name` must match.
-3. Check the declaration without any host:
+2. Check the declarations without any host:
 
    ```bash
    make bench-check
@@ -66,11 +103,13 @@ On `lechuck`, `vmbr0` is not VLAN-aware; Proxmox then creates a `vmbr0v<tag>` br
    Expected output (last lines):
 
    ```text
-   == lab: tests/rejected.tftest.hcl with tests/rejected.tfvars
+   == lab: tests/rejected_no_clickhouse.tftest.hcl with tests/rejected-no-clickhouse.tfvars
    Success! 1 passed, 0 failed.
    ```
 
-### Declaration
+   `bench-check` plans every committed experiment's layout against `site.example.tfvars`, not your site file.
+
+### Experiment file
 
 | Name | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -78,27 +117,13 @@ On `lechuck`, `vmbr0` is not VLAN-aware; Proxmox then creates a `vmbr0v<tag>` br
 | **`riptide.source`** | string | required | `release:X.Y.Z` (downloaded and verified with cosign) or `deb:<path>` (relative to the repository root). |
 | **`riptide.env`** | map(string) | `{}` | Lines of `/etc/riptide/riptide.env`: `JAVA_OPTS` and `RIPTIDE_*` overrides, for example receivers. |
 | **`ssh_keys`** | list(string) | `[]` | Keys for user `bench` in addition to the SSH agent's. |
-| **`hosts.<h>.provider`** | string | required | `libvirt` or `proxmox`. |
-| **`hosts.<h>.numa`** | map(list(string)) | required | Output of `bin/numa-topology`. The last core of each node is reserved for emulator threads and the host. |
-| **`hosts.<h>.uri`** | string | required on libvirt | libvirt connection URI, for example `qemu+ssh://root@mad-monkey.labmonkeys.tech/system`. |
-| **`hosts.<h>.pool`** | string | `default` | libvirt storage pool for disks. |
-| **`hosts.<h>.node`** | string | required on Proxmox | Proxmox node name. |
-| **`hosts.<h>.datastore`** | string | required on Proxmox | Datastore for VM disks, for example `scummbar`. Snippets and the base image go to `local`. |
-| **`hosts.<h>.address`** | string | node name | SSH address of a Proxmox node, for snippet upload. |
-| **`hosts.<h>.bridges`** | map(string) | `vmbr0` per network on Proxmox | Host bridge per network. Required on libvirt. |
-| **`networks.ingest.vlan`**, **`networks.store.vlan`** | number | required | VLAN IDs. |
-| **`networks.<n>.cidr`** | string | `172.24.0.0/16`, `172.25.0.0/16`, `172.26.0.0/16` (exporters), `192.168.11.0/24` (mgmt) | Address range. |
-| **`networks.mgmt.host_range`** | string | required | Addresses for the VMs, `192.168.11.200-229` form. |
-| **`networks.mgmt.dns`** | list(string) | required | Resolvers the VMs use; cloud-init installs packages through them. |
-| **`networks.mgmt.vlan`**, **`.gateway`** | number, string | `11`, first host | |
 | **`services.<s>.role`** | string | required | `riptide` (exactly one), `clickhouse` (exactly one), `nl6`, `victoriametrics` (at most one each). |
-| **`services.<s>.host`**, **`.numa_node`** | string, number | required | Placement. |
+| **`services.<s>.host`**, **`.numa_node`** | string, number | required | Placement: a host key from the site file and one of its NUMA nodes. |
 | **`services.<s>.vcpus`** | number | required | A multiple of the host's threads per core. The service gets `vcpus / threads` whole cores. |
 | **`services.<s>.memory_gb`**, **`.disk_gb`**, **`.hugepages`** | number, number, bool | required, none, `false` | `disk_gb` adds a data disk mounted at `/var/lib/bench`. |
 | **`services.<s>.networks`** | list(string) | required | From `ingest`, `store`, `mgmt`. riptide needs all three; nl6 needs `ingest` and `mgmt`; the others `store` and `mgmt`. |
 
-`exporters` is not a VLAN: nl6 allocates its simulated exporters from that range inside the loadgen VM, and the SUT routes it through the loadgen's `ingest` address.
-A key the table does not name is rejected, so a typo cannot fall back to a default.
+A key neither table names is rejected, so a typo cannot fall back to a default.
 
 ## Build the lab
 
@@ -109,7 +134,7 @@ A key the table does not name is rejected, so a typo cannot fall back to a defau
    make bench-plan EXP=flow-capacity
    ```
 
-   Expected output (last lines):
+   Expected output (last lines, on hosts without the base image):
 
    ```text
    Plan: 28 to add, 0 to change, 0 to destroy.
@@ -146,7 +171,7 @@ A key the table does not name is rejected, so a typo cannot fall back to a defau
    | `inventory.json` | Per service: host, NUMA node, pinned CPUs, emulator CPUs, addresses, MACs. riptide version and SHA-256, image digests, and the `sut` fields of a `benchmark-capture` manifest. |
    | `ssh_config` | `Host bench-<name>-<service>` entries: `ssh -F benchmark/runs/<name>/ssh_config bench-<name>-sut`. Host keys go to `known_hosts` next to it, since a rebuilt VM has a new key. |
    | `scrape-targets.json` | Prometheus file-SD targets for riptide `/metrics` and every node_exporter. |
-   | `applied.tfvars` | The declaration apply used; destroy reads it. |
+   | `applied-site.tfvars`, `applied.tfvars` | The site and experiment files apply used; destroy reads them. |
 
 4. List the experiment's VMs on every declared host:
 
@@ -158,10 +183,10 @@ A key the table does not name is rejected, so a typo cannot fall back to a defau
 
    ```text
    HOST         BACKEND   VM                                       STATE
-   lechuck      proxmox   bench-flow-capacity-sut                  running
-   lechuck      proxmox   bench-flow-capacity-clickhouse           running
-   mad-monkey   libvirt   bench-flow-capacity-loadgen              running
-   mad-monkey   libvirt   bench-flow-capacity-metrics              running
+   pve-1        proxmox   bench-flow-capacity-sut                  running
+   pve-1        proxmox   bench-flow-capacity-clickhouse           running
+   kvm-1        libvirt   bench-flow-capacity-loadgen              running
+   kvm-1        libvirt   bench-flow-capacity-metrics              running
    ```
 
    Proxmox VMs are matched by the `exp-<name>` tag through `pvesh`; libvirt domains by their metadata, read with `virsh metadata <domain> https://riptide-labs.github.io/benchmark/1`.
@@ -179,7 +204,7 @@ Destroy complete! Resources: 21 destroyed.
 ```
 
 Destroy removes the experiment's VMs, disks, cloud-init media and snippets and keeps its downloaded base images, so the next apply skips the download.
-It uses `runs/<name>/applied.tfvars`, not the editable file: a host deleted from the declaration after apply still has its VMs removed.
+It uses the files saved in `runs/<name>/`, not the editable ones: a host deleted from the site file after apply still has its VMs removed.
 A re-apply may add hosts but refuses to drop one, or to change its provider, while it still has VMs: destroy first.
 `benchmark/bin/bench purge <name>` also removes the base images, the workspace and the run files.
 
@@ -187,15 +212,16 @@ A re-apply may add hosts but refuses to drop one, or to change its provider, whi
 
 - One experiment per host at a time.
   Checks run within one declaration, so two experiments can pin the same cores.
-- On Proxmox, `cpu.affinity` pins the whole QEMU process to the service's cores, so emulator threads share them; the guest sees `vcpus` cores without SMT topology. libvirt pins each vCPU to one thread and emulator threads to the reserved core.
+- On Proxmox, `cpu.affinity` pins the whole QEMU process to the service's cores, so emulator threads share them; the guest sees `vcpus` cores without SMT topology.
+  libvirt pins each vCPU to one thread and emulator threads to the reserved core.
 - The `dmacvicar/libvirt` provider's signature is not checked, because its registry entry carries no GPG key; `.terraform.lock.hcl` pins its hashes.
 - Image digests in **`benchmark/lab/images.auto.tfvars`** are bumped by hand; Dependabot does not read `.tfvars`.
   The ClickHouse image is read from `deployment/clickhouse/compose.yml`.
-- nl6 hardcodes its veth pair at `10.254.0.1` and `10.254.0.2` (DN42 space).
+- nl6 hardcodes its veth pair at `10.254.0.1` and `10.254.0.2`.
   The link stays inside the loadgen VM and is never routed out.
 - `make bench-check` runs no host.
   A green check says nothing about VMs booting, pinning on a real host or services answering.
 
 ## Open questions
 
-- A libvirt-only experiment has only been planned, not applied: the lab has one libvirt host, and the SUT needs a NUMA node of its own.
+- A libvirt-only experiment has only been planned, not applied: the lab it was verified on has one libvirt host, and the SUT needs a NUMA node of its own.

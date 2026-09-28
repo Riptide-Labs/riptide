@@ -116,7 +116,7 @@ resource "libvirt_domain" "this" {
     ]
 
     # A Debian genericcloud guest without a video device boot-looped in GRUB
-    # on mad-monkey (2026-09-26); VNC on loopback plus virtio video boots.
+    # on a lab host (2026-09-26); VNC on loopback plus virtio video boots.
     graphics = [{ vnc = { auto_port = true, listen = "127.0.0.1" } }]
     videos   = [{ model = { type = "virtio", primary = "yes" } }]
     serials  = [{ target = { port = 0 } }]

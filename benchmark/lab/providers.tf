@@ -3,8 +3,8 @@
 
 # One provider instance per host in use. A backend no host declares gets no
 # instance at all, so it is never configured or contacted, and its credentials
-# may be unset. Both maps are read from the raw declaration because provider
-# for_each is evaluated before any module runs; the var file must therefore be
+# may be unset. Both maps are read from the raw site file because provider
+# for_each is evaluated before any module runs; the var files must therefore be
 # passed to `tofu init` too (benchmark/bin/bench does).
 #
 # A provider instance must outlive its resources by one apply. Destroy with the
@@ -12,8 +12,8 @@
 # edited copy that dropped a host.
 
 locals {
-  libvirt_hosts = { for h, v in var.experiment.hosts : h => v if try(v.provider, "") == "libvirt" }
-  proxmox_hosts = { for h, v in var.experiment.hosts : h => v if try(v.provider, "") == "proxmox" }
+  libvirt_hosts = { for h, v in var.site.hosts : h => v if try(v.provider, "") == "libvirt" }
+  proxmox_hosts = { for h, v in var.site.hosts : h => v if try(v.provider, "") == "proxmox" }
 }
 
 provider "libvirt" {

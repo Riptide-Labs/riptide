@@ -1,8 +1,13 @@
 # Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+variable "site" {
+  description = "The lab's hosts, networks and protected ranges, from benchmark/site.tfvars (not in git; see site.example.tfvars). Untyped on purpose: modules/declaration checks its keys and converts it."
+  type        = any
+}
+
 variable "experiment" {
-  description = "The experiment declaration, from benchmark/experiments/<name>.tfvars. Untyped on purpose: modules/declaration checks its keys and converts it."
+  description = "The experiment, from benchmark/experiments/<name>.tfvars: services placed on the site's host keys, and the riptide build. Untyped on purpose: modules/declaration checks its keys and converts it."
   type        = any
 }
 

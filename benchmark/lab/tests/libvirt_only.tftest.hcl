@@ -8,7 +8,7 @@
 
 mock_provider "libvirt" {
   alias    = "host"
-  for_each = { mad-monkey = true, guybrush = true }
+  for_each = { kvm-1 = true, kvm-2 = true }
 }
 
 variables {
@@ -33,7 +33,7 @@ run "plans_without_proxmox" {
 run "each_libvirt_host_gets_its_own_base_image" {
   command = plan
   assert {
-    condition     = jsonencode(sort(keys(libvirt_volume.base))) == jsonencode(["guybrush", "mad-monkey"])
+    condition     = jsonencode(sort(keys(libvirt_volume.base))) == jsonencode(["kvm-1", "kvm-2"])
     error_message = "base volumes: ${jsonencode(keys(libvirt_volume.base))}"
   }
 }

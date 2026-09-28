@@ -7,7 +7,7 @@
 
 module "typed" {
   source     = "./typed"
-  experiment = var.raw
+  experiment = local.combined
 }
 
 locals {
@@ -19,18 +19,34 @@ locals {
   role_count_exactly = { riptide = 1, clickhouse = 1 }
   role_count_at_most = { nl6 = 1, victoriametrics = 1 }
 
-  protected_ranges = {
-    "DN42 172.20.0.0/14"             = "172.20.0.0/14"
-    "k0s pods 10.244.0.0/16"         = "10.244.0.0/16"
-    "k0s services 10.96.0.0/12"      = "10.96.0.0/12"
-    "Docker default 172.17.0.0/16"   = "172.17.0.0/16"
-    "benchmark Docker 172.28.0.0/14" = "172.28.0.0/14"
+  # The ranges the tool itself uses; the site adds its own (other networks,
+  # clusters, overlays) as protected_ranges.
+  tool_ranges = {
+    "Docker default"   = "172.17.0.0/16"
+    "benchmark Docker" = "172.28.0.0/14"
   }
+  protected_ranges = merge(local.x.protected_ranges, local.tool_ranges)
+
+  # --- site and experiment --------------------------------------------------
+  # The lab root passes the two files apart; the declaration is their merge.
+  # Each key belongs to one of them, so a lab's hosts and networks never land
+  # in a committed experiment file.
+
+  split           = var.site != null
+  site_keys       = ["hosts", "networks", "protected_ranges"]
+  experiment_keys = ["name", "ssh_keys", "riptide", "services"]
+  # merge() skips a null site, so this holds apart or together.
+  combined = merge(var.site, var.raw)
+
+  misplaced_keys = local.split ? concat(
+    [for k in keys(var.raw) : "experiment file: \"${k}\" belongs in the site file" if contains(local.site_keys, k)],
+    [for k in keys(var.site) : "site file: \"${k}\" belongs in the experiment file" if contains(local.experiment_keys, k)],
+  ) : []
 
   # --- unknown keys ---------------------------------------------------------
 
   allowed_keys = {
-    experiment = ["name", "ssh_keys", "riptide", "hosts", "networks", "services"]
+    experiment = concat(local.experiment_keys, local.site_keys)
     riptide    = ["source", "env"]
     host       = ["provider", "numa", "bridges", "uri", "pool", "node", "address", "datastore"]
     service    = ["role", "host", "numa_node", "vcpus", "memory_gb", "networks", "disk_gb", "hugepages"]
@@ -42,13 +58,13 @@ locals {
     }
   }
 
-  raw_hosts    = try(var.raw.hosts, {})
-  raw_networks = try(var.raw.networks, {})
-  raw_services = try(var.raw.services, {})
+  raw_hosts    = try(local.combined.hosts, {})
+  raw_networks = try(local.combined.networks, {})
+  raw_services = try(local.combined.services, {})
 
   unknown_keys = concat(
-    [for k in keys(var.raw) : "experiment: unknown key \"${k}\"" if !contains(local.allowed_keys.experiment, k)],
-    [for k in keys(try(var.raw.riptide, {})) : "riptide: unknown key \"${k}\"" if !contains(local.allowed_keys.riptide, k)],
+    [for k in keys(local.combined) : "declaration: unknown key \"${k}\"" if !contains(local.allowed_keys.experiment, k)],
+    [for k in keys(try(local.combined.riptide, {})) : "riptide: unknown key \"${k}\"" if !contains(local.allowed_keys.riptide, k)],
     flatten([for h, v in local.raw_hosts : [for k in keys(v) : "host ${h}: unknown key \"${k}\"" if !contains(local.allowed_keys.host, k)]]),
     flatten([for s, v in local.raw_services : [for k in keys(v) : "service ${s}: unknown key \"${k}\"" if !contains(local.allowed_keys.service, k)]]),
     [for n in keys(local.raw_networks) : "networks: unknown network \"${n}\"" if !contains(keys(local.allowed_keys.networks), n)],
@@ -193,8 +209,11 @@ locals {
     mgmt      = local.x.networks.mgmt.cidr
   }
 
-  cidr_violations = [for n, c in local.cidrs : "network ${n}: \"${c}\" is not an IPv4 CIDR" if !can(cidrhost(c, 0)) || length(split(".", split("/", c)[0])) != 4]
-  cidrs_valid     = length(local.cidr_violations) == 0
+  cidr_violations = concat(
+    [for n, c in local.cidrs : "network ${n}: \"${c}\" is not an IPv4 CIDR" if !can(cidrhost(c, 0)) || length(split(".", split("/", c)[0])) != 4],
+    [for n, c in local.x.protected_ranges : "protected range ${n}: \"${c}\" is not an IPv4 CIDR" if !can(cidrhost(c, 0)) || length(split(".", split("/", c)[0])) != 4],
+  )
+  cidrs_valid = length(local.cidr_violations) == 0
 
   # IPv4 address to integer, and a CIDR to its first and last address.
   cidr_first = { for n, c in merge(local.cidrs, local.protected_ranges) : n => local.cidrs_valid ? sum([for i, o in split(".", cidrhost(c, 0)) : tonumber(o) * pow(256, 3 - i)]) : 0 }
@@ -209,7 +228,7 @@ locals {
       if local.cidr_first[a] <= local.cidr_last[b] && local.cidr_first[b] <= local.cidr_last[a]
     ]]),
     flatten([for a in local.network_names : [
-      for p in keys(local.protected_ranges) : "network ${a} (${local.cidrs[a]}) overlaps protected range ${p}"
+      for p in keys(local.protected_ranges) : "network ${a} (${local.cidrs[a]}) overlaps protected range ${p} (${local.protected_ranges[p]})"
       if local.cidr_first[a] <= local.cidr_last[p] && local.cidr_first[p] <= local.cidr_last[a]
     ]]),
   ) : []
@@ -234,7 +253,7 @@ locals {
   mgmt_end   = try(sum([for i, o in split(".", local.mgmt_end_ip) : tonumber(o) * pow(256, 3 - i)]), -1)
 
   mgmt_violations = local.cidrs_valid ? concat(
-    local.mgmt_start < 0 || local.mgmt_end < 0 ? ["mgmt host_range \"${local.x.networks.mgmt.host_range}\" is not a range like 192.168.11.200-229"] : [],
+    local.mgmt_start < 0 || local.mgmt_end < 0 ? ["mgmt host_range \"${local.x.networks.mgmt.host_range}\" is not a range like 192.0.2.200-229"] : [],
     local.mgmt_start >= 0 && local.mgmt_end >= 0 && (local.mgmt_start < local.cidr_first.mgmt || local.mgmt_end > local.cidr_last.mgmt) ? ["mgmt host_range ${local.x.networks.mgmt.host_range} is not inside ${local.cidrs.mgmt}"] : [],
     local.mgmt_start >= 0 && local.mgmt_end >= 0 && local.mgmt_end - local.mgmt_start + 1 < length(local.service_names) ? [
       "mgmt host_range ${local.x.networks.mgmt.host_range} holds ${max(0, local.mgmt_end - local.mgmt_start + 1)} addresses for ${length(local.service_names)} services: ${join(", ", local.service_names)}",
@@ -242,6 +261,7 @@ locals {
   ) : []
 
   violations = concat(
+    local.misplaced_keys,
     local.unknown_keys,
     local.name_violations,
     local.source_violations,

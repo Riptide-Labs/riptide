@@ -10,6 +10,12 @@ variable "raw" {
   type        = any
 }
 
+variable "site" {
+  description = "The site declaration (hosts, networks, protected ranges), when it comes from its own file. Null when raw already holds everything, as in the module's own tests."
+  type        = any
+  default     = null
+}
+
 variable "agent_ssh_keys" {
   description = "Public keys held by the SSH agent that apply connects with; benchmark/bin/bench passes them. Authorized for user bench together with the declaration's ssh_keys."
   type        = list(string)

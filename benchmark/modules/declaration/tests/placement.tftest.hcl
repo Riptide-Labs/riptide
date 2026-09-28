@@ -65,7 +65,7 @@ run "addresses_follow_sorted_service_names" {
     error_message = "store addresses: ${jsonencode({ for s, v in output.services : s => lookup(v.addresses, "store", null) })}"
   }
   assert {
-    condition     = output.services.clickhouse.addresses.mgmt == "192.168.11.200" && output.services.sut.addresses.mgmt == "192.168.11.203"
+    condition     = output.services.clickhouse.addresses.mgmt == "192.0.2.200" && output.services.sut.addresses.mgmt == "192.0.2.203"
     error_message = "mgmt addresses: ${jsonencode({ for s, v in output.services : s => v.addresses.mgmt })}"
   }
 }

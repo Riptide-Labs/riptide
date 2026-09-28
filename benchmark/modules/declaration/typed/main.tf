@@ -38,8 +38,8 @@ variable "experiment" {
       }), {})
       mgmt = object({
         host_range = string
-        vlan       = optional(number, 11)
-        cidr       = optional(string, "192.168.11.0/24")
+        vlan       = number
+        cidr       = string
         gateway    = optional(string)
         # Required, but checked as a violation in the parent module rather
         # than by the type: a type error would hide every other violation,
@@ -47,6 +47,7 @@ variable "experiment" {
         dns = optional(list(string))
       })
     })
+    protected_ranges = optional(map(string), {})
     services = map(object({
       role      = string
       host      = string

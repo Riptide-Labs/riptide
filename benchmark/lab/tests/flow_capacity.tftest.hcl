@@ -1,16 +1,18 @@
 # Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-# Plans experiments/flow-capacity.tfvars against mocked providers and asserts
-# what each VM module hands its provider. Run by benchmark/bin/bench check with
-#   tofu test -filter=tests/flow_capacity.tftest.hcl -var-file=../experiments/flow-capacity.tfvars
-# since provider for_each is evaluated from the var file before any run.
+# Plans the committed experiments/flow-capacity.tfvars on the committed
+# site.example.tfvars against mocked providers, and asserts what each VM module
+# hands its provider. Run by benchmark/bin/bench check with
+#   tofu test -filter=tests/flow_capacity.tftest.hcl \
+#     -var-file=../site.example.tfvars -var-file=../experiments/flow-capacity.tfvars
+# since provider for_each is evaluated from the var files before any run.
 
 # Mocks carry the same for_each keys as the provider blocks they replace;
 # a mock without for_each leaves every resource bound to a missing instance.
 mock_provider "libvirt" {
   alias    = "host"
-  for_each = { mad-monkey = true }
+  for_each = { kvm-1 = true }
 }
 
 mock_provider "proxmox" {
@@ -41,7 +43,7 @@ run "vms_go_to_their_backend" {
   }
 }
 
-run "sut_is_pinned_to_node_1_on_lechuck" {
+run "sut_is_pinned_to_node_1_on_pve-1" {
   command = plan
   assert {
     condition     = module.proxmox_vm["sut"].vm.affinity == "1,25,3,27,5,29,7,31"
@@ -68,7 +70,7 @@ run "proxmox_nics_carry_vlan_tags_and_macs" {
 run "proxmox_disks_land_on_the_declared_datastore" {
   command = plan
   assert {
-    condition     = module.proxmox_vm["clickhouse"].vm.datastore == "scummbar" && module.proxmox_vm["clickhouse"].vm.disks == 2 && module.proxmox_vm["sut"].vm.disks == 1
+    condition     = module.proxmox_vm["clickhouse"].vm.datastore == "local-zfs" && module.proxmox_vm["clickhouse"].vm.disks == 2 && module.proxmox_vm["sut"].vm.disks == 1
     error_message = "clickhouse: ${jsonencode(module.proxmox_vm["clickhouse"].vm)}"
   }
 }
@@ -112,7 +114,7 @@ run "libvirt_nics_use_declared_bridges" {
   assert {
     condition = jsonencode(module.libvirt_vm["loadgen"].domain.interfaces) == jsonencode([
       { bridge = "br-vlan24", mac = output.services.loadgen.macs.ingest, queues = 8 },
-      { bridge = "br0", mac = output.services.loadgen.macs.mgmt, queues = 8 },
+      { bridge = "br-mgmt", mac = output.services.loadgen.macs.mgmt, queues = 8 },
     ])
     error_message = "loadgen interfaces: ${jsonencode(module.libvirt_vm["loadgen"].domain.interfaces)}"
   }

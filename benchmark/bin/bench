@@ -22,14 +22,26 @@ REPO_DIR="$(cd "${BENCH_DIR}/.." && pwd)"
 LAB_DIR="${BENCH_DIR}/lab"
 CACHE_DIR="${BENCH_DIR}/.cache"
 RUNS_DIR="${BENCH_DIR}/runs"
+# The lab's hosts, addresses and networks; not in git (site.example.tfvars).
+SITE_FILE="${BENCH_SITE:-${BENCH_DIR}/site.tfvars}"
 METADATA_NS="https://riptide-labs.github.io/benchmark/1"
 
 die() { echo "bench: $*" >&2; exit 1; }
 tf() { tofu -chdir="${LAB_DIR}" "$@"; }
 
-# Lab tests: each test file with the var file its provider for_each is
-# evaluated from (tofu test evaluates it before any run block).
-LAB_TESTS="flow_capacity:../experiments/flow-capacity.tfvars
+# The var files of the declaration in use, site first: every tofu call reads
+# both. Set by use_declaration.
+DECL=()
+use_declaration() {
+  [ -f "$1" ] || die "no site file at $1; copy benchmark/site.example.tfvars to benchmark/site.tfvars (or set BENCH_SITE) and describe your lab"
+  [ -f "$2" ] || die "no experiment at $2"
+  DECL=("-var-file=$1" "-var-file=$2")
+}
+
+# Lab tests: each test file with the var files its provider for_each is
+# evaluated from (tofu test evaluates them before any run block). The
+# committed experiment is planned against the example site.
+LAB_TESTS="flow_capacity:../site.example.tfvars,../experiments/flow-capacity.tfvars
 libvirt_only:tests/libvirt-only.tfvars
 proxmox_only:tests/proxmox-only.tfvars
 rejected:tests/rejected.tfvars
@@ -59,23 +71,26 @@ check() {
     fi
   done
 
-  local entry test varfile
+  local entry test files f
+  local -a args
   for entry in ${LAB_TESTS}; do
     test="${entry%%:*}"
-    varfile="${entry#*:}"
-    echo "== lab: tests/${test}.tftest.hcl with ${varfile}"
-    tf init -input=false -no-color -var-file="${varfile}" >/dev/null
-    tf validate -no-color -var-file="${varfile}"
-    tf test -no-color -filter="tests/${test}.tftest.hcl" -var-file="${varfile}"
+    files="${entry#*:}"
+    args=()
+    for f in ${files//,/ }; do args+=("-var-file=${f}"); done
+    echo "== lab: tests/${test}.tftest.hcl with ${files}"
+    tf init -input=false -no-color "${args[@]}" >/dev/null
+    tf validate -no-color "${args[@]}"
+    tf test -no-color -filter="tests/${test}.tftest.hcl" "${args[@]}"
   done
 }
 
-# Reads one expression from a declaration through tofu console, unquoted.
-# console prints configuration warnings to stdout ahead of the value, so only
-# the last line is the value.
+# Reads one expression from the declaration in use through tofu console,
+# unquoted. console prints configuration warnings to stdout ahead of the
+# value, so only the last line is the value.
 declared() {
-  local varfile="$1" expr="$2" out
-  out="$(echo "${expr}" | tf console -no-color -var-file="${varfile}")" || die "cannot read ${expr} from ${varfile}"
+  local expr="$1" out
+  out="$(echo "${expr}" | tf console -no-color "${DECL[@]}")" || die "cannot read ${expr} from ${DECL[*]}"
   out="$(printf '%s\n' "${out}" | tail -n 1)"
   out="${out#\"}"
   echo "${out%\"}"
@@ -123,10 +138,10 @@ resolve_riptide() {
 # on every run; prints its path. Only libvirt needs it: Proxmox downloads the
 # image on the node and checks the same SHA-512 there.
 resolve_base_image() {
-  local varfile="$1" url file sha512 path actual
-  url="$(declared "${varfile}" "var.base_image.url")"
-  file="$(declared "${varfile}" "var.base_image.file")"
-  sha512="$(declared "${varfile}" "var.base_image.sha512")"
+  local url file sha512 path actual
+  url="$(declared "var.base_image.url")"
+  file="$(declared "var.base_image.file")"
+  sha512="$(declared "var.base_image.sha512")"
   path="${CACHE_DIR}/${file}"
   mkdir -p "${CACHE_DIR}"
   if [ ! -f "${path}" ]; then
@@ -144,10 +159,10 @@ resolve_base_image() {
 # itself for a root@pam ticket over the root SSH that snippet upload already
 # needs. A ticket lives two hours, so it is fetched on every run.
 proxmox_login() {
-  local varfile="$1" target out
-  [ "$(declared "${varfile}" 'length([for h in values(var.experiment.hosts) : h if try(h.provider, "") == "proxmox"])')" != 0 ] || return 0
+  local target out
+  [ "$(declared 'length([for h in values(var.site.hosts) : h if try(h.provider, "") == "proxmox"])')" != 0 ] || return 0
   # shellcheck disable=SC2016 # an HCL expression; ${...} is for tofu, not the shell
-  target="$(declared "${varfile}" '[for h in values(var.experiment.hosts) : try(h.address, null) != null ? h.address : h.node if try(h.provider, "") == "proxmox"][0]')"
+  target="$(declared '[for h in values(var.site.hosts) : try(h.address, null) != null ? h.address : h.node if try(h.provider, "") == "proxmox"][0]')"
   : "${PROXMOX_VE_ENDPOINT:=https://${target}:8006/}"
   export PROXMOX_VE_ENDPOINT
   [ -z "${PROXMOX_VE_PASSWORD:-}" ] || return 0
@@ -176,52 +191,65 @@ agent_keys_hcl() {
 # instances. So a re-apply may add hosts but never drop one, or change its
 # provider, while the saved declaration still names it: destroy first.
 keep_hosts() {
-  local name="$1" varfile="$2" saved="${RUNS_DIR}/$1/applied.tfvars" expr before after h
-  [ -f "${saved}" ] || return 0
+  local name="$1" expr before after h
+  local -a current=("${DECL[@]}")
+  [ -f "${RUNS_DIR}/${name}/applied-site.tfvars" ] || return 0
   # shellcheck disable=SC2016 # an HCL expression; ${...} is for tofu, not the shell
-  expr='join(" ", sort([for k, v in var.experiment.hosts : "${k}=${try(v.provider, "")}"]))'
-  before="$(declared "${saved}" "${expr}")"
-  after=" $(declared "${varfile}" "${expr}") "
+  expr='join(" ", sort([for k, v in var.site.hosts : "${k}=${try(v.provider, "")}"]))'
+  after=" $(declared "${expr}") "
+  use_saved "${name}"
+  before="$(declared "${expr}")"
+  DECL=("${current[@]}")
   for h in ${before}; do
     case "${after}" in
       *" ${h} "*) ;;
-      *) die "${name} was applied with host ${h%%=*} (${h#*=}), which ${varfile} drops or changes; run make bench-destroy EXP=${name} first" ;;
+      *) die "${name} was applied with host ${h%%=*} (${h#*=}), which ${SITE_FILE} drops or changes; run make bench-destroy EXP=${name} first" ;;
     esac
   done
 }
 
-# Selects the experiment: init with its declaration, then its workspace.
+# Uses the declaration an experiment was applied with, saved by apply.
+use_saved() {
+  local dir="${RUNS_DIR}/$1"
+  [ -f "${dir}/applied.tfvars" ] || die "no saved declaration in ${dir}; was $1 applied from this checkout?"
+  [ -f "${dir}/applied-site.tfvars" ] ||
+    die "${dir} was saved before the site file existed: move hosts and networks from applied.tfvars into applied-site.tfvars as site = { ... }"
+  use_declaration "${dir}/applied-site.tfvars" "${dir}/applied.tfvars"
+}
+
+# Selects the experiment: init with the declaration in use, then its workspace.
 select_experiment() {
-  local name="$1" varfile="$2" declared_name
-  [ -f "${varfile}" ] || die "no declaration at ${varfile}"
-  tf init -input=false -no-color -var-file="${varfile}" >/dev/null
-  declared_name="$(declared "${varfile}" "var.experiment.name")"
-  [ "${declared_name}" = "${name}" ] || die "${varfile} declares name \"${declared_name}\"; the file and the name must match"
+  local name="$1" declared_name
+  tf init -input=false -no-color "${DECL[@]}" >/dev/null
+  declared_name="$(declared "var.experiment.name")"
+  [ "${declared_name}" = "${name}" ] || die "experiment ${name} declares name \"${declared_name}\"; the file and the name must match"
   tf workspace select -or-create "${name}" >/dev/null
 }
 
 plan_or_apply() {
-  local cmd="$1" name="$2" varfile="${BENCH_DIR}/experiments/$2.tfvars" source deb base
+  local cmd="$1" name="$2" experiment="${BENCH_DIR}/experiments/$2.tfvars" source deb base
   shift 2
-  select_experiment "${name}" "${varfile}"
-  source="$(declared "${varfile}" "var.experiment.riptide.source")"
+  use_declaration "${SITE_FILE}" "${experiment}"
+  select_experiment "${name}"
+  source="$(declared "var.experiment.riptide.source")"
   deb="$(resolve_riptide "${source}")"
   base=""
-  if [ "$(declared "${varfile}" 'length([for h in values(var.experiment.hosts) : h if try(h.provider, "") == "libvirt"])')" != 0 ]; then
-    base="$(resolve_base_image "${varfile}")"
+  if [ "$(declared 'length([for h in values(var.site.hosts) : h if try(h.provider, "") == "libvirt"])')" != 0 ]; then
+    base="$(resolve_base_image)"
   fi
   if [ "${cmd}" = apply ]; then
-    keep_hosts "${name}" "${varfile}"
+    keep_hosts "${name}"
     # Saved before apply, so a partly applied experiment is destroyed with
     # the declaration that created it. keep_hosts makes overwriting safe: the
-    # new declaration still names every host the saved one did.
+    # new site still names every host the saved one did.
     mkdir -p "${RUNS_DIR}/${name}"
-    cp "${varfile}" "${RUNS_DIR}/${name}/applied.tfvars"
+    cp "${SITE_FILE}" "${RUNS_DIR}/${name}/applied-site.tfvars"
+    cp "${experiment}" "${RUNS_DIR}/${name}/applied.tfvars"
   fi
   # Last before tofu: downloads above can take a while, the ticket lives 2 h.
-  proxmox_login "${varfile}"
+  proxmox_login
   SECONDS=0
-  tf "${cmd}" -input=false -var-file="${varfile}" \
+  tf "${cmd}" -input=false "${DECL[@]}" \
     -var "riptide_deb=${deb}" -var "riptide_deb_sha256=$(sha256 "${deb}")" \
     -var "base_image_path=${base}" -var "agent_ssh_keys=$(agent_keys_hcl)" "$@"
   if [ "${cmd}" = apply ]; then
@@ -233,17 +261,17 @@ plan_or_apply() {
 }
 
 destroy() {
-  local mode="$1" name="$2" saved="${RUNS_DIR}/$2/applied.tfvars"
+  local mode="$1" name="$2"
   shift 2
-  [ -f "${saved}" ] || die "no saved declaration at ${saved}; was ${name} applied from this checkout?"
-  select_experiment "${name}" "${saved}"
-  proxmox_login "${saved}"
+  use_saved "${name}"
+  select_experiment "${name}"
+  proxmox_login
   if [ "${mode}" = keep-base ]; then
-    tf destroy -input=false -var-file="${saved}" \
+    tf destroy -input=false "${DECL[@]}" \
       -exclude=libvirt_volume.base -exclude=proxmox_download_file.base "$@"
     rm -f "${RUNS_DIR}/${name}/known_hosts"
   else
-    tf destroy -input=false -var-file="${saved}" "$@"
+    tf destroy -input=false "${DECL[@]}" "$@"
     tf workspace select default >/dev/null
     tf workspace delete "${name}"
     rm -rf "${RUNS_DIR:?}/${name}"
@@ -251,9 +279,9 @@ destroy() {
 }
 
 list() {
-  local name="$1" saved="${RUNS_DIR}/$1/applied.tfvars" hosts h provider target node
-  [ -f "${saved}" ] || die "no saved declaration at ${saved}; was ${name} applied from this checkout?"
-  select_experiment "${name}" "${saved}"
+  local name="$1" hosts h provider target node
+  use_saved "${name}"
+  select_experiment "${name}"
   hosts="$(tf output -json hosts)"
   printf '%-12s %-9s %-40s %s\n' HOST BACKEND VM STATE
   for h in $(echo "${hosts}" | jq -r 'keys[]'); do

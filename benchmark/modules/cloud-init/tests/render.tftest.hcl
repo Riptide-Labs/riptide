@@ -45,7 +45,7 @@ run "sut_network_config_routes_exporters_via_loadgen" {
     error_message = "sut network-config: ${output.network_config}"
   }
   assert {
-    condition     = yamldecode(output.network_config).ethernets.mgmt.routes[0].to == "default" && yamldecode(output.network_config).ethernets.mgmt.addresses[0] == "192.168.11.203/24"
+    condition     = yamldecode(output.network_config).ethernets.mgmt.routes[0].to == "default" && yamldecode(output.network_config).ethernets.mgmt.addresses[0] == "192.0.2.203/24"
     error_message = "sut mgmt: ${jsonencode(yamldecode(output.network_config).ethernets.mgmt)}"
   }
   assert {
@@ -122,10 +122,10 @@ run "vmagent_scrapes_the_given_targets" {
   command = plan
   variables {
     service        = run.declaration.services.metrics
-    scrape_targets = { node = ["192.168.11.200:9100"], riptide = ["192.168.11.203:8080"] }
+    scrape_targets = { node = ["192.0.2.200:9100"], riptide = ["192.0.2.203:8080"] }
   }
   assert {
-    condition     = jsonencode(yamldecode(nonsensitive(output.files["/etc/bench/vmagent/scrape.yml"])).scrape_configs[1]) == jsonencode({ job_name = "riptide", static_configs = [{ targets = ["192.168.11.203:8080"] }] })
+    condition     = jsonencode(yamldecode(nonsensitive(output.files["/etc/bench/vmagent/scrape.yml"])).scrape_configs[1]) == jsonencode({ job_name = "riptide", static_configs = [{ targets = ["192.0.2.203:8080"] }] })
     error_message = "scrape.yml: ${nonsensitive(output.files["/etc/bench/vmagent/scrape.yml"])}"
   }
   assert {

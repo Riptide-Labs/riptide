@@ -7,7 +7,7 @@
 
 mock_provider "libvirt" {
   alias    = "host"
-  for_each = { mad-monkey = true }
+  for_each = { kvm-1 = true }
 }
 
 mock_provider "proxmox" {

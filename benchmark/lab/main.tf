@@ -3,6 +3,7 @@
 
 module "declaration" {
   source         = "../modules/declaration"
+  site           = var.site
   raw            = var.experiment
   agent_ssh_keys = var.agent_ssh_keys
 }
