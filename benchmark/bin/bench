@@ -65,9 +65,12 @@ check() {
 }
 
 # Reads one expression from a declaration through tofu console, unquoted.
+# console prints configuration warnings to stdout ahead of the value, so only
+# the last line is the value.
 declared() {
   local varfile="$1" expr="$2" out
-  out="$(echo "${expr}" | tf console -var-file="${varfile}")" || die "cannot read ${expr} from ${varfile}"
+  out="$(echo "${expr}" | tf console -no-color -var-file="${varfile}")" || die "cannot read ${expr} from ${varfile}"
+  out="$(printf '%s\n' "${out}" | tail -n 1)"
   out="${out#\"}"
   echo "${out%\"}"
 }
