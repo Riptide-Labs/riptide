@@ -3,7 +3,8 @@
 
 # Run with -var-file=../site.example.tfvars -var-file=tests/java-opts.tfvars.
 # A declared JAVA_OPTS that already carries the profiling flag keeps its value
-# and does not get the flag twice.
+# and does not get the flag twice; a declared management bind address wins, and
+# readiness is checked where riptide actually listens.
 
 mock_provider "libvirt" {
   alias    = "host"
@@ -38,5 +39,17 @@ run "declared_flag_is_not_added_twice" {
   assert {
     condition     = strcontains(nonsensitive(local.riptide_env_file), "JAVA_OPTS=\"-Xmx4g --enable-native-access=ALL-UNNAMED\"\n")
     error_message = "JAVA_OPTS changed or duplicated the flag"
+  }
+}
+
+run "readiness_follows_the_declared_bind_address" {
+  command = plan
+  override_resource {
+    target = random_password.clickhouse
+    values = { result = "test-password" }
+  }
+  assert {
+    condition     = strcontains(nonsensitive(local.riptide_env_file), "RIPTIDE_MANAGEMENT_BIND_ADDRESS=\"127.0.0.1\"\n") && jsonencode(local.health_urls.sut) == jsonencode(["http://127.0.0.1:8080/readyz"])
+    error_message = "health: ${jsonencode(local.health_urls.sut)}"
   }
 }

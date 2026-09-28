@@ -58,9 +58,9 @@ resource "proxmox_virtual_environment_vm" "this" {
   machine         = "q35"
   scsi_hardware   = "virtio-scsi-single"
   stop_on_destroy = true
-  # Never delete a disk this VM does not reference, such as a data volume
-  # another VMID owns.
-  delete_unreferenced_disks_on_destroy = false
+  # A VM holding a kept data volume skips Proxmox's cleanup of unreferenced
+  # disks; every other VM keeps it, so destroy leaves nothing behind.
+  delete_unreferenced_disks_on_destroy = var.data_volume == null
   on_boot                              = false
   started                              = true
 

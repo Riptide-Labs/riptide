@@ -18,6 +18,8 @@ experiment = {
       RIPTIDE_RECEIVERS_FLOWS_TYPE = "multi"
       RIPTIDE_RECEIVERS_FLOWS_HOST = "0.0.0.0"
       RIPTIDE_RECEIVERS_FLOWS_PORT = "9999"
+      # Overrides the observe address the lab sets for profiling.
+      RIPTIDE_MANAGEMENT_BIND_ADDRESS = "127.0.0.1"
     }
   }
 

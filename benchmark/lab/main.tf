@@ -31,13 +31,13 @@ locals {
   # Prometheus's scrape jobs, every target on its observe address with the
   # labels a query needs to pick a slice of the lab.
   target_labels = { for s, v in local.services : s => { experiment = local.name, service = s, role = v.role, host = v.host } }
-  prometheus_jobs = !local.ok || module.declaration.observability == null ? {} : merge(
+  prometheus_jobs = local.observability == null ? {} : merge(
     { node = [for s in sort(keys(local.services)) : { target = "${local.services[s].addresses.observe}:9100", labels = local.target_labels[s] }] },
     { riptide = [{ target = "${local.services[module.declaration.sut].addresses.observe}:8080", labels = local.target_labels[module.declaration.sut] }] },
     { clickhouse = [{ target = "${local.services[local.clickhouse].addresses.observe}:9363", labels = local.target_labels[local.clickhouse] }] },
     { for s, v in local.services : "victoriametrics" => [{ target = "${v.addresses.observe}:8428", labels = local.target_labels[s] }] if v.role == "victoriametrics" },
-    { prometheus = [{ target = "localhost:9090", labels = local.target_labels[module.declaration.observability] }] },
-    { pyroscope = [{ target = "localhost:4040", labels = local.target_labels[module.declaration.observability] }] },
+    { prometheus = [{ target = "localhost:9090", labels = local.target_labels[local.observability] }] },
+    { pyroscope = [{ target = "localhost:4040", labels = local.target_labels[local.observability] }] },
   )
 
   # The self-monitoring dashboards, read at plan time so a lab shows the
@@ -83,10 +83,11 @@ module "cloud_init" {
   exporters_cidr      = module.declaration.cidrs.exporters
   pyroscope_url       = local.pyroscope_url
 
-  prometheus_jobs        = each.value.role == "observability" ? local.prometheus_jobs : {}
-  grafana_admin_password = each.value.role == "observability" ? random_password.grafana.result : ""
-  grafana_dashboards     = each.value.role == "observability" ? local.grafana_dashboards : {}
-  alert_rules            = each.value.role == "observability" ? file("${path.module}/../../deployment/clickhouse/container-fs/prometheus/riptide-alerts.yml") : ""
+  # Read by the module for the observability role only.
+  prometheus_jobs        = local.prometheus_jobs
+  grafana_admin_password = random_password.grafana.result
+  grafana_dashboards     = local.grafana_dashboards
+  alert_rules            = file("${path.module}/../../deployment/clickhouse/container-fs/prometheus/riptide-alerts.yml")
   clickhouse_files = {
     config_xml = file("${path.module}/../../deployment/clickhouse/container-fs/clickhouse/config.xml")
     users_xml  = file("${path.module}/../../deployment/clickhouse/container-fs/clickhouse/users.xml")
@@ -163,6 +164,8 @@ resource "terraform_data" "proxmox_observability_data" {
     datastore = local.x.hosts[each.value.host].datastore
     volume    = "vm-999999-bench-${local.name}-${each.key}-data"
     size      = "${each.value.disk_gb}G"
+    # The whole volid, so a volume whose name only starts the same does not count.
+    exists = "pvesm list ${local.x.hosts[each.value.host].datastore} --vmid 999999 | awk '{print $1}' | grep -qx '${local.x.hosts[each.value.host].datastore}:vm-999999-bench-${local.name}-${each.key}-data'"
   }
 
   connection {
@@ -174,12 +177,13 @@ resource "terraform_data" "proxmox_observability_data" {
 
   # Idempotent: a volume kept by an earlier bench destroy is reused.
   provisioner "remote-exec" {
-    inline = ["pvesm list ${self.input.datastore} --vmid 999999 | grep -q '${self.input.volume}' || pvesm alloc ${self.input.datastore} 999999 ${self.input.volume} ${self.input.size}"]
+    inline = ["${self.input.exists} || pvesm alloc ${self.input.datastore} 999999 ${self.input.volume} ${self.input.size}"]
   }
 
+  # A volume already freed by hand does not fail bench purge.
   provisioner "remote-exec" {
     when   = destroy
-    inline = ["pvesm free ${self.input.datastore}:${self.input.volume}"]
+    inline = ["if ${self.input.exists}; then pvesm free ${self.input.datastore}:${self.input.volume}; fi"]
   }
 
   depends_on = [terraform_data.checks]

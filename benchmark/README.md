@@ -198,6 +198,7 @@ A key neither table names is rejected, so a typo cannot fall back to a default.
 ## Watch the lab
 
 With an observability service, the lab measures and profiles itself on the `observe` network; `mgmt` carries none of it.
+A lab without one collects no telemetry: VictoriaMetrics belongs to the system under test and only riptide writes to it.
 
 | What | Where |
 | --- | --- |
@@ -241,6 +242,9 @@ A re-apply may add hosts but refuses to drop one, or to change its provider, whi
   The link stays inside the loadgen VM and is never routed out.
 - The Grafana dashboards come from this checkout, not from the riptide release under test.
   A release older than the checkout lacks series they read: on 2026-09-28, 21 of the 36 Prometheus panel queries returned nothing with `release:0.16.2`, against 4 with a package built from the checkout.
+- On Proxmox, the kept observability volume is allocated by a name without a format extension; this was verified on a ZFS pool.
+  A file-based datastore (directory, NFS, CIFS) needs a `.raw` or `.qcow2` name, so `pvesm alloc` fails there.
+- Prometheus keeps at most half the observability data disk; Pyroscope keeps 30 days and has no size cap, so a long-lived disk under heavy profiling can fill.
 - `make bench-check` runs no host.
   A green check says nothing about VMs booting, pinning on a real host or services answering.
 

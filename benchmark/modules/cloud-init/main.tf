@@ -41,7 +41,10 @@ locals {
       ],
       [for c in lookup(spec, "post", []) : "ExecStartPost=${c}"],
       [
-        "ExecStop=/usr/bin/docker stop ${name}",
+        # Docker's default 10 s before SIGKILL can cut a flush short, and a
+        # cut-short Pyroscope leaves empty blocks on the kept disk.
+        "ExecStop=/usr/bin/docker stop -t 60 ${name}",
+        "TimeoutStopSec=90",
         "Restart=on-failure",
         "RestartSec=5",
         "",
@@ -153,11 +156,12 @@ locals {
     # node_exporter listens only on observe, so metrics never leave over
     # mgmt, ingest or store. A drop-in, not /etc/default: that file is the
     # package's conffile, and cloud-init writes files before installing it.
+    # Bound to one address, it must wait for the network at boot.
     contains(keys(local.s.addresses), "observe") ? [
       {
         path        = "/etc/systemd/system/prometheus-node-exporter.service.d/10-bench-listen.conf"
         permissions = "0644"
-        content     = "[Service]\nExecStart=\nExecStart=/usr/bin/prometheus-node-exporter --web.listen-address=${local.s.addresses.observe}:9100 $ARGS\n"
+        content     = "[Unit]\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nExecStart=\nExecStart=/usr/bin/prometheus-node-exporter --web.listen-address=${local.s.addresses.observe}:9100 $ARGS\n"
       },
     ] : [],
     [for name, text in local.unit : { path = "/etc/systemd/system/${name}.service", permissions = "0644", content = text }],
@@ -195,7 +199,7 @@ locals {
     local.s.role == "observability" ? concat(
       [
         { path = "/etc/bench/prometheus/prometheus.yml", permissions = "0644", content = yamlencode(local.prometheus_config) },
-        # 0644: the Grafana container user (472) reads it through a bind mount; it exists only on this VM.
+        # 0600: only root reads it, piping it into the reset-admin-password ExecStartPre.
         { path = "/etc/bench/grafana/admin-password", permissions = "0600", content = var.grafana_admin_password },
         { path = "/etc/bench/grafana/provisioning/datasources/lab.yml", permissions = "0644", content = yamlencode(local.grafana_datasources) },
         { path = "/etc/bench/grafana/provisioning/dashboards/lab.yml", permissions = "0644", content = yamlencode(local.grafana_dashboard_provider) },

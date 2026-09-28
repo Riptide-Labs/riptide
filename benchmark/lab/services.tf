@@ -11,10 +11,18 @@
 locals {
   sut = module.declaration.sut
 
-  observability = module.declaration.observability
+  # Null on a rejected declaration too, whose services map is empty: every
+  # consumer then checks this one condition and never indexes local.services.
+  observability = local.ok ? module.declaration.observability : null
   obs_address   = try(local.services[local.observability].addresses.observe, null)
   pyroscope_url = local.obs_address == null ? "" : "http://${local.obs_address}:4040"
   sut_observe   = try(local.services[local.sut].addresses.observe, null)
+
+  # Where riptide's management server listens: the experiment's own value,
+  # else the observe address while profiling, else riptide's 0.0.0.0 default.
+  # Readiness is checked there, so the two cannot disagree.
+  sut_bind  = lookup(local.x.riptide.env, "RIPTIDE_MANAGEMENT_BIND_ADDRESS", local.pyroscope_url == "" ? "0.0.0.0" : local.sut_observe)
+  sut_ready = local.sut_bind == "0.0.0.0" ? coalesce(local.sut_observe, "127.0.0.1") : local.sut_bind
 
   # Read apart from riptide_env, which holds the ClickHouse password and so is
   # sensitive as a whole. Profiling needs native access; the flag is appended
@@ -35,7 +43,7 @@ locals {
     local.pyroscope_url == "" ? {} : {
       RIPTIDE_PROFILING_ENABLED       = "true"
       PYROSCOPE_SERVER_ADDRESS        = local.pyroscope_url
-      RIPTIDE_MANAGEMENT_BIND_ADDRESS = local.sut_observe
+      RIPTIDE_MANAGEMENT_BIND_ADDRESS = local.sut_bind
     },
     # The experiment's own values win; JAVA_OPTS is merged above.
     { for k, v in local.x.riptide.env : k => v if k != "JAVA_OPTS" },
@@ -65,11 +73,10 @@ locals {
     ])
   }
 
-  # riptide serves /readyz on its observe address when it has one; the rest
-  # are checked on the VM itself.
+  # riptide is checked where it listens; the rest on the VM itself.
   health_urls = {
     for s, v in local.services : s => {
-      riptide         = ["http://${coalesce(lookup(v.addresses, "observe", null), "127.0.0.1")}:8080/readyz"]
+      riptide         = ["http://${local.sut_ready}:8080/readyz"]
       clickhouse      = ["http://127.0.0.1:8123/ping"]
       victoriametrics = ["http://127.0.0.1:8428/health"]
       nl6             = ["http://127.0.0.1:8080/api/v1/status"]

@@ -45,6 +45,11 @@ run "node_exporter_listens_only_on_observe" {
     condition     = strcontains(try(nonsensitive(output.files["/etc/systemd/system/prometheus-node-exporter.service.d/10-bench-listen.conf"]), ""), "ExecStart=\nExecStart=/usr/bin/prometheus-node-exporter --web.listen-address=172.26.0.11:9100 $ARGS\n")
     error_message = "node exporter drop-in: ${try(nonsensitive(output.files["/etc/systemd/system/prometheus-node-exporter.service.d/10-bench-listen.conf"]), "missing")}"
   }
+  # Bound to one address, it fails at boot if it starts before the address exists.
+  assert {
+    condition     = startswith(try(nonsensitive(output.files["/etc/systemd/system/prometheus-node-exporter.service.d/10-bench-listen.conf"]), ""), "[Unit]\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\n")
+    error_message = "node exporter drop-in does not wait for the network: ${try(nonsensitive(output.files["/etc/systemd/system/prometheus-node-exporter.service.d/10-bench-listen.conf"]), "missing")}"
+  }
 }
 
 run "nl6_pushes_profiles_to_pyroscope" {
@@ -141,6 +146,11 @@ run "grafana_provisions_two_datasources_and_the_dashboards" {
   assert {
     condition     = try(one([for f in yamldecode(trimprefix(nonsensitive(output.user_data), "#cloud-config\n")).write_files : f.permissions if f.path == "/etc/bench/grafana/admin-password"]), "") == "0600"
     error_message = "the Grafana admin password file must be readable by root only"
+  }
+  # Docker's default 10 s grace before SIGKILL can cut Pyroscope's flush short.
+  assert {
+    condition     = alltrue([for u in ["grafana", "prometheus", "pyroscope"] : strcontains(try(output.units[u], ""), "ExecStop=/usr/bin/docker stop -t 60 ${u}\n") && strcontains(try(output.units[u], ""), "TimeoutStopSec=90\n")])
+    error_message = "stop grace: ${try(output.units.pyroscope, "")}"
   }
 }
 
