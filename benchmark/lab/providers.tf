@@ -12,8 +12,9 @@
 # edited copy that dropped a host.
 
 locals {
-  libvirt_hosts = { for h, v in var.site.hosts : h => v if try(v.provider, "") == "libvirt" }
-  proxmox_hosts = { for h, v in var.site.hosts : h => v if try(v.provider, "") == "proxmox" }
+  # try(): a site file without hosts is reported by the declaration, not here.
+  libvirt_hosts = { for h, v in try(var.site.hosts, {}) : h => v if try(v.provider, "") == "libvirt" }
+  proxmox_hosts = { for h, v in try(var.site.hosts, {}) : h => v if try(v.provider, "") == "proxmox" }
 }
 
 provider "libvirt" {

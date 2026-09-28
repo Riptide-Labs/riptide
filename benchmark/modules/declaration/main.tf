@@ -27,6 +27,12 @@ locals {
   }
   protected_ranges = merge(local.x.protected_ranges, local.tool_ranges)
 
+  # A site range under a reserved name would be replaced by the tool's own.
+  reserved_violations = [
+    for n in keys(local.x.protected_ranges) : "protected range ${n}: the name is reserved for the tool's range ${local.tool_ranges[n]}; rename it"
+    if contains(keys(local.tool_ranges), n)
+  ]
+
   # --- site and experiment --------------------------------------------------
   # The lab root passes the two files apart; the declaration is their merge.
   # Each key belongs to one of them, so a lab's hosts and networks never land
@@ -209,15 +215,28 @@ locals {
     mgmt      = local.x.networks.mgmt.cidr
   }
 
-  cidr_violations = concat(
-    [for n, c in local.cidrs : "network ${n}: \"${c}\" is not an IPv4 CIDR" if !can(cidrhost(c, 0)) || length(split(".", split("/", c)[0])) != 4],
-    [for n, c in local.x.protected_ranges : "protected range ${n}: \"${c}\" is not an IPv4 CIDR" if !can(cidrhost(c, 0)) || length(split(".", split("/", c)[0])) != 4],
+  mgmt_declared_violations = concat(
+    local.x.networks.mgmt.vlan != null ? [] : ["network mgmt: declare vlan, the management network's VLAN ID"],
+    local.x.networks.mgmt.cidr != null ? [] : ["network mgmt: declare cidr, the management network's address range"],
   )
-  cidrs_valid = length(local.cidr_violations) == 0
 
-  # IPv4 address to integer, and a CIDR to its first and last address.
-  cidr_first = { for n, c in merge(local.cidrs, local.protected_ranges) : n => local.cidrs_valid ? sum([for i, o in split(".", cidrhost(c, 0)) : tonumber(o) * pow(256, 3 - i)]) : 0 }
-  cidr_last  = { for n, c in merge(local.cidrs, local.protected_ranges) : n => local.cidrs_valid ? local.cidr_first[n] + pow(2, 32 - tonumber(split("/", c)[1])) - 1 : 0 }
+  # Every declared range, networks and protected ranges alike, checked once.
+  ranges = concat(
+    [for n, c in local.cidrs : { label = "network ${n}", cidr = c } if c != null],
+    [for n, c in local.x.protected_ranges : { label = "protected range ${n}", cidr = c }],
+  )
+  cidr_violations = [
+    for r in local.ranges : "${r.label}: \"${r.cidr}\" is not an IPv4 CIDR"
+    if !(can(cidrhost(r.cidr, 0)) && length(split(".", split("/", r.cidr)[0])) == 4)
+  ]
+  cidrs_valid = length(local.cidr_violations) == 0 && local.x.networks.mgmt.cidr != null
+
+  # A CIDR's first and last address as integers. Networks and protected ranges
+  # are kept apart: a site may name a protected range like a network.
+  net_first  = { for n, c in local.cidrs : n => local.cidrs_valid ? sum([for i, o in split(".", cidrhost(c, 0)) : tonumber(o) * pow(256, 3 - i)]) : 0 }
+  net_last   = { for n, c in local.cidrs : n => local.cidrs_valid ? local.net_first[n] + pow(2, 32 - tonumber(split("/", c)[1])) - 1 : 0 }
+  prot_first = { for n, c in local.protected_ranges : n => local.cidrs_valid ? sum([for i, o in split(".", cidrhost(c, 0)) : tonumber(o) * pow(256, 3 - i)]) : 0 }
+  prot_last  = { for n, c in local.protected_ranges : n => local.cidrs_valid ? local.prot_first[n] + pow(2, 32 - tonumber(split("/", c)[1])) - 1 : 0 }
 
   network_names = sort(keys(local.cidrs))
 
@@ -225,11 +244,11 @@ locals {
     flatten([for i, a in local.network_names : [
       for b in slice(local.network_names, i + 1, length(local.network_names)) :
       "networks ${a} (${local.cidrs[a]}) and ${b} (${local.cidrs[b]}) overlap"
-      if local.cidr_first[a] <= local.cidr_last[b] && local.cidr_first[b] <= local.cidr_last[a]
+      if local.net_first[a] <= local.net_last[b] && local.net_first[b] <= local.net_last[a]
     ]]),
     flatten([for a in local.network_names : [
       for p in keys(local.protected_ranges) : "network ${a} (${local.cidrs[a]}) overlaps protected range ${p} (${local.protected_ranges[p]})"
-      if local.cidr_first[a] <= local.cidr_last[p] && local.cidr_first[p] <= local.cidr_last[a]
+      if local.net_first[a] <= local.prot_last[p] && local.prot_first[p] <= local.net_last[a]
     ]]),
   ) : []
 
@@ -254,7 +273,7 @@ locals {
 
   mgmt_violations = local.cidrs_valid ? concat(
     local.mgmt_start < 0 || local.mgmt_end < 0 ? ["mgmt host_range \"${local.x.networks.mgmt.host_range}\" is not a range like 192.0.2.200-229"] : [],
-    local.mgmt_start >= 0 && local.mgmt_end >= 0 && (local.mgmt_start < local.cidr_first.mgmt || local.mgmt_end > local.cidr_last.mgmt) ? ["mgmt host_range ${local.x.networks.mgmt.host_range} is not inside ${local.cidrs.mgmt}"] : [],
+    local.mgmt_start >= 0 && local.mgmt_end >= 0 && (local.mgmt_start < local.net_first.mgmt || local.mgmt_end > local.net_last.mgmt) ? ["mgmt host_range ${local.x.networks.mgmt.host_range} is not inside ${local.cidrs.mgmt}"] : [],
     local.mgmt_start >= 0 && local.mgmt_end >= 0 && local.mgmt_end - local.mgmt_start + 1 < length(local.service_names) ? [
       "mgmt host_range ${local.x.networks.mgmt.host_range} holds ${max(0, local.mgmt_end - local.mgmt_start + 1)} addresses for ${length(local.service_names)} services: ${join(", ", local.service_names)}",
     ] : [],
@@ -275,6 +294,8 @@ locals {
     local.capacity_violations,
     local.isolation_violations,
     local.network_violations,
+    local.mgmt_declared_violations,
+    local.reserved_violations,
     local.cidr_violations,
     local.overlap_violations,
     local.address_violations,
@@ -291,7 +312,7 @@ locals {
     for s, v in local.x.services : s => {
       for n in v.networks : n => (
         n == "mgmt"
-        ? try(cidrhost(local.cidrs.mgmt, local.mgmt_start - local.cidr_first.mgmt + local.service_index[s]), null)
+        ? try(cidrhost(local.cidrs.mgmt, local.mgmt_start - local.net_first.mgmt + local.service_index[s]), null)
         : try(cidrhost(local.cidrs[n], 10 + local.service_index[s]), null)
       ) if contains(local.joinable_networks, n)
     }
@@ -309,7 +330,7 @@ locals {
     }
   }
 
-  mgmt_gateway = coalesce(local.x.networks.mgmt.gateway, try(cidrhost(local.cidrs.mgmt, 1), ""))
+  mgmt_gateway = try(coalesce(local.x.networks.mgmt.gateway, try(cidrhost(local.cidrs.mgmt, 1), "")), "")
   mgmt_dns     = coalesce(local.x.networks.mgmt.dns, [])
 
   sut     = try(one([for s, v in local.x.services : s if v.role == "riptide"]), null)

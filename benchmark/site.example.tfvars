@@ -45,8 +45,11 @@ site = {
   }
 
   # Ranges no lab network may overlap, besides the Docker ranges the tool
-  # protects itself: other networks, clusters and overlays at the site.
+  # protects itself: other networks, clusters and overlays at the site. Keep
+  # DN42 if the site peers into it: its 172.20.0.0/14 sits next to the
+  # default lab ranges 172.24.0.0/14.
   protected_ranges = {
+    "DN42"             = "172.20.0.0/14"
     "cluster pods"     = "10.244.0.0/16"
     "cluster services" = "10.96.0.0/12"
   }

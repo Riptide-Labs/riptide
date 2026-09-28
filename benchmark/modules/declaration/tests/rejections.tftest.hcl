@@ -523,3 +523,50 @@ run "invalid_protected_range_is_rejected" {
     error_message = "violations: ${jsonencode(output.violations)}"
   }
 }
+
+run "missing_mgmt_vlan_is_rejected" {
+  command = plan
+  variables {
+    raw = merge(run.fixture.raw, { networks = merge(run.fixture.raw.networks, { mgmt = { cidr = "192.0.2.0/24", host_range = "192.0.2.200-229", dns = ["192.0.2.53"] } }) })
+  }
+  assert {
+    condition     = length(output.violations) == 1 && contains(output.violations, "network mgmt: declare vlan, the management network's VLAN ID")
+    error_message = "violations: ${jsonencode(output.violations)}"
+  }
+}
+
+# A declaration saved before cidr was required must still convert.
+run "missing_mgmt_cidr_is_rejected" {
+  command = plan
+  variables {
+    raw = merge(run.fixture.raw, { networks = merge(run.fixture.raw.networks, { mgmt = { vlan = 11, host_range = "192.0.2.200-229", dns = ["192.0.2.53"] } }) })
+  }
+  assert {
+    condition     = length(output.violations) == 1 && contains(output.violations, "network mgmt: declare cidr, the management network's address range")
+    error_message = "violations: ${jsonencode(output.violations)}"
+  }
+}
+
+run "reserved_protected_range_name_is_rejected" {
+  command = plan
+  variables {
+    raw = merge(run.fixture.raw, { protected_ranges = { "Docker default" = "10.200.0.0/16" } })
+  }
+  assert {
+    condition     = length(output.violations) == 1 && contains(output.violations, "protected range Docker default: the name is reserved for the tool's range 172.17.0.0/16; rename it")
+    error_message = "violations: ${jsonencode(output.violations)}"
+  }
+}
+
+# Named like a network, a protected range keeps its own bounds: no false
+# overlap with the network mgmt, and a real overlap is still found.
+run "protected_range_named_like_a_network_keeps_its_bounds" {
+  command = plan
+  variables {
+    raw = merge(run.fixture.raw, { protected_ranges = { mgmt = "10.0.0.0/8", store = "172.25.128.0/17" } })
+  }
+  assert {
+    condition     = length(output.violations) == 1 && contains(output.violations, "network store (172.25.0.0/16) overlaps protected range store (172.25.128.0/17)")
+    error_message = "violations: ${jsonencode(output.violations)}"
+  }
+}

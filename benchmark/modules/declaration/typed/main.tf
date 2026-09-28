@@ -38,12 +38,13 @@ variable "experiment" {
       }), {})
       mgmt = object({
         host_range = string
-        vlan       = number
-        cidr       = string
+        vlan       = optional(number)
+        cidr       = optional(string)
         gateway    = optional(string)
-        # Required, but checked as a violation in the parent module rather
-        # than by the type: a type error would hide every other violation,
-        # and would break destroy for declarations saved before dns existed.
+        # vlan, cidr and dns are required, but checked as violations in the
+        # parent module rather than by the type: a type error would hide every
+        # other violation, and would break destroy for a declaration saved
+        # before the field was required.
         dns = optional(list(string))
       })
     })

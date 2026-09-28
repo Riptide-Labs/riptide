@@ -66,7 +66,7 @@ A key in the wrong file is rejected, so a lab's addresses cannot end up in a com
    Each entry is one physical core, written as its thread siblings.
 
 3. Keep the host keys the experiments use (`pve-1`, `kvm-1` in `flow-capacity`) and point them at your machines.
-   `BENCH_SITE=<path>` selects another site file.
+   `BENCH_SITE=<path>` selects another site file; `.gitignore` covers any `benchmark/site*.tfvars` but the example.
 
 ### Site file
 
@@ -86,7 +86,7 @@ A key in the wrong file is rejected, so a lab's addresses cannot end up in a com
 | **`networks.mgmt.host_range`** | string | required | Addresses for the VMs, `192.0.2.200-229` form. |
 | **`networks.mgmt.dns`** | list(string) | required | Resolvers the VMs use; cloud-init installs packages through them. |
 | **`networks.mgmt.gateway`** | string | first host of `cidr` | Default route. |
-| **`protected_ranges`** | map(string) | `{}` | Name to CIDR of ranges no lab network may overlap: other networks, clusters, overlays. The Docker ranges `172.17.0.0/16` and `172.28.0.0/14` are always protected. |
+| **`protected_ranges`** | map(string) | `{}` | Name to CIDR of ranges no lab network may overlap: other networks, clusters, overlays, and DN42 (`172.20.0.0/14`) if the site peers into it. The Docker ranges `172.17.0.0/16` and `172.28.0.0/14` are always protected, under names a site cannot reuse. |
 
 `exporters` is not a VLAN: nl6 allocates its simulated exporters from that range inside the loadgen VM, and the SUT routes it through the loadgen's `ingest` address.
 

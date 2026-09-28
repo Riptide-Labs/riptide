@@ -24,6 +24,8 @@ CACHE_DIR="${BENCH_DIR}/.cache"
 RUNS_DIR="${BENCH_DIR}/runs"
 # The lab's hosts, addresses and networks; not in git (site.example.tfvars).
 SITE_FILE="${BENCH_SITE:-${BENCH_DIR}/site.tfvars}"
+# tofu runs with -chdir, which would resolve a relative path elsewhere.
+case "${SITE_FILE}" in /*) ;; *) SITE_FILE="${PWD}/${SITE_FILE}" ;; esac
 METADATA_NS="https://riptide-labs.github.io/benchmark/1"
 
 die() { echo "bench: $*" >&2; exit 1; }
@@ -85,12 +87,18 @@ check() {
   done
 }
 
-# Reads one expression from the declaration in use through tofu console,
-# unquoted. console prints configuration warnings to stdout ahead of the
-# value, so only the last line is the value.
+# Reads one expression through tofu console, unquoted: declared_in reads it
+# from the var-file arguments given after the expression, declared from the
+# declaration in use. console prints configuration warnings to stdout ahead
+# of the value, so only the last line is the value.
 declared() {
+  declared_in "$1" "${DECL[@]}"
+}
+
+declared_in() {
   local expr="$1" out
-  out="$(echo "${expr}" | tf console -no-color "${DECL[@]}")" || die "cannot read ${expr} from ${DECL[*]}"
+  shift
+  out="$(echo "${expr}" | tf console -no-color "$@")" || die "cannot read ${expr} from $*"
   out="$(printf '%s\n' "${out}" | tail -n 1)"
   out="${out#\"}"
   echo "${out%\"}"
@@ -160,9 +168,9 @@ resolve_base_image() {
 # needs. A ticket lives two hours, so it is fetched on every run.
 proxmox_login() {
   local target out
-  [ "$(declared 'length([for h in values(var.site.hosts) : h if try(h.provider, "") == "proxmox"])')" != 0 ] || return 0
+  [ "$(declared 'length([for h in values(try(var.site.hosts, {})) : h if try(h.provider, "") == "proxmox"])')" != 0 ] || return 0
   # shellcheck disable=SC2016 # an HCL expression; ${...} is for tofu, not the shell
-  target="$(declared '[for h in values(var.site.hosts) : try(h.address, null) != null ? h.address : h.node if try(h.provider, "") == "proxmox"][0]')"
+  target="$(declared '[for h in values(try(var.site.hosts, {})) : try(h.address, null) != null ? h.address : h.node if try(h.provider, "") == "proxmox"][0]')"
   : "${PROXMOX_VE_ENDPOINT:=https://${target}:8006/}"
   export PROXMOX_VE_ENDPOINT
   [ -z "${PROXMOX_VE_PASSWORD:-}" ] || return 0
@@ -191,15 +199,15 @@ agent_keys_hcl() {
 # instances. So a re-apply may add hosts but never drop one, or change its
 # provider, while the saved declaration still names it: destroy first.
 keep_hosts() {
-  local name="$1" expr before after h
-  local -a current=("${DECL[@]}")
-  [ -f "${RUNS_DIR}/${name}/applied-site.tfvars" ] || return 0
+  local name="$1" dir="${RUNS_DIR}/$1" expr before after h
+  # An applied.tfvars without its site file is from before the split, and
+  # check_saved says how to convert it rather than letting apply overwrite it.
+  [ -f "${dir}/applied.tfvars" ] || return 0
+  check_saved "${name}"
   # shellcheck disable=SC2016 # an HCL expression; ${...} is for tofu, not the shell
-  expr='join(" ", sort([for k, v in var.site.hosts : "${k}=${try(v.provider, "")}"]))'
+  expr='join(" ", sort([for k, v in try(var.site.hosts, {}) : "${k}=${try(v.provider, "")}"]))'
   after=" $(declared "${expr}") "
-  use_saved "${name}"
-  before="$(declared "${expr}")"
-  DECL=("${current[@]}")
+  before="$(declared_in "${expr}" "-var-file=${dir}/applied-site.tfvars" "-var-file=${dir}/applied.tfvars")"
   for h in ${before}; do
     case "${after}" in
       *" ${h} "*) ;;
@@ -208,13 +216,17 @@ keep_hosts() {
   done
 }
 
-# Uses the declaration an experiment was applied with, saved by apply.
-use_saved() {
+# The declaration an experiment was applied with, saved by apply.
+check_saved() {
   local dir="${RUNS_DIR}/$1"
   [ -f "${dir}/applied.tfvars" ] || die "no saved declaration in ${dir}; was $1 applied from this checkout?"
   [ -f "${dir}/applied-site.tfvars" ] ||
     die "${dir} was saved before the site file existed: move hosts and networks from applied.tfvars into applied-site.tfvars as site = { ... }"
-  use_declaration "${dir}/applied-site.tfvars" "${dir}/applied.tfvars"
+}
+
+use_saved() {
+  check_saved "$1"
+  use_declaration "${RUNS_DIR}/$1/applied-site.tfvars" "${RUNS_DIR}/$1/applied.tfvars"
 }
 
 # Selects the experiment: init with the declaration in use, then its workspace.
@@ -234,7 +246,7 @@ plan_or_apply() {
   source="$(declared "var.experiment.riptide.source")"
   deb="$(resolve_riptide "${source}")"
   base=""
-  if [ "$(declared 'length([for h in values(var.site.hosts) : h if try(h.provider, "") == "libvirt"])')" != 0 ]; then
+  if [ "$(declared 'length([for h in values(try(var.site.hosts, {})) : h if try(h.provider, "") == "libvirt"])')" != 0 ]; then
     base="$(resolve_base_image)"
   fi
   if [ "${cmd}" = apply ]; then

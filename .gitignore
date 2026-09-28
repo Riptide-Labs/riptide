@@ -69,8 +69,10 @@ benchmark/**/terraform.tfstate.backup
 benchmark/**/terraform.tfstate.d/
 benchmark/.cache/
 benchmark/runs/
-# A lab's hosts, addresses and networks (benchmark/site.example.tfvars).
-benchmark/site.tfvars
+# A lab's hosts, addresses and networks (benchmark/site.example.tfvars),
+# under any name BENCH_SITE may point at.
+benchmark/site*.tfvars
+!benchmark/site.example.tfvars
 
 ### Docker Compose ###
 compose.override.y*ml
