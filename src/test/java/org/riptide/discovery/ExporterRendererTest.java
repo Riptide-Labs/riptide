@@ -310,10 +310,10 @@ class ExporterRendererTest {
     void aNameClaimedOnTwoEndpointsListsEachAddressWithItsEndpoint() {
         assertThatThrownBy(() -> renderBoth(
                 List.of(exporter("hook", "192.168.10.5")),
-                List.of(exporter("hook", "100.110.244.41"))))
+                List.of(exporter("hook", "198.51.100.41"))))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageStartingWith(DEVICES + ", " + VMS + " returned 1 exporter name(s)")
-                .hasMessageEndingWith("  hook -> 192.168.10.5 (" + DEVICES + "), 100.110.244.41 (" + VMS + ")");
+                .hasMessageEndingWith("  hook -> 192.168.10.5 (" + DEVICES + "), 198.51.100.41 (" + VMS + ")");
     }
 
     @Test
