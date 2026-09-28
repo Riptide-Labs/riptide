@@ -1,0 +1,34 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Run with -var-file=tests/rejected.tfvars. A rejected declaration stops the
+# plan at terraform_data.checks, before any VM, disk or image is planned.
+# modules/declaration/tests pins each rule and its message.
+
+mock_provider "libvirt" {
+  alias    = "host"
+  for_each = { mad-monkey = true }
+}
+
+mock_provider "proxmox" {
+  alias    = "pve"
+  for_each = { pve = true }
+
+  mock_resource "proxmox_download_file" {
+    defaults = { id = "local:import/base.qcow2" }
+  }
+  mock_resource "proxmox_virtual_environment_file" {
+    defaults = { id = "local:snippets/cloud-init.yaml" }
+  }
+}
+
+variables {
+  agent_ssh_keys     = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKeyOnly test"]
+  riptide_deb        = "/tmp/riptide_0.16.2_all.deb"
+  riptide_deb_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+}
+
+run "isolation_violation_blocks_the_plan" {
+  command         = plan
+  expect_failures = [terraform_data.checks]
+}

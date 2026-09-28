@@ -1,0 +1,53 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Host-free checks of the benchmark lab (benchmark/README.md): formatting,
+# validation and every `tofu test` suite, with mocked providers. Nothing here
+# reaches a lab host, and no apply runs, so a green run says nothing about VMs
+# booting, pinning on a real host or services answering.
+#
+# Path-filtered, which is safe only because this is not a required check: a
+# required check that a filter skips stays pending and blocks the merge.
+name: Benchmark lab
+run-name: Check the benchmark lab declaration and modules
+on:
+  workflow_dispatch:
+  push:
+    branches: [ 'main' ]
+    paths:
+      - 'benchmark/**'
+      - 'deployment/clickhouse/compose.yml'
+      - 'deployment/clickhouse/container-fs/clickhouse/**'
+      - '.github/workflows/benchmark-lab.yml'
+      - 'Makefile'
+  pull_request:
+    branches: [ 'main' ]
+    paths:
+      - 'benchmark/**'
+      - 'deployment/clickhouse/compose.yml'
+      - 'deployment/clickhouse/container-fs/clickhouse/**'
+      - '.github/workflows/benchmark-lab.yml'
+      - 'Makefile'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-lab-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Verifies the binary against the release's SHA256SUMS by default.
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: 1.12.6
+          tofu_wrapper: false
+      - name: Check the benchmark lab
+        run: make bench-check
