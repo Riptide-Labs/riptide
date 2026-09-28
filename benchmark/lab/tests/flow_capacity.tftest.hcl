@@ -202,7 +202,7 @@ run "observability_data_disk_lives_outside_the_domain" {
     error_message = "observability data volumes: ${jsonencode(keys(libvirt_volume.observability_data))}"
   }
   assert {
-    condition     = module.libvirt_vm["observe"].domain.disks == 3 && module.libvirt_vm["metrics"].domain.disks == 3
+    condition     = module.libvirt_vm["observe"].domain.disks == 3 && module.libvirt_vm["metrics"].domain.disks == 3 && module.libvirt_vm["observe"].domain.data_disk == "bench-flow-capacity-observe-data.qcow2"
     error_message = "disks: observe ${module.libvirt_vm["observe"].domain.disks}, metrics ${module.libvirt_vm["metrics"].domain.disks}"
   }
 }
