@@ -140,13 +140,26 @@ locals {
     ]
   }
 
-  # Same uids as the compose stack's self-monitoring datasources.
+  # Same uids as the compose stack's datasources, so every dashboard binds
+  # unchanged. ClickHouse is read on observe with the native protocol; the flow
+  # dashboards are opened between ladder steps, never during a hold.
   grafana_datasources = {
     apiVersion = 1
-    datasources = [
-      { name = "Prometheus", uid = "riptide-prometheus", type = "prometheus", url = "http://localhost:9090", jsonData = { timeInterval = "10s" } },
-      { name = "Pyroscope", uid = "riptide-pyroscope", type = "grafana-pyroscope-datasource", url = "http://localhost:4040" },
-    ]
+    datasources = concat(
+      [
+        { name = "Prometheus", uid = "riptide-prometheus", type = "prometheus", url = "http://localhost:9090", jsonData = { timeInterval = "10s" } },
+        { name = "Pyroscope", uid = "riptide-pyroscope", type = "grafana-pyroscope-datasource", url = "http://localhost:4040" },
+      ],
+      var.grafana_clickhouse == null ? [] : [
+        {
+          name           = "ClickHouse"
+          uid            = "riptide-clickhouse"
+          type           = "grafana-clickhouse-datasource"
+          jsonData       = { host = var.grafana_clickhouse.host, port = 9000, protocol = "native", username = "default", defaultDatabase = var.grafana_clickhouse.database }
+          secureJsonData = { password = var.clickhouse_password }
+        },
+      ],
+    )
   }
 
   grafana_dashboard_provider = {
@@ -214,7 +227,7 @@ locals {
         { path = "/etc/bench/prometheus/prometheus.yml", permissions = "0644", content = yamlencode(local.prometheus_config) },
         # 0600: only root reads it, piping it into the reset-admin-password ExecStartPre.
         { path = "/etc/bench/grafana/admin-password", permissions = "0600", content = var.grafana_admin_password },
-        { path = "/etc/bench/grafana/provisioning/datasources/lab.yml", permissions = "0644", content = yamlencode(local.grafana_datasources) },
+        { path = "/etc/bench/grafana/provisioning/datasources/lab.yml", permissions = "0640", content = yamlencode(local.grafana_datasources) },
         { path = "/etc/bench/grafana/provisioning/dashboards/lab.yml", permissions = "0644", content = yamlencode(local.grafana_dashboard_provider) },
       ],
       var.alert_rules == "" ? [] : [{ path = "/etc/bench/prometheus/riptide-alerts.yml", permissions = "0644", content = var.alert_rules }],
@@ -266,6 +279,9 @@ locals {
           ["chown", "-R", "65534:65534", "${local.data_dir}/prometheus"],
           ["chown", "-R", "10001:10001", "${local.data_dir}/pyroscope"],
           ["chown", "-R", "472:472", "${local.data_dir}/grafana"],
+          # The datasources file holds the ClickHouse password: readable by
+          # root and Grafana's group (472 in the image) only.
+          ["chown", "0:472", "/etc/bench/grafana/provisioning/datasources/lab.yml"],
         ] : [],
         local.uses_docker ? [["systemctl", "restart", "docker"], ["systemctl", "daemon-reload"]] : [],
         contains(keys(local.s.addresses), "observe") ? [["systemctl", "daemon-reload"], ["systemctl", "restart", "prometheus-node-exporter"]] : [],

@@ -280,3 +280,19 @@ run "discovery_is_off_unless_declared" {
     error_message = "riptide.env carries discovery keys the experiment did not declare"
   }
 }
+
+run "grafana_gets_every_dashboard" {
+  command = plan
+  assert {
+    condition     = length(local.grafana_dashboards) == 12 && contains(keys(local.grafana_dashboards), "riptide-traffic-paths.json")
+    error_message = "dashboards: ${jsonencode(keys(local.grafana_dashboards))}"
+  }
+}
+
+run "clickhouse_password_is_a_private_run_file" {
+  command = plan
+  assert {
+    condition     = length(local_file.clickhouse_password) == 1 && local_file.clickhouse_password[0].file_permission == "0600"
+    error_message = "clickhouse-password file missing or not 0600"
+  }
+}

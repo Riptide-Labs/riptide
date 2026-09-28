@@ -176,6 +176,7 @@ A key neither table names is rejected, so a typo cannot fall back to a default.
    | `prometheus-jobs.json` | The scrape jobs the lab's Prometheus runs, every target with its labels. |
    | `grafana-admin` | Grafana's admin password, mode 0600. |
    | `seed/<service>/` | The service's rendered cloud-init documents, mode 0600: they hold the lab's passwords. See [Change a running lab](#change-a-running-lab). |
+   | `clickhouse-password` | ClickHouse's `default` password, mode 0600. The flow knee ladder reads it. |
    | `applied-site.tfvars`, `applied.tfvars` | The site and experiment files apply used; destroy reads them. |
 
 4. List the experiment's VMs on every declared host:
@@ -204,7 +205,7 @@ A lab without one collects no telemetry: VictoriaMetrics belongs to the system u
 
 | What | Where |
 | --- | --- |
-| Grafana, with `riptide-health`, `riptide-stage-detail` and `riptide-profiling` | `http://<observability mgmt address>:3000`, user `admin`, password in `runs/<name>/grafana-admin` |
+| Grafana, with every riptide dashboard; the flow dashboards read ClickHouse on `observe` | `http://<observability mgmt address>:3000`, user `admin`, password in `runs/<name>/grafana-admin` |
 | Prometheus | `http://<observability mgmt address>:9090` |
 | Pyroscope | `http://<observability mgmt address>:4040` |
 

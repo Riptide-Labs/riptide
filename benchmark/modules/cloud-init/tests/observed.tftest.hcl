@@ -251,3 +251,21 @@ run "grafana_preinstalls_the_dashboard_plugins" {
     error_message = "grafana unit: ${try(nonsensitive(output.files["/etc/systemd/system/grafana.service"]), "missing")}"
   }
 }
+
+run "grafana_reads_clickhouse_on_observe" {
+  command = plan
+  variables {
+    service            = run.declaration.services.observe
+    grafana_clickhouse = { host = "172.26.0.12", database = "riptide_knee" }
+  }
+  assert {
+    condition     = try(one([for d in yamldecode(nonsensitive(output.files["/etc/bench/grafana/provisioning/datasources/lab.yml"])).datasources : d if d.uid == "riptide-clickhouse"]).type, "") == "grafana-clickhouse-datasource"
+    error_message = "datasources: ${try(nonsensitive(output.files["/etc/bench/grafana/provisioning/datasources/lab.yml"]), "missing")}"
+  }
+  assert {
+    condition = try(jsonencode(one([for d in yamldecode(nonsensitive(output.files["/etc/bench/grafana/provisioning/datasources/lab.yml"])).datasources : d if d.uid == "riptide-clickhouse"]).jsonData), "") == jsonencode({
+      defaultDatabase = "riptide_knee", host = "172.26.0.12", port = 9000, protocol = "native", username = "default"
+    })
+    error_message = "datasources: ${try(nonsensitive(output.files["/etc/bench/grafana/provisioning/datasources/lab.yml"]), "missing")}"
+  }
+}

@@ -77,3 +77,12 @@ variable "alert_rules" {
   type        = string
   default     = ""
 }
+
+variable "grafana_clickhouse" {
+  description = "Where the observability Grafana reads flows: the ClickHouse observe address and database. Null leaves Grafana without a ClickHouse datasource."
+  type = object({
+    host     = string
+    database = string
+  })
+  default = null
+}
