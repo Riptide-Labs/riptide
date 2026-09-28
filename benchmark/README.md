@@ -28,8 +28,9 @@ A key in the wrong file is rejected, so a lab's addresses cannot end up in a com
 
 ### One-time lab setup
 
-1. Create a VLAN for `ingest` and one for `store` (24 and 25 in the example) and trunk both, and the `mgmt` VLAN, to every host.
-2. On a libvirt host, create an address-less bridge per VLAN, for example with netplan: VLAN subinterfaces `<nic>.24` and `<nic>.25` in bridges `br-vlan24` and `br-vlan25`.
+1. Create a VLAN for `ingest`, `store` and `observe` (24, 25 and 26 in the example) and trunk them, and the `mgmt` VLAN, to every host.
+   `observe` is needed only for an observability service.
+2. On a libvirt host, create an address-less bridge per VLAN, for example with netplan: VLAN subinterfaces `<nic>.24`, `<nic>.25` and `<nic>.26` in bridges `br-vlan24`, `br-vlan25` and `br-vlan26`.
    A Proxmox node needs nothing: a NIC tagged on `vmbr0` gets a `vmbr0v<tag>` bridge when `vmbr0` is not VLAN-aware.
 3. On a libvirt host that runs Docker, move Docker's address pools out of `172.24.0.0/14` in **`/etc/docker/daemon.json`**:
 
@@ -81,7 +82,8 @@ A key in the wrong file is rejected, so a lab's addresses cannot end up in a com
 | **`hosts.<h>.address`** | string | node name | SSH and API address of a Proxmox node. |
 | **`hosts.<h>.bridges`** | map(string) | `vmbr0` per network on Proxmox | Host bridge per network. Required on libvirt. |
 | **`networks.ingest.vlan`**, **`networks.store.vlan`** | number | required | VLAN IDs. |
-| **`networks.ingest.cidr`**, **`.store.cidr`**, **`.exporters.cidr`** | string | `172.24.0.0/16`, `172.25.0.0/16`, `172.27.0.0/16` | Address ranges. |
+| **`networks.observe.vlan`** | number | required when `observe` is declared | VLAN of the out-of-band network: every scrape and profile push. Needed for an observability service. |
+| **`networks.ingest.cidr`**, **`.store.cidr`**, **`.observe.cidr`**, **`.exporters.cidr`** | string | `172.24.0.0/16`, `172.25.0.0/16`, `172.26.0.0/16`, `172.27.0.0/16` | Address ranges. |
 | **`networks.mgmt.vlan`**, **`networks.mgmt.cidr`** | number, string | required | The management VLAN and its range. |
 | **`networks.mgmt.host_range`** | string | required | Addresses for the VMs, `192.0.2.200-229` form. |
 | **`networks.mgmt.dns`** | list(string) | required | Resolvers the VMs use; cloud-init installs packages through them. |
@@ -103,7 +105,7 @@ A key in the wrong file is rejected, so a lab's addresses cannot end up in a com
    Expected output (last lines):
 
    ```text
-   == lab: tests/rejected_no_clickhouse.tftest.hcl with tests/rejected-no-clickhouse.tfvars
+   == lab: tests/java_opts.tftest.hcl with ../site.example.tfvars,tests/java-opts.tfvars
    Success! 1 passed, 0 failed.
    ```
 
@@ -117,11 +119,11 @@ A key in the wrong file is rejected, so a lab's addresses cannot end up in a com
 | **`riptide.source`** | string | required | `release:X.Y.Z` (downloaded and verified with cosign) or `deb:<path>` (relative to the repository root). |
 | **`riptide.env`** | map(string) | `{}` | Lines of `/etc/riptide/riptide.env`: `JAVA_OPTS` and `RIPTIDE_*` overrides, for example receivers. |
 | **`ssh_keys`** | list(string) | `[]` | Keys for user `bench` in addition to the SSH agent's. |
-| **`services.<s>.role`** | string | required | `riptide` (exactly one), `clickhouse` (exactly one), `nl6`, `victoriametrics` (at most one each). |
+| **`services.<s>.role`** | string | required | `riptide` (exactly one), `clickhouse` (exactly one), `nl6`, `victoriametrics`, `observability` (at most one each). `observability` needs `disk_gb`; when it exists every service joins `observe`. |
 | **`services.<s>.host`**, **`.numa_node`** | string, number | required | Placement: a host key from the site file and one of its NUMA nodes. |
 | **`services.<s>.vcpus`** | number | required | A multiple of the host's threads per core. The service gets `vcpus / threads` whole cores. |
 | **`services.<s>.memory_gb`**, **`.disk_gb`**, **`.hugepages`** | number, number, bool | required, none, `false` | `disk_gb` adds a data disk mounted at `/var/lib/bench`. |
-| **`services.<s>.networks`** | list(string) | required | From `ingest`, `store`, `mgmt`. riptide needs all three; nl6 needs `ingest` and `mgmt`; the others `store` and `mgmt`. |
+| **`services.<s>.networks`** | list(string) | required | From `ingest`, `store`, `observe`, `mgmt`. riptide needs `ingest`, `store` and `mgmt`; nl6 `ingest` and `mgmt`; clickhouse and victoriametrics `store` and `mgmt`; observability `observe` and `mgmt`. |
 
 A key neither table names is rejected, so a typo cannot fall back to a default.
 
@@ -161,7 +163,7 @@ A key neither table names is rejected, so a typo cannot fall back to a default.
    For an unattended run, pass tofu arguments through: `make bench-apply EXP=flow-capacity BENCH_TOFU_ARGS=-auto-approve`, or `benchmark/bin/bench apply flow-capacity -auto-approve`.
    `make` hands **`BENCH_TOFU_ARGS`** to `bench-apply` and `bench-destroy` only; `tofu plan` rejects `-auto-approve`.
 
-   Apply waits for cloud-init and then for ClickHouse `/ping`, VictoriaMetrics `/health` and nl6 `/api/v1/status`, installs riptide over SSH, and waits for its `/readyz`.
+   Apply waits for cloud-init and the observability VM (Prometheus, Pyroscope, Grafana) first, then for ClickHouse `/ping`, VictoriaMetrics `/health` and nl6 `/api/v1/status`, installs riptide over SSH, and waits for its `/readyz`.
    A service that misses its deadline (**`ready_timeout_seconds`**, 600) fails the apply with its name and URL.
 
 3. Read the run files in `benchmark/runs/<name>/`:
@@ -170,7 +172,8 @@ A key neither table names is rejected, so a typo cannot fall back to a default.
    | --- | --- |
    | `inventory.json` | Per service: host, NUMA node, pinned CPUs, emulator CPUs, addresses, MACs. riptide version and SHA-256, image digests, and the `sut` fields of a `benchmark-capture` manifest. |
    | `ssh_config` | `Host bench-<name>-<service>` entries: `ssh -F benchmark/runs/<name>/ssh_config bench-<name>-sut`. Host keys go to `known_hosts` next to it, since a rebuilt VM has a new key. |
-   | `scrape-targets.json` | Prometheus file-SD targets for riptide `/metrics` and every node_exporter. |
+   | `prometheus-jobs.json` | The scrape jobs the lab's Prometheus runs, every target with its labels. |
+   | `grafana-admin` | Grafana's admin password, mode 0600. |
    | `applied-site.tfvars`, `applied.tfvars` | The site and experiment files apply used; destroy reads them. |
 
 4. List the experiment's VMs on every declared host:
@@ -191,6 +194,21 @@ A key neither table names is rejected, so a typo cannot fall back to a default.
 
    Proxmox VMs are matched by the `exp-<name>` tag through `pvesh`; libvirt domains by their metadata, read with `virsh metadata <domain> https://riptide-labs.github.io/benchmark/1`.
 
+## Watch the lab
+
+With an observability service, the lab measures and profiles itself on the `observe` network; `mgmt` carries none of it.
+
+| What | Where |
+| --- | --- |
+| Grafana, with `riptide-health`, `riptide-stage-detail` and `riptide-profiling` | `http://<observability mgmt address>:3000`, user `admin`, password in `runs/<name>/grafana-admin` |
+| Prometheus | `http://<observability mgmt address>:9090` |
+| Pyroscope | `http://<observability mgmt address>:4040` |
+
+The addresses are in `runs/<name>/inventory.json` under `observability`.
+Prometheus scrapes every 10 s: node_exporter on every VM (it listens only on `observe`), riptide, VictoriaMetrics, ClickHouse (port 9363), itself and Pyroscope, every target labelled with `experiment`, `service`, `role` and `host`.
+riptide and nl6 push continuous profiles to Pyroscope.
+VictoriaMetrics is part of the system under test: only riptide writes to it.
+
 ## Remove the lab
 
 ```bash
@@ -203,10 +221,10 @@ Expected output (last line):
 Destroy complete! Resources: 21 destroyed.
 ```
 
-Destroy removes the experiment's VMs, disks, cloud-init media and snippets and keeps its downloaded base images, so the next apply skips the download.
+Destroy removes the experiment's VMs, disks, cloud-init media and snippets and keeps its downloaded base images and the observability data disk, so the next apply skips the download and Prometheus and Pyroscope keep their history.
 It uses the files saved in `runs/<name>/`, not the editable ones: a host deleted from the site file after apply still has its VMs removed.
 A re-apply may add hosts but refuses to drop one, or to change its provider, while it still has VMs: destroy first.
-`benchmark/bin/bench purge <name>` also removes the base images, the workspace and the run files.
+`benchmark/bin/bench purge <name>` also removes the base images, the observability data, the workspace and the run files.
 
 ## Limits
 
@@ -215,8 +233,8 @@ A re-apply may add hosts but refuses to drop one, or to change its provider, whi
 - On Proxmox, `cpu.affinity` pins the whole QEMU process to the service's cores, so emulator threads share them; the guest sees `vcpus` cores without SMT topology.
   libvirt pins each vCPU to one thread and emulator threads to the reserved core.
 - The `dmacvicar/libvirt` provider's signature is not checked, because its registry entry carries no GPG key; `.terraform.lock.hcl` pins its hashes.
-- Image digests in **`benchmark/lab/images.auto.tfvars`** are bumped by hand; Dependabot does not read `.tfvars`.
-  The ClickHouse image is read from `deployment/clickhouse/compose.yml`.
+- The Debian base image in **`benchmark/lab/images.auto.tfvars`** is bumped by hand; Dependabot does not read `.tfvars`.
+  Container images live in **`benchmark/images/compose.yml`**, which Dependabot keeps current; ClickHouse is read from `deployment/clickhouse/compose.yml`.
 - nl6 hardcodes its veth pair at `10.254.0.1` and `10.254.0.2`.
   The link stays inside the loadgen VM and is never routed out.
 - `make bench-check` runs no host.
