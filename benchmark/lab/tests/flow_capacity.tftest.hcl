@@ -190,7 +190,7 @@ run "every_lab_image_comes_from_the_manifest_digest_pinned" {
     error_message = "an image is not digest-pinned: ${jsonencode(local.images)}"
   }
   assert {
-    condition     = local.images.grafana == "docker.io/grafana/grafana:13.2.2-distroless-slim@sha256:e71b3b20cbf56b628adce3224a51511f3989871e50074c7a0b9c5d8cbac09263"
+    condition     = local.images.grafana == "docker.io/grafana/grafana:13.2.2@sha256:ac461fb352abc50da10a51c7d02462e9c05488f11f53f14b3ad79a8145f638a0"
     error_message = "grafana: ${try(local.images.grafana, "missing")}"
   }
 }
