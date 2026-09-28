@@ -40,11 +40,11 @@ locals {
     { pyroscope = [{ target = "localhost:4040", labels = local.target_labels[local.observability] }] },
   )
 
-  # The self-monitoring dashboards, read at plan time so a lab shows the
-  # repository's current ones.
+  # Every riptide dashboard, read at plan time so a lab shows the repository's
+  # current ones. The flow dashboards read ClickHouse through the lab Grafana.
+  dashboards_dir = "${path.module}/../../deployment/clickhouse/container-fs/grafana/provisioning/dashboards"
   grafana_dashboards = {
-    for f in ["riptide-health.json", "riptide-stage-detail.json", "riptide-profiling.json"] :
-    f => file("${path.module}/../../deployment/clickhouse/container-fs/grafana/provisioning/dashboards/${f}")
+    for f in fileset(local.dashboards_dir, "*.json") : f => file("${local.dashboards_dir}/${f}")
   }
 }
 
@@ -87,7 +87,11 @@ module "cloud_init" {
   prometheus_jobs        = local.prometheus_jobs
   grafana_admin_password = random_password.grafana.result
   grafana_dashboards     = local.grafana_dashboards
-  alert_rules            = file("${path.module}/../../deployment/clickhouse/container-fs/prometheus/riptide-alerts.yml")
+  grafana_clickhouse = local.observability == null ? null : {
+    host     = local.services[local.clickhouse].addresses.observe
+    database = lookup(local.x.riptide.env, "RIPTIDE_CLICKHOUSE_DATABASE", "riptide")
+  }
+  alert_rules = file("${path.module}/../../deployment/clickhouse/container-fs/prometheus/riptide-alerts.yml")
   clickhouse_files = {
     config_xml = file("${path.module}/../../deployment/clickhouse/container-fs/clickhouse/config.xml")
     users_xml  = file("${path.module}/../../deployment/clickhouse/container-fs/clickhouse/users.xml")

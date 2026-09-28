@@ -96,6 +96,15 @@ resource "local_file" "prometheus_jobs" {
   depends_on      = [terraform_data.riptide]
 }
 
+# The ladder driver counts stored rows in ClickHouse (benchmark/ladder).
+resource "local_file" "clickhouse_password" {
+  count           = local.observability == null ? 0 : 1
+  filename        = "${local.run_dir}/clickhouse-password"
+  content         = random_password.clickhouse.result
+  file_permission = "0600"
+  depends_on      = [terraform_data.riptide]
+}
+
 resource "local_file" "grafana_admin" {
   count           = local.observability == null ? 0 : 1
   filename        = "${local.run_dir}/grafana-admin"
