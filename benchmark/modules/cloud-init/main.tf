@@ -13,7 +13,7 @@ locals {
   data_dir = "/var/lib/bench"
 
   # Container roles run their images with host networking under systemd.
-  container_roles = ["clickhouse", "nl6", "victoriametrics"]
+  container_roles = ["clickhouse", "nl6", "victoriametrics", "observability"]
   uses_docker     = contains(local.container_roles, local.s.role)
 
   # Docker's default pools reach 172.24.0.0/14 on a host with enough networks,
@@ -83,7 +83,61 @@ locals {
         cmd         = ["-storageDataPath=/storage", "-retentionPeriod=90d", "-httpListenAddr=:8428"]
       }
     } : null,
+    local.s.role == "observability" ? {
+      prometheus = {
+        description = "Prometheus for benchmark ${var.experiment}"
+        image       = var.images.prometheus
+        args        = ["-v /etc/bench/prometheus:/etc/prometheus:ro", "-v ${local.data_dir}/prometheus:/prometheus"]
+        # Half the data disk: Pyroscope and Grafana share it.
+        cmd = ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--storage.tsdb.retention.size=${floor(coalesce(local.s.disk_gb, 2) / 2)}GB", "--web.listen-address=:9090"]
+      }
+      pyroscope = {
+        description = "Pyroscope for benchmark ${var.experiment}"
+        image       = var.images.pyroscope
+        args        = ["-v ${local.data_dir}/pyroscope:/data"]
+        cmd         = ["-retention-period=720h"]
+      }
+      grafana = {
+        description = "Grafana for benchmark ${var.experiment}"
+        image       = var.images.grafana
+        args = [
+          "-e GF_SECURITY_ADMIN_PASSWORD__FILE=/etc/grafana/admin-password",
+          "-e GF_AUTH_ANONYMOUS_ENABLED=false",
+          "-v /etc/bench/grafana/admin-password:/etc/grafana/admin-password:ro",
+          "-v /etc/bench/grafana/provisioning:/etc/grafana/provisioning:ro",
+          "-v /etc/bench/grafana/dashboards:/var/lib/grafana-dashboards:ro",
+          "-v ${local.data_dir}/grafana:/var/lib/grafana",
+        ]
+        cmd = []
+      }
+    } : null,
   )
+
+  prometheus_config = {
+    global     = { scrape_interval = "10s", evaluation_interval = "10s" }
+    rule_files = var.alert_rules == "" ? [] : ["/etc/prometheus/riptide-alerts.yml"]
+    scrape_configs = [
+      for job in sort(keys(var.prometheus_jobs)) : {
+        job_name       = job
+        metrics_path   = "/metrics"
+        static_configs = [for t in var.prometheus_jobs[job] : { targets = [t.target], labels = t.labels }]
+      }
+    ]
+  }
+
+  # Same uids as the compose stack's self-monitoring datasources.
+  grafana_datasources = {
+    apiVersion = 1
+    datasources = [
+      { name = "Prometheus", uid = "riptide-prometheus", type = "prometheus", url = "http://localhost:9090", jsonData = { timeInterval = "10s" } },
+      { name = "Pyroscope", uid = "riptide-pyroscope", type = "grafana-pyroscope-datasource", url = "http://localhost:4040" },
+    ]
+  }
+
+  grafana_dashboard_provider = {
+    apiVersion = 1
+    providers  = [{ name = "riptide", type = "file", folder = "Riptide", options = { path = "/var/lib/grafana-dashboards" } }]
+  }
 
   write_files = concat(
     [
@@ -131,6 +185,17 @@ locals {
         EOT
       },
     ] : [],
+    local.s.role == "observability" ? concat(
+      [
+        { path = "/etc/bench/prometheus/prometheus.yml", permissions = "0644", content = yamlencode(local.prometheus_config) },
+        # 0644: the Grafana container user (472) reads it through a bind mount; it exists only on this VM.
+        { path = "/etc/bench/grafana/admin-password", permissions = "0644", content = var.grafana_admin_password },
+        { path = "/etc/bench/grafana/provisioning/datasources/lab.yml", permissions = "0644", content = yamlencode(local.grafana_datasources) },
+        { path = "/etc/bench/grafana/provisioning/dashboards/lab.yml", permissions = "0644", content = yamlencode(local.grafana_dashboard_provider) },
+      ],
+      var.alert_rules == "" ? [] : [{ path = "/etc/bench/prometheus/riptide-alerts.yml", permissions = "0644", content = var.alert_rules }],
+      [for f in sort(keys(var.grafana_dashboards)) : { path = "/etc/bench/grafana/dashboards/${f}", permissions = "0644", content = var.grafana_dashboards[f] }],
+    ) : [],
   )
 
   packages = concat(
@@ -157,20 +222,33 @@ locals {
       }]
       package_update = true
       packages       = local.packages
-      write_files    = local.write_files
+      # Large files (the dashboards) travel compressed in the user-data.
+      write_files = [
+        for f in local.write_files : length(f.content) > 4096
+        ? { path = f.path, permissions = f.permissions, encoding = "gz+b64", content = base64gzip(f.content) }
+        : f
+      ]
       runcmd = concat(
         [
           ["sysctl", "--system"],
           ["mkdir", "-p", local.data_dir],
         ],
         [for name in keys(local.units) : ["mkdir", "-p", "${local.data_dir}/${name}"]],
+        # Each container writes as its image's user.
+        local.s.role == "observability" ? [
+          ["chown", "-R", "65534:65534", "${local.data_dir}/prometheus"],
+          ["chown", "-R", "10001:10001", "${local.data_dir}/pyroscope"],
+          ["chown", "-R", "472:472", "${local.data_dir}/grafana"],
+        ] : [],
         local.uses_docker ? [["systemctl", "restart", "docker"], ["systemctl", "daemon-reload"]] : [],
         contains(keys(local.s.addresses), "observe") ? [["systemctl", "daemon-reload"], ["systemctl", "restart", "prometheus-node-exporter"]] : [],
         [for name in keys(local.units) : ["systemctl", "enable", "--now", "${name}.service"]],
       )
     },
     local.has_data_disk ? {
-      fs_setup = [{ label = "benchdata", filesystem = "ext4", device = "/dev/vdb" }]
+      # overwrite = false: a reattached data disk (the observability VM's)
+      # keeps its data.
+      fs_setup = [{ label = "benchdata", filesystem = "ext4", device = "/dev/vdb", overwrite = false }]
       mounts   = [["LABEL=benchdata", local.data_dir, "ext4", "defaults,nofail", "0", "2"]]
     } : null,
   )
