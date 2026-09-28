@@ -27,5 +27,6 @@ output "vm" {
     nics      = [for n in proxmox_virtual_environment_vm.this.network_device : { bridge = n.bridge, vlan_id = n.vlan_id, mac = n.mac_address, queues = n.queues }]
     datastore = proxmox_virtual_environment_vm.this.disk[0].datastore_id
     disks     = length(proxmox_virtual_environment_vm.this.disk)
+    data_path = try([for d in proxmox_virtual_environment_vm.this.disk : d.path_in_datastore if d.interface == "virtio1"][0], null)
   }
 }

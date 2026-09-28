@@ -53,6 +53,7 @@ locals {
     clickhouse      = "http://127.0.0.1:8123/ping"
     victoriametrics = "http://127.0.0.1:8428/health"
     nl6             = "http://127.0.0.1:8080/api/v1/status"
+    observability   = "http://127.0.0.1:9090/-/ready"
   }
 }
 

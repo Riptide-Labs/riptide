@@ -31,7 +31,19 @@ run "plans_without_libvirt" {
     error_message = "a Proxmox-only experiment planned libvirt resources"
   }
   assert {
-    condition     = jsonencode(sort(keys(module.proxmox_vm))) == jsonencode(["clickhouse", "loadgen", "metrics", "sut"])
+    condition     = jsonencode(sort(keys(module.proxmox_vm))) == jsonencode(["clickhouse", "loadgen", "metrics", "observe", "sut"])
     error_message = "Proxmox VMs: ${jsonencode(keys(module.proxmox_vm))}"
+  }
+}
+
+run "proxmox_observability_disk_is_allocated_outside_the_vm" {
+  command = plan
+  assert {
+    condition     = length(terraform_data.proxmox_observability_data) == 1 && terraform_data.proxmox_observability_data["observe"].input.volume == "vm-999999-bench-idle-libvirt-observe-data"
+    error_message = "proxmox observability data: ${jsonencode(keys(terraform_data.proxmox_observability_data))}"
+  }
+  assert {
+    condition     = module.proxmox_vm["observe"].vm.disks == 2 && module.proxmox_vm["observe"].vm.data_path == "vm-999999-bench-idle-libvirt-observe-data"
+    error_message = "observe vm: ${jsonencode(module.proxmox_vm["observe"].vm)}"
   }
 }

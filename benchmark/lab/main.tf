@@ -108,6 +108,56 @@ resource "proxmox_download_file" "base" {
   depends_on = [terraform_data.checks]
 }
 
+# --- observability data -----------------------------------------------------
+# The observability service's data disk outlives its VM: bench destroy
+# excludes these resources, so a re-applied lab keeps its measurement
+# history; bench purge removes them.
+
+resource "libvirt_volume" "observability_data" {
+  for_each = { for s, v in local.libvirt_services : s => v if v.role == "observability" }
+  provider = libvirt.host[each.value.host]
+
+  name     = "bench-${local.name}-${each.key}-data.qcow2"
+  pool     = local.x.hosts[each.value.host].pool
+  capacity = each.value.disk_gb * 1073741824
+  target   = { format = { type = "qcow2" } }
+
+  depends_on = [terraform_data.checks]
+}
+
+# Owned by holder VMID 999999, so destroying the observability VM leaves it:
+# Proxmox deletes only the volumes a VM's own VMID owns. Allocated and freed
+# over the root SSH that snippet upload already uses.
+resource "terraform_data" "proxmox_observability_data" {
+  for_each = { for s, v in local.proxmox_services : s => v if v.role == "observability" }
+
+  input = {
+    target    = coalesce(local.x.hosts[each.value.host].address, local.x.hosts[each.value.host].node)
+    datastore = local.x.hosts[each.value.host].datastore
+    volume    = "vm-999999-bench-${local.name}-${each.key}-data"
+    size      = "${each.value.disk_gb}G"
+  }
+
+  connection {
+    type  = "ssh"
+    host  = self.input.target
+    user  = "root"
+    agent = true
+  }
+
+  # Idempotent: a volume kept by an earlier bench destroy is reused.
+  provisioner "remote-exec" {
+    inline = ["pvesm list ${self.input.datastore} --vmid 999999 | grep -q '${self.input.volume}' || pvesm alloc ${self.input.datastore} 999999 ${self.input.volume} ${self.input.size}"]
+  }
+
+  provisioner "remote-exec" {
+    when   = destroy
+    inline = ["pvesm free ${self.input.datastore}:${self.input.volume}"]
+  }
+
+  depends_on = [terraform_data.checks]
+}
+
 # --- VMs --------------------------------------------------------------------
 
 module "libvirt_vm" {
@@ -119,6 +169,10 @@ module "libvirt_vm" {
   service          = each.value
   pool             = local.x.hosts[each.value.host].pool
   base_volume_path = libvirt_volume.base[each.value.host].path
+  data_volume = each.value.role == "observability" ? {
+    pool = libvirt_volume.observability_data[each.key].pool
+    name = libvirt_volume.observability_data[each.key].name
+  } : null
   cloud_init = {
     user_data      = module.cloud_init[each.key].user_data
     meta_data      = module.cloud_init[each.key].meta_data
@@ -138,6 +192,12 @@ module "proxmox_vm" {
   node          = local.x.hosts[each.value.host].node
   datastore     = local.x.hosts[each.value.host].datastore
   base_image_id = proxmox_download_file.base[each.value.host].id
+  data_volume = each.value.role == "observability" ? {
+    # input, not output: known at plan, and the reference still orders the
+    # VM after the volume.
+    datastore = terraform_data.proxmox_observability_data[each.key].input.datastore
+    path      = terraform_data.proxmox_observability_data[each.key].input.volume
+  } : null
   cloud_init = {
     user_data      = module.cloud_init[each.key].user_data
     meta_data      = module.cloud_init[each.key].meta_data

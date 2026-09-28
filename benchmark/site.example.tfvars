@@ -28,13 +28,16 @@ site = {
       uri      = "qemu+ssh://root@kvm-1.example.org/system"
       pool     = "default"
       numa     = { 0 = ["0,8", "1,9", "2,10", "3,11", "4,12", "5,13", "6,14", "7,15"] }
-      bridges  = { ingest = "br-vlan24", store = "br-vlan25", mgmt = "br-mgmt" }
+      bridges  = { ingest = "br-vlan24", store = "br-vlan25", observe = "br-vlan26", mgmt = "br-mgmt" }
     }
   }
 
   networks = {
     ingest = { vlan = 24 } # cidr defaults to 172.24.0.0/16
     store  = { vlan = 25 } # cidr defaults to 172.25.0.0/16
+    # Out of band: every scrape and profile push. Optional; needed for an
+    # observability service.
+    observe = { vlan = 26 } # cidr defaults to 172.26.0.0/16
     mgmt = {
       vlan       = 11
       cidr       = "192.0.2.0/24"

@@ -41,7 +41,7 @@ resource "libvirt_volume" "root" {
 }
 
 resource "libvirt_volume" "data" {
-  count    = var.service.disk_gb == null ? 0 : 1
+  count    = var.service.disk_gb == null || var.data_volume != null ? 0 : 1
   name     = "${local.name}-data.qcow2"
   pool     = var.pool
   capacity = var.service.disk_gb * local.gib
@@ -94,7 +94,7 @@ resource "libvirt_domain" "this" {
         target = { bus = "virtio", dev = "vda" }
         driver = { type = "qcow2" }
       }],
-      [for v in libvirt_volume.data : {
+      [for v in(var.data_volume == null ? [for d in libvirt_volume.data : { pool = d.pool, name = d.name }] : [var.data_volume]) : {
         source = { volume = { pool = v.pool, volume = v.name } }
         target = { bus = "virtio", dev = "vdb" }
         driver = { type = "qcow2" }

@@ -38,7 +38,7 @@ variables {
 run "vms_go_to_their_backend" {
   command = plan
   assert {
-    condition     = jsonencode(sort(keys(module.libvirt_vm))) == jsonencode(["loadgen", "metrics"]) && jsonencode(sort(keys(module.proxmox_vm))) == jsonencode(["clickhouse", "sut"])
+    condition     = jsonencode(sort(keys(module.libvirt_vm))) == jsonencode(["loadgen", "metrics", "observe"]) && jsonencode(sort(keys(module.proxmox_vm))) == jsonencode(["clickhouse", "sut"])
     error_message = "libvirt: ${jsonencode(keys(module.libvirt_vm))}, proxmox: ${jsonencode(keys(module.proxmox_vm))}"
   }
 }
@@ -61,6 +61,7 @@ run "proxmox_nics_carry_vlan_tags_and_macs" {
     condition = jsonencode(module.proxmox_vm["sut"].vm.nics) == jsonencode([
       { bridge = "vmbr0", vlan_id = 24, mac = upper(output.services.sut.macs.ingest), queues = 8 },
       { bridge = "vmbr0", vlan_id = 25, mac = upper(output.services.sut.macs.store), queues = 8 },
+      { bridge = "vmbr0", vlan_id = 26, mac = upper(output.services.sut.macs.observe), queues = 8 },
       { bridge = "vmbr0", vlan_id = 11, mac = upper(output.services.sut.macs.mgmt), queues = 8 },
     ])
     error_message = "sut nics: ${jsonencode(module.proxmox_vm["sut"].vm.nics)}"
@@ -114,6 +115,7 @@ run "libvirt_nics_use_declared_bridges" {
   assert {
     condition = jsonencode(module.libvirt_vm["loadgen"].domain.interfaces) == jsonencode([
       { bridge = "br-vlan24", mac = output.services.loadgen.macs.ingest, queues = 8 },
+      { bridge = "br-vlan26", mac = output.services.loadgen.macs.observe, queues = 8 },
       { bridge = "br-mgmt", mac = output.services.loadgen.macs.mgmt, queues = 8 },
     ])
     error_message = "loadgen interfaces: ${jsonencode(module.libvirt_vm["loadgen"].domain.interfaces)}"
@@ -190,5 +192,17 @@ run "every_lab_image_comes_from_the_manifest_digest_pinned" {
   assert {
     condition     = local.images.grafana == "docker.io/grafana/grafana:13.2.2-distroless-slim@sha256:e71b3b20cbf56b628adce3224a51511f3989871e50074c7a0b9c5d8cbac09263"
     error_message = "grafana: ${try(local.images.grafana, "missing")}"
+  }
+}
+
+run "observability_data_disk_lives_outside_the_domain" {
+  command = plan
+  assert {
+    condition     = length(libvirt_volume.observability_data) == 1 && libvirt_volume.observability_data["observe"].name == "bench-flow-capacity-observe-data.qcow2"
+    error_message = "observability data volumes: ${jsonencode(keys(libvirt_volume.observability_data))}"
+  }
+  assert {
+    condition     = module.libvirt_vm["observe"].domain.disks == 3 && module.libvirt_vm["metrics"].domain.disks == 3
+    error_message = "disks: observe ${module.libvirt_vm["observe"].domain.disks}, metrics ${module.libvirt_vm["metrics"].domain.disks}"
   }
 }

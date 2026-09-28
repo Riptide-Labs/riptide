@@ -51,3 +51,9 @@ variable "root_disk_gb" {
   type        = number
   default     = 20
 }
+
+variable "data_volume" {
+  description = "An existing volume to attach as the data disk instead of creating one; the lab root owns it so it survives bench destroy (the observability service). Null otherwise."
+  type        = object({ pool = string, name = string })
+  default     = null
+}
