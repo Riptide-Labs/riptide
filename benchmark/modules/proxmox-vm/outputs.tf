@@ -19,6 +19,7 @@ output "tags" {
 output "vm" {
   description = "The planned VM settings that carry placement and labels, read back from the resource for tests and review."
   value = {
+    machine   = proxmox_virtual_environment_vm.this.machine
     tags      = proxmox_virtual_environment_vm.this.tags
     affinity  = proxmox_virtual_environment_vm.this.cpu[0].affinity
     cores     = proxmox_virtual_environment_vm.this.cpu[0].cores

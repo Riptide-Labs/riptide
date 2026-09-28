@@ -165,3 +165,12 @@ run "inventory_carries_the_capture_manifest_sut_fields" {
     error_message = "db_version: ${local.inventory.sut.db_version}"
   }
 }
+
+# Proxmox defaults to i440fx when no machine is given.
+run "every_vm_is_q35" {
+  command = plan
+  assert {
+    condition     = alltrue([for m in module.proxmox_vm : m.vm.machine == "q35"]) && alltrue([for m in module.libvirt_vm : m.domain.machine == "q35"])
+    error_message = "machines: ${jsonencode(merge({ for s, m in module.proxmox_vm : s => m.vm.machine }, { for s, m in module.libvirt_vm : s => m.domain.machine }))}"
+  }
+}

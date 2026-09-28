@@ -19,6 +19,7 @@ output "labels" {
 output "domain" {
   description = "The planned domain settings that carry placement and labels, read back from the resource for tests and review."
   value = {
+    machine    = libvirt_domain.this.os.type_machine
     title      = libvirt_domain.this.title
     metadata   = libvirt_domain.this.metadata.xml
     topology   = libvirt_domain.this.cpu.topology
