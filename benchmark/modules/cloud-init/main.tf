@@ -269,8 +269,8 @@ locals {
           ["chown", "-R", "10001:10001", "${local.data_dir}/pyroscope"],
           ["chown", "-R", "472:472", "${local.data_dir}/grafana"],
           # The datasources file holds the ClickHouse password: readable by
-          # root and Grafana's group (472 in the image) only.
-          ["chown", "0:472", "/etc/bench/grafana/provisioning/datasources/lab.yml"],
+          # Grafana only. The image runs as uid 472 with gid 0, so 472 owns it.
+          ["chown", "472:0", "/etc/bench/grafana/provisioning/datasources/lab.yml"],
         ] : [],
         local.uses_docker ? [["systemctl", "restart", "docker"], ["systemctl", "daemon-reload"]] : [],
         contains(keys(local.s.addresses), "observe") ? [["systemctl", "daemon-reload"], ["systemctl", "restart", "prometheus-node-exporter"]] : [],

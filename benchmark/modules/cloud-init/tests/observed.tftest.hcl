@@ -230,3 +230,17 @@ run "grafana_reads_clickhouse_on_observe" {
     error_message = "datasources: ${try(nonsensitive(output.files["/etc/bench/grafana/provisioning/datasources/lab.yml"]), "missing")}"
   }
 }
+
+# The Grafana image runs as uid 472 with gid 0, so the datasources file, which
+# holds the ClickHouse password, is owned by 472; a group of 472 is not enough.
+run "grafana_owns_the_datasources_file" {
+  command = plan
+  variables {
+    service            = run.declaration.services.observe
+    grafana_clickhouse = { host = "172.26.0.12", database = "riptide_knee" }
+  }
+  assert {
+    condition     = contains(yamldecode(nonsensitive(output.user_data)).runcmd, ["chown", "472:0", "/etc/bench/grafana/provisioning/datasources/lab.yml"])
+    error_message = "runcmd: ${jsonencode(yamldecode(nonsensitive(output.user_data)).runcmd)}"
+  }
+}
