@@ -9,6 +9,9 @@
 #   bench apply   <name>       apply it; returns when every health check answers
 #   bench destroy <name>       destroy its VMs, disks and snippets; keeps base images
 #   bench purge   <name>       destroy everything, base images included, and the workspace
+#
+# plan, apply, destroy and purge pass further arguments to tofu, for example
+# -auto-approve for an unattended run.
 #   bench list    <name>       list its VMs on every declared host
 #
 # Written for bash 3.2 (macOS): no associative arrays, no mapfile.
@@ -196,6 +199,7 @@ select_experiment() {
 
 plan_or_apply() {
   local cmd="$1" name="$2" varfile="${BENCH_DIR}/experiments/$2.tfvars" source deb base
+  shift 2
   select_experiment "${name}" "${varfile}"
   proxmox_login "${varfile}"
   source="$(declared "${varfile}" "var.experiment.riptide.source")"
@@ -215,21 +219,22 @@ plan_or_apply() {
   SECONDS=0
   tf "${cmd}" -input=false -var-file="${varfile}" \
     -var "riptide_deb=${deb}" -var "riptide_deb_sha256=$(sha256 "${deb}")" \
-    -var "base_image_path=${base}" -var "agent_ssh_keys=$(agent_keys_hcl)"
+    -var "base_image_path=${base}" -var "agent_ssh_keys=$(agent_keys_hcl)" "$@"
   [ "${cmd}" = apply ] && echo "bench: ${name} ready in ${SECONDS} s; inventory at ${RUNS_DIR}/${name}/inventory.json"
   return 0
 }
 
 destroy() {
   local mode="$1" name="$2" saved="${RUNS_DIR}/$2/applied.tfvars"
+  shift 2
   [ -f "${saved}" ] || die "no saved declaration at ${saved}; was ${name} applied from this checkout?"
   select_experiment "${name}" "${saved}"
   proxmox_login "${saved}"
   if [ "${mode}" = keep-base ]; then
     tf destroy -input=false -var-file="${saved}" \
-      -exclude=libvirt_volume.base -exclude=proxmox_download_file.base
+      -exclude=libvirt_volume.base -exclude=proxmox_download_file.base "$@"
   else
-    tf destroy -input=false -var-file="${saved}"
+    tf destroy -input=false -var-file="${saved}" "$@"
     tf workspace select default >/dev/null
     tf workspace delete "${name}"
     rm -rf "${RUNS_DIR:?}/${name}"
@@ -270,9 +275,9 @@ list() {
 cmd="${1:-}"
 case "${cmd}" in
   check) check ;;
-  plan | apply) [ -n "${2:-}" ] || die "usage: bench ${cmd} <name>"; plan_or_apply "${cmd}" "$2" ;;
-  destroy) [ -n "${2:-}" ] || die "usage: bench destroy <name>"; destroy keep-base "$2" ;;
-  purge) [ -n "${2:-}" ] || die "usage: bench purge <name>"; destroy all "$2" ;;
+  plan | apply) [ -n "${2:-}" ] || die "usage: bench ${cmd} <name> [tofu args]"; plan_or_apply "${cmd}" "$2" "${@:3}" ;;
+  destroy) [ -n "${2:-}" ] || die "usage: bench destroy <name> [tofu args]"; destroy keep-base "$2" "${@:3}" ;;
+  purge) [ -n "${2:-}" ] || die "usage: bench purge <name> [tofu args]"; destroy all "$2" "${@:3}" ;;
   list) [ -n "${2:-}" ] || die "usage: bench list <name>"; list "$2" ;;
-  *) sed -n '5,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '5,16p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
