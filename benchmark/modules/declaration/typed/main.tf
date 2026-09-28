@@ -41,7 +41,9 @@ variable "experiment" {
         vlan       = optional(number, 11)
         cidr       = optional(string, "192.168.11.0/24")
         gateway    = optional(string)
-        dns        = optional(list(string))
+        # Required: the gateway often does not serve DNS (VLAN 11 does not),
+        # and a wrong default only shows as a cloud-init package failure.
+        dns = list(string)
       })
     })
     services = map(object({

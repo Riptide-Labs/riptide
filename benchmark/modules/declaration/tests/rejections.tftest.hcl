@@ -440,3 +440,14 @@ run "lab_network_too_small_is_rejected" {
     error_message = "violations: ${jsonencode(output.violations)}"
   }
 }
+
+run "empty_dns_is_rejected" {
+  command = plan
+  variables {
+    raw = merge(run.fixture.raw, { networks = merge(run.fixture.raw.networks, { mgmt = merge(run.fixture.raw.networks.mgmt, { dns = [] }) }) })
+  }
+  assert {
+    condition     = length(output.violations) == 1 && contains(output.violations, "network mgmt: dns is empty; VMs need a resolver to install packages")
+    error_message = "violations: ${jsonencode(output.violations)}"
+  }
+}

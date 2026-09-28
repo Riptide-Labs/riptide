@@ -233,6 +233,7 @@ destroy() {
   if [ "${mode}" = keep-base ]; then
     tf destroy -input=false -var-file="${saved}" \
       -exclude=libvirt_volume.base -exclude=proxmox_download_file.base "$@"
+    rm -f "${RUNS_DIR}/${name}/known_hosts"
   else
     tf destroy -input=false -var-file="${saved}" "$@"
     tf workspace select default >/dev/null
