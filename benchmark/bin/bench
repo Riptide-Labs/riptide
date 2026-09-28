@@ -9,10 +9,10 @@
 #   bench apply   <name>       apply it; returns when every health check answers
 #   bench destroy <name>       destroy its VMs, disks and snippets; keeps base images
 #   bench purge   <name>       destroy everything, base images included, and the workspace
+#   bench list    <name>       list its VMs on every declared host
 #
 # plan, apply, destroy and purge pass further arguments to tofu, for example
 # -auto-approve for an unattended run.
-#   bench list    <name>       list its VMs on every declared host
 #
 # Written for bash 3.2 (macOS): no associative arrays, no mapfile.
 set -euo pipefail
