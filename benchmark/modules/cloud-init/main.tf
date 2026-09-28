@@ -34,6 +34,9 @@ locals {
         "",
         "[Service]",
         "ExecStartPre=-/usr/bin/docker rm -f ${name}",
+      ],
+      [for c in lookup(spec, "pre", []) : "ExecStartPre=${c}"],
+      [
         "ExecStart=/usr/bin/docker run --rm --name ${name} --network host ${join(" ", spec.args)} ${spec.image} ${join(" ", spec.cmd)}",
       ],
       [for c in lookup(spec, "post", []) : "ExecStartPost=${c}"],
@@ -100,10 +103,14 @@ locals {
       grafana = {
         description = "Grafana for benchmark ${var.experiment}"
         image       = var.images.grafana
+        # The distroless image starts the grafana binary without /run.sh, so
+        # no GF_*__FILE variable is read, and grafana.db on the kept disk keeps
+        # the password it was created with. Every start resets it instead.
+        pre = [
+          "/bin/sh -c '/usr/bin/docker run --rm -i -v ${local.data_dir}/grafana:/var/lib/grafana --entrypoint grafana ${var.images.grafana} cli admin reset-admin-password --password-from-stdin < /etc/bench/grafana/admin-password'",
+        ]
         args = [
-          "-e GF_SECURITY_ADMIN_PASSWORD__FILE=/etc/grafana/admin-password",
           "-e GF_AUTH_ANONYMOUS_ENABLED=false",
-          "-v /etc/bench/grafana/admin-password:/etc/grafana/admin-password:ro",
           "-v /etc/bench/grafana/provisioning:/etc/grafana/provisioning:ro",
           "-v /etc/bench/grafana/dashboards:/var/lib/grafana-dashboards:ro",
           "-v ${local.data_dir}/grafana:/var/lib/grafana",
@@ -189,7 +196,7 @@ locals {
       [
         { path = "/etc/bench/prometheus/prometheus.yml", permissions = "0644", content = yamlencode(local.prometheus_config) },
         # 0644: the Grafana container user (472) reads it through a bind mount; it exists only on this VM.
-        { path = "/etc/bench/grafana/admin-password", permissions = "0644", content = var.grafana_admin_password },
+        { path = "/etc/bench/grafana/admin-password", permissions = "0600", content = var.grafana_admin_password },
         { path = "/etc/bench/grafana/provisioning/datasources/lab.yml", permissions = "0644", content = yamlencode(local.grafana_datasources) },
         { path = "/etc/bench/grafana/provisioning/dashboards/lab.yml", permissions = "0644", content = yamlencode(local.grafana_dashboard_provider) },
       ],

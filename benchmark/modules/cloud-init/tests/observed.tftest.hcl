@@ -128,8 +128,19 @@ run "grafana_provisions_two_datasources_and_the_dashboards" {
     error_message = "dashboards or password file missing"
   }
   assert {
-    condition     = strcontains(try(output.units.grafana, ""), "GF_SECURITY_ADMIN_PASSWORD__FILE=/etc/grafana/admin-password") && strcontains(try(output.units.grafana, ""), "GF_AUTH_ANONYMOUS_ENABLED=false")
+    condition     = strcontains(try(output.units.grafana, ""), "GF_AUTH_ANONYMOUS_ENABLED=false")
     error_message = "grafana: ${try(output.units.grafana, "")}"
+  }
+  # The distroless image starts the grafana binary without /run.sh, so no
+  # GF_*__FILE variable is read, and grafana.db on the kept disk keeps the
+  # password it was created with. Every start resets it from the file.
+  assert {
+    condition     = strcontains(try(output.units.grafana, ""), "ExecStartPre=/bin/sh -c '/usr/bin/docker run --rm -i -v /var/lib/bench/grafana:/var/lib/grafana --entrypoint grafana docker.io/grafana/grafana:13.2.2-distroless-slim@sha256:graf cli admin reset-admin-password --password-from-stdin < /etc/bench/grafana/admin-password'") && !strcontains(try(output.units.grafana, ""), "__FILE")
+    error_message = "grafana admin password reset: ${try(output.units.grafana, "")}"
+  }
+  assert {
+    condition     = try(one([for f in yamldecode(trimprefix(nonsensitive(output.user_data), "#cloud-config\n")).write_files : f.permissions if f.path == "/etc/bench/grafana/admin-password"]), "") == "0600"
+    error_message = "the Grafana admin password file must be readable by root only"
   }
 }
 
