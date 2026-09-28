@@ -30,3 +30,13 @@ output "ssh_keys" {
   description = "Keys authorized for user bench: the agent's, then the declaration's."
   value       = local.ssh_keys
 }
+
+output "observability" {
+  description = "Name of the observability service, or null."
+  value       = local.observability
+}
+
+output "observe_enabled" {
+  description = "Whether the site declares the observe network."
+  value       = local.observe_enabled
+}

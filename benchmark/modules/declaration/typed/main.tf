@@ -33,6 +33,11 @@ variable "experiment" {
         vlan = number
         cidr = optional(string, "172.25.0.0/16")
       })
+      observe = optional(object({
+        # vlan is required when observe is declared; checked as a violation.
+        vlan = optional(number)
+        cidr = optional(string, "172.26.0.0/16")
+      }))
       exporters = optional(object({
         cidr = optional(string, "172.27.0.0/16")
       }), {})

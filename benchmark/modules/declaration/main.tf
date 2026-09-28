@@ -13,11 +13,11 @@ module "typed" {
 locals {
   x = module.typed.experiment
 
-  roles              = ["riptide", "clickhouse", "nl6", "victoriametrics"]
-  joinable_networks  = ["ingest", "store", "mgmt"]
-  role_networks      = { riptide = ["ingest", "store", "mgmt"], clickhouse = ["store", "mgmt"], nl6 = ["ingest", "mgmt"], victoriametrics = ["store", "mgmt"] }
+  roles              = ["riptide", "clickhouse", "nl6", "victoriametrics", "observability"]
+  joinable_networks  = ["ingest", "store", "observe", "mgmt"]
+  role_networks      = { riptide = ["ingest", "store", "mgmt"], clickhouse = ["store", "mgmt"], nl6 = ["ingest", "mgmt"], victoriametrics = ["store", "mgmt"], observability = ["observe", "mgmt"] }
   role_count_exactly = { riptide = 1, clickhouse = 1 }
-  role_count_at_most = { nl6 = 1, victoriametrics = 1 }
+  role_count_at_most = { nl6 = 1, victoriametrics = 1, observability = 1 }
 
   # The ranges the tool itself uses; the site adds its own (other networks,
   # clusters, overlays) as protected_ranges.
@@ -59,6 +59,7 @@ locals {
     networks = {
       ingest    = ["vlan", "cidr"]
       store     = ["vlan", "cidr"]
+      observe   = ["vlan", "cidr"]
       exporters = ["cidr"]
       mgmt      = ["host_range", "vlan", "cidr", "gateway", "dns"]
     }
@@ -109,6 +110,25 @@ locals {
     if length([for s, v in local.x.services : s if v.role == r]) != n],
     [for r, n in local.role_count_at_most : "at most ${n} ${r} service allowed, found ${length([for s, v in local.x.services : s if v.role == r])}"
     if length([for s, v in local.x.services : s if v.role == r]) > n],
+  )
+
+  # --- observe network and observability role --------------------------------
+
+  observe_enabled = local.x.networks.observe != null
+  observability   = try(one([for s, v in local.x.services : s if v.role == "observability"]), null)
+  observe_joiners = sort([for s, v in local.x.services : s if contains(v.networks, "observe")])
+
+  observe_violations = concat(
+    local.observe_enabled && try(local.x.networks.observe.vlan, null) == null ? ["network observe: declare vlan, the observability network's VLAN ID"] : [],
+    !local.observe_enabled && length(local.observe_joiners) > 0 ? [
+      "network observe: the site declares no observe network, but services join it: ${join(", ", local.observe_joiners)}",
+    ] : [],
+    [for s, v in local.x.services : "service ${s}: role observability needs disk_gb for the data that survives bench destroy" if v.role == "observability" && v.disk_gb == null],
+    # The observability service missing observe is reported by role_networks.
+    local.observability == null ? [] : [
+      for s, v in local.x.services : "service ${s}: network observe is required while the lab has an observability service"
+      if !contains(v.networks, "observe") && v.role != "observability"
+    ],
   )
 
   # --- hosts and topology ---------------------------------------------------
@@ -208,12 +228,15 @@ locals {
     )
   ])
 
-  cidrs = {
-    ingest    = local.x.networks.ingest.cidr
-    store     = local.x.networks.store.cidr
-    exporters = local.x.networks.exporters.cidr
-    mgmt      = local.x.networks.mgmt.cidr
-  }
+  cidrs = merge(
+    {
+      ingest    = local.x.networks.ingest.cidr
+      store     = local.x.networks.store.cidr
+      exporters = local.x.networks.exporters.cidr
+      mgmt      = local.x.networks.mgmt.cidr
+    },
+    local.observe_enabled ? { observe = local.x.networks.observe.cidr } : {},
+  )
 
   mgmt_declared_violations = concat(
     local.x.networks.mgmt.vlan != null ? [] : ["network mgmt: declare vlan, the management network's VLAN ID"],
@@ -257,7 +280,7 @@ locals {
   address_violations = local.cidrs_valid ? flatten([
     for s, v in local.x.services : [
       for n in v.networks : "network ${n} (${local.cidrs[n]}) has no host number ${10 + local.service_index[s]} for service ${s}"
-      if contains(["ingest", "store"], n) && !can(cidrhost(local.cidrs[n], 10 + local.service_index[s]))
+      if contains(["ingest", "store", "observe"], n) && contains(keys(local.cidrs), n) && !can(cidrhost(local.cidrs[n], 10 + local.service_index[s]))
     ]
   ]) : []
 
@@ -288,6 +311,7 @@ locals {
     local.ssh_key_violations,
     local.role_violations,
     local.role_count_violations,
+    local.observe_violations,
     local.host_violations,
     local.topology_violations,
     local.placement_violations,
@@ -314,7 +338,7 @@ locals {
         n == "mgmt"
         ? try(cidrhost(local.cidrs.mgmt, local.mgmt_start - local.net_first.mgmt + local.service_index[s]), null)
         : try(cidrhost(local.cidrs[n], 10 + local.service_index[s]), null)
-      ) if contains(local.joinable_networks, n)
+      ) if contains(local.joinable_networks, n) && contains(keys(local.cidrs), n)
     }
   }
 
@@ -364,7 +388,7 @@ locals {
       macs        = local.macs[s]
       prefix      = local.prefix
       bridges     = { for n in v.networks : n => try(local.bridges[v.host][n], null) if contains(local.joinable_networks, n) }
-      vlans       = { ingest = local.x.networks.ingest.vlan, store = local.x.networks.store.vlan, mgmt = local.x.networks.mgmt.vlan }
+      vlans       = { ingest = local.x.networks.ingest.vlan, store = local.x.networks.store.vlan, observe = try(local.x.networks.observe.vlan, null), mgmt = local.x.networks.mgmt.vlan }
       routes      = local.routes[s]
       gateway     = local.mgmt_gateway
       nameservers = local.mgmt_dns

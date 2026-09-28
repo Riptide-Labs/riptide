@@ -116,7 +116,7 @@ run "unknown_role_is_rejected" {
     raw = merge(run.fixture.raw, { services = merge(run.fixture.raw.services, { metrics = merge(run.fixture.raw.services.metrics, { role = "kafka" }) }) })
   }
   assert {
-    condition     = length(output.violations) == 1 && contains(output.violations, "service metrics: role \"kafka\" is not one of riptide, clickhouse, nl6, victoriametrics")
+    condition     = length(output.violations) == 1 && contains(output.violations, "service metrics: role \"kafka\" is not one of riptide, clickhouse, nl6, victoriametrics, observability")
     error_message = "violations: ${jsonencode(output.violations)}"
   }
 }
@@ -336,7 +336,7 @@ run "unknown_service_network_is_rejected" {
     raw = merge(run.fixture.raw, { services = merge(run.fixture.raw.services, { sut = merge(run.fixture.raw.services.sut, { networks = ["ingest", "store", "mgmt", "exporters"] }) }) })
   }
   assert {
-    condition     = length(output.violations) == 1 && contains(output.violations, "service sut: network \"exporters\" is not one of ingest, store, mgmt")
+    condition     = length(output.violations) == 1 && contains(output.violations, "service sut: network \"exporters\" is not one of ingest, store, observe, mgmt")
     error_message = "violations: ${jsonencode(output.violations)}"
   }
 }
