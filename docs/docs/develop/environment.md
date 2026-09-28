@@ -63,6 +63,7 @@ description: The toolchain, the clone-and-build steps with their output, the mak
 | **`make docs`**, **`make docs-serve`** | Builds the site into `docs/build` and lints the rendered pages; serves it with live reload. | npm |
 | **`make lint-actions`** | actionlint and zizmor over `.github/workflows`. | actionlint, zizmor |
 | **`make nix`**, **`make nix-check`**, **`make nix-hash`** | Builds the flake package; runs the flake checks; regenerates `mvnHash` in `nix/package.nix` after a `pom.xml` change. | Nix |
+| **`make bench-check`**, **`make bench-plan`**, **`make bench-apply`**, **`make bench-destroy`**, **`make bench-list`** | Benchmark labs on libvirt and Proxmox from one declaration per experiment; see the [benchmark lab how-to](https://github.com/Riptide-Labs/riptide/blob/main/benchmark/README.md). `bench-check` needs no host. | OpenTofu, cosign |
 | **`make clean`** | `mvn clean`. | JDK, Maven |
 
 `make help` lists the release, benchmark and checker-fixture targets as well.
