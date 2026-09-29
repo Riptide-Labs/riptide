@@ -12,8 +12,9 @@ from test_rules import CLEAN
 
 
 class FakeFleet:
-    def __init__(self):
+    def __init__(self, events=None):
         self.devices, self.grows = 0, []
+        self.events = events if events is not None else []
 
     def size(self):
         return self.devices
@@ -22,6 +23,7 @@ class FakeFleet:
         if devices < self.devices:
             raise AssertionError("shrink without restart")
         self.grows.append(devices)
+        self.events.append(("grow", devices))
         self.devices = devices
 
 
@@ -50,11 +52,13 @@ class Run(unittest.TestCase):
     def setUp(self):
         self.path = Path(tempfile.mkdtemp()) / "knee.jsonl"
         self.clock = Clock()
-        self.fleet = FakeFleet()
+        self.events = []
+        self.fleet = FakeFleet(self.events)
         self.restarts = 0
 
     def restart(self):
         self.restarts += 1
+        self.events.append(("reset",))
         self.fleet.devices = 0
 
     def go(self, capacity):
@@ -113,6 +117,33 @@ class Run(unittest.TestCase):
         records, torn = ladder.load(str(self.path))
         self.assertTrue(torn)
         self.assertEqual(len(records), 1)
+
+    def test_a_record_after_a_torn_line_survives_the_next_resume(self):
+        self.path.write_text(json.dumps({"devices": 1000, "verdict": "pass", "reason": "clean",
+                                         "start": 1, "end": 601, "flows_per_device": 4.0}) + "\n{\"devices\": 20")
+        self.fleet.devices = 1000
+        self.go(1500)
+        records, torn = ladder.load(str(self.path))
+        self.assertFalse(torn)
+        self.assertEqual([r["devices"] for r in records][:2], [1000, 2000])
+
+    def test_an_empty_nl6_after_a_crash_still_resets_before_a_smaller_step(self):
+        # nl6 was restarted but riptide was not: its stale sessions would be
+        # measured as the knee unless the reset runs again.
+        self.path.write_text(json.dumps({"devices": 1000, "verdict": "pass", "reason": "clean", "start": 1,
+                                         "end": 601, "flows_per_device": 4.0}) + "\n" +
+                             json.dumps({"devices": 2000, "verdict": "riptide-bound", "reason": "x", "start": 1,
+                                         "end": 601}) + "\n")
+        self.fleet.devices = 0
+        self.go(1200)
+        self.assertEqual(self.events[:2], [("reset",), ("grow", 1500)])
+
+    def test_a_fleet_left_half_grown_is_reset_not_topped_up(self):
+        self.path.write_text(json.dumps({"devices": 1000, "verdict": "pass", "reason": "clean", "start": 1,
+                                         "end": 601, "flows_per_device": 4.0}) + "\n")
+        self.fleet.devices = 1250  # died after the first batch of the 2,000 step
+        self.go(5000)
+        self.assertEqual(self.events[:2], [("reset",), ("grow", 2000)])
 
     def test_a_measurement_gap_is_an_inconclusive_record(self):
         def missing(devices, start, end):

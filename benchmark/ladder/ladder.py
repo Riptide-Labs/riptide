@@ -45,14 +45,22 @@ def load(path):
     return records, torn
 
 
+def _rewrite(path, records):
+    """Drop a torn last line, so the next append starts on a line of its own."""
+    Path(path).write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in records))
+
+
 def _append(path, record):
     with open(path, "a") as f:
         f.write(json.dumps(record, sort_keys=True) + "\n")
         f.flush()
 
 
-def _step(path, fleet, devices, measure_step, restart_loadgen, now, sleep, reference, warmup, hold):
-    if devices < fleet.size():
+def _step(path, fleet, devices, measure_step, restart_loadgen, now, sleep, reference, warmup, hold, expected):
+    # expected is the fleet the records account for. Anything else (a smaller
+    # step, nl6 restarted without riptide, a grow that died half way) starts
+    # from an empty nl6 and an empty riptide session table.
+    if devices < expected or fleet.size() != expected:
         restart_loadgen()
     fleet.grow_to(devices)
     sleep(warmup)
@@ -75,7 +83,8 @@ def run(path, fleet, measure_step, restart_loadgen, now, sleep, warmup=WARMUP_SE
     """The knee search; returns why it stopped."""
     records, torn = load(path)
     if torn:
-        print(f"ladder: ignored a torn last line in {path}", file=sys.stderr)
+        print(f"ladder: dropped a torn last line from {path}", file=sys.stderr)
+        _rewrite(path, records)
     for r in records:
         if r["verdict"] in STOP_VERDICTS:
             return f"stopped earlier at {r['devices']} devices: {r['verdict']} ({r['reason']})"
@@ -89,7 +98,8 @@ def run(path, fleet, measure_step, restart_loadgen, now, sleep, warmup=WARMUP_SE
             k = search.knee(history)
             return f"knee at {k} devices; baseline {search.baseline(k)} devices" if k else "no fleet passes"
         reference = records[0].get("flows_per_device") if records and records[0]["verdict"] == PASS else None
-        record = _step(path, fleet, devices, measure_step, restart_loadgen, now, sleep, reference, warmup, hold)
+        expected = records[-1]["devices"] if records else 0
+        record = _step(path, fleet, devices, measure_step, restart_loadgen, now, sleep, reference, warmup, hold, expected)
         records.append(record)
         if record["verdict"] in STOP_VERDICTS:
             return f"stopped at {devices} devices: {record['verdict']} ({record['reason']})"
@@ -119,7 +129,8 @@ def main():
     readyz = f"http://{s['sut']['addresses']['observe']}:8080/readyz"
 
     def ssh(target, command):
-        subprocess.run(["ssh", "-o", "StrictHostKeyChecking=accept-new", target, command], check=True)
+        subprocess.run(["ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10", target, command],
+                       check=True, timeout=180)
 
     def wait_for(what, ok):
         deadline = time.monotonic() + 600
@@ -145,10 +156,13 @@ def main():
 
     measure_step = lambda devices, start, end: measure.measure(lab, devices, start, end)
     if args.baseline:
-        records, _ = load(args.records)
+        records, torn = load(args.records)
+        if torn:
+            _rewrite(args.records, records)
         reference = next((r.get("flows_per_device") for r in records if r["devices"] == search.START and r["verdict"] == PASS), None)
+        # A baseline always starts from an empty nl6 and riptide.
         record = _step(args.records, fleet, args.baseline, measure_step, restart_loadgen, time.time, time.sleep,
-                       reference, WARMUP_SECONDS, args.hold)
+                       reference, WARMUP_SECONDS, args.hold, expected=0)
         print(f"baseline {args.baseline} devices over {args.hold:.0f} s: {record['verdict']} ({record['reason']})")
         return 0 if record["verdict"] == PASS else 1
     print(run(args.records, fleet, measure_step, restart_loadgen, time.time, time.sleep, hold=args.hold))

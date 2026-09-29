@@ -35,7 +35,7 @@ case "${cmd}" in
     "${ssh_obs[@]}" "sudo mkdir -p ${remote} && sudo chown bench: ${remote}"
     scp -F "${run_dir}/ssh_config" "${BENCH_DIR}"/ladder/*.py "${run_dir}/inventory.json" "${run_dir}/clickhouse-password" \
       "bench-${name}-observe:${remote}/"
-    "${ssh_obs[@]}" "sudo systemd-run --unit bench-ladder-${name} --working-directory=${remote} --uid=bench \
+    "${ssh_obs[@]}" "sudo systemd-run --collect --unit bench-ladder-${name} --working-directory=${remote} --uid=bench \
       python3 ladder.py --inventory inventory.json --clickhouse-password-file clickhouse-password \
       --records ${name}.jsonl --loadgen-ssh bench@${loadgen_mgmt} --sut-ssh bench@${sut_mgmt} $*"
     echo "ladder-run: started bench-ladder-${name}; follow with: ladder-run status ${name}"

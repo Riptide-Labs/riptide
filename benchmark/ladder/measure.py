@@ -41,7 +41,8 @@ QUERIES = {
     "flush_p99_last": 'max(max_over_time(persister_batch_flush_seconds{{quantile="0.99"}}[{phase}s]))',
     "uplink_bytes_per_second": 'sum(rate(node_network_receive_bytes_total{{service="clickhouse"}}[{range}s]) * on(instance, device) group_left node_network_info{{service="clickhouse", address="{clickhouse_store}"}})'
                                ' + sum(rate(node_network_receive_bytes_total{{service="observe"}}[{range}s]) * on(instance, device) group_left node_network_info{{service="observe", address="{observe_observe}"}})',
-    "min_scrapes": "min(count_over_time(up[{range}s]))",
+    # Successful scrapes per target: up=0 is still a sample, so sum, not count.
+    "min_scrapes": "min(sum_over_time(up[{range}s]))",
 }
 
 
@@ -81,6 +82,12 @@ def _clickhouse(lab, sql):
     return int(raw.decode().strip())
 
 
+def _gap(hold, successes):
+    """Longest hole the missed scrapes can leave: k missed in a row span (k + 1) intervals."""
+    missed = int(hold // SCRAPE_INTERVAL_SECONDS) - int(successes)
+    return (missed + 1) * SCRAPE_INTERVAL_SECONDS if missed > 0 else 0
+
+
 def measure(lab, devices, start, end):
     hold = end - start
     args = query_args(lab.macs, hold)
@@ -97,7 +104,6 @@ def measure(lab, devices, start, end):
                                "AND type = 'QueryFinish' AND query_kind = 'Select' AND is_initial_query "
                                "AND log_comment != 'bench-ladder' "
                                "SETTINGS log_comment = 'bench-ladder'")
-    expected_scrapes = hold / SCRAPE_INTERVAL_SECONDS
     return Step(
         devices=devices, hold_seconds=hold,
         wire_tx_packets=v["wire_tx_packets"], wire_rx_packets=v["wire_rx_packets"],
@@ -108,6 +114,6 @@ def measure(lab, devices, start, end):
         loadgen_cpu=v["loadgen_cpu"], clickhouse_cpu=v["clickhouse_cpu"],
         flush_p99_rising=v["flush_p99_last"] > 1.5 * v["flush_p99_first"],
         uplink_utilisation=v["uplink_bytes_per_second"] * 8 / UPLINK_BITS_PER_SECOND,
-        scrape_gap_seconds=max(0.0, (expected_scrapes - v["min_scrapes"]) * SCRAPE_INTERVAL_SECONDS),
+        scrape_gap_seconds=_gap(hold, v["min_scrapes"]),
         foreign_queries=foreign,
     )
