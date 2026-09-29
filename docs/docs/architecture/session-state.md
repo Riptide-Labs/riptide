@@ -38,12 +38,6 @@ The observation domain is a 32-bit header field, and both halves of the sFlow pa
 A sender that varies one of them mints a new identity on every packet, so the state is bounded rather than left to grow.
 The four keys that bound it, with their defaults, are on the [receivers reference](../reference/receivers.md#session-state-bounds).
 
-A source, for these bounds, is the exporter host: its address and the socket it sends to, without its source port.
-Each parser counts its own sources, so a host sending both NetFlow v9 and IPFIX holds two slots.
-An IPFIX exporter that restarts comes back on a new source port, which RFC 7011 treats as a new session with its own templates.
-It keeps its source slot.
-The old session's state becomes that source's least-recently-used scope, and is the first displaced if the source runs out of scopes.
-
 ## How the bounds are sized
 
 Worst-case retained state is a product an operator can multiply out, and the reference page tabulates it.
@@ -60,13 +54,19 @@ Behaviour differs by level, on purpose.
 
 | Bound | On reaching it | Effect |
 | --- | --- | --- |
-| **`max-sources`** | New sources refused; admitted ones keep their state | New exporters are not retained until a slot frees |
+| **`max-sources`** | New sources refused; admitted ones keep their state, except as below | New exporters are not retained until a slot frees |
 | **`max-scopes-per-source`** | That source's least-recently-used scope is displaced | Confined to that source; no other exporter is affected |
 | **`max-ifindexes-per-scope`** | That scope's least-recently-used interface is evicted | Degrades only: static pins and live SNMP still resolve the interface, and the flow is still emitted |
 
 Only the source bound refuses; the other two evict least-recently-used within their own level.
 Evicting across sources would let whoever sends hardest choose which of your devices stop being monitored, so eviction is always confined to the source that caused it.
 Confining it also forces a spoofing sender to sustain traffic on every forged address to hold its slots, which removes the fire-and-forget property of a spray.
+
+A source is one UDP session: for IPFIX the exporter's address and source port, since RFC 7011 scopes templates to that socket.
+An IPFIX exporter that restarts comes back on a new source port, so it is a new source, and its old socket holds a slot until `source-idle-timeout` releases it.
+So at a full table a new source is not refused if its host already holds a source that has been quiet for a minute.
+It takes the slot of that host's least-recently-seen source, whose state is dropped, and `flows.session.replacedSources` counts it.
+Replacement never crosses hosts or parsers, and never takes a slot heard from within the last minute, so a sender spoofing a live exporter's address cannot displace it.
 
 A rejection meter climbing steadily on a healthy fleet means the bound is too low for your hardware, not that you are under attack; raise the matching setting.
 Rejections are also logged at warning level, rate-limited, with separate limiters per bound so a noisy scope flood cannot mask the more serious source-bound message.

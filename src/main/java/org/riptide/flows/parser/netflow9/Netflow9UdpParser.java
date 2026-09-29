@@ -139,7 +139,7 @@ public class Netflow9UdpParser extends UdpParserBase implements DispatchableUdpP
 
         /** Already the exporter host, since this key ignores the remote port. */
         @Override
-        public Object getAdmissionSource() {
+        public Object getExporterHost() {
             return this;
         }
     }

@@ -12,10 +12,13 @@ import org.riptide.flows.parser.session.UdpSessionManager.SessionKey;
 import org.riptide.pipeline.ExporterIdentity;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
@@ -31,16 +34,9 @@ import java.util.function.LongSupplier;
  * <p>Two levels, and which policy sits at which level is the load-bearing decision:
  *
  * <pre>
- *   sources : Map&lt;exporter host, ScopeBudget&gt;            &lt;= maxSources          reject-new + idle evict
- *   scopes  : per source, admitted (session, identity)  &lt;= maxScopesPerSource  LRU *within* that source
+ *   sources : Map&lt;SessionKey, ScopeBudget&gt;   &lt;= maxSources          reject-new + idle evict + same-host quiet replace
+ *   scopes  : per source, admitted identities  &lt;= maxScopesPerSource  LRU *within* that source
  * </pre>
- *
- * <p>A source is the exporter host as one parser sees it ({@link SessionKey#getAdmissionSource()}),
- * not the session. IPFIX keys its session on the full remote socket, so an exporter that restarts on
- * a new source port opens a new session. Counting that as a new source cost it a second slot until
- * the old one idled out, and a mass restart near the bound refused templates for the whole idle
- * timeout (#946). Each socket still costs its own entry in the host's budget, so the old socket is
- * the least-recently-used entry there and is displaced first.
  *
  * <p>Global LRU across identities would be a hole rather than a bound: an attacker's inserts would
  * evict other exporters' state, letting the attacker choose which devices stop being monitored.
@@ -50,6 +46,15 @@ import java.util.function.LongSupplier;
  * own source, and forces a spoofing attacker to sustain traffic on every forged address to hold its
  * slots — which is what removes the fire-and-forget property.
  *
+ * <p><strong>A full table still admits a restarted exporter.</strong> IPFIX keys its session on the
+ * full remote socket, so an exporter that restarts on a new source port is a new source, and its
+ * old socket keeps a slot until it idles out. At a full table that refused the restarted exporter
+ * for the whole idle timeout (#946). So a new source is not refused outright when its exporter host
+ * already holds a quiet slot: it takes the slot of that host's least-recently-seen source, and the
+ * replaced source's scopes go to the eviction callback. Replacement never crosses hosts, and never
+ * takes a slot heard from within {@link #REPLACEABLE_AFTER_NANOS}, so neither a flood nor a sender
+ * spoofing a live exporter's address can displace a live exporter.
+ *
  * <p><strong>Evictions must be acted on.</strong> Admitting a new scope by evicting this source's
  * least-recently-used one only bounds anything if the evicted scope's table entries go with it;
  * otherwise the budget shrinks while the tables it governs keep growing. {@link #admit} therefore
@@ -57,8 +62,8 @@ import java.util.function.LongSupplier;
  * responsible for dropping the corresponding state.
  *
  * <p>Thread-safe. The steady-state path — a packet from an already-admitted scope — takes one
- * uncontended lock on that source's budget and allocates one small lookup entry. Each source has its
- * own lock, so unrelated exporters never contend.
+ * uncontended lock on that source's budget and no allocation. Each source has its own lock, so
+ * unrelated exporters never contend.
  */
 @Slf4j
 public final class SessionAdmission {
@@ -66,14 +71,34 @@ public final class SessionAdmission {
     /** At most one rejection warning per source per this interval, so a flood cannot flood the log. */
     private static final long WARN_INTERVAL_NANOS = TimeUnit.MINUTES.toNanos(1);
 
+    /**
+     * How long a source must be quiet before a new source of the same host may take its slot.
+     *
+     * <p>Not a key, because it is not a sizing decision. It only has to separate a socket that
+     * stopped (a restarted exporter's old one, minutes quiet) from one that is live (a datagram every
+     * few seconds). Without it, one spoofed packet from a live exporter's address on a new port would
+     * replace that exporter's session at a full table.
+     */
+    static final long REPLACEABLE_AFTER_NANOS = TimeUnit.MINUTES.toNanos(1);
+
     private final SessionAdmissionConfig config;
     private final LongSupplier nanoTime;
 
-    /** Keyed by {@link SessionKey#getAdmissionSource()}: the exporter host, not the session. */
-    private final ConcurrentMap<Object, ScopeBudget> sources = new ConcurrentHashMap<>();
+    private final ConcurrentMap<SessionKey, ScopeBudget> sources = new ConcurrentHashMap<>();
+
+    /**
+     * Each exporter host's admitted sources, so a replacement finds its candidates without walking
+     * the source table. A walk per refused packet would let a flood buy CPU with the bound itself.
+     *
+     * <p>Every set is mutated only inside {@code compute} on its host, so an emptied set is removed
+     * atomically. Entries may briefly name a source already gone from {@link #sources}; readers
+     * treat those as absent.
+     */
+    private final ConcurrentMap<Object, Set<SessionKey>> hosts = new ConcurrentHashMap<>();
 
     private final Meter rejectedSources;
     private final Meter rejectedScopes;
+    private final Meter replacedSources;
     /**
      * One limiter per condition, not one shared.
      *
@@ -99,6 +124,7 @@ public final class SessionAdmission {
 
         this.rejectedSources = metrics.meter(MetricRegistry.name("flows", "session", "rejectedSources"));
         this.rejectedScopes = metrics.meter(MetricRegistry.name("flows", "session", "rejectedScopes"));
+        this.replacedSources = metrics.meter(MetricRegistry.name("flows", "session", "replacedSources"));
         // Gauges rather than counters: the population is derivable from the maps themselves, and a
         // counter would drift the first time an eviction path forgot to decrement it.
         metrics.gauge(MetricRegistry.name("flows", "session", "sources"), () -> this::sourceCount);
@@ -108,26 +134,24 @@ public final class SessionAdmission {
     /**
      * Whether state may be allocated for {@code scope} arriving on {@code source}.
      *
-     * @param onEvicted receives the session and scope displaced from this source's budget to make
-     *                  room. The caller MUST drop that state; see the class comment. The displaced
-     *                  session may differ from {@code source}: an exporter host's budget holds every
-     *                  socket it has used.
-     * @return {@code false} when the source table is full and this source is not already admitted,
-     *         in which case no state may be allocated for it at all
+     * @param onEvicted receives each session and scope displaced to make room. The caller MUST drop
+     *                  that state; see the class comment. The session is not always {@code source}:
+     *                  a replacement hands over every scope of the replaced source.
+     * @return {@code false} when the source table is full, this source is not already admitted, and
+     *         its host holds no replaceable source, in which case no state may be allocated for it
      */
     public boolean admit(final SessionKey source,
                          final ExporterIdentity scope,
                          final Consumer<AdmittedScope> onEvicted) {
-        final ScopeBudget budget = budgetFor(source);
+        final ScopeBudget budget = budgetFor(source, onEvicted);
         if (budget == null) {
             return false;
         }
-        final AdmittedScope evicted = budget.admit(new AdmittedScope(source, scope),
-                this.config.getMaxScopesPerSource(), now());
+        final ExporterIdentity evicted = budget.admit(scope, this.config.getMaxScopesPerSource(), now());
         if (evicted != null) {
             this.rejectedScopes.mark();
             warnRateLimited(source, scope);
-            onEvicted.accept(evicted);
+            onEvicted.accept(new AdmittedScope(source, evicted));
         }
         return true;
     }
@@ -140,31 +164,89 @@ public final class SessionAdmission {
      * the insert another thread may have taken the last slot. The re-check removes only the mapping
      * this call created, so a racing thread's admitted source is never revoked.
      */
-    private ScopeBudget budgetFor(final SessionKey source) {
-        final Object host = source.getAdmissionSource();
-        final ScopeBudget existing = this.sources.get(host);
+    private ScopeBudget budgetFor(final SessionKey source, final Consumer<AdmittedScope> onEvicted) {
+        final ScopeBudget existing = this.sources.get(source);
         if (existing != null) {
             existing.touch(now());
             return existing;
         }
         final int maxSources = this.config.getMaxSources();
-        if (maxSources <= 0 || this.sources.size() >= maxSources) {
+        if ((maxSources <= 0 || this.sources.size() >= maxSources) && !replaceQuietSibling(source, onEvicted)) {
             this.rejectedSources.mark();
             warnRateLimited(source, null);
             return null;
         }
         final AtomicBoolean isNew = new AtomicBoolean(false);
-        final ScopeBudget created = this.sources.computeIfAbsent(host, key -> {
+        final ScopeBudget created = this.sources.computeIfAbsent(source, key -> {
             isNew.set(true);
             return new ScopeBudget(now());
         });
-        if (isNew.get() && this.sources.size() > maxSources) {
-            this.sources.remove(host, created);
-            this.rejectedSources.mark();
-            warnRateLimited(source, null);
-            return null;
+        if (isNew.get()) {
+            if (this.sources.size() > maxSources) {
+                this.sources.remove(source, created);
+                this.rejectedSources.mark();
+                warnRateLimited(source, null);
+                return null;
+            }
+            index(source);
+            // Idle reclaim may have removed the source between the insert and the index, and would
+            // then have found nothing to unindex. Re-check so the index cannot keep a dead entry.
+            if (this.sources.get(source) != created) {
+                unindex(source);
+            }
         }
         return created;
+    }
+
+    /**
+     * Free a slot for {@code source} by replacing its own host's least-recently-seen source, if that
+     * one has been quiet long enough. See the class comment for why this is safe.
+     *
+     * @return whether a slot was freed
+     */
+    private boolean replaceQuietSibling(final SessionKey source, final Consumer<AdmittedScope> onEvicted) {
+        final Set<SessionKey> siblings = this.hosts.get(source.getExporterHost());
+        if (siblings == null) {
+            return false;
+        }
+        SessionKey victim = null;
+        ScopeBudget victimBudget = null;
+        for (final SessionKey sibling : siblings) {
+            final ScopeBudget budget = this.sources.get(sibling);
+            // Subtraction rather than <, so the comparison stays correct across nanoTime wrapping.
+            if (budget != null && (victimBudget == null || budget.lastSeenNanos - victimBudget.lastSeenNanos < 0)) {
+                victim = sibling;
+                victimBudget = budget;
+            }
+        }
+        if (victim == null || now() - victimBudget.lastSeenNanos < REPLACEABLE_AFTER_NANOS) {
+            return false;
+        }
+        // remove(key, value), as in reclaimIdle: a racing thread may have replaced it already.
+        if (!this.sources.remove(victim, victimBudget)) {
+            return false;
+        }
+        unindex(victim);
+        this.replacedSources.mark();
+        for (final ExporterIdentity scope : victimBudget.drain()) {
+            onEvicted.accept(new AdmittedScope(victim, scope));
+        }
+        return true;
+    }
+
+    private void index(final SessionKey source) {
+        this.hosts.compute(source.getExporterHost(), (host, admitted) -> {
+            final Set<SessionKey> target = admitted != null ? admitted : ConcurrentHashMap.newKeySet();
+            target.add(source);
+            return target;
+        });
+    }
+
+    private void unindex(final SessionKey source) {
+        this.hosts.computeIfPresent(source.getExporterHost(), (host, admitted) -> {
+            admitted.remove(source);
+            return admitted.isEmpty() ? null : admitted;
+        });
     }
 
     /**
@@ -181,14 +263,16 @@ public final class SessionAdmission {
      */
     public void reclaimIdle() {
         final long cutoff = now() - this.config.getSourceIdleTimeout().toNanos();
-        for (final Map.Entry<Object, ScopeBudget> entry : this.sources.entrySet()) {
+        for (final Map.Entry<SessionKey, ScopeBudget> entry : this.sources.entrySet()) {
             final ScopeBudget budget = entry.getValue();
             // Subtraction rather than <, so the comparison stays correct across nanoTime wrapping.
             if (budget.lastSeenNanos - cutoff <= 0) {
                 // remove(key, value) rather than remove(key): a packet may have arrived and
                 // refreshed lastSeen since the test above, and dropping the budget then would
                 // revoke a source that is demonstrably live.
-                this.sources.remove(entry.getKey(), budget);
+                if (this.sources.remove(entry.getKey(), budget)) {
+                    unindex(entry.getKey());
+                }
             }
         }
     }
@@ -204,7 +288,7 @@ public final class SessionAdmission {
         return this.config.getSourceIdleTimeout();
     }
 
-    /** Distinct exporter hosts currently holding a budget, counted per parser. */
+    /** Distinct sources currently holding a budget. */
     public int sourceCount() {
         return this.sources.size();
     }
@@ -214,6 +298,18 @@ public final class SessionAdmission {
         int total = 0;
         for (final ScopeBudget budget : this.sources.values()) {
             total += budget.size();
+        }
+        return total;
+    }
+
+    /**
+     * Sources named in the host index. Must equal {@link #sourceCount()} once admissions settle;
+     * anything above it is a leaked index entry. Walks the index, so for tests only.
+     */
+    int indexedSourceCount() {
+        int total = 0;
+        for (final Set<SessionKey> admitted : this.hosts.values()) {
+            total += admitted.size();
         }
         return total;
     }
@@ -250,17 +346,17 @@ public final class SessionAdmission {
     }
 
     /**
-     * One admitted scope identity under one session.
+     * One scope handed back for its state to be dropped, named with the source that holds it.
      *
-     * <p>The session is part of the entry, not only the budget's key, because a budget is per
-     * exporter host while IPFIX state is per socket. Budgeting bare identities would admit every new
-     * socket from a host for free, and one address could hold template state on every port.
+     * <p>The source is part of the record because it is not always the caller's: a replacement
+     * hands over another source's scopes, and dropping them under the caller's key would drop
+     * nothing.
      */
     public record AdmittedScope(SessionKey session, ExporterIdentity scope) {
     }
 
     /**
-     * One source's admitted scopes, least-recently-used first.
+     * One source's admitted scope identities, least-recently-used first.
      *
      * <p>A {@link LinkedHashMap} in access order under a lock, rather than a lock-free structure:
      * LRU needs a total order over accesses, and every concurrent approximation of that is either
@@ -268,7 +364,7 @@ public final class SessionAdmission {
      * operation, so packets from different exporters never wait on each other.
      */
     private static final class ScopeBudget {
-        private final Map<AdmittedScope, Boolean> admitted = new LinkedHashMap<>(16, 0.75f, true);
+        private final Map<ExporterIdentity, Boolean> admitted = new LinkedHashMap<>(16, 0.75f, true);
         private volatile long lastSeenNanos;
 
         private ScopeBudget(final long nowNanos) {
@@ -282,26 +378,33 @@ public final class SessionAdmission {
         /**
          * @return the identity displaced to make room, or {@code null} if none was
          */
-        private synchronized AdmittedScope admit(final AdmittedScope scope,
-                                                 final int maxScopes,
-                                                 final long nowNanos) {
+        private synchronized ExporterIdentity admit(final ExporterIdentity scope,
+                                                    final int maxScopes,
+                                                    final long nowNanos) {
             this.lastSeenNanos = nowNanos;
             // get() rather than containsKey(): access order only updates on get/put, so containsKey
             // would leave a busy scope looking idle and make it the next eviction victim.
             if (this.admitted.get(scope) != null) {
                 return null;
             }
-            AdmittedScope evicted = null;
+            ExporterIdentity evicted = null;
             // No `maxScopes > 0` guard: it would make a misconfigured zero mean "no bound" rather
             // than "no room", restoring the unbounded growth this class exists to stop. The
             // constructor rejects a non-positive value outright, so the bound is always enforced.
             if (this.admitted.size() >= maxScopes) {
-                final Iterator<AdmittedScope> lruFirst = this.admitted.keySet().iterator();
+                final Iterator<ExporterIdentity> lruFirst = this.admitted.keySet().iterator();
                 evicted = lruFirst.next();
                 lruFirst.remove();
             }
             this.admitted.put(scope, Boolean.TRUE);
             return evicted;
+        }
+
+        /** Empty this budget and return what it held, for a replaced source's state to be dropped. */
+        private synchronized List<ExporterIdentity> drain() {
+            final List<ExporterIdentity> held = new ArrayList<>(this.admitted.keySet());
+            this.admitted.clear();
+            return held;
         }
 
         private synchronized int size() {

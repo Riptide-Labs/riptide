@@ -114,9 +114,8 @@ public class UdpSessionManager {
      * <p>Called when admission displaces or releases a scope. A budget that shrinks without its
      * tables shrinking would bound nothing, so this is what makes the admission decision real.
      *
-     * <p>The session key is the displaced entry's own, not the caller's. One host's budget holds
-     * every socket that host has used (#946), so the entry displaced to admit a new socket usually
-     * belongs to an older one.
+     * <p>The session key is the displaced entry's own, not the caller's. When a restarted exporter's
+     * new socket replaces its old one (#946), every scope handed back belongs to the old socket.
      */
     private void dropScope(final SessionAdmission.AdmittedScope displaced) {
         final SessionKey sessionKey = displaced.session();
@@ -228,16 +227,16 @@ public class UdpSessionManager {
         InetAddress getRemoteAddress();
 
         /**
-         * The exporter host this session belongs to, as {@link SessionAdmission} counts sources.
+         * The exporter host this session belongs to. {@link SessionAdmission} lets a new session take
+         * a quiet slot of the same host when the source table is full.
          *
-         * <p>Separate from the session key itself because the two answer different questions. The
-         * session key scopes templates, and for IPFIX that is the full socket (RFC 7011). Admission
-         * bounds exporters, and an exporter that restarts on a new source port is still the same
-         * exporter (#946). Two keys of different parsers must never return equal values: each parser
-         * has its own manager, and a budget shared across them would hand one manager the other's
-         * state to drop.
+         * <p>Separate from the session key because the two answer different questions. The session
+         * key scopes templates, and for IPFIX that is the full socket (RFC 7011). An exporter that
+         * restarts on a new source port is a new session but the same host (#946). Two keys of
+         * different parsers must never return equal values: each parser has its own manager, and a
+         * replacement across them would hand one manager the other's state to drop.
          */
-        Object getAdmissionSource();
+        Object getExporterHost();
     }
 
     // Package-private (not private) because the public TemplateKey exposes it in a field.

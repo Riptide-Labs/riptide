@@ -110,18 +110,18 @@ public class IpfixUdpParser extends UdpParserBase implements DispatchableUdpPars
     /**
      * Keys the session on the full remote <em>socket</em> (address and port) plus the local socket:
      * an IPFIX UDP Transport Session is per source/destination tuple, so an exporter that moves
-     * source port is a new session. It is not a new source to admission, which counts the exporter
-     * host; see {@link #getAdmissionSource()}. Contrast {@code Netflow9UdpParser.HostSessionKey}.
+     * source port is a new session. At a full admission table that new session may take its own
+     * host's quiet slot; see {@link #getExporterHost()}. Contrast {@code Netflow9UdpParser.HostSessionKey}.
      */
     public static final class SocketSessionKey implements UdpSessionManager.SessionKey {
         private final InetSocketAddress remoteAddress;
         private final InetSocketAddress localAddress;
-        private final AdmissionSource admissionSource;
+        private final ExporterHost exporterHost;
 
         public SocketSessionKey(final InetSocketAddress remoteAddress, final InetSocketAddress localAddress) {
             this.remoteAddress = remoteAddress;
             this.localAddress = localAddress;
-            this.admissionSource = new AdmissionSource(remoteAddress.getAddress(), localAddress);
+            this.exporterHost = new ExporterHost(remoteAddress.getAddress(), localAddress);
         }
 
         @Override
@@ -156,16 +156,16 @@ public class IpfixUdpParser extends UdpParserBase implements DispatchableUdpPars
         }
 
         /**
-         * The exporter host without the remote port, so an exporter that restarts on a new port
-         * keeps its admission slot (#946). Its own type rather than a {@code HostSessionKey}, which
-         * would put this host's IPFIX and NetFlow v9 state into one budget.
+         * This socket without the remote port, so an exporter that restarts on a new port is found
+         * as the same host (#946). Its own type rather than a {@code HostSessionKey}, which would let
+         * an IPFIX session replace this host's NetFlow v9 one.
          */
         @Override
-        public Object getAdmissionSource() {
-            return this.admissionSource;
+        public Object getExporterHost() {
+            return this.exporterHost;
         }
 
-        private record AdmissionSource(InetAddress remoteAddress, InetSocketAddress localAddress) {
+        private record ExporterHost(InetAddress remoteAddress, InetSocketAddress localAddress) {
         }
     }
 

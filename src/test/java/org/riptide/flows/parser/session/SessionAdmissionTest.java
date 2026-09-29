@@ -65,7 +65,7 @@ class SessionAdmissionTest {
             }
 
             @Override
-            public Object getAdmissionSource() {
+            public Object getExporterHost() {
                 return this;
             }
 
@@ -192,6 +192,7 @@ class SessionAdmissionTest {
         admission.reclaimIdle();
 
         assertThat(admission.sourceCount()).isZero();
+        assertThat(admission.indexedSourceCount()).as("reclaimed sources leave the host index too").isZero();
         assertThat(admission.admit(source("10.0.0.3"), scope("10.0.0.3", 1), e -> { }))
                 .as("a real exporter appearing after the flood must not stay locked out")
                 .isTrue();
@@ -343,53 +344,140 @@ class SessionAdmissionTest {
 
     /**
      * #946: an IPFIX exporter that restarts comes back on a new source port, and IPFIX keys its
-     * session on the full socket. Admission must still see the same exporter host. Counting the new
-     * socket as a new source cost every restarted exporter a second slot while the old one idled out,
-     * and a mass restart near the bound refused templates for up to the idle timeout.
+     * session on the full socket. At a full source table that new socket used to be refused for the
+     * whole idle timeout while the old, silent socket kept its slot. It now takes the slot of its own
+     * host's least-recently-seen socket, and every scope of that socket is handed back to be dropped.
      */
     @Test
-    void anIpfixExporterReturningOnANewPortKeepsItsHostsSlot() {
+    void anIpfixExporterReturningOnANewPortReplacesItsOwnStaleSocket() {
         final SessionAdmission admission = admission(config(3, 16));
+        final List<SessionAdmission.AdmittedScope> dropped = new ArrayList<>();
 
         for (int i = 1; i <= 3; i++) {
-            assertThat(admission.admit(ipfix("10.0.0." + i, 50_000), scope("10.0.0." + i, 0), e -> { }))
-                    .isTrue();
+            admission.admit(ipfix("10.0.0." + i, 50_000), scope("10.0.0." + i, 0), dropped::add);
+            admission.admit(ipfix("10.0.0." + i, 50_000), scope("10.0.0." + i, 1), dropped::add);
         }
+        this.clock.addAndGet(TimeUnit.MINUTES.toNanos(1));
 
         // Every exporter restarts and comes back on a new port, with the source table full.
         for (int i = 1; i <= 3; i++) {
-            assertThat(admission.admit(ipfix("10.0.0." + i, 60_000), scope("10.0.0." + i, 0), e -> { }))
-                    .as("10.0.0.%d already holds a slot; a new source port is not a new exporter", i)
+            assertThat(admission.admit(ipfix("10.0.0." + i, 60_000), scope("10.0.0." + i, 0), dropped::add))
+                    .as("10.0.0.%d already holds a slot; its new socket must not be refused", i)
                     .isTrue();
         }
 
         assertThat(admission.sourceCount()).isEqualTo(3);
-        assertThat(meter("rejectedSources")).isZero();
+        assertThat(admission.indexedSourceCount()).as("replaced sources leave the host index").isEqualTo(3);
+        assertThat(meter("rejectedSources")).as("nothing was refused").isZero();
+        assertThat(meter("replacedSources")).as("but every replacement is visible").isEqualTo(3);
+        assertThat(dropped)
+                .as("every scope of each replaced socket, named by that socket's own key")
+                .containsExactlyInAnyOrder(
+                        new SessionAdmission.AdmittedScope(ipfix("10.0.0.1", 50_000), scope("10.0.0.1", 0)),
+                        new SessionAdmission.AdmittedScope(ipfix("10.0.0.1", 50_000), scope("10.0.0.1", 1)),
+                        new SessionAdmission.AdmittedScope(ipfix("10.0.0.2", 50_000), scope("10.0.0.2", 0)),
+                        new SessionAdmission.AdmittedScope(ipfix("10.0.0.2", 50_000), scope("10.0.0.2", 1)),
+                        new SessionAdmission.AdmittedScope(ipfix("10.0.0.3", 50_000), scope("10.0.0.3", 0)),
+                        new SessionAdmission.AdmittedScope(ipfix("10.0.0.3", 50_000), scope("10.0.0.3", 1)));
     }
 
     /**
-     * NetFlow v9 and IPFIX run separate session managers behind this one oracle. A displaced entry
-     * is handed to the manager that asked, so a budget shared across parsers would hand one parser
-     * another parser's state to drop, and the real state would outlive its budget entry.
+     * Replacement is confined to the host that caused it, the same confinement the scope LRU relies
+     * on. The oldest socket in the whole table belongs to another host here, and must survive.
      */
     @Test
-    void parsersDoNotShareOneHostsBudget() {
-        final SessionAdmission admission = admission(config(16, 2));
-        final var netflow9 = new Netflow9UdpParser.HostSessionKey(address("10.0.0.1"), LOCAL);
-        final List<ExporterIdentity> evicted = new ArrayList<>();
+    void replacementPicksTheLeastRecentlySeenSocketOfTheSameHostOnly() {
+        final SessionAdmission admission = admission(config(3, 16));
+        final List<SessionAdmission.AdmittedScope> dropped = new ArrayList<>();
 
-        admission.admit(netflow9, scope("10.0.0.1", 1), e -> evicted.add(e.scope()));
-        admission.admit(netflow9, scope("10.0.0.1", 2), e -> evicted.add(e.scope()));
+        admission.admit(ipfix("10.0.0.1", 50_000), scope("10.0.0.1", 0), dropped::add);
+        this.clock.addAndGet(TimeUnit.MINUTES.toNanos(1));
+        admission.admit(ipfix("10.0.0.2", 50_000), scope("10.0.0.2", 0), dropped::add);
+        this.clock.addAndGet(TimeUnit.MINUTES.toNanos(1));
+        admission.admit(ipfix("10.0.0.2", 50_001), scope("10.0.0.2", 0), dropped::add);
+        this.clock.addAndGet(TimeUnit.MINUTES.toNanos(1));
 
-        // The same host, now over IPFIX, fills far past a budget of two.
-        for (long domain = 100; domain < 150; domain++) {
-            admission.admit(ipfix("10.0.0.1", 50_000), scope("10.0.0.1", domain), e -> evicted.add(e.scope()));
+        assertThat(admission.admit(ipfix("10.0.0.2", 50_002), scope("10.0.0.2", 0), dropped::add)).isTrue();
+
+        assertThat(dropped)
+                .as("10.0.0.2's older socket, not its newer one and not 10.0.0.1's, which is older still")
+                .containsExactly(new SessionAdmission.AdmittedScope(ipfix("10.0.0.2", 50_000), scope("10.0.0.2", 0)));
+
+        assertThat(admission.admit(ipfix("10.0.0.3", 50_000), scope("10.0.0.3", 0), dropped::add))
+                .as("a host holding no slot is refused as before")
+                .isFalse();
+        assertThat(meter("rejectedSources")).isEqualTo(1);
+        assertThat(dropped).hasSize(1);
+    }
+
+    /**
+     * Without the quiet period, one spoofed packet from a live exporter's address on a new port would
+     * replace that exporter's session at a full table. On main such a packet was simply refused.
+     */
+    @Test
+    void aLiveSocketIsNotReplacedEvenByItsOwnHost() {
+        final SessionAdmission admission = admission(config(1, 16));
+        final List<SessionAdmission.AdmittedScope> dropped = new ArrayList<>();
+
+        admission.admit(ipfix("10.0.0.1", 50_000), scope("10.0.0.1", 0), dropped::add);
+        this.clock.addAndGet(SessionAdmission.REPLACEABLE_AFTER_NANOS - 1);
+
+        assertThat(admission.admit(ipfix("10.0.0.1", 60_000), scope("10.0.0.1", 0), dropped::add))
+                .as("the incumbent was heard from within the quiet period")
+                .isFalse();
+        assertThat(dropped).isEmpty();
+        assertThat(meter("replacedSources")).isZero();
+
+        this.clock.addAndGet(1);
+        assertThat(admission.admit(ipfix("10.0.0.1", 60_000), scope("10.0.0.1", 0), dropped::add))
+                .as("and once it has been quiet for the full period, it is replaceable")
+                .isTrue();
+    }
+
+    /**
+     * One budget per host was tried for #946 and withdrawn: a host running several export processes,
+     * each on its own port, thrashed once they held more than one budget's worth of scopes between
+     * them. Each socket keeps its own budget.
+     */
+    @Test
+    void aHostWithSeveralLiveSocketsKeepsABudgetPerSocket() {
+        final SessionAdmission admission = admission(config(16, 16));
+        final List<SessionAdmission.AdmittedScope> dropped = new ArrayList<>();
+
+        for (int round = 0; round < 10; round++) {
+            for (int port = 50_000; port < 50_004; port++) {
+                for (long domain = 0; domain < 8; domain++) {
+                    admission.admit(ipfix("10.0.0.1", port), scope("10.0.0.1", domain), dropped::add);
+                }
+            }
         }
 
-        assertThat(evicted)
-                .as("IPFIX traffic from a host must never displace that host's NetFlow v9 scopes")
-                .doesNotContain(scope("10.0.0.1", 1), scope("10.0.0.1", 2));
-        assertThat(admission.sourceCount()).isEqualTo(2);
+        assertThat(dropped).as("4 live sockets x 8 domains, and no scope is displaced").isEmpty();
+        assertThat(admission.scopeCount()).isEqualTo(32);
+        assertThat(meter("rejectedScopes")).isZero();
+    }
+
+    /**
+     * NetFlow v9 and IPFIX run separate session managers behind this one oracle, and a replaced
+     * session's state is handed to the manager that asked. Replacing across parsers would hand one
+     * manager another's state to drop, and the real state would outlive its slot.
+     */
+    @Test
+    void parsersDoNotReplaceEachOthersSources() {
+        final SessionAdmission admission = admission(config(2, 16));
+        final List<SessionAdmission.AdmittedScope> dropped = new ArrayList<>();
+
+        admission.admit(new Netflow9UdpParser.HostSessionKey(address("10.0.0.1"), LOCAL), scope("10.0.0.1", 0),
+                dropped::add);
+        admission.admit(ipfix("10.0.0.2", 50_000), scope("10.0.0.2", 0), dropped::add);
+        // Past the quiet period, so only the parser boundary can stop a replacement here.
+        this.clock.addAndGet(TimeUnit.MINUTES.toNanos(2));
+
+        assertThat(admission.admit(ipfix("10.0.0.1", 50_000), scope("10.0.0.1", 0), dropped::add))
+                .as("10.0.0.1 holds a NetFlow v9 slot, not an IPFIX one")
+                .isFalse();
+        assertThat(dropped).isEmpty();
+        assertThat(meter("replacedSources")).isZero();
     }
 
     /** An operator reading the refusal must still be able to tell which IPFIX socket was refused. */
