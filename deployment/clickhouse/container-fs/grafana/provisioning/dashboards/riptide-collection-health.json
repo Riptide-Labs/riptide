@@ -453,7 +453,7 @@
       "id": 10,
       "type": "stat",
       "title": "Lost in riptide \u2014 last 15 min",
-      "description": "Flows riptide received but did not store in the last 15 minutes: socket drops, dispatch drops and errors, dropped and failed batch rows (riptide:lost_total from riptide-alerts.yml), and flow sets it could not decode because it held no template for them. Every other tile on this dashboard reads ClickHouse and so only sees flows that arrived; this is the one that sees the ones that did not. Normal is 0. Anything else: open Riptide - Health, which names the stage.",
+      "description": "Flows riptide received but did not store in the last 15 minutes: socket drops, dispatch drops and errors, dropped and failed batch rows (riptide:lost_total from riptide-alerts.yml), and flow sets it could not decode because it held no template for them. Every other tile on this dashboard reads ClickHouse and so only sees flows that arrived; this is the one that sees the ones that did not. Normal is 0. Anything else: open Riptide - Health, which names the stage. It covers the whole collector: riptide's own metrics carry no tenant or zone, so the Tenant and Zone filters do not apply to it. \"No data\" means the chosen Prometheus lacks riptide's recording rules or does not scrape riptide as job=\"riptide\", not that nothing was lost.",
       "datasource": {
         "type": "prometheus",
         "uid": "${prometheus}"
@@ -490,7 +490,8 @@
               "title": "Riptide - Health: which stage is losing flows",
               "url": "/d/riptide-health/riptide-health?${__url_time_range}"
             }
-          ]
+          ],
+          "noValue": "No data: riptide-alerts.yml loaded, job=\"riptide\"?"
         },
         "overrides": []
       },
@@ -515,7 +516,7 @@
           },
           "instant": true,
           "range": false,
-          "expr": "sum(increase(riptide:lost_total[15m])) or vector(0)",
+          "expr": "sum(increase(riptide:lost_total[15m]))",
           "legendFormat": "flows lost"
         },
         {
@@ -526,7 +527,7 @@
           },
           "instant": true,
           "range": false,
-          "expr": "sum(increase(label_replace({job=\"riptide\", __name__=~\"parsers_.+_undecodableSets\"}, \"parser\", \"$1\", \"__name__\", \"(.+)\")[15m:1m])) or vector(0)",
+          "expr": "sum(increase(label_replace({job=\"riptide\", __name__=~\"parsers_.+_undecodableSets\"}, \"parser\", \"$1\", \"__name__\", \"(.+)\")[15m:1m]))",
           "legendFormat": "sets undecodable"
         }
       ]
@@ -605,7 +606,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "Flow records by exporter",
-      "description": "Flow records received per second, stacked by exporter (top 10 by record count, remainder as Other), bucketed by ingest time. Normal: each exporter contributes a steady band. A band that thins out or disappears is an exporter fading \u2014 cross-check its row in the activity panel above; a step change in one band with steady traffic elsewhere often means an exporter's sampling or timeout configuration changed rather than the network. Only complete intervals are drawn, so the right edge never shows a partial interval as a drop.",
+      "description": "Flow records received per second, stacked by exporter (top 10 by record count, remainder as Other), bucketed by ingest time. Normal: each exporter contributes a steady band. To find which exporter went silent, read the \"Silent for\" column of the exporter inventory below. Only complete intervals are drawn, so the right edge never shows a partial interval as a drop.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -769,7 +770,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "Collection lag over time \u2014 p50 / p95",
-      "description": "Median and 95th-percentile delay between a flow ending on the exporter (lastSwitched) and its record arriving at the collector (receivedAt), per bucket. Normal: flat, seconds to about a minute, set by the exporters' active/inactive timeouts; p95 well above p50 means a subset of exporters lags behind the rest. A step change in both percentiles is a configuration or clock event \u2014 compare with the per-exporter panels to see whether one exporter or all of them moved. Negative values mean exporter clocks run ahead of the collector. Only complete intervals are drawn, so the right edge never shows a partial interval as a drop. Flows with an end time after their receipt are left out; they are the \"Flows ending after their receipt\" panel.",
+      "description": "Median and 95th-percentile delay between a flow ending on the exporter (lastSwitched) and its record arriving at the collector (receivedAt), per bucket. Normal: flat, seconds to about a minute, set by the exporters' active/inactive timeouts; p95 well above p50 means a subset of exporters lags behind the rest. A step change in both percentiles is a configuration or clock event \u2014 compare with the per-exporter panels to see whether one exporter or all of them moved. Only complete intervals are drawn, so the right edge never shows a partial interval as a drop. Flows with an end time after their receipt are left out; they are the \"Flows ending after their receipt\" panel.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -936,38 +937,7 @@
           "min": 0,
           "max": 100
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "p50"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "light-blue"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "p95"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "dark-blue"
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "options": {
         "legend": {

@@ -25,7 +25,8 @@ The set is the dashboards in the table below and one provisioning file. Grafana'
 The ClickHouse dashboards have a **Datasource** and a **Database** variable, so the same JSON works against any ClickHouse datasource and any riptide database name.
 The three self-monitoring dashboards have a **Prometheus** datasource variable and read riptide's own `/metrics` through the recording rules in `riptide-alerts.yml`, so the Prometheus they point at must scrape riptide as `job="riptide"` and load that file.
 **Riptide - Collection Health** has one too, for its **Lost in riptide** tile: the flows riptide received but did not store, which no ClickHouse query can see.
-Without such a Prometheus that tile shows an error and the rest of the dashboard works.
+The tile covers the whole collector and ignores the Tenant and Zone filters, since riptide's own metrics carry neither.
+Without such a Prometheus the tile shows an error, or "No data" when the Prometheus lacks the recording rules; the rest of the dashboard works either way.
 The variable lists only datasources of type **Prometheus**.
 If you read riptide's metrics through the VictoriaMetrics plugin (type `victoriametrics-metrics-datasource`), use one of these, both verified on Grafana 13.0.2 against a single-node VictoriaMetrics:
 
