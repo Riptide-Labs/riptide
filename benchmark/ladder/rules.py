@@ -34,6 +34,7 @@ class Step:
     kernel_drops: float          # SUT Udp_RcvbufErrors + Udp_InErrors
     listener_drops: float        # riptide:lost_total{stage="listener"}
     pipeline_drops: float        # riptide:lost_total, every other stage
+    undecodable_sets: float      # sum of parsers_*_undecodableSets: sets riptide had no template for
     dispatched_records: float    # sum of parsers_*_recordsDispatched
     stored_rows: float           # ClickHouse count() over the hold's receivedAt window
     queue_start: float           # fullest queue, depth / capacity, at the hold's start
@@ -72,7 +73,8 @@ def verdict(s, reference_fpd):
     if growing and (s.clickhouse_cpu > CLICKHOUSE_CPU_MAX or s.flush_p99_rising):
         return "clickhouse-bound", f"clickhouse_cpu={s.clickhouse_cpu:.0%} flush_p99_rising={s.flush_p99_rising} with a growing queue"
     causes = [f"{name}={value:g}" for name, value in
-              (("kernel_drops", s.kernel_drops), ("listener_drops", s.listener_drops), ("pipeline_drops", s.pipeline_drops))
+              (("kernel_drops", s.kernel_drops), ("listener_drops", s.listener_drops), ("pipeline_drops", s.pipeline_drops),
+               ("undecodable_sets", s.undecodable_sets))
               if value > 0]
     if growing:
         causes.append(f"queue {s.queue_start:.0%} -> {s.queue_end:.0%}")

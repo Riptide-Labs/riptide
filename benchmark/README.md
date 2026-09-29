@@ -259,7 +259,7 @@ Each hold is judged in this order, and the first match is the step's verdict:
 | `inconclusive` | A scrape gap over 30 s, a ClickHouse query not issued by the ladder, no flows at all, or a metric that returned nothing. |
 | `network-bound` | The libvirt host's uplink above 70% of 1 Gbit/s. |
 | `clickhouse-bound` | ClickHouse above 90% CPU, or a rising flush p99, while a queue grows. |
-| `riptide-bound` | UDP receive errors, socket drops, pipeline drops, or a queue that more than doubles and ends above 10% full. This is the knee signal. |
+| `riptide-bound` | UDP receive errors, socket drops, pipeline drops, IPFIX or NetFlow v9 sets riptide has no template for, or a queue that more than doubles and ends above 10% full. This is the knee signal. |
 | `unexplained-loss` | More than 1% difference between packets sent and received on `ingest`, or between flows riptide dispatched and rows ClickHouse holds, while riptide reports no loss. |
 | `nl6-bound` | Flows per device more than 5% below the first step's, or the loadgen VM above 85% CPU. |
 | `pass` | None of the above. |
@@ -297,7 +297,10 @@ The self-monitoring dashboards read Prometheus and may stay open.
    make bench-ladder EXP=flow-knee BASELINE=<devices>
    ```
 
-nl6 cannot remove devices cleanly, so a smaller fleet restarts the nl6 service on the loadgen VM first.
+nl6 cannot remove devices cleanly, so a smaller fleet restarts nl6 on the loadgen VM and then riptide on the SUT.
+Restarted exporters come back on new source ports, and riptide would otherwise keep the old sessions for their 30 minute idle timeout.
+Those count against riptide's 4,096 session sources (`riptide.flows.session.max-sources`), and a full table refuses new exporters' templates.
+A fleet whose NetFlow v9 and IPFIX exporters exceed that bound, about 5,460 devices in this mix, meets the same limit without any restart.
 
 ## Remove the lab
 

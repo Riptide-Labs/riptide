@@ -34,7 +34,7 @@ class Prometheus:
 
 
 CLEAN = {"wire_tx_packets": 100000, "wire_rx_packets": 100000, "kernel_drops": 0, "listener_drops": 0,
-         "pipeline_drops": 0, "dispatched_records": 2400000, "queue": 0.01, "loadgen_cpu": 0.4,
+         "pipeline_drops": 0, "undecodable_sets": 0, "dispatched_records": 2400000, "queue": 0.01, "loadgen_cpu": 0.4,
          "clickhouse_cpu": 0.3, "flush_p99_first": 0.05, "flush_p99_last": 0.05, "uplink_bytes_per_second": 12.5e6,
          "min_scrapes": 60}
 
@@ -102,6 +102,11 @@ class Measure(unittest.TestCase):
         # live /metrics of 0.17.0): persister_batch_flush_seconds{quantile="0.99"}.
         for name in ("flush_p99_first", "flush_p99_last"):
             self.assertIn('persister_batch_flush_seconds{{quantile="0.99"}}', measure.QUERIES[name])
+
+    def test_undecodable_sets_are_measured(self):
+        values = dict(CLEAN, undecodable_sets=42)
+        self.assertEqual(measure.measure(self.lab(values), 1000, 1000.0, 1600.0).undecodable_sets, 42)
+        self.assertIn('__name__=~"parsers_.+_undecodableSets"', measure.QUERIES["undecodable_sets"])
 
     def test_foreign_clickhouse_queries_are_counted(self):
         self.assertEqual(measure.measure(self.lab(CLEAN, foreign=3), 1000, 1000.0, 1600.0).foreign_queries, 3)
