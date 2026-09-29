@@ -53,7 +53,10 @@ import java.util.function.LongSupplier;
  * already holds a quiet slot: it takes the slot of that host's least-recently-seen source, and the
  * replaced source's scopes go to the eviction callback. Replacement never crosses hosts, and never
  * takes a slot heard from within {@link #REPLACEABLE_AFTER_NANOS}, so neither a flood nor a sender
- * spoofing a live exporter's address can displace a live exporter.
+ * spoofing a live exporter's address can displace a live exporter. An exporter quiet for longer is
+ * not protected: at a full table, a sender spoofing its address can take its slot and keep it with
+ * one packet a minute. That is the price of admitting restarted exporters, and it needs the
+ * spoofing a source ACL on the flow port already rules out.
  *
  * <p><strong>Evictions must be acted on.</strong> Admitting a new scope by evicting this source's
  * least-recently-used one only bounds anything if the evicted scope's table entries go with it;
@@ -171,10 +174,14 @@ public final class SessionAdmission {
             return existing;
         }
         final int maxSources = this.config.getMaxSources();
-        if ((maxSources <= 0 || this.sources.size() >= maxSources) && !replaceQuietSibling(source, onEvicted)) {
-            this.rejectedSources.mark();
-            warnRateLimited(source, null);
-            return null;
+        boolean replaced = false;
+        if (maxSources <= 0 || this.sources.size() >= maxSources) {
+            replaced = replaceQuietSibling(source, onEvicted);
+            if (!replaced) {
+                this.rejectedSources.mark();
+                warnRateLimited(source, null);
+                return null;
+            }
         }
         final AtomicBoolean isNew = new AtomicBoolean(false);
         final ScopeBudget created = this.sources.computeIfAbsent(source, key -> {
@@ -182,7 +189,10 @@ public final class SessionAdmission {
             return new ScopeBudget(now());
         });
         if (isNew.get()) {
-            if (this.sources.size() > maxSources) {
+            // A replacement freed the slot it takes, so it skips the re-check. A racing insert that
+            // replaced nothing still runs it and backs out; without the skip, that racer could take
+            // the freed slot and leave this source refused with its predecessor's state already gone.
+            if (!replaced && this.sources.size() > maxSources) {
                 this.sources.remove(source, created);
                 this.rejectedSources.mark();
                 warnRateLimited(source, null);
@@ -191,7 +201,7 @@ public final class SessionAdmission {
             index(source);
             // Idle reclaim may have removed the source between the insert and the index, and would
             // then have found nothing to unindex. Re-check so the index cannot keep a dead entry.
-            if (this.sources.get(source) != created) {
+            if (!this.sources.containsKey(source)) {
                 unindex(source);
             }
         }
@@ -242,9 +252,18 @@ public final class SessionAdmission {
         });
     }
 
+    /**
+     * Drop {@code source} from the index unless it is admitted again.
+     *
+     * <p>A source removed from {@link #sources} can be re-admitted by another thread before this
+     * runs. Checking inside {@code compute} on the host serialises this against that thread's
+     * {@link #index}, so the fresh entry is never removed.
+     */
     private void unindex(final SessionKey source) {
         this.hosts.computeIfPresent(source.getExporterHost(), (host, admitted) -> {
-            admitted.remove(source);
+            if (!this.sources.containsKey(source)) {
+                admitted.remove(source);
+            }
             return admitted.isEmpty() ? null : admitted;
         });
     }

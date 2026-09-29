@@ -71,7 +71,7 @@ Why the bounds exist and what happens when one is reached is on [Exporter identi
 
 | Name | Type | Default | Description |
 | --- | --- | --- | --- |
-| **`riptide.flows.session.max-sources`** | int | `4096` | Distinct UDP sources retaining state. New sources beyond it are refused; admitted ones keep their state. The one exception: a new source from a host whose own source has been quiet for a minute takes that slot, so an IPFIX exporter restarting on a new port is not locked out. |
+| **`riptide.flows.session.max-sources`** | int | `4096` | Distinct UDP sources retaining state. New sources beyond it are refused; admitted ones keep their state. The one exception: a new source from a host whose own source has been quiet for a minute takes that slot, so an IPFIX exporter restarting on a new port is not locked out. A sender spoofing the address of an exporter that has been quiet that long can take its slot the same way. |
 | **`riptide.flows.session.max-scopes-per-source`** | int | `16` | Scope identities per source. Beyond it, that source's least-recently-used scope is displaced. |
 | **`riptide.flows.session.max-ifindexes-per-scope`** | int | `1024` | Interface entries per scope in the exporter option table. Beyond it, that scope's least-recently-used interface is evicted. |
 | **`riptide.flows.session.source-idle-timeout`** | duration | `30m` | Silence after which a source's slot is released. Keep it at or above the receiver's template timeout; riptide warns at startup if the template timeout is longer. |

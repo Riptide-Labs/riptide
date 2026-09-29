@@ -67,6 +67,8 @@ An IPFIX exporter that restarts comes back on a new source port, so it is a new 
 So at a full table a new source is not refused if its host already holds a source that has been quiet for a minute.
 It takes the slot of that host's least-recently-seen source, whose state is dropped, and `flows.session.replacedSources` counts it.
 Replacement never crosses hosts or parsers, and never takes a slot heard from within the last minute, so a sender spoofing a live exporter's address cannot displace it.
+An exporter that has been quiet for longer is not protected that way.
+At a full table, a sender spoofing its address from a new port takes its slot, and can keep the exporter out by sending once a minute.
 
 A rejection meter climbing steadily on a healthy fleet means the bound is too low for your hardware, not that you are under attack; raise the matching setting.
 Rejections are also logged at warning level, rate-limited, with separate limiters per bound so a noisy scope flood cannot mask the more serious source-bound message.
