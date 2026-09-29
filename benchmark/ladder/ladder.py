@@ -25,6 +25,9 @@ from rules import KNEE_VERDICT, PASS, STOP_VERDICTS, verdict
 
 WARMUP_SECONDS = 120
 HOLD_SECONDS = 600
+# Rows for the hold's last seconds are still in riptide's batch queue when it
+# ends (batch latency, flush, nl6's 5 s burst): count ClickHouse after this.
+SETTLE_SECONDS = 30
 
 
 def load(path):
@@ -55,6 +58,7 @@ def _step(path, fleet, devices, measure_step, restart_loadgen, now, sleep, refer
     start = now()
     sleep(hold)
     end = now()
+    sleep(SETTLE_SECONDS)
     try:
         s = measure_step(devices, start, end)
         name, reason = verdict(s, reference)
