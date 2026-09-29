@@ -1,0 +1,44 @@
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# Answers one question for the code scanning workflows: can this repository
+# receive code scanning results right now? On a public repository it can. On a
+# private one it needs GitHub Code Security, and without it CodeQL, dependency
+# review and the Scorecard SARIF upload all fail on permissions rather than on
+# anything in the change under test. Callers skip their job instead.
+#
+# Asks the API rather than reading github.event.repository.private, because
+# that payload field is not documented for scheduled runs.
+name: Code scanning available
+on:
+  workflow_call:
+    outputs:
+      available:
+        description: "'true' when the repository is public"
+        value: ${{ jobs.check.outputs.available }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      available: ${{ steps.visibility.outputs.available }}
+    steps:
+      - name: Read repository visibility
+        id: visibility
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          private=$(gh api "repos/${REPOSITORY}" --jq '.private')
+          if [ "${private}" = "false" ]; then
+            echo "available=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "::notice::${REPOSITORY} is private (private=${private}); code scanning jobs are skipped."
+            echo "available=false" >> "${GITHUB_OUTPUT}"
+          fi

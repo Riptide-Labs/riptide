@@ -59,8 +59,9 @@ These run as well, by path or on every pull request, and are not required by bra
 
 | Check | Runs when | Enforces | Run locally |
 | --- | --- | --- | --- |
-| **`analyze`** (CodeQL) | every pull request | The `security-and-quality` query suite over the Java sources. | not available |
-| **`review`** (dependency review) | every pull request | No new dependency with a known vulnerability of severity high or above. | not available |
+| **`analyze`** (CodeQL) | every pull request, while the repository is public | The `security-and-quality` query suite over the Java sources. | not available |
+| **`review`** (dependency review) | every pull request, while the repository is public | No new dependency with a known vulnerability of severity high or above. | not available |
+| **`code-scanning / check`** | before `analyze` and `review` | Whether the repository is public. A private repository needs GitHub Code Security for code scanning, so while it is private `analyze` and `review` show as skipped and nothing is scanned. | not available |
 | **`build`** (Docs) | `docs/`, `landing/`, `Makefile`, `docs.yml` | The site builds with broken links and anchors as errors, and no rendered page shows admonition markup as body copy. | `make docs` |
 | **`compose-smoke`** | `deployment/riptide/`, `deployment/clickhouse/`, `Makefile` | The shipped compose stack starts and its ClickHouse and Grafana wiring works, then starts again without self-monitoring on the same volumes. | `make compose-smoke` |
 | **`packages`** | `nfpm.yaml`, `deployment/package/`, `Makefile` | The DEB and RPM build and install. | `make packages packages-smoke` |

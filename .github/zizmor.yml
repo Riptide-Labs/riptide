@@ -27,3 +27,15 @@ rules:
       # declarative block. Pinned by SHA and Dependabot-tracked; not worth the
       # hand-rolled shell.
       - release.yml
+  self-repository:
+    ignore:
+      # zizmor asks for the `$/` self-repository form (GitHub, 2026-07-30), but
+      # actionlint rejects it as a malformed reusable workflow call, and both
+      # run in `make lint-actions`. The audit's runtime-filesystem concern is
+      # about local actions: a `./` reusable workflow is resolved from the
+      # calling commit, not from files a previous step wrote to the workspace.
+      #
+      # Revisit when actionlint accepts `$/`.
+      - codeql.yml
+      - dependency-review.yml
+      - scorecard.yml
