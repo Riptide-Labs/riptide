@@ -51,7 +51,7 @@
       "keepTime": true
     },
     {
-      "title": "Dashboards v1.1.2",
+      "title": "Dashboards v1.1.3",
       "type": "link",
       "url": "https://riptide.space/docs/guides/grafana-dashboards",
       "tooltip": "Version of the provisioned dashboard set, independent of the riptide version. Opens the install and upgrade guide.",

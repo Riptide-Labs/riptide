@@ -1,7 +1,7 @@
 {
   "title": "Riptide - Collection Health",
   "uid": "riptide-collection-health",
-  "description": "Is flow collection healthy right now \u2014 is every exporter delivering? Status wall for the operator running the Riptide collector: verdict on top, per-exporter activity below, inventory with drill-down at the bottom. All panels read ingest time (receivedAt), not flow switch time, so they measure the collection pipeline rather than the traffic.",
+  "description": "Is flow collection healthy right now \u2014 is every exporter delivering? Status wall for the operator running the Riptide collector: verdict on top, fleet activity and collection lag below, inventory with drill-down at the bottom. All panels read ingest time (receivedAt), not flow switch time, so they measure the collection pipeline rather than the traffic.",
   "tags": [
     "riptide",
     "netflow",
@@ -36,7 +36,7 @@
       "keepTime": true
     },
     {
-      "title": "Dashboards v1.1.2",
+      "title": "Dashboards v1.1.3",
       "type": "link",
       "url": "https://riptide.space/docs/guides/grafana-dashboards",
       "tooltip": "Version of the provisioned dashboard set, independent of the riptide version. Opens the install and upgrade guide.",
@@ -69,6 +69,15 @@
         "query": "grafana-clickhouse-datasource",
         "current": {},
         "refresh": 1
+      },
+      {
+        "name": "prometheus",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "refresh": 1,
+        "description": "The Prometheus that scrapes riptide as job=\"riptide\" and loads riptide-alerts.yml. Only the \"Lost in riptide\" tile reads it."
       },
       {
         "name": "database",
@@ -161,13 +170,13 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 5,
         "x": 0,
         "y": 0
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "unit": "none",
           "decimals": 0,
           "color": {
             "mode": "thresholds"
@@ -236,13 +245,13 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 6,
+        "w": 5,
+        "x": 5,
         "y": 0
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "unit": "none",
           "decimals": 0,
           "color": {
             "mode": "thresholds"
@@ -304,14 +313,14 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 12,
+        "w": 5,
+        "x": 10,
         "y": 0
       },
       "fieldConfig": {
         "defaults": {
           "unit": "suffix:flows/s",
-          "decimals": 1,
+          "decimals": 0,
           "color": {
             "mode": "thresholds"
           },
@@ -372,15 +381,15 @@
       "id": 4,
       "type": "stat",
       "title": "Collection lag p95 \u2014 last 15 min",
-      "description": "95th percentile of the delay between a flow ending on the exporter (lastSwitched) and the record arriving at the collector (receivedAt), over the last 15 minutes. Normal: seconds to about a minute, dominated by the exporter's active/inactive timeout settings. Amber above 1 minute, red above 5: sustained high lag means export batching delay, a congested path to the collector, or exporter clock skew (the collector records the skew it corrects in the clockCorrection column).",
+      "description": "95th percentile of the delay between a flow ending on the exporter (lastSwitched) and the record arriving at the collector (receivedAt), over the last 15 minutes. Normal: seconds to about a minute, dominated by the exporter's active/inactive timeout settings. Amber above 1 minute, red above 5: sustained high lag means export batching delay, a congested path to the collector, or exporter clock skew (the collector records the skew it corrects in the clockCorrection column). Flows that end after their receipt are left out here and counted in \"Flows ending after their receipt\" below: a negative lag is not a fast collector.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 18,
+        "w": 5,
+        "x": 15,
         "y": 0
       },
       "fieldConfig": {
@@ -432,7 +441,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT if(count() > 0, quantile(0.95)(dateDiff('millisecond', lastSwitched, receivedAt)) / 1000, NULL) AS \"Collection lag p95\"\nFROM ${database}.flows\nWHERE timestamp >= now() - INTERVAL 1 DAY AND receivedAt >= now() - INTERVAL 15 MINUTE AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)",
+          "rawSql": "SELECT if(countIf(receivedAt >= lastSwitched) > 0, quantileIf(0.95)(dateDiff('millisecond', lastSwitched, receivedAt), receivedAt >= lastSwitched) / 1000, NULL) AS \"Collection lag p95\"\nFROM ${database}.flows\nWHERE timestamp >= now() - INTERVAL 1 DAY AND receivedAt >= now() - INTERVAL 15 MINUTE AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -441,29 +450,113 @@
       ]
     },
     {
+      "id": 10,
+      "type": "stat",
+      "title": "Lost in riptide \u2014 last 15 min",
+      "description": "Flows riptide received but did not store in the last 15 minutes: socket drops, dispatch drops and errors, dropped and failed batch rows (riptide:lost_total from riptide-alerts.yml), and flow sets it could not decode because it held no template for them. Every other tile on this dashboard reads ClickHouse and so only sees flows that arrived; this is the one that sees the ones that did not. Normal is 0. Anything else: open Riptide - Health, which names the stage. It covers the whole collector: riptide's own metrics carry no tenant or zone, so the Tenant and Zone filters do not apply to it. \"No data\" means the chosen Prometheus lacks riptide's recording rules or does not scrape riptide as job=\"riptide\", not that nothing was lost.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [],
+          "links": [
+            {
+              "title": "Riptide - Health: which stage is losing flows",
+              "url": "/d/riptide-health/riptide-health?${__url_time_range}"
+            }
+          ],
+          "noValue": "No data: riptide-alerts.yml loaded, job=\"riptide\"?"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none",
+        "colorMode": "value",
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus}"
+          },
+          "instant": true,
+          "range": false,
+          "expr": "sum(increase(riptide:lost_total[15m]))",
+          "legendFormat": "flows lost"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus}"
+          },
+          "instant": true,
+          "range": false,
+          "expr": "sum(increase(label_replace({job=\"riptide\", __name__=~\"parsers_.+_undecodableSets\"}, \"parser\", \"$1\", \"__name__\", \"(.+)\")[15m:1m]))",
+          "legendFormat": "sets undecodable"
+        }
+      ]
+    },
+    {
       "id": 5,
-      "type": "state-timeline",
-      "title": "Exporter activity \u2014 who was delivering, when",
-      "description": "One row per exporter (named where the exporter has a name, address otherwise), green while at least one flow record arrived in the bucket, red where the exporter went quiet while others kept delivering. Normal: unbroken green rows. A red gap on one row is that exporter or its path; red across all rows at once is the collector. Caveats: intervals before an exporter's first record in the range also render red, and if every exporter is silent simultaneously the interval is missing entirely (no rows) \u2014 the stat panels above catch that case.",
+      "type": "timeseries",
+      "title": "Exporters delivering \u2014 per interval",
+      "description": "How many exporters delivered at least one flow in each interval, by ingest time. A flat line is a healthy fleet; a dip is exporters going silent, and the exporter inventory below names them (sorted by \"Silent for\"). Replaces a per-exporter timeline, which cannot show a fleet of thousands. Only complete intervals are drawn.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
       },
       "gridPos": {
-        "h": 9,
+        "h": 7,
         "w": 24,
         "x": 0,
         "y": 4
       },
       "fieldConfig": {
         "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "min": 0,
           "custom": {
-            "fillOpacity": 70,
-            "lineWidth": 0,
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
             "spanNulls": false
-          },
-          "color": {
-            "mode": "thresholds"
           },
           "thresholds": {
             "mode": "absolute",
@@ -474,44 +567,21 @@
               }
             ]
           },
-          "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "1": {
-                  "text": "Receiving",
-                  "color": "green",
-                  "index": 0
-                }
-              }
-            },
-            {
-              "type": "special",
-              "options": {
-                "match": "null",
-                "result": {
-                  "text": "Silent",
-                  "color": "red",
-                  "index": 1
-                }
-              }
-            }
-          ]
+          "color": {
+            "mode": "palette-classic"
+          }
         },
         "overrides": []
       },
       "options": {
-        "mergeValues": true,
-        "showValue": "never",
-        "alignValue": "center",
-        "rowHeight": 0.85,
         "legend": {
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
         "tooltip": {
-          "mode": "single"
+          "mode": "multi",
+          "sort": "none"
         }
       },
       "targets": [
@@ -523,7 +593,7 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "table",
-          "rawSql": "SELECT toStartOfInterval(receivedAt, toIntervalSecond($__interval_s)) AS time,\n       if(exporterName != '', exporterName, exporterAddr) AS exporter,\n       1 AS state\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time, exporter\nORDER BY time",
+          "rawSql": "SELECT toStartOfInterval(receivedAt, toIntervalSecond($__interval_s)) AS time,\n       uniqExact(exporterAddr) AS \"Exporters delivering\"\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND receivedAt < toStartOfInterval($__toTime, toIntervalSecond($__interval_s)) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time\nORDER BY time",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -536,7 +606,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "Flow records by exporter",
-      "description": "Flow records received per second, stacked by exporter (top 10 by record count, remainder as Other), bucketed by ingest time. Normal: each exporter contributes a steady band. A band that thins out or disappears is an exporter fading \u2014 cross-check its row in the activity panel above; a step change in one band with steady traffic elsewhere often means an exporter's sampling or timeout configuration changed rather than the network.",
+      "description": "Flow records received per second, stacked by exporter (top 10 by record count, remainder as Other), bucketed by ingest time. Normal: each exporter contributes a steady band. To find which exporter went silent, read the \"Silent for\" column of the exporter inventory below. Only complete intervals are drawn, so the right edge never shows a partial interval as a drop.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -545,13 +615,13 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 13
+        "y": 11
       },
       "fieldConfig": {
         "defaults": {
           "unit": "suffix:flows/s",
           "min": 0,
-          "decimals": 1,
+          "decimals": 0,
           "color": {
             "mode": "palette-classic"
           },
@@ -567,7 +637,8 @@
             },
             "gradientMode": "none",
             "spanNulls": false
-          }
+          },
+          "displayName": "${__field.labels.series}"
         },
         "overrides": [
           {
@@ -612,7 +683,7 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "table",
-          "rawSql": "WITH top AS (SELECT exporterAddr AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) GROUP BY dim ORDER BY count() DESC LIMIT 10)\nSELECT toStartOfInterval(receivedAt, toIntervalSecond($__interval_s)) AS time,\n       if(exporterAddr IN (SELECT dim FROM top), if(exporterName != '', exporterName, exporterAddr), 'Other') AS series,\n       count() / $__interval_s AS rate\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time, series\nORDER BY time",
+          "rawSql": "WITH top AS (SELECT exporterAddr AS dim FROM ${database}.flows WHERE $__timeFilter(timestamp) AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone) GROUP BY dim ORDER BY count() DESC LIMIT 10)\nSELECT toStartOfInterval(receivedAt, toIntervalSecond($__interval_s)) AS time,\n       if(exporterAddr IN (SELECT dim FROM top), if(exporterName != '', exporterName, exporterAddr), 'Other') AS series,\n       count() / $__interval_s AS rate\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND receivedAt < toStartOfInterval($__toTime, toIntervalSecond($__interval_s)) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time, series\nORDER BY time",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -625,7 +696,7 @@
       "id": 7,
       "type": "timeseries",
       "title": "Flow records by protocol",
-      "description": "Flow records received per second, stacked by flow protocol (NetFlow v5/v9, IPFIX, sFlow), bucketed by ingest time. Normal: the mix is stable \u2014 each device exports one protocol, so this is the exporter fleet seen by protocol. A protocol band vanishing means every exporter of that type stopped at once, which points at a shared cause: a template/parsing problem on the collector for that protocol, or a shared network path.",
+      "description": "Flow records received per second, stacked by flow protocol (NetFlow v5/v9, IPFIX, sFlow), bucketed by ingest time. Normal: the mix is stable \u2014 each device exports one protocol, so this is the exporter fleet seen by protocol. A protocol band vanishing means every exporter of that type stopped at once, which points at a shared cause: a template/parsing problem on the collector for that protocol, or a shared network path. Only complete intervals are drawn, so the right edge never shows a partial interval as a drop.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
@@ -634,13 +705,13 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 13
+        "y": 11
       },
       "fieldConfig": {
         "defaults": {
           "unit": "suffix:flows/s",
           "min": 0,
-          "decimals": 1,
+          "decimals": 0,
           "color": {
             "mode": "palette-classic"
           },
@@ -656,7 +727,8 @@
             },
             "gradientMode": "none",
             "spanNulls": false
-          }
+          },
+          "displayName": "${__field.labels.series}"
         },
         "overrides": []
       },
@@ -685,7 +757,7 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "table",
-          "rawSql": "SELECT toStartOfInterval(receivedAt, toIntervalSecond($__interval_s)) AS time,\n       toString(flowProtocol) AS series,\n       count() / $__interval_s AS rate\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time, series\nORDER BY time",
+          "rawSql": "SELECT toStartOfInterval(receivedAt, toIntervalSecond($__interval_s)) AS time,\n       toString(flowProtocol) AS series,\n       count() / $__interval_s AS rate\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND receivedAt < toStartOfInterval($__toTime, toIntervalSecond($__interval_s)) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time, series\nORDER BY time",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -698,16 +770,16 @@
       "id": 8,
       "type": "timeseries",
       "title": "Collection lag over time \u2014 p50 / p95",
-      "description": "Median and 95th-percentile delay between a flow ending on the exporter (lastSwitched) and its record arriving at the collector (receivedAt), per bucket. Normal: flat, seconds to about a minute, set by the exporters' active/inactive timeouts; p95 well above p50 means a subset of exporters lags behind the rest. A step change in both percentiles is a configuration or clock event \u2014 compare with the per-exporter panels to see whether one exporter or all of them moved. Negative values mean exporter clocks run ahead of the collector.",
+      "description": "Median and 95th-percentile delay between a flow ending on the exporter (lastSwitched) and its record arriving at the collector (receivedAt), per bucket. Normal: flat, seconds to about a minute, set by the exporters' active/inactive timeouts; p95 well above p50 means a subset of exporters lags behind the rest. A step change in both percentiles is a configuration or clock event \u2014 compare with the per-exporter panels to see whether one exporter or all of them moved. Only complete intervals are drawn, so the right edge never shows a partial interval as a drop. Flows with an end time after their receipt are left out; they are the \"Flows ending after their receipt\" panel.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "${datasource}"
       },
       "gridPos": {
         "h": 7,
-        "w": 24,
+        "w": 12,
         "x": 0,
-        "y": 21
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -747,7 +819,8 @@
             "thresholdsStyle": {
               "mode": "dashed"
             }
-          }
+          },
+          "min": 0
         },
         "overrides": [
           {
@@ -802,7 +875,91 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "table",
-          "rawSql": "SELECT toStartOfInterval(receivedAt, toIntervalSecond($__interval_s)) AS time,\n       quantile(0.5)(dateDiff('millisecond', lastSwitched, receivedAt)) / 1000 AS \"p50\",\n       quantile(0.95)(dateDiff('millisecond', lastSwitched, receivedAt)) / 1000 AS \"p95\"\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time\nORDER BY time",
+          "rawSql": "SELECT toStartOfInterval(receivedAt, toIntervalSecond($__interval_s)) AS time,\n       quantileIf(0.5)(dateDiff('millisecond', lastSwitched, receivedAt), receivedAt >= lastSwitched) / 1000 AS \"p50\",\n       quantileIf(0.95)(dateDiff('millisecond', lastSwitched, receivedAt), receivedAt >= lastSwitched) / 1000 AS \"p95\"\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND receivedAt < toStartOfInterval($__toTime, toIntervalSecond($__interval_s)) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time\nORDER BY time",
+          "refId": "A",
+          "meta": {
+            "timezone": "UTC"
+          }
+        }
+      ],
+      "interval": "1m"
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Flows ending after their receipt \u2014 share",
+      "description": "The share of flows whose end time (lastSwitched) is later than the moment riptide received them. An exporter clock running ahead of riptide's does this, and so does an exporter that reports end times in the future: with nl6 v0.32.0 and every clock NTP-synchronized, about 89 % of flows ended some 2 minutes after receipt, alike for NetFlow v5, v9 and IPFIX. Their lag is meaningless, so the lag panels leave them out. Normal is 0 %. A steady share points at one exporter or a fleet: check its clock first, then Riptide - Data Trust for the clock corrections riptide applied.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 19
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            },
+            "gradientMode": "none",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "${datasource}"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "table",
+          "rawSql": "SELECT toStartOfInterval(receivedAt, toIntervalSecond($__interval_s)) AS time,\n       countIf(lastSwitched > receivedAt) / count() * 100 AS \"ending after receipt\"\nFROM ${database}.flows\nWHERE $__timeFilter(receivedAt) AND receivedAt < toStartOfInterval($__toTime, toIntervalSecond($__interval_s)) AND timestamp >= $__fromTime - INTERVAL 1 DAY AND timestamp <= $__toTime + INTERVAL 1 DAY AND $__conditionalAll(tenant IN (${tenant:singlequote}), $tenant) AND $__conditionalAll(zone IN (${zone:singlequote}), $zone)\nGROUP BY time\nORDER BY time",
           "refId": "A",
           "meta": {
             "timezone": "UTC"
@@ -824,7 +981,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 28
+        "y": 26
       },
       "fieldConfig": {
         "defaults": {
