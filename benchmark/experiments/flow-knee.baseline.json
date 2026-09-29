@@ -1,0 +1,39 @@
+{
+  "experiment": "flow-knee",
+  "declaration": "benchmark/experiments/flow-knee.tfvars",
+  "measured_on": "2026-09-29",
+  "riptide": "release:0.17.0",
+  "load": {
+    "generator": "nl6 v0.32.0",
+    "resource_file": "cisco_crs_x.json",
+    "mix": {"netflow5": 0.25, "netflow9": 0.25, "ipfix": 0.5},
+    "note": "nl6 ticks every device on one 5 s timer, so flows arrive in synchronized bursts"
+  },
+  "knee": {
+    "devices": 2184,
+    "flows_per_second": 13600,
+    "next_step": {"devices": 2248, "verdict": "riptide-bound", "dropped_rows": 24},
+    "limit": "batch-writer queue full (riptide.clickhouse.batch.queue-capacity 40000) under 5 s bursts; SUT CPU 11%, flusher 22% busy",
+    "probe": {"queue_capacity": 80000, "devices": 2500, "verdict": "pass", "dropped_rows": 0, "default_dropped_rows": 3538}
+  },
+  "baseline": {
+    "devices": 1744,
+    "hold_seconds": 3600,
+    "verdict": "pass",
+    "flows_per_second": 10860,
+    "dispatched_flows": 39098032,
+    "stored_rows": 39094573,
+    "lost_flows": 0,
+    "undecodable_sets": 0,
+    "sut_cpu_mean": 0.085,
+    "sut_cpu_p99_1m": 0.091,
+    "flusher_busy_mean": 0.164,
+    "listener_busy_mean": 0.083,
+    "flush_p99_seconds_max": 0.338,
+    "batch_queue_max": 0.0,
+    "clickhouse_cpu_mean": 0.058,
+    "heap_used_min_mib": {"first_10_min": 75, "last_10_min": 122},
+    "clickhouse_active_parts": {"first_10_min": 81, "last_10_min": 83}
+  },
+  "capture_sha256": "932859bacf747b7ee9254f0d29dfc96753d90427df12c834d2aeac4aa77393ec"
+}
