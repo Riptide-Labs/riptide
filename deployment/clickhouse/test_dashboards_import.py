@@ -497,7 +497,7 @@ class ThePrometheusType(ImportTest):
                     self.assertEqual(new, {**old, "type": VM}, f"{uid} ref {old}")
                 else:
                     self.assertEqual(new, old, f"{uid} ref {old} is not bound to the Prometheus variable")
-        self.assertEqual(rewritten, {"Riptide - Health", "Riptide - Pipeline Diagnostics", "Riptide - Profiling"})
+        self.assertEqual(rewritten, {"Riptide - Collection Health", "Riptide - Health", "Riptide - Pipeline Diagnostics", "Riptide - Profiling"})
 
     def test_without_the_option_every_dashboard_is_posted_as_shipped(self):
         shipped = self.shipped()

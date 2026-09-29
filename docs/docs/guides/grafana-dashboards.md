@@ -12,7 +12,7 @@ The set is the dashboards in the table below and one provisioning file. Grafana'
 | **Riptide - Top 10** | ClickHouse | Top talkers by AS, host, application, service, protocol, exporter and interface, with a source-AS table carrying a 95th percentile. |
 | **Riptide - Traffic Paths (Sankey)** | ClickHouse | Where traffic enters and leaves: AS peering, geo origination and termination, ultimate exit, filterable by exporter and direction. |
 | **Riptide - Flow Forensics** | ClickHouse | One slice of flows by tenant, zone, exporter, application, HTTP host and URI, protocol, address and port, down to the raw records. |
-| **Riptide - Collection Health** | ClickHouse | Is every exporter delivering: reporting and silent verdicts, activity timeline, collection lag, exporter inventory. |
+| **Riptide - Collection Health** | ClickHouse, Prometheus | Is every exporter delivering, and does riptide keep what arrives: reporting, silent and lost-in-riptide verdicts, exporters delivering over time, collection lag, flows ending after their receipt, exporter inventory. |
 | **Riptide - Interface Traffic Analysis** | ClickHouse | Throughput and usage per exporter interface, by application, conversation, host and DSCP, in versus out. |
 | **Riptide - Capacity & Routing** | ClickHouse | Headroom against SNMP-reported link speed, next-hop distribution, prefix volume, one-directional conversations. |
 | **Riptide - Behavioural Anomalies** | ClickHouse | Scanning, sweeps, repeated attempts on service ports, SYN-only ratio, fan-in targets, packet-size outliers, with thresholds as variables. |
@@ -24,11 +24,13 @@ The set is the dashboards in the table below and one provisioning file. Grafana'
 
 The ClickHouse dashboards have a **Datasource** and a **Database** variable, so the same JSON works against any ClickHouse datasource and any riptide database name.
 The three self-monitoring dashboards have a **Prometheus** datasource variable and read riptide's own `/metrics` through the recording rules in `riptide-alerts.yml`, so the Prometheus they point at must scrape riptide as `job="riptide"` and load that file.
+**Riptide - Collection Health** has one too, for its **Lost in riptide** tile: the flows riptide received but did not store, which no ClickHouse query can see.
+Without such a Prometheus that tile shows an error and the rest of the dashboard works.
 The variable lists only datasources of type **Prometheus**.
 If you read riptide's metrics through the VictoriaMetrics plugin (type `victoriametrics-metrics-datasource`), use one of these, both verified on Grafana 13.0.2 against a single-node VictoriaMetrics:
 
-- [Import over the API](#install-into-a-grafana-over-its-api) with `--prometheus-type victoriametrics-metrics-datasource`. The script sets that type on the three dashboards before it imports them.
-- On any install path, add a second datasource of type **Prometheus** whose URL is VictoriaMetrics' Prometheus-compatible API, `http://<host>:8428` for a single node. Every query of the three dashboards ran on it without error. For a cluster the URL is `http://<vmselect>:8481/select/<tenant>/prometheus`, which was not tested.
+- [Import over the API](#install-into-a-grafana-over-its-api) with `--prometheus-type victoriametrics-metrics-datasource`. The script sets that type on every dashboard with a Prometheus variable before it imports them.
+- On any install path, add a second datasource of type **Prometheus** whose URL is VictoriaMetrics' Prometheus-compatible API, `http://<host>:8428` for a single node. Every query of the three self-monitoring dashboards ran on it without error. For a cluster the URL is `http://<vmselect>:8481/select/<tenant>/prometheus`, which was not tested.
 
 **Riptide - Profiling** also has a **Pyroscope** datasource variable and reads the profiles riptide uploads when [continuous profiling](../operations/profiling.md) is on; Grafana ships the Pyroscope datasource, so it needs no plugin.
 Its **Service** variable selects the service the profiles arrive under, `riptide` unless the collector sets `PYROSCOPE_APPLICATION_NAME`.
@@ -367,7 +369,7 @@ Everything below was verified on Grafana 13.2.2.
      --prometheus-type victoriametrics-metrics-datasource riptide-dashboards-1.1.2.tar.gz
    ```
 
-   The first line names the type, and the Prometheus variable of the three self-monitoring dashboards lists that datasource.
+   The first line names the type, and the Prometheus variable of every dashboard that has one lists that datasource.
    Expected first line, captured on Grafana 13.0.2 with the VictoriaMetrics plugin 0.26.1:
 
    ```text
@@ -408,7 +410,7 @@ The script prints one line per dashboard and exits non-zero if any was not impor
 | `error: set GRAFANA_TOKEN to a Grafana service-account token (Editor role)` | `GRAFANA_TOKEN` is not exported in this shell. | Run the `read -rs GRAFANA_TOKEN && export GRAFANA_TOKEN` line again. |
 
 To upgrade, run step 4 with the newer release's tarball.
-Pass the same `--prometheus-type` every time: an import without it sets the three variables back to type **Prometheus**.
+Pass the same `--prometheus-type` every time: an import without it sets those variables back to type **Prometheus**.
 The output of an upgrade from dashboards imported by hand into a folder of their own:
 
 ```text
