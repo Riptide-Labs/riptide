@@ -29,7 +29,7 @@ variables {
   images = {
     clickhouse      = "clickhouse/clickhouse-server:26.7@sha256:ch"
     victoriametrics = "victoriametrics/victoria-metrics:v1@sha256:vm"
-    nl6             = "ghcr.io/labmonkeys-space/nl6:v0.32.0@sha256:nl6"
+    nl6             = "ghcr.io/labmonkeys-space/nl6:v0.33.0@sha256:nl6"
   }
 }
 
