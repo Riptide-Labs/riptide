@@ -109,12 +109,18 @@ public class UdpSessionManager {
     }
 
     /**
-     * Drop every table entry keyed on one scope identity.
+     * Drop every table entry keyed on one displaced scope.
      *
      * <p>Called when admission displaces or releases a scope. A budget that shrinks without its
      * tables shrinking would bound nothing, so this is what makes the admission decision real.
+     *
+     * <p>The session key is the displaced entry's own, not the caller's. One host's budget holds
+     * every socket that host has used (#946), so the entry displaced to admit a new socket usually
+     * belongs to an older one.
      */
-    private void dropScope(final SessionKey sessionKey, final ExporterIdentity scope) {
+    private void dropScope(final SessionAdmission.AdmittedScope displaced) {
+        final SessionKey sessionKey = displaced.session();
+        final ExporterIdentity scope = displaced.scope();
         if (scope instanceof ExporterIdentity.NetflowIpfix netflowIpfix) {
             // sFlow carries no templates, so only the v9/IPFIX identity maps onto a DomainKey.
             this.templates.remove(new DomainKey(sessionKey, netflowIpfix.observationDomain()));
@@ -220,6 +226,18 @@ public class UdpSessionManager {
         String getDescription();
 
         InetAddress getRemoteAddress();
+
+        /**
+         * The exporter host this session belongs to, as {@link SessionAdmission} counts sources.
+         *
+         * <p>Separate from the session key itself because the two answer different questions. The
+         * session key scopes templates, and for IPFIX that is the full socket (RFC 7011). Admission
+         * bounds exporters, and an exporter that restarts on a new source port is still the same
+         * exporter (#946). Two keys of different parsers must never return equal values: each parser
+         * has its own manager, and a budget shared across them would hand one manager the other's
+         * state to drop.
+         */
+        Object getAdmissionSource();
     }
 
     // Package-private (not private) because the public TemplateKey exposes it in a field.
@@ -373,7 +391,7 @@ public class UdpSessionManager {
             // inner map is the allocation the bound exists to prevent, and a template is the most
             // expensive thing this class retains.
             if (!UdpSessionManager.this.admission.admit(this.sessionKey, scope(observationDomainId),
-                    evicted -> UdpSessionManager.this.dropScope(this.sessionKey, evicted))) {
+                    UdpSessionManager.this::dropScope)) {
                 return;
             }
             // The inner mutation happens inside the outer compute on purpose: it keeps the insert
@@ -446,7 +464,7 @@ public class UdpSessionManager {
             // attacker or a misconfigured exporter, and losing sequence accounting for it is a
             // better outcome than allocating a tracker per forged identity until the heap is gone.
             if (!UdpSessionManager.this.admission.admit(this.sessionKey, scope,
-                    evicted -> UdpSessionManager.this.dropScope(this.sessionKey, evicted))) {
+                    UdpSessionManager.this::dropScope)) {
                 return true;
             }
             final TrackerKey key = new TrackerKey(this.sessionKey, scope);

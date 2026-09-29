@@ -110,15 +110,18 @@ public class IpfixUdpParser extends UdpParserBase implements DispatchableUdpPars
     /**
      * Keys the session on the full remote <em>socket</em> (address and port) plus the local socket:
      * an IPFIX UDP Transport Session is per source/destination tuple, so an exporter that moves
-     * source port is a new session. Contrast {@code Netflow9UdpParser.HostSessionKey}.
+     * source port is a new session. It is not a new source to admission, which counts the exporter
+     * host; see {@link #getAdmissionSource()}. Contrast {@code Netflow9UdpParser.HostSessionKey}.
      */
     public static final class SocketSessionKey implements UdpSessionManager.SessionKey {
         private final InetSocketAddress remoteAddress;
         private final InetSocketAddress localAddress;
+        private final AdmissionSource admissionSource;
 
         public SocketSessionKey(final InetSocketAddress remoteAddress, final InetSocketAddress localAddress) {
             this.remoteAddress = remoteAddress;
             this.localAddress = localAddress;
+            this.admissionSource = new AdmissionSource(remoteAddress.getAddress(), localAddress);
         }
 
         @Override
@@ -152,6 +155,18 @@ public class IpfixUdpParser extends UdpParserBase implements DispatchableUdpPars
             return this.remoteAddress.getAddress();
         }
 
+        /**
+         * The exporter host without the remote port, so an exporter that restarts on a new port
+         * keeps its admission slot (#946). Its own type rather than a {@code HostSessionKey}, which
+         * would put this host's IPFIX and NetFlow v9 state into one budget.
+         */
+        @Override
+        public Object getAdmissionSource() {
+            return this.admissionSource;
+        }
+
+        private record AdmissionSource(InetAddress remoteAddress, InetSocketAddress localAddress) {
+        }
     }
 
     public IpfixUdpParser withFlowActiveTimeoutFallback(final Duration flowActiveTimeoutFallback) {

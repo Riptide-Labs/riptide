@@ -31,9 +31,16 @@ import java.util.function.LongSupplier;
  * <p>Two levels, and which policy sits at which level is the load-bearing decision:
  *
  * <pre>
- *   sources : Map&lt;SessionKey, ScopeBudget&gt;   &lt;= maxSources          reject-new + idle evict
- *   scopes  : per source, admitted identities  &lt;= maxScopesPerSource  LRU *within* that source
+ *   sources : Map&lt;exporter host, ScopeBudget&gt;            &lt;= maxSources          reject-new + idle evict
+ *   scopes  : per source, admitted (session, identity)  &lt;= maxScopesPerSource  LRU *within* that source
  * </pre>
+ *
+ * <p>A source is the exporter host as one parser sees it ({@link SessionKey#getAdmissionSource()}),
+ * not the session. IPFIX keys its session on the full remote socket, so an exporter that restarts on
+ * a new source port opens a new session. Counting that as a new source cost it a second slot until
+ * the old one idled out, and a mass restart near the bound refused templates for the whole idle
+ * timeout (#946). Each socket still costs its own entry in the host's budget, so the old socket is
+ * the least-recently-used entry there and is displaced first.
  *
  * <p>Global LRU across identities would be a hole rather than a bound: an attacker's inserts would
  * evict other exporters' state, letting the attacker choose which devices stop being monitored.
@@ -50,8 +57,8 @@ import java.util.function.LongSupplier;
  * responsible for dropping the corresponding state.
  *
  * <p>Thread-safe. The steady-state path — a packet from an already-admitted scope — takes one
- * uncontended lock on that source's budget and no allocation. Each source has its own lock, so
- * unrelated exporters never contend.
+ * uncontended lock on that source's budget and allocates one small lookup entry. Each source has its
+ * own lock, so unrelated exporters never contend.
  */
 @Slf4j
 public final class SessionAdmission {
@@ -62,7 +69,8 @@ public final class SessionAdmission {
     private final SessionAdmissionConfig config;
     private final LongSupplier nanoTime;
 
-    private final ConcurrentMap<SessionKey, ScopeBudget> sources = new ConcurrentHashMap<>();
+    /** Keyed by {@link SessionKey#getAdmissionSource()}: the exporter host, not the session. */
+    private final ConcurrentMap<Object, ScopeBudget> sources = new ConcurrentHashMap<>();
 
     private final Meter rejectedSources;
     private final Meter rejectedScopes;
@@ -100,19 +108,22 @@ public final class SessionAdmission {
     /**
      * Whether state may be allocated for {@code scope} arriving on {@code source}.
      *
-     * @param onEvicted receives the identity of a scope displaced from this source's budget to make
-     *                  room. The caller MUST drop that scope's state; see the class comment.
+     * @param onEvicted receives the session and scope displaced from this source's budget to make
+     *                  room. The caller MUST drop that state; see the class comment. The displaced
+     *                  session may differ from {@code source}: an exporter host's budget holds every
+     *                  socket it has used.
      * @return {@code false} when the source table is full and this source is not already admitted,
      *         in which case no state may be allocated for it at all
      */
     public boolean admit(final SessionKey source,
                          final ExporterIdentity scope,
-                         final Consumer<ExporterIdentity> onEvicted) {
+                         final Consumer<AdmittedScope> onEvicted) {
         final ScopeBudget budget = budgetFor(source);
         if (budget == null) {
             return false;
         }
-        final ExporterIdentity evicted = budget.admit(scope, this.config.getMaxScopesPerSource(), now());
+        final AdmittedScope evicted = budget.admit(new AdmittedScope(source, scope),
+                this.config.getMaxScopesPerSource(), now());
         if (evicted != null) {
             this.rejectedScopes.mark();
             warnRateLimited(source, scope);
@@ -130,7 +141,8 @@ public final class SessionAdmission {
      * this call created, so a racing thread's admitted source is never revoked.
      */
     private ScopeBudget budgetFor(final SessionKey source) {
-        final ScopeBudget existing = this.sources.get(source);
+        final Object host = source.getAdmissionSource();
+        final ScopeBudget existing = this.sources.get(host);
         if (existing != null) {
             existing.touch(now());
             return existing;
@@ -142,12 +154,12 @@ public final class SessionAdmission {
             return null;
         }
         final AtomicBoolean isNew = new AtomicBoolean(false);
-        final ScopeBudget created = this.sources.computeIfAbsent(source, key -> {
+        final ScopeBudget created = this.sources.computeIfAbsent(host, key -> {
             isNew.set(true);
             return new ScopeBudget(now());
         });
         if (isNew.get() && this.sources.size() > maxSources) {
-            this.sources.remove(source, created);
+            this.sources.remove(host, created);
             this.rejectedSources.mark();
             warnRateLimited(source, null);
             return null;
@@ -169,7 +181,7 @@ public final class SessionAdmission {
      */
     public void reclaimIdle() {
         final long cutoff = now() - this.config.getSourceIdleTimeout().toNanos();
-        for (final Map.Entry<SessionKey, ScopeBudget> entry : this.sources.entrySet()) {
+        for (final Map.Entry<Object, ScopeBudget> entry : this.sources.entrySet()) {
             final ScopeBudget budget = entry.getValue();
             // Subtraction rather than <, so the comparison stays correct across nanoTime wrapping.
             if (budget.lastSeenNanos - cutoff <= 0) {
@@ -192,7 +204,7 @@ public final class SessionAdmission {
         return this.config.getSourceIdleTimeout();
     }
 
-    /** Distinct sources currently holding a budget. */
+    /** Distinct exporter hosts currently holding a budget, counted per parser. */
     public int sourceCount() {
         return this.sources.size();
     }
@@ -238,7 +250,17 @@ public final class SessionAdmission {
     }
 
     /**
-     * One source's admitted scope identities, least-recently-used first.
+     * One admitted scope identity under one session.
+     *
+     * <p>The session is part of the entry, not only the budget's key, because a budget is per
+     * exporter host while IPFIX state is per socket. Budgeting bare identities would admit every new
+     * socket from a host for free, and one address could hold template state on every port.
+     */
+    public record AdmittedScope(SessionKey session, ExporterIdentity scope) {
+    }
+
+    /**
+     * One source's admitted scopes, least-recently-used first.
      *
      * <p>A {@link LinkedHashMap} in access order under a lock, rather than a lock-free structure:
      * LRU needs a total order over accesses, and every concurrent approximation of that is either
@@ -246,7 +268,7 @@ public final class SessionAdmission {
      * operation, so packets from different exporters never wait on each other.
      */
     private static final class ScopeBudget {
-        private final Map<ExporterIdentity, Boolean> admitted = new LinkedHashMap<>(16, 0.75f, true);
+        private final Map<AdmittedScope, Boolean> admitted = new LinkedHashMap<>(16, 0.75f, true);
         private volatile long lastSeenNanos;
 
         private ScopeBudget(final long nowNanos) {
@@ -260,21 +282,21 @@ public final class SessionAdmission {
         /**
          * @return the identity displaced to make room, or {@code null} if none was
          */
-        private synchronized ExporterIdentity admit(final ExporterIdentity scope,
-                                                    final int maxScopes,
-                                                    final long nowNanos) {
+        private synchronized AdmittedScope admit(final AdmittedScope scope,
+                                                 final int maxScopes,
+                                                 final long nowNanos) {
             this.lastSeenNanos = nowNanos;
             // get() rather than containsKey(): access order only updates on get/put, so containsKey
             // would leave a busy scope looking idle and make it the next eviction victim.
             if (this.admitted.get(scope) != null) {
                 return null;
             }
-            ExporterIdentity evicted = null;
+            AdmittedScope evicted = null;
             // No `maxScopes > 0` guard: it would make a misconfigured zero mean "no bound" rather
             // than "no room", restoring the unbounded growth this class exists to stop. The
             // constructor rejects a non-positive value outright, so the bound is always enforced.
             if (this.admitted.size() >= maxScopes) {
-                final Iterator<ExporterIdentity> lruFirst = this.admitted.keySet().iterator();
+                final Iterator<AdmittedScope> lruFirst = this.admitted.keySet().iterator();
                 evicted = lruFirst.next();
                 lruFirst.remove();
             }

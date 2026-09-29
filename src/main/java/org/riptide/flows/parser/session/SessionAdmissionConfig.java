@@ -52,7 +52,11 @@ import java.time.Duration;
 public class SessionAdmissionConfig {
 
     /**
-     * Distinct UDP sources for which session state is retained.
+     * Distinct exporter hosts for which session state is retained, counted per parser.
+     *
+     * <p>A host is the remote address plus the local socket, without the remote port, so an IPFIX
+     * exporter that restarts on a new source port keeps its slot (#946). The same host sending both
+     * NetFlow v9 and IPFIX holds one slot per parser.
      *
      * <p>Aligned with {@code riptide.snmp.poll.max-exporters} so the two admission decisions on the
      * ingest path agree about how large a fleet is plausible. Reaching this bound rejects

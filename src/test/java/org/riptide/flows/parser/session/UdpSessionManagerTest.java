@@ -7,6 +7,7 @@ package org.riptide.flows.parser.session;
 
 import io.netty.buffer.ByteBuf;
 import org.junit.jupiter.api.Test;
+import org.riptide.flows.parser.exceptions.MissingTemplateException;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.ie.values.StringValue;
 import org.riptide.flows.parser.ipfix.IpfixUdpParser;
@@ -20,6 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 public class UdpSessionManagerTest {
 
@@ -453,6 +455,46 @@ public class UdpSessionManagerTest {
         assertThat(manager.count())
                 .as("one template each, so templates are bounded by the same budget")
                 .isLessThanOrEqualTo(8);
+    }
+
+    /**
+     * #946 made a source the exporter host, so one address's IPFIX sockets share that host's budget.
+     * Each socket must still cost its own entry, and a displaced socket's templates and tracker must
+     * go with it. Otherwise one address could hold template state on every one of 65,535 ports.
+     */
+    @Test
+    void oneAddressCyclingSourcePortsIsBoundedByItsOwnBudget() throws Exception {
+        final var config = new SessionAdmissionConfig();
+        config.setMaxSources(64);
+        config.setMaxScopesPerSource(8);
+        final var manager = new UdpSessionManager(Duration.ofMinutes(30),
+                () -> new SequenceNumberTracker(32),
+                OptionListener.NONE,
+                new SessionAdmission(config, new com.codahale.metrics.MetricRegistry()));
+
+        final var address = InetAddress.getByName("10.10.10.20");
+        final var local = new InetSocketAddress(InetAddress.getByName("10.10.10.10"), 4739);
+        final var identity = new ExporterIdentity.NetflowIpfix(address, 0);
+        final var template = Template.builder(templateId1, Template.Type.TEMPLATE)
+                .withFields(List.of(field("field1"))).build();
+
+        final var sessions = new ArrayList<Session>();
+        for (int port = 50_000; port < 50_009; port++) {
+            final var session = manager.getSession(
+                    new IpfixUdpParser.SocketSessionKey(new InetSocketAddress(address, port), local));
+            session.addTemplate(0, template);
+            session.verifySequenceNumber(identity, 1, 1);
+            sessions.add(session);
+        }
+
+        assertThat(manager.domainCount())
+                .as("nine sockets from one address against a budget of eight")
+                .isEqualTo(8);
+        assertThat(manager.sequenceTrackerCount()).isEqualTo(8);
+        assertThatThrownBy(() -> sessions.getFirst().getResolver(0).lookupTemplate(templateId1))
+                .as("the least-recently-used socket is the one displaced, and its templates go with it")
+                .isInstanceOf(MissingTemplateException.class);
+        assertThat(sessions.getLast().getResolver(0).lookupTemplate(templateId1)).isNotNull();
     }
 
 }

@@ -5,11 +5,19 @@
 
 package org.riptide.flows.parser.session;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.codahale.metrics.MetricRegistry;
 import org.junit.jupiter.api.Test;
+import org.riptide.flows.parser.ipfix.IpfixUdpParser;
+import org.riptide.flows.parser.netflow9.Netflow9UdpParser;
 import org.riptide.pipeline.ExporterIdentity;
+import org.riptide.testsupport.LogCapture;
+import org.slf4j.LoggerFactory;
 
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.List;
@@ -54,6 +62,11 @@ class SessionAdmissionTest {
             @Override
             public InetAddress getRemoteAddress() {
                 return address(host);
+            }
+
+            @Override
+            public Object getAdmissionSource() {
+                return this;
             }
 
             @Override
@@ -110,9 +123,9 @@ class SessionAdmissionTest {
         final var attacker = source("10.0.0.1");
         final List<ExporterIdentity> evicted = new ArrayList<>();
 
-        admission.admit(attacker, scope("10.0.0.1", 1), evicted::add);
-        admission.admit(attacker, scope("10.0.0.1", 2), evicted::add);
-        admission.admit(attacker, scope("10.0.0.1", 3), evicted::add);
+        admission.admit(attacker, scope("10.0.0.1", 1), e -> evicted.add(e.scope()));
+        admission.admit(attacker, scope("10.0.0.1", 2), e -> evicted.add(e.scope()));
+        admission.admit(attacker, scope("10.0.0.1", 3), e -> evicted.add(e.scope()));
 
         // Without this the budget would shrink while the tables it governs kept growing — the
         // bound would be bookkeeping rather than a bound.
@@ -147,11 +160,11 @@ class SessionAdmissionTest {
         final var attacker = source("10.0.0.1");
         final List<ExporterIdentity> evicted = new ArrayList<>();
 
-        admission.admit(victim, scope("10.0.0.2", 1), evicted::add);
-        admission.admit(victim, scope("10.0.0.2", 2), evicted::add);
+        admission.admit(victim, scope("10.0.0.2", 1), e -> evicted.add(e.scope()));
+        admission.admit(victim, scope("10.0.0.2", 2), e -> evicted.add(e.scope()));
 
         for (long domain = 0; domain < 500; domain++) {
-            admission.admit(attacker, scope("10.0.0.1", domain), evicted::add);
+            admission.admit(attacker, scope("10.0.0.1", domain), e -> evicted.add(e.scope()));
         }
 
         assertThat(evicted)
@@ -291,7 +304,7 @@ class SessionAdmissionTest {
         // Eight linecards, each its own observation domain, each re-announcing templates.
         for (int round = 0; round < 20; round++) {
             for (long linecard = 0; linecard < 8; linecard++) {
-                admission.admit(chassis, scope("10.0.0.1", linecard), evicted::add);
+                admission.admit(chassis, scope("10.0.0.1", linecard), e -> evicted.add(e.scope()));
             }
         }
 
@@ -308,16 +321,96 @@ class SessionAdmissionTest {
         final var exporter = source("10.0.0.1");
         final List<ExporterIdentity> evicted = new ArrayList<>();
 
-        admission.admit(exporter, scope("10.0.0.1", 1), evicted::add);
-        admission.admit(exporter, scope("10.0.0.1", 2), evicted::add);
+        admission.admit(exporter, scope("10.0.0.1", 1), e -> evicted.add(e.scope()));
+        admission.admit(exporter, scope("10.0.0.1", 2), e -> evicted.add(e.scope()));
         for (int i = 0; i < 100; i++) {
-            admission.admit(exporter, scope("10.0.0.1", 1), evicted::add);
-            admission.admit(exporter, scope("10.0.0.1", 2), evicted::add);
+            admission.admit(exporter, scope("10.0.0.1", 1), e -> evicted.add(e.scope()));
+            admission.admit(exporter, scope("10.0.0.1", 2), e -> evicted.add(e.scope()));
         }
 
         assertThat(evicted)
                 .as("a legitimate multi-domain chassis within its budget must never be churned")
                 .isEmpty();
         assertThat(meter("rejectedScopes")).isZero();
+    }
+
+    /** The collector's listening socket; one receiver, so every key below shares it. */
+    private static final InetSocketAddress LOCAL = new InetSocketAddress(address("10.10.10.10"), 4739);
+
+    private static UdpSessionManager.SessionKey ipfix(final String host, final int port) {
+        return new IpfixUdpParser.SocketSessionKey(new InetSocketAddress(address(host), port), LOCAL);
+    }
+
+    /**
+     * #946: an IPFIX exporter that restarts comes back on a new source port, and IPFIX keys its
+     * session on the full socket. Admission must still see the same exporter host. Counting the new
+     * socket as a new source cost every restarted exporter a second slot while the old one idled out,
+     * and a mass restart near the bound refused templates for up to the idle timeout.
+     */
+    @Test
+    void anIpfixExporterReturningOnANewPortKeepsItsHostsSlot() {
+        final SessionAdmission admission = admission(config(3, 16));
+
+        for (int i = 1; i <= 3; i++) {
+            assertThat(admission.admit(ipfix("10.0.0." + i, 50_000), scope("10.0.0." + i, 0), e -> { }))
+                    .isTrue();
+        }
+
+        // Every exporter restarts and comes back on a new port, with the source table full.
+        for (int i = 1; i <= 3; i++) {
+            assertThat(admission.admit(ipfix("10.0.0." + i, 60_000), scope("10.0.0." + i, 0), e -> { }))
+                    .as("10.0.0.%d already holds a slot; a new source port is not a new exporter", i)
+                    .isTrue();
+        }
+
+        assertThat(admission.sourceCount()).isEqualTo(3);
+        assertThat(meter("rejectedSources")).isZero();
+    }
+
+    /**
+     * NetFlow v9 and IPFIX run separate session managers behind this one oracle. A displaced entry
+     * is handed to the manager that asked, so a budget shared across parsers would hand one parser
+     * another parser's state to drop, and the real state would outlive its budget entry.
+     */
+    @Test
+    void parsersDoNotShareOneHostsBudget() {
+        final SessionAdmission admission = admission(config(16, 2));
+        final var netflow9 = new Netflow9UdpParser.HostSessionKey(address("10.0.0.1"), LOCAL);
+        final List<ExporterIdentity> evicted = new ArrayList<>();
+
+        admission.admit(netflow9, scope("10.0.0.1", 1), e -> evicted.add(e.scope()));
+        admission.admit(netflow9, scope("10.0.0.1", 2), e -> evicted.add(e.scope()));
+
+        // The same host, now over IPFIX, fills far past a budget of two.
+        for (long domain = 100; domain < 150; domain++) {
+            admission.admit(ipfix("10.0.0.1", 50_000), scope("10.0.0.1", domain), e -> evicted.add(e.scope()));
+        }
+
+        assertThat(evicted)
+                .as("IPFIX traffic from a host must never displace that host's NetFlow v9 scopes")
+                .doesNotContain(scope("10.0.0.1", 1), scope("10.0.0.1", 2));
+        assertThat(admission.sourceCount()).isEqualTo(2);
+    }
+
+    /** An operator reading the refusal must still be able to tell which IPFIX socket was refused. */
+    @Test
+    void theSourceRefusalNamesTheRefusedSocket() {
+        final Logger logger = (Logger) LoggerFactory.getLogger(SessionAdmission.class);
+        final ListAppender<ILoggingEvent> appender = LogCapture.startedAppender();
+        logger.addAppender(appender);
+        try {
+            final SessionAdmission admission = admission(config(1, 16));
+            admission.admit(ipfix("10.0.0.1", 50_000), scope("10.0.0.1", 0), e -> { });
+
+            assertThat(admission.admit(ipfix("10.0.0.2", 50_001), scope("10.0.0.2", 0), e -> { })).isFalse();
+
+            assertThat(appender.list)
+                    .extracting(ILoggingEvent::getFormattedMessage)
+                    .anySatisfy(message -> assertThat(message)
+                            .contains("Session source bound (1) reached")
+                            .contains("Last refused: 10.0.0.2:50001."));
+        } finally {
+            logger.detachAppender(appender);
+        }
     }
 }

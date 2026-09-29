@@ -136,6 +136,12 @@ public class Netflow9UdpParser extends UdpParserBase implements DispatchableUdpP
         public InetAddress getRemoteAddress() {
             return this.remoteAddress;
         }
+
+        /** Already the exporter host, since this key ignores the remote port. */
+        @Override
+        public Object getAdmissionSource() {
+            return this;
+        }
     }
 
     public Netflow9UdpParser withFlowActiveTimeoutFallback(final Duration flowActiveTimeoutFallback) {

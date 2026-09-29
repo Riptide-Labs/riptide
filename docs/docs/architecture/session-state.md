@@ -38,6 +38,12 @@ The observation domain is a 32-bit header field, and both halves of the sFlow pa
 A sender that varies one of them mints a new identity on every packet, so the state is bounded rather than left to grow.
 The four keys that bound it, with their defaults, are on the [receivers reference](../reference/receivers.md#session-state-bounds).
 
+A source, for these bounds, is the exporter host: its address and the socket it sends to, without its source port.
+Each parser counts its own sources, so a host sending both NetFlow v9 and IPFIX holds two slots.
+An IPFIX exporter that restarts comes back on a new source port, which RFC 7011 treats as a new session with its own templates.
+It keeps its source slot.
+The old session's state becomes that source's least-recently-used scope, and is the first displaced if the source runs out of scopes.
+
 ## How the bounds are sized
 
 Worst-case retained state is a product an operator can multiply out, and the reference page tabulates it.
