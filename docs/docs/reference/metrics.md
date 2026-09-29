@@ -147,6 +147,7 @@ Collector-wide; nothing here names an exporter. `offered` always equals the sum 
 | **`flows.session.sources`** | gauge | UDP sources currently holding a slot. | approaching `riptide.flows.session.max-sources` |
 | **`flows.session.scopes`** | gauge | Admitted scope identities across all sources. | not an alert |
 | **`flows.session.rejectedSources`** | meter | A new source was refused because `max-sources` was reached. | any rate on a healthy fleet: the bound is too low, or a spray is running |
+| **`flows.session.replacedSources`** | meter | At a full table, a new source took the slot of a quiet source from the same host, and that source's state was dropped. Expected when IPFIX exporters restart on new source ports. | a steady rate: an exporter is changing source port without restarting |
 | **`flows.session.rejectedScopes`** | meter | A source's least-recently-used scope was displaced because `max-scopes-per-source` was reached. | a steady rate |
 | **`enrichment.optionInterfaces.rejected`** | meter | An interface entry was evicted because `max-ifindexes-per-scope` was reached. Degrades only. | a steady rate: raise the bound |
 | **`enrichment.optionApplications.rejected`** | meter | An application-table entry was evicted because the fixed 16,384-id scope cap was reached. | a steady rate |

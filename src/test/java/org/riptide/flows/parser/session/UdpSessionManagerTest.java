@@ -7,6 +7,7 @@ package org.riptide.flows.parser.session;
 
 import io.netty.buffer.ByteBuf;
 import org.junit.jupiter.api.Test;
+import org.riptide.flows.parser.exceptions.MissingTemplateException;
 import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.ie.values.StringValue;
 import org.riptide.flows.parser.ipfix.IpfixUdpParser;
@@ -20,6 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 public class UdpSessionManagerTest {
 
@@ -453,6 +455,57 @@ public class UdpSessionManagerTest {
         assertThat(manager.count())
                 .as("one template each, so templates are bounded by the same budget")
                 .isLessThanOrEqualTo(8);
+    }
+
+    /**
+     * #946 through the real paths: a restarted IPFIX socket that replaces its host's old socket at a
+     * full table must take the old socket's templates and sequence tracker with it. Otherwise the
+     * slot is freed while the state it authorised stays, and the bound counts nothing.
+     */
+    @Test
+    void aReplacedSocketsStateIsDropped() throws Exception {
+        final var config = new SessionAdmissionConfig();
+        config.setMaxSources(2);
+        config.setMaxScopesPerSource(8);
+        final var clock = new java.util.concurrent.atomic.AtomicLong();
+        final var manager = new UdpSessionManager(Duration.ofMinutes(30),
+                () -> new SequenceNumberTracker(32),
+                OptionListener.NONE,
+                new SessionAdmission(config, new com.codahale.metrics.MetricRegistry(), clock::get));
+
+        final var local = new InetSocketAddress(InetAddress.getByName("10.10.10.10"), 4739);
+        final var restarting = InetAddress.getByName("10.10.10.20");
+        final var other = InetAddress.getByName("10.10.10.30");
+        final var template = Template.builder(templateId1, Template.Type.TEMPLATE)
+                .withFields(List.of(field("field1"))).build();
+
+        final var before = manager.getSession(
+                new IpfixUdpParser.SocketSessionKey(new InetSocketAddress(restarting, 50_000), local));
+        before.addTemplate(0, template);
+        before.verifySequenceNumber(new ExporterIdentity.NetflowIpfix(restarting, 0), 1, 1);
+        final var bystander = manager.getSession(
+                new IpfixUdpParser.SocketSessionKey(new InetSocketAddress(other, 50_000), local));
+        bystander.addTemplate(0, template);
+        bystander.verifySequenceNumber(new ExporterIdentity.NetflowIpfix(other, 0), 1, 1);
+
+        // The old socket falls silent, and the bystander keeps talking.
+        clock.addAndGet(java.util.concurrent.TimeUnit.MINUTES.toNanos(2));
+        bystander.verifySequenceNumber(new ExporterIdentity.NetflowIpfix(other, 0), 2, 1);
+
+        final var after = manager.getSession(
+                new IpfixUdpParser.SocketSessionKey(new InetSocketAddress(restarting, 60_000), local));
+        after.addTemplate(0, template);
+        after.verifySequenceNumber(new ExporterIdentity.NetflowIpfix(restarting, 0), 1, 1);
+
+        assertThat(after.getResolver(0).lookupTemplate(templateId1))
+                .as("the restarted exporter's template is admitted at a full table")
+                .isNotNull();
+        assertThatThrownBy(() -> before.getResolver(0).lookupTemplate(templateId1))
+                .as("the replaced socket's templates go with its slot")
+                .isInstanceOf(MissingTemplateException.class);
+        assertThat(bystander.getResolver(0).lookupTemplate(templateId1)).isNotNull();
+        assertThat(manager.domainCount()).isEqualTo(2);
+        assertThat(manager.sequenceTrackerCount()).as("and so does its sequence tracker").isEqualTo(2);
     }
 
 }
