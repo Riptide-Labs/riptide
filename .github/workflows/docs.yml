@@ -70,17 +70,21 @@ jobs:
           sed -i "s/%%VERSION%%/${VERSION}/g" site/index.html
           REDIRECT='<script>(function(){var p=location.pathname;if(p.indexOf("/docs")!==0){location.replace("/docs"+p+location.search+location.hash)}})()</script>'
           sed "s|<head>|<head>${REDIRECT}|" docs/build/404.html > site/404.html
+      # Publishing is switched by the repository variable PAGES_ENABLED. Unset
+      # or anything but 'true' builds and checks the site but publishes nothing,
+      # for while GitHub Pages is disabled for the repository. On a private
+      # repository, publishing also needs `pages: read` on this job (#952).
       - name: Configure GitHub Pages
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && vars.PAGES_ENABLED == 'true'
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - name: Upload site artifact
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && vars.PAGES_ENABLED == 'true'
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site
 
   deploy:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && vars.PAGES_ENABLED == 'true'
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 10
