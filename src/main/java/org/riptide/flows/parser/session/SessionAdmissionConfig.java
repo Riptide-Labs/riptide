@@ -59,6 +59,10 @@ public class SessionAdmissionConfig {
      * <em>new</em> sources and leaves admitted ones alone: the alternative, evicting the
      * least-recently-used source, would let a flood choose which real exporters stop being
      * monitored.
+     *
+     * <p>One exception, confined to one host: a new source from a host that already holds a slot
+     * quiet for a minute takes that slot, because a restarted IPFIX exporter comes back on a new
+     * source port and would otherwise be refused until its old socket idled out (#946).
      */
     private int maxSources = 4_096;
 
