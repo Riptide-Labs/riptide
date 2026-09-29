@@ -297,6 +297,13 @@ The self-monitoring dashboards read Prometheus and may stay open.
    make bench-ladder EXP=flow-knee BASELINE=<devices>
    ```
 
+The observability data disk survives `bench destroy`, and so do the ladder's records in `/var/lib/bench/ladder/`.
+Before a new campaign on a rebuilt lab, move the old `<name>.jsonl` aside, or the ladder resumes from the previous lab's steps.
+
+The measured knee and baseline of `flow-knee` are in **`benchmark/experiments/flow-knee.baseline.json`**.
+A later optimization rebuilds the same declaration, holds the same fleet with `BASELINE=`, and compares against that file.
+On riptide 0.17.0 the knee was 2,184 devices (about 13,600 flows/s), set by the batch queue absorbing nl6's synchronized 5 s bursts rather than by CPU.
+
 nl6 cannot remove devices cleanly, so a smaller fleet restarts nl6 on the loadgen VM and then riptide on the SUT.
 Restarted exporters come back on new source ports, and riptide would otherwise keep the old sessions for their 30 minute idle timeout.
 Those count against riptide's 4,096 session sources (`riptide.flows.session.max-sources`), and a full table refuses new exporters' templates.
