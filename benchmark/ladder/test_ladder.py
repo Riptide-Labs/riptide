@@ -75,6 +75,20 @@ class Run(unittest.TestCase):
         self.assertEqual(first["end"] - first["start"], 600)
         self.assertEqual(first["start"], 1000.0 + 120)
 
+    def test_the_store_is_counted_after_the_pipeline_settles(self):
+        # Counting at the hold's end missed the flows still in riptide's
+        # batch queue: 3.4% short on the live lab at 1,000 devices.
+        seen = []
+
+        def measure_step(devices, start, end):
+            seen.append((end, self.clock.now()))
+            return dataclasses.replace(CLEAN, devices=devices)
+
+        ladder.run(str(self.path), self.fleet, measure_step, self.restart, self.clock.now, self.clock.sleep)
+        end, measured_at = seen[0]
+        self.assertGreaterEqual(measured_at - end, ladder.SETTLE_SECONDS)
+        self.assertGreaterEqual(ladder.SETTLE_SECONDS, 30)
+
     def test_a_smaller_fleet_restarts_the_loadgen_first(self):
         self.go(3300)
         self.assertGreaterEqual(self.restarts, 1)
