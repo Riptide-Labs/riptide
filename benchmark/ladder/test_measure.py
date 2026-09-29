@@ -88,6 +88,21 @@ class Measure(unittest.TestCase):
         values = dict(CLEAN, min_scrapes=56)
         self.assertEqual(measure.measure(self.lab(values), 1000, 1000.0, 1600.0).scrape_gap_seconds, 40)
 
+    def test_several_parsers_are_summed_without_a_label_clash(self):
+        # increase() drops __name__, so the ipfix, netflow5 and netflow9
+        # parser series collide unless the name is kept in a label first
+        # (live on Prometheus v3.15.0: "vector cannot contain metrics with the
+        # same labelset").
+        q = measure.QUERIES["dispatched_records"]
+        self.assertIn('label_replace({{job="riptide", __name__=~"parsers_.+_recordsDispatched"}}, "parser", "$1", "__name__", "(.+)")', q)
+        self.assertIn("[{range}s:10s]", q)
+
+    def test_flush_p99_reads_the_exported_timer(self):
+        # riptide exports the flush timer as a summary in seconds (read from a
+        # live /metrics of 0.17.0): persister_batch_flush_seconds{quantile="0.99"}.
+        for name in ("flush_p99_first", "flush_p99_last"):
+            self.assertIn('persister_batch_flush_seconds{{quantile="0.99"}}', measure.QUERIES[name])
+
     def test_foreign_clickhouse_queries_are_counted(self):
         self.assertEqual(measure.measure(self.lab(CLEAN, foreign=3), 1000, 1000.0, 1600.0).foreign_queries, 3)
 

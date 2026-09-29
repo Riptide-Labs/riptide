@@ -28,12 +28,14 @@ QUERIES = {
     "kernel_drops": 'sum(increase(node_netstat_Udp_RcvbufErrors{{service="sut"}}[{range}s])) + sum(increase(node_netstat_Udp_InErrors{{service="sut"}}[{range}s]))',
     "listener_drops": 'sum(increase(riptide:lost_total{{stage="listener"}}[{range}s]))',
     "pipeline_drops": 'sum(increase(riptide:lost_total{{stage!="listener"}}[{range}s]))',
-    "dispatched_records": 'sum(increase({{job="riptide", __name__=~"parsers_.+_recordsDispatched"}}[{range}s]))',
+    # increase() drops __name__, so the parser series would share one labelset;
+    # the name is kept as a label and the increase taken over a subquery.
+    "dispatched_records": 'sum(increase(label_replace({{job="riptide", __name__=~"parsers_.+_recordsDispatched"}}, "parser", "$1", "__name__", "(.+)")[{range}s:10s]))',
     "queue": "max(riptide:queue_depth / on(stage, component) riptide:queue_capacity)",
     "loadgen_cpu": '1 - avg(rate(node_cpu_seconds_total{{service="loadgen", mode="idle"}}[{range}s]))',
     "clickhouse_cpu": '1 - avg(rate(node_cpu_seconds_total{{service="clickhouse", mode="idle"}}[{range}s]))',
-    "flush_p99_first": 'max(max_over_time(persister_batch_flush{{quantile="0.99"}}[{phase}s] offset {late}s))',
-    "flush_p99_last": 'max(max_over_time(persister_batch_flush{{quantile="0.99"}}[{phase}s]))',
+    "flush_p99_first": 'max(max_over_time(persister_batch_flush_seconds{{quantile="0.99"}}[{phase}s] offset {late}s))',
+    "flush_p99_last": 'max(max_over_time(persister_batch_flush_seconds{{quantile="0.99"}}[{phase}s]))',
     "uplink_bytes_per_second": 'sum(rate(node_network_receive_bytes_total{{service="clickhouse"}}[{range}s]) * on(instance, device) group_left node_network_info{{service="clickhouse", address="{clickhouse_store}"}})'
                                ' + sum(rate(node_network_receive_bytes_total{{service="observe"}}[{range}s]) * on(instance, device) group_left node_network_info{{service="observe", address="{observe_observe}"}})',
     "min_scrapes": "min(count_over_time(up[{range}s]))",
