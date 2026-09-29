@@ -22,7 +22,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  code-scanning:
+    uses: ./.github/workflows/code-scanning-available.yml
+
   analysis:
+    needs: code-scanning
+    if: needs.code-scanning.outputs.available == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
