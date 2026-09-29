@@ -83,6 +83,19 @@ class Grow(unittest.TestCase):
         fleet.grow_to(4)
         self.assertEqual(fleet.size(), 4)
 
+    def test_a_409_that_never_clears_stops_within_the_patience(self):
+        class Always409(FakeNl6):
+            def __call__(self, method, path, body):
+                if method == "POST":
+                    return 409, {"success": False, "message": "overlapping addresses"}
+                return super().__call__(method, path, body)
+        server = FakeServer(Always409())
+        self.addCleanup(server.close)
+        fleet = nl6.Fleet(server.url, collector="172.24.0.10:9999", poll_seconds=0.01, patience_seconds=0.3)
+        with self.assertRaises(nl6.FleetError) as caught:
+            fleet.grow_to(4)
+        self.assertIn("409", str(caught.exception))
+
     def test_a_failed_device_stops_the_ladder(self):
         fleet = self.fleet(FakeNl6(fail=1))
         with self.assertRaises(nl6.FleetError) as caught:

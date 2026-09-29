@@ -4,8 +4,8 @@
 """Grow an nl6 CRS-X fleet over its REST API (nl6 v0.32.0).
 
 Devices export flows from the moment they exist, so no scenario is used. A
-fleet only grows: the ladder bisects by building a fresh lab, never by
-deleting devices, since nl6 keeps a deleted device's flows in flight.
+fleet only grows here: for a smaller fleet the ladder restarts nl6 and riptide
+(ladder.py) and grows again from zero, since nl6 cannot remove devices cleanly.
 """
 
 import ipaddress
@@ -56,7 +56,7 @@ class Fleet:
     def grow_to(self, devices):
         have = self.size()
         if devices < have:
-            raise FleetError(f"the fleet has {have} devices and cannot shrink to {devices}; rebuild the lab")
+            raise FleetError(f"the fleet has {have} devices and cannot shrink to {devices}; restart nl6 first")
         if devices == have:
             return
         next_ip = self.start + have
@@ -64,11 +64,17 @@ class Fleet:
             batch = {"start_ip": str(next_ip), "device_count": count, "netmask": "16",
                      "resource_file": RESOURCE_FILE,
                      "flow": {"collector": self.collector, "protocol": protocol}}
+            deadline = time.monotonic() + self.patience
             while True:
                 self._wait_idle()
                 status, raw = web.request("POST", f"{self.base}/api/v1/devices", batch)
                 if status != 409:
                     break
+                # 409 is nl6's batch gate; one that outlasts the patience is a
+                # real conflict, such as overlapping addresses.
+                if time.monotonic() > deadline:
+                    raise FleetError(f"nl6 kept answering 409 to a {protocol} batch: {raw[:300]!r}")
+                time.sleep(self.poll_seconds)
             if status not in (200, 201):
                 raise FleetError(f"nl6 refused a {protocol} batch ({status}): {raw[:300]!r}")
             data = json.loads(raw)["data"]

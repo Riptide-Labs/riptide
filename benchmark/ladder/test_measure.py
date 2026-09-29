@@ -85,8 +85,16 @@ class Measure(unittest.TestCase):
         self.assertTrue(measure.measure(self.lab(values), 1000, 1000.0, 1600.0).flush_p99_rising)
 
     def test_missing_scrapes_become_a_gap(self):
+        # 4 scrapes missed in a row leave a 50 s hole between two good ones.
         values = dict(CLEAN, min_scrapes=56)
-        self.assertEqual(measure.measure(self.lab(values), 1000, 1000.0, 1600.0).scrape_gap_seconds, 40)
+        self.assertEqual(measure.measure(self.lab(values), 1000, 1000.0, 1600.0).scrape_gap_seconds, 50)
+
+    def test_a_down_target_counts_as_a_gap(self):
+        # up=0 is still a sample; only successful scrapes may count.
+        self.assertIn("sum_over_time(up[{range}s])", measure.QUERIES["min_scrapes"])
+
+    def test_a_hold_a_hair_over_its_length_is_no_gap(self):
+        self.assertEqual(measure.measure(self.lab(CLEAN), 1000, 1000.0, 1600.0001).scrape_gap_seconds, 0)
 
     def test_several_parsers_are_summed_without_a_label_clash(self):
         # increase() drops __name__, so the ipfix, netflow5 and netflow9
