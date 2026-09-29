@@ -31,6 +31,9 @@ QUERIES = {
     # increase() drops __name__, so the parser series would share one labelset;
     # the name is kept as a label and the increase taken over a subquery.
     "dispatched_records": 'sum(increase(label_replace({{job="riptide", __name__=~"parsers_.+_recordsDispatched"}}, "parser", "$1", "__name__", "(.+)")[{range}s:10s]))',
+    # A set riptide has no template for is dropped before any loss counter,
+    # for example when a full session table refuses the exporter's session.
+    "undecodable_sets": 'sum(increase(label_replace({{job="riptide", __name__=~"parsers_.+_undecodableSets"}}, "parser", "$1", "__name__", "(.+)")[{range}s:10s]))',
     "queue": "max(riptide:queue_depth / on(stage, component) riptide:queue_capacity)",
     "loadgen_cpu": '1 - avg(rate(node_cpu_seconds_total{{service="loadgen", mode="idle"}}[{range}s]))',
     "clickhouse_cpu": '1 - avg(rate(node_cpu_seconds_total{{service="clickhouse", mode="idle"}}[{range}s]))',
@@ -99,6 +102,7 @@ def measure(lab, devices, start, end):
         devices=devices, hold_seconds=hold,
         wire_tx_packets=v["wire_tx_packets"], wire_rx_packets=v["wire_rx_packets"],
         kernel_drops=v["kernel_drops"], listener_drops=v["listener_drops"], pipeline_drops=v["pipeline_drops"],
+        undecodable_sets=v["undecodable_sets"],
         dispatched_records=v["dispatched_records"], stored_rows=stored,
         queue_start=queue_start, queue_end=queue_end,
         loadgen_cpu=v["loadgen_cpu"], clickhouse_cpu=v["clickhouse_cpu"],

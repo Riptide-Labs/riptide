@@ -21,6 +21,7 @@ from pathlib import Path
 import measure
 import nl6
 import search
+import web
 from rules import KNEE_VERDICT, PASS, STOP_VERDICTS, verdict
 
 WARMUP_SECONDS = 120
@@ -102,6 +103,7 @@ def main():
     parser.add_argument("--baseline", type=int, help="hold this fleet once instead of searching")
     parser.add_argument("--hold", type=float, default=HOLD_SECONDS)
     parser.add_argument("--loadgen-ssh", default="", help="ssh target that restarts nl6: 'bench@<loadgen mgmt>'")
+    parser.add_argument("--sut-ssh", default="", help="ssh target that restarts riptide: 'bench@<sut mgmt>'")
     args = parser.parse_args()
 
     inv = json.loads(Path(args.inventory).read_text())
@@ -114,18 +116,32 @@ def main():
     fleet = nl6.Fleet(f"http://{s['loadgen']['addresses']['mgmt']}:8080",
                       collector=f"{s['sut']['addresses']['ingest']}:9999")
 
-    def restart_loadgen():
-        subprocess.run(["ssh", "-o", "StrictHostKeyChecking=accept-new", args.loadgen_ssh, "sudo systemctl restart nl6"], check=True)
+    readyz = f"http://{s['sut']['addresses']['observe']}:8080/readyz"
+
+    def ssh(target, command):
+        subprocess.run(["ssh", "-o", "StrictHostKeyChecking=accept-new", target, command], check=True)
+
+    def wait_for(what, ok):
         deadline = time.monotonic() + 600
         while True:
             try:
-                if fleet.size() == 0:
+                if ok():
                     return
             except Exception:
                 pass
             if time.monotonic() > deadline:
-                raise nl6.FleetError("nl6 did not come back empty within 600 s")
+                raise nl6.FleetError(f"{what} within 600 s")
             time.sleep(5)
+
+    def restart_loadgen():
+        # A smaller fleet needs an empty nl6 and an empty riptide session table:
+        # restarted exporters come back on new source ports, and the old
+        # sessions would hold riptide's source bound (4,096) for their 30 min
+        # idle timeout, refusing the new exporters' templates.
+        ssh(args.loadgen_ssh, "sudo systemctl restart nl6")
+        wait_for("nl6 did not come back empty", lambda: fleet.size() == 0)
+        ssh(args.sut_ssh, "sudo systemctl restart riptide")
+        wait_for("riptide did not answer /readyz", lambda: web.request("GET", readyz, timeout=5)[0] == 200)
 
     measure_step = lambda devices, start, end: measure.measure(lab, devices, start, end)
     if args.baseline:

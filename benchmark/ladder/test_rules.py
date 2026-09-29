@@ -11,7 +11,7 @@ from rules import PASS, Step, verdict
 CLEAN = Step(
     devices=1000, hold_seconds=600,
     wire_tx_packets=100_000, wire_rx_packets=100_000,
-    kernel_drops=0, listener_drops=0, pipeline_drops=0,
+    kernel_drops=0, listener_drops=0, pipeline_drops=0, undecodable_sets=0,
     dispatched_records=2_400_000, stored_rows=2_400_000,
     queue_start=0.01, queue_end=0.01,
     loadgen_cpu=0.40, clickhouse_cpu=0.30, flush_p99_rising=False,
@@ -40,6 +40,13 @@ class Verdicts(unittest.TestCase):
 
     def test_pipeline_drops_are_riptide_bound(self):
         self.assertEqual(judged(pipeline_drops=1), "riptide-bound")
+
+    def test_undecodable_sets_are_riptide_bound(self):
+        # riptide refusing exporter sessions (source bound reached) drops
+        # their templates and so their records, before any loss counter.
+        verdict_name, reason = verdict(dataclasses.replace(CLEAN, undecodable_sets=330), REF)
+        self.assertEqual(verdict_name, "riptide-bound")
+        self.assertIn("undecodable_sets=330", reason)
 
     def test_a_queue_that_doubles_above_the_floor_is_riptide_bound(self):
         self.assertEqual(judged(queue_start=0.10, queue_end=0.21), "riptide-bound")
