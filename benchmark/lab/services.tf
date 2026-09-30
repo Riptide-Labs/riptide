@@ -78,7 +78,8 @@ locals {
   seed_docs = ["user-data", "meta-data", "network-config"]
   # The mgmt address each running VM had after the last apply: a changed
   # network-config takes effect only at the re-run's reboot.
-  applied_inventory = fileexists("${local.run_dir}/inventory.json") ? jsondecode(file("${local.run_dir}/inventory.json")) : {}
+  # try, not a conditional: the inventory object and {} differ in type.
+  applied_inventory = try(jsondecode(file("${local.run_dir}/inventory.json")), {})
   reseed = {
     for s, v in local.services : s => join(" ", [
       for a in [
