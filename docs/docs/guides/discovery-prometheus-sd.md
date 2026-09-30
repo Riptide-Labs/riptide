@@ -25,6 +25,7 @@ Nothing needs installing unless the producer is NetBox, where the [`netbox-plugi
 1. Point `riptide.discovery.url` at the document in `/etc/riptide/config.yaml`.
    The example is the NetBox plugin endpoint; a producer that is not NetBox needs `address-labels` set to whichever label carries its address, or no label at all when the target itself is the address.
    Such a producer names its devices under its own label, so set `name-labels` to it: nl6's `/api/v1/prometheus/sd` needs `name-labels: [__meta_nl6_sys_name]`, and its targets are already addresses.
+   Use nl6 v0.34.1 or later: v0.34.0 can give two devices one sysName, and Riptide refuses the whole document on a name collision.
 
    ```yaml
    riptide:

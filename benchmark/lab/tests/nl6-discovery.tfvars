@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # riptide names its exporters from the load generator's service discovery
-# endpoint (nl6 v0.34.0 and later), read over mgmt. The riptide it installs
+# endpoint (nl6 v0.34.1 and later), read over mgmt. The riptide it installs
 # must read riptide.discovery.name-labels (#957) and boot on an empty fleet
 # (#959), so the source is a local build; the declaration refuses releases up
 # to 0.17.0.
