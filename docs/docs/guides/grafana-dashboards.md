@@ -41,11 +41,42 @@ The compose stack does all of this.
 
 - Grafana 11 or newer with nested folders. Everything on this page was verified on Grafana 13.0.2, the version the compose stack pins.
 - Plugins **`grafana-clickhouse-datasource`** and **`netsage-sankey-panel`** installed.
-- A ClickHouse datasource pointing at the riptide database. The compose stack provisions one; elsewhere, add it under *Connections* first.
+- A ClickHouse datasource pointing at the riptide database. The compose stack provisions one; elsewhere, add it under *Connections* first, as a [read-only user](#give-grafana-a-read-only-clickhouse-user).
 - For the tarball and package paths: shell access to the Grafana host.
 - For the Helm path: `helm` and `kubectl` access to the release's namespace.
 - For the tarball, package and Helm paths: an admin login for the one-time folder move.
 - For the API path: `python3` and a Grafana service-account token with the Editor role.
+
+## Give Grafana a read-only ClickHouse user
+
+Do not point the datasource at the user riptide inserts with, or at any admin.
+Explore runs whatever SQL a Grafana editor types as the datasource's user, so that user's rights are every editor's rights.
+
+The compose stack already sets this up.
+A multi-tenant deployment points each tenant's datasource at the read-only `bi_<tenant>@<database>` reader that `riptide onboard` creates, see [Onboard a tenant](../operations/tenants/onboard-a-tenant.md).
+On any other ClickHouse you run yourself, create the user as an admin, replacing the password and, if yours differs, the database `riptide`:
+
+```sql
+CREATE USER IF NOT EXISTS grafana IDENTIFIED WITH sha256_password BY 'change-me' SETTINGS readonly = 2;
+GRANT SELECT ON riptide.* TO grafana;
+GRANT SELECT ON system.databases TO grafana;
+GRANT SELECT ON system.tables TO grafana;
+GRANT SELECT ON system.columns TO grafana;
+```
+
+Check it as `grafana`, for example with `clickhouse-client --user grafana`:
+
+```sql
+CREATE TABLE riptide.check_grafana (x UInt8) ENGINE = Memory;
+```
+
+It is refused:
+
+```text
+Code: 497. DB::Exception: Received from localhost:9000. DB::Exception: grafana: Not enough privileges. To execute this query, it's necessary to have the grant CREATE TABLE ON riptide.check_grafana. (ACCESS_DENIED)
+```
+
+`readonly = 2`, not `1`: the ClickHouse plugin sends `max_execution_time` with every query, and `readonly = 1` refuses any setting.
 
 ## Install with the compose stack
 
