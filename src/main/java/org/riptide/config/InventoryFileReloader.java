@@ -280,8 +280,9 @@ public class InventoryFileReloader {
      */
     private static FileWatchTrigger.Messages messages(final PacedInventorySource source) {
         return messages(
-                ("Inventory source %s is absent: either the endpoint answered 404 or the inventory file "
-                        + "is missing (deletion and atomic replacement are indistinguishable). Skipping "
+                ("Inventory source %s is absent: the endpoint answered 404, or answered with no targets "
+                        + "before its first composition, or the inventory file is missing (deletion and "
+                        + "atomic replacement are indistinguishable). Skipping "
                         + "reload cycles until it can be read again (keeping the running inventory)")
                         .formatted(source.describe()),
                 ("Inventory source %s composed an empty or whitespace-only document: skipping reload "

@@ -26,6 +26,7 @@ import java.nio.file.NoSuchFileException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -350,14 +351,127 @@ class ComposedInventoryDocumentTest {
         assertThat(document.degradedAtBoot()).isFalse();
     }
 
+    /**
+     * Targets that were all skipped are configuration an operator has to see, unlike an empty
+     * answer: every device is there and none has a usable name or address.
+     */
     @Test
     void aContentFailureAtBootStillFailsBoot() {
-        final ComposedInventoryDocument document = composed(AGENTS, "[]");
+        final ComposedInventoryDocument document = composed(AGENTS, """
+                [{"targets":["has-no-ip"],"labels":{"__meta_netbox_name":"has-no-ip"}}]
+                """);
 
         assertThatThrownBy(document::bootText)
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("no exporter");
         assertThat(document.degradedAtBoot()).isFalse();
+    }
+
+    /** nl6 answers [] until its devices exist; at boot there is no tree to wipe (#959). */
+    @Test
+    void anEmptyAnswerAtBootServesTheFileWithNoExportersTree() {
+        final ComposedInventoryDocument document = composed(AGENTS, "[]");
+
+        final String text = document.bootText();
+
+        assertThat(text).contains("10.0.0.0/8").contains("corp-v3");
+        assertThat(text).doesNotContain("exporters");
+        assertThat(document.degradedAtBoot()).isTrue();
+    }
+
+    @Test
+    void aGroupWithNoTargetsIsAnEmptyAnswer() {
+        final ComposedInventoryDocument document = composed(AGENTS, """
+                [{"targets":[],"labels":{"__meta_netbox_name":"nothing"}}]
+                """);
+
+        document.bootText();
+
+        assertThat(document.degradedAtBoot()).isTrue();
+    }
+
+    @Test
+    void anEmptyAnswerAtBootIsNamedOnceAndSaysWhy() {
+        final ComposedInventoryDocument document = composed(AGENTS, "[]");
+
+        final ListAppender<ILoggingEvent> captured = captureDocumentLog();
+        try {
+            document.bootText();
+        } finally {
+            releaseDocumentLog(captured);
+        }
+
+        assertThat(captured.list).singleElement().satisfies(event -> assertThat(event.getFormattedMessage())
+                .startsWith("Boot found the endpoint empty: it answered with no targets. Serving the "
+                        + "inventory file's trees with no discovered exporters."));
+    }
+
+    /** An empty endpoint must not hide what is wrong with one that answered (#959 review). */
+    @Test
+    void anEmptyEndpointDoesNotHideACollisionInAnotherAtBoot() {
+        final DiscoveryConfig config = new DiscoveryConfig();
+        config.setUrl("https://netbox.example.com/api/devices/");
+        final ComposedInventoryDocument document = new ComposedInventoryDocument(
+                new FixedFile(AGENTS),
+                new DiscoveryEndpoints(List.of(
+                        new DiscoveryEndpoints.Endpoint(() -> "the empty one",
+                                new ServiceDiscoverySource(() -> "[]".getBytes(StandardCharsets.UTF_8), () -> "the empty one")),
+                        new DiscoveryEndpoints.Endpoint(() -> "the clashing one",
+                                new ServiceDiscoverySource(() -> """
+                                        [{"targets":["10.0.0.1"],"labels":{"__meta_netbox_name":"sw1"}},
+                                         {"targets":["10.0.0.2"],"labels":{"__meta_netbox_name":"sw1"}}]
+                                        """.getBytes(StandardCharsets.UTF_8), () -> "the clashing one")))),
+                config,
+                new MetricRegistry());
+
+        assertThatThrownBy(document::bootText)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("sw1");
+        assertThat(document.degradedAtBoot()).isFalse();
+    }
+
+    /**
+     * After an empty boot the fleet is not there yet, so a poll that still finds it empty is absence:
+     * no counted failure every poll, staleness latched. Once the fleet has composed, empty is refused.
+     */
+    @Test
+    void aFleetStillEmptyAfterAnEmptyBootIsAbsenceUntilItFirstComposes() throws IOException {
+        final AtomicReference<String> answer = new AtomicReference<>("[]");
+        final ComposedInventoryDocument document = composed(AGENTS,
+                () -> answer.get().getBytes(StandardCharsets.UTF_8));
+        document.bootText();
+
+        final ListAppender<ILoggingEvent> captured = captureDocumentLog();
+        try {
+            assertThat(document.fetch()).isInstanceOf(FileWatchTrigger.Fetch.Absent.class);
+            assertThat(document.fetch()).isInstanceOf(FileWatchTrigger.Fetch.Absent.class);
+        } finally {
+            releaseDocumentLog(captured);
+        }
+        assertThat(document.endpointAbsent()).isTrue();
+        assertThat(captured.list).as("once per episode, not every poll").singleElement()
+                .satisfies(event -> assertThat(event.getFormattedMessage())
+                        .startsWith("the endpoint answered with no targets and nothing has been composed since boot"));
+
+        answer.set(DEVICES);
+        assertThat(document.fetch()).isInstanceOf(FileWatchTrigger.Fetch.Present.class);
+        assertThat(document.endpointAbsent()).isFalse();
+
+        answer.set("[]");
+        assertThatThrownBy(document::fetch)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("no exporter");
+    }
+
+    /** Only boot degrades: after it, an empty answer would wipe a populated tree. */
+    @Test
+    void anEmptyAnswerAfterBootIsStillRefused() {
+        final ComposedInventoryDocument document = composed(AGENTS, "[]");
+        document.bootText();
+
+        assertThatThrownBy(document::text)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("no exporter");
     }
 
     @Test

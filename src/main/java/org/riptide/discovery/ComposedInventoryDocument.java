@@ -25,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
@@ -70,6 +71,8 @@ public class ComposedInventoryDocument implements InventoryDocument, PacedInvent
     private final DiscoveryConfig config;
     private final AtomicInteger skipped = new AtomicInteger();
     private volatile boolean degradedAtBoot;
+    /** Whether any read since boot composed the endpoints in; until one has, empty is not yet (#959). */
+    private volatile boolean composedOnce;
     private volatile boolean endpointAbsent;
     /** The 404 last named in this absence episode, so a different endpoint going absent is named too. */
     private volatile String absenceWarned;
@@ -108,14 +111,47 @@ public class ComposedInventoryDocument implements InventoryDocument, PacedInvent
      */
     @Override
     public String text() {
-        final List<ExporterRenderer.EndpointGroups> groups;
+        return compose(readStrictly());
+    }
+
+    /** Every endpoint's answer, a fetch failure thrown as the strict readers throw it. */
+    private List<ExporterRenderer.EndpointGroups> readStrictly() {
         try {
-            groups = readAll();
+            return readAll();
         } catch (final UnreadableEndpoint e) {
             throw new IllegalStateException(
                     "%s could not be read: %s".formatted(e.endpoint, e.getCause().getMessage()), e.getCause());
         }
-        return compose(groups);
+    }
+
+    /**
+     * The first endpoint that answered with no targets at all, while nothing has composed since
+     * boot. A producer whose fleet starts empty, such as nl6 before its devices exist, answers so
+     * until the fleet appears; boot degrades on it and a poll treats it as absence, not failure.
+     * Once anything has composed, an empty answer is refused again: it would wipe a populated tree.
+     *
+     * <p>The endpoints that did answer are rendered first and must pass, so an empty endpoint
+     * cannot hide a collision or an all-skipped answer in another.</p>
+     */
+    private Optional<String> emptyBeforeFirstComposition(final List<ExporterRenderer.EndpointGroups> groups) {
+        if (this.composedOnce) {
+            return Optional.empty();
+        }
+        final Optional<String> empty = groups.stream()
+                .filter(ComposedInventoryDocument::answeredNothing)
+                .map(ExporterRenderer.EndpointGroups::name)
+                .findFirst();
+        final List<ExporterRenderer.EndpointGroups> answered = groups.stream()
+                .filter(endpoint -> !answeredNothing(endpoint))
+                .toList();
+        if (empty.isPresent() && !answered.isEmpty()) {
+            render(answered);
+        }
+        return empty;
+    }
+
+    private static boolean answeredNothing(final ExporterRenderer.EndpointGroups endpoint) {
+        return endpoint.groups().stream().allMatch(group -> group.targets().isEmpty());
     }
 
     /**
@@ -156,14 +192,21 @@ public class ComposedInventoryDocument implements InventoryDocument, PacedInvent
     }
 
     /**
-     * Boot's read, which degrades on exactly one failure: the fetch itself. A refused connection,
-     * a timeout, a non-200 and a 404 all mean the endpoint could not be reached, and boot then serves
-     * the file's trees with no exporters tree instead of refusing to start. A flow collector that
-     * will not start while NetBox is down is worse than one that starts without device names.
+     * Boot's read, which degrades on exactly two answers: the fetch failing, and an endpoint
+     * answering with no targets at all. A refused connection, a timeout, a non-200 and a 404 all
+     * mean the endpoint could not be reached, and boot then serves the file's trees with no
+     * exporters tree instead of refusing to start. A flow collector that will not start while
+     * NetBox is down is worse than one that starts without device names.
+     *
+     * <p>An empty answer degrades the same way (#959). After boot it is refused, because it would
+     * wipe a populated exporters tree; at boot there is nothing to wipe, and a producer whose fleet
+     * legitimately starts empty, such as nl6 before its devices exist, must not keep the collector
+     * down. One empty endpoint degrades the whole boot, as one unreachable endpoint does: the
+     * composition is all or nothing.</p>
      *
      * <p>Everything else still fails boot: an answer that is not a service discovery document, a
-     * name collision, an empty answer, and an exporters tree in the file. Those are configuration an
-     * operator has to see, not an endpoint that is down.</p>
+     * name collision, targets that were all skipped, and an exporters tree in the file. Those are
+     * configuration an operator has to see, not an endpoint that is down or empty.</p>
      *
      * <p>The degraded document has no {@code exporters} key at all rather than an empty one. An empty
      * mapping is how an operator declares a tree deliberately empty, which the regression guard
@@ -177,21 +220,29 @@ public class ComposedInventoryDocument implements InventoryDocument, PacedInvent
         try {
             groups = readAll();
         } catch (final UnreadableEndpoint e) {
-            // composed first, warned after: the merge can still fail boot with the endpoint down
-            // (an exporters tree in the file is refused either way, and so is an unparseable
-            // file), and warning first printed "serving the inventory file's trees" immediately
-            // above a startup failure that served nothing at all
-            final String degraded = merge(null);
-            this.degradedAtBoot = true;
-            // the retry clause is chosen, not asserted: with a non-positive interval the watcher
-            // never starts, so it registers no inventory.reload.stale gauge at all, and the
-            // sentence promising one reads as "wait for it" about something that never arrives
-            log.warn("Boot could not reach {}: {}. Serving the inventory file's trees with no discovered "
-                    + "exporters. {}", e.endpoint, reason(e), retryClause());
-            return degraded;
+            return degrade("Boot could not reach %s: %s".formatted(e.endpoint, reason(e)));
+        }
+        final Optional<String> empty = emptyBeforeFirstComposition(groups);
+        if (empty.isPresent()) {
+            return degrade("Boot found %s empty: it answered with no targets".formatted(empty.get()));
         }
         this.degradedAtBoot = false;
         return compose(groups);
+    }
+
+    /** The file's trees alone, for a boot that cannot compose the endpoint in yet. */
+    private String degrade(final String opening) {
+        // composed first, warned after: the merge can still fail boot with the endpoint down
+        // (an exporters tree in the file is refused either way, and so is an unparseable
+        // file), and warning first printed "serving the inventory file's trees" immediately
+        // above a startup failure that served nothing at all
+        final String degraded = merge(null);
+        this.degradedAtBoot = true;
+        // the retry clause is chosen, not asserted: with a non-positive interval the watcher
+        // never starts, so it registers no inventory.reload.stale gauge at all, and the
+        // sentence promising one reads as "wait for it" about something that never arrives
+        log.warn("{}. Serving the inventory file's trees with no discovered exporters. {}", opening, retryClause());
+        return degraded;
     }
 
     /**
@@ -233,15 +284,21 @@ public class ComposedInventoryDocument implements InventoryDocument, PacedInvent
         return this.degradedAtBoot;
     }
 
+    private RenderedExporters render(final List<ExporterRenderer.EndpointGroups> groups) {
+        return ExporterRenderer.render(groups, this.config.getNameLabels(), this.config.getAddressLabels());
+    }
+
     private String compose(final List<ExporterRenderer.EndpointGroups> groups) {
-        final RenderedExporters rendered = ExporterRenderer.render(groups, this.config.getNameLabels(), this.config.getAddressLabels());
+        final RenderedExporters rendered = render(groups);
         // Only skipped is set here. discovery.targets is derived from the published inventory by
         // DiscoveryTargetsGauge, because a value set at this point describes a candidate that the
         // merge, the loader, the regression guard or a lost profile race may still reject (#807).
         // skipped is deliberately render-time: a device the endpoint keeps offering with no usable
         // address is worth seeing precisely while the candidate around it is being refused
         this.skipped.set(rendered.skipped());
-        return merge(rendered);
+        final String composed = merge(rendered);
+        this.composedOnce = true;
+        return composed;
     }
 
     @Override
@@ -331,8 +388,23 @@ public class ComposedInventoryDocument implements InventoryDocument, PacedInvent
     @Override
     public FileWatchTrigger.Fetch fetch() throws IOException {
         try {
+            final List<ExporterRenderer.EndpointGroups> groups = readStrictly();
+            final Optional<String> empty = emptyBeforeFirstComposition(groups);
+            if (empty.isPresent()) {
+                // a fleet not there yet, after a boot that could not compose it in: absence, so
+                // inventory.reload.stale latches and nothing counts as a failure every poll
+                final String message = ("%s answered with no targets and nothing has been composed since boot: "
+                        + "skipping reload cycles until it answers with some (keeping the running inventory)")
+                        .formatted(empty.get());
+                if (!message.equals(this.absenceWarned)) {
+                    log.warn("{}", message);
+                    this.absenceWarned = message;
+                }
+                this.endpointAbsent = true;
+                return new FileWatchTrigger.Fetch.Absent();
+            }
             final FileWatchTrigger.Fetch.Present present =
-                    new FileWatchTrigger.Fetch.Present(text().getBytes(StandardCharsets.UTF_8));
+                    new FileWatchTrigger.Fetch.Present(compose(groups).getBytes(StandardCharsets.UTF_8));
             this.endpointAbsent = false;
             this.absenceWarned = null;
             return present;

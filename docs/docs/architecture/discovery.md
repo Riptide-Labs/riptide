@@ -111,7 +111,8 @@ NetBox answers a token that cannot view an object type with an empty list, and a
 | Any endpoint fails after boot | The whole poll is refused, the last good inventory serves, and `inventory.reload.failures` counts one failure naming that endpoint. |
 | Any endpoint answers 404 | Absence for the whole document: `inventory.reload.stale` reads 1, and one warning per episode names that endpoint. |
 | Any endpoint is unreachable at boot | Boot degrades as one endpoint does: no discovered exporters from any endpoint, a warning naming the unreachable one, and `inventory.reload.stale` at 1 until every endpoint answers. |
-| Any endpoint yields zero usable entries | Refused, naming every empty endpoint with its own skip count. |
+| Any endpoint answers with no targets at boot | Boot degrades as for an unreachable endpoint, with a warning naming the empty one, provided every other endpoint composes cleanly. Later polls treat the same answer as absence until the fleet first composes. |
+| Any endpoint yields zero usable entries | Refused, naming every empty endpoint with its own skip count. At boot this fails startup only when the endpoint offered targets and every one was skipped. |
 | A name or address clash within or across endpoints | Refused, every clash named at once, each claimant with its endpoint. |
 
 Only the first failing endpoint is named when several are down.
@@ -189,7 +190,14 @@ An endpoint that cannot be reached at boot, a refused connection, a timeout, or 
 Riptide warns and serves the inventory file's trees with no `exporters` tree at all.
 A collector that refuses to start because NetBox is down is worse than one that starts without device names.
 
-Every other discovery failure still fails boot: an endpoint that answers with something that is not the expected document, a name collision, an empty answer, and an `exporters` tree already present in the inventory file.
+An endpoint that answers with no targets at all degrades boot the same way, with the warning `Boot found <endpoint> empty`.
+After boot an empty answer is refused, because it would wipe a populated `exporters` tree.
+At boot there is no tree to wipe.
+A producer whose fleet starts empty, such as nl6 before its devices exist, would otherwise keep the collector down.
+Until the fleet first composes, a poll that still finds it empty is absence, as a 404 is: `inventory.reload.stale` reads 1, one warning per episode names the endpoint, and nothing counts in `inventory.reload.failures`.
+With several endpoints, the ones that did answer must still compose cleanly, so an empty endpoint never hides a collision or an all-skipped answer in another.
+
+Every other discovery failure still fails boot: an endpoint that answers with something that is not the expected document, a name collision, targets that were all skipped, and an `exporters` tree already present in the inventory file.
 Those are configuration an operator has to see, not an endpoint that is temporarily down.
 
 After boot, a poll that fails for any reason, unreachable or invalid, keeps the last good inventory serving; nothing publishes a partial or degraded document past boot.
@@ -213,5 +221,6 @@ Nothing else does.
 | Refuse an empty answer | A filter typo or a revoked token cannot wipe every exporter name | Emptying a fleet on purpose needs a filter that keeps at least one device, or discovery turned off |
 | Paths, not expressions | No code-execution surface fed from configuration | A value the endpoint serves in the wrong shape cannot be fixed on riptide's side |
 | Degrade at boot on an unreachable endpoint | The collector starts while NetBox is down | Flows carry no exporter names until the first successful poll |
+| Degrade at boot on an empty answer | A producer whose fleet starts empty, such as nl6, cannot keep the collector down | A filter typo or a revoked token at startup starts the collector without exporter names instead of stopping it. The warning and `inventory.reload.stale` say so. |
 | Token resolved per request | Rotation applies on the next page, no restart | One secret resolution per page of a walk |
 | Several endpoints read in sequence, all or nothing | A deterministic first failure; no partial fleet is ever published | Poll duration grows with the endpoint count; one endpoint down holds back every other |
