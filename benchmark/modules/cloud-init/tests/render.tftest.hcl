@@ -96,6 +96,10 @@ run "clickhouse_runs_its_pinned_image_on_the_data_disk" {
     condition     = strcontains(nonsensitive(output.files["/etc/bench/clickhouse.env"]), "CLICKHOUSE_PASSWORD=test-password\n")
     error_message = "clickhouse.env lacks the password"
   }
+  assert {
+    condition     = strcontains(nonsensitive(output.files["/etc/bench/clickhouse.env"]), "\nCLICKHOUSE_GRAFANA_PASSWORD=test-password\n")
+    error_message = "clickhouse.env lacks the grafana user's password, so users.xml gives that user an empty one"
+  }
 }
 
 run "nl6_forwards_and_routes_its_exporters" {

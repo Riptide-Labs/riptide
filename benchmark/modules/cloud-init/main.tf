@@ -174,7 +174,10 @@ locals {
     local.s.role == "clickhouse" ? [
       { path = "/etc/bench/clickhouse/config.xml", permissions = "0644", content = var.clickhouse_files.config_xml },
       { path = "/etc/bench/clickhouse/users.xml", permissions = "0644", content = var.clickhouse_files.users_xml },
-      { path = "/etc/bench/clickhouse.env", permissions = "0600", content = "TZ=UTC\nCLICKHOUSE_USER=default\nCLICKHOUSE_DB=riptide\nCLICKHOUSE_PASSWORD=${var.clickhouse_password}\n" },
+      # CLICKHOUSE_GRAFANA_PASSWORD too: users.xml defines a grafana user from it, and outside
+      # compose nothing falls back for it. Unset, ClickHouse creates that user with an EMPTY password,
+      # on a host-network server. Same value as the admin, as compose defaults it.
+      { path = "/etc/bench/clickhouse.env", permissions = "0600", content = "TZ=UTC\nCLICKHOUSE_USER=default\nCLICKHOUSE_DB=riptide\nCLICKHOUSE_PASSWORD=${var.clickhouse_password}\nCLICKHOUSE_GRAFANA_PASSWORD=${var.clickhouse_password}\n" },
       # Prometheus metrics for the lab's Prometheus; the compose stack's config.xml stays untouched.
       {
         path        = "/etc/bench/clickhouse/prometheus.xml"
