@@ -119,7 +119,10 @@ The poll after it recovers names the next one.
 
 ## How a target becomes an exporter
 
-The exporter name comes from the `__meta_netbox_name` label when it is present, and otherwise from the target itself with any trailing port removed.
+The exporter name comes from the first label in `name-labels` that is present, then from `__meta_netbox_name`, and otherwise from the target itself with any trailing port removed.
+`__meta_netbox_name` is read after the list whatever it holds, because `netbox-api` and `mapped-json` emit their names under it.
+A name label that is present but blank skips the entry.
+It never falls back to the target.
 
 The address comes from the first label in `address-labels` that is present and parses as a strict address, the same parser the inventory loader uses for agent ranges.
 A label present but malformed (`not-an-ip`) is skipped as if it were absent, and the next label in the list is tried.

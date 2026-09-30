@@ -30,6 +30,55 @@ class ExporterRendererTest {
         return new TargetGroup(targets, labels);
     }
 
+    private static RenderedExporters renderNamed(final List<String> nameLabels, final List<TargetGroup> groups) {
+        return ExporterRenderer.render(
+                List.of(new ExporterRenderer.EndpointGroups("the endpoint", groups)), nameLabels, DEFAULT_LABELS);
+    }
+
+    /** nl6's service discovery shape: the target is the device's address, the name a label (#957). */
+    @Test
+    void theNameLabelsAreConsultedInOrderAheadOfTheNetboxName() {
+        final var rendered = renderNamed(List.of("__meta_nl6_sys_name", "__meta_other_name"), List.of(group(
+                List.of("172.27.0.1"),
+                Map.of("__meta_nl6_sys_name", "core-rtr-01",
+                        "__meta_other_name", "other-01",
+                        "__meta_netbox_name", "netbox-01"))));
+
+        assertThat(rendered.byName()).containsExactly(Map.entry("core-rtr-01", "172.27.0.1"));
+    }
+
+    @Test
+    void aLaterNameLabelIsUsedWhenAnEarlierOneIsAbsent() {
+        final var rendered = renderNamed(List.of("__meta_nl6_sys_name", "__meta_other_name"), List.of(group(
+                List.of("172.27.0.1"),
+                Map.of("__meta_other_name", "other-01", "__meta_netbox_name", "netbox-01"))));
+
+        assertThat(rendered.byName()).containsExactly(Map.entry("other-01", "172.27.0.1"));
+    }
+
+    /**
+     * netbox-api and mapped-json emit their name under the NetBox label, so a list customised for
+     * a prometheus-sd producer must not turn their names into addresses.
+     */
+    @Test
+    void theNetboxNameIsStillReadAfterACustomisedList() {
+        final var rendered = renderNamed(List.of("__meta_nl6_sys_name"), List.of(group(
+                List.of("10.0.0.1"),
+                Map.of("__meta_netbox_name", "firewall-01"))));
+
+        assertThat(rendered.byName()).containsExactly(Map.entry("firewall-01", "10.0.0.1"));
+    }
+
+    @Test
+    void aPresentButBlankNameLabelIsSkippedRatherThanNamedByItsAddress() {
+        final var rendered = renderNamed(List.of("__meta_nl6_sys_name"), List.of(
+                group(List.of("172.27.0.1"), Map.of("__meta_nl6_sys_name", "")),
+                group(List.of("172.27.0.2"), Map.of("__meta_nl6_sys_name", "edge-02"))));
+
+        assertThat(rendered.byName()).containsExactly(Map.entry("edge-02", "172.27.0.2"));
+        assertThat(rendered.skipped()).isEqualTo(1);
+    }
+
     @Test
     void theNameComesFromTheNetboxNameLabelAndTheAddressFromALabel() {
         final var rendered = render(List.of(group(
@@ -303,7 +352,7 @@ class ExporterRendererTest {
     private static RenderedExporters renderBoth(final List<TargetGroup> devices, final List<TargetGroup> vms) {
         return ExporterRenderer.render(List.of(
                 new ExporterRenderer.EndpointGroups(DEVICES, devices),
-                new ExporterRenderer.EndpointGroups(VMS, vms)), DEFAULT_LABELS);
+                new ExporterRenderer.EndpointGroups(VMS, vms)), List.of(), DEFAULT_LABELS);
     }
 
     @Test
@@ -342,7 +391,7 @@ class ExporterRendererTest {
         assertThatThrownBy(() -> renderBoth(List.of(exporter("sw1", "10.0.0.1")), List.of()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage(VMS + " yielded no exporter entries (0 entries were skipped for want of a usable "
-                        + "address). Keeping the running inventory: a source of truth that answers with nothing "
+                        + "name or address). Keeping the running inventory: a source of truth that answers with nothing "
                         + "is more often a filter or permission mistake than an emptied fleet.");
     }
 
@@ -353,7 +402,7 @@ class ExporterRendererTest {
                 List.of()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageStartingWith(DEVICES + " yielded no exporter entries (1 entry was skipped"
-                        + " for want of a usable address)." + System.lineSeparator()
+                        + " for want of a usable name or address)." + System.lineSeparator()
                         + VMS + " yielded no exporter entries (0 entries were skipped");
     }
 

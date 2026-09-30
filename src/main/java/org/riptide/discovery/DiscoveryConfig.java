@@ -134,6 +134,15 @@ public class DiscoveryConfig {
     }
 
     /**
+     * Labels consulted in order for an entry's name, first one present wins. The default is what the
+     * NetBox service discovery plugin emits. {@code __meta_netbox_name} is read after the list
+     * whatever it says, and the target itself when no label is present; see
+     * {@code ExporterRenderer}. A producer such as nl6 names its devices under
+     * {@code __meta_nl6_sys_name}.
+     */
+    private List<String> nameLabels = List.of("__meta_netbox_name");
+
+    /**
      * Labels consulted in order for an entry's address, first one present wins. The default pair is
      * what the NetBox service discovery plugin emits; every IP it emits already has its CIDR mask
      * stripped. When no label in this list is present the target itself is used, which is what makes

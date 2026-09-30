@@ -28,7 +28,8 @@ import java.util.Map;
 public final class ExporterRenderer {
 
     /**
-     * The label this renderer reads for an exporter's name, which every source emits.
+     * The label this renderer reads for an exporter's name after {@code riptide.discovery.name-labels},
+     * which every source written here emits.
      *
      * <p>Package-private rather than private because it is a contract between the renderer and the
      * sources, not a detail of either: the NetBox plugin emits it, and both sources written here
@@ -58,7 +59,7 @@ public final class ExporterRenderer {
     public static RenderedExporters render(final List<TargetGroup> groups,
                                            final List<String> addressLabels,
                                            final String sourceName) {
-        return render(List.of(new EndpointGroups(sourceName, groups)), addressLabels);
+        return render(List.of(new EndpointGroups(sourceName, groups)), List.of(), addressLabels);
     }
 
     /**
@@ -74,10 +75,14 @@ public final class ExporterRenderer {
      * under a merged check, silently drop every virtual machine exporter while the devices kept the
      * document non-empty.</p>
      *
+     * @param nameLabels labels consulted in order for a name, first present wins, before
+     *     {@link #NAME_LABEL}
+     * @param addressLabels labels consulted in order for an address, first present wins
      * @throws IllegalStateException when two entries claim one name, when two entries claim one
      *     address, or when any endpoint yields no entries
      */
     public static RenderedExporters render(final List<EndpointGroups> endpoints,
+                                           final List<String> nameLabels,
                                            final List<String> addressLabels) {
         final boolean annotate = endpoints.size() > 1;
         final String sourceName = String.join(", ", endpoints.stream().map(EndpointGroups::name).toList());
@@ -102,7 +107,7 @@ public final class ExporterRenderer {
             for (final TargetGroup group : endpoint.groups()) {
                 for (final String target : group.targets()) {
                     final String host = host(target);
-                    final String name = group.labels().getOrDefault(NAME_LABEL, host);
+                    final String name = name(group, nameLabels, host);
                     final String address = address(group, addressLabels, host);
                     if (name.isBlank() || address == null || address.isBlank()) {
                         // never guessed at: an exporter entry with the wrong address silently enriches
@@ -124,7 +129,7 @@ public final class ExporterRenderer {
             }
             skipped += endpointSkipped;
             if (endpointEntries == 0) {
-                empty.add("%s yielded no exporter entries (%d entr%s skipped for want of a usable address)."
+                empty.add("%s yielded no exporter entries (%d entr%s skipped for want of a usable name or address)."
                         .formatted(endpoint.name(), endpointSkipped, endpointSkipped == 1 ? "y was" : "ies were"));
             }
         }
@@ -211,6 +216,24 @@ public final class ExporterRenderer {
                                         : claimant.getKey())
                                 .toList())))
                 .toList();
+    }
+
+    /**
+     * The first name label present, then {@link #NAME_LABEL}, else the target's own host.
+     *
+     * <p>{@link #NAME_LABEL} comes last whatever the list says: the {@code netbox-api} and
+     * {@code mapped-json} sources emit their name under it, so a list customised for a
+     * {@code prometheus-sd} producer cannot strip their names. Present wins, not non-blank: a blank
+     * name stays a skipped entry, as it always was, rather than silently becoming the address.</p>
+     */
+    private static String name(final TargetGroup group, final List<String> nameLabels, final String host) {
+        for (final String label : nameLabels) {
+            final String value = group.labels().get(label);
+            if (value != null) {
+                return value;
+            }
+        }
+        return group.labels().getOrDefault(NAME_LABEL, host);
     }
 
     /**

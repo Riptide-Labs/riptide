@@ -234,7 +234,7 @@ public class ComposedInventoryDocument implements InventoryDocument, PacedInvent
     }
 
     private String compose(final List<ExporterRenderer.EndpointGroups> groups) {
-        final RenderedExporters rendered = ExporterRenderer.render(groups, this.config.getAddressLabels());
+        final RenderedExporters rendered = ExporterRenderer.render(groups, this.config.getNameLabels(), this.config.getAddressLabels());
         // Only skipped is set here. discovery.targets is derived from the published inventory by
         // DiscoveryTargetsGauge, because a value set at this point describes a candidate that the
         // merge, the loader, the regression guard or a lost profile race may still reject (#807).

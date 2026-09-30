@@ -14,6 +14,7 @@ Nothing needs installing unless the producer is NetBox, where the [`netbox-plugi
 | Requirement | Detail |
 | --- | --- |
 | An endpoint serving a Prometheus HTTP SD document | A bare array, no envelope. Each target is `host` or `host:port`; a NetBox device's target is its name. |
+| A name per device | From the first present label in `riptide.discovery.name-labels` (default `__meta_netbox_name`), then `__meta_netbox_name`, else the target's host. |
 | An address per device | From the first present label in `riptide.discovery.address-labels` (default `__meta_netbox_primary_ip4`, then `__meta_netbox_primary_ip6`), else the target's host when it parses as an address. |
 | A token, if the endpoint needs one | Stored where a [secret reference](../reference/secret-references.md) resolves it. |
 | An internal CA, if the endpoint uses one | In **`riptide.http.ca-bundle`**, see [Outbound TLS](../reference/outbound-tls.md). |
@@ -23,6 +24,7 @@ Nothing needs installing unless the producer is NetBox, where the [`netbox-plugi
 
 1. Point `riptide.discovery.url` at the document in `/etc/riptide/config.yaml`.
    The example is the NetBox plugin endpoint; a producer that is not NetBox needs `address-labels` set to whichever label carries its address, or no label at all when the target itself is the address.
+   Such a producer names its devices under its own label, so set `name-labels` to it: nl6's `/api/v1/prometheus/sd` needs `name-labels: [__meta_nl6_sys_name]`, and its targets are already addresses.
 
    ```yaml
    riptide:

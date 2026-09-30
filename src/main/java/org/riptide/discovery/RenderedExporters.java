@@ -11,7 +11,7 @@ import java.util.TreeMap;
 
 /**
  * The exporters a discovery document yielded, keyed by exporter name, plus how many entries were
- * dropped for want of a usable address.
+ * dropped for want of a usable name or address.
  *
  * <p>Sorted by name, and that is load-bearing rather than tidy: the Prometheus contract states
  * target lists are unordered, and the content-hash short-circuit in {@code FileWatchTrigger} is the
