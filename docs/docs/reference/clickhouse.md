@@ -24,7 +24,7 @@ How the batching path, the rollups and the dead-letter table behave is on [Inser
 | **`riptide.clickhouse.batch.enabled`** | boolean | `true` | Client-side insert batching. `false` falls back to one insert per flow record. |
 | **`riptide.clickhouse.batch.max-rows`** | int | `10000` | Flush when this many rows are buffered. Must be greater than 0. |
 | **`riptide.clickhouse.batch.max-latency`** | duration | `2s` | Flush whatever is buffered after this long. Must be positive. |
-| **`riptide.clickhouse.batch.queue-capacity`** | int | `40000` | Buffer bound. A full queue drops flows, counted on `persister.batch.droppedRows`. Must be greater than 0. |
+| **`riptide.clickhouse.batch.queue-capacity`** | int | `80000` | Buffer bound. A full queue drops flows, counted on `persister.batch.droppedRows`. Must be greater than 0. |
 | **`riptide.clickhouse.batch.shutdown-grace-period`** | duration | `5s` | How long `stop()` waits for the flusher to drain. Must be at least twice `max-latency`; startup fails otherwise. |
 | **`riptide.identity.tenant`** | string | `default` | Stamped into the `tenant` column of every row. |
 | **`riptide.identity.organisation`** | string | `default` | Stamped into `organisation`. |

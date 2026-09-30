@@ -146,13 +146,17 @@ public final class ClickhouseConfig {
                 private Duration maxLatency = Duration.ofSeconds(2);
 
                 /**
-                 * Bound of the buffer between producers and the flusher: 40k = four full
-                 * batches, enough to ride out one slow insert. When full, producers drop flows
-                 * (counted + logged) instead of blocking — ClickHouse latency otherwise
-                 * backpressures the parser executors into the Netty socket, where the loss is
-                 * invisible.
+                 * Bound of the buffer between producers and the flusher: 80k = eight full
+                 * batches. When full, producers drop flows (counted + logged) instead of
+                 * blocking — ClickHouse latency otherwise backpressures the parser executors
+                 * into the Netty socket, where the loss is invisible.
+                 *
+                 * <p>Sized for exporters that send on a shared timer: 2,000 of them at 12,450
+                 * flows/s land about 62,000 rows every 5 s, above the old 40k default. With the
+                 * flow dashboards slowing ClickHouse's inserts, 40k dropped about 10,000 rows per
+                 * dashboard pass and 80k none, with no higher heap peak (#945).
                  */
-                private int queueCapacity = 40_000;
+                private int queueCapacity = 80_000;
 
                 /**
                  * How long {@code stop()} waits for the flusher to drain accepted rows before

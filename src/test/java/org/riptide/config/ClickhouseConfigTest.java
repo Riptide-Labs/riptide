@@ -27,6 +27,12 @@ class ClickhouseConfigTest {
         Assertions.assertThat(new ClickhouseConfig().getStartupWait()).isEqualTo(Duration.ofSeconds(30));
     }
 
+    /** At 40,000 a burst of synchronised exports plus dashboard reads dropped rows (#945). */
+    @Test
+    void batchQueueCapacityDefaultsToEightyThousandRows() {
+        Assertions.assertThat(new ClickhouseConfig().getBatch().getQueueCapacity()).isEqualTo(80_000);
+    }
+
     @Test
     void asyncInsertsAreOffWhileBatchingIsEnabled() {
         final var config = new ClickhouseConfig();

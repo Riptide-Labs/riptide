@@ -34,7 +34,7 @@ ok: receivers listening
 
 Readiness excludes ClickHouse.
 Flows arrive as UDP push, so a "not ready" collector does not stop the packets; it only moves the loss to another layer, a drained load balancer under `externalTrafficPolicy: Local` or the wire.
-When ClickHouse recovers, readiness convergence typically loses more flows than the bounded batching queue (`riptide.clickhouse.batch.queue-capacity`, 40,000 rows by default) absorbs: at the measured ~11.8k rows/s the queue covers ~3.4 s, well under a probe period plus endpoint propagation.
+When ClickHouse recovers, readiness convergence typically loses more flows than the bounded batching queue (`riptide.clickhouse.batch.queue-capacity`, 80,000 rows by default) absorbs: at the measured ~11.8k rows/s the queue covers ~6.8 s, well under a probe period plus endpoint propagation.
 Where Prometheus scrapes through the Service, "not ready" can also remove the pod from the endpoints and take `/metrics` down with it, blinding the one signal that explains the outage.
 A ClickHouse outage therefore keeps the collector receiving.
 Probes are for scheduling; saturation is for alerting: watch a sustained `persister.batch.droppedRows` or `persister.batch.failedRows` rate and `persister.batch.queueDepth` over `persister.batch.queueCapacity` approaching 1.
@@ -98,7 +98,7 @@ Expected output:
 
 ```text
 # TYPE persister_batch_queueCapacity gauge
-persister_batch_queueCapacity 40000.0
+persister_batch_queueCapacity 80000.0
 # TYPE persister_batch_queueDepth gauge
 persister_batch_queueDepth 0.0
 # TYPE persister_batch_deadLetterFailedRows counter
