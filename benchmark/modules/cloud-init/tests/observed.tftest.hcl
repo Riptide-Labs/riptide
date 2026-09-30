@@ -201,3 +201,42 @@ run "large_files_travel_compressed" {
     error_message = "big dashboard not compressed"
   }
 }
+
+# bin/bench-reseed compares user-data alone, so user-data must change whenever
+# network-config or meta-data does.
+run "user_data_carries_a_digest_of_the_other_documents" {
+  command = plan
+  variables {
+    service = run.declaration.services.observe
+  }
+  assert {
+    condition     = nonsensitive(output.files["/etc/bench/cloud-init-seed.sha256"]) == "${sha256("${output.network_config}${output.meta_data}")}\n"
+    error_message = "seed digest: ${nonsensitive(output.files["/etc/bench/cloud-init-seed.sha256"])}"
+  }
+}
+
+run "a_rerun_keeps_the_host_keys" {
+  command = plan
+  variables {
+    service = run.declaration.services.observe
+  }
+  assert {
+    condition     = try(yamldecode(trimprefix(nonsensitive(output.user_data), "#cloud-config\n")).ssh_deletekeys, true) == false
+    error_message = "ssh_deletekeys is not false"
+  }
+}
+
+# A re-run repeats runcmd on the kept disks, so every entry must be safe twice.
+run "runcmd_is_safe_to_repeat" {
+  command = plan
+  variables {
+    service = run.declaration.services.observe
+  }
+  assert {
+    condition = alltrue([
+      for c in yamldecode(trimprefix(nonsensitive(output.user_data), "#cloud-config\n")).runcmd :
+      contains(["sysctl", "chown", "systemctl"], c[0]) || (c[0] == "mkdir" && c[1] == "-p")
+    ])
+    error_message = "runcmd: ${jsonencode(yamldecode(trimprefix(nonsensitive(output.user_data), "#cloud-config\n")).runcmd)}"
+  }
+}

@@ -174,6 +174,7 @@ A key neither table names is rejected, so a typo cannot fall back to a default.
    | `ssh_config` | `Host bench-<name>-<service>` entries: `ssh -F benchmark/runs/<name>/ssh_config bench-<name>-sut`. Host keys go to `known_hosts` next to it, since a rebuilt VM has a new key. |
    | `prometheus-jobs.json` | The scrape jobs the lab's Prometheus runs, every target with its labels. |
    | `grafana-admin` | Grafana's admin password, mode 0600. |
+   | `seed/<service>/` | The service's rendered cloud-init documents, mode 0600: they hold the lab's passwords. See [Change a running lab](#change-a-running-lab). |
    | `applied-site.tfvars`, `applied.tfvars` | The site and experiment files apply used; destroy reads them. |
 
 4. List the experiment's VMs on every declared host:
@@ -210,6 +211,34 @@ The addresses are in `runs/<name>/inventory.json` under `observability`.
 Prometheus scrapes every 10 s: node_exporter on every VM (it listens only on `observe`), riptide, VictoriaMetrics, ClickHouse (port 9363), itself and Pyroscope, every target labelled with `experiment`, `service`, `role` and `host`.
 riptide and nl6 push continuous profiles to Pyroscope.
 VictoriaMetrics is part of the system under test: only riptide writes to it.
+
+## Change a running lab
+
+Apply again after editing the experiment, the site file or the cloud-init module.
+A VM whose rendered cloud-init documents (user-data, network-config, meta-data) changed gets them in place:
+
+1. Apply compares, over SSH, the user-data the guest consumed with the new one.
+   user-data carries a digest of the other two documents, so this one comparison covers all three.
+2. If they differ, apply writes the documents to `/var/lib/cloud/seed/nocloud/` in the guest.
+   It also adds `/etc/cloud/cloud.cfg.d/90-bench-seed.cfg`, which stops cloud-init reading the attached cloud-init medium, since that medium can be stale.
+3. It runs `cloud-init clean` and reboots the VM, then waits for cloud-init and the VM's health checks again.
+   On the observability VM, Grafana, Pyroscope and Prometheus stop cleanly first.
+   After the SUT or ClickHouse reboots, riptide is restarted and its `/readyz` waited for.
+
+The root disk, the data disk and the SSH host keys stay, and a VM that already runs the current documents is not rebooted.
+The first apply of a running lab created before this behaviour existed reboots every VM once.
+
+A re-run adds and overwrites. It never undoes anything.
+A file dropped from `write_files`, a removed package or a removed unit stays on the root disk.
+To start a libvirt VM from a clean root disk, replace its root volume and domain:
+
+```bash
+benchmark/bin/bench apply <name> -auto-approve \
+  '-replace=module.libvirt_vm["<service>"].libvirt_volume.root' \
+  '-replace=module.libvirt_vm["<service>"].libvirt_domain.this'
+```
+
+On Proxmox, replace `module.proxmox_vm["<service>"].proxmox_virtual_environment_vm.this`, which imports a new root disk.
 
 ## Remove the lab
 

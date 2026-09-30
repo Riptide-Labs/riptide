@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Re-runs cloud-init on a running lab VM whose rendered documents changed;
+# lab/services.tf calls it once per service on every change of them.
+#
+#   bench-reseed <service> <role> <mgmt address now> <mgmt address after> <seed dir> <known_hosts> <timeout seconds>
+#
+# The two addresses differ when network-config moves mgmt: the guest answers
+# on the old one until the reboot applies the new one.
+#
+# <seed dir> holds user-data, meta-data and network-config as rendered. The
+# guest compares user-data with the one it consumed; user-data carries a
+# digest of the other two, so equal user-data means nothing changed and the
+# VM is left alone. Otherwise the documents go to the NoCloud seed directory,
+# a drop-in stops cloud-init reading the attached medium (NoCloud merges a
+# cidata device over the seed directory, and that medium can be stale), and
+# the VM is cleaned and rebooted. Root disk, data disk and host keys stay.
+#
+# Written for bash 3.2 (macOS): no associative arrays, no mapfile.
+set -euo pipefail
+
+[ $# -eq 7 ] || { echo "usage: bench-reseed <service> <role> <address now> <address after> <seed dir> <known_hosts> <timeout>" >&2; exit 2; }
+service="$1" role="$2" address_now="$3" address_after="$4" seed="$5" known_hosts="$6" timeout="$7"
+address="${address_now}"
+deadline=$(($(date +%s) + timeout))
+
+die() { echo "service ${service}: $*" >&2; exit 1; }
+say() { echo "service ${service}: $*"; }
+
+on() {
+  # Keepalives: a guest going down mid-session must not hang past the deadline.
+  ssh -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 \
+    -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="${known_hosts}" "bench@${address}" "$@"
+}
+
+# Answers once SSH does, which a VM created in this apply may not yet. A VM
+# created with the new address answers there, a running one on the old.
+wait_ssh() {
+  local a
+  while :; do
+    for a in "${address_now}" "${address_after}"; do
+      address="${a}"
+      on true 2>/dev/null && return 0
+    done
+    [ "$(date +%s)" -lt "${deadline}" ] || die "no SSH on ${address_now} or ${address_after} within ${timeout} s"
+    sleep 5
+  done
+}
+
+# Exit 2 is "done with recoverable errors", accepted as in lab/services.tf.
+wait_cloud_init() {
+  local rc=0
+  on 'cloud-init status --wait >/dev/null' || rc=$?
+  [ "${rc}" -ne 255 ] || die "lost SSH while waiting for cloud-init"
+  [ "${rc}" -eq 0 ] || [ "${rc}" -eq 2 ] || die "cloud-init failed, see /var/log/cloud-init-output.log"
+}
+
+# 0 when the guest consumed exactly the rendered user-data, 1 when not.
+consumed_current() {
+  local rc=0
+  on 'sudo cmp -s - /var/lib/cloud/instance/user-data.txt' <"${seed}/user-data" || rc=$?
+  case "${rc}" in
+    0) return 0 ;;
+    1 | 2) return 1 ;; # 2: no consumed copy at all, which cloud-init leaves only on failure
+    *) die "cannot compare user-data over SSH (exit ${rc})" ;;
+  esac
+}
+
+for f in user-data meta-data network-config; do
+  [ -f "${seed}/${f}" ] || die "no ${f} in ${seed}"
+done
+
+wait_ssh
+wait_cloud_init
+if consumed_current; then
+  say "cloud-init documents unchanged"
+  exit 0
+fi
+
+say "cloud-init documents changed; re-seeding and rebooting"
+if [ "${role}" = "observability" ]; then
+  # As terraform_data.observability_ready's destroy step: an unclean stop
+  # leaves Pyroscope blocks on the kept disk that fail every later query.
+  on 'sudo systemctl stop grafana pyroscope prometheus && sync'
+fi
+for f in user-data meta-data network-config; do
+  # chmod as well as umask: an earlier re-seed's file keeps its mode.
+  on "sudo sh -c 'umask 077 && mkdir -p /var/lib/cloud/seed/nocloud && cat >/var/lib/cloud/seed/nocloud/${f} && chmod 0600 /var/lib/cloud/seed/nocloud/${f}'" <"${seed}/${f}"
+done
+on "sudo sh -c 'printf \"datasource:\\n  NoCloud:\\n    fs_label: null\\n\" >/etc/cloud/cloud.cfg.d/90-bench-seed.cfg'"
+old_boot="$(on 'cat /proc/sys/kernel/random/boot_id')"
+# Detached, so this session ends before the guest goes down.
+on 'sudo cloud-init clean --logs && sudo systemd-run --quiet --on-active=2 systemctl reboot'
+
+address="${address_after}"
+new_boot="${old_boot}"
+until [ -n "${new_boot}" ] && [ "${new_boot}" != "${old_boot}" ]; do
+  [ "$(date +%s)" -lt "${deadline}" ] || die "did not come back on ${address} from its reboot within ${timeout} s"
+  sleep 5
+  new_boot="$(on 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null || true)"
+done
+
+wait_cloud_init
+consumed_current || die "rebooted, but cloud-init did not consume the new user-data; see /var/log/cloud-init.log"
+say "cloud-init re-ran with the new documents"

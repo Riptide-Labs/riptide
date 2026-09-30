@@ -14,7 +14,7 @@ output "network_config" {
 
 output "meta_data" {
   description = "cloud-init meta-data."
-  value       = yamlencode({ "instance-id" = "bench-${var.experiment}-${var.service.name}", "local-hostname" = "bench-${var.experiment}-${var.service.name}" })
+  value       = local.meta_data
 }
 
 output "units" {

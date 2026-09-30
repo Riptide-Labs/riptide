@@ -152,9 +152,14 @@ locals {
     providers  = [{ name = "riptide", type = "file", folder = "Riptide", options = { path = "/var/lib/grafana-dashboards" } }]
   }
 
+  meta_data = yamlencode({ "instance-id" = "bench-${var.experiment}-${var.service.name}", "local-hostname" = "bench-${var.experiment}-${var.service.name}" })
+
   write_files = concat(
     [
       { path = "/etc/docker/daemon.json", permissions = "0644", content = jsonencode(local.docker_daemon) },
+      # A digest of the other two documents, so that comparing user-data alone
+      # tells bin/bench-reseed whether any of the three changed.
+      { path = "/etc/bench/cloud-init-seed.sha256", permissions = "0644", content = "${sha256("${yamlencode(local.network_config)}${local.meta_data}")}\n" },
     ],
     # node_exporter listens only on observe, so metrics never leave over
     # mgmt, ingest or store. A drop-in, not /etc/default: that file is the
@@ -229,6 +234,9 @@ locals {
       hostname          = "bench-${var.experiment}-${local.s.name}"
       preserve_hostname = false
       ssh_pwauth        = false
+      # bin/bench-reseed re-runs cloud-init on a kept root disk; new host keys
+      # would break the run's known_hosts. The first boot still generates them.
+      ssh_deletekeys = false
       users = [{
         name                = "bench"
         groups              = ["sudo"]

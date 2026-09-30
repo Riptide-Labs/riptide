@@ -260,6 +260,9 @@ plan_or_apply() {
     cp "${SITE_FILE}" "${RUNS_DIR}/${name}/applied-site.tfvars"
     cp "${experiment}" "${RUNS_DIR}/${name}/applied.tfvars"
   fi
+  # Apply may replace a VM at the same address, with a new host key; the
+  # keys are collected afresh during apply, which bench-reseed needs too.
+  [ "${cmd}" != apply ] || rm -f "${RUNS_DIR}/${name}/known_hosts"
   # Last before tofu: downloads above can take a while, the ticket lives 2 h.
   proxmox_login
   SECONDS=0
@@ -267,8 +270,6 @@ plan_or_apply() {
     -var "riptide_deb=${deb}" -var "riptide_deb_sha256=$(sha256 "${deb}")" \
     -var "base_image_path=${base}" -var "agent_ssh_keys=$(agent_keys_hcl)" "$@"
   if [ "${cmd}" = apply ]; then
-    # Apply may have replaced a VM at the same address, with a new host key.
-    rm -f "${RUNS_DIR}/${name}/known_hosts"
     echo "bench: ${name} ready in ${SECONDS} s; inventory at ${RUNS_DIR}/${name}/inventory.json"
   fi
   return 0
