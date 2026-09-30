@@ -146,13 +146,17 @@ public final class ClickhouseConfig {
                 private Duration maxLatency = Duration.ofSeconds(2);
 
                 /**
-                 * Bound of the buffer between producers and the flusher: 40k = four full
-                 * batches, enough to ride out one slow insert. When full, producers drop flows
-                 * (counted + logged) instead of blocking — ClickHouse latency otherwise
-                 * backpressures the parser executors into the Netty socket, where the loss is
-                 * invisible.
+                 * Bound of the buffer between producers and the flusher: 80k = eight full
+                 * batches. When full, producers drop flows (counted + logged) instead of
+                 * blocking — ClickHouse latency otherwise backpressures the parser executors
+                 * into the Netty socket, where the loss is invisible.
+                 *
+                 * <p>Sized for exporters that send on a shared timer: 2,000 of them at 12,450
+                 * flows/s land about 62,000 rows every 5 s, above the old 40k default. With the
+                 * flow dashboards slowing ClickHouse's inserts, 40k dropped about 10,000 rows per
+                 * dashboard pass and 80k none, with no higher heap peak (#945).
                  */
-                private int queueCapacity = 40_000;
+                private int queueCapacity = 80_000;
 
                 /**
                  * How long {@code stop()} waits for the flusher to drain accepted rows before
@@ -160,8 +164,13 @@ public final class ClickhouseConfig {
                  * {@code TimeoutStopSec}), or the process is killed mid-drain — and note the
                  * listeners stop first, each waiting up to ~5 s for its parser executor, before
                  * this grace period even starts.
+                 *
+                 * <p>Sized with {@link #queueCapacity}: a full queue drains one {@link #maxRows}
+                 * insert at a time, after up to one {@link #maxLatency} window. At the ~13.5k
+                 * rows/s ceiling measured with delayed inserts, 80k rows take about 6 s plus that
+                 * window, so 10 s; the old 5 s paired with the old 40k. Raise both together.
                  */
-                private Duration shutdownGracePeriod = Duration.ofSeconds(5);
+                private Duration shutdownGracePeriod = Duration.ofSeconds(10);
 
                 /**
                  * Fail fast on values that would misbehave at runtime; called when the batching

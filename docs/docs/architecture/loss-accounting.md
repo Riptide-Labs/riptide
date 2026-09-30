@@ -101,7 +101,7 @@ Both queues are bounded, so the worst case is the sum, and the dispatch queue co
 | Queue | Bound | Cost |
 | --- | --- | --- |
 | `parsers.<name>` dispatch queue | 4096 packets by default | each queued packet also pins its received datagram buffer until the packet is enriched, about 33 MB of direct memory per receiver at the default 8096-byte buffer size, on top of the heap cost of the flow objects |
-| `persister.batch` queue | 40,000 rows by default (`riptide.clickhouse.batch.queue-capacity`) | heap |
+| `persister.batch` queue | 80,000 rows by default (`riptide.clickhouse.batch.queue-capacity`) | heap |
 
 A `multi` receiver runs one parser per sub-protocol, each with its own queue and threads, so budget per sub-protocol and size down accordingly if you configure several.
 

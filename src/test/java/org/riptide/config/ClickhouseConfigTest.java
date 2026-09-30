@@ -27,6 +27,18 @@ class ClickhouseConfigTest {
         Assertions.assertThat(new ClickhouseConfig().getStartupWait()).isEqualTo(Duration.ofSeconds(30));
     }
 
+    /** At 40,000 a burst of synchronised exports plus dashboard reads dropped rows (#945). */
+    @Test
+    void batchQueueCapacityDefaultsToEightyThousandRows() {
+        Assertions.assertThat(new ClickhouseConfig().getBatch().getQueueCapacity()).isEqualTo(80_000);
+    }
+
+    /** Doubled with the queue: a full 80,000-row queue does not drain inside 5 s at a slow ClickHouse. */
+    @Test
+    void shutdownGracePeriodDefaultsToTenSeconds() {
+        Assertions.assertThat(new ClickhouseConfig().getBatch().getShutdownGracePeriod()).isEqualTo(Duration.ofSeconds(10));
+    }
+
     @Test
     void asyncInsertsAreOffWhileBatchingIsEnabled() {
         final var config = new ClickhouseConfig();
