@@ -121,7 +121,7 @@ locals {
     length([for s, v in local.x.services : s if v.role == "nl6"]) == 0 ? [
       "riptide nl6_discovery: no service has role nl6, so there is no fleet to discover",
     ] : [],
-    startswith(local.x.riptide.source, "release:") && try(local.discovery_release[0] == 0 && local.discovery_release[1] <= 17, false) ? [
+    startswith(local.x.riptide.source, "release:") && try(local.discovery_release[0] == 0 && (local.discovery_release[1] < 17 || local.discovery_release[1] == 17 && local.discovery_release[2] == 0), false) ? [
       "riptide nl6_discovery: ${local.x.riptide.source} predates riptide.discovery.name-labels (#957) and booting on an empty fleet (#959); use deb:<path> or a later release",
     ] : [],
   )

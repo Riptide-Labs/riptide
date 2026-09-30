@@ -609,13 +609,26 @@ run "nl6_discovery_with_a_release_that_predates_it_is_rejected" {
   }
 }
 
+# 0.17.1 is the first version that can carry #958 and #960: main built as
+# 0.17.1-SNAPSHOT when they merged.
 run "nl6_discovery_with_a_later_release_is_accepted" {
   command = plan
   variables {
-    raw = merge(run.fixture.raw, { riptide = merge(run.fixture.raw.riptide, { source = "release:0.18.0", nl6_discovery = true }) })
+    raw = merge(run.fixture.raw, { riptide = merge(run.fixture.raw.riptide, { source = "release:0.17.1", nl6_discovery = true }) })
   }
   assert {
     condition     = length(output.violations) == 0
+    error_message = "violations: ${jsonencode(output.violations)}"
+  }
+}
+
+run "nl6_discovery_with_an_older_minor_release_is_rejected" {
+  command = plan
+  variables {
+    raw = merge(run.fixture.raw, { riptide = merge(run.fixture.raw.riptide, { source = "release:0.16.2", nl6_discovery = true }) })
+  }
+  assert {
+    condition     = length(output.violations) == 1 && contains(output.violations, "riptide nl6_discovery: release:0.16.2 predates riptide.discovery.name-labels (#957) and booting on an empty fleet (#959); use deb:<path> or a later release")
     error_message = "violations: ${jsonencode(output.violations)}"
   }
 }
