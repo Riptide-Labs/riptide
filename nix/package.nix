@@ -49,7 +49,7 @@ maven.buildMavenPackage {
   # Fixed-output hash of the maven dependency set. Regenerate with `make nix-hash` whenever the
   # pom changes; the nix CI job fails the PR if it drifts and prints the expected hash in its
   # job summary.
-  mvnHash = "sha256-ced6RlDnLidtwfPZ0gEm5UHP63bunyoqrNjES3MwKI4=";
+  mvnHash = "sha256-FN/9Z20+YEFHAAVJo2Gqtwj4XextbQyzoaihltu54hA=";
 
   nativeBuildInputs = [ makeWrapper ];
 
