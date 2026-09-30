@@ -266,3 +266,17 @@ run "observability_outputs_for_the_operator" {
     error_message = "inventory observability: ${jsonencode(local.inventory.observability)}"
   }
 }
+
+# nl6_discovery is opt-in: a riptide without #957 and #959 would not boot on
+# the load generator's empty fleet.
+run "discovery_is_off_unless_declared" {
+  command = plan
+  override_resource {
+    target = random_password.clickhouse
+    values = { result = "test-password" }
+  }
+  assert {
+    condition     = !strcontains(nonsensitive(local.riptide_env_file), "RIPTIDE_DISCOVERY_")
+    error_message = "riptide.env carries discovery keys the experiment did not declare"
+  }
+}

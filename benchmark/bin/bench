@@ -50,6 +50,7 @@ rejected:tests/rejected.tfvars
 rejected_many:tests/rejected-many.tfvars
 rejected_no_clickhouse:tests/rejected-no-clickhouse.tfvars
 java_opts:../site.example.tfvars,tests/java-opts.tfvars
+nl6_discovery:../site.example.tfvars,tests/nl6-discovery.tfvars
 rejected_observed:../site.example.tfvars,tests/rejected-observed.tfvars"
 
 check() {
