@@ -53,7 +53,7 @@ locals {
 
   allowed_keys = {
     experiment = concat(local.experiment_keys, local.site_keys)
-    riptide    = ["source", "env"]
+    riptide    = ["source", "env", "nl6_discovery"]
     host       = ["provider", "numa", "bridges", "uri", "pool", "node", "address", "datastore"]
     service    = ["role", "host", "numa_node", "vcpus", "memory_gb", "networks", "disk_gb", "hugepages"]
     networks = {
@@ -110,6 +110,20 @@ locals {
     if length([for s, v in local.x.services : s if v.role == r]) != n],
     [for r, n in local.role_count_at_most : "at most ${n} ${r} service allowed, found ${length([for s, v in local.x.services : s if v.role == r])}"
     if length([for s, v in local.x.services : s if v.role == r]) > n],
+  )
+
+  # riptide reads its exporter names from nl6's service discovery endpoint,
+  # which needs an nl6 service to read, and a riptide that picks the name label
+  # (#957) and boots on the still-empty fleet (#959). No release up to 0.17.0
+  # has either; an older one would never answer /readyz, naming neither cause.
+  discovery_release = try([for p in split(".", trimprefix(local.x.riptide.source, "release:")) : tonumber(p)], null)
+  discovery_violations = !local.x.riptide.nl6_discovery ? [] : concat(
+    length([for s, v in local.x.services : s if v.role == "nl6"]) == 0 ? [
+      "riptide nl6_discovery: no service has role nl6, so there is no fleet to discover",
+    ] : [],
+    startswith(local.x.riptide.source, "release:") && try(local.discovery_release[0] == 0 && local.discovery_release[1] <= 17, false) ? [
+      "riptide nl6_discovery: ${local.x.riptide.source} predates riptide.discovery.name-labels (#957) and booting on an empty fleet (#959); use deb:<path> or a later release",
+    ] : [],
   )
 
   # --- observe network and observability role --------------------------------
@@ -311,6 +325,7 @@ locals {
     local.ssh_key_violations,
     local.role_violations,
     local.role_count_violations,
+    local.discovery_violations,
     local.observe_violations,
     local.host_violations,
     local.topology_violations,

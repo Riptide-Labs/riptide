@@ -570,3 +570,52 @@ run "protected_range_named_like_a_network_keeps_its_bounds" {
     error_message = "violations: ${jsonencode(output.violations)}"
   }
 }
+
+# riptide.nl6_discovery reads the load generator's service discovery endpoint,
+# so it needs an nl6 service to point at.
+run "nl6_discovery_without_an_nl6_service_is_rejected" {
+  command = plan
+  variables {
+    raw = merge(run.fixture.raw, {
+      riptide  = merge(run.fixture.raw.riptide, { source = "deb:riptide.deb", nl6_discovery = true })
+      services = { for s, v in run.fixture.raw.services : s => v if v.role != "nl6" }
+    })
+  }
+  assert {
+    condition     = length(output.violations) == 1 && contains(output.violations, "riptide nl6_discovery: no service has role nl6, so there is no fleet to discover")
+    error_message = "violations: ${jsonencode(output.violations)}"
+  }
+}
+
+run "nl6_discovery_with_an_nl6_service_is_accepted" {
+  command = plan
+  variables {
+    raw = merge(run.fixture.raw, { riptide = merge(run.fixture.raw.riptide, { source = "deb:riptide.deb", nl6_discovery = true }) })
+  }
+  assert {
+    condition     = length(output.violations) == 0 && output.experiment.riptide.nl6_discovery
+    error_message = "violations: ${jsonencode(output.violations)}"
+  }
+}
+
+run "nl6_discovery_with_a_release_that_predates_it_is_rejected" {
+  command = plan
+  variables {
+    raw = merge(run.fixture.raw, { riptide = merge(run.fixture.raw.riptide, { source = "release:0.17.0", nl6_discovery = true }) })
+  }
+  assert {
+    condition     = length(output.violations) == 1 && contains(output.violations, "riptide nl6_discovery: release:0.17.0 predates riptide.discovery.name-labels (#957) and booting on an empty fleet (#959); use deb:<path> or a later release")
+    error_message = "violations: ${jsonencode(output.violations)}"
+  }
+}
+
+run "nl6_discovery_with_a_later_release_is_accepted" {
+  command = plan
+  variables {
+    raw = merge(run.fixture.raw, { riptide = merge(run.fixture.raw.riptide, { source = "release:0.18.0", nl6_discovery = true }) })
+  }
+  assert {
+    condition     = length(output.violations) == 0
+    error_message = "violations: ${jsonencode(output.violations)}"
+  }
+}

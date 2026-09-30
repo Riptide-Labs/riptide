@@ -31,6 +31,14 @@ locals {
   declared_java  = lookup(local.x.riptide.env, "JAVA_OPTS", "-Xmx${max(1, floor(try(local.services[local.sut].memory_gb, 2) / 2))}g")
   java_opts      = local.pyroscope_url == "" || strcontains(local.declared_java, local.profiling_flag) ? local.declared_java : "${local.declared_java} ${local.profiling_flag}"
 
+  # nl6's service discovery names every simulated exporter by its sysName. Over
+  # mgmt, which carries control traffic, never the measured ingest path.
+  loadgen = try(one([for s, v in local.services : s if v.role == "nl6"]), null)
+  nl6_discovery = local.x.riptide.nl6_discovery && local.loadgen != null ? {
+    RIPTIDE_DISCOVERY_URL         = "http://${local.services[local.loadgen].addresses.mgmt}:8080/api/v1/prometheus/sd"
+    RIPTIDE_DISCOVERY_NAME_LABELS = "__meta_nl6_sys_name"
+  } : {}
+
   riptide_env = merge(
     {
       JAVA_OPTS                          = local.java_opts
@@ -45,6 +53,7 @@ locals {
       PYROSCOPE_SERVER_ADDRESS        = local.pyroscope_url
       RIPTIDE_MANAGEMENT_BIND_ADDRESS = local.sut_bind
     },
+    local.nl6_discovery,
     # The experiment's own values win; JAVA_OPTS is merged above.
     { for k, v in local.x.riptide.env : k => v if k != "JAVA_OPTS" },
   )

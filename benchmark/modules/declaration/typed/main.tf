@@ -11,8 +11,9 @@ variable "experiment" {
     name     = string
     ssh_keys = optional(list(string), [])
     riptide = object({
-      source = string
-      env    = optional(map(string), {})
+      source        = string
+      env           = optional(map(string), {})
+      nl6_discovery = optional(bool, false)
     })
     hosts = map(object({
       provider  = string
