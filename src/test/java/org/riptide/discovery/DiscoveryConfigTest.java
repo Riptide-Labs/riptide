@@ -24,6 +24,7 @@ class DiscoveryConfigTest {
         assertThat(config.getTimeout()).isEqualTo(Duration.ofSeconds(10));
         assertThat(config.getAddressLabels())
                 .containsExactly("__meta_netbox_primary_ip4", "__meta_netbox_primary_ip6");
+        assertThat(config.getNameLabels()).containsExactly("__meta_netbox_name");
     }
 
     @Test

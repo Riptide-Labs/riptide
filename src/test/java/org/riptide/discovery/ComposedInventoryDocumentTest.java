@@ -24,6 +24,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.NoSuchFileException;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -216,6 +217,26 @@ class ComposedInventoryDocumentTest {
         assertThatThrownBy(() -> composed(null, "[]").text())
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("no exporter");
+    }
+
+    /** The consumer of riptide.discovery.name-labels: nl6 names its devices by sysName (#957). */
+    @Test
+    void theConfiguredNameLabelsNameTheComposedExporters() {
+        final DiscoveryConfig config = new DiscoveryConfig();
+        config.setUrl("http://nl6.example.com:8080/api/v1/prometheus/sd");
+        config.setNameLabels(List.of("__meta_nl6_sys_name"));
+        final String text = new ComposedInventoryDocument(
+                new FixedFile(null),
+                new ServiceDiscoverySource(() -> """
+                        [{"targets":["172.27.0.1"],"labels":{"__meta_nl6_sys_name":"core-rtr-01",
+                          "__meta_nl6_resource":"cisco_crs_x","__meta_nl6_snmp_port":"161"}}]
+                        """.getBytes(StandardCharsets.UTF_8),
+                        () -> "the endpoint"),
+                () -> "the endpoint",
+                config,
+                new MetricRegistry()).text();
+
+        assertThat(text).contains("core-rtr-01").contains("172.27.0.1");
     }
 
     /**

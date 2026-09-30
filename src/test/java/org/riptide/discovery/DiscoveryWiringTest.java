@@ -160,6 +160,16 @@ class DiscoveryWiringTest {
                         .hasMessageContaining("prometheus-sd"));
     }
 
+    /** The comma form is what RIPTIDE_DISCOVERY_NAME_LABELS carries from an environment file (#957). */
+    @Test
+    void theNameLabelsBindFromACommaSeparatedValueInOrder() {
+        this.runner
+                .withPropertyValues("riptide.discovery.url=http://127.0.0.1:9/api/v1/prometheus/sd",
+                        "riptide.discovery.name-labels=__meta_nl6_sys_name,__meta_other_name")
+                .run(context -> assertThat(context.getBean(DiscoveryConfig.class).getNameLabels())
+                        .containsExactly("__meta_nl6_sys_name", "__meta_other_name"));
+    }
+
     @Test
     void theDefaultAddressLabelsAreTheOnesTheNativeSourceEmits() {
         this.runner
