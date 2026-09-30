@@ -73,6 +73,23 @@ locals {
     ])
   }
 
+  # Rendered cloud-init documents per service, for bin/bench-reseed.
+  seed_dir  = "${abspath(local.run_dir)}/seed"
+  seed_docs = ["user-data", "meta-data", "network-config"]
+  # The mgmt address each running VM had after the last apply: a changed
+  # network-config takes effect only at the re-run's reboot.
+  # try, not a conditional: the inventory object and {} differ in type.
+  applied_inventory = try(jsondecode(file("${local.run_dir}/inventory.json")), {})
+  reseed = {
+    for s, v in local.services : s => join(" ", [
+      for a in [
+        abspath("${path.module}/../bin/bench-reseed"), s, v.role,
+        try(local.applied_inventory.services[s].addresses.mgmt, v.addresses.mgmt), v.addresses.mgmt,
+        "${local.seed_dir}/${s}", "${abspath(local.run_dir)}/known_hosts", tostring(var.ready_timeout_seconds),
+      ] : "'${a}'"
+    ])
+  }
+
   # riptide is checked where it listens; the rest on the VM itself.
   health_urls = {
     for s, v in local.services : s => {
@@ -85,16 +102,62 @@ locals {
   }
 }
 
+# A running guest never re-reads its cloud-init medium, so a changed document
+# is pushed over SSH instead: bin/bench-reseed re-runs cloud-init in place and
+# leaves a VM that already consumed the current documents alone. Files, not
+# arguments: user-data holds the lab's passwords.
+resource "local_sensitive_file" "seed" {
+  for_each = toset(flatten([for s in keys(local.services) : [for d in local.seed_docs : "${s}/${d}"]]))
+
+  filename             = "${local.seed_dir}/${each.key}"
+  file_permission      = "0600"
+  directory_permission = "0700"
+  content = {
+    "user-data"      = module.cloud_init[split("/", each.key)[0]].user_data
+    "meta-data"      = module.cloud_init[split("/", each.key)[0]].meta_data
+    "network-config" = module.cloud_init[split("/", each.key)[0]].network_config
+  }[split("/", each.key)[1]]
+}
+
+# The observability VM first, so it answers before any other VM reboots.
+resource "terraform_data" "observability_cloud_init" {
+  for_each = { for s, v in local.services : s => v if s == local.observability }
+
+  triggers_replace = [for d in local.seed_docs : local_sensitive_file.seed["${each.key}/${d}"].content_sha256]
+
+  provisioner "local-exec" {
+    command = local.reseed[each.key]
+  }
+
+  depends_on = [module.libvirt_vm, module.proxmox_vm]
+}
+
+resource "terraform_data" "cloud_init" {
+  for_each = { for s, v in local.services : s => v if s != local.observability }
+
+  triggers_replace = [for d in local.seed_docs : local_sensitive_file.seed["${each.key}/${d}"].content_sha256]
+
+  provisioner "local-exec" {
+    command = local.reseed[each.key]
+  }
+
+  depends_on = [module.libvirt_vm, module.proxmox_vm, terraform_data.observability_ready]
+}
+
 resource "terraform_data" "riptide" {
   count = local.ok ? 1 : 0
 
   # A re-created ClickHouse starts empty, and riptide creates its schema only
   # at startup, so a new ClickHouse VM reinstalls and restarts riptide too.
+  # So does a re-run of cloud-init on either VM: riptide exits when ClickHouse
+  # is gone for 30 s, as it is while its VM reboots.
   triggers_replace = [
     var.riptide_deb_sha256,
     sha256(local.riptide_env_file),
     local.vm_ids[local.sut],
     local.vm_ids[local.clickhouse],
+    terraform_data.cloud_init[local.sut].id,
+    terraform_data.cloud_init[local.clickhouse].id,
   ]
 
   connection {
@@ -150,7 +213,7 @@ resource "terraform_data" "riptide" {
 resource "terraform_data" "observability_ready" {
   for_each = { for s, v in local.services : s => v if s == local.observability }
 
-  triggers_replace = [local.vm_ids[each.key]]
+  triggers_replace = [local.vm_ids[each.key], terraform_data.observability_cloud_init[each.key].id]
 
   # A destroy-time provisioner may only read self. bench destroy powers the VM
   # off, and Pyroscope's unflushed blocks would reach the kept disk as empty
@@ -168,8 +231,10 @@ resource "terraform_data" "observability_ready" {
     timeout = "10m"
   }
 
+  # Replacing this resource ran the stop below; when bench-reseed then found
+  # nothing to re-run, no reboot started the containers again.
   provisioner "remote-exec" {
-    inline = [local.wait_cloud_init[each.key], local.wait_healthy[each.key]]
+    inline = [local.wait_cloud_init[each.key], "sudo systemctl start grafana pyroscope prometheus", local.wait_healthy[each.key]]
   }
 
   provisioner "remote-exec" {
@@ -183,7 +248,8 @@ resource "terraform_data" "observability_ready" {
 resource "terraform_data" "ready" {
   for_each = { for s, v in local.services : s => v if s != local.sut && s != local.observability }
 
-  triggers_replace = [local.vm_ids[each.key]]
+  # A re-run of cloud-init reboots the VM, so its health is checked again.
+  triggers_replace = [local.vm_ids[each.key], terraform_data.cloud_init[each.key].id]
 
   connection {
     type    = "ssh"

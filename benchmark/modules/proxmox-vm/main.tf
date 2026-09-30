@@ -17,6 +17,13 @@ locals {
   name = "bench-${var.experiment}-${var.service.name}"
   # Proxmox stores tags sorted; an unsorted list shows a change on every plan.
   tags = sort(["riptide-bench", "exp-${var.experiment}", "role-${var.service.role}"])
+
+  # Snippet ids are built, not read from the file resources: a changed
+  # document replaces its file, the provider reports the id as unknown until
+  # apply, and an unknown file id replaces the VM with its root disk. The id
+  # is the same before and after; bin/bench-reseed brings the change in place.
+  snippet    = { for d in ["user-data", "network-config", "meta-data"] : d => "${local.name}-${d}.yaml" }
+  snippet_id = { for d, f in local.snippet : d => "${var.snippets_datastore}:snippets/${f}" }
 }
 
 resource "proxmox_virtual_environment_file" "user_data" {
@@ -24,7 +31,7 @@ resource "proxmox_virtual_environment_file" "user_data" {
   datastore_id = var.snippets_datastore
   content_type = "snippets"
   source_raw {
-    file_name = "${local.name}-user-data.yaml"
+    file_name = local.snippet["user-data"]
     data      = var.cloud_init.user_data
   }
 }
@@ -34,7 +41,7 @@ resource "proxmox_virtual_environment_file" "network_config" {
   datastore_id = var.snippets_datastore
   content_type = "snippets"
   source_raw {
-    file_name = "${local.name}-network-config.yaml"
+    file_name = local.snippet["network-config"]
     data      = var.cloud_init.network_config
   }
 }
@@ -44,7 +51,7 @@ resource "proxmox_virtual_environment_file" "meta_data" {
   datastore_id = var.snippets_datastore
   content_type = "snippets"
   source_raw {
-    file_name = "${local.name}-meta-data.yaml"
+    file_name = local.snippet["meta-data"]
     data      = var.cloud_init.meta_data
   }
 }
@@ -126,10 +133,16 @@ resource "proxmox_virtual_environment_vm" "this" {
 
   initialization {
     datastore_id         = var.datastore
-    user_data_file_id    = proxmox_virtual_environment_file.user_data.id
-    network_data_file_id = proxmox_virtual_environment_file.network_config.id
-    meta_data_file_id    = proxmox_virtual_environment_file.meta_data.id
+    user_data_file_id    = local.snippet_id["user-data"]
+    network_data_file_id = local.snippet_id["network-config"]
+    meta_data_file_id    = local.snippet_id["meta-data"]
   }
 
   serial_device {}
+
+  depends_on = [
+    proxmox_virtual_environment_file.user_data,
+    proxmox_virtual_environment_file.network_config,
+    proxmox_virtual_environment_file.meta_data,
+  ]
 }
