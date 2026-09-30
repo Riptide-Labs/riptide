@@ -90,9 +90,11 @@ worst case ≈ (5 s × total parsers across all receivers) + shutdown-grace-peri
 
 The 1 s is the grace-expired path only: a flusher that has to be interrupted gets one more second to unwind before the queue is swept, so the sweep and the client teardown never race an insert still in flight.
 The management server and the MCP SSE server each get up to 2 s to close their connections.
-A collector with one `multi` receiver (4 protocols) and one IPFIX receiver is therefore 5 × 5 + 5 + 1 + 2 = about 33 s, about 35 s with SSE enabled.
+A collector with one `multi` receiver (4 protocols) and one IPFIX receiver is therefore 5 × 5 + 10 + 1 + 2 = about 38 s, about 40 s with SSE enabled.
 Keep that sum below systemd's `TimeoutStopSec` (default 90 s), or the process is killed mid-drain and the buffer is lost.
 `shutdown-grace-period` must be at least twice `max-latency`, enforced at startup, because the flusher notices the stop signal only between flush windows.
+Size it with `queue-capacity`: the flusher drains a full queue one `max-rows` insert at a time, so the defaults pair 80,000 rows with 10 s, enough at the 13,500 rows/s ceiling measured with delayed inserts.
+Rows still queued when the grace period runs out are counted on `failedRows` and are not dead-lettered.
 
 ## Why coalescing is off under batching
 

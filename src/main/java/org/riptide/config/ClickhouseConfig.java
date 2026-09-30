@@ -164,8 +164,13 @@ public final class ClickhouseConfig {
                  * {@code TimeoutStopSec}), or the process is killed mid-drain — and note the
                  * listeners stop first, each waiting up to ~5 s for its parser executor, before
                  * this grace period even starts.
+                 *
+                 * <p>Sized with {@link #queueCapacity}: a full queue drains one {@link #maxRows}
+                 * insert at a time, after up to one {@link #maxLatency} window. At the ~13.5k
+                 * rows/s ceiling measured with delayed inserts, 80k rows take about 6 s plus that
+                 * window, so 10 s; the old 5 s paired with the old 40k. Raise both together.
                  */
-                private Duration shutdownGracePeriod = Duration.ofSeconds(5);
+                private Duration shutdownGracePeriod = Duration.ofSeconds(10);
 
                 /**
                  * Fail fast on values that would misbehave at runtime; called when the batching

@@ -95,7 +95,7 @@ Any value above 0 names a stage that counted flows it could not store in the las
 | `pipeline dispatchErrors` | enrichment or persistence threw | Search the log for the WARN lines around the start of the loss |
 | `batch-writer droppedRows` | the batch writer queue was full | The flusher is the limit: see [RiptideWorkerSaturated](#riptideworkersaturated) |
 | `batch-writer failedRows` | ClickHouse refused or did not answer inserts | Compare with `persister_batch_deadLetteredRows`: rows kept there are recoverable, see [Inspect and replay dead letters](dead-letters.md); then fix ClickHouse, whose own logs name the refusal |
-| `batch-writer droppedRows` while the flusher is far below 0.8 | exporters send in bursts larger than the queue | Raise **`riptide.clickhouse.batch.queue-capacity`** to hold one export interval of rows at peak: the default 80,000 rows is about 6.5 s at 12,000 flows/s |
+| `batch-writer droppedRows` while the flusher is far below 0.8 | exporters send in bursts larger than the queue | Raise **`riptide.clickhouse.batch.queue-capacity`** to hold one export interval of rows at peak: the default 80,000 rows is about 6.7 s at 12,000 flows/s |
 
 When several stages lose at once, start from the one whose alert fired first.
 A full batch writer queue stalls the dispatch workers, a full dispatch queue stalls the listener's read loop, and the kernel then drops at the socket: on the rig, parser-dispatch followed the batch writer 45 s later and the listener 6 minutes later.
