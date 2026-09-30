@@ -94,7 +94,7 @@ Always:
 | Service | Image | Published ports | Notes |
 | --- | --- | --- | --- |
 | **`riptide`** | `ghcr.io/riptide-labs/riptide:latest` | `9999/udp` | One `multi` [receiver](../reference/receivers.md) parses every protocol on that port. Starts only after ClickHouse reports healthy. Health is `/readyz` on the container's port 8080, which is not published. Logs at `WARN`. |
-| **`clickhouse`** | `clickhouse/clickhouse-server:26.7`, pinned by digest | `127.0.0.1:8123`, `127.0.0.1:9000` | Database `riptide`, user `default`. 26.7 is the version the integration suite runs against, see [server versions](../reference/clickhouse.md#server-versions). |
+| **`clickhouse`** | `clickhouse/clickhouse-server:26.7`, pinned by digest | `127.0.0.1:8123`, `127.0.0.1:9000` | Database `riptide`. User `default` is riptide's and an admin; user `grafana` is the datasource's and read-only. 26.7 is the version the integration suite runs against, see [server versions](../reference/clickhouse.md#server-versions). |
 | **`grafana`** | `grafana/grafana-oss:13.0.2`, pinned by digest | `3000` | ClickHouse datasource, the Prometheus and Pyroscope datasources with self-monitoring, and the riptide dashboards provisioned; plugins `grafana-clickhouse-datasource` and `netsage-sankey-panel`. |
 
 Self-monitoring, from **`deployment/clickhouse/compose.self-monitoring.yml`**, unless [dropped](#run-without-self-monitoring):
@@ -109,7 +109,8 @@ The riptide image follows `:latest`, so `docker compose pull` moves the collecto
 
 | Variable | Read by | Default | When a change takes effect |
 | --- | --- | --- | --- |
-| **`CLICKHOUSE_PASSWORD`** | ClickHouse, riptide (as `env://CLICKHOUSE_PASSWORD`), Grafana's datasource | `riptide` | On `docker compose up -d`, all three follow. Anything else that connected with the old password needs the new one. |
+| **`CLICKHOUSE_PASSWORD`** | ClickHouse's `default` user, riptide (as `env://CLICKHOUSE_PASSWORD`) | `riptide` | On `docker compose up -d`, both follow. Anything else that connected with the old password needs the new one. |
+| **`CLICKHOUSE_GRAFANA_PASSWORD`** | ClickHouse's `grafana` user, Grafana's datasource | the value of `CLICKHOUSE_PASSWORD` | On `docker compose up -d`, both follow. Set it apart from `CLICKHOUSE_PASSWORD` for anything reachable beyond localhost. |
 | **`GF_SECURITY_ADMIN_PASSWORD`** | Grafana, only when it initialises its database | `admin` | First start only. To change it later, remove the `gf-data` volume, or change it in Grafana. |
 | **`PROMETHEUS_TARGETS`** | Prometheus, the directory of scrape targets | `./container-fs/prometheus/targets`, the `riptide` service | On `docker compose up -d`. Set `./container-fs/prometheus/targets-host` for a riptide running on the host instead. |
 
@@ -128,7 +129,7 @@ Compose loads it automatically and it is gitignored.
 ## Reach ClickHouse from another host
 
 ClickHouse listens on loopback only because riptide and Grafana reach it over the compose network.
-To publish it, set `CLICKHOUSE_PASSWORD` first, then replace the ports list in `compose.override.yml`.
+To publish it, set `CLICKHOUSE_PASSWORD` and `CLICKHOUSE_GRAFANA_PASSWORD` first, then replace the ports list in `compose.override.yml`.
 Compose merges `ports` by appending, so the override has to replace the list:
 
 ```yaml
@@ -140,9 +141,13 @@ services:
 ```
 
 Do not restrict the `default` user by source address in `users.xml` instead.
-Riptide and Grafana connect from a compose bridge address that varies by network, and a loopback or fixed-CIDR rule breaks them.
+Riptide connects as `default` from a compose bridge address that varies by network, and a loopback or fixed-CIDR rule breaks it.
 
 ## Dashboards
+
+Grafana reads ClickHouse as the `grafana` user, not as `default`.
+That user can only `SELECT` from the `riptide` database and the catalog tables the dashboards list.
+Explore runs whatever SQL a Grafana editor types as the datasource's user, and `default` is a ClickHouse admin.
 
 Grafana provisions the riptide dashboards from `deployment/clickhouse/container-fs/grafana/provisioning/dashboards/` into the folder **Flow Analytics** under **Riptide**; the `grafana-folders` one-shot service nests the folder after Grafana is healthy.
 What each dashboard answers, how the same set installs into a Grafana you run yourself, and what an upgrade does to UI edits is on the [Grafana dashboards](grafana-dashboards.md) page.

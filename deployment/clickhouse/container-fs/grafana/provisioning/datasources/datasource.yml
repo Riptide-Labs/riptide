@@ -17,8 +17,10 @@ datasources:
       defaultDatabase: riptide
       port: 9000
       host: clickhouse
-      username: default
+      # Read-only, apart from the user riptide inserts with: default is a ClickHouse admin, and
+      # Explore runs a Grafana editor's SQL as this datasource's user.
+      username: grafana
       tlsSkipVerify: false
     secureJsonData:
       # Interpolated by Grafana from the container environment; set in compose.yml (#651).
-      password: ${CLICKHOUSE_PASSWORD}
+      password: ${CLICKHOUSE_GRAFANA_PASSWORD}

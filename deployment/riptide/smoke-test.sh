@@ -10,6 +10,8 @@
 #   - an unauthenticated request is refused and a credentialled one is served
 #   - riptide provisions its schema through the env:// SecretRef indirection
 #   - Grafana's provisioned ClickHouse and Prometheus datasources report healthy
+#   - Grafana reads riptide.flows as the grafana user, which cannot write or change schema,
+#     neither directly nor through the datasource
 #   - Prometheus scrapes riptide as job="riptide" and loads the 9 alert rules (#908)
 #   - riptide's profiles reach Pyroscope and its Grafana datasource is healthy (#921)
 #   - every dashboard in the source tree sits in Flow Analytics under Riptide, none in General (#864)
@@ -17,6 +19,7 @@
 # compose.override.no-self-monitoring.yml (#927), asserting:
 #   - no prometheus or pyroscope container exists and riptide does not profile
 #   - Grafana holds only the ClickHouse datasource, the two a default run provisioned deleted
+#   - with CLICKHOUSE_GRAFANA_PASSWORD unset, the datasource still reads as grafana
 #   - riptide still provisions its schema, and every dashboard is still in Flow Analytics
 #   - neither variant leaves a mountpoint file behind in the source tree
 #
@@ -36,6 +39,9 @@ PHASE_FILES=(-f "$COMPOSE_FILE")
 # Not the compose default: a real value proves the from_env indirection carried it
 # rather than the entrypoint's fallback happening to match.
 export CLICKHOUSE_PASSWORD="${CLICKHOUSE_PASSWORD:-smoke-$RANDOM-Xy9}"
+# Distinct from CLICKHOUSE_PASSWORD, so a datasource or users.xml still wired to the admin password
+# fails the grafana checks instead of passing on a shared value. The drop phase unsets it.
+export CLICKHOUSE_GRAFANA_PASSWORD="${CLICKHOUSE_GRAFANA_PASSWORD:-smoke-gf-$RANDOM-Qz4}"
 
 cleanup() {
     local status=$?
@@ -52,6 +58,22 @@ trap cleanup EXIT
 fail() {
     echo "FAIL: $1" >&2
     exit 1
+}
+
+# One raw SQL query through the provisioned ClickHouse datasource, so it runs as whatever user and
+# password Grafana resolved for it; the health check only connects and cannot show either.
+grafana_sql() {
+    curl -s -u admin:admin -H 'Content-Type: application/json' "http://127.0.0.1:3000/api/ds/query" \
+        -d "{\"queries\":[{\"refId\":\"A\",\"datasource\":{\"uid\":\"riptide-clickhouse\"},\"rawSql\":\"$1\",\"format\":1}],\"from\":\"now-5m\",\"to\":\"now\"}"
+}
+
+assert_datasource_reads_as_grafana() {
+    local who
+    who="$(grafana_sql "SELECT currentUser() AS u")"
+    case "$who" in
+        *'"values":[["grafana"]]'*) echo "  ok  the datasource reads as grafana" ;;
+        *) fail "the datasource did not read as grafana: '$who'" ;;
+    esac
 }
 
 tree_state() {
@@ -113,6 +135,38 @@ case "$health" in
     *'"status":"OK"'*) echo "  ok  datasource riptide-clickhouse reports OK" ;;
     *) fail "datasource health returned '$health'" ;;
 esac
+
+echo "=== smoke: Grafana reads as a read-only user ==="
+assert_datasource_reads_as_grafana
+# The grant names the database literally (users.xml); a drift from CLICKHOUSE_DB fails here, which
+# the health check, connecting only, would not notice.
+counted="$(grafana_sql "SELECT count() AS c FROM riptide.flows")"
+case "$counted" in
+    *'"values":[['*) echo "  ok  the datasource reads riptide.flows" ;;
+    *) fail "the datasource cannot read riptide.flows: '$counted'" ;;
+esac
+# Through Grafana too: Explore runs an editor's SQL as the datasource's user, which is the path the
+# read-only user exists to close. The plugin reports only the numeric code, "code: 497, message:",
+# not the name: 497 is ACCESS_DENIED (the grants), 164 is READONLY.
+via_grafana="$(grafana_sql "CREATE TABLE riptide.smoke_ds (x UInt8) ENGINE = Memory")"
+case "$via_grafana" in
+    *'code: 497,'* | *'code: 164,'*) echo "  ok  DDL through the datasource refused" ;;
+    *) fail "DDL through the datasource was not refused: '$via_grafana'" ;;
+esac
+# Direct, not through Grafana, so the refusal is ClickHouse's own. Matched on the error code: a
+# wrong password (AUTHENTICATION_FAILED) or a typo (SYNTAX_ERROR) must not pass as a refusal. Either
+# the grants (ACCESS_DENIED) or readonly (READONLY) may be what refuses; both are in users.xml.
+as_grafana() {
+    curl -s -u "grafana:${CLICKHOUSE_GRAFANA_PASSWORD}" --data-binary "$1" "http://127.0.0.1:8123/"
+}
+for statement in "INSERT INTO riptide.flows (tenant) VALUES ('smoke')" \
+        "CREATE TABLE riptide.smoke (x UInt8) ENGINE = Memory"; do
+    refused="$(as_grafana "$statement")"
+    case "$refused" in
+        *'(ACCESS_DENIED)'* | *'(READONLY)'*) echo "  ok  refused: ${statement%% (*}" ;;
+        *) fail "grafana was not refused '$statement': '$refused'" ;;
+    esac
+done
 
 echo "=== smoke: Prometheus scrapes riptide and loads its alert rules (#908) ==="
 # The first scrape lands within one 15 s interval of the target appearing; poll
@@ -221,13 +275,16 @@ assert_clean_tree() {
 }
 assert_clean_tree
 
-echo "=== smoke: default stack OK (compose stack, ClickHouse auth and grants, schema, Grafana datasources, Prometheus scrape and rules, Pyroscope profiles, dashboard folder) ==="
+echo "=== smoke: default stack OK (compose stack, ClickHouse auth and grants, schema, Grafana datasources, grafana read user, Prometheus scrape and rules, Pyroscope profiles, dashboard folder) ==="
 
 echo "=== smoke: restarting without self-monitoring on the same volumes (#927) ==="
 # A plain down, as the compose guide says: with the override, Compose would leave the running
 # Prometheus and Pyroscope alone. Without -v, so Grafana keeps the two datasources the default run
 # provisioned and the delete file has something to delete.
 docker compose -f "$COMPOSE_FILE" down
+# The upgrade case: a stack that predates CLICKHOUSE_GRAFANA_PASSWORD sets only
+# CLICKHOUSE_PASSWORD, and ClickHouse and Grafana must both fall back to it.
+unset CLICKHOUSE_GRAFANA_PASSWORD
 PHASE_FILES=(-f "$COMPOSE_FILE" -f "$DROP_FILE")
 docker compose "${PHASE_FILES[@]}" up --detach --wait --wait-timeout 300 clickhouse grafana riptide
 docker compose "${PHASE_FILES[@]}" run --rm --no-deps grafana-folders
@@ -271,6 +328,7 @@ case "$health" in
     *'"status":"OK"'*) echo "  ok  datasource riptide-clickhouse reports OK" ;;
     *) fail "datasource health returned '$health'" ;;
 esac
+assert_datasource_reads_as_grafana
 
 echo "=== smoke: the dashboards are still in Riptide / Flow Analytics ==="
 # The drop override restates Grafana's volume list; losing the dashboards mount there fails here.

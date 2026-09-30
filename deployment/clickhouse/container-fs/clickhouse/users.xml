@@ -7,6 +7,14 @@
             <load_balancing>in_order</load_balancing>
             <log_queries>1</log_queries>
         </default>
+        <!--
+            Grafana's profile. readonly 2, not 1: the ClickHouse plugin sends max_execution_time with
+            every query, and readonly 1 refuses any setting. Writes and DDL stay refused either way.
+        -->
+        <grafana>
+            <readonly>2</readonly>
+            <log_queries>1</log_queries>
+        </grafana>
     </profiles>
     <users>
         <default>
@@ -18,9 +26,9 @@
                 CLICKHOUSE_PASSWORD before publishing them wider.
 
                 Narrowing <networks> instead was tried three times and does not work here: riptide
-                and Grafana both authenticate as this user and both arrive from a compose bridge
-                address, so a loopback or fixed-CIDR rule breaks them (#636, #640, #641). Binding
-                the published host ports is a different knob and does not affect them.
+                authenticates as this user from a compose bridge address, as Grafana did until it
+                got the grafana user below, so a loopback or fixed-CIDR rule breaks it (#636, #640,
+                #641). Binding the published host ports is a different knob and does not affect it.
             -->
             <!--
                 replace="1" is required, not decorative. Setting CLICKHOUSE_USER/CLICKHOUSE_PASSWORD
@@ -43,6 +51,27 @@
             <show_named_collections>1</show_named_collections>
             <show_named_collections_secrets>1</show_named_collections_secrets>
         </default>
+        <!--
+            The identity Grafana's provisioned datasource reads with: SELECT on the riptide database
+            and the catalog tables the dashboards' Database variable lists, nothing else. The datasource
+            used to be default, a ClickHouse admin, so any Grafana editor's SQL in Explore ran as one.
+            The database is named literally because a grant cannot read CLICKHOUSE_DB; it must match
+            compose.yml, and make compose-smoke fails its read of riptide.flows through Grafana if not.
+        -->
+        <grafana>
+            <password from_env="CLICKHOUSE_GRAFANA_PASSWORD"/>
+            <profile>grafana</profile>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <quota>default</quota>
+            <grants>
+                <query>GRANT SELECT ON riptide.*</query>
+                <query>GRANT SELECT ON system.databases</query>
+                <query>GRANT SELECT ON system.tables</query>
+                <query>GRANT SELECT ON system.columns</query>
+            </grants>
+        </grafana>
     </users>
     <quotas>
         <default>

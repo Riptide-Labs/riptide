@@ -23,6 +23,10 @@ services:
       # publishing the ports below beyond loopback. Read by users.xml via from_env. See
       # docs/guides/docker-compose.md.
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-riptide}
+      # The read-only user Grafana reads with, read by users.xml via from_env.
+      # Falls back to CLICKHOUSE_PASSWORD so an existing stack upgrades with no new variable; the
+      # user is still read-only when the two match. Grafana below must default it the same way.
+      CLICKHOUSE_GRAFANA_PASSWORD: ${CLICKHOUSE_GRAFANA_PASSWORD:-${CLICKHOUSE_PASSWORD:-riptide}}
     volumes:
       - clickhouse-data:/var/lib/clickhouse/
       - ./container-fs/clickhouse/config.xml:/etc/clickhouse-server/config.d/config.xml
@@ -42,7 +46,7 @@ services:
 
   grafana:
     # Pinned with ClickHouse below it: the provisioned datasource interpolates
-    # ${CLICKHOUSE_PASSWORD} at Grafana's startup, so a floating tag can change that
+    # ${CLICKHOUSE_GRAFANA_PASSWORD} at Grafana's startup, so a floating tag can change that
     # behaviour with no code change here. Dependabot keeps both current (#672).
     image: docker.io/grafana/grafana-oss:13.0.2@sha256:5dad0df181cb644a14e13617b913b261a54f7d4fd4510721dba420929f35bea2
     depends_on:
@@ -54,8 +58,9 @@ services:
       # GF_SECURITY_ADMIN_PASSWORD in the environment or an .env file for anything reachable
       # beyond localhost. See docs/guides/docker-compose.md.
       GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-admin}
-      # Consumed by the provisioned ClickHouse datasource, which interpolates it at load.
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-riptide}
+      # Consumed by the provisioned ClickHouse datasource, which interpolates it at load. The
+      # datasource reads as the grafana user, not default; same fallback as clickhouse above.
+      CLICKHOUSE_GRAFANA_PASSWORD: ${CLICKHOUSE_GRAFANA_PASSWORD:-${CLICKHOUSE_PASSWORD:-riptide}}
       GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,netsage-sankey-panel
       GF_FEATURE_TOGGLES_ENABLE: nestedFolders
     # deployment/riptide/compose.override.no-self-monitoring.yml restates this list, so a volume
