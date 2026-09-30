@@ -11,7 +11,10 @@ experiment = {
   name = "flow-knee"
 
   riptide = {
-    source = "release:0.17.0"
+    # main at a3a117b: riptide.discovery.name-labels (#958) and an empty
+    # fleet at boot (#960), until a release carries both.
+    source        = "deb:target/riptide_0.17.1~SNAPSHOT_all.deb"
+    nl6_discovery = true
     env = {
       JAVA_OPTS                    = "-Xmx5g"
       RIPTIDE_CLICKHOUSE_DATABASE  = "riptide_knee"
