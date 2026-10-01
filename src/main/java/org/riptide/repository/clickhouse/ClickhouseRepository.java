@@ -47,6 +47,7 @@ import java.util.LinkedHashMap;
 import java.time.temporal.ChronoUnit;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -185,7 +186,7 @@ public class ClickhouseRepository implements FlowRepository {
     @Override
     public void deadLetter(final List<EnrichedFlow> flows, final Throwable cause)
             throws FlowException, IOException {
-        if (this.deadLetterTableAbsent) {
+        if (this.deadLetterTableAbsent.get()) {
             // Measured once and remembered: see the field. Costs no round trip, which is the point.
             throw new FlowException("the dead-letter table " + FlowsSchema.DEAD_LETTER + " in database"
                     + " '" + this.config.getDatabase() + "' was not there on an earlier attempt;"
@@ -260,12 +261,12 @@ public class ClickhouseRepository implements FlowRepository {
      * <p><b>It is not cleared when the table appears.</b> Adding it takes an {@code onboard} run, and
      * a collector's schema posture is decided at startup everywhere else in this class (see
      * {@code verifyRollupShapes}); the message says to restart, and {@code multi-tenancy.md} says so
-     * too. Volatile rather than atomic: every flusher that reaches here races only to write the
-     * same {@code true}, so the latch itself needs no stronger ordering — though with
-     * {@code riptide.clickhouse.batch.flushers} above one, the check-then-act around the warning
-     * above is no longer race-free, and two flushers can rarely both see it unset and both log.</p>
+     * too. Atomic, not a plain {@code volatile}: with {@code riptide.clickhouse.batch.flushers}
+     * above one, several flushers can hit {@code UNKNOWN_TABLE} on the same instant, and the
+     * {@code compareAndSet} below is what keeps the warning below true to "reported once" instead
+     * of once per racing flusher.</p>
      */
-    private volatile boolean deadLetterTableAbsent;
+    private final AtomicBoolean deadLetterTableAbsent = new AtomicBoolean();
 
     /** Latch {@link #deadLetterTableAbsent} if — and only if — the server said UNKNOWN_TABLE. */
     private void rememberIfTheTableIsNotThere(final Throwable thrown) {
@@ -273,14 +274,13 @@ public class ClickhouseRepository implements FlowRepository {
         for (Throwable cause = thrown; cause != null && seen.add(cause); cause = cause.getCause()) {
             if (cause instanceof ServerException server
                     && server.getCode() == ServerException.ErrorCodes.TABLE_NOT_FOUND.getCode()) {
-                if (!this.deadLetterTableAbsent) {
+                if (this.deadLetterTableAbsent.compareAndSet(false, true)) {
                     log.warn("The dead-letter table {} is not present in database '{}', so refused"
                             + " batches cannot be kept. Run 'riptide onboard --create-schema' and"
                             + " restart the collector. This is reported once; later refused batches"
                             + " are counted without asking the server again.",
                             FlowsSchema.DEAD_LETTER, this.config.getDatabase());
                 }
-                this.deadLetterTableAbsent = true;
                 return;
             }
         }

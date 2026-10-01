@@ -63,13 +63,13 @@ public final class ClickhouseConfig {
          *
          * <p>It is not free. Profiling the flusher thread at ~29k rows/s put LZ4 at roughly a fifth
          * of its CPU ({@code ClickHouseLZ4OutputStream.write} plus the {@code LZ4SafeUtils} /
-         * {@code LZ4JavaSafeCompressor} frames), and with the default one {@link #flushers} that
+         * {@code LZ4JavaSafeCompressor} frames), and with the default one {@link BatchConfig#flushers} that
          * thread is the insert path's ceiling. On a benchmark lab (#968, default one flusher) the
          * flusher saturated at ~59.5k flows/s with compression on (flush p50 0.16 s, queue full,
          * rows dropped) and kept up at ~65.4k flows/s with it off (81% busy, p50 0.12 s), sending
          * ~150 Mbit/s instead of ~23. So on the same LAN as ClickHouse turning this off trades a
          * small share of 1 GbE for headroom on the flusher thread (or threads, with
-         * {@link #flushers} raised) that serializes each batch. Leave it on across a WAN or where
+         * {@link BatchConfig#flushers} raised) that serializes each batch. Leave it on across a WAN or where
          * egress is metered.
          */
         private boolean compressRequests = true;
@@ -120,7 +120,7 @@ public final class ClickhouseConfig {
 
         /**
          * Client-side insert batching: a bounded queue in front of the repository, drained by one
-         * or more background flushers ({@link #flushers}, default one) into one insert per batch
+         * or more background flushers ({@link BatchConfig#flushers}, default one) into one insert per batch
          * each. Each insert forms a part and fires
          * the four rollup materialized views, so many small inserts collapse throughput — the
          * per-record path capped a 4-vCPU host at ~150 inserts/s ≈ 3,600 rows/s with the CPU
