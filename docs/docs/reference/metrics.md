@@ -87,7 +87,8 @@ What each of these counts, and the delivery arithmetic between them, is in [Wher
 | **`persister.batch.failedRows`** | counter | rows an insert was attempted for and lost; charges the whole batch, so an upper bound for a refused insert | sustained rate, as a signal and not a loss figure |
 | **`persister.batch.deadLetteredRows`** | counter | rows of a refused batch kept in `flows_dead_letter` instead of being dropped | not an alert; read with `failedRows` |
 | **`persister.batch.deadLetterFailedRows`** | counter | rows of a refused batch that could not be kept either | any movement |
-| **`persister.batch.flusherBusySeconds`** | counter | seconds the single flusher spent inserting, from a non-empty drain to the insert completing; waiting for rows is not counted | `rate()` sustained above 0.8; the batch writer's early warning, since its queue covers only seconds of load |
+| **`persister.batch.flusherBusySeconds`** | counter | seconds the flushers spent inserting, from a non-empty drain to the insert completing, divided by their number (`persister.batch.flushers`), so `rate()` is their mean utilisation, 0 to 1; waiting for rows is not counted | `rate()` sustained above 0.8; the batch writer's early warning, since its queue covers only seconds of load; raise `riptide.clickhouse.batch.flushers` |
+| **`persister.batch.flushers`** | gauge | `riptide.clickhouse.batch.flushers`, the flushers inserting concurrently; total busy seconds are `flusherBusySeconds` × this | not an alert |
 | **`persister.batch.batchSize`** | histogram | rows per flushed batch | not an alert |
 | **`persister.batch.flush`** | timer | insert duration per batch | not an alert |
 | **`logPersisting.persister`** | timer | the enqueue latency, the hand-off into the buffer, normally microseconds; not the insert duration | not an alert |

@@ -91,12 +91,14 @@ healthcheck:
 `GET /metrics` renders the whole metric registry in [Prometheus text exposition format](https://prometheus.io/docs/instrumenting/exposition_formats/) 0.0.4.
 
 ```bash
-curl -s http://localhost:8080/metrics | grep -E '^(# TYPE )?persister_batch' | head -14
+curl -s http://localhost:8080/metrics | grep -E '^(# TYPE )?persister_batch' | head -16
 ```
 
 Expected output:
 
 ```text
+# TYPE persister_batch_flushers gauge
+persister_batch_flushers 1.0
 # TYPE persister_batch_queueCapacity gauge
 persister_batch_queueCapacity 80000.0
 # TYPE persister_batch_queueDepth gauge
