@@ -175,6 +175,22 @@ public final class ClickhouseConfig {
                 private Duration shutdownGracePeriod = Duration.ofSeconds(10);
 
                 /**
+                 * Upper bound for {@link #flushers}: each flusher holds one of the ClickHouse
+                 * client's connections while it inserts, the client opens at most 10 by default,
+                 * and schema and drift queries need the rest.
+                 */
+                public static final int MAX_FLUSHERS = 8;
+
+                /**
+                 * Background flushers draining the one queue, each inserting its own batches
+                 * concurrently with the others. One, the default, is the behaviour before this
+                 * key existed. A single flusher inserts serially and became the insert path's
+                 * ceiling at ~67k flows/s on the benchmark lab, with CPU and network idle; raise
+                 * it when {@code persister.batch.flusherBusySeconds} runs near 1.
+                 */
+                private int flushers = 1;
+
+                /**
                  * Fail fast on values that would misbehave at runtime; called when the batching
                  * repository is constructed. {@code maxRows <= 0} would busy-spin the flusher,
                  * {@code queueCapacity <= 0} only surfaces as an opaque queue exception, and a
@@ -190,6 +206,13 @@ public final class ClickhouseConfig {
                         if (this.queueCapacity <= 0) {
                                 throw new IllegalArgumentException(
                                         "riptide.clickhouse.batch.queue-capacity must be > 0 (got " + this.queueCapacity + ")");
+                        }
+                        if (this.flushers < 1 || this.flushers > MAX_FLUSHERS) {
+                                throw new IllegalArgumentException(
+                                        "riptide.clickhouse.batch.flushers must be between 1 and " + MAX_FLUSHERS
+                                                + " (got " + this.flushers + "): each flusher holds one of the ClickHouse"
+                                                + " client's 10 default connections while it inserts, and schema and"
+                                                + " drift queries need the rest");
                         }
                         if (this.maxLatency == null || this.maxLatency.isZero() || this.maxLatency.isNegative()) {
                                 throw new IllegalArgumentException(

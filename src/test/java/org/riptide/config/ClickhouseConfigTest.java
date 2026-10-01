@@ -7,8 +7,11 @@ package org.riptide.config;
 
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
 
 import java.time.Duration;
+import java.util.Map;
 
 /**
  * The {@code asyncInserts} derivation: batching supersedes server-side coalescing, but only
@@ -60,6 +63,21 @@ class ClickhouseConfigTest {
         // Provisioned mode keeps the synchronous CHECK-barrier rejection.
         config.setManageSchema(false);
         Assertions.assertThat(config.isAsyncInserts()).isFalse();
+    }
+
+    @Test
+    void batchFlushersDefaultsToOne() {
+        Assertions.assertThat(new ClickhouseConfig().getBatch().getFlushers()).isEqualTo(1);
+    }
+
+    /** The key's consumer is BatchingFlowRepository; this proves the key reaches the config it reads. */
+    @Test
+    void batchFlushersBindsFromItsKey() {
+        final ClickhouseConfig bound = new Binder(new MapConfigurationPropertySource(
+                Map.of("riptide.clickhouse.batch.flushers", "3")))
+                .bind("riptide.clickhouse", ClickhouseConfig.class)
+                .get();
+        Assertions.assertThat(bound.getBatch().getFlushers()).isEqualTo(3);
     }
 
     @Test

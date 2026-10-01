@@ -612,6 +612,29 @@ class BatchingFlowRepositoryTest {
     }
 
     @Test
+    void rejectsFlushersOutsideOneToEight() {
+        for (final int flushers : new int[] {0, -1, 9}) {
+            final var config = batchConfig(10, Duration.ofMillis(100));
+            config.setFlushers(flushers);
+            Assertions.assertThatThrownBy(() -> repository(config))
+                    .as("flushers=%d", flushers)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("riptide.clickhouse.batch.flushers")
+                    .hasMessageContaining("between 1 and 8")
+                    .hasMessageContaining("(got " + flushers + ")");
+        }
+    }
+
+    @Test
+    void acceptsFlushersFromOneToEight() {
+        for (final int flushers : new int[] {1, 8}) {
+            final var config = batchConfig(10, Duration.ofMillis(100));
+            config.setFlushers(flushers);
+            Assertions.assertThatCode(() -> repository(config)).doesNotThrowAnyException();
+        }
+    }
+
+    @Test
     void rejectsShutdownGracePeriodUnderTwiceMaxLatency() {
         // Merely-greater is not enough: one full drain window can pass before the drain starts,
         // so 4900ms/5000ms would leave 100ms to empty the whole queue.

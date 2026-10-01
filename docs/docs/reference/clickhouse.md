@@ -23,6 +23,7 @@ How the batching path, the rollups and the dead-letter table behave is on [Inser
 | **`riptide.clickhouse.async-inserts`** | boolean | unset | Server-side insert coalescing. Unset derives: off while batching is enabled; with batching disabled it follows `manage-schema` (on in manage mode, off in provisioned mode). Set it to pin a value. |
 | **`riptide.clickhouse.batch.enabled`** | boolean | `true` | Client-side insert batching. `false` falls back to one insert per flow record. |
 | **`riptide.clickhouse.batch.max-rows`** | int | `10000` | Flush when this many rows are buffered. Must be greater than 0. |
+| **`riptide.clickhouse.batch.flushers`** | int | `1` | Background flushers inserting batches concurrently from the one queue, 1 to 8. One inserts serially; raise it when `persister.batch.flusherBusySeconds` runs near 1. Up to `flushers × max-rows` rows are in flight outside the queue. Each flusher holds one of the client's 10 default connections while it inserts. |
 | **`riptide.clickhouse.batch.max-latency`** | duration | `2s` | Flush whatever is buffered after this long. Must be positive. |
 | **`riptide.clickhouse.batch.queue-capacity`** | int | `80000` | Buffer bound. A full queue drops flows, counted on `persister.batch.droppedRows`. Must be greater than 0. |
 | **`riptide.clickhouse.batch.shutdown-grace-period`** | duration | `10s` | How long `stop()` waits for the flusher to drain. Must be at least twice `max-latency`; startup fails otherwise. Raise it with `queue-capacity`: a full queue of 80,000 rows needs about 8 s at a slow ClickHouse. |
@@ -245,6 +246,7 @@ If you set `--ttl-days` above 365, raise every rollup to at least the same value
 | `… is missing expected column(s) …` | The on-disk `flows` table predates a column riptide inserts | Manage mode adds it on the next start; validate mode: re-run `riptide onboard` |
 | `No serializer found for column '…'` | A plain `DEFAULT` column riptide has no value for | Make it `MATERIALIZED` or `ALIAS`, or drop it |
 | `riptide.clickhouse.batch.shutdown-grace-period (…) must be at least twice max-latency (…)` | Grace period too short for the flusher to notice the stop signal | Raise the grace period or lower `max-latency` |
+| `riptide.clickhouse.batch.flushers must be between 1 and 8 (got …)` | `flushers` set outside 1 to 8 | Set a value from 1 to 8. |
 | `Failed to persist a batch of N flows, flusher does not retry, some may be committed` | The server refused a batch, see [Insert batching and dead letters](../architecture/persistence.md) | Read `flows_dead_letter`, see [Inspect and replay dead letters](../operations/dead-letters.md) |
 | `Code: 469 … (VIOLATED_CONSTRAINT)` | A row's `tenant` or `organisation` does not match the writer credential's `CONST` setting | Fix `riptide.identity.*` on that collector |
 | `Code: 452 … (SETTING_CONSTRAINT_VIOLATION)` | A `SET` or query-level `SETTINGS SQL_tenant=…` tried to override the pinned setting | None needed; the pin is working |
