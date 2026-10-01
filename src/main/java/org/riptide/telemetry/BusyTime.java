@@ -26,6 +26,11 @@ public final class BusyTime implements SecondsCounter {
         this.nanos.add(System.nanoTime() - startNanos);
     }
 
+    /** Adds {@code nanos} directly, for a caller that apportions one interval across workers. */
+    public void add(final long nanos) {
+        this.nanos.add(nanos);
+    }
+
     @Override
     public double seconds() {
         return this.nanos.sum() / NANOS_PER_SECOND;

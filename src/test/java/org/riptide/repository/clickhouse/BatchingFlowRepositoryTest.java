@@ -9,6 +9,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.codahale.metrics.Gauge;
 import com.codahale.metrics.MetricRegistry;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterEach;
@@ -26,6 +27,7 @@ import org.slf4j.LoggerFactory;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -635,6 +637,92 @@ class BatchingFlowRepositoryTest {
     }
 
     @Test
+    void twoFlushersInsertConcurrently() throws Exception {
+        this.delegate.insertMillis = 300;
+        final var config = batchConfig(1, Duration.ofMillis(100));
+        config.setFlushers(2);
+        this.repository = repository(config);
+        this.repository.start();
+
+        this.repository.persist(flows(4));
+
+        await(Duration.ofSeconds(5), "all four rows inserted", () -> this.delegate.count() == 4);
+        Assertions.assertThat(this.delegate.maxInFlight.get()).isEqualTo(2);
+    }
+
+    @Test
+    void oneFlusherNeverInsertsConcurrently() throws Exception {
+        this.delegate.insertMillis = 100;
+        this.repository = repository(batchConfig(1, Duration.ofMillis(100)));
+        this.repository.start();
+
+        this.repository.persist(flows(4));
+
+        await(Duration.ofSeconds(5), "all four rows inserted", () -> this.delegate.count() == 4);
+        Assertions.assertThat(this.delegate.maxInFlight.get()).isEqualTo(1);
+    }
+
+    /** Dashboards and the saturation alert read this as 0 to 1; two busy flushers must not read 2. */
+    @Test
+    void flusherBusySecondsIsTheMeanAcrossFlushers() throws Exception {
+        this.delegate.insertMillis = 1000;
+        final var config = batchConfig(1, Duration.ofMillis(100));
+        config.setFlushers(2);
+        this.repository = repository(config);
+        this.repository.start();
+
+        this.repository.persist(flows(2));
+
+        await(Duration.ofSeconds(5), "both rows inserted", () -> this.delegate.count() == 2);
+        Assertions.assertThat(this.delegate.maxInFlight.get()).isEqualTo(2);
+        Assertions.assertThat(flusherBusySeconds()).isBetween(0.9d, 1.5d);
+    }
+
+    @Test
+    void theFlushersGaugeReportsNAndIsRemovedOnStop() {
+        final var config = batchConfig(10, Duration.ofMillis(100));
+        config.setFlushers(3);
+        this.repository = repository(config);
+        final String name = MetricRegistry.name("persister", "batch", "flushers");
+
+        Assertions.assertThat(((Gauge<?>) this.metricRegistry.getGauges().get(name)).getValue()).isEqualTo(3);
+        this.repository.start();
+        this.repository.stop();
+        Assertions.assertThat(this.metricRegistry.getGauges()).doesNotContainKey(name);
+    }
+
+    @Test
+    void flusherThreadsAreNamedAfterTheirCount() {
+        // Snapshot live threads before each start(): other test classes sharing this surefire JVM
+        // (e.g. a cached Spring context) can own a live clickhouse-batch-flusher thread of their
+        // own, and asserting on every thread with that name regardless of origin would make this
+        // test order-dependent on what else is running.
+        final Set<Thread> before1 = Thread.getAllStackTraces().keySet();
+        this.repository = repository(batchConfig(10, Duration.ofMillis(100)));
+        this.repository.start();
+        Assertions.assertThat(newFlusherNames(before1)).containsExactly("clickhouse-batch-flusher");
+        this.repository.stop();
+
+        final var config = batchConfig(10, Duration.ofMillis(100));
+        config.setFlushers(3);
+        final Set<Thread> before2 = Thread.getAllStackTraces().keySet();
+        this.repository = new BatchingFlowRepository(new ObservableRepository(), config, new MetricRegistry());
+        this.repository.start();
+        Assertions.assertThat(newFlusherNames(before2)).containsExactlyInAnyOrder(
+                "clickhouse-batch-flusher-0", "clickhouse-batch-flusher-1", "clickhouse-batch-flusher-2");
+    }
+
+    /** Only flusher-named threads that were not already live in {@code before}. */
+    private static List<String> newFlusherNames(final Set<Thread> before) {
+        return Thread.getAllStackTraces().keySet().stream()
+                .filter(t -> !before.contains(t))
+                .filter(Thread::isAlive)
+                .map(Thread::getName)
+                .filter(n -> n.startsWith("clickhouse-batch-flusher"))
+                .toList();
+    }
+
+    @Test
     void rejectsShutdownGracePeriodUnderTwiceMaxLatency() {
         // Merely-greater is not enough: one full drain window can pass before the drain starts,
         // so 4900ms/5000ms would leave 100ms to empty the whole queue.
@@ -738,6 +826,10 @@ class BatchingFlowRepositoryTest {
 
         private final AtomicInteger failuresRemaining = new AtomicInteger();
 
+        /** Inserts running right now, and the most ever running at once. */
+        private final AtomicInteger inFlight = new AtomicInteger();
+        private final AtomicInteger maxInFlight = new AtomicInteger();
+
         /**
          * The dead letters this delegate accepted, or null while it has no dead-letter store at all.
          *
@@ -780,8 +872,7 @@ class BatchingFlowRepositoryTest {
             }
         }
 
-        @Override
-        public void persist(final List<EnrichedFlow> flows) throws FlowException {
+        private void persistTracked(final List<EnrichedFlow> flows) throws FlowException {
             this.inserts.incrementAndGet();
             this.onPersist.run();
             if (this.insertMillis > 0) {
@@ -810,6 +901,17 @@ class BatchingFlowRepositoryTest {
                 throw new FlowException("poison batch");
             }
             this.store.persist(flows);
+        }
+
+        @Override
+        public void persist(final List<EnrichedFlow> flows) throws FlowException {
+            final int now = this.inFlight.incrementAndGet();
+            this.maxInFlight.accumulateAndGet(now, Math::max);
+            try {
+                persistTracked(flows);
+            } finally {
+                this.inFlight.decrementAndGet();
+            }
         }
 
         @Override

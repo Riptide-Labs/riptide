@@ -31,8 +31,9 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Batching decorator around a {@link FlowRepository}: producers enqueue flows into a bounded
- * queue, a single background flusher drains them and hands the delegate one large insert per
- * batch (at {@code maxRows} rows or after {@code maxLatency}, whichever comes first). Each
+ * queue, one or more background flushers ({@code riptide.clickhouse.batch.flushers}, default one)
+ * drain them and hand the delegate one large insert per batch (at {@code maxRows} rows or after
+ * {@code maxLatency}, whichever comes first). Each
  * ClickHouse insert forms a part and fires the four rollup materialized views, so collapsing the
  * per-record inserts into batches is what buys the throughput (see
  * {@link ClickhouseConfig.BatchConfig} for the sizing rationale).
@@ -83,7 +84,13 @@ public class BatchingFlowRepository implements FlowRepository {
     /** Set once by stop(): producers reject-new, the flusher switches to its final drain. */
     private final AtomicBoolean stopped = new AtomicBoolean();
 
-    private volatile Thread flusher;
+    /** The running flushers; empty before start() and after stop(). */
+    private volatile List<Thread> flushers = List.of();
+
+    /** N, from the config: every flusher adds its busy time divided by it. */
+    private final int flusherCount;
+
+    private final String flushersGauge;
 
     /** nanoTime, not wall clock: an NTP step backwards would mute drop warnings for the skew. */
     private final AtomicLong lastDropWarnNanos = new AtomicLong(System.nanoTime() - DROP_WARN_INTERVAL_NANOS);
@@ -128,6 +135,8 @@ public class BatchingFlowRepository implements FlowRepository {
         // queueCapacity=0 would surface as an opaque LinkedBlockingQueue exception here.
         config.validate();
 
+        this.flusherCount = config.getFlushers();
+
         this.queue = new LinkedBlockingQueue<>(config.getQueueCapacity());
 
         this.droppedRows = metricRegistry.counter(MetricRegistry.name("persister", "batch", "droppedRows"));
@@ -145,7 +154,7 @@ public class BatchingFlowRepository implements FlowRepository {
         // instance's dead queue — worse than no gauge at all. stop() unregisters it again.
         metricRegistry.remove(this.queueDepthGauge);
         metricRegistry.register(this.queueDepthGauge, (Gauge<Integer>) this.queue::size);
-        // The single flusher is this stage's ceiling, and its queue covers only seconds of load at
+        // The flushers are this stage's ceiling, and the queue covers only seconds of load at
         // capacity, so busy time is the early warning and depth is not. Same lifecycle as queueDepth.
         this.flusherBusyName = MetricRegistry.name("persister", "batch", "flusherBusySeconds");
         metricRegistry.remove(this.flusherBusyName);
@@ -155,6 +164,11 @@ public class BatchingFlowRepository implements FlowRepository {
         final int capacity = config.getQueueCapacity();
         metricRegistry.remove(this.queueCapacityGauge);
         metricRegistry.register(this.queueCapacityGauge, (Gauge<Integer>) () -> capacity);
+        // N beside the busy time, whose rate is the flushers' mean: "one at 80%" and "four at
+        // 80%" read the same there. Same lifecycle as queueDepth.
+        this.flushersGauge = MetricRegistry.name("persister", "batch", "flushers");
+        metricRegistry.remove(this.flushersGauge);
+        metricRegistry.register(this.flushersGauge, (Gauge<Integer>) () -> this.flusherCount);
     }
 
     @Override
@@ -205,22 +219,27 @@ public class BatchingFlowRepository implements FlowRepository {
             // flow — the worst possible failure mode for a persister.
             throw new IllegalStateException("BatchingFlowRepository is stopped and cannot be restarted");
         }
-        if (this.flusher != null) {
-            // A second start() would re-run the delegate's manage-mode DDL and orphan the first
-            // flusher, which stop() then never joins.
+        if (!this.flushers.isEmpty()) {
+            // A second start() would re-run the delegate's manage-mode DDL and orphan the
+            // already-running flushers, which stop() then never joins.
             throw new IllegalStateException("BatchingFlowRepository is already started");
         }
 
-        // Delegate first: the flusher must not insert before the schema is ensured/validated.
+        // Delegate first: no flusher may insert before the schema is ensured/validated.
         this.delegate.start();
 
-        final Thread thread = new ThreadFactoryBuilder()
-                .setNameFormat("clickhouse-batch-flusher")
-                .setDaemon(true)
-                .build()
-                .newThread(this::flushLoop);
-        this.flusher = thread;
-        thread.start();
+        final List<Thread> threads = new ArrayList<>(this.flusherCount);
+        for (int i = 0; i < this.flusherCount; i++) {
+            // One flusher keeps today's name, so dumps, profiles and log greps still match.
+            final String name = this.flusherCount == 1 ? "clickhouse-batch-flusher" : "clickhouse-batch-flusher-" + i;
+            threads.add(new ThreadFactoryBuilder()
+                    .setNameFormat(name)
+                    .setDaemon(true)
+                    .build()
+                    .newThread(this::flushLoop));
+        }
+        this.flushers = List.copyOf(threads);
+        threads.forEach(Thread::start);
     }
 
     private void flushLoop() {
@@ -267,13 +286,17 @@ public class BatchingFlowRepository implements FlowRepository {
                         try {
                             flush(batch);
                         } finally {
-                            this.flusherBusy.addSince(start);
+                            // Divided by N: the counter's rate stays the flushers' mean
+                            // utilisation, 0 to 1, which the saturation alert and the dashboards
+                            // read. With one flusher this is exactly addSince(start).
+                            this.flusherBusy.add((System.nanoTime() - start) / this.flusherCount);
                         }
                     }
                 }
             } catch (final Throwable e) {
-                // Throwable on purpose: this is the only flusher, and a silent death (a metrics
-                // bug, an Error, anything unforeseen) would turn into a permanent 100% drop.
+                // Throwable on purpose: a silent death of a flusher (a metrics bug, an Error,
+                // anything unforeseen) would still cut throughput — and with a single flusher
+                // (the default) that cut is a permanent 100% drop.
                 // Count whatever was in hand, log, and keep looping.
                 // Charged in full. Whether that is exact depends on where the Throwable came from,
                 // and this catch cannot tell: an Error out of delegate.persist escapes flush()'s
@@ -377,11 +400,12 @@ public class BatchingFlowRepository implements FlowRepository {
             // Idempotent: the drain and the delegate stop must run exactly once.
             return;
         }
-        final Thread thread = this.flusher;
         boolean graceExpired = false;
-        if (thread != null) {
+        // Temporary: one full grace period per flusher, joined in sequence. At flushers=1 this is
+        // exactly today's behaviour; a shared deadline across all of them is Task 3.
+        for (final Thread thread : this.flushers) {
             try {
-                // The flusher sees the stop flag at the latest after the current drain window
+                // Each flusher sees the stop flag at the latest after the current drain window
                 // (maxLatency < grace, enforced by validate()), then drains the queue
                 // non-blocking and exits.
                 thread.join(Math.max(1, this.config.getShutdownGracePeriod().toMillis()));
@@ -407,8 +431,8 @@ public class BatchingFlowRepository implements FlowRepository {
                     log.warn("Batch flusher still alive after the interrupt — continuing shutdown");
                 }
             }
-            this.flusher = null;
         }
+        this.flushers = List.of();
 
         // Straggler sweep: a producer may pass the stopped check and offer after the flusher's
         // final drain — without this, those rows would be lost uncounted.
@@ -430,6 +454,7 @@ public class BatchingFlowRepository implements FlowRepository {
         this.metricRegistry.remove(this.queueDepthGauge);
         this.metricRegistry.remove(this.flusherBusyName);
         this.metricRegistry.remove(this.queueCapacityGauge);
+        this.metricRegistry.remove(this.flushersGauge);
     }
 
     /**
