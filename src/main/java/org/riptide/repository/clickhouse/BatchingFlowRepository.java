@@ -69,9 +69,12 @@ public class BatchingFlowRepository implements FlowRepository {
     private static final long DROP_WARN_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(10);
 
     /**
-     * How long stop() waits for each live flusher to unwind after the post-grace interrupt, before
-     * sweeping the queue itself. Without it the sweep would drain the same queue concurrently
-     * with a dying flusher, and delegate.stop() could run with an insert still in flight.
+     * How long stop() waits, in total across every live flusher, for them to unwind after the
+     * post-grace interrupt, before sweeping the queue itself: one shared deadline, the same way the
+     * grace period itself is shared, so N flushers that ignore the interrupt (a blocking socket read
+     * does not respond to it) cost one bounded wait rather than N of them. Without this wait at all
+     * the sweep would drain the same queue concurrently with a dying flusher, and delegate.stop()
+     * could run with an insert still in flight.
      */
     private static final long INTERRUPT_JOIN_MS = 1_000;
 
@@ -419,16 +422,23 @@ public class BatchingFlowRepository implements FlowRepository {
             final List<Thread> alive = threads.stream().filter(Thread::isAlive).toList();
             if (!alive.isEmpty()) {
                 // Grace expired: a wedged or very slow insert. Interrupt every live flusher as a
-                // last resort, then give each a moment to unwind: otherwise the sweep below drains
-                // the queue concurrently with a dying thread and delegate.stop() can run with an
-                // insert still in flight.
+                // last resort, then give them a shared moment to unwind: otherwise the sweep below
+                // drains the queue concurrently with a dying thread and delegate.stop() can run
+                // with an insert still in flight.
                 graceExpired = true;
                 alive.forEach(Thread::interrupt);
                 log.warn("Batch flusher did not drain within {}; about {} accepted rows undelivered",
                         this.config.getShutdownGracePeriod(), this.queue.size());
+                // One shared unwind window, not one per flusher: a flusher stuck in a blocking
+                // socket read ignores the interrupt entirely (no socket timeout by default — see
+                // sweep()'s javadoc), so joining each flusher for the full INTERRUPT_JOIN_MS in
+                // sequence would turn N unresponsive flushers into N × INTERRUPT_JOIN_MS of extra
+                // shutdown time instead of one bounded wait.
+                final long unwindDeadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(INTERRUPT_JOIN_MS);
                 for (final Thread thread : alive) {
+                    final long remainingMillis = TimeUnit.NANOSECONDS.toMillis(unwindDeadline - System.nanoTime());
                     try {
-                        thread.join(INTERRUPT_JOIN_MS);
+                        thread.join(Math.max(1, remainingMillis));
                     } catch (final InterruptedException e) {
                         Thread.currentThread().interrupt();
                     }

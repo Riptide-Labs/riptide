@@ -754,6 +754,35 @@ class BatchingFlowRepositoryTest {
         Assertions.assertThat(failedRows()).as("both in-hand rows counted").isEqualTo(2);
     }
 
+    /**
+     * The realistic wedge the grace deadline alone does not cover: a blocking socket read ignores
+     * {@link Thread#interrupt()} entirely (no socket timeout by default — see the {@code sweep}
+     * javadoc), so the post-grace interrupt cannot make such a flusher unwind at all. stop() must
+     * still return promptly: one shared grace plus one shared unwind window, not grace plus
+     * {@code N × INTERRUPT_JOIN_MS} for every flusher that never responds.
+     */
+    @Test
+    void stopReturnsWithinGracePlusOneUnwindWindowWhenFlushersIgnoreInterrupts() throws Exception {
+        this.delegate.blockIgnoringInterrupts();
+        final var config = batchConfig(1, Duration.ofMillis(100));
+        config.setShutdownGracePeriod(Duration.ofSeconds(1));
+        config.setFlushers(2);
+        this.repository = repository(config);
+        this.repository.start();
+        this.repository.persist(flows(2));
+        await(Duration.ofSeconds(3), "both flushers inside an insert", () -> this.delegate.inFlight.get() == 2);
+
+        final long started = System.nanoTime();
+        this.repository.stop();
+        final long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+
+        // grace (1 s) + one shared unwind window (1 s) + margin; the sequential per-thread join
+        // gives ~3 s with two flushers that never respond to the interrupt.
+        Assertions.assertThat(elapsedMillis)
+                .as("one shared grace plus one shared unwind window, not grace + N × unwind")
+                .isLessThan(2500);
+    }
+
     @Test
     void fourFlushersDeliverEveryAcceptedRowExactlyOnce() throws Exception {
         final var config = batchConfig(50, Duration.ofMillis(50));
@@ -947,6 +976,13 @@ class BatchingFlowRepositoryTest {
 
         private volatile CountDownLatch blockOn;
 
+        /**
+         * Set by {@link #blockIgnoringInterrupts()}: the realistic wedge is a blocking socket read,
+         * which does not respond to {@link Thread#interrupt()} at all. A plain {@code block()}
+         * blocks on an interruptible {@link CountDownLatch#await()}, so it cannot model that case.
+         */
+        private volatile boolean ignoreInterruptsWhileBlocked;
+
         /** How long each insert takes, to give the flusher a known amount of work. */
         private volatile long insertMillis;
 
@@ -959,6 +995,15 @@ class BatchingFlowRepositoryTest {
 
         void block() {
             this.blockOn = new CountDownLatch(1);
+        }
+
+        /** Like {@link #block()}, but the block ignores interrupts, as an uninterruptible socket
+         * read would. {@link #unblock()} releases it the same way; the interrupt flag the thread
+         * accrued while waiting is reasserted once released, so the flusher loop still notices it
+         * on its next iteration. */
+        void blockIgnoringInterrupts() {
+            this.blockOn = new CountDownLatch(1);
+            this.ignoreInterruptsWhileBlocked = true;
         }
 
         void unblock() {
@@ -981,11 +1026,26 @@ class BatchingFlowRepositoryTest {
             }
             final var latch = this.blockOn;
             if (latch != null) {
-                try {
-                    latch.await();
-                } catch (final InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new FlowException(e);
+                if (this.ignoreInterruptsWhileBlocked) {
+                    boolean interrupted = false;
+                    while (true) {
+                        try {
+                            latch.await();
+                            break;
+                        } catch (final InterruptedException e) {
+                            interrupted = true;
+                        }
+                    }
+                    if (interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                } else {
+                    try {
+                        latch.await();
+                    } catch (final InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new FlowException(e);
+                    }
                 }
             }
             // Decrement only while positive: a plain getAndDecrement() would also count down on
