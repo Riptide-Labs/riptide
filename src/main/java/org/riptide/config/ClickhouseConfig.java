@@ -63,12 +63,14 @@ public final class ClickhouseConfig {
          *
          * <p>It is not free. Profiling the flusher thread at ~29k rows/s put LZ4 at roughly a fifth
          * of its CPU ({@code ClickHouseLZ4OutputStream.write} plus the {@code LZ4SafeUtils} /
-         * {@code LZ4JavaSafeCompressor} frames), and that thread is the insert path's ceiling. On a
-         * benchmark lab (#968) the flusher saturated at ~59.5k flows/s with compression on (flush
-         * p50 0.16 s, queue full, rows dropped) and kept up at ~65.4k flows/s with it off (81% busy,
-         * p50 0.12 s), sending ~150 Mbit/s instead of ~23. So on the same LAN as ClickHouse turning
-         * this off trades a small share of 1 GbE for headroom on the one thread that serializes
-         * every batch. Leave it on across a WAN or where egress is metered.
+         * {@code LZ4JavaSafeCompressor} frames), and with the default one {@link #flushers} that
+         * thread is the insert path's ceiling. On a benchmark lab (#968, default one flusher) the
+         * flusher saturated at ~59.5k flows/s with compression on (flush p50 0.16 s, queue full,
+         * rows dropped) and kept up at ~65.4k flows/s with it off (81% busy, p50 0.12 s), sending
+         * ~150 Mbit/s instead of ~23. So on the same LAN as ClickHouse turning this off trades a
+         * small share of 1 GbE for headroom on the flusher thread (or threads, with
+         * {@link #flushers} raised) that serializes each batch. Leave it on across a WAN or where
+         * egress is metered.
          */
         private boolean compressRequests = true;
 
@@ -117,8 +119,9 @@ public final class ClickhouseConfig {
         private BatchConfig batch = new BatchConfig();
 
         /**
-         * Client-side insert batching: a bounded queue in front of the repository, drained by a
-         * single background flusher into one insert per batch. Each insert forms a part and fires
+         * Client-side insert batching: a bounded queue in front of the repository, drained by one
+         * or more background flushers ({@link #flushers}, default one) into one insert per batch
+         * each. Each insert forms a part and fires
          * the four rollup materialized views, so many small inserts collapse throughput — the
          * per-record path capped a 4-vCPU host at ~150 inserts/s ≈ 3,600 rows/s with the CPU
          * mostly idle. ClickHouse guidance is 10k–100k rows per insert at roughly one insert per
@@ -161,16 +164,18 @@ public final class ClickhouseConfig {
                 private int queueCapacity = 80_000;
 
                 /**
-                 * How long {@code stop()} waits for the flusher to drain accepted rows before
+                 * How long {@code stop()} waits for the flushers to drain accepted rows before
                  * giving up. Keep this below the service manager's stop timeout (systemd
                  * {@code TimeoutStopSec}), or the process is killed mid-drain — and note the
                  * listeners stop first, each waiting up to ~5 s for its parser executor, before
                  * this grace period even starts.
                  *
-                 * <p>Sized with {@link #queueCapacity}: a full queue drains one {@link #maxRows}
-                 * insert at a time, after up to one {@link #maxLatency} window. At the ~13.5k
-                 * rows/s ceiling measured with delayed inserts, 80k rows take about 6 s plus that
-                 * window, so 10 s; the old 5 s paired with the old 40k. Raise both together.
+                 * <p>Sized with {@link #queueCapacity}: a full queue drains up to {@link #flushers}
+                 * {@link #maxRows} inserts at a time, after up to one {@link #maxLatency} window. At
+                 * the ~13.5k rows/s ceiling measured with delayed inserts and the default one
+                 * flusher, 80k rows take about 6 s plus that window, so 10 s; the old 5 s paired
+                 * with the old 40k. Raise both together; more flushers drain a full queue faster
+                 * than this number alone suggests.
                  */
                 private Duration shutdownGracePeriod = Duration.ofSeconds(10);
 

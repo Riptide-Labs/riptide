@@ -260,8 +260,10 @@ public class ClickhouseRepository implements FlowRepository {
      * <p><b>It is not cleared when the table appears.</b> Adding it takes an {@code onboard} run, and
      * a collector's schema posture is decided at startup everywhere else in this class (see
      * {@code verifyRollupShapes}); the message says to restart, and {@code multi-tenancy.md} says so
-     * too. Volatile rather than atomic: two flusher threads do not exist, and a racing double-write
-     * writes the same {@code true}.</p>
+     * too. Volatile rather than atomic: every flusher that reaches here races only to write the
+     * same {@code true}, so the latch itself needs no stronger ordering — though with
+     * {@code riptide.clickhouse.batch.flushers} above one, the check-then-act around the warning
+     * above is no longer race-free, and two flushers can rarely both see it unset and both log.</p>
      */
     private volatile boolean deadLetterTableAbsent;
 

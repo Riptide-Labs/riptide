@@ -451,7 +451,7 @@ public class BatchingFlowRepository implements FlowRepository {
             this.flushers = List.of();
         }
 
-        // Straggler sweep: a producer may pass the stopped check and offer after the flusher's
+        // Straggler sweep: a producer may pass the stopped check and offer after the flushers'
         // final drain — without this, those rows would be lost uncounted.
         sweep(graceExpired);
 
@@ -475,12 +475,12 @@ public class BatchingFlowRepository implements FlowRepository {
     }
 
     /**
-     * Drain whatever the flusher left behind, in {@code maxRows}-sized chunks: {@code
+     * Drain whatever the flushers left behind, in {@code maxRows}-sized chunks: {@code
      * queueCapacity} is a multiple of {@code maxRows}, so one unchunked drain could produce an
-     * insert several times larger than any the flusher would ever issue. The healthy path goes
+     * insert several times larger than any one flusher would ever issue. The healthy path goes
      * through {@link #flush} so the batch-size histogram and flush timer see it too.
      *
-     * @param graceExpired when the flusher had to be interrupted: the grace budget is spent and
+     * @param graceExpired when any flusher had to be interrupted: the grace budget is spent and
      *                     the delegate is why, so another blocking insert would hang shutdown
      *                     past the service manager's stop timeout (the client has no socket
      *                     timeout by default) for rows unlikely to land anyway. Count and log.
