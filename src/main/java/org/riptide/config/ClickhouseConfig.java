@@ -63,10 +63,12 @@ public final class ClickhouseConfig {
          *
          * <p>It is not free. Profiling the flusher thread at ~29k rows/s put LZ4 at roughly a fifth
          * of its CPU ({@code ClickHouseLZ4OutputStream.write} plus the {@code LZ4SafeUtils} /
-         * {@code LZ4JavaSafeCompressor} frames). A collector on the same LAN as ClickHouse pushes on
-         * the order of single-digit MB/s uncompressed at that rate — a rounding error on 1 GbE — so
-         * turning this off there trades bandwidth nobody is paying for against CPU on the one thread
-         * that serializes every batch. Leave it on across a WAN or where egress is metered.
+         * {@code LZ4JavaSafeCompressor} frames), and that thread is the insert path's ceiling. On a
+         * benchmark lab (#968) the flusher saturated at ~59.5k flows/s with compression on (flush
+         * p50 0.16 s, queue full, rows dropped) and kept up at ~65.4k flows/s with it off (81% busy,
+         * p50 0.12 s), sending ~150 Mbit/s instead of ~23. So on the same LAN as ClickHouse turning
+         * this off trades a small share of 1 GbE for headroom on the one thread that serializes
+         * every batch. Leave it on across a WAN or where egress is metered.
          */
         private boolean compressRequests = true;
 

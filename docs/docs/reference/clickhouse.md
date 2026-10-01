@@ -19,7 +19,7 @@ How the batching path, the rollups and the dead-letter table behave is on [Inser
 | **`riptide.clickhouse.database`** | string | `riptide` | Database holding `flows`. In manage mode the name must match `[A-Za-z0-9_-]+`; any other name is rejected at startup. |
 | **`riptide.clickhouse.manage-schema`** | boolean | `true` | `true`: riptide creates and repairs the schema. `false`: riptide creates nothing and validates. See [Schema modes](#schema-ownership). |
 | **`riptide.clickhouse.startup-wait`** | duration | `30s` | How long startup waits for a server that is not answering yet. `0` means one probe and no retry. Negative is rejected at construction. See [Startup wait](#startup-wait). |
-| **`riptide.clickhouse.compress-requests`** | boolean | `true` | LZ4-compress insert payloads. Response compression is always on and covers only the schema queries at startup. |
+| **`riptide.clickhouse.compress-requests`** | boolean | `true` | LZ4-compress insert payloads. Response compression is always on and covers only the schema queries at startup. On the same LAN as ClickHouse, `false` raises how many flows/s the single flusher keeps up with; see [Why compression is on](../architecture/persistence.md#why-compression-is-on). |
 | **`riptide.clickhouse.async-inserts`** | boolean | unset | Server-side insert coalescing. Unset derives: off while batching is enabled; with batching disabled it follows `manage-schema` (on in manage mode, off in provisioned mode). Set it to pin a value. |
 | **`riptide.clickhouse.batch.enabled`** | boolean | `true` | Client-side insert batching. `false` falls back to one insert per flow record. |
 | **`riptide.clickhouse.batch.max-rows`** | int | `10000` | Flush when this many rows are buffered. Must be greater than 0. |
