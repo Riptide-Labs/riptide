@@ -9,7 +9,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.LongAdder;
 
 /**
- * Wall time a single-threaded worker spent on work, as seconds; {@code rate()} of it reads 0 to 1.
+ * Wall time spent on work, as seconds; {@code rate()} of it reads 0 to 1: one worker's own
+ * utilization if it alone adds to this counter, or several workers' mean utilization when a
+ * caller apportions one interval across them with {@link #add(long)}.
  *
  * <p>Wall time, not the thread's CPU time, on purpose: a flusher waiting on a slow insert is busy
  * even though it burns no CPU. The caller brackets only the unit of work, so time spent waiting for
