@@ -69,9 +69,9 @@ public class BatchingFlowRepository implements FlowRepository {
     private static final long DROP_WARN_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(10);
 
     /**
-     * How long stop() waits for the flusher to unwind after the post-grace interrupt, before
+     * How long stop() waits for each live flusher to unwind after the post-grace interrupt, before
      * sweeping the queue itself. Without it the sweep would drain the same queue concurrently
-     * with the dying flusher, and delegate.stop() could run with an insert still in flight.
+     * with a dying flusher, and delegate.stop() could run with an insert still in flight.
      */
     private static final long INTERRUPT_JOIN_MS = 1_000;
 
@@ -400,39 +400,46 @@ public class BatchingFlowRepository implements FlowRepository {
             // Idempotent: the drain and the delegate stop must run exactly once.
             return;
         }
+        final List<Thread> threads = this.flushers;
         boolean graceExpired = false;
-        // Temporary: one full grace period per flusher, joined in sequence. At flushers=1 this is
-        // exactly today's behaviour; a shared deadline across all of them is Task 3.
-        for (final Thread thread : this.flushers) {
-            try {
-                // Each flusher sees the stop flag at the latest after the current drain window
-                // (maxLatency < grace, enforced by validate()), then drains the queue
-                // non-blocking and exits.
-                thread.join(Math.max(1, this.config.getShutdownGracePeriod().toMillis()));
-            } catch (final InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            if (thread.isAlive()) {
-                // Grace expired — a wedged or very slow insert. Interrupt as a last resort, then
-                // give the flusher a moment to unwind: otherwise the sweep below drains the same
-                // queue concurrently with the dying thread and delegate.stop() can run with an
-                // insert still in flight.
-                graceExpired = true;
-                thread.interrupt();
-                log.warn("Batch flusher did not drain within {}; about {} accepted rows undelivered",
-                        this.config.getShutdownGracePeriod(), this.queue.size());
+        if (!threads.isEmpty()) {
+            // One deadline for all of them: the grace period is the service's shutdown budget,
+            // and N flushers must not stretch it to N × grace. Each flusher sees the stop flag
+            // after its current drain window (maxLatency < grace, enforced by validate()), then
+            // drains the queue non-blocking and exits.
+            final long deadline = System.nanoTime() + this.config.getShutdownGracePeriod().toNanos();
+            for (final Thread thread : threads) {
+                final long remainingMillis = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
                 try {
-                    thread.join(INTERRUPT_JOIN_MS);
+                    thread.join(Math.max(1, remainingMillis));
                 } catch (final InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
-                if (thread.isAlive()) {
+            }
+            final List<Thread> alive = threads.stream().filter(Thread::isAlive).toList();
+            if (!alive.isEmpty()) {
+                // Grace expired: a wedged or very slow insert. Interrupt every live flusher as a
+                // last resort, then give each a moment to unwind: otherwise the sweep below drains
+                // the queue concurrently with a dying thread and delegate.stop() can run with an
+                // insert still in flight.
+                graceExpired = true;
+                alive.forEach(Thread::interrupt);
+                log.warn("Batch flusher did not drain within {}; about {} accepted rows undelivered",
+                        this.config.getShutdownGracePeriod(), this.queue.size());
+                for (final Thread thread : alive) {
+                    try {
+                        thread.join(INTERRUPT_JOIN_MS);
+                    } catch (final InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                if (alive.stream().anyMatch(Thread::isAlive)) {
                     // Best effort: proceed rather than hang shutdown on an unresponsive thread.
                     log.warn("Batch flusher still alive after the interrupt — continuing shutdown");
                 }
             }
+            this.flushers = List.of();
         }
-        this.flushers = List.of();
 
         // Straggler sweep: a producer may pass the stopped check and offer after the flusher's
         // final drain — without this, those rows would be lost uncounted.

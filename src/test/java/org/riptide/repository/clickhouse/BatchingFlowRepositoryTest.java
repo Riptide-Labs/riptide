@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
@@ -347,8 +348,14 @@ class BatchingFlowRepositoryTest {
      * delegate then refuses. Returns once that insert has been attempted.
      */
     private void attemptOnePoisonedBatchOfTwo() throws Exception {
+        attemptOnePoisonedBatchOfTwo(1);
+    }
+
+    private void attemptOnePoisonedBatchOfTwo(final int flushers) throws Exception {
         this.delegate.failuresRemaining.set(1);
-        this.repository = repository(batchConfig(2, Duration.ofMillis(600)));
+        final var config = batchConfig(2, Duration.ofMillis(600));
+        config.setFlushers(flushers);
+        this.repository = repository(config);
 
         this.repository.persist(flows(2));
         this.repository.start();
@@ -723,6 +730,92 @@ class BatchingFlowRepositoryTest {
                 .map(Thread::getName)
                 .filter(n -> n.startsWith("clickhouse-batch-flusher"))
                 .toList();
+    }
+
+    /** N × grace would make a service manager kill riptide mid-insert; one deadline bounds it. */
+    @Test
+    void stopWithTwoWedgedFlushersHonoursOneSharedGraceDeadline() throws Exception {
+        this.delegate.block();
+        final var config = batchConfig(1, Duration.ofMillis(100));
+        config.setShutdownGracePeriod(Duration.ofSeconds(1));
+        config.setFlushers(2);
+        this.repository = repository(config);
+        this.repository.start();
+        this.repository.persist(flows(2));
+        await(Duration.ofSeconds(3), "both flushers inside an insert", () -> this.delegate.inFlight.get() == 2);
+
+        final long started = System.nanoTime();
+        this.repository.stop();
+        final long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+
+        Assertions.assertThat(elapsedMillis)
+                .as("one shared 1 s grace plus the interrupt unwind, not 2 × 1 s")
+                .isLessThan(1800);
+        Assertions.assertThat(failedRows()).as("both in-hand rows counted").isEqualTo(2);
+    }
+
+    @Test
+    void fourFlushersDeliverEveryAcceptedRowExactlyOnce() throws Exception {
+        final var config = batchConfig(50, Duration.ofMillis(50));
+        config.setQueueCapacity(100_000);
+        config.setFlushers(4);
+        this.repository = repository(config);
+        this.repository.start();
+
+        final var pool = Executors.newFixedThreadPool(8);
+        for (int p = 0; p < 8; p++) {
+            pool.submit(() -> {
+                for (int i = 0; i < 100; i++) {
+                    this.repository.persist(flows(10));
+                }
+                return null;
+            });
+        }
+        pool.shutdown();
+        Assertions.assertThat(pool.awaitTermination(30, TimeUnit.SECONDS)).isTrue();
+        this.repository.stop();
+
+        Assertions.assertThat(this.delegate.count() + droppedRows())
+                .as("delivered + dropped = offered: no row lost uncounted, none delivered twice")
+                .isEqualTo(8_000);
+        Assertions.assertThat(failedRows()).isZero();
+    }
+
+    @Test
+    void anErrorInOneOfTwoFlushersDoesNotStopTheOthers() throws Exception {
+        this.delegate.errorsRemaining.set(1);
+        final var config = batchConfig(1, Duration.ofMillis(100));
+        config.setFlushers(2);
+        this.repository = repository(config);
+        this.repository.start();
+
+        this.repository.persist(flows(5));
+
+        await(Duration.ofSeconds(5), "the four rows after the Error inserted", () -> this.delegate.count() == 4);
+        Assertions.assertThat(failedRows()).isEqualTo(1);
+    }
+
+    @Test
+    void poisonBatchIsCountedAndLaterBatchesFlushWithTwoFlushers() throws Exception {
+        attemptOnePoisonedBatchOfTwo(2);
+
+        this.repository.persist(flows(2));
+
+        await(Duration.ofSeconds(3), "flush after the poison batch", () -> this.delegate.count() == 2);
+        Assertions.assertThat(failedRows()).isEqualTo(2);
+        Assertions.assertThat(droppedRows()).isZero();
+    }
+
+    @Test
+    void aRefusedBatchIsDeadLetteredWithTwoFlushers() throws Exception {
+        this.delegate.deadLettered = new CopyOnWriteArrayList<>();
+        attemptOnePoisonedBatchOfTwo(2);
+        this.repository.stop();
+
+        Assertions.assertThat(this.delegate.deadLettered).hasSize(2);
+        Assertions.assertThat(deadLetteredRows()).isEqualTo(2);
+        Assertions.assertThat(failedRows()).isEqualTo(2);
+        Assertions.assertThat(deadLetterFailedRows()).isZero();
     }
 
     @Test
