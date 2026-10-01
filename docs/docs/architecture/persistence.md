@@ -123,12 +123,15 @@ Profiling the batch flusher put LZ4 at roughly a fifth of that thread's CPU (`Cl
 That thread is the insert path's ceiling, and at high rates the compression decides whether it keeps up.
 Measured on a benchmark lab (riptide 0.17.1, ClickHouse 26.7 on 8 vCPU, 10-minute holds, `batch.max-rows` 10000):
 
-| `compress-requests` | Flows/s | Flusher busy | Flush p50 / p99 | Queue peak | Rows dropped | SUT to ClickHouse |
-| --- | --- | --- | --- | --- | --- | --- |
-| `true` | ~59,500 | 100% | 0.160 / 0.329 s | full | ~497,000 in 10 min | 23 Mbit/s |
-| `false` | ~65,400 | 81% | 0.122 / 0.265 s | 17% | 0 | 150 Mbit/s |
+| `compress-requests` | Exporters | Flows/s accepted | Flusher busy | Flush p50 / p99 | Queue peak | Rows dropped | SUT to ClickHouse |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `true` | 9,840 | ~59,500 | 100% | 0.160 / 0.329 s | full | ~497,000 in 10 min | 23 Mbit/s |
+| `false` | 10,496 | ~65,400 | 81% | 0.122 / 0.265 s | 17% | 0 | 150 Mbit/s |
 
-Uncompressed inserts cost about 6.5 times the bandwidth, about 150 Mbit/s at 65,000 flows/s, which is still a small share of 1 GbE.
+Flows/s accepted is the rate riptide decoded and handed to the batch writer.
+With compression on, the flusher was already saturated at the smaller fleet.
+With it off, the larger fleet passed with a fifth of the flusher left.
+Per flow, uncompressed inserts cost about 6 times the bandwidth, about 150 Mbit/s at 65,000 flows/s, which is still a small share of 1 GbE.
 On the same LAN as ClickHouse, turning compression off trades that bandwidth for headroom on the one thread that serializes every batch:
 
 ```properties
