@@ -673,9 +673,12 @@ class BatchingFlowRepositoryTest {
 
         this.repository.persist(flows(2));
 
-        await(Duration.ofSeconds(5), "both rows inserted", () -> this.delegate.count() == 2);
+        // Wait on the busy time itself, not on the delegate's count (see
+        // flusherBusySecondsCountsInsertTime): count reaches 2 inside the second insert, before
+        // that flusher adds its share of the busy time on its way out of flush().
+        await(Duration.ofSeconds(5), "both inserts timed", () -> flusherBusySeconds() >= 0.9d);
         Assertions.assertThat(this.delegate.maxInFlight.get()).isEqualTo(2);
-        Assertions.assertThat(flusherBusySeconds()).isBetween(0.9d, 1.5d);
+        Assertions.assertThat(flusherBusySeconds()).isLessThan(1.5d);
     }
 
     @Test
