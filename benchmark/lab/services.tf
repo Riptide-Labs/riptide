@@ -9,6 +9,11 @@
 # once ClickHouse is up.
 
 locals {
+  # --allow-downgrades: the experiment declares the riptide it wants, and the
+  # package is already verified, so going back from a deb: build to an older
+  # release must install it rather than stop at apt's guard (#977).
+  riptide_install = "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades -o Dpkg::Options::=--force-confold /tmp/riptide.deb"
+
   sut = module.declaration.sut
 
   # Null on a rejected declaration too, whose services map is empty: every
@@ -203,7 +208,7 @@ resource "terraform_data" "riptide" {
     inline = [
       "set -e",
       "echo '${var.riptide_deb_sha256}  /tmp/riptide.deb' | sha256sum -c -",
-      "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold /tmp/riptide.deb",
+      local.riptide_install,
       "sudo install -m 0640 -o root -g riptide /tmp/riptide.env /etc/riptide/riptide.env",
       "rm -f /tmp/riptide.env /tmp/riptide.deb",
       "sudo systemctl enable riptide",

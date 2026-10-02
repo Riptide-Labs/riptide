@@ -223,6 +223,16 @@ run "riptide_profiles_and_serves_metrics_on_observe" {
   }
 }
 
+# An experiment declares the riptide it wants; going back from a deb: build to
+# an older release must install it, not stop at apt's downgrade guard (#977).
+run "riptide_install_allows_a_downgrade" {
+  command = plan
+  assert {
+    condition     = strcontains(local.riptide_install, "apt-get install -y --allow-downgrades ") && endswith(local.riptide_install, " /tmp/riptide.deb")
+    error_message = "install: ${local.riptide_install}"
+  }
+}
+
 # bench destroy powers the VM off. Without a clean stop, Pyroscope's last
 # seconds of blocks reach the kept disk as empty files, and every later query
 # that touches one fails. The destroy-time provisioner runs self.input.stop;
