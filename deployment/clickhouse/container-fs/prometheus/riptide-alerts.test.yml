@@ -167,7 +167,7 @@ tests:
           - exp_labels: {severity: warning, job: riptide, instance: "riptide:8080", stage: batch-writer, component: flusher}
             exp_annotations:
               summary: "riptide on riptide:8080: the batch-writer worker (flusher) is over 80% busy"
-              description: "This single thread has been busy 90% of the time for 15 minutes. At 100% the stage behind it starts to drop."
+              description: "This worker has been busy 90% of the time for 15 minutes; for the batch flusher this is the mean across persister.batch.flushers threads. At 100% the stage behind it starts to drop."
               runbook_url: https://riptide.space/docs/operations/monitoring#riptideworkersaturated
 
   - name: a worker busy 75 percent of the time does not fire

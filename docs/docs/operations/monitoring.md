@@ -20,7 +20,7 @@ The healthy outputs were captured on macOS, which has no per-socket kernel count
 | [**`RiptideDown`**](#riptidedown) | critical | a riptide target is not scraped for 2 minutes | fixed |
 | [**`RiptideDataLoss`**](#riptidedataloss) | critical | any stage counts flows that did not reach the flows table, for 5 minutes | fixed |
 | [**`RiptideQueueFilling`**](#riptidequeuefilling) | warning | a parser dispatch or batch writer queue is over 80% full for 10 minutes | measured: fires after the loss has started |
-| [**`RiptideWorkerSaturated`**](#riptideworkersaturated) | warning | a listener read loop or the batch flusher is over 80% busy for 15 minutes | measured for the flusher: leads loss |
+| [**`RiptideWorkerSaturated`**](#riptideworkersaturated) | warning | a listener read loop, or the batch flushers' mean, is over 80% busy for 15 minutes | measured for the flusher: leads loss |
 | [**`RiptideHeapPressure`**](#riptideheappressure) | warning | heap used is over 90% of the maximum for 15 minutes | default |
 | [**`RiptideGcPressure`**](#riptidegcpressure) | warning | over 10% of the time is spent in GC pauses for 10 minutes | default |
 | [**`RiptideCpuPressure`**](#riptidecpupressure) | warning | CPU used is over 85% of the available cores for 15 minutes | default |
@@ -135,7 +135,9 @@ Measured on the rig, the batch writer queue went over 80% 30 s before rows dropp
 
 ## RiptideWorkerSaturated {/* #riptideworkersaturated */}
 
-A single-threaded worker has been busy over 80% of the time for 15 minutes; at 100% the stage behind it drops.
+A listener's read loop, or the batch writer's flushers as a group, has been busy over 80% of the time for 15 minutes.
+At 100% the stage behind it drops.
+The flusher figure is the mean busy fraction across `riptide.clickhouse.batch.flushers`, so 80% can mean every flusher evenly loaded, or one pinned at 100% while the rest idle.
 
 ### Check
 
@@ -156,13 +158,14 @@ riptide-on-host listener flows 0.005
 
 | Finding | Likely cause | Fix |
 | --- | --- | --- |
-| `batch-writer flusher` above 0.8, insert p99 rising | ClickHouse is slowing down | Open **Riptide - Pipeline Diagnostics** for `batch-writer` and fix ClickHouse; riptide settings will not help |
-| `batch-writer flusher` above 0.8, insert time flat | the flusher issues many small inserts | Raise **`riptide.clickhouse.batch.max-rows`** for fewer, larger inserts, with two limits: a batch only grows past `max-rows` when rows arrive faster than `max-rows` per **`riptide.clickhouse.batch.max-latency`**, and **`riptide.clickhouse.batch.queue-capacity`** must stay several batches deep, or rows drop while an insert runs |
+| `batch-writer flusher` above 0.8, insert p99 rising | ClickHouse is slowing down, or more concurrent flushers are now competing for it than it handles well | Open **Riptide - Pipeline Diagnostics** for `batch-writer`; fix ClickHouse if its own CPU or query metrics show the slowdown, otherwise lower **`riptide.clickhouse.batch.flushers`** and check whether p99 falls |
+| `batch-writer flusher` above 0.8, insert time flat | the flusher issues many small inserts | Raise **`riptide.clickhouse.batch.max-rows`** for fewer, larger inserts, with two limits: a batch only grows past `max-rows` when rows arrive faster than `max-rows` per **`riptide.clickhouse.batch.max-latency`**, and **`riptide.clickhouse.batch.queue-capacity`** must stay several batches deep, or rows drop while an insert runs; if **`riptide.clickhouse.batch.flushers`** is above 1 at low load, lowering it is the more direct fix |
+| `batch-writer flusher` above 0.8, ClickHouse's own CPU and insert latency flat | one flusher is the limit, not ClickHouse or the batch size | Raise **`riptide.clickhouse.batch.flushers`** (1 to 8): each added flusher holds one more of the ClickHouse client's 10 default connections |
 | `listener <name>` above 0.8, dispatch queue full | the read loop waits for room in the dispatch queue, which counts as busy | Fix the stage behind it first; see [RiptideDataLoss](#riptidedataloss) on how overload spreads back |
 | `listener <name>` above 0.8, dispatch queue empty | one read loop parses everything that arrives on that port | Split exporters across more receivers on separate ports, or give riptide faster cores; the figure leaves out socket reads, so the real share is a little higher |
 | Above 0.8 and none of the causes above | the worker spends its time in code no metric names | Follow **Profile this stage** on **Riptide - Pipeline Diagnostics** and read the widest frames of the stage's CPU and lock flame graphs |
 
-Measured on the rig, the flusher sat at 0.85 to 0.88 without losing a row and this alert fired 15 minutes later; the flusher's loss started only when offered load went past its ceiling.
+Measured on the rig with one flusher, the default, the flusher sat at 0.85 to 0.88 without losing a row and this alert fired 15 minutes later; the flusher's loss started only when offered load went past its ceiling.
 The listener figure reached 0.88 only while it waited on a full dispatch queue; the rig never drove a read loop that hard by parsing alone, so its 0.8 is not validated for that case.
 
 ## RiptideHeapPressure {/* #riptideheappressure */}
@@ -302,7 +305,7 @@ A `0` for every component is healthy.
 
 ## What the benchmark rig showed {/* #what-the-benchmark-rig-showed */}
 
-Run on 2026-09-27 against the integration of the golden-signals series, alerts and dashboards ([#902](https://github.com/Riptide-Labs/riptide/issues/902)), one riptide on a 4 vCPU virtual machine with 6 GiB heap, nl6 exporting NetFlow v9, ClickHouse 26.7 on the host.
+Run on 2026-09-27 against the integration of the golden-signals series, alerts and dashboards ([#902](https://github.com/Riptide-Labs/riptide/issues/902)), one riptide (one flusher, the default) on a 4 vCPU virtual machine with 6 GiB heap, nl6 exporting NetFlow v9, ClickHouse 26.7 on the host.
 
 | Load | Stored | Flusher busy | Loss | Alerts |
 | --- | --- | --- | --- | --- |

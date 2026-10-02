@@ -9,6 +9,7 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.codahale.metrics.Gauge;
 import com.codahale.metrics.MetricRegistry;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterEach;
@@ -26,8 +27,10 @@ import org.slf4j.LoggerFactory;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
@@ -345,8 +348,14 @@ class BatchingFlowRepositoryTest {
      * delegate then refuses. Returns once that insert has been attempted.
      */
     private void attemptOnePoisonedBatchOfTwo() throws Exception {
+        attemptOnePoisonedBatchOfTwo(1);
+    }
+
+    private void attemptOnePoisonedBatchOfTwo(final int flushers) throws Exception {
         this.delegate.failuresRemaining.set(1);
-        this.repository = repository(batchConfig(2, Duration.ofMillis(600)));
+        final var config = batchConfig(2, Duration.ofMillis(600));
+        config.setFlushers(flushers);
+        this.repository = repository(config);
 
         this.repository.persist(flows(2));
         this.repository.start();
@@ -612,6 +621,250 @@ class BatchingFlowRepositoryTest {
     }
 
     @Test
+    void rejectsFlushersOutsideOneToEight() {
+        for (final int flushers : new int[] {0, -1, 9}) {
+            final var config = batchConfig(10, Duration.ofMillis(100));
+            config.setFlushers(flushers);
+            Assertions.assertThatThrownBy(() -> repository(config))
+                    .as("flushers=%d", flushers)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("riptide.clickhouse.batch.flushers")
+                    .hasMessageContaining("between 1 and 8")
+                    .hasMessageContaining("(got " + flushers + ")");
+        }
+    }
+
+    @Test
+    void acceptsFlushersFromOneToEight() {
+        for (final int flushers : new int[] {1, 8}) {
+            final var config = batchConfig(10, Duration.ofMillis(100));
+            config.setFlushers(flushers);
+            Assertions.assertThatCode(() -> repository(config)).doesNotThrowAnyException();
+        }
+    }
+
+    @Test
+    void twoFlushersInsertConcurrently() throws Exception {
+        this.delegate.insertMillis = 300;
+        final var config = batchConfig(1, Duration.ofMillis(100));
+        config.setFlushers(2);
+        this.repository = repository(config);
+        this.repository.start();
+
+        this.repository.persist(flows(4));
+
+        await(Duration.ofSeconds(5), "all four rows inserted", () -> this.delegate.count() == 4);
+        Assertions.assertThat(this.delegate.maxInFlight.get()).isEqualTo(2);
+    }
+
+    @Test
+    void oneFlusherNeverInsertsConcurrently() throws Exception {
+        this.delegate.insertMillis = 100;
+        this.repository = repository(batchConfig(1, Duration.ofMillis(100)));
+        this.repository.start();
+
+        this.repository.persist(flows(4));
+
+        await(Duration.ofSeconds(5), "all four rows inserted", () -> this.delegate.count() == 4);
+        Assertions.assertThat(this.delegate.maxInFlight.get()).isEqualTo(1);
+    }
+
+    /** Dashboards and the saturation alert read this as 0 to 1; two busy flushers must not read 2. */
+    @Test
+    void flusherBusySecondsIsTheMeanAcrossFlushers() throws Exception {
+        this.delegate.insertMillis = 1000;
+        final var config = batchConfig(1, Duration.ofMillis(100));
+        config.setFlushers(2);
+        this.repository = repository(config);
+        this.repository.start();
+
+        this.repository.persist(flows(2));
+
+        // Wait for both inserts to actually finish (inFlight back to 0 after having reached 2),
+        // not just for the busy value to cross a threshold: under a mutant that drops the
+        // "/ flusherCount" division, the first flusher alone adds ~1.0 s on its own, and a bare
+        // busy >= 0.9 check can pass right then, before the second flusher's add, letting the
+        // band assertion below pass on one flusher's time alone.
+        await(Duration.ofSeconds(5), "both inserts ran concurrently and completed",
+                () -> this.delegate.maxInFlight.get() == 2 && this.delegate.inFlight.get() == 0);
+        // Settle: the flusher adds its share of the busy time a few bookkeeping steps after the
+        // insert returns, on its way out of flush() (see flusherBusySecondsCountsInsertTime).
+        await(Duration.ofSeconds(5), "both inserts timed", () -> flusherBusySeconds() >= 0.9d);
+        Assertions.assertThat(flusherBusySeconds()).isLessThan(1.5d);
+    }
+
+    @Test
+    void theFlushersGaugeReportsNAndIsRemovedOnStop() {
+        final var config = batchConfig(10, Duration.ofMillis(100));
+        config.setFlushers(3);
+        this.repository = repository(config);
+        final String name = MetricRegistry.name("persister", "batch", "flushers");
+
+        Assertions.assertThat(((Gauge<?>) this.metricRegistry.getGauges().get(name)).getValue()).isEqualTo(3);
+        this.repository.start();
+        this.repository.stop();
+        Assertions.assertThat(this.metricRegistry.getGauges()).doesNotContainKey(name);
+    }
+
+    @Test
+    void flusherThreadsAreNamedAfterTheirCount() {
+        // Snapshot live threads before each start(): other test classes sharing this surefire JVM
+        // (e.g. a cached Spring context) can own a live clickhouse-batch-flusher thread of their
+        // own, and asserting on every thread with that name regardless of origin would make this
+        // test order-dependent on what else is running.
+        final Set<Thread> before1 = Thread.getAllStackTraces().keySet();
+        this.repository = repository(batchConfig(10, Duration.ofMillis(100)));
+        this.repository.start();
+        Assertions.assertThat(newFlusherNames(before1)).containsExactly("clickhouse-batch-flusher");
+        this.repository.stop();
+
+        final var config = batchConfig(10, Duration.ofMillis(100));
+        config.setFlushers(3);
+        final Set<Thread> before2 = Thread.getAllStackTraces().keySet();
+        this.repository = new BatchingFlowRepository(new ObservableRepository(), config, new MetricRegistry());
+        this.repository.start();
+        Assertions.assertThat(newFlusherNames(before2)).containsExactlyInAnyOrder(
+                "clickhouse-batch-flusher-0", "clickhouse-batch-flusher-1", "clickhouse-batch-flusher-2");
+    }
+
+    /** Only flusher-named threads that were not already live in {@code before}. */
+    private static List<String> newFlusherNames(final Set<Thread> before) {
+        return Thread.getAllStackTraces().keySet().stream()
+                .filter(t -> !before.contains(t))
+                .filter(Thread::isAlive)
+                .map(Thread::getName)
+                .filter(n -> n.startsWith("clickhouse-batch-flusher"))
+                .toList();
+    }
+
+    /** N × grace would make a service manager kill riptide mid-insert; one deadline bounds it. */
+    @Test
+    void stopWithTwoWedgedFlushersHonoursOneSharedGraceDeadline() throws Exception {
+        this.delegate.block();
+        final var config = batchConfig(1, Duration.ofMillis(100));
+        config.setShutdownGracePeriod(Duration.ofSeconds(1));
+        config.setFlushers(2);
+        this.repository = repository(config);
+        this.repository.start();
+        this.repository.persist(flows(2));
+        await(Duration.ofSeconds(3), "both flushers inside an insert", () -> this.delegate.inFlight.get() == 2);
+
+        final long started = System.nanoTime();
+        this.repository.stop();
+        final long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+
+        Assertions.assertThat(elapsedMillis)
+                .as("one shared 1 s grace plus the interrupt unwind, not 2 × 1 s")
+                .isLessThan(1800);
+        Assertions.assertThat(failedRows()).as("both in-hand rows counted").isEqualTo(2);
+    }
+
+    /**
+     * The realistic wedge the grace deadline alone does not cover: a blocking socket read ignores
+     * {@link Thread#interrupt()} entirely (no socket timeout by default — see the {@code sweep}
+     * javadoc), so the post-grace interrupt cannot make such a flusher unwind at all. stop() must
+     * still return promptly: one shared grace plus one shared unwind window, not grace plus
+     * {@code N × INTERRUPT_JOIN_MS} for every flusher that never responds.
+     */
+    @Test
+    void stopReturnsWithinGracePlusOneUnwindWindowWhenFlushersIgnoreInterrupts() throws Exception {
+        this.delegate.blockIgnoringInterrupts();
+        final var config = batchConfig(1, Duration.ofMillis(100));
+        config.setShutdownGracePeriod(Duration.ofSeconds(1));
+        config.setFlushers(3);
+        this.repository = repository(config);
+        this.repository.start();
+        this.repository.persist(flows(3));
+        await(Duration.ofSeconds(3), "all three flushers inside an insert", () -> this.delegate.inFlight.get() == 3);
+
+        final long started = System.nanoTime();
+        this.repository.stop();
+        final long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+
+        // grace (1 s) + one shared unwind window (1 s) ≈ 2 s correct, vs. grace (1 s) + 3 ×
+        // unwind (1 s) = 4 s for the sequential per-thread-join mutant; 3 s sits between the two
+        // with margin on both sides.
+        Assertions.assertThat(elapsedMillis)
+                .as("one shared grace plus one shared unwind window, not grace + N × unwind")
+                .isLessThan(3000);
+    }
+
+    @Test
+    void fourFlushersDeliverEveryAcceptedRowExactlyOnce() throws Exception {
+        final var config = batchConfig(50, Duration.ofMillis(50));
+        config.setQueueCapacity(100_000);
+        config.setFlushers(4);
+        this.repository = repository(config);
+        this.repository.start();
+
+        final var pool = Executors.newFixedThreadPool(8);
+        boolean terminated = false;
+        try {
+            for (int p = 0; p < 8; p++) {
+                pool.submit(() -> {
+                    for (int i = 0; i < 100; i++) {
+                        this.repository.persist(flows(10));
+                    }
+                    return null;
+                });
+            }
+            pool.shutdown();
+            terminated = pool.awaitTermination(30, TimeUnit.SECONDS);
+            Assertions.assertThat(terminated).isTrue();
+        } finally {
+            // A producer stuck past the 30 s budget would otherwise leave its thread running
+            // for the rest of the suite.
+            if (!terminated) {
+                pool.shutdownNow();
+            }
+        }
+        this.repository.stop();
+
+        Assertions.assertThat(this.delegate.count() + droppedRows())
+                .as("delivered + dropped = offered: no row lost uncounted, none delivered twice")
+                .isEqualTo(8_000);
+        Assertions.assertThat(droppedRows()).isZero();
+        Assertions.assertThat(failedRows()).isZero();
+    }
+
+    @Test
+    void anErrorInOneOfTwoFlushersDoesNotStopTheOthers() throws Exception {
+        this.delegate.errorsRemaining.set(1);
+        final var config = batchConfig(1, Duration.ofMillis(100));
+        config.setFlushers(2);
+        this.repository = repository(config);
+        this.repository.start();
+
+        this.repository.persist(flows(5));
+
+        await(Duration.ofSeconds(5), "the four rows after the Error inserted", () -> this.delegate.count() == 4);
+        Assertions.assertThat(failedRows()).isEqualTo(1);
+    }
+
+    @Test
+    void poisonBatchIsCountedAndLaterBatchesFlushWithTwoFlushers() throws Exception {
+        attemptOnePoisonedBatchOfTwo(2);
+
+        this.repository.persist(flows(2));
+
+        await(Duration.ofSeconds(3), "flush after the poison batch", () -> this.delegate.count() == 2);
+        Assertions.assertThat(failedRows()).isEqualTo(2);
+        Assertions.assertThat(droppedRows()).isZero();
+    }
+
+    @Test
+    void aRefusedBatchIsDeadLetteredWithTwoFlushers() throws Exception {
+        this.delegate.deadLettered = new CopyOnWriteArrayList<>();
+        attemptOnePoisonedBatchOfTwo(2);
+        this.repository.stop();
+
+        Assertions.assertThat(this.delegate.deadLettered).hasSize(2);
+        Assertions.assertThat(deadLetteredRows()).isEqualTo(2);
+        Assertions.assertThat(failedRows()).isEqualTo(2);
+        Assertions.assertThat(deadLetterFailedRows()).isZero();
+    }
+
+    @Test
     void rejectsShutdownGracePeriodUnderTwiceMaxLatency() {
         // Merely-greater is not enough: one full drain window can pass before the drain starts,
         // so 4900ms/5000ms would leave 100ms to empty the whole queue.
@@ -715,6 +968,10 @@ class BatchingFlowRepositoryTest {
 
         private final AtomicInteger failuresRemaining = new AtomicInteger();
 
+        /** Inserts running right now, and the most ever running at once. */
+        private final AtomicInteger inFlight = new AtomicInteger();
+        private final AtomicInteger maxInFlight = new AtomicInteger();
+
         /**
          * The dead letters this delegate accepted, or null while it has no dead-letter store at all.
          *
@@ -736,6 +993,13 @@ class BatchingFlowRepositoryTest {
 
         private volatile CountDownLatch blockOn;
 
+        /**
+         * Set by {@link #blockIgnoringInterrupts()}: the realistic wedge is a blocking socket read,
+         * which does not respond to {@link Thread#interrupt()} at all. A plain {@code block()}
+         * blocks on an interruptible {@link CountDownLatch#await()}, so it cannot model that case.
+         */
+        private volatile boolean ignoreInterruptsWhileBlocked;
+
         /** How long each insert takes, to give the flusher a known amount of work. */
         private volatile long insertMillis;
 
@@ -750,6 +1014,15 @@ class BatchingFlowRepositoryTest {
             this.blockOn = new CountDownLatch(1);
         }
 
+        /** Like {@link #block()}, but the block ignores interrupts, as an uninterruptible socket
+         * read would. {@link #unblock()} releases it the same way; the interrupt flag the thread
+         * accrued while waiting is reasserted once released, so the flusher loop still notices it
+         * on its next iteration. */
+        void blockIgnoringInterrupts() {
+            this.blockOn = new CountDownLatch(1);
+            this.ignoreInterruptsWhileBlocked = true;
+        }
+
         void unblock() {
             final var latch = this.blockOn;
             if (latch != null) {
@@ -757,8 +1030,7 @@ class BatchingFlowRepositoryTest {
             }
         }
 
-        @Override
-        public void persist(final List<EnrichedFlow> flows) throws FlowException {
+        private void persistTracked(final List<EnrichedFlow> flows) throws FlowException {
             this.inserts.incrementAndGet();
             this.onPersist.run();
             if (this.insertMillis > 0) {
@@ -771,11 +1043,26 @@ class BatchingFlowRepositoryTest {
             }
             final var latch = this.blockOn;
             if (latch != null) {
-                try {
-                    latch.await();
-                } catch (final InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new FlowException(e);
+                if (this.ignoreInterruptsWhileBlocked) {
+                    boolean interrupted = false;
+                    while (true) {
+                        try {
+                            latch.await();
+                            break;
+                        } catch (final InterruptedException e) {
+                            interrupted = true;
+                        }
+                    }
+                    if (interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                } else {
+                    try {
+                        latch.await();
+                    } catch (final InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new FlowException(e);
+                    }
                 }
             }
             // Decrement only while positive: a plain getAndDecrement() would also count down on
@@ -787,6 +1074,17 @@ class BatchingFlowRepositoryTest {
                 throw new FlowException("poison batch");
             }
             this.store.persist(flows);
+        }
+
+        @Override
+        public void persist(final List<EnrichedFlow> flows) throws FlowException {
+            final int now = this.inFlight.incrementAndGet();
+            this.maxInFlight.accumulateAndGet(now, Math::max);
+            try {
+                persistTracked(flows);
+            } finally {
+                this.inFlight.decrementAndGet();
+            }
         }
 
         @Override

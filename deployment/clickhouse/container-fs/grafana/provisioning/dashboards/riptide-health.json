@@ -51,7 +51,7 @@
       "keepTime": true
     },
     {
-      "title": "Dashboards v1.1.3",
+      "title": "Dashboards v1.1.4",
       "type": "link",
       "url": "https://riptide.space/docs/guides/grafana-dashboards",
       "tooltip": "Version of the provisioned dashboard set, independent of the riptide version. Opens the install and upgrade guide.",
@@ -814,8 +814,8 @@
     {
       "id": 8,
       "type": "timeseries",
-      "title": "How busy is each single-threaded worker?",
-      "description": "The share of time each single-threaded worker spent on work: each listener's read loop and the batch flusher. Normal: well below 80%. The dashed line is the 80% warning; at 100% the stage behind it drops. The listener figure leaves out socket reads, so it reads a little low.",
+      "title": "How busy is each worker?",
+      "description": "The share of time each worker spent on work: each listener's read loop (one thread) and the batch flushers (the mean across persister.batch.flushers threads). Normal: well below 80%. The dashed line is the 80% warning; at 100% the stage behind it drops. The listener figure leaves out socket reads, so it reads a little low.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"

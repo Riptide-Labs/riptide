@@ -44,7 +44,7 @@
       "keepTime": true
     },
     {
-      "title": "Dashboards v1.1.3",
+      "title": "Dashboards v1.1.4",
       "type": "link",
       "url": "https://riptide.space/docs/guides/grafana-dashboards",
       "tooltip": "Version of the provisioned dashboard set, independent of the riptide version. Opens the install and upgrade guide.",
@@ -283,7 +283,7 @@
       "id": 2,
       "type": "stat",
       "title": "How busy is this stage's worker?",
-      "description": "Share of time the busiest selected single-threaded worker spent on work: a listener read loop or the batch flusher. Normal: well below 80%. Amber at 80%, where RiptideWorkerSaturated warns; at 100% the stage drops. The listener figure leaves out socket reads and reads a little low.",
+      "description": "Share of time the busiest selected worker spent on work: a listener read loop (one thread) or the batch flushers (the mean across persister.batch.flushers threads). Normal: well below 80%. Amber at 80%, where RiptideWorkerSaturated warns; at 100% the stage drops. The listener figure leaves out socket reads and reads a little low.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -675,7 +675,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "Worker busy share over time",
-      "description": "Share of time each selected single-threaded worker spent on work. Normal: well below the dashed 80% line. Compare with the host row below: a busy worker while CPU is also high points at the host, a busy worker on a quiet host points at the stage.",
+      "description": "Share of time each selected worker spent on work: a listener's one thread, or the mean across a batch flusher's persister.batch.flushers threads. Normal: well below the dashed 80% line. Compare with the host row below: a busy worker while CPU is also high points at the host, a busy worker on a quiet host points at the stage.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"

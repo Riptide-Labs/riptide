@@ -51,7 +51,8 @@ groups:
             persister_batch_queueCapacity{job="riptide"},
             "component", "queue", "", ""), "stage", "batch-writer", "", "")
 
-      # Seconds a single-threaded worker spent on work; rate() of it reads 0 to 1.
+      # Seconds each worker spent on work: one thread for a listener, the mean across
+      # persister.batch.flushers threads for the batch flusher; rate() of it reads 0 to 1.
       - record: riptide:busy_seconds_total
         expr: |
           label_replace(label_replace(
@@ -106,7 +107,7 @@ groups:
           severity: warning
         annotations:
           summary: "riptide on {{ $labels.instance }}: the {{ $labels.stage }} worker ({{ $labels.component }}) is over 80% busy"
-          description: "This single thread has been busy {{ $value | humanizePercentage }} of the time for 15 minutes. At 100% the stage behind it starts to drop."
+          description: "This worker has been busy {{ $value | humanizePercentage }} of the time for 15 minutes; for the batch flusher this is the mean across persister.batch.flushers threads. At 100% the stage behind it starts to drop."
           runbook_url: https://riptide.space/docs/operations/monitoring#riptideworkersaturated
 
       - alert: RiptideHeapPressure

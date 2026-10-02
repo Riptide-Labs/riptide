@@ -7,7 +7,7 @@ description: Why the collector batches inserts client-side, what a refused batch
 # Insert batching and dead letters
 
 Every insert into ClickHouse forms a part and fires the four rollup materialized views, so many small inserts collapse throughput.
-The collector therefore buffers flows in a bounded queue and has one background flusher issue one insert per batch.
+The collector therefore buffers flows in a bounded queue and has one or more background flushers (`riptide.clickhouse.batch.flushers`, default one) each issue one insert per batch.
 The keys are on the [ClickHouse reference](../reference/clickhouse.md#settings); this page says why they are shaped that way and what happens when an insert fails.
 
 ## Who owns the schema
@@ -49,8 +49,14 @@ The [readiness contract](../reference/management.md#health-endpoints--probes) de
 ## A poison row costs a whole batch, and the batch is kept
 
 Because rows are inserted together, one row the server rejects fails the entire insert: up to `max-rows` flows fail instead of the one bad flow the per-record path would have lost.
+
 The flusher logs the batch size with the error, writes every row of the batch to `flows_dead_letter`, and moves on, so one bad batch never wedges ingestion.
 The rows are inspectable and replayable by hand, see [Inspect and replay dead letters](../operations/dead-letters.md), but they are still not in `flows`.
+
+With `riptide.clickhouse.batch.flushers` above 1, that many flushers drain the same queue and insert concurrently.
+Up to `flushers × max-rows` rows are then in flight outside the queue, and each refused batch is charged and dead-lettered by the flusher that sent it, exactly as with one.
+Below saturation each flusher still times its own flush against `max-latency` independently, so the same window can produce up to that many smaller inserts instead of one.
+
 A persistent source of rejected rows, a mis-tenanted collector against the multi-tenant `CHECK` barrier for example, still costs proportionally more live data.
 Lowering `max-rows` limits the blast radius at the cost of throughput.
 If the dead-letter write fails as well, because the deployment was provisioned before that table existed or the server has gone away, the rows are counted under `deadLetterFailedRows` and the outcome is the older behaviour exactly.
@@ -88,12 +94,12 @@ Only then does the batch drain's `shutdown-grace-period` start.
 worst case ≈ (5 s × total parsers across all receivers) + shutdown-grace-period + 1 s + 2 s (management server) + 2 s (MCP SSE transport, when enabled)
 ```
 
-The 1 s is the grace-expired path only: a flusher that has to be interrupted gets one more second to unwind before the queue is swept, so the sweep and the client teardown never race an insert still in flight.
+The 1 s is the grace-expired path only: the flushers that have to be interrupted share one more second to unwind before the queue is swept, so the sweep and the client teardown never race an insert still in flight.
 The management server and the MCP SSE server each get up to 2 s to close their connections.
 A collector with one `multi` receiver (4 protocols) and one IPFIX receiver is therefore 5 × 5 + 10 + 1 + 2 = about 38 s, about 40 s with SSE enabled.
 Keep that sum below systemd's `TimeoutStopSec` (default 90 s), or the process is killed mid-drain and the buffer is lost.
 `shutdown-grace-period` must be at least twice `max-latency`, enforced at startup, because the flusher notices the stop signal only between flush windows.
-Size it with `queue-capacity`: the flusher drains a full queue one `max-rows` insert at a time, so the defaults pair 80,000 rows with 10 s, enough at the 13,500 rows/s ceiling measured with delayed inserts.
+Size it with `queue-capacity`: a full queue drains up to `flushers` inserts of `max-rows` rows at a time, so the defaults (one flusher) pair 80,000 rows with 10 s, enough at the 13,500 rows/s ceiling measured with delayed inserts and a single flusher.
 Rows still queued when the grace period runs out are counted on `failedRows` and are not dead-lettered.
 
 ## Why coalescing is off under batching
@@ -120,8 +126,8 @@ Set the key explicitly to override either derivation.
 
 It is not free.
 Profiling the batch flusher put LZ4 at roughly a fifth of that thread's CPU (`ClickHouseLZ4OutputStream.write` plus the LZ4 compressor frames).
-That thread is the insert path's ceiling, and at high rates the compression decides whether it keeps up.
-Measured on a benchmark lab (riptide 0.17.1, ClickHouse 26.7 on 8 vCPU, 10-minute holds, `batch.max-rows` 10000):
+With the default one flusher, that thread is the insert path's ceiling, and at high rates the compression decides whether it keeps up.
+Measured on a benchmark lab (riptide 0.17.1, ClickHouse 26.7 on 8 vCPU, 10-minute holds, `batch.max-rows` 10000, one flusher):
 
 | `compress-requests` | Exporters | Flows/s accepted | Flusher busy | Flush p50 / p99 | Queue peak | Rows dropped | SUT to ClickHouse |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -132,7 +138,7 @@ Flows/s accepted is the rate riptide decoded and handed to the batch writer.
 With compression on, the flusher was already saturated at the smaller fleet.
 With it off, the larger fleet passed with a fifth of the flusher left.
 Per flow, uncompressed inserts cost about 6 times the bandwidth, about 150 Mbit/s at 65,000 flows/s, which is still a small share of 1 GbE.
-On the same LAN as ClickHouse, turning compression off trades that bandwidth for headroom on the one thread that serializes every batch:
+On the same LAN as ClickHouse, turning compression off trades that bandwidth for headroom on the flusher thread (or threads, with `riptide.clickhouse.batch.flushers` raised) that serializes each batch:
 
 ```properties
 riptide.clickhouse.compress-requests=false

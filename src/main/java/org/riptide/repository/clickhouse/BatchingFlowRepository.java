@@ -31,8 +31,9 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Batching decorator around a {@link FlowRepository}: producers enqueue flows into a bounded
- * queue, a single background flusher drains them and hands the delegate one large insert per
- * batch (at {@code maxRows} rows or after {@code maxLatency}, whichever comes first). Each
+ * queue, one or more background flushers ({@code riptide.clickhouse.batch.flushers}, default one)
+ * drain them and hand the delegate one large insert per batch (at {@code maxRows} rows or after
+ * {@code maxLatency}, whichever comes first). Each
  * ClickHouse insert forms a part and fires the four rollup materialized views, so collapsing the
  * per-record inserts into batches is what buys the throughput (see
  * {@link ClickhouseConfig.BatchConfig} for the sizing rationale).
@@ -68,9 +69,12 @@ public class BatchingFlowRepository implements FlowRepository {
     private static final long DROP_WARN_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(10);
 
     /**
-     * How long stop() waits for the flusher to unwind after the post-grace interrupt, before
-     * sweeping the queue itself. Without it the sweep would drain the same queue concurrently
-     * with the dying flusher, and delegate.stop() could run with an insert still in flight.
+     * How long stop() waits, in total across every live flusher, for them to unwind after the
+     * post-grace interrupt, before sweeping the queue itself: one shared deadline, the same way the
+     * grace period itself is shared, so N flushers that ignore the interrupt (a blocking socket read
+     * does not respond to it) cost one bounded wait rather than N of them. Without this wait at all
+     * the sweep would drain the same queue concurrently with a dying flusher, and delegate.stop()
+     * could run with an insert still in flight.
      */
     private static final long INTERRUPT_JOIN_MS = 1_000;
 
@@ -80,10 +84,16 @@ public class BatchingFlowRepository implements FlowRepository {
 
     private final LinkedBlockingQueue<EnrichedFlow> queue;
 
-    /** Set once by stop(): producers reject-new, the flusher switches to its final drain. */
+    /** Set once by stop(): producers reject-new, each flusher switches to its final drain. */
     private final AtomicBoolean stopped = new AtomicBoolean();
 
-    private volatile Thread flusher;
+    /** The running flushers; empty before start() and after stop(). */
+    private volatile List<Thread> flushers = List.of();
+
+    /** N, from the config: every flusher adds its busy time divided by it. */
+    private final int flusherCount;
+
+    private final String flushersGauge;
 
     /** nanoTime, not wall clock: an NTP step backwards would mute drop warnings for the skew. */
     private final AtomicLong lastDropWarnNanos = new AtomicLong(System.nanoTime() - DROP_WARN_INTERVAL_NANOS);
@@ -128,6 +138,8 @@ public class BatchingFlowRepository implements FlowRepository {
         // queueCapacity=0 would surface as an opaque LinkedBlockingQueue exception here.
         config.validate();
 
+        this.flusherCount = config.getFlushers();
+
         this.queue = new LinkedBlockingQueue<>(config.getQueueCapacity());
 
         this.droppedRows = metricRegistry.counter(MetricRegistry.name("persister", "batch", "droppedRows"));
@@ -145,7 +157,7 @@ public class BatchingFlowRepository implements FlowRepository {
         // instance's dead queue — worse than no gauge at all. stop() unregisters it again.
         metricRegistry.remove(this.queueDepthGauge);
         metricRegistry.register(this.queueDepthGauge, (Gauge<Integer>) this.queue::size);
-        // The single flusher is this stage's ceiling, and its queue covers only seconds of load at
+        // The flushers are this stage's ceiling, and the queue covers only seconds of load at
         // capacity, so busy time is the early warning and depth is not. Same lifecycle as queueDepth.
         this.flusherBusyName = MetricRegistry.name("persister", "batch", "flusherBusySeconds");
         metricRegistry.remove(this.flusherBusyName);
@@ -155,6 +167,11 @@ public class BatchingFlowRepository implements FlowRepository {
         final int capacity = config.getQueueCapacity();
         metricRegistry.remove(this.queueCapacityGauge);
         metricRegistry.register(this.queueCapacityGauge, (Gauge<Integer>) () -> capacity);
+        // N beside the busy time, whose rate is the flushers' mean: "one at 80%" and "four at
+        // 80%" read the same there. Same lifecycle as queueDepth.
+        this.flushersGauge = MetricRegistry.name("persister", "batch", "flushers");
+        metricRegistry.remove(this.flushersGauge);
+        metricRegistry.register(this.flushersGauge, (Gauge<Integer>) () -> this.flusherCount);
     }
 
     @Override
@@ -205,22 +222,27 @@ public class BatchingFlowRepository implements FlowRepository {
             // flow — the worst possible failure mode for a persister.
             throw new IllegalStateException("BatchingFlowRepository is stopped and cannot be restarted");
         }
-        if (this.flusher != null) {
-            // A second start() would re-run the delegate's manage-mode DDL and orphan the first
-            // flusher, which stop() then never joins.
+        if (!this.flushers.isEmpty()) {
+            // A second start() would re-run the delegate's manage-mode DDL and orphan the
+            // already-running flushers, which stop() then never joins.
             throw new IllegalStateException("BatchingFlowRepository is already started");
         }
 
-        // Delegate first: the flusher must not insert before the schema is ensured/validated.
+        // Delegate first: no flusher may insert before the schema is ensured/validated.
         this.delegate.start();
 
-        final Thread thread = new ThreadFactoryBuilder()
-                .setNameFormat("clickhouse-batch-flusher")
-                .setDaemon(true)
-                .build()
-                .newThread(this::flushLoop);
-        this.flusher = thread;
-        thread.start();
+        final List<Thread> threads = new ArrayList<>(this.flusherCount);
+        for (int i = 0; i < this.flusherCount; i++) {
+            // One flusher keeps today's name, so dumps, profiles and log greps still match.
+            final String name = this.flusherCount == 1 ? "clickhouse-batch-flusher" : "clickhouse-batch-flusher-" + i;
+            threads.add(new ThreadFactoryBuilder()
+                    .setNameFormat(name)
+                    .setDaemon(true)
+                    .build()
+                    .newThread(this::flushLoop));
+        }
+        this.flushers = List.copyOf(threads);
+        threads.forEach(Thread::start);
     }
 
     private void flushLoop() {
@@ -267,13 +289,17 @@ public class BatchingFlowRepository implements FlowRepository {
                         try {
                             flush(batch);
                         } finally {
-                            this.flusherBusy.addSince(start);
+                            // Divided by N: the counter's rate stays the flushers' mean
+                            // utilisation, 0 to 1, which the saturation alert and the dashboards
+                            // read. With one flusher this is exactly addSince(start).
+                            this.flusherBusy.add((System.nanoTime() - start) / this.flusherCount);
                         }
                     }
                 }
             } catch (final Throwable e) {
-                // Throwable on purpose: this is the only flusher, and a silent death (a metrics
-                // bug, an Error, anything unforeseen) would turn into a permanent 100% drop.
+                // Throwable on purpose: a silent death of a flusher (a metrics bug, an Error,
+                // anything unforeseen) would still cut throughput — and with a single flusher
+                // (the default) that cut is a permanent 100% drop.
                 // Count whatever was in hand, log, and keep looping.
                 // Charged in full. Whether that is exact depends on where the Throwable came from,
                 // and this catch cannot tell: an Error out of delegate.persist escapes flush()'s
@@ -377,40 +403,55 @@ public class BatchingFlowRepository implements FlowRepository {
             // Idempotent: the drain and the delegate stop must run exactly once.
             return;
         }
-        final Thread thread = this.flusher;
+        final List<Thread> threads = this.flushers;
         boolean graceExpired = false;
-        if (thread != null) {
-            try {
-                // The flusher sees the stop flag at the latest after the current drain window
-                // (maxLatency < grace, enforced by validate()), then drains the queue
-                // non-blocking and exits.
-                thread.join(Math.max(1, this.config.getShutdownGracePeriod().toMillis()));
-            } catch (final InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            if (thread.isAlive()) {
-                // Grace expired — a wedged or very slow insert. Interrupt as a last resort, then
-                // give the flusher a moment to unwind: otherwise the sweep below drains the same
-                // queue concurrently with the dying thread and delegate.stop() can run with an
-                // insert still in flight.
-                graceExpired = true;
-                thread.interrupt();
-                log.warn("Batch flusher did not drain within {}; about {} accepted rows undelivered",
-                        this.config.getShutdownGracePeriod(), this.queue.size());
+        if (!threads.isEmpty()) {
+            // One deadline for all of them: the grace period is the service's shutdown budget,
+            // and N flushers must not stretch it to N × grace. Each flusher sees the stop flag
+            // after its current drain window (maxLatency < grace, enforced by validate()), then
+            // drains the queue non-blocking and exits.
+            final long deadline = System.nanoTime() + this.config.getShutdownGracePeriod().toNanos();
+            for (final Thread thread : threads) {
+                final long remainingMillis = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
                 try {
-                    thread.join(INTERRUPT_JOIN_MS);
+                    thread.join(Math.max(1, remainingMillis));
                 } catch (final InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
-                if (thread.isAlive()) {
+            }
+            final List<Thread> alive = threads.stream().filter(Thread::isAlive).toList();
+            if (!alive.isEmpty()) {
+                // Grace expired: a wedged or very slow insert. Interrupt every live flusher as a
+                // last resort, then give them a shared moment to unwind: otherwise the sweep below
+                // drains the queue concurrently with a dying thread and delegate.stop() can run
+                // with an insert still in flight.
+                graceExpired = true;
+                alive.forEach(Thread::interrupt);
+                log.warn("Batch flusher did not drain within {}; about {} accepted rows undelivered",
+                        this.config.getShutdownGracePeriod(), this.queue.size());
+                // One shared unwind window, not one per flusher: a flusher stuck in a blocking
+                // socket read ignores the interrupt entirely (no socket timeout by default — see
+                // sweep()'s javadoc), so joining each flusher for the full INTERRUPT_JOIN_MS in
+                // sequence would turn N unresponsive flushers into N × INTERRUPT_JOIN_MS of extra
+                // shutdown time instead of one bounded wait.
+                final long unwindDeadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(INTERRUPT_JOIN_MS);
+                for (final Thread thread : alive) {
+                    final long remainingMillis = TimeUnit.NANOSECONDS.toMillis(unwindDeadline - System.nanoTime());
+                    try {
+                        thread.join(Math.max(1, remainingMillis));
+                    } catch (final InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                if (alive.stream().anyMatch(Thread::isAlive)) {
                     // Best effort: proceed rather than hang shutdown on an unresponsive thread.
                     log.warn("Batch flusher still alive after the interrupt — continuing shutdown");
                 }
             }
-            this.flusher = null;
+            this.flushers = List.of();
         }
 
-        // Straggler sweep: a producer may pass the stopped check and offer after the flusher's
+        // Straggler sweep: a producer may pass the stopped check and offer after the flushers'
         // final drain — without this, those rows would be lost uncounted.
         sweep(graceExpired);
 
@@ -430,15 +471,16 @@ public class BatchingFlowRepository implements FlowRepository {
         this.metricRegistry.remove(this.queueDepthGauge);
         this.metricRegistry.remove(this.flusherBusyName);
         this.metricRegistry.remove(this.queueCapacityGauge);
+        this.metricRegistry.remove(this.flushersGauge);
     }
 
     /**
-     * Drain whatever the flusher left behind, in {@code maxRows}-sized chunks: {@code
+     * Drain whatever the flushers left behind, in {@code maxRows}-sized chunks: {@code
      * queueCapacity} is a multiple of {@code maxRows}, so one unchunked drain could produce an
-     * insert several times larger than any the flusher would ever issue. The healthy path goes
+     * insert several times larger than any one flusher would ever issue. The healthy path goes
      * through {@link #flush} so the batch-size histogram and flush timer see it too.
      *
-     * @param graceExpired when the flusher had to be interrupted: the grace budget is spent and
+     * @param graceExpired when any flusher had to be interrupted: the grace budget is spent and
      *                     the delegate is why, so another blocking insert would hang shutdown
      *                     past the service manager's stop timeout (the client has no socket
      *                     timeout by default) for rows unlikely to land anyway. Count and log.
