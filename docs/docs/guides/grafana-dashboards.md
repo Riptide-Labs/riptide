@@ -100,13 +100,13 @@ On every later `docker compose up -d` the same service prints `Flow Analytics al
 
 Use this for a Grafana you run yourself, whose provisioning directory you can write to.
 
-1. Download the set for the riptide release you run from its [release page](https://github.com/Riptide-Labs/riptide/releases). The asset is named after the set version, not the riptide version: **`riptide-dashboards-1.0.2.tar.gz`** for set 1.0.2. A `.sigstore.json` bundle sits next to it like every other asset.
+1. Download the set for the riptide release you run from its [release page](https://github.com/Riptide-Labs/riptide/releases). The asset is named after the set version, not the riptide version: **`riptide-dashboards-1.1.4.tar.gz`** for set 1.1.4. A `.sigstore.json` bundle sits next to it like every other asset.
 
 2. Extract it into Grafana's provisioning directory. The archive holds one `dashboards/` directory, so it lands as `/etc/grafana/provisioning/dashboards/`.
 
    ```bash
-   tar -tzf riptide-dashboards-1.0.2.tar.gz
-   sudo tar -xzf riptide-dashboards-1.0.2.tar.gz -C /etc/grafana/provisioning/
+   tar -tzf riptide-dashboards-1.1.4.tar.gz
+   sudo tar -xzf riptide-dashboards-1.1.4.tar.gz -C /etc/grafana/provisioning/
    ```
 
    Expected output:
@@ -118,7 +118,10 @@ Use this for a Grafana you run yourself, whose provisioning directory you can wr
    dashboards/riptide-collection-health.json
    dashboards/riptide-data-trust.json
    dashboards/riptide-flow-forensics.json
+   dashboards/riptide-health.json
    dashboards/riptide-interface-traffic-analysis.json
+   dashboards/riptide-profiling.json
+   dashboards/riptide-stage-detail.json
    dashboards/riptide-top-10.json
    dashboards/riptide-traffic-composition.json
    dashboards/riptide-traffic-paths.json
@@ -160,7 +163,7 @@ Use this for a Grafana you run yourself, whose provisioning directory you can wr
 
    ```text
    "parentUid":"riptide"
-   9
+   12
    ```
 
 ## Install from the deb or rpm package
@@ -182,7 +185,10 @@ The package puts the same files under **`/usr/share/riptide/grafana/dashboards/`
    riptide-collection-health.json
    riptide-data-trust.json
    riptide-flow-forensics.json
+   riptide-health.json
    riptide-interface-traffic-analysis.json
+   riptide-profiling.json
+   riptide-stage-detail.json
    riptide-top-10.json
    riptide-traffic-composition.json
    riptide-traffic-paths.json
@@ -241,7 +247,7 @@ For a release whose name does not contain `grafana`, the chart names the deploym
    Digest: sha256:0fcb82fdbf9409a24fb0f9b4c20875a2d0fa668d4f3ad71f1717845ba9bb99ca
    Release "grafana" has been upgraded. Happy Helming!
    NAME: grafana
-   LAST DEPLOYED: Thu Sep 24 01:03:46 2026
+   LAST DEPLOYED: Sat Oct  3 00:12:19 2026
    NAMESPACE: monitoring
    STATUS: deployed
    ...
@@ -283,12 +289,12 @@ For a release whose name does not contain `grafana`, the chart names the deploym
    curl -s -u "$AUTH" "$GRAFANA/api/dashboards/uid/riptide-top10" | grep -o '"title":"Dashboards v[^"]*"'
    ```
 
-   Expected output, for the release that carries set 1.0.2:
+   Expected output, for the release that carries set 1.1.4:
 
    ```text
    "parentUid":"riptide"
-   9
-   "title":"Dashboards v1.0.2"
+   12
+   "title":"Dashboards v1.1.4"
    ```
 
 Riptide dashboards imported by hand before are adopted into **Flow Analytics** on the first pass, under their uids and URLs.
@@ -351,13 +357,13 @@ Everything below was verified on Grafana 13.2.2.
    ```bash
    GRAFANA=https://grafana.example.org
    read -rs GRAFANA_TOKEN && export GRAFANA_TOKEN
-   python3 riptide-dashboards-import.py --grafana "$GRAFANA" --dry-run riptide-dashboards-1.0.2.tar.gz
+   python3 riptide-dashboards-import.py --grafana "$GRAFANA" --dry-run riptide-dashboards-1.1.4.tar.gz
    ```
 
    Expected output, on a Grafana that holds none of the dashboards yet:
 
    ```text
-   riptide dashboard set 1.0.2, 9 dashboards -> https://grafana.example.org (dry run, nothing is written)
+   riptide dashboard set 1.1.4, 12 dashboards -> https://grafana.example.org (dry run, nothing is written)
    folder Riptide: would create
    folder Flow Analytics: would create
    riptide-behavioural-anomalies: would create
@@ -365,7 +371,10 @@ Everything below was verified on Grafana 13.2.2.
    riptide-collection-health: would create
    riptide-data-trust: would create
    riptide-flow-forensics: would create
+   riptide-health: would create
    riptide-interface-traffic-analysis: would create
+   riptide-profiling: would create
+   riptide-stage-detail: would create
    riptide-top10: would create
    riptide-traffic-composition: would create
    riptide-traffic-paths: would create
@@ -374,13 +383,13 @@ Everything below was verified on Grafana 13.2.2.
 4. Import.
 
    ```bash
-   python3 riptide-dashboards-import.py --grafana "$GRAFANA" riptide-dashboards-1.0.2.tar.gz
+   python3 riptide-dashboards-import.py --grafana "$GRAFANA" riptide-dashboards-1.1.4.tar.gz
    ```
 
    Expected output:
 
    ```text
-   riptide dashboard set 1.0.2, 9 dashboards -> https://grafana.example.org
+   riptide dashboard set 1.1.4, 12 dashboards -> https://grafana.example.org
    folder Riptide: created
    folder Flow Analytics: created
    riptide-behavioural-anomalies: created
@@ -388,7 +397,10 @@ Everything below was verified on Grafana 13.2.2.
    riptide-collection-health: created
    riptide-data-trust: created
    riptide-flow-forensics: created
+   riptide-health: created
    riptide-interface-traffic-analysis: created
+   riptide-profiling: created
+   riptide-stage-detail: created
    riptide-top10: created
    riptide-traffic-composition: created
    riptide-traffic-paths: created
@@ -398,14 +410,14 @@ Everything below was verified on Grafana 13.2.2.
 
    ```bash
    python3 riptide-dashboards-import.py --grafana "$GRAFANA" \
-     --prometheus-type victoriametrics-metrics-datasource riptide-dashboards-1.1.2.tar.gz
+     --prometheus-type victoriametrics-metrics-datasource riptide-dashboards-1.1.4.tar.gz
    ```
 
    The first line names the type, and the Prometheus variable of every dashboard that has one lists that datasource.
    Expected first line, captured on Grafana 13.0.2 with the VictoriaMetrics plugin 0.26.1:
 
    ```text
-   riptide dashboard set 1.1.2, 12 dashboards -> https://grafana.example.org, Prometheus variables -> victoriametrics-metrics-datasource
+   riptide dashboard set 1.1.4, 12 dashboards -> https://grafana.example.org, Prometheus variables -> victoriametrics-metrics-datasource
    ```
 
 5. Verify.
@@ -420,7 +432,7 @@ Everything below was verified on Grafana 13.2.2.
 
    ```text
    "parentUid":"riptide"
-   9
+   12
    ```
 
 The script prints one line per dashboard and exits non-zero if any was not imported.
@@ -428,8 +440,8 @@ The script prints one line per dashboard and exits non-zero if any was not impor
 | Line | Meaning |
 | --- | --- |
 | **`created`** | The dashboard was not on this instance. |
-| **`updated 1.0.0 -> 1.0.2`** | Replaced. The previous body stays in the dashboard's *Settings* > *Versions*, where a replaced UI edit can be restored. |
-| **`unchanged (1.0.2)`** | Identical to what the instance already had; Grafana saved nothing. |
+| **`updated 1.1.3 -> 1.1.4`** | Replaced. The previous body stays in the dashboard's *Settings* > *Versions*, where a replaced UI edit can be restored. |
+| **`unchanged (1.1.4)`** | Identical to what the instance already had; Grafana saved nothing. |
 | **`(from folder 'Riptide Flow Analytics')`** | The dashboard was in another folder, for example after a hand import, and was moved into **Flow Analytics**. |
 | **`refused: Cannot save provisioned dashboard`** | This instance also loads the dashboard from files. Use one install path per Grafana. |
 | **`folder '…' (…) is now empty: …`** | A folder the dashboards were moved out of holds nothing else: no dashboards, folders, alert rules or library elements. The script does not delete it; an admin can. |
@@ -446,13 +458,13 @@ Pass the same `--prometheus-type` every time: an import without it sets those va
 The output of an upgrade from dashboards imported by hand into a folder of their own:
 
 ```text
-riptide dashboard set 1.0.2, 9 dashboards -> https://grafana.example.org
+riptide dashboard set 1.1.4, 12 dashboards -> https://grafana.example.org
 folder Riptide: created
 folder Flow Analytics: created
-riptide-behavioural-anomalies: updated 1.0.0 -> 1.0.2 (from folder 'Riptide Flow Analytics')
+riptide-behavioural-anomalies: updated 1.1.3 -> 1.1.4 (from folder 'Riptide Flow Analytics')
 ...
-riptide-traffic-paths: updated 1.0.0 -> 1.0.2 (from folder 'Riptide Flow Analytics')
-folder 'Riptide Flow Analytics' (efsybbe4ozv28c) is now empty: no dashboards, folders, alert rules or library elements. This script deletes nothing.
+riptide-traffic-paths: updated 1.1.3 -> 1.1.4 (from folder 'Riptide Flow Analytics')
+folder 'Riptide Flow Analytics' (bg01y14jxsmwwe) is now empty: no dashboards, folders, alert rules or library elements. This script deletes nothing.
 ```
 
 ## Upgrade an installed set
@@ -486,7 +498,7 @@ curl -s -u "$AUTH" "$GRAFANA/api/dashboards/uid/riptide-top10" | grep -o '"title
 Expected output:
 
 ```text
-"title":"Dashboards v1.0.2"
+"title":"Dashboards v1.1.4"
 ```
 
 The API reports `"provisioned":false` for these dashboards on Grafana 13.0.2 even though the file provider owns them, so do not use that field to tell a provisioned dashboard from a hand-imported one.
