@@ -116,7 +116,7 @@ A key in the wrong file is rejected, so a lab's addresses cannot end up in a com
 | Name | Type | Default | Description |
 | --- | --- | --- | --- |
 | **`name`** | string | required | Names the workspace, every VM (`bench-<name>-<service>`) and the `exp-<name>` label. Lowercase letters, digits and `-`. |
-| **`riptide.source`** | string | required | `release:X.Y.Z` (downloaded and verified with cosign) or `deb:<path>` (relative to the repository root). |
+| **`riptide.source`** | string | required | `release:X.Y.Z` (downloaded and verified with cosign) or `deb:<path>` (relative to the repository root). An older version than the one installed is installed as a downgrade, so returning from a `deb:` build to a release needs no manual step. |
 | **`riptide.env`** | map(string) | `{}` | Lines of `/etc/riptide/riptide.env`: `JAVA_OPTS` and `RIPTIDE_*` overrides, for example receivers. |
 | **`riptide.nl6_discovery`** | bool | `false` | Names riptide's exporters from the load generator's fleet: sets `RIPTIDE_DISCOVERY_URL` to nl6's `/api/v1/prometheus/sd` on the `nl6` service's `mgmt` address, and `RIPTIDE_DISCOVERY_NAME_LABELS=__meta_nl6_sys_name`. Needs an `nl6` service at v0.34.1 or later (v0.34.0 repeats sysNames, which riptide refuses as collisions), and a riptide that reads `riptide.discovery.name-labels` (#957) and boots on an empty fleet (#959). Releases up to 0.17.0 have neither and are refused; use a `deb:` build until a later release. `riptide.env` overrides either key. |
 | **`ssh_keys`** | list(string) | `[]` | Keys for user `bench` in addition to the SSH agent's. |

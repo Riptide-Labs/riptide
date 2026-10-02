@@ -75,8 +75,10 @@ locals {
       nl6 = {
         description = "nl6 load generator for benchmark ${var.experiment}"
         image       = var.images.nl6
-        args        = ["--privileged", "--device /dev/net/tun"]
-        cmd         = var.pyroscope_url == "" ? [] : ["-profiling-pyroscope=${var.pyroscope_url}"]
+        # --init reaps nl6's exited children: without it one stayed a zombie
+        # that docker stop could not kill, wedging the loadgen (#977).
+        args = ["--init", "--privileged", "--device /dev/net/tun"]
+        cmd  = var.pyroscope_url == "" ? [] : ["-profiling-pyroscope=${var.pyroscope_url}"]
         # nl6 creates veth-sim-host but does not route its simulated exporters.
         post = ["/usr/local/sbin/bench-exporters-route"]
       }

@@ -111,6 +111,12 @@ run "nl6_forwards_and_routes_its_exporters" {
     condition     = strcontains(output.units.nl6, "--privileged --device /dev/net/tun") && strcontains(output.units.nl6, "ExecStartPost=/usr/local/sbin/bench-exporters-route")
     error_message = "nl6 unit: ${output.units.nl6}"
   }
+  # Without an init, an exited child of nl6 stays a zombie that docker stop
+  # cannot kill; at 16,000 devices that wedged the loadgen for minutes (#977).
+  assert {
+    condition     = strcontains(output.units.nl6, "ExecStart=/usr/bin/docker run --rm --name nl6 --network host --init ")
+    error_message = "nl6 runs without --init: ${output.units.nl6}"
+  }
   assert {
     condition     = strcontains(nonsensitive(output.files["/usr/local/sbin/bench-exporters-route"]), "ip route replace 172.27.0.0/16 via 10.254.0.2 dev veth-sim-host")
     error_message = "route script: ${nonsensitive(output.files["/usr/local/sbin/bench-exporters-route"])}"
