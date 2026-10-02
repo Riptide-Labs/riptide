@@ -50,11 +50,12 @@ The [readiness contract](../reference/management.md#health-endpoints--probes) de
 
 Because rows are inserted together, one row the server rejects fails the entire insert: up to `max-rows` flows fail instead of the one bad flow the per-record path would have lost.
 
+The flusher logs the batch size with the error, writes every row of the batch to `flows_dead_letter`, and moves on, so one bad batch never wedges ingestion.
+The rows are inspectable and replayable by hand, see [Inspect and replay dead letters](../operations/dead-letters.md), but they are still not in `flows`.
+
 With `riptide.clickhouse.batch.flushers` above 1, that many flushers drain the same queue and insert concurrently.
 Up to `flushers × max-rows` rows are then in flight outside the queue, and each refused batch is charged and dead-lettered by the flusher that sent it, exactly as with one.
 
-The flusher logs the batch size with the error, writes every row of the batch to `flows_dead_letter`, and moves on, so one bad batch never wedges ingestion.
-The rows are inspectable and replayable by hand, see [Inspect and replay dead letters](../operations/dead-letters.md), but they are still not in `flows`.
 A persistent source of rejected rows, a mis-tenanted collector against the multi-tenant `CHECK` barrier for example, still costs proportionally more live data.
 Lowering `max-rows` limits the blast radius at the cost of throughput.
 If the dead-letter write fails as well, because the deployment was provisioned before that table existed or the server has gone away, the rows are counted under `deadLetterFailedRows` and the outcome is the older behaviour exactly.
@@ -97,7 +98,7 @@ The management server and the MCP SSE server each get up to 2 s to close their c
 A collector with one `multi` receiver (4 protocols) and one IPFIX receiver is therefore 5 × 5 + 10 + 1 + 2 = about 38 s, about 40 s with SSE enabled.
 Keep that sum below systemd's `TimeoutStopSec` (default 90 s), or the process is killed mid-drain and the buffer is lost.
 `shutdown-grace-period` must be at least twice `max-latency`, enforced at startup, because the flusher notices the stop signal only between flush windows.
-Size it with `queue-capacity`: a full queue drains up to `flushers` `max-rows` inserts at a time, so the defaults (one flusher) pair 80,000 rows with 10 s, enough at the 13,500 rows/s ceiling measured with delayed inserts and a single flusher.
+Size it with `queue-capacity`: a full queue drains up to `flushers` inserts of `max-rows` rows at a time, so the defaults (one flusher) pair 80,000 rows with 10 s, enough at the 13,500 rows/s ceiling measured with delayed inserts and a single flusher.
 Rows still queued when the grace period runs out are counted on `failedRows` and are not dead-lettered.
 
 ## Why coalescing is off under batching

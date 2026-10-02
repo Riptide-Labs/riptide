@@ -84,7 +84,7 @@ public class BatchingFlowRepository implements FlowRepository {
 
     private final LinkedBlockingQueue<EnrichedFlow> queue;
 
-    /** Set once by stop(): producers reject-new, the flusher switches to its final drain. */
+    /** Set once by stop(): producers reject-new, each flusher switches to its final drain. */
     private final AtomicBoolean stopped = new AtomicBoolean();
 
     /** The running flushers; empty before start() and after stop(). */

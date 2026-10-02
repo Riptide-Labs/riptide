@@ -171,8 +171,8 @@ public final class ClickhouseConfig {
                  * this grace period even starts.
                  *
                  * <p>Sized with {@link #queueCapacity}: a full queue drains up to {@link #flushers}
-                 * {@link #maxRows} inserts at a time, after up to one {@link #maxLatency} window. At
-                 * the ~13.5k rows/s ceiling measured with delayed inserts and the default one
+                 * inserts of {@link #maxRows} rows at a time, after up to one {@link #maxLatency}
+                 * window. At the ~13.5k rows/s ceiling measured with delayed inserts and the default one
                  * flusher, 80k rows take about 6 s plus that window, so 10 s; the old 5 s paired
                  * with the old 40k. Raise both together; more flushers drain a full queue faster
                  * than this number alone suggests.
@@ -191,7 +191,7 @@ public final class ClickhouseConfig {
                  * concurrently with the others. One, the default, is the behaviour before this
                  * key existed. A single flusher inserts serially and became the insert path's
                  * ceiling at ~67k flows/s on the benchmark lab, with CPU and network idle; raise
-                 * it when {@code persister.batch.flusherBusySeconds} runs near 1.
+                 * it when {@code persister.batch.flusherBusySeconds}'s {@code rate()} runs near 1.
                  */
                 private int flushers = 1;
 

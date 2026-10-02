@@ -20,7 +20,7 @@ The healthy outputs were captured on macOS, which has no per-socket kernel count
 | [**`RiptideDown`**](#riptidedown) | critical | a riptide target is not scraped for 2 minutes | fixed |
 | [**`RiptideDataLoss`**](#riptidedataloss) | critical | any stage counts flows that did not reach the flows table, for 5 minutes | fixed |
 | [**`RiptideQueueFilling`**](#riptidequeuefilling) | warning | a parser dispatch or batch writer queue is over 80% full for 10 minutes | measured: fires after the loss has started |
-| [**`RiptideWorkerSaturated`**](#riptideworkersaturated) | warning | a listener read loop or the batch flusher is over 80% busy for 15 minutes | measured for the flusher: leads loss |
+| [**`RiptideWorkerSaturated`**](#riptideworkersaturated) | warning | a listener read loop, or the batch flushers' mean, is over 80% busy for 15 minutes | measured for the flusher: leads loss |
 | [**`RiptideHeapPressure`**](#riptideheappressure) | warning | heap used is over 90% of the maximum for 15 minutes | default |
 | [**`RiptideGcPressure`**](#riptidegcpressure) | warning | over 10% of the time is spent in GC pauses for 10 minutes | default |
 | [**`RiptideCpuPressure`**](#riptidecpupressure) | warning | CPU used is over 85% of the available cores for 15 minutes | default |
