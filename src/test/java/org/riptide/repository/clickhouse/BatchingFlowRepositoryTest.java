@@ -680,11 +680,16 @@ class BatchingFlowRepositoryTest {
 
         this.repository.persist(flows(2));
 
-        // Wait on the busy time itself, not on the delegate's count (see
-        // flusherBusySecondsCountsInsertTime): count reaches 2 inside the second insert, before
-        // that flusher adds its share of the busy time on its way out of flush().
+        // Wait for both inserts to actually finish (inFlight back to 0 after having reached 2),
+        // not just for the busy value to cross a threshold: under a mutant that drops the
+        // "/ flusherCount" division, the first flusher alone adds ~1.0 s on its own, and a bare
+        // busy >= 0.9 check can pass right then, before the second flusher's add, letting the
+        // band assertion below pass on one flusher's time alone.
+        await(Duration.ofSeconds(5), "both inserts ran concurrently and completed",
+                () -> this.delegate.maxInFlight.get() == 2 && this.delegate.inFlight.get() == 0);
+        // Settle: the flusher adds its share of the busy time a few bookkeeping steps after the
+        // insert returns, on its way out of flush() (see flusherBusySecondsCountsInsertTime).
         await(Duration.ofSeconds(5), "both inserts timed", () -> flusherBusySeconds() >= 0.9d);
-        Assertions.assertThat(this.delegate.maxInFlight.get()).isEqualTo(2);
         Assertions.assertThat(flusherBusySeconds()).isLessThan(1.5d);
     }
 
@@ -766,21 +771,22 @@ class BatchingFlowRepositoryTest {
         this.delegate.blockIgnoringInterrupts();
         final var config = batchConfig(1, Duration.ofMillis(100));
         config.setShutdownGracePeriod(Duration.ofSeconds(1));
-        config.setFlushers(2);
+        config.setFlushers(3);
         this.repository = repository(config);
         this.repository.start();
-        this.repository.persist(flows(2));
-        await(Duration.ofSeconds(3), "both flushers inside an insert", () -> this.delegate.inFlight.get() == 2);
+        this.repository.persist(flows(3));
+        await(Duration.ofSeconds(3), "all three flushers inside an insert", () -> this.delegate.inFlight.get() == 3);
 
         final long started = System.nanoTime();
         this.repository.stop();
         final long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
 
-        // grace (1 s) + one shared unwind window (1 s) + margin; the sequential per-thread join
-        // gives ~3 s with two flushers that never respond to the interrupt.
+        // grace (1 s) + one shared unwind window (1 s) ≈ 2 s correct, vs. grace (1 s) + 3 ×
+        // unwind (1 s) = 4 s for the sequential per-thread-join mutant; 3 s sits between the two
+        // with margin on both sides.
         Assertions.assertThat(elapsedMillis)
                 .as("one shared grace plus one shared unwind window, not grace + N × unwind")
-                .isLessThan(2500);
+                .isLessThan(3000);
     }
 
     @Test
@@ -792,21 +798,32 @@ class BatchingFlowRepositoryTest {
         this.repository.start();
 
         final var pool = Executors.newFixedThreadPool(8);
-        for (int p = 0; p < 8; p++) {
-            pool.submit(() -> {
-                for (int i = 0; i < 100; i++) {
-                    this.repository.persist(flows(10));
-                }
-                return null;
-            });
+        boolean terminated = false;
+        try {
+            for (int p = 0; p < 8; p++) {
+                pool.submit(() -> {
+                    for (int i = 0; i < 100; i++) {
+                        this.repository.persist(flows(10));
+                    }
+                    return null;
+                });
+            }
+            pool.shutdown();
+            terminated = pool.awaitTermination(30, TimeUnit.SECONDS);
+            Assertions.assertThat(terminated).isTrue();
+        } finally {
+            // A producer stuck past the 30 s budget would otherwise leave its thread running
+            // for the rest of the suite.
+            if (!terminated) {
+                pool.shutdownNow();
+            }
         }
-        pool.shutdown();
-        Assertions.assertThat(pool.awaitTermination(30, TimeUnit.SECONDS)).isTrue();
         this.repository.stop();
 
         Assertions.assertThat(this.delegate.count() + droppedRows())
                 .as("delivered + dropped = offered: no row lost uncounted, none delivered twice")
                 .isEqualTo(8_000);
+        Assertions.assertThat(droppedRows()).isZero();
         Assertions.assertThat(failedRows()).isZero();
     }
 
