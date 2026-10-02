@@ -55,6 +55,7 @@ The rows are inspectable and replayable by hand, see [Inspect and replay dead le
 
 With `riptide.clickhouse.batch.flushers` above 1, that many flushers drain the same queue and insert concurrently.
 Up to `flushers × max-rows` rows are then in flight outside the queue, and each refused batch is charged and dead-lettered by the flusher that sent it, exactly as with one.
+Below saturation each flusher still times its own flush against `max-latency` independently, so the same window can produce up to that many smaller inserts instead of one.
 
 A persistent source of rejected rows, a mis-tenanted collector against the multi-tenant `CHECK` barrier for example, still costs proportionally more live data.
 Lowering `max-rows` limits the blast radius at the cost of throughput.
