@@ -15,8 +15,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -187,5 +190,66 @@ class GeoIpEnricherTest {
         } finally {
             enricher.stop();
         }
+    }
+
+    /**
+     * #979 sibling: stop() waits for an in-flight refresh before closing snapshots, so a refresh
+     * cannot swap in a snapshot nobody closes. Before the fix an interrupted caller skipped that
+     * wait entirely. The refresh here blocks inside {@code getDatabases()} and ignores the
+     * {@code shutdownNow()} interrupt, as a refresh that has not reached an interruptible call yet.
+     */
+    @Test
+    void stopFromAnInterruptedCallerStillWaitsForAnInFlightRefresh() throws Exception {
+        final var entered = new CountDownLatch(1);
+        final var release = new CountDownLatch(1);
+        final var config = new GeoIpConfig() {
+            @Override
+            public List<String> getDatabases() {
+                if ("geoip-refresh".equals(Thread.currentThread().getName())) {
+                    entered.countDown();
+                    boolean interrupted = false;
+                    while (true) {
+                        try {
+                            release.await();
+                            break;
+                        } catch (final InterruptedException e) {
+                            interrupted = true;
+                        }
+                    }
+                    if (interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+                return super.getDatabases();
+            }
+        };
+        config.setDatabases(List.of(FIXTURES.resolve("geolite2-city-test.mmdb").toString()));
+        config.setRefreshInterval(Duration.ofMillis(20));
+        config.parseOverrides();
+        final var enricher = new GeoIpEnricher(config);
+        enricher.start();
+
+        final var interruptedAfterStop = new boolean[1];
+        final var stopper = new Thread(() -> {
+            Thread.currentThread().interrupt();
+            enricher.stop();
+            interruptedAfterStop[0] = Thread.currentThread().isInterrupted();
+        }, "test-stopper");
+        try {
+            assertThat(entered.await(5, TimeUnit.SECONDS)).as("refresh in flight").isTrue();
+            stopper.start();
+            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+            while (stopper.getState() != Thread.State.TIMED_WAITING && stopper.isAlive()
+                    && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
+            assertThat(stopper.isAlive()).as("stop() still waiting for the refresh").isTrue();
+        } finally {
+            release.countDown();
+            stopper.join(TimeUnit.SECONDS.toMillis(10));
+        }
+
+        assertThat(stopper.isAlive()).as("stop() returned").isFalse();
+        assertThat(interruptedAfterStop[0]).as("caller's interrupt flag restored").isTrue();
     }
 }

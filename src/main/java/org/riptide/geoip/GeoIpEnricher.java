@@ -5,6 +5,7 @@
 
 package org.riptide.geoip;
 
+import com.google.common.util.concurrent.Uninterruptibles;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -82,11 +83,11 @@ public class GeoIpEnricher extends Enricher.Single {
         if (this.scheduler != null) {
             // Fence the refresh: an in-flight run may still swap in a fresh snapshot, so wait
             // for termination before tearing down state — otherwise that snapshot leaks open.
+            // Uninterruptibly (#979): an interrupted caller would otherwise skip the wait at once.
+            // The helper restores the caller's interrupt flag before it returns.
             this.scheduler.shutdownNow();
-            try {
-                this.scheduler.awaitTermination(5, TimeUnit.SECONDS);
-            } catch (final InterruptedException e) {
-                Thread.currentThread().interrupt();
+            if (!Uninterruptibles.awaitTerminationUninterruptibly(this.scheduler, 5, TimeUnit.SECONDS)) {
+                log.warn("GeoIP refresh still running after 5 s; closing the databases anyway");
             }
         }
         // Delayed closes dropped by shutdownNow() are closed eagerly here.

@@ -178,6 +178,50 @@ class ParserDispatchTest {
     }
 
     /**
+     * #979: a caller whose interrupt flag is already set still gets the 5 s drain. Before the fix
+     * the wait threw at once and {@code shutdownNow()} discarded every queued packet, so records
+     * that would have reached the repository in milliseconds were counted as drops instead.
+     */
+    @Test
+    void stopFromAnInterruptedCallerStillDrainsQueuedWork() throws Exception {
+        final var registry = new MetricRegistry();
+        final var gate = new CountDownLatch(1);
+        final var entered = new CountDownLatch(1);
+        final var tally = new AtomicInteger();
+        final var parser = start(new StubParser("interrupted", registry, true, gated(entered, gate, tally)), 1, 4);
+
+        assertThat(parser.dispatch()).isNotNull();                       // taken by the gated worker
+        assertThat(entered.await(10, TimeUnit.SECONDS)).as("worker must pick up the first packet").isTrue();
+        parser.dispatch();
+        parser.dispatch();
+
+        final var interruptedAfterStop = new boolean[1];
+        final var stopper = new Thread(() -> {
+            Thread.currentThread().interrupt();
+            parser.stop();
+            interruptedAfterStop[0] = Thread.currentThread().isInterrupted();
+        }, "test-stopper");
+        try {
+            stopper.start();
+            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+            while (stopper.getState() != Thread.State.TIMED_WAITING && stopper.isAlive()
+                    && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
+            assertThat(stopper.isAlive()).as("stop() still waiting for the queued packets").isTrue();
+        } finally {
+            gate.countDown();
+            stopper.join(TimeUnit.SECONDS.toMillis(10));
+        }
+        this.started.remove(parser);
+
+        assertThat(stopper.isAlive()).as("stop() returned").isFalse();
+        assertThat(counter(registry, "interrupted", "dispatchDrops")).isZero();
+        assertThat(tally.get()).as("all three packets delivered").isEqualTo(3 * FLOWS_PER_PACKET);
+        assertThat(interruptedAfterStop[0]).as("caller's interrupt flag restored").isTrue();
+    }
+
+    /**
      * A dispatch the dispatcher swallowed still marks its records dispatched — which is what
      * {@code recordsDispatched} has always meant, and is not what this test used to say.
      *

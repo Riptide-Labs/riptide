@@ -6,6 +6,7 @@
 package org.riptide.flows.parser;
 
 import com.google.common.util.concurrent.RateLimiter;
+import com.google.common.util.concurrent.Uninterruptibles;
 import com.codahale.metrics.Counter;
 import com.codahale.metrics.Gauge;
 import com.codahale.metrics.Meter;
@@ -192,17 +193,13 @@ public abstract class ParserBase implements Parser {
     public void stop() {
         if (this.executor != null) {
             this.executor.shutdown();
-            try {
-                // Bounded wait for the in-flight dispatches to land in the repository (and its
-                // batch buffer) before the pipeline behind them is stopped and drained.
-                if (!this.executor.awaitTermination(5, SECONDS)) {
-                    log.warn("Parser {} executor did not terminate in time; cancelling remaining dispatches", this.name);
-                    // Abandoned non-daemon workers would wedge JVM exit.
-                    abandon(this.executor.shutdownNow());
-                }
-            } catch (final InterruptedException e) {
-                Thread.currentThread().interrupt();
-                log.warn("Interrupted while stopping parser {}; cancelling remaining dispatches", this.name);
+            // Bounded wait for the in-flight dispatches to land in the repository (and its
+            // batch buffer) before the pipeline behind them is stopped and drained.
+            // Uninterruptibly (#979): an interrupted caller would otherwise skip the wait and
+            // discard every queued record. The helper restores the caller's interrupt flag.
+            if (!Uninterruptibles.awaitTerminationUninterruptibly(this.executor, 5, SECONDS)) {
+                log.warn("Parser {} executor did not terminate in time; cancelling remaining dispatches", this.name);
+                // Abandoned non-daemon workers would wedge JVM exit.
                 abandon(this.executor.shutdownNow());
             }
             // deregistered AFTER the drain, not before: the wait above runs up to 5s and can end
