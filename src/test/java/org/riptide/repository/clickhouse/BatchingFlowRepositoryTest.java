@@ -789,6 +789,109 @@ class BatchingFlowRepositoryTest {
                 .isLessThan(3000);
     }
 
+    /**
+     * #979: a caller whose interrupt flag is already set must still get the grace wait. Before the
+     * fix every {@code join} threw at once, so stop() interrupted both flushers, failed their rows
+     * and stopped the delegate with both inserts still in flight.
+     */
+    @Test
+    void stopFromAnInterruptedCallerStillWaitsForTheFlushers() throws Exception {
+        this.delegate.block();
+        final var config = batchConfig(1, Duration.ofMillis(100));
+        config.setShutdownGracePeriod(Duration.ofSeconds(10));
+        config.setFlushers(2);
+        this.repository = repository(config);
+        this.repository.start();
+        this.repository.persist(flows(2));
+        await(Duration.ofSeconds(3), "both flushers inside an insert", () -> this.delegate.inFlight.get() == 2);
+
+        final var stopper = new Stopper(true);
+        stopper.start();
+        await(Duration.ofSeconds(3), "stop() waiting or finished", stopper::waitingOrDone);
+        Assertions.assertThat(stopper.isAlive())
+                .as("stop() still waiting while both inserts are blocked")
+                .isTrue();
+
+        this.delegate.unblock();
+        stopper.join(TimeUnit.SECONDS.toMillis(10));
+
+        Assertions.assertThat(stopper.isAlive()).as("stop() returned").isFalse();
+        Assertions.assertThat(this.delegate.inFlightAtStop).as("inserts in flight at delegate.stop()").isZero();
+        Assertions.assertThat(this.delegate.count()).as("both released rows delivered").isEqualTo(2);
+        Assertions.assertThat(failedRows()).isZero();
+        Assertions.assertThat(stopper.interruptedAfterStop).as("caller's interrupt flag restored").isTrue();
+    }
+
+    /** #979: an interrupt that arrives during the grace wait must not end it either. */
+    @Test
+    void anInterruptDuringTheGraceWaitDoesNotEndIt() throws Exception {
+        this.delegate.block();
+        final var config = batchConfig(1, Duration.ofMillis(100));
+        config.setShutdownGracePeriod(Duration.ofSeconds(10));
+        this.repository = repository(config);
+        this.repository.start();
+        this.repository.persist(flows(1));
+        await(Duration.ofSeconds(3), "the flusher inside an insert", () -> this.delegate.inFlight.get() == 1);
+
+        final var stopper = new Stopper(false);
+        stopper.start();
+        await(Duration.ofSeconds(3), "stop() waiting or finished", stopper::waitingOrDone);
+        stopper.interrupt();
+        // The fixed stop() absorbs the interrupt and parks in join again; the old one returns.
+        await(Duration.ofSeconds(3), "stop() back in its wait or finished",
+                () -> !stopper.isAlive() || !stopper.isInterrupted() && stopper.waitingOrDone());
+        Assertions.assertThat(stopper.isAlive())
+                .as("stop() still waiting after the interrupt")
+                .isTrue();
+
+        this.delegate.unblock();
+        stopper.join(TimeUnit.SECONDS.toMillis(10));
+
+        Assertions.assertThat(stopper.isAlive()).as("stop() returned").isFalse();
+        Assertions.assertThat(this.delegate.inFlightAtStop).as("inserts in flight at delegate.stop()").isZero();
+        Assertions.assertThat(this.delegate.count()).as("released row delivered").isEqualTo(1);
+        Assertions.assertThat(failedRows()).isZero();
+        Assertions.assertThat(stopper.interruptedAfterStop).as("caller's interrupt flag restored").isTrue();
+    }
+
+    /**
+     * #979: the caller's interrupt belongs to the caller, not to the sweep. The delegate's timed
+     * insert throws on a set flag, as an interruptible client call would, so a flag left set (or
+     * restored too early) during the sweep turns delivered rows into failed ones.
+     */
+    @Test
+    void theSweepRunsWithTheCallersInterruptCleared() throws Exception {
+        this.delegate.insertMillis = 1;
+        this.repository = repository(batchConfig(10, Duration.ofMillis(100)));
+        this.repository.persist(flows(3));
+
+        Thread.currentThread().interrupt();
+        final boolean interruptedAfterStop;
+        try {
+            this.repository.stop();
+        } finally {
+            // Clears the flag as it reads it, so the JUnit thread is not left interrupted.
+            interruptedAfterStop = Thread.interrupted();
+        }
+
+        Assertions.assertThat(this.delegate.count()).as("swept rows delivered").isEqualTo(3);
+        Assertions.assertThat(failedRows()).isZero();
+        Assertions.assertThat(interruptedAfterStop).as("caller's interrupt flag restored").isTrue();
+    }
+
+    /** #979: restoring the flag must not invent one for a caller that was never interrupted. */
+    @Test
+    void stopLeavesAnUninterruptedCallerUninterrupted() throws Exception {
+        this.repository = repository(batchConfig(1, Duration.ofMillis(100)));
+        this.repository.start();
+        this.repository.persist(flows(1));
+
+        this.repository.stop();
+
+        Assertions.assertThat(Thread.currentThread().isInterrupted()).isFalse();
+        Assertions.assertThat(this.delegate.count()).isEqualTo(1);
+    }
+
     @Test
     void fourFlushersDeliverEveryAcceptedRowExactlyOnce() throws Exception {
         final var config = batchConfig(50, Duration.ofMillis(50));
@@ -919,6 +1022,34 @@ class BatchingFlowRepositoryTest {
                 .toList();
     }
 
+    /** Calls stop() on its own thread, optionally pre-interrupted, and records the flag after. */
+    private final class Stopper extends Thread {
+
+        private final boolean interruptFirst;
+
+        private volatile boolean interruptedAfterStop;
+
+        Stopper(final boolean interruptFirst) {
+            super("test-stopper");
+            this.interruptFirst = interruptFirst;
+        }
+
+        @Override
+        public void run() {
+            if (this.interruptFirst) {
+                interrupt();
+            }
+            BatchingFlowRepositoryTest.this.repository.stop();
+            this.interruptedAfterStop = isInterrupted();
+        }
+
+        /** Parked in a timed join, or already gone. */
+        boolean waitingOrDone() {
+            final State state = getState();
+            return state == State.TIMED_WAITING || state == State.TERMINATED;
+        }
+    }
+
     /**
      * Deadline-based polling; fails the test on timeout. Never a bare sleep.
      *
@@ -965,6 +1096,9 @@ class BatchingFlowRepositoryTest {
         private final AtomicInteger inserts = new AtomicInteger();
 
         private final AtomicInteger stops = new AtomicInteger();
+
+        /** {@link #inFlight} when {@link #stop()} ran, or -1 before it ran. */
+        private volatile int inFlightAtStop = -1;
 
         private final AtomicInteger failuresRemaining = new AtomicInteger();
 
@@ -1097,6 +1231,7 @@ class BatchingFlowRepositoryTest {
 
         @Override
         public void stop() {
+            this.inFlightAtStop = this.inFlight.get();
             this.stops.incrementAndGet();
         }
     }
