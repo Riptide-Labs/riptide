@@ -18,6 +18,7 @@ nix run 'github:Riptide-Labs/riptide?ref=v%%VERSION%%' -- convert --help
 Expected output:
 
 ```text
+Picked up JAVA_TOOL_OPTIONS: -XX:+UseCompactObjectHeaders
 usage: riptide convert <legacy-config.yaml> [--out-config <path>] [--out-inventory <path>] [--force]
 
   Converts a 0.8 riptide.nodes configuration into 0.9 form. Emits two
@@ -28,10 +29,12 @@ usage: riptide convert <legacy-config.yaml> [--out-config <path>] [--out-invento
   goes to stderr so the output can be redirected.
 ```
 
+The first line is the JVM confirming the launcher's [JVM defaults](../reference/jvm-defaults.md), on stderr.
 Without a subcommand the launcher starts the collector, which reads `/etc/riptide/config.yaml`; there is no `--help` for the daemon itself.
 The ref is quoted because `?` is a glob character in zsh.
 
 `nix build 'github:Riptide-Labs/riptide?ref=v%%VERSION%%#default'` produces `result/bin/riptide`, a launcher that execs `java -jar` on the fat jar, and needs no local JDK.
+The launcher prefixes the [JVM defaults](../reference/jvm-defaults.md) to `JAVA_TOOL_OPTIONS`.
 
 ## Module options
 
@@ -97,6 +100,8 @@ JVM options go in `environmentFile` as **`JDK_JAVA_OPTIONS`**, which the `java` 
 CLICKHOUSE_PASSWORD=...
 JDK_JAVA_OPTIONS=-Xmx2g
 ```
+
+A flag in `JDK_JAVA_OPTIONS` overrides the launcher's [JVM defaults](../reference/jvm-defaults.md), for example `-XX:-UseCompactObjectHeaders`.
 
 `JAVA_OPTS` is silently discarded here.
 The launcher execs `java` directly with no shell to expand it, unlike the packaged unit, whose `ExecStart` does expand `$JAVA_OPTS`.

@@ -9,6 +9,11 @@ RUN apk add --no-cache tcpdump
 
 COPY target/riptide-flows-*.jar /app/riptide.jar
 
+# Default JVM flags (#924). JAVA_TOOL_OPTIONS is read before the command line and before
+# JDK_JAVA_OPTIONS, so an operator flag in JDK_JAVA_OPTIONS wins (-XX:-UseCompactObjectHeaders
+# turns this off) and overriding CMD keeps it. Setting JAVA_TOOL_OPTIONS replaces it.
+ENV JAVA_TOOL_OPTIONS="-XX:+UseCompactObjectHeaders"
+
 ENTRYPOINT [ "java" ]
 
 CMD [ "-jar", "/app/riptide.jar" ]

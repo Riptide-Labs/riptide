@@ -132,6 +132,7 @@ Removing the package stops and disables the unit.
 | --- | --- | --- |
 | `User`, `Group` | `riptide` | Runs unprivileged. |
 | `EnvironmentFile` | `-/etc/riptide/riptide.env` | Optional; read at every start. |
+| `Environment` | `JAVA_TOOL_OPTIONS=-XX:+UseCompactObjectHeaders` | The [JVM defaults](../reference/jvm-defaults.md). A flag in `JAVA_OPTS` or `JDK_JAVA_OPTIONS` overrides them. |
 | `ExecStart` | `/usr/bin/java $JAVA_OPTS -jar /usr/share/riptide/riptide.jar` | |
 | `Restart` | `on-failure` | |
 | `SuccessExitStatus` | `143` | The JVM exits 143 on SIGTERM after its shutdown hooks; systemd counts that as a clean stop. |
