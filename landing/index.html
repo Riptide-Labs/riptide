@@ -527,7 +527,7 @@ services.riptide = {
                             <p class="tab-instructions">Download the release jar and run it against a reachable ClickHouse (requires Java 25):</p>
                             <pre class="code-block"><code>curl -fsSLO https://github.com/Riptide-Labs/riptide/releases/download/v%%VERSION%%/riptide-flows-%%VERSION%%.jar
 export CLICKHOUSE_PASSWORD=riptide
-java -jar riptide-flows-%%VERSION%%.jar \
+java -XX:+UseCompactObjectHeaders -jar riptide-flows-%%VERSION%%.jar \
   --riptide.clickhouse.endpoint=http://localhost:8123 \
   --riptide.clickhouse.password=env://CLICKHOUSE_PASSWORD \
   --riptide.receivers.flows.type=multi \

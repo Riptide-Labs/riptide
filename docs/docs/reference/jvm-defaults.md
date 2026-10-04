@@ -14,7 +14,8 @@ description: The JVM flags every riptide launch path sets by default, where each
 
 `-XX:+UseCompactObjectHeaders` is JDK 25's compact object headers (JEP 519).
 Object headers shrink from 12 to 8 bytes on a 64-bit JVM.
-The plain jar sets nothing: `java -jar riptide-flows-*.jar` runs with the JDK's own defaults.
+The plain jar sets nothing by itself.
+To run it like the image and the packages, pass the flag on the command line, `java -XX:+UseCompactObjectHeaders -jar riptide-flows-*.jar`, as the [plain JAR guide](../guides/plain-jar.md) does.
 
 ## Where each launch path sets them
 
