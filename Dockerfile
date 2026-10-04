@@ -7,14 +7,35 @@ ARG DATE="1970-01-01T00:00:00Z"
 
 RUN apk add --no-cache tcpdump
 
-COPY target/riptide-flows-*.jar /app/riptide.jar
+# The extracted layout (#987): /app/riptide.jar is the thin jar, its Class-Path names /app/lib/*.jar.
+# The JDK AOT cache cannot hold classes Spring Boot's nested-jar loader reads from the fat jar, and
+# the thin jar keeps the path `-jar /app/riptide.jar` that a replaced CMD may already name.
+RUN --mount=type=bind,source=target,target=/build \
+    java -Djarmode=tools -jar /build/riptide-flows-*.jar extract --destination /app \
+    && mv /app/riptide-flows-*.jar /app/riptide.jar
 
 # Default JVM flags (#924). JAVA_TOOL_OPTIONS is read before the command line and before
 # JDK_JAVA_OPTIONS, so an operator flag in JDK_JAVA_OPTIONS wins (-XX:-UseCompactObjectHeaders
 # turns this off) and overriding CMD keeps it. Setting JAVA_TOOL_OPTIONS replaces it.
+# Set before training: the cache is only valid for the flags it was trained with.
 ENV JAVA_TOOL_OPTIONS="-XX:+UseCompactObjectHeaders"
 
-ENTRYPOINT [ "java" ]
+# Train the AOT cache (JEP 514/515) by replaying the flow fixtures through this stage's own JVM.
+# Needs a ClickHouse on the build host's network; see contrib/aot-train/train.sh. The fixtures and
+# the scripts are bind mounts, so none of them stay in the image.
+ARG TARGETARCH
+ARG AOT_TRAIN_CLICKHOUSE=http://127.0.0.1:18123
+ARG AOT_TRAIN_SECONDS=45
+RUN --mount=type=bind,source=src/test/resources/flows,target=/train/flows \
+    --mount=type=bind,source=contrib/aot-train,target=/train/bin \
+    TARGETARCH="${TARGETARCH}" AOT_TRAIN_CLICKHOUSE="${AOT_TRAIN_CLICKHOUSE}" \
+    AOT_TRAIN_SECONDS="${AOT_TRAIN_SECONDS}" sh /train/bin/train.sh \
+    && sh /train/bin/check.sh
+
+# The cache flag is on the entrypoint, not in JAVA_TOOL_OPTIONS, so only riptide's JVM uses it: a
+# `docker exec` jcmd or jfr has another class path and would print AOT errors. JDK_JAVA_OPTIONS=
+# -XX:AOTMode=off still turns it off; a flag that does not match training makes the JVM skip it.
+ENTRYPOINT [ "java", "-XX:AOTCache=/app/riptide.aot" ]
 
 CMD [ "-jar", "/app/riptide.jar" ]
 

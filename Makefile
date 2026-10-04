@@ -283,13 +283,32 @@ landing-serve:
 		echo "Serving landing page (version $${VERSION}) on http://localhost:8080"
 	@python3 -m http.server 8080 --directory build/landing
 
+# The ClickHouse the image build trains its AOT cache against (#987, contrib/aot-train/train.sh):
+# the e2e image's pinned server, on the host network so the build reaches it with --network host.
+AOT_CLICKHOUSE_IMAGE = $(shell awk '/^FROM/ {print $$2; exit}' .github/e2e-images/clickhouse.Dockerfile)
+
+.PHONY: aot-clickhouse-up
+aot-clickhouse-up: deps-oci
+	docker rm -f riptide-aot-clickhouse >/dev/null 2>&1 || true
+	docker run -d --name riptide-aot-clickhouse --network host -e CLICKHOUSE_SKIP_USER_SETUP=1 \
+      $(AOT_CLICKHOUSE_IMAGE) -- --http_port=18123 --tcp_port=19000 --interserver_http_port=0 \
+      --mysql_port=0 --postgresql_port=0 --listen_host=127.0.0.1 >/dev/null
+	@for i in $$(seq 1 60); do \
+	  docker run --rm --network host $(AOT_CLICKHOUSE_IMAGE) clickhouse-client --port 19000 -q "SELECT 1" >/dev/null 2>&1 && exit 0; sleep 1; \
+	done; echo "ClickHouse for AOT training did not start"; exit 1
+
+.PHONY: aot-clickhouse-down
+aot-clickhouse-down:
+	docker rm -f riptide-aot-clickhouse >/dev/null 2>&1 || true
+
 .PHONY: oci
 oci: deps-oci jar
-	docker build -t $(OCI_TAG) \
+	$(MAKE) aot-clickhouse-up
+	docker build --network host -t $(OCI_TAG) \
       --build-arg="VERSION=$(VERSION)" \
       --build-arg="GIT_SHORT_HASH"=$(GIT_SHORT_HASH) \
       --build-arg="DATE=$(DATE)" \
-      .
+      . ; status=$$?; $(MAKE) aot-clickhouse-down; exit $$status
 
 .PHONY: packages
 packages: deps-oci
