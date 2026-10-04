@@ -57,7 +57,11 @@ maven.buildMavenPackage {
     runHook preInstall
     mkdir -p $out/share/riptide
     cp target/riptide-flows-*.jar $out/share/riptide/riptide.jar
+    # Default JVM flags (#924) go into JAVA_TOOL_OPTIONS, not --add-flags: the launcher puts
+    # JDK_JAVA_OPTIONS (the module's documented channel) before the command line, so a flag in
+    # --add-flags would beat the operator's. JAVA_TOOL_OPTIONS is read first, so theirs wins.
     makeWrapper ${jdk25_headless}/bin/java $out/bin/riptide \
+      --prefix JAVA_TOOL_OPTIONS " " "-XX:+UseCompactObjectHeaders" \
       --add-flags "-jar $out/share/riptide/riptide.jar"
     runHook postInstall
   '';

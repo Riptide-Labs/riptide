@@ -65,11 +65,12 @@ On Debian, Ubuntu or RHEL-family hosts prefer the [DEB and RPM packages](linux-p
          port: 4739
    ```
 
-4. Run it:
+4. Run it with **`-XX:+UseCompactObjectHeaders`**, the flag the container image and the packages set by default, see [JVM defaults](../reference/jvm-defaults.md).
+   The jar also runs without it, with the JDK's own defaults.
 
    ```bash
    export CLICKHOUSE_PASSWORD=...
-   java -jar riptide-flows-%%VERSION%%.jar
+   java -XX:+UseCompactObjectHeaders -jar riptide-flows-%%VERSION%%.jar
    ```
 
    Expected output, among the startup log lines:

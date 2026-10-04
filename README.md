@@ -77,7 +77,7 @@ RIPTIDE_E2E_FULL_MODE=1 make e2e
 
 ```
 cd target
-java -jar riptide-flows-*.jar
+java -XX:+UseCompactObjectHeaders -jar riptide-flows-*.jar
 ```
 
 # 🕹️ Run with Docker Compose

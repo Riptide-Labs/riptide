@@ -11,6 +11,9 @@ After=network-online.target
 Type=simple
 User=riptide
 Group=riptide
+# Default JVM flags (#924), as JAVA_TOOL_OPTIONS like the image and the Nix launcher: the JVM reads
+# it before the command line, so a flag in $JAVA_OPTS or JDK_JAVA_OPTIONS wins over it.
+Environment=JAVA_TOOL_OPTIONS=-XX:+UseCompactObjectHeaders
 EnvironmentFile=-/etc/riptide/riptide.env
 ExecStart=/usr/bin/java $JAVA_OPTS -jar /usr/share/riptide/riptide.jar
 Restart=on-failure
