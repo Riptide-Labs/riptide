@@ -5,7 +5,6 @@
 
 package org.riptide.inventory;
 
-import inet.ipaddr.IPAddressString;
 import org.riptide.pipeline.ExporterIdentity;
 
 /**
@@ -41,8 +40,8 @@ public final class InventorySnapshot {
         this.exportersDeclared = exportersDeclared;
         // built once here rather than per call: a consumer that captures a view per
         // batch should pay a volatile read and nothing else
-        this.agentView = identity -> this.agents.lookup(probe(identity), domain(identity));
-        this.exporterView = identity -> this.exporters.lookup(probe(identity), domain(identity));
+        this.agentView = identity -> this.agents.lookup(identity.deviceAddress(), domain(identity));
+        this.exporterView = identity -> this.exporters.lookup(identity.deviceAddress(), domain(identity));
     }
 
     /** How many agent ranges this build carries. */
@@ -105,10 +104,6 @@ public final class InventorySnapshot {
     /** Capture once per unit of work; see {@link #agentView()}. */
     public ExporterView exporterView() {
         return this.exporterView;
-    }
-
-    private static IPAddressString probe(final ExporterIdentity identity) {
-        return new IPAddressString(identity.deviceAddress().getHostAddress());
     }
 
     private static long domain(final ExporterIdentity identity) {

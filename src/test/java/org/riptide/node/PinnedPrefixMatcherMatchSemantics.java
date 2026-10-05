@@ -30,11 +30,7 @@ final class PinnedPrefixMatcherMatchSemantics implements ExporterMatchSemantics 
             builder.add(entry.name(), new IPAddressString(entry.subnet()), entry.observationDomainPin(), entry.name());
         }
         final PinnedPrefixMatcher<String> matcher = builder.build();
-        return identity -> matcher.lookup(probe(identity), domain(identity));
-    }
-
-    private static IPAddressString probe(final ExporterIdentity identity) {
-        return new IPAddressString(deviceAddress(identity).getHostAddress());
+        return identity -> matcher.lookup(deviceAddress(identity), domain(identity));
     }
 
     private static InetAddress deviceAddress(final ExporterIdentity identity) {
