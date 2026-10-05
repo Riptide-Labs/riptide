@@ -93,8 +93,8 @@ class PinnedPrefixMatcherAddressFormTest {
         final Optional<String> textual = MATCHER.lookup(new IPAddressString(address.getHostAddress()), domain);
         final Optional<String> direct = MATCHER.lookup(address, domain);
 
-        assertThat(textual).isEqualTo(Optional.ofNullable(expected));
-        assertThat(direct).isEqualTo(textual);
+        assertThat(textual).as(name).isEqualTo(Optional.ofNullable(expected));
+        assertThat(direct).as(name).isEqualTo(textual);
     }
 
     @ParameterizedTest(name = "{0}")
@@ -104,17 +104,21 @@ class PinnedPrefixMatcherAddressFormTest {
         final Optional<String> textual = CIDR_ONLY.lookup(new IPAddressString(address.getHostAddress()), domain);
         final Optional<String> direct = CIDR_ONLY.lookup(address, domain);
 
-        assertThat(textual).isEqualTo(Optional.ofNullable(expected));
-        assertThat(direct).isEqualTo(textual);
+        assertThat(textual).as(name).isEqualTo(Optional.ofNullable(expected));
+        assertThat(direct).as(name).isEqualTo(textual);
+    }
+
+    /** The same addresses, without the expected entry an empty matcher never returns. */
+    static Stream<Arguments> addressesOnly() throws UnknownHostException {
+        return addresses().map(row -> Arguments.of(row.get()[0], row.get()[1], row.get()[2]));
     }
 
     @ParameterizedTest(name = "{0}")
-    @MethodSource("addresses")
-    void anEmptyMatcherResolvesNothing(final String name, final InetAddress address, final long domain,
-                                       final String expected) {
+    @MethodSource("addressesOnly")
+    void anEmptyMatcherResolvesNothing(final String name, final InetAddress address, final long domain) {
         final PinnedPrefixMatcher<String> empty = PinnedPrefixMatcher.<String>builder().build();
 
-        assertThat(empty.lookup(address, domain)).isEmpty();
-        assertThat(empty.lookup(new IPAddressString(address.getHostAddress()), domain)).isEmpty();
+        assertThat(empty.lookup(address, domain)).as(name).isEmpty();
+        assertThat(empty.lookup(new IPAddressString(address.getHostAddress()), domain)).as(name).isEmpty();
     }
 }

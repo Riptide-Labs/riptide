@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -163,7 +164,10 @@ public final class PinnedPrefixMatcher<T> {
             if (this.side.isEmpty()) {
                 return best;
             }
-            final IPAddressString probe = address != null ? address : parsed.toAddressString();
+            // never both null: the textual overload always passes its string, the direct
+            // overload always passes the address it built
+            final IPAddressString probe = address != null ? address
+                    : Objects.requireNonNull(parsed, "address or parsed").toAddressString();
             for (final SideEntry<T> entry : this.side) {
                 if (entry.rank() > bestRank && entry.subnet().contains(probe)) {
                     best = entry.named();
