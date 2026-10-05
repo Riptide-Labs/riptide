@@ -15,11 +15,13 @@ import org.riptide.pipeline.FlowException;
 import org.riptide.pipeline.FlowPersister;
 import org.riptide.pipeline.Pipeline;
 import org.riptide.repository.FlowRepository;
+import org.riptide.repository.UninsertableFlowsException;
 import org.riptide.pipeline.Source;
 
 import java.io.IOException;
 import java.net.InetAddress;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.RejectedExecutionException;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -183,6 +185,24 @@ class DaemonDispatcherTest {
      */
     private static final class DispatchProbeError extends Error {
         private static final long serialVersionUID = 1L;
+    }
+
+    /**
+     * With batching off the repository stores what it can and reports the rest (#985): the flows it
+     * left out are charged, not the packet.
+     */
+    @Test
+    void uninsertableFlowsAreChargedAloneNotThePacket() throws Exception {
+        final FlowRepository leavesTheFirstTwoOut = flows -> {
+            throw new UninsertableFlowsException(Map.of("no source", flows.subList(0, 2)));
+        };
+        final var dispatcher = Daemon.dispatcherFor(pipelineOver(leavesTheFirstTwoOut), this.metrics);
+        final List<Flow> flows = List.of(oneFlow(), oneFlow(), oneFlow(), oneFlow(), oneFlow(), oneFlow(), oneFlow());
+
+        assertThatCode(() -> dispatcher.accept(source(), flows)).doesNotThrowAnyException();
+        assertThat(dispatchErrors())
+                .as("five of the seven were stored")
+                .isEqualTo(2);
     }
 
     /** A successful dispatch charges nothing, so the counter above is not simply always rising. */

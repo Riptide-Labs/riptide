@@ -18,11 +18,13 @@ import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
 import org.riptide.profiling.ProfilingLabels;
 import org.riptide.repository.FlowRepository;
+import org.riptide.repository.UninsertableFlowsException;
 import org.riptide.telemetry.BusyTime;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -342,17 +344,55 @@ public class BatchingFlowRepository implements FlowRepository {
      * That is a second, independent statement and not a correction of the one above: the batch still
      * did not reach {@code flows}, {@code failedRows} still charges it in full, and whether the
      * server committed a prefix is exactly as unknown as before.
+     *
+     * <p>A batch the delegate inserted <em>except for</em> flows it could tell it cannot store is
+     * not a poison batch and takes none of the above: see {@link #keepUninsertable} (#985).
      */
     private void flush(final List<EnrichedFlow> batch) {
         this.batchSize.update(batch.size());
         try (var ctx = this.flushTimer.time()) {
             this.delegate.persist(batch);
+        } catch (final UninsertableFlowsException e) {
+            keepUninsertable(batch.size(), e);
         } catch (final FlowException | IOException | RuntimeException e) {
             this.failedRows.inc(batch.size());
             log.error("Failed to persist a batch of {} flows, flusher does not retry, some may be committed",
                     batch.size(), e);
             deadLetterOrCount(batch, e);
         }
+    }
+
+    /**
+     * Charge and keep the flows the delegate left out of an insert it otherwise made (#985).
+     *
+     * <p>Not a refused batch, and not accounted as one: the rest of the batch is in {@code flows},
+     * so {@code failedRows} is charged with the left-out flows alone and only they are dead-lettered.
+     * One dead-letter write per reason, because the {@code error} column is per write and a row's
+     * error must name that row's columns; a batch normally has one reason.
+     */
+    private void keepUninsertable(final int batchSize, final UninsertableFlowsException e) {
+        this.failedRows.inc(e.count());
+        if (log.isWarnEnabled()) {
+            log.warn("Left {} of a batch of {} flows out of the insert, the rest was inserted: {}."
+                    + " Sent by {}", e.count(), batchSize, e.getMessage(), exporters(e));
+        }
+        e.rejected().forEach((reason, flows) ->
+                deadLetterOrCount(flows, new UninsertableFlowsException(Map.of(reason, flows))));
+    }
+
+    /** How many exporters {@link #keepUninsertable}'s line names before it stops listing them. */
+    private static final int NAMED_EXPORTERS = 5;
+
+    private static String exporters(final UninsertableFlowsException e) {
+        final List<String> exporters = e.rejected().values().stream()
+                .flatMap(List::stream)
+                .map(EnrichedFlow::getExporterAddr)
+                .distinct()
+                .toList();
+        return exporters.size() <= NAMED_EXPORTERS
+                ? String.join(", ", exporters)
+                : String.join(", ", exporters.subList(0, NAMED_EXPORTERS))
+                        + " and " + (exporters.size() - NAMED_EXPORTERS) + " more";
     }
 
     /**
@@ -382,7 +422,7 @@ public class BatchingFlowRepository implements FlowRepository {
         try {
             this.delegate.deadLetter(batch, cause);
             this.deadLetteredRows.inc(batch.size());
-            log.warn("Kept all {} flows of the refused batch in the dead-letter table for an operator"
+            log.warn("Kept {} flows that were not inserted in the dead-letter table for an operator"
                     + " to inspect; riptide never replays them into flows by itself", batch.size());
         } catch (final Throwable e) {
             if (e instanceof InterruptedException) {
@@ -392,8 +432,8 @@ public class BatchingFlowRepository implements FlowRepository {
             // Deliberately says only what it knows. The rows did not reach the dead-letter table;
             // whether the server kept part of the original batch is exactly as unknowable as it was
             // one line above, and this message must not resolve it either way.
-            log.error("Could not keep the {} flows of a refused batch in the dead-letter table;"
-                    + " they are counted as failed and nothing else was written", batch.size(), e);
+            log.error("Could not keep the {} flows that were not inserted in the dead-letter table;"
+                    + " they are counted as failed and are kept nowhere", batch.size(), e);
         }
     }
 

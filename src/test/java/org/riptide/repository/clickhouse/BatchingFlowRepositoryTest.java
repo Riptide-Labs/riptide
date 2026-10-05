@@ -20,13 +20,17 @@ import org.riptide.pipeline.EnrichedFlow;
 import org.riptide.pipeline.FlowException;
 import org.riptide.repository.FlowRepository;
 import org.riptide.repository.TestRepository;
+import org.riptide.repository.UninsertableFlowsException;
 import org.riptide.telemetry.SecondsCounter;
 import org.riptide.testsupport.LogCapture;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -34,6 +38,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import java.util.stream.IntStream;
 
 /**
@@ -223,6 +228,132 @@ class BatchingFlowRepositoryTest {
         Assertions.assertThat(droppedRows())
                 .as("a refused insert is a failure, not a drop")
                 .isZero();
+    }
+
+    /**
+     * Flows the delegate left out of an insert it otherwise made cost themselves, not the batch
+     * (#985).
+     *
+     * <p>The counter is the property here: charging {@code failedRows} with the batch size is what
+     * the code did before, and it reads a stored row as a lost one.</p>
+     */
+    @Test
+    void uninsertableFlowsAreChargedAloneAndTheRestOfTheBatchIsStored() throws Exception {
+        flushOneBatchWithUninsertableFlows(5, ODD_PORTS_HAVE_NO_SOURCE);
+
+        // The same flusher takes a clean batch afterwards.
+        this.delegate.uninsertable = null;
+        this.repository.persist(flows(2));
+        await(Duration.ofSeconds(3), "flush after the partial batch", () -> this.delegate.count() == 3 + 2);
+
+        Assertions.assertThat(failedRows())
+                .as("ports 1 and 3 of five were left out; the other three are stored")
+                .isEqualTo(2);
+        Assertions.assertThat(droppedRows()).isZero();
+    }
+
+    /** Only the flows left out are kept as dead letters; a stored flow must not also be one (#985). */
+    @Test
+    void onlyTheUninsertableFlowsAreDeadLettered() throws Exception {
+        this.delegate.deadLettered = new CopyOnWriteArrayList<>();
+        flushOneBatchWithUninsertableFlows(5, ODD_PORTS_HAVE_NO_SOURCE);
+        this.repository.stop();
+
+        Assertions.assertThat(this.delegate.deadLettered)
+                .extracting(EnrichedFlow::getSrcPort)
+                .containsExactly(1, 3);
+        Assertions.assertThat(deadLetteredRows()).isEqualTo(2);
+        Assertions.assertThat(deadLetterFailedRows()).isZero();
+    }
+
+    /** A dead letter's error is its own flow's reason, not the batch's list of reasons (#985). */
+    @Test
+    void eachReasonIsDeadLetteredWithItsOwnCause() throws Exception {
+        this.delegate.deadLettered = new CopyOnWriteArrayList<>();
+        flushOneBatchWithUninsertableFlows(5, flow -> switch (flow.getSrcPort()) {
+            case 1 -> "no source";
+            case 3 -> "no destination";
+            default -> null;
+        });
+        this.repository.stop();
+
+        Assertions.assertThat(this.delegate.deadLetterCauses)
+                .containsExactlyInAnyOrder("1: no source", "3: no destination");
+    }
+
+    /** The shutdown sweep goes through the same handling as the flusher loop (#985). */
+    @Test
+    void theShutdownSweepChargesUninsertableFlowsAloneToo() throws Exception {
+        this.delegate.deadLettered = new CopyOnWriteArrayList<>();
+        this.delegate.uninsertable = ODD_PORTS_HAVE_NO_SOURCE;
+        // Never started: only stop()'s leftover sweep can deliver.
+        this.repository = repository(batchConfig(10, Duration.ofMillis(100)));
+        this.repository.persist(flows(5));
+
+        this.repository.stop();
+
+        Assertions.assertThat(this.delegate.count()).isEqualTo(3);
+        Assertions.assertThat(failedRows()).isEqualTo(2);
+        Assertions.assertThat(deadLetteredRows()).isEqualTo(2);
+    }
+
+    /**
+     * The operator is told once per batch how many flows were left out, why, and who sent them, and
+     * is not told the batch failed (#985).
+     */
+    @Test
+    void uninsertableFlowsAreReportedWithCountReasonAndExporterAndNotAsAFailedBatch() throws Exception {
+        this.delegate.deadLettered = new CopyOnWriteArrayList<>();
+        flushOneBatchWithUninsertableFlows(5, ODD_PORTS_HAVE_NO_SOURCE);
+        this.repository.stop();
+
+        Assertions.assertThat(this.logEvents.list)
+                .filteredOn(event -> event.getFormattedMessage().startsWith("Left "))
+                .singleElement()
+                .satisfies(event -> {
+                    Assertions.assertThat(event.getLevel()).isEqualTo(Level.WARN);
+                    Assertions.assertThat(event.getFormattedMessage())
+                            .contains("Left 2 of a batch of 5 flows")
+                            .contains("no source")
+                            .contains("Sent by 192.0.2.1, 192.0.2.3");
+                });
+        Assertions.assertThat(this.logEvents.list)
+                .extracting(ILoggingEvent::getFormattedMessage)
+                .as("the rest of the batch was inserted, so nothing may say the batch failed")
+                .noneMatch(message -> message.contains("Failed to persist a batch"));
+    }
+
+    /** Uninsertable flows that cannot be kept either are counted, and the rest is still stored. */
+    @Test
+    void uninsertableFlowsThatCannotBeKeptAreCountedAndTheRestIsStillStored() throws Exception {
+        // No dead-letter store at all: the un-migrated deployment.
+        flushOneBatchWithUninsertableFlows(5, ODD_PORTS_HAVE_NO_SOURCE);
+        this.repository.stop();
+
+        Assertions.assertThat(this.delegate.count()).isEqualTo(3);
+        Assertions.assertThat(failedRows()).isEqualTo(2);
+        Assertions.assertThat(deadLetterFailedRows()).isEqualTo(2);
+        Assertions.assertThat(deadLetteredRows()).isZero();
+    }
+
+    private static final Function<EnrichedFlow, String> ODD_PORTS_HAVE_NO_SOURCE =
+            flow -> flow.getSrcPort() % 2 == 1 ? "no source" : null;
+
+    /** One batch of {@code size} flows from exporters {@code 192.0.2.<port>}, flushed and waited for. */
+    private void flushOneBatchWithUninsertableFlows(final int size,
+            final Function<EnrichedFlow, String> uninsertable) throws Exception {
+        this.delegate.uninsertable = uninsertable;
+        this.repository = repository(batchConfig(size, Duration.ofMillis(600)));
+        final List<EnrichedFlow> batch = IntStream.range(0, size)
+                .mapToObj(i -> EnrichedFlow.builder().srcPort(i).exporterAddr("192.0.2." + i).build())
+                .toList();
+        final long stored = batch.stream().filter(flow -> uninsertable.apply(flow) == null).count();
+
+        this.repository.persist(batch);
+        this.repository.start();
+        await(Duration.ofSeconds(3), "the partial batch", () -> this.delegate.count() == stored
+                && failedRows() == size - stored
+                && deadLetteredRows() + deadLetterFailedRows() == size - stored);
     }
 
     /**
@@ -1118,6 +1249,15 @@ class BatchingFlowRepositoryTest {
         /** Set to refuse the dead-letter write, which is the un-migrated deployment's state. */
         private volatile boolean deadLetterFails;
 
+        /** One entry per accepted dead-letter write: its first flow's source port and its cause. */
+        private final List<String> deadLetterCauses = new CopyOnWriteArrayList<>();
+
+        /**
+         * Why a flow cannot be inserted, or null when it can. When set, an insert stores the flows
+         * it returns null for and then reports the others, as {@code ClickhouseRepository} does.
+         */
+        private volatile Function<EnrichedFlow, String> uninsertable;
+
         /**
          * Arms an {@link Error} rather than an exception. {@code flush()} catches only
          * {@code FlowException | IOException | RuntimeException}, so this is how a failure reaches
@@ -1207,7 +1347,25 @@ class BatchingFlowRepositoryTest {
             if (this.failuresRemaining.getAndUpdate(remaining -> remaining > 0 ? remaining - 1 : remaining) > 0) {
                 throw new FlowException("poison batch");
             }
-            this.store.persist(flows);
+            final var reasonOf = this.uninsertable;
+            if (reasonOf == null) {
+                this.store.persist(flows);
+                return;
+            }
+            final Map<String, List<EnrichedFlow>> rejected = new LinkedHashMap<>();
+            final List<EnrichedFlow> insertable = new ArrayList<>();
+            for (final EnrichedFlow flow : flows) {
+                final String reason = reasonOf.apply(flow);
+                if (reason == null) {
+                    insertable.add(flow);
+                } else {
+                    rejected.computeIfAbsent(reason, key -> new ArrayList<>()).add(flow);
+                }
+            }
+            this.store.persist(insertable);
+            if (!rejected.isEmpty()) {
+                throw new UninsertableFlowsException(rejected);
+            }
         }
 
         @Override
@@ -1227,6 +1385,7 @@ class BatchingFlowRepositoryTest {
                 throw new FlowException("no dead-letter store");
             }
             this.deadLettered.addAll(flows);
+            this.deadLetterCauses.add(flows.get(0).getSrcPort() + ": " + cause.getMessage());
         }
 
         @Override

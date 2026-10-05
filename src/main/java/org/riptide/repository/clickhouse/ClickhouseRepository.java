@@ -24,6 +24,7 @@ import com.clickhouse.client.api.metadata.TableSchema;
 import com.clickhouse.data.ClickHouseColumn;
 import com.clickhouse.data.ClickHouseFormat;
 import org.riptide.repository.FlowRepository;
+import org.riptide.repository.UninsertableFlowsException;
 import org.riptide.schema.FlowsSchema;
 import org.riptide.schema.RollupAvailability;
 import org.riptide.schema.RollupShapeCheck;
@@ -88,6 +89,9 @@ public class ClickhouseRepository implements FlowRepository {
      */
     private final StartupWait startupWait;
 
+    /** The columns a row must not leave null; read from the live table by {@link #start()}. */
+    private volatile RequiredColumns requiredColumns = RequiredColumns.NONE;
+
     @SneakyThrows
     public ClickhouseRepository(final FlowMapper flowMapper,
                                 final ClickhouseConfig config,
@@ -148,12 +152,44 @@ public class ClickhouseRepository implements FlowRepository {
         this.client = builder.build();
     }
 
+    /**
+     * Insert the flows that can be stored, then report the ones that cannot (#985).
+     *
+     * <p>The client serialises row by row and refuses the whole insert on the first null in a
+     * non-nullable column, so one such flow used to cost every flow sent with it. Each mapped row is
+     * therefore checked against {@link RequiredColumns} first and left out when it would be refused.
+     * The check runs before anything is sent rather than after a failure, so nothing is ever
+     * inserted twice.
+     *
+     * <p>Only that one refusal is anticipated. A row the server refuses, or one the client refuses
+     * for another reason, still fails the insert as a whole, and then the ordinary exception is what
+     * leaves here: the caller treats every flow of the call as not stored, the left-out ones
+     * included.
+     *
+     * @throws UninsertableFlowsException after the rest was inserted, carrying the flows left out
+     */
     @Override
     public void persist(final List<EnrichedFlow> flows) throws FlowException, IOException {
+        final RequiredColumns required = this.requiredColumns;
+        final List<ClickhouseFlow> rows = new ArrayList<>(flows.size());
+        Map<String, List<EnrichedFlow>> rejected = null;
+        for (final EnrichedFlow flow : flows) {
+            final ClickhouseFlow row = this.flowMapper.flow(flow);
+            final String missing = required.missing(row);
+            if (missing == null) {
+                rows.add(row);
+            } else {
+                if (rejected == null) {
+                    rejected = new LinkedHashMap<>();
+                }
+                rejected.computeIfAbsent(missing, reason -> new ArrayList<>()).add(flow);
+            }
+        }
         try {
             // Persist raw flows
-            this.client.insert("flows", flows.stream().map(this.flowMapper::flow).toList()).get();
-
+            if (!rows.isEmpty()) {
+                this.client.insert("flows", rows).get();
+            }
         } catch (final InterruptedException e) {
             // Restore the flag before wrapping: the batching flusher swallows FlowException (a
             // poison batch must not wedge it) and relies on the thread's interrupt status to
@@ -162,6 +198,9 @@ public class ClickhouseRepository implements FlowRepository {
             throw new FlowException(e);
         } catch (final ExecutionException e) {
             throw new FlowException(e);
+        }
+        if (rejected != null) {
+            throw new UninsertableFlowsException(rejected);
         }
     }
 
@@ -229,7 +268,7 @@ public class ClickhouseRepository implements FlowRepository {
      * <p>Under the opt-in coalesced path the client sends {@code wait_for_async_insert=0}, which
      * acknowledges on buffer append. Inherited here, the dead-letter insert would report success
      * before the server had accepted anything — so {@code deadLetteredRows} would count rows that may
-     * never land, and the flusher's "Kept all N flows" line would be a claim nothing checked. The
+     * never land, and the flusher's "Kept N flows" line would be a claim nothing checked. The
      * whole value of a dead letter is that it is <em>there</em>, so this insert waits.</p>
      *
      * <p>Costs nothing on the default path, which already sends {@code async_insert=0}.</p>
@@ -455,6 +494,9 @@ public class ClickhouseRepository implements FlowRepository {
         verifyRollupShapes(plannedRepairs, unrepaired, refused, posture);
 
         this.client.register(ClickhouseFlow.class, schema);
+        // From the same columns the client was just handed, so the check persist() makes and the
+        // serialiser it protects cannot disagree about what the table is (#985).
+        this.requiredColumns = RequiredColumns.of(schema.getColumns());
     }
 
     /** Which rollups this start may build a view for, and which it must decline for not trying. */
