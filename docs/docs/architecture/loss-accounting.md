@@ -54,19 +54,22 @@ The two `persister.batch.*` loss counters split on whether an insert was ever at
 | | `droppedRows` | `failedRows` |
 | --- | --- | --- |
 | when | no insert was attempted for the row | the flusher had the row and did not deliver it |
-| causes | queue full, repository stopping, producer interrupted, offered after the shutdown drain | insert refused, unexpected `Error` in the flusher, flusher interrupted mid-drain, shutdown grace expired |
-| exact? | yes, nothing was sent | no, in two of four cases |
+| causes | queue full, repository stopping, producer interrupted, offered after the shutdown drain | insert refused, flow left out of an insert, unexpected `Error` in the flusher, flusher interrupted mid-drain, shutdown grace expired |
+| exact? | yes, nothing was sent | no, in two of five cases |
 | what it means | ClickHouse cannot keep up, or riptide is shutting down | ClickHouse rejected the write, or riptide died holding it |
 
-`failedRows` covers four cases and is an upper bound on the loss in two of them.
+`failedRows` covers five cases and is an upper bound on the loss in two of them.
 A refused insert may still have committed a prefix of the batch, yet the whole batch is charged; see [Insert batching and dead letters](persistence.md).
 The same is true when an unexpected `Error` escapes the flusher, since it may escape with an insert already in flight.
-The other two are certain loss: rows the flusher still held when it was interrupted, and rows left over once the shutdown grace period expires.
+Two more are certain loss: rows the flusher still held when it was interrupted, and rows left over once the shutdown grace period expires.
 Neither ever reached the server.
+The fifth is exact as well.
+A flow with a null in a non-nullable column is left out of the insert before anything is sent, the rest of its batch is stored, and `failedRows` rises by the flows left out alone.
 
 A refused batch increments `failedRows`, not `droppedRows`; the drop counter is for queue-full and post-shutdown loss and stays at zero for that failure.
 Since dead-lettering, a refused batch's rows are also kept in `flows_dead_letter` and counted under `deadLetteredRows`, and that is a second statement rather than a correction: those rows are still not in `flows`.
-The other three `failedRows` cases are not dead-lettered, because none of them is a batch a reachable server refused.
+A flow left out of an insert is kept there too, alone, with an `error` that names the columns it left null.
+The other three `failedRows` cases are not dead-lettered, because in none of them did a reachable server just answer.
 How to read and replay them is in [Inspect and replay dead letters](../operations/dead-letters.md).
 
 `failedRows` is alertable on a sustained rate, as a signal and not as a loss figure.

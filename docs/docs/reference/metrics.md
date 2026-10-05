@@ -80,13 +80,13 @@ What each of these counts, and the delivery arithmetic between them, is in [Wher
 | **`parsers.<name>.recordsReceived`** | meter | records parsed | the base of the delivery arithmetic |
 | **`parsers.<name>.recordsScheduled`** | meter | records handed to the dispatch queue; excludes queue-full drops | not an alert |
 | **`parsers.<name>.recordsDispatched`** | meter | records the dispatcher returned from, errors included | not a delivery confirmation |
-| **`pipeline.dispatchErrors`** | counter | records lost because enrichment or persistence threw; with batching off, a refused insert counts here | `> 0` |
+| **`pipeline.dispatchErrors`** | counter | records lost because enrichment or persistence threw; with batching off, a refused insert counts here, and so do flows left out of an insert | `> 0` |
 | **`persister.batch.queueDepth`** | gauge | rows waiting to be inserted | over `persister.batch.queueCapacity`, approaching 1 |
 | **`persister.batch.queueCapacity`** | gauge | the queue's bound in rows, `riptide.clickhouse.batch.queue-capacity` | not an alert; the denominator for fill |
 | **`persister.batch.droppedRows`** | counter | rows the queue never handed to an insert: queue full, repository stopping, producer interrupted, offered after the shutdown drain; exact | sustained rate |
-| **`persister.batch.failedRows`** | counter | rows an insert was attempted for and lost; charges the whole batch, so an upper bound for a refused insert | sustained rate, as a signal and not a loss figure |
-| **`persister.batch.deadLetteredRows`** | counter | rows of a refused batch kept in `flows_dead_letter` instead of being dropped | not an alert; read with `failedRows` |
-| **`persister.batch.deadLetterFailedRows`** | counter | rows of a refused batch that could not be kept either | any movement |
+| **`persister.batch.failedRows`** | counter | rows an insert was attempted for and lost; charges the whole batch, so an upper bound for a refused insert; flows left out of an insert for a null in a non-nullable column are charged alone | sustained rate, as a signal and not a loss figure |
+| **`persister.batch.deadLetteredRows`** | counter | rows of a refused batch, or flows left out of an insert, kept in `flows_dead_letter` instead of being dropped | not an alert; read with `failedRows` |
+| **`persister.batch.deadLetterFailedRows`** | counter | rows of a refused batch, or flows left out of an insert, that could not be kept either | any movement |
 | **`persister.batch.flusherBusySeconds`** | counter | seconds the flushers spent inserting, from a non-empty drain to the insert completing, divided by their number (`persister.batch.flushers`), so `rate()` is their mean utilisation, 0 to 1; waiting for rows is not counted | `rate()` sustained above 0.8; the batch writer's early warning, since its queue covers only seconds of load; raise `riptide.clickhouse.batch.flushers`, but only once [ClickHouse's own insert latency and CPU read flat](../operations/monitoring.md#riptideworkersaturated) |
 | **`persister.batch.flushers`** | gauge | `riptide.clickhouse.batch.flushers`, the flushers inserting concurrently; total busy seconds are `flusherBusySeconds` × this | not an alert |
 | **`persister.batch.batchSize`** | histogram | rows per flushed batch | not an alert |

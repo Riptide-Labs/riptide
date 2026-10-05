@@ -16,8 +16,16 @@ If that write fails too, the rows are counted under `persister.batch.deadLetterF
 `persister.batch.failedRows` still charges the whole batch either way, because a dead-lettered row is still not in `flows`.
 On a refused batch, `failedRows − deadLetteredRows` is what riptide no longer has anywhere.
 
+One case is not a refused batch.
+A flow with a null in a non-nullable `flows` column, a NetFlow v9 record without a source address for example, would make the client refuse the whole insert.
+riptide leaves such a flow out before it sends anything, stores the rest of the batch, and logs `Left N of a batch of M flows out of the insert, the rest was inserted` with the reason and the exporters.
+Only the flows left out are counted in `failedRows` and written to `flows_dead_letter`.
+Their `error` names the columns, for example `null in non-nullable column(s) srcAddr, dstAddr`.
+
 With batching off there is no flusher, no batch and no dead letter: the rejection reaches the caller synchronously and the records are counted in `pipeline.dispatchErrors` instead.
 That path inserts one call at a time, so a poison row costs that call rather than up to `max-rows` flows.
+A flow left out for a null in a non-nullable column costs only itself there too.
+The rest of the call is stored, and `pipeline.dispatchErrors` rises by the number of flows left out.
 
 ## Check
 
@@ -38,6 +46,7 @@ persister_batch_failedRows 0.0
 | Finding | Likely cause | Go to |
 | --- | --- | --- |
 | `deadLetteredRows` moves with `failedRows` | a reachable server refused a batch: a poison row, a constraint violation, a quota | [Read the refused batches](#read-the-refused-batches) |
+| `deadLetteredRows` moves with `failedRows` and the log says `Left N of a batch of M flows out of the insert` | an exporter sends flows with a null in a non-nullable column; the rest of each batch was stored | [Read the refused batches](#read-the-refused-batches); the `error` names the columns and the log line names the exporters |
 | `deadLetterFailedRows` moves | the deployment was provisioned before the table existed, or the server has gone away | [Add the table](#add-the-dead-letter-table) |
 | `failedRows` moves, neither dead-letter counter does, and the log names a connection failure | a severed transport; the dead-letter write goes to the same server over the same client, so it fails with the insert | the rows are gone; see [Where flows can be lost](../architecture/loss-accounting.md) |
 

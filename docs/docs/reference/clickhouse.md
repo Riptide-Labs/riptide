@@ -210,7 +210,7 @@ A rollup gains dimensions in place, so the list is the server's, not this page's
 
 ## Dead-letter table
 
-`flows_dead_letter` holds the rows of a refused batch, see [Inspect and replay dead letters](../operations/dead-letters.md).
+`flows_dead_letter` holds the rows of a refused batch and the flows left out of an insert for a null in a non-nullable column, see [Inspect and replay dead letters](../operations/dead-letters.md).
 
 | Column | Type |
 | --- | --- |

@@ -25,6 +25,7 @@ import org.riptide.flows.parser.netflow5.Netflow5UdpParser;
 import org.riptide.flows.parser.sflow.SflowUdpParser;
 import org.riptide.flows.parser.netflow9.Netflow9UdpParser;
 import org.riptide.pipeline.FlowException;
+import org.riptide.repository.UninsertableFlowsException;
 import org.riptide.pipeline.Pipeline;
 import org.riptide.flows.parser.session.ExporterSamplingTable;
 import org.riptide.flows.parser.session.OptionListener;
@@ -230,6 +231,14 @@ public class Daemon implements ApplicationRunner {
         return (source, flows) -> {
             try {
                 pipeline.process(source, flows);
+            } catch (final UninsertableFlowsException e) {
+                // Batching is off and the repository stored the rest of this packet's flows (#985):
+                // charge the ones it left out, not the packet.
+                dispatchErrors.inc(e.count());
+                if (log.isWarnEnabled() && errorWarnLimiter.tryAcquire()) {
+                    log.warn("Dropping {} of {} flows from {}: {}", e.count(), flows.size(),
+                            source.identity(), e.getMessage());
+                }
             } catch (final FlowException | RuntimeException e) {
                 // RuntimeException too, not just FlowException: a shut-down SNMP pool throws
                 // RejectedExecutionException and any enricher can NPE. Those used to escape into
