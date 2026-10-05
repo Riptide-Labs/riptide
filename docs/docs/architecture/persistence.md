@@ -57,11 +57,17 @@ With `riptide.clickhouse.batch.flushers` above 1, that many flushers drain the s
 Up to `flushers × max-rows` rows are then in flight outside the queue, and each refused batch is charged and dead-lettered by the flusher that sent it, exactly as with one.
 Below saturation each flusher still times its own flush against `max-latency` independently, so the same window can produce up to that many smaller inserts instead of one.
 
+One poison row is caught before it costs a batch: a flow with a null in a non-nullable `flows` column, which the client would refuse the whole insert for.
+The repository checks each row against the live table's columns, leaves such a flow out, and inserts the rest.
+Only the flows left out are charged to `failedRows` and dead-lettered, and the flusher logs `Left N of a batch of M flows out of the insert, the rest was inserted` at WARN instead of the ERROR line.
+Every other refusal, by the server or by the client for another reason, still fails the batch as a whole.
+
 A persistent source of rejected rows, a mis-tenanted collector against the multi-tenant `CHECK` barrier for example, still costs proportionally more live data.
 Lowering `max-rows` limits the blast radius at the cost of throughput.
 If the dead-letter write fails as well, because the deployment was provisioned before that table existed or the server has gone away, the rows are counted under `deadLetterFailedRows` and the outcome is the older behaviour exactly.
 
 With `batch.enabled=false` there is no batch and no dead letter: the rejection reaches the caller synchronously and the records are counted in `pipeline.dispatchErrors`.
+A flow left out for a null in a non-nullable column is counted there alone, and the rest of its call is stored.
 
 "A whole batch" is only true while the whole batch lands in one committed block.
 ClickHouse cuts an incoming insert into blocks and may commit them separately.
@@ -71,7 +77,7 @@ When it does, a refused insert is not atomic: the blocks already accepted stay c
 The counters say this too.
 A refused batch increments `persister.batch.failedRows`, not `droppedRows`; the drop counter is for queue-full and post-shutdown loss.
 It increments `deadLetteredRows` as well, and that is a second statement rather than a correction: the rows are kept in `flows_dead_letter`, and they are still not in `flows`.
-`failedRows` charges the whole batch, so for a refused insert it is an upper bound on the loss: where a prefix did commit, those rows are both persisted and counted failed, and nothing reports the difference.
+`failedRows` charges the whole refused batch, so for a refused insert it is an upper bound on the loss: where a prefix did commit, those rows are both persisted and counted failed, and nothing reports the difference.
 Riptide cannot tell the two apart, so the flusher's line admits the possibility instead of claiming the batch was dropped.
 
 Riptide does not tell you whether your server is affected, and neither does this page.
@@ -153,5 +159,6 @@ Leave it on across a WAN, in cloud deployments where egress is billed, or whenev
 | Drop on a full queue instead of blocking | Loss is counted where it happens | Flows are lost under sustained ClickHouse lag |
 | One insert per batch | Throughput, see #382 | A poison row fails up to `max-rows` flows; the synchronous error signal |
 | Dead-letter the refused batch | Rows are inspectable and replayable | A second table to police; `failedRows` still charges the batch |
+| Leave a flow with a null in a non-nullable column out of the insert | It costs itself, not its batch | A reflective check per row; only that one refusal is anticipated |
 | Never replay a dead letter automatically | The rollups cannot be inflated by a re-insert | An operator has to decide |
 | Coalescing off under batching | Insert errors stay visible | Nothing measurable; batching already amortizes the insert |
