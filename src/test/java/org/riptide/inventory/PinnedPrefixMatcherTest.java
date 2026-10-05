@@ -8,6 +8,8 @@ package org.riptide.inventory;
 import inet.ipaddr.IPAddressString;
 import org.junit.jupiter.api.Test;
 
+import java.net.InetAddress;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -156,7 +158,8 @@ class PinnedPrefixMatcherTest {
                 .add("wildcard", prefix("10.0.0.0/24"), null, "wildcard")
                 .build();
 
-        assertThat(matcher.lookup(null, 0)).isEmpty();
+        assertThat(matcher.lookup((IPAddressString) null, 0)).isEmpty();
+        assertThat(matcher.lookup((InetAddress) null, 0)).isEmpty();
     }
 
     private static IPAddressString prefix(final String value) {

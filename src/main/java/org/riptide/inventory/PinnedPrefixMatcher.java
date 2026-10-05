@@ -7,13 +7,19 @@ package org.riptide.inventory;
 
 import inet.ipaddr.IPAddress;
 import inet.ipaddr.IPAddressString;
+import inet.ipaddr.ipv4.IPv4Address;
 import inet.ipaddr.ipv4.IPv4AddressAssociativeTrie;
+import inet.ipaddr.ipv6.IPv6Address;
 import inet.ipaddr.ipv6.IPv6AddressAssociativeTrie;
 
+import java.net.Inet4Address;
+import java.net.Inet6Address;
+import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -73,10 +79,41 @@ public final class PinnedPrefixMatcher<T> {
      *         under, matched against entry pins
      */
     public Optional<T> lookup(final IPAddressString address, final long domain) {
-        if (address == null) {
+        if (address == null || this.size == 0) {
             return Optional.empty();
         }
-        final IPAddress parsed = address.getAddress();
+        return lookup(address, address.getAddress(), domain);
+    }
+
+    /**
+     * Resolves the most specific matching entry for a device address, the form the flow
+     * path holds. Builds the {@link IPAddress} from the address bytes (keeping an IPv6 scope
+     * zone) and never formats it to text: parsing the text back, or building the
+     * {@link IPAddressString} form, each cost more than the rest of the lookup. The text form
+     * is built only for a pool with side entries, which are matched by
+     * {@link IPAddressString#contains}. An empty matcher allocates nothing.
+     *
+     * @param address the device address; {@code null} yields empty
+     * @param domain the observation domain (or sFlow sub-agent ID) the flow arrived
+     *         under, matched against entry pins
+     */
+    public Optional<T> lookup(final InetAddress address, final long domain) {
+        if (address == null || this.size == 0) {
+            return Optional.empty();
+        }
+        final IPAddress parsed;
+        if (address instanceof Inet4Address inet4) {
+            parsed = new IPv4Address(inet4);
+        } else if (address instanceof Inet6Address inet6) {
+            parsed = new IPv6Address(inet6);
+        } else {
+            throw new IllegalArgumentException("Neither IPv4 nor IPv6: " + address);
+        }
+        return lookup(null, parsed, domain);
+    }
+
+    /** {@code address} may be null when {@code parsed} is not; the side pool then builds it. */
+    private Optional<T> lookup(final IPAddressString address, final IPAddress parsed, final long domain) {
         if (!this.pinned.isEmpty()) {
             final Pool<T> pinnedPool = this.pinned.get(domain);
             if (pinnedPool != null) {
@@ -124,8 +161,15 @@ public final class PinnedPrefixMatcher<T> {
                             : this.v6.longestPrefixMatchNode(parsed.toIPv6());
             Named<T> best = trieNode != null ? trieNode.getValue() : null;
             int bestRank = trieNode != null ? rankOf(trieNode.getKey()) : Integer.MIN_VALUE;
+            if (this.side.isEmpty()) {
+                return best;
+            }
+            // never both null: the textual overload always passes its string, the direct
+            // overload always passes the address it built
+            final IPAddressString probe = address != null ? address
+                    : Objects.requireNonNull(parsed, "address or parsed").toAddressString();
             for (final SideEntry<T> entry : this.side) {
-                if (entry.rank() > bestRank && entry.subnet().contains(address)) {
+                if (entry.rank() > bestRank && entry.subnet().contains(probe)) {
                     best = entry.named();
                     bestRank = entry.rank();
                 }
