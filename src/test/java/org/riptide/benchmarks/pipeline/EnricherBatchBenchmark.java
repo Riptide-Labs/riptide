@@ -29,9 +29,11 @@ import java.util.concurrent.TimeUnit;
 /**
  * What one batch through {@code Enricher.Single.enrich(Source, List)} costs when every per-flow
  * result is already complete, as it is for all five {@code Single} enrichers. The per-flow method
- * does nothing but return its future, so the figure is the batch plumbing alone. 19 flows is the
- * flow-knee lab's batch size (18.7 flows per packet at 11,000 devices). Run with {@code -prof gc}
- * for B/op.
+ * does nothing but return a fresh {@code completedFuture(null)}, the shape every enricher had
+ * before #991, so the same source runs on both arms of an A/B. That per-flow future is part of the
+ * figure only while the batch method stores it: once the loop stops keeping completed futures, the
+ * JIT scalar-replaces it and B/op reads about zero. 19 flows is the flow-knee lab's batch size
+ * (18.7 flows per packet at 11,000 devices). Run with {@code -prof gc} for B/op.
  */
 @Fork(value = 1)
 @Warmup(iterations = 2)
