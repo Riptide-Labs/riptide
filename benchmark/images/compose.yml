@@ -12,7 +12,7 @@
 # none of them (built-in datasources only, readiness checked from the VM).
 services:
   grafana:
-    image: docker.io/grafana/grafana:13.2.2-distroless-slim@sha256:e71b3b20cbf56b628adce3224a51511f3989871e50074c7a0b9c5d8cbac09263
+    image: docker.io/grafana/grafana:13.2.3-distroless-slim@sha256:7f954442e535c572ed4ce44be3a9c477e57e2ab76e4f20b6afed77bd104dbc4e
   prometheus:
     image: docker.io/prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
   pyroscope:
