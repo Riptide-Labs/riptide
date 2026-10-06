@@ -143,7 +143,7 @@ public class GeoIpEnricher extends Enricher.Single {
             enrichSide(snap, flow.getDstAddr(), flow::setDstCountry, flow::setDstCity,
                     flow::getDstAs, flow::setDstAs, flow::getDstAsOrg, flow::setDstAsOrg);
         }
-        return CompletableFuture.completedFuture(null);
+        return done();
     }
 
     private void enrichSide(final GeoIpSnapshot snap, final InetAddress address,

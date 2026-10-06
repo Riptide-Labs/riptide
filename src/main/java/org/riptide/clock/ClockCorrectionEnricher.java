@@ -34,7 +34,7 @@ public class ClockCorrectionEnricher extends Enricher.Single {
     @Override
     protected CompletableFuture<Void> enrich(final Source source, final EnrichedFlow flow) {
         if (flow.getFirstSwitched() == null || flow.getLastSwitched() == null) {
-            return CompletableFuture.completedFuture(null);
+            return done();
         }
 
         if (flow.getFirstSwitched().isAfter(flow.getLastSwitched())) {
@@ -63,6 +63,6 @@ public class ClockCorrectionEnricher extends Enricher.Single {
             }
         }
 
-        return CompletableFuture.completedFuture(null);
+        return done();
     }
 }
