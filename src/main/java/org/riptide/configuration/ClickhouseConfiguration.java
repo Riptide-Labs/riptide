@@ -59,7 +59,7 @@ public class ClickhouseConfiguration {
                                                final ClickhouseConfig config,
                                                final SecretResolvers secretResolvers,
                                                final MetricRegistry metricRegistry) {
-        final var repository = new ClickhouseRepository(flowMapper, config, secretResolvers);
+        final var repository = new ClickhouseRepository(flowMapper, config, secretResolvers, metricRegistry);
         // The batching decorator is the default write path; disabling it falls back to the raw
         // per-record repository (one insert per persist call).
         if (config.getBatch().isEnabled()) {
