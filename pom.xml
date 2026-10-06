@@ -33,7 +33,7 @@
         <caffeine.version>3.3.0</caffeine.version>
         <common-csv.version>1.14.1</common-csv.version>
         <dnsjava.version>3.6.5</dnsjava.version>
-        <guava.version>33.7.1-jre</guava.version>
+        <guava.version>33.7.2-jre</guava.version>
         <ipaddress.version>5.6.2</ipaddress.version>
         <!-- Overrides Spring Boot's managed jackson-2-bom.version (2.21.4), which governs every
              Jackson 2 module. 2.22.1 patches GHSA-5jmj-h7xm-6q6v (Scorecard/osv-scanner finding).
