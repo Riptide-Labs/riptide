@@ -39,7 +39,7 @@ public class LocalityEnricher extends Enricher.Single {
             flow.setFlowLocality(Flow.Locality.PRIVATE);
         }
 
-        return CompletableFuture.completedFuture(null);
+        return done();
     }
 
     private static boolean isPrivateAddress(final InetAddress inetAddress) {

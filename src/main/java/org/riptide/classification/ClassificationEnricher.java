@@ -66,7 +66,7 @@ public class ClassificationEnricher extends Enricher.Single {
                 flow.setApplication(name);
                 flow.setApplicationSource(ApplicationSource.Exporter);
                 flow.setApplicationDescription(named.map(ApplicationInfo::description).orElse(null));
-                return CompletableFuture.completedFuture(null);
+                return done();
             }
             if (name == null) {
                 this.unresolved.mark();
@@ -91,6 +91,6 @@ public class ClassificationEnricher extends Enricher.Single {
             flow.setApplicationSource(ApplicationSource.None);
         }
 
-        return CompletableFuture.completedFuture(null);
+        return done();
     }
 }

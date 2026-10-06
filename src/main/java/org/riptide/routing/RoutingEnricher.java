@@ -39,7 +39,7 @@ public class RoutingEnricher extends Enricher.Single {
             enrichSide(flow.getSrcAddr(), flow::getSrcAs, flow::setSrcAs, flow::getSrcAsOrg, flow::setSrcAsOrg);
             enrichSide(flow.getDstAddr(), flow::getDstAs, flow::setDstAs, flow::getDstAsOrg, flow::setDstAsOrg);
         }
-        return CompletableFuture.completedFuture(null);
+        return done();
     }
 
     private void enrichSide(final InetAddress address, final Supplier<Long> getAs,
