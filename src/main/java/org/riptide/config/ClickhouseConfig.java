@@ -38,6 +38,20 @@ public final class ClickhouseConfig {
         private boolean manageSchema = true;
 
         /**
+         * When {@code true}, every stored flow is also written to the dashboard-first
+         * {@code traffic} table, whose 1-minute rollups ({@code traffic_by_*_1m}) are fed from it
+         * ({@link org.riptide.schema.TrafficSchema}). Off by default: it is a second insert per
+         * batch, and {@code flows} stays the table the MCP server and the shipped dashboards read.
+         *
+         * <p>Read by the {@code ClickhouseRepository} constructor, which refuses it in validate mode
+         * ({@code manage-schema: false}) because {@code riptide onboard} does not yet grant or
+         * row-policy the tables; by {@code ClickhouseRepository#start}, which creates them; and by
+         * {@code ClickhouseRepository#persist}, which writes the rows. Proven by
+         * {@code TrafficTableIT}.
+         */
+        private boolean trafficTable;
+
+        /**
          * How long startup waits for a ClickHouse endpoint that is not answering yet (#833). Read by
          * {@code ClickhouseRepository.start()}, which probes the endpoint every 2 s within this
          * window and proceeds on the first answer; past it, startup fails naming the endpoint and

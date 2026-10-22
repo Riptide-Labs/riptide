@@ -10,6 +10,8 @@ import com.clickhouse.client.api.ServerException;
 import com.clickhouse.client.api.insert.InsertSettings;
 import com.clickhouse.client.api.query.GenericRecord;
 import com.clickhouse.client.api.query.QueryResponse;
+import com.codahale.metrics.Counter;
+import com.codahale.metrics.MetricRegistry;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.mapstruct.BeanMapping;
@@ -28,6 +30,7 @@ import org.riptide.repository.UninsertableFlowsException;
 import org.riptide.schema.FlowsSchema;
 import org.riptide.schema.RollupAvailability;
 import org.riptide.schema.RollupShapeCheck;
+import org.riptide.schema.TrafficSchema;
 import org.riptide.secrets.SecretResolvers;
 
 import java.io.ByteArrayInputStream;
@@ -92,14 +95,40 @@ public class ClickhouseRepository implements FlowRepository {
     /** The columns a row must not leave null; read from the live table by {@link #start()}. */
     private volatile RequiredColumns requiredColumns = RequiredColumns.NONE;
 
-    @SneakyThrows
+    /**
+     * Flows stored in {@code flows} that did not reach {@code traffic}: the second insert failed,
+     * or the flow carried no time to file a row under. See {@link #persistTraffic}.
+     */
+    private final Counter trafficFailedRows;
+
     public ClickhouseRepository(final FlowMapper flowMapper,
                                 final ClickhouseConfig config,
                                 final SecretResolvers secretResolvers) {
+        this(flowMapper, config, secretResolvers, new MetricRegistry());
+    }
+
+    @SneakyThrows
+    public ClickhouseRepository(final FlowMapper flowMapper,
+                                final ClickhouseConfig config,
+                                final SecretResolvers secretResolvers,
+                                final MetricRegistry metricRegistry) {
         this.flowMapper = Objects.requireNonNull(flowMapper);
         this.config = Objects.requireNonNull(config);
+        this.trafficFailedRows = Objects.requireNonNull(metricRegistry, "metricRegistry")
+                .counter(MetricRegistry.name("persister", "traffic", "failedRows"));
         Objects.requireNonNull(secretResolvers, "secretResolvers");
         this.startupWait = new StartupWait(config.getStartupWait());
+        if (config.isTrafficTable() && !config.isManageSchema()) {
+            // Refused rather than skipped: the operator asked for the table, and riptide onboard
+            // neither creates it nor grants it nor gives it the per-tenant row policies every other
+            // riptide table has. Tenant rows in a table no row policy covers would let any reader
+            // see every tenant's traffic.
+            throw new IllegalStateException("riptide.clickhouse.traffic-table=true needs"
+                    + " riptide.clickhouse.manage-schema=true: 'riptide onboard' does not yet create,"
+                    + " grant or row-policy the " + TrafficSchema.TRAFFIC + " tables, so in a provisioned"
+                    + " deployment they would hold every tenant's rows with no row policy. Turn"
+                    + " traffic-table off, or let riptide manage the schema.");
+        }
 
         // Resolve the credential SecretRefs once, before the client is built. resolve() is
         // null-safe; an unset ref falls back to the ClickHouse default user / empty password —
@@ -172,12 +201,14 @@ public class ClickhouseRepository implements FlowRepository {
     public void persist(final List<EnrichedFlow> flows) throws FlowException, IOException {
         final RequiredColumns required = this.requiredColumns;
         final List<ClickhouseFlow> rows = new ArrayList<>(flows.size());
+        final List<EnrichedFlow> stored = new ArrayList<>(flows.size());
         Map<String, List<EnrichedFlow>> rejected = null;
         for (final EnrichedFlow flow : flows) {
             final ClickhouseFlow row = this.flowMapper.flow(flow);
             final String missing = required.missing(row);
             if (missing == null) {
                 rows.add(row);
+                stored.add(flow);
             } else {
                 if (rejected == null) {
                     rejected = new LinkedHashMap<>();
@@ -199,8 +230,50 @@ public class ClickhouseRepository implements FlowRepository {
         } catch (final ExecutionException e) {
             throw new FlowException(e);
         }
+        if (this.config.isTrafficTable() && !stored.isEmpty()) {
+            persistTraffic(stored);
+        }
         if (rejected != null) {
             throw new UninsertableFlowsException(rejected);
+        }
+    }
+
+    /**
+     * Write the flows {@code flows} just took to {@code traffic} as well.
+     *
+     * <p><b>Best effort, deliberately.</b> By the time this runs the flows are committed to
+     * {@code flows}, so any exception out of here would make the caller treat them as not stored:
+     * the batching flusher would dead-letter rows that are already in the system of record, and a
+     * replay would store them twice. A failure is therefore logged and counted
+     * ({@code persister.traffic.failedRows}) and never thrown. {@code flows} stays the record
+     * while {@code traffic} is opt-in; a collector that writes only {@code traffic} would have to
+     * give it the dead-letter path {@code flows} has.</p>
+     */
+    private void persistTraffic(final List<EnrichedFlow> flows) {
+        final List<TrafficRow> rows = new ArrayList<>(flows.size());
+        for (final EnrichedFlow flow : flows) {
+            final TrafficRow row = TrafficMapper.row(flow);
+            if (row != null) {
+                rows.add(row);
+            }
+        }
+        final int unfiled = flows.size() - rows.size();
+        if (unfiled > 0) {
+            this.trafficFailedRows.inc(unfiled);
+        }
+        if (rows.isEmpty()) {
+            return;
+        }
+        try {
+            this.client.insert(TrafficSchema.TRAFFIC, rows).get();
+        } catch (final InterruptedException e) {
+            // Restored for the reason persist() restores it: the flusher reads it to see a drain.
+            Thread.currentThread().interrupt();
+            this.trafficFailedRows.inc(rows.size());
+        } catch (final ExecutionException | RuntimeException e) {
+            this.trafficFailedRows.inc(rows.size());
+            log.warn("{} flows were stored in flows but not in {}: {}", rows.size(), TrafficSchema.TRAFFIC,
+                    e.getMessage());
         }
     }
 
@@ -492,6 +565,10 @@ public class ClickhouseRepository implements FlowRepository {
         // what a fresh or upgraded install's shape comes from. Never fails startup — see
         // verifyRollupShapes.
         verifyRollupShapes(plannedRepairs, unrepaired, refused, posture);
+
+        if (this.config.isTrafficTable()) {
+            startTraffic();
+        }
 
         this.client.register(ClickhouseFlow.class, schema);
         // From the same columns the client was just handed, so the check persist() makes and the
@@ -1375,6 +1452,41 @@ public class ClickhouseRepository implements FlowRepository {
         return new TableSchema("flows", null, this.config.getDatabase(), columns);
     }
 
+    /**
+     * Create the {@code traffic} table and its rollups, check the table carries every column this
+     * version writes, and register the row type for it. Manage mode only; the constructor refuses
+     * the switch in validate mode.
+     *
+     * <p>Unlike the {@code flows} rollups, a failure here stops the start. Nothing depends on these
+     * tables but the operator who switched them on, and a collector that silently writes nothing to
+     * them is the outcome they would least expect.</p>
+     */
+    private void startTraffic() throws Exception {
+        final String database = this.config.getDatabase();
+        this.client.execute(TrafficSchema.createTrafficTable(database, FlowsSchema.DEFAULT_TTL_DAYS)).get();
+        // Checked before the rollups, whose views select from these columns: against a stale table
+        // the view's CREATE would fail first, naming a column and not the reason.
+        final List<ClickHouseColumn> columns = readColumns(TrafficSchema.TRAFFIC);
+        final Set<String> present = columns.stream()
+                .map(ClickHouseColumn::getColumnName)
+                .collect(Collectors.toSet());
+        final List<String> missing = TrafficSchema.trafficColumns().keySet().stream()
+                .filter(column -> !present.contains(column))
+                .toList();
+        if (!missing.isEmpty()) {
+            throw new IllegalStateException(TrafficSchema.TRAFFIC + " table in database '" + database
+                    + "' is missing the column(s) " + missing + " that this version writes. It predates"
+                    + " them or was created by hand; riptide performs no migration of it.");
+        }
+        for (final String ddl : TrafficSchema.createRollupTables(database, FlowsSchema.DEFAULT_ROLLUP_TTL_DAYS)) {
+            this.client.execute(ddl).get();
+        }
+        for (final String ddl : TrafficSchema.createRollupViews(database)) {
+            this.client.execute(ddl).get();
+        }
+        this.client.register(TrafficRow.class, new TableSchema(TrafficSchema.TRAFFIC, null, database, columns));
+    }
+
     /** The one message an operator whose flows table is not there gets, from either branch above. */
     private String flowsTableNotFound() {
         return "flows table not found in database '" + this.config.getDatabase()
@@ -1416,11 +1528,16 @@ public class ClickhouseRepository implements FlowRepository {
      * one column over.</p>
      */
     private List<ClickHouseColumn> readFlowsColumns() throws Exception {
+        return readColumns(FlowsSchema.FLOWS);
+    }
+
+    /** {@link #readFlowsColumns()} for any table of the configured database. */
+    private List<ClickHouseColumn> readColumns(final String table) throws Exception {
         final List<ClickHouseColumn> columns = new ArrayList<>();
         final var pending = this.client.queryRecords(
                 "SELECT name, type, default_kind, default_expression FROM system.columns"
                         + " WHERE database = " + quote(this.config.getDatabase())
-                        + " AND table = 'flows' ORDER BY position");
+                        + " AND table = " + quote(table) + " ORDER BY position");
         try (var records = pending.get(STARTUP_READ_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
             records.forEach(record -> columns.add(column(record)));
         } catch (final TimeoutException | InterruptedException e) {
