@@ -18,6 +18,6 @@ services:
   pyroscope:
     image: docker.io/grafana/pyroscope:2.4.0@sha256:b7e62699a27463aa3533efe3f88c320da594da495731fd6eabca6f44f92cdd7b
   victoriametrics:
-    image: docker.io/victoriametrics/victoria-metrics:v1.154.0@sha256:4bd592341587d669b7f57d54bbb82bd21ac8675f4e24234b7703a7c0f85197d8
+    image: docker.io/victoriametrics/victoria-metrics:v1.154.1@sha256:c7884f32920dd45a9d86542a717227e63af03e060e53bbf8031e6e6fd0e1e05d
   nl6:
     image: ghcr.io/labmonkeys-space/nl6:v0.36.0@sha256:407b9629ce810378c36fb20ebadd3cc5fa6433ab78dfe27ae39c5ef6f76e5e78
