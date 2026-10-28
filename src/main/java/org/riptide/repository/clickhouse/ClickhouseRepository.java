@@ -427,6 +427,8 @@ public class ClickhouseRepository implements FlowRepository {
             this.client.execute(FlowsSchema.createSamplesView(this.config.getDatabase())).get();
             // Additive upgrades manage mode owns: a pre-existing table that IF NOT EXISTS no-oped
             // over gains the additive columns in place (no data loss); on a fresh table these no-op.
+            // The codecs and indices follow the shape check below, not here: they name columns a
+            // stale table may lack, and the check is what names such a column for the operator.
             for (final String ddl : FlowsSchema.addAdditiveColumns(this.config.getDatabase())) {
                 this.client.execute(ddl).get();
             }
@@ -437,6 +439,15 @@ public class ClickhouseRepository implements FlowRepository {
         // EXISTS no-oped over; in validate mode it catches an absent or mis-provisioned schema —
         // before the first insert would fail with an opaque error. Reuses the schema for register.
         final TableSchema schema = checkSchema();
+
+        if (this.config.isManageSchema()) {
+            // The table has every column, so the storage upgrades can name them: column codecs
+            // and skipping indices, in place, without a row being touched. Idempotent on a fresh
+            // or already-upgraded table.
+            for (final String ddl : FlowsSchema.upgradeFlowsStorage(this.config.getDatabase())) {
+                this.client.execute(ddl).get();
+            }
+        }
 
         // Rollups whose repair did not complete on this start. Every statement below is guarded, so
         // one rollup's failure cannot stop the others or stop ingestion — but a rollup left

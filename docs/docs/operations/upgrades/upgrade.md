@@ -68,11 +68,13 @@ classification_rules_rejected 0.0
 
 In manage mode (`riptide.clickhouse.manage-schema=true`, the default) riptide ensures its `flows` table with `CREATE TABLE IF NOT EXISTS` at startup, so an existing table is not replaced and flow data survives a restart.
 A new column is added in place with `ALTER TABLE … ADD COLUMN IF NOT EXISTS`.
-In validate mode (`manage-schema=false`) the collector issues no DDL: the startup column check fails fast naming the missing column, and re-running `riptide onboard` adds it.
+A column compression codec is applied in place with `ALTER TABLE … MODIFY COLUMN IF EXISTS … CODEC(…)`, a metadata change: parts already on disk keep their old codec until a merge rewrites them, and new parts use the new one.
+A data skipping index is added in place with `ALTER TABLE … ADD INDEX IF NOT EXISTS`; it covers parts written afterwards and the parts a merge rewrites.
+In validate mode (`manage-schema=false`) the collector issues no DDL: the startup column check fails fast naming the missing column, and re-running `riptide onboard` emits the same column, codec and index statements.
 
 :::warning[Non-additive schema changes are not migrated]
 
-Only additive changes are applied in place.
+Only additive changes (columns, codecs, indices) are applied in place.
 Any other schema change between riptide versions is not applied: the startup column check fails fast when the on-disk schema is stale, and the operator must drop the `flows` table (riptide recreates it in manage mode) or re-provision it in validate mode.
 Plan retention accordingly if a release requires dropping the table.
 

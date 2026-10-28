@@ -74,7 +74,7 @@ class FlowsSchemaTest {
         assertThat(FlowsSchema.additiveColumnNames()).contains("samplingProvenance");
         assertThat(create).contains("samplingProvenance LowCardinality(String)");
         assertThat(alters).contains(
-                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS samplingProvenance LowCardinality(String)");
+                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS samplingProvenance LowCardinality(String) CODEC(ZSTD(1))");
 
         // Every additive column is emitted by both paths, in the same relative order.
         final var declarationOrder = FlowsSchema.additiveColumnNames().stream()
@@ -1222,7 +1222,7 @@ class FlowsSchemaTest {
         assertThat(FlowsSchema.additiveColumnNames()).contains("applicationId");
         assertThat(FlowsSchema.createFlowsTable("riptide")).contains("applicationId UInt32");
         assertThat(FlowsSchema.addAdditiveColumns("riptide")).contains(
-                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS applicationId UInt32");
+                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS applicationId UInt32 CODEC(T64, ZSTD(1))");
     }
 
     @Test
@@ -1230,7 +1230,7 @@ class FlowsSchemaTest {
         assertThat(FlowsSchema.additiveColumnNames()).contains("applicationSource");
         assertThat(FlowsSchema.createFlowsTable("riptide")).contains("applicationSource LowCardinality(String)");
         assertThat(FlowsSchema.addAdditiveColumns("riptide")).contains(
-                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS applicationSource LowCardinality(String)");
+                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS applicationSource LowCardinality(String) CODEC(ZSTD(1))");
     }
 
     /** Exporter-supplied text with no cap and no dictionary: a plain String, never a dimension. */
@@ -1239,7 +1239,7 @@ class FlowsSchemaTest {
         assertThat(FlowsSchema.additiveColumnNames()).contains("httpHost");
         assertThat(FlowsSchema.createFlowsTable("riptide")).contains("httpHost String");
         assertThat(FlowsSchema.addAdditiveColumns("riptide")).contains(
-                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS httpHost String");
+                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS httpHost String CODEC(ZSTD(1))");
     }
 
     @Test
@@ -1247,7 +1247,7 @@ class FlowsSchemaTest {
         assertThat(FlowsSchema.additiveColumnNames()).contains("httpUri");
         assertThat(FlowsSchema.createFlowsTable("riptide")).contains("httpUri String");
         assertThat(FlowsSchema.addAdditiveColumns("riptide")).contains(
-                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS httpUri String");
+                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS httpUri String CODEC(ZSTD(1))");
     }
 
     /** One value per application-table row, so a dictionary the size of a protocol pack. */
@@ -1256,6 +1256,131 @@ class FlowsSchemaTest {
         assertThat(FlowsSchema.additiveColumnNames()).contains("applicationDescription");
         assertThat(FlowsSchema.createFlowsTable("riptide")).contains("applicationDescription LowCardinality(String)");
         assertThat(FlowsSchema.addAdditiveColumns("riptide")).contains(
-                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS applicationDescription LowCardinality(String)");
+                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS applicationDescription LowCardinality(String) CODEC(ZSTD(1))");
+    }
+
+    /**
+     * The codecs the lab measurement chose (FlowsSchema's CREATE comment, 2026-10-06): ZSTD over
+     * the default where it won, no DoubleDelta on the time columns because rows inside a granule
+     * are not time-ordered, and the default (LZ4) on the near-constant String dimensions where
+     * ZSTD(1) measured four times larger.
+     */
+    @Test
+    void flowsTableDeclaresTheMeasuredCompressionCodecs() {
+        final String ddl = FlowsSchema.createFlowsTable("riptide");
+        assertThat(ddl)
+                .contains("timestamp DateTime64(3, 'UTC') CODEC(ZSTD(1)),")
+                .contains("receivedAt DateTime64(9, 'UTC') CODEC(ZSTD(1)),")
+                .contains("bytes UInt64 CODEC(T64, ZSTD(1))")
+                .contains("packets UInt64 CODEC(T64, ZSTD(1))")
+                .contains("srcAddr IPv6 CODEC(ZSTD(3))")
+                .contains("dstAddr IPv6 CODEC(ZSTD(3))")
+                .contains("samplingInterval Float64 CODEC(Gorilla, ZSTD(1))")
+                .doesNotContain("CODEC(DoubleDelta")
+                .contains("tenant String,")
+                .contains("organisation String,")
+                .contains("zone String,")
+                .contains("system String,")
+                .contains("exporterAddr String,");
+    }
+
+    /**
+     * Every codec the CREATE declares reaches a table created before it existed: one
+     * {@code MODIFY COLUMN} per codec-bearing column, with the codec text the CREATE has, and
+     * nothing for a column the CREATE leaves on the default. Read off the rendered CREATE by a
+     * parser independent of FlowsSchema's own, so a column the schema parser dropped (the two
+     * multi-line enums are the ones at risk) would show up as a missing MODIFY.
+     */
+    @Test
+    void everyCodecInTheCreateReachesAnUpgradedTable() {
+        final String ddl = FlowsSchema.createFlowsTable("riptide");
+        final String modify = FlowsSchema.modifyCodecs("riptide");
+        assertThat(modify).startsWith("ALTER TABLE `riptide`.flows MODIFY COLUMN IF EXISTS ");
+
+        final Map<String, String> codecs = codecsOf(ddl);
+        assertThat(codecs).hasSize(56)
+                .containsEntry("timestamp", "ZSTD(1)")
+                .containsEntry("flowProtocol", "ZSTD(1)")
+                .containsEntry("samplingAlgorithm", "ZSTD(1)")
+                .containsEntry("bytes", "T64, ZSTD(1)")
+                .doesNotContainKeys("tenant", "organisation", "zone", "system", "exporterAddr");
+        codecs.forEach((column, codec) ->
+                assertThat(modify).contains("MODIFY COLUMN IF EXISTS " + column + " CODEC(" + codec + ")"));
+        assertThat(modify.split("MODIFY COLUMN IF EXISTS ")).hasSize(codecs.size() + 1);
+        for (final String plain : List.of("tenant", "organisation", "zone", "system", "exporterAddr")) {
+            assertThat(modify).doesNotContain("MODIFY COLUMN IF EXISTS " + plain + " ");
+        }
+    }
+
+    /** Column name to codec text for every {@code CODEC(…)} in a CREATE body, by a line scan. */
+    private static Map<String, String> codecsOf(final String ddl) {
+        final Map<String, String> codecs = new java.util.LinkedHashMap<>();
+        String pendingName = null;
+        for (final String raw : between(ddl, "(\n", ") ENGINE").lines().toList()) {
+            final String line = raw.strip();
+            if (line.isEmpty() || line.startsWith("--") || line.startsWith("INDEX ")) {
+                continue;
+            }
+            final Matcher column = Pattern.compile("^(\\w+) .*").matcher(line);
+            if (column.matches() && !line.startsWith("'")) {
+                pendingName = column.group(1);
+            }
+            final Matcher codec = Pattern.compile(".* CODEC\\((.+)\\),?\\s*$").matcher(line);
+            if (codec.matches()) {
+                codecs.put(pendingName, codec.group(1));
+            }
+        }
+        return codecs;
+    }
+
+    /**
+     * The CREATE and the ALTER path render the same index definitions from one map, in full: a
+     * definition retuned in one place cannot drift from the other, and a mangled ALTER body
+     * (wrong column, dropped GRANULARITY) fails here rather than shipping.
+     */
+    @Test
+    void skippingIndicesAreTheSameInTheCreateAndTheAlterPath() {
+        final String ddl = FlowsSchema.createFlowsTable("riptide");
+        assertThat(ddl)
+                .contains("INDEX idx_src_addr srcAddr TYPE bloom_filter(0.01) GRANULARITY 1,\n")
+                .contains("INDEX idx_dst_addr dstAddr TYPE bloom_filter(0.01) GRANULARITY 1\n")
+                .doesNotContain("minmax")
+                .doesNotContain("tokenbf_v1");
+
+        assertThat(FlowsSchema.addSkippingIndices("riptide")).containsExactly(
+                "ALTER TABLE `riptide`.flows ADD INDEX IF NOT EXISTS idx_src_addr srcAddr TYPE bloom_filter(0.01) GRANULARITY 1",
+                "ALTER TABLE `riptide`.flows ADD INDEX IF NOT EXISTS idx_dst_addr dstAddr TYPE bloom_filter(0.01) GRANULARITY 1");
+
+        // Every INDEX body in the CREATE appears verbatim in exactly one ALTER.
+        final List<String> createBodies = between(ddl, "(\n", ") ENGINE").lines()
+                .map(String::strip)
+                .filter(line -> line.startsWith("INDEX "))
+                .map(line -> line.replaceFirst("^INDEX ", "").replaceFirst(",$", ""))
+                .toList();
+        assertThat(createBodies).hasSize(2);
+        for (final String body : createBodies) {
+            assertThat(FlowsSchema.addSkippingIndices("riptide"))
+                    .filteredOn(alter -> alter.endsWith("ADD INDEX IF NOT EXISTS " + body))
+                    .hasSize(1);
+        }
+    }
+
+    /**
+     * The upgrade onboard runs: columns first (the later statements name them), then the storage
+     * half, which is the codecs followed by the indices. Manage mode runs the same two halves
+     * around its shape check ({@code ClickhouseRepositoryIT.columnCheckFailsFastWhenIdentityColumnMissing}
+     * pins why).
+     */
+    @Test
+    void upgradeFlowsTableAddsColumnsThenCodecsThenIndices() {
+        final List<String> storage = FlowsSchema.upgradeFlowsStorage("riptide");
+        assertThat(storage.get(0)).isEqualTo(FlowsSchema.modifyCodecs("riptide"));
+        assertThat(storage.subList(1, storage.size()))
+                .containsExactlyElementsOf(FlowsSchema.addSkippingIndices("riptide"));
+
+        final List<String> upgrade = FlowsSchema.upgradeFlowsTable("riptide");
+        final int additive = FlowsSchema.additiveColumnNames().size();
+        assertThat(upgrade.subList(0, additive)).containsExactlyElementsOf(FlowsSchema.addAdditiveColumns("riptide"));
+        assertThat(upgrade.subList(additive, upgrade.size())).containsExactlyElementsOf(storage);
     }
 }
