@@ -18,6 +18,10 @@ PARENT=riptide
 get() { curl -sf -u "$AUTH" "$GRAFANA/api/folders/$1"; }
 post() { curl -sf -u "$AUTH" -H 'Content-Type: application/json' -X POST "$GRAFANA/api/folders$1" -d "$2" >/dev/null; }
 status() { curl -s -o /dev/null -w '%{http_code}' -u "$AUTH" "$GRAFANA/api/folders/$1"; }
+# Role grants only, as the provisioned child has. Creating a folder gives its creator Admin on it,
+# and Grafana 13.3.0 refuses to move a folder into one where the mover holds more than on the folder
+# itself (folders.accessEscalation), so a Riptide this script creates must not keep that grant.
+grants() { post "/$1/permissions" '{"items":[{"role":"Viewer","permission":1},{"role":"Editor","permission":2}]}'; }
 
 # The provider creates the child a moment after Grafana reports healthy. A
 # rejected login is not "not yet": Grafana keeps the admin password it was
@@ -32,11 +36,16 @@ until get "$CHILD" >/dev/null 2>&1; do
     sleep 2
 done
 
-get "$PARENT" >/dev/null 2>&1 || post "" "{\"uid\":\"$PARENT\",\"title\":\"Riptide\"}"
+get "$PARENT" >/dev/null 2>&1 || { post "" "{\"uid\":\"$PARENT\",\"title\":\"Riptide\"}"; grants "$PARENT"; }
 
 if get "$CHILD" | grep -q "\"parentUid\":\"$PARENT\""; then
     echo "Flow Analytics already under Riptide"
 else
-    post "/$CHILD/move" "{\"parentUid\":\"$PARENT\"}"
-    echo "moved Flow Analytics under Riptide"
+    answer=$(curl -s -u "$AUTH" -H 'Content-Type: application/json' -X POST "$GRAFANA/api/folders/$CHILD/move" \
+        -d "{\"parentUid\":\"$PARENT\"}" -w ' HTTP %{http_code}')
+    case "$answer" in
+        *" HTTP 200") echo "moved Flow Analytics under Riptide" ;;
+        *folders.accessEscalation*) echo "Grafana refused to move Flow Analytics under Riptide: the admin user holds a higher grant on Riptide than on Flow Analytics. Give Riptide the role grants only (Viewer: View, Editor: Edit), then run this again: $answer" >&2; exit 1 ;;
+        *) echo "Grafana refused to move Flow Analytics under Riptide: $answer" >&2; exit 1 ;;
+    esac
 fi
