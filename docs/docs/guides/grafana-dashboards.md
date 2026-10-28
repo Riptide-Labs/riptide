@@ -39,7 +39,7 @@ The compose stack does all of this.
 
 ## Prerequisites
 
-- Grafana 11 or newer with nested folders. Everything on this page was verified on Grafana 13.0.2, the version the compose stack pins.
+- Grafana 11 or newer with nested folders. The compose stack pins Grafana 13.3.0, and the folder steps on this page were verified on it. Other sections name the version they were captured on.
 - Plugins **`grafana-clickhouse-datasource`** and **`netsage-sankey-panel`** installed.
 - A ClickHouse datasource pointing at the riptide database. The compose stack provisions one; elsewhere, add it under *Connections* first, as a [read-only user](#give-grafana-a-read-only-clickhouse-user).
 - For the tarball and package paths: shell access to the Grafana host.
@@ -136,8 +136,13 @@ Use this for a Grafana you run yourself, whose provisioning directory you can wr
    ```bash
    GRAFANA=http://localhost:3000
    AUTH=admin:admin
-   curl -s -u "$AUTH" -H 'Content-Type: application/json' -X POST "$GRAFANA/api/folders" \
-     -d '{"uid":"riptide","title":"Riptide"}' -o /dev/null -w '%{http_code}\n'
+   status=$(curl -s -u "$AUTH" -H 'Content-Type: application/json' -X POST "$GRAFANA/api/folders" \
+     -d '{"uid":"riptide","title":"Riptide"}' -o /dev/null -w '%{http_code}')
+   echo "$status"
+   if [ "$status" = 200 ]; then
+     curl -s -u "$AUTH" -H 'Content-Type: application/json' -X POST "$GRAFANA/api/folders/riptide/permissions" \
+       -d '{"items":[{"role":"Viewer","permission":1},{"role":"Editor","permission":2}]}' -o /dev/null -w '%{http_code}\n'
+   fi
    curl -s -u "$AUTH" -H 'Content-Type: application/json' -X POST "$GRAFANA/api/folders/riptide-flow-analytics/move" \
      -d '{"parentUid":"riptide"}' -o /dev/null -w '%{http_code}\n'
    ```
@@ -147,9 +152,13 @@ Use this for a Grafana you run yourself, whose provisioning directory you can wr
    ```text
    200
    200
+   200
    ```
 
-   The first call answers `412` when a folder `Riptide` already exists; the move still applies.
+   Creating a folder makes you its Admin, and Grafana 13.3 refuses to move a folder into one where you hold more than on the folder itself.
+   So a `Riptide` the block creates gets the same role grants as `Flow Analytics`, and the move is allowed.
+   When a folder `Riptide` already exists, the first call answers `409` (`412` before Grafana 13.3) and the block leaves that folder's permissions alone.
+   The move then fails with `403` if you hold a higher grant on `Riptide` than on `Flow Analytics`.
    The same two steps in the UI: *Dashboards* > *New* > *New folder* named `Riptide`, then open `Flow Analytics` > *Folder actions* > *Move* and pick `Riptide`.
 
 5. Verify.
@@ -266,8 +275,13 @@ For a release whose name does not contain `grafana`, the chart names the deploym
    kubectl -n "$NAMESPACE" port-forward svc/grafana 3000:80 >/dev/null &
    GRAFANA=http://localhost:3000
    AUTH="admin:$(kubectl -n "$NAMESPACE" get secret grafana -o jsonpath='{.data.admin-password}' | base64 -d)"
-   curl -s -u "$AUTH" -H 'Content-Type: application/json' -X POST "$GRAFANA/api/folders" \
-     -d '{"uid":"riptide","title":"Riptide"}' -o /dev/null -w '%{http_code}\n'
+   status=$(curl -s -u "$AUTH" -H 'Content-Type: application/json' -X POST "$GRAFANA/api/folders" \
+     -d '{"uid":"riptide","title":"Riptide"}' -o /dev/null -w '%{http_code}')
+   echo "$status"
+   if [ "$status" = 200 ]; then
+     curl -s -u "$AUTH" -H 'Content-Type: application/json' -X POST "$GRAFANA/api/folders/riptide/permissions" \
+       -d '{"items":[{"role":"Viewer","permission":1},{"role":"Editor","permission":2}]}' -o /dev/null -w '%{http_code}\n'
+   fi
    curl -s -u "$AUTH" -H 'Content-Type: application/json' -X POST "$GRAFANA/api/folders/riptide-flow-analytics/move" \
      -d '{"parentUid":"riptide"}' -o /dev/null -w '%{http_code}\n'
    ```
@@ -277,9 +291,13 @@ For a release whose name does not contain `grafana`, the chart names the deploym
    ```text
    200
    200
+   200
    ```
 
-   The first call answers `412` when a folder `Riptide` already exists; the move still applies.
+   Creating a folder makes you its Admin, and Grafana 13.3 refuses to move a folder into one where you hold more than on the folder itself.
+   So a `Riptide` the block creates gets the same role grants as `Flow Analytics`, and the move is allowed.
+   When a folder `Riptide` already exists, the first call answers `409` (`412` before Grafana 13.3) and the block leaves that folder's permissions alone.
+   The move then fails with `403` if you hold a higher grant on `Riptide` than on `Flow Analytics`.
 
 3. Verify.
 

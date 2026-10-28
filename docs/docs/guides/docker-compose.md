@@ -95,7 +95,7 @@ Always:
 | --- | --- | --- | --- |
 | **`riptide`** | `ghcr.io/riptide-labs/riptide:latest` | `9999/udp` | One `multi` [receiver](../reference/receivers.md) parses every protocol on that port. Starts only after ClickHouse reports healthy. Health is `/readyz` on the container's port 8080, which is not published. Logs at `WARN`. |
 | **`clickhouse`** | `clickhouse/clickhouse-server:26.7`, pinned by digest | `127.0.0.1:8123`, `127.0.0.1:9000` | Database `riptide`. User `default` is riptide's and an admin; user `grafana` is the datasource's and read-only. 26.7 is the version the integration suite runs against, see [server versions](../reference/clickhouse.md#server-versions). |
-| **`grafana`** | `grafana/grafana-oss:13.0.2`, pinned by digest | `3000` | ClickHouse datasource, the Prometheus and Pyroscope datasources with self-monitoring, and the riptide dashboards provisioned; plugins `grafana-clickhouse-datasource` and `netsage-sankey-panel`. |
+| **`grafana`** | `grafana/grafana:13.3.0`, pinned by digest | `3000` | ClickHouse datasource, the Prometheus and Pyroscope datasources with self-monitoring, and the riptide dashboards provisioned; plugins `grafana-clickhouse-datasource` and `netsage-sankey-panel`. |
 
 Self-monitoring, from **`deployment/clickhouse/compose.self-monitoring.yml`**, unless [dropped](#run-without-self-monitoring):
 

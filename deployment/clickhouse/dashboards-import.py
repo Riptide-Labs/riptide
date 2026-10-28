@@ -36,7 +36,9 @@ redirect points, so the script stops and names the URL to use instead.
 
 Grafana answers as measured on 13.2.2 with an Editor token (issue #872): an
 absent folder reads as 403, not 404, so folders are created first and a 412
-means "already there".
+means "already there". Grafana 13.3.0 answers 409 for the same case, and it
+refuses to move a folder into one where the token holds a higher grant; see
+PARENT_GRANTS.
 
 Guide: https://riptide.space/docs/guides/grafana-dashboards
 """
@@ -55,6 +57,13 @@ from pathlib import Path
 
 PARENT_UID, PARENT_TITLE = "riptide", "Riptide"
 FOLDER_UID, FOLDER_TITLE = "riptide-flow-analytics", "Flow Analytics"
+# Creating a folder gives its creator Admin on it, and Grafana 13.3.0 refuses to move a folder into
+# one where the mover holds more than on the folder itself (folders.accessEscalation). A Riptide this
+# script creates is therefore left with the role grants a provisioned Flow Analytics carries, so the
+# move stays legal. A Riptide that already exists is the operator's and is not touched.
+PARENT_GRANTS = {"items": [{"role": "Viewer", "permission": 1}, {"role": "Editor", "permission": 2}]}
+# "Already exists" for POST /api/folders: 412 on 13.2.2, 409 on 13.3.0.
+PRESENT = (409, 412)
 # The set's version lives in one link per dashboard. The same pattern is TITLE
 # in dashboards-version.py; this script ships alone, so it carries its own copy.
 SET_VERSION = re.compile(r"^Dashboards v(\d+\.\d+\.\d+)$")
@@ -181,7 +190,7 @@ def ensure_folders(grafana, dry_run):
             status, folder = grafana.call("GET", f"/api/folders/{uid}")
             if status != 200:
                 # 403 and 404 both mean absent here: an Editor reads an absent folder as 403.
-                print(f"folder {title}: would create")
+                print(f"folder {title}: would create" + (", with role grants only" if uid == PARENT_UID else ""))
             elif uid == FOLDER_UID and folder.get("parentUid") != PARENT_UID:
                 print(f"folder {title}: would move under {PARENT_TITLE}")
             else:
@@ -189,16 +198,22 @@ def ensure_folders(grafana, dry_run):
         return
 
     status, answer = grafana.write("POST", "/api/folders", {"uid": PARENT_UID, "title": PARENT_TITLE})
-    if status not in (200, 412):
+    if status != 200 and status not in PRESENT:
         raise Stop(f"cannot create folder {PARENT_TITLE} ({status}): {message(answer)}")
-    print(f"folder {PARENT_TITLE}: {'created' if status == 200 else 'present'}")
+    if status == 200:
+        status, answer = grafana.write("POST", f"/api/folders/{PARENT_UID}/permissions", PARENT_GRANTS)
+        if status != 200:
+            raise Stop(f"cannot set the permissions of folder {PARENT_TITLE} ({status}): {message(answer)}")
+        print(f"folder {PARENT_TITLE}: created")
+    else:
+        print(f"folder {PARENT_TITLE}: present")
 
     status, answer = grafana.write("POST", "/api/folders",
                                    {"uid": FOLDER_UID, "title": FOLDER_TITLE, "parentUid": PARENT_UID})
     if status == 200:
         print(f"folder {FOLDER_TITLE}: created")
         return
-    if status != 412:
+    if status not in PRESENT:
         raise Stop(f"cannot create folder {FOLDER_TITLE} ({status}): {message(answer)}")
     status, folder = grafana.call("GET", f"/api/folders/{FOLDER_UID}")
     if status != 200:
@@ -206,7 +221,21 @@ def ensure_folders(grafana, dry_run):
     if folder.get("parentUid") == PARENT_UID:
         print(f"folder {FOLDER_TITLE}: present")
         return
-    status, answer = grafana.write("POST", f"/api/folders/{FOLDER_UID}/move", {"parentUid": PARENT_UID})
+    # call, not write: a refused move is not a missing role, and write would say it is.
+    status, answer = grafana.call("POST", f"/api/folders/{FOLDER_UID}/move", {"parentUid": PARENT_UID})
+    # Two refusals, told apart by messageId (measured on 13.3.0 with an Editor token).
+    if status == 403 and answer.get("messageId") == "folders.accessEscalation":
+        # Permanent: the token holds more on Riptide than on Flow Analytics, as a Riptide created
+        # before PARENT_GRANTS existed leaves it. Still refused 50 s later.
+        raise Stop(f"Grafana refused to move folder {FOLDER_TITLE} under {PARENT_TITLE}: {message(answer)}."
+                   f" This token holds a higher grant on {PARENT_TITLE} than on {FOLDER_TITLE}. Give"
+                   f" {PARENT_TITLE} the role grants only (Viewer: View, Editor: Edit), or have an Admin move it")
+    if status == 403:
+        # Transient (folders.forbiddenMove): right after PARENT_GRANTS are set, the token's cached
+        # permissions still miss them for up to about 45 seconds.
+        raise Stop(f"Grafana refused to move folder {FOLDER_TITLE} under {PARENT_TITLE}: {message(answer)}."
+                   f" A folder's new permissions can take a minute to reach a token: run again in a"
+                   f" minute, or have an Admin move it")
     if status != 200:
         raise Stop(f"cannot move folder {FOLDER_TITLE} under {PARENT_TITLE} ({status}): {message(answer)}")
     print(f"folder {FOLDER_TITLE}: moved under {PARENT_TITLE}")

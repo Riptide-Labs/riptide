@@ -67,6 +67,10 @@ class FakeGrafana:
         self.library = {}      # folder uid -> number of library elements in it
         self.restricted = set()  # dashboard uids this token may neither read nor write
         self.drop = set()        # dashboard uids whose import drops the connection
+        self.duplicate = 412     # POST /api/folders for an existing uid: 412 on 13.2.2, 409 on 13.3.0
+        self.grants = {}         # folder uid -> the items last POSTed to its permissions
+        self.refuse_move = False  # 13.3.0 before a permission change has reached the token
+        self.creator = set()     # folder uids on which the token holds its creator Admin grant
         self.requests = []     # (method, path, body)
         fake = self
 
@@ -148,10 +152,23 @@ class FakeGrafana:
                 if viewer:
                     return denied("folders:create")
                 if body["uid"] in self.folders:
-                    return 412, {"message": "the folder has been changed by someone else"}
+                    return self.duplicate, {"message": "a folder with the same UID already exists"}
                 self.folders[body["uid"]] = {"title": body["title"], "parentUid": body.get("parentUid")}
+                self.creator.add(body["uid"])
                 return 200, {"uid": body["uid"], **self.folders[body["uid"]]}
+            if method == "POST" and len(parts) == 2 and parts[1] == "permissions":
+                self.grants[parts[0]] = body["items"]
+                self.creator.discard(parts[0])
+                return 200, {"message": "Folder permissions updated"}
             if method == "POST" and len(parts) == 2 and parts[1] == "move":
+                if self.refuse_move:
+                    # Measured on 13.3.0 with an Editor token.
+                    return 403, {"statusCode": 403, "messageId": "folders.forbiddenMove",
+                                 "message": "Access denied to the destination folder"}
+                if body["parentUid"] in self.creator and parts[0] not in self.creator:
+                    # Measured on 13.3.0: a higher grant on the destination is refused for good.
+                    return 403, {"statusCode": 403, "messageId": "folders.accessEscalation",
+                                 "message": "Cannot move a folder to a folder where you have higher permissions"}
                 self.folders[parts[0]]["parentUid"] = body["parentUid"]
                 return 200, {"uid": parts[0], **self.folders[parts[0]]}
             if method == "DELETE":
@@ -237,6 +254,13 @@ class AnEmptyInstance(ImportTest):
         for uid in "abc":
             self.assertIn(f"{uid}: created", proc.stdout)
 
+    def test_a_riptide_it_creates_keeps_only_the_role_grants(self):
+        proc = self.run_import(self.source())
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.grafana.grants, {"riptide": [{"role": "Viewer", "permission": 1},
+                                                           {"role": "Editor", "permission": 2}]})
+
 
 class FoldersAlreadyThere(ImportTest):
 
@@ -250,6 +274,62 @@ class FoldersAlreadyThere(ImportTest):
         self.assertEqual(self.grafana.folders[FOLDER]["parentUid"], "riptide")
         self.assertIn(("POST", f"/api/folders/{FOLDER}/move", {"parentUid": "riptide"}), self.grafana.requests)
         self.assertEqual(len(self.imports()), 3)
+
+    def test_a_409_means_present_as_412_did(self):
+        self.grafana.duplicate = 409
+        self.grafana.folders["riptide"] = {"title": "Riptide", "parentUid": None}
+        self.grafana.folders[FOLDER] = {"title": "Flow Analytics", "parentUid": "riptide"}
+
+        proc = self.run_import(self.source())
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("folder Riptide: present", proc.stdout)
+        self.assertIn("folder Flow Analytics: present", proc.stdout)
+        self.assertEqual(len(self.imports()), 3)
+
+    def test_a_riptide_already_there_keeps_its_permissions(self):
+        self.grafana.folders["riptide"] = {"title": "Riptide", "parentUid": None}
+
+        proc = self.run_import(self.source())
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.grafana.grants, {})
+
+    def test_a_refused_move_says_to_wait_not_that_the_role_is_missing(self):
+        self.grafana.duplicate = 409
+        self.grafana.refuse_move = True
+        self.grafana.folders[FOLDER] = {"title": "Flow Analytics", "parentUid": None}
+
+        proc = self.run_import(self.source())
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("Access denied to the destination folder", proc.stderr)
+        self.assertIn("run again in a minute", proc.stderr)
+        self.assertNotIn("needs the Editor role", proc.stderr)
+        self.assertEqual(self.imports(), [])
+
+    def test_a_provisioned_flow_analytics_moves_under_a_riptide_the_script_creates(self):
+        self.grafana.duplicate = 409
+        self.grafana.folders[FOLDER] = {"title": "Flow Analytics", "parentUid": None}
+
+        proc = self.run_import(self.source())
+
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.grafana.folders[FOLDER]["parentUid"], "riptide")
+        self.assertIn("folder Flow Analytics: moved under Riptide", proc.stdout)
+
+    def test_a_riptide_with_a_higher_grant_is_named_as_the_cause(self):
+        self.grafana.duplicate = 409
+        self.grafana.folders["riptide"] = {"title": "Riptide", "parentUid": None}
+        self.grafana.creator.add("riptide")
+        self.grafana.folders[FOLDER] = {"title": "Flow Analytics", "parentUid": None}
+
+        proc = self.run_import(self.source())
+
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("holds a higher grant on Riptide", proc.stderr)
+        self.assertNotIn("run again in a minute", proc.stderr)
+        self.assertEqual(self.imports(), [])
 
     def test_a_nested_flow_analytics_is_left_alone(self):
         self.grafana.folders["riptide"] = {"title": "Riptide", "parentUid": None}
