@@ -867,7 +867,18 @@ public final class FlowsSchema {
      * applies), and the names of its skipping indices. An absent table is two empty collections.
      * Read with {@link #liveCodecsQuery}, and {@link #liveIndicesQuery} through {@link #indicesIn}.
      */
-    public record LiveStorage(Map<String, String> codecs, Set<String> indices) { }
+    public record LiveStorage(Map<String, String> codecs, Set<String> indices) {
+        /** Whether the live table has the column at all. */
+        public boolean hasColumn(final String column) {
+            return this.codecs.containsKey(column);
+        }
+
+        /** Whether the live table has the column and it carries no codec. */
+        public boolean lacksCodec(final String column) {
+            final String codec = this.codecs.get(column);
+            return codec != null && codec.isEmpty();
+        }
+    }
 
     /** Columns {@code name} and {@code compression_codec} of the live flows table. */
     public static String liveCodecsQuery(final String database) {
@@ -909,12 +920,12 @@ public final class FlowsSchema {
         final String flows = qualifiedFlows(database);
         final List<String> statements = new ArrayList<>();
         FLOWS_COLUMNS.stream()
-                .filter(column -> column.codec() != null && "".equals(live.codecs().get(column.name())))
+                .filter(column -> column.codec() != null && live.lacksCodec(column.name()))
                 .forEach(column -> statements.add(
                         "ALTER TABLE " + flows + " MODIFY COLUMN " + column.name() + column.codecClause()));
         SKIPPING_INDICES.forEach((name, definition) -> {
             final String column = definition.substring(0, definition.indexOf(' '));
-            if (!live.indices().contains(name) && live.codecs().containsKey(column)) {
+            if (!live.indices().contains(name) && live.hasColumn(column)) {
                 statements.add("ALTER TABLE " + flows + " ADD INDEX IF NOT EXISTS " + name + " " + definition);
             }
         });
