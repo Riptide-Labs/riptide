@@ -680,8 +680,9 @@ public class ClickhouseRepositoryIT {
      * The storage upgrade only saves disk and reads, so a manage-mode user the server refuses it to
      * still starts and ingests, and the refusal is logged. The user holds everything a start needed
      * before codecs existed (ADD COLUMN included) but not ALTER MODIFY COLUMN or ALTER ADD INDEX.
-     * The stripped codec staying stripped proves the statement really failed, so the guard, not a
-     * no-op, is what kept the start alive.
+     * Each gap gets its own statement and its own warning; the stripped codec and the dropped
+     * index both staying missing proves each statement really failed, so the guard, not a no-op,
+     * is what kept the start alive.
      */
     @Test
     void aRefusedStorageUpgradeDoesNotStopIngestion() throws Exception {
@@ -700,8 +701,15 @@ public class ClickhouseRepositoryIT {
 
         final var restricted = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
         final var logged = RollupShapeDriftIT.messages(RollupShapeDriftIT.captureRepositoryLog(restricted::start));
-        Assertions.assertThat(logged).anyMatch(message -> message.startsWith("flows storage upgrade not applied:"));
+        Assertions.assertThat(logged).filteredOn(message -> message.startsWith("flows storage upgrade not applied:"))
+                .hasSize(2)
+                .anyMatch(message -> message.contains("MODIFY COLUMN bytes CODEC(T64, ZSTD(1))"))
+                .anyMatch(message -> message.contains("ADD INDEX IF NOT EXISTS idx_dst_addr "));
         Assertions.assertThat(liveCodecs(database).get("bytes")).isEmpty();
+        Assertions.assertThat(queryClient.queryAll("SELECT name FROM system.data_skipping_indices WHERE database = '"
+                        + database + "' AND table = 'flows'"))
+                .extracting(row -> row.getString("name"))
+                .containsExactly("idx_src_addr");
 
         restricted.persist(List.of(testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 60012, 443, 100L)));
         Assertions.assertThat(queryClient.queryAll(

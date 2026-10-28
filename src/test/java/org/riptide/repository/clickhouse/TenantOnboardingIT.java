@@ -25,7 +25,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import static org.riptide.repository.clickhouse.ClickhouseItFlows.flow;
@@ -259,6 +261,39 @@ public class TenantOnboardingIT {
                         "--writer-secret", "wB", "--reader-secret", "rB"},
                 discard(), discard());
         Assertions.assertThat(code).isZero();
+    }
+
+    /**
+     * Re-running onboard fills the storage gaps of an existing flows table from what it reads live,
+     * and only those: a column stripped of its codec gets riptide's back, an index dropped is
+     * re-added, and a codec an operator tuned is left as the operator set it.
+     */
+    @Test
+    void reonboardFillsStorageGapsAndKeepsAnOperatorCodec() throws Exception {
+        final String database = "gaps";
+        Assertions.assertThat(ProvisioningCommand.run(onboardArgsFor(database, "gappy", true), discard(), discard()))
+                .isZero();
+        try (var admin = adminClient()) {
+            admin.execute("ALTER TABLE " + database + ".flows MODIFY COLUMN bytes REMOVE CODEC").get();
+            admin.execute("ALTER TABLE " + database + ".flows MODIFY COLUMN httpUri CODEC(ZSTD(6))").get();
+            admin.execute("ALTER TABLE " + database + ".flows DROP INDEX idx_dst_addr").get();
+        }
+
+        Assertions.assertThat(ProvisioningCommand.run(onboardArgsFor(database, "gappy", false), discard(), discard()))
+                .isZero();
+
+        try (var admin = adminClient()) {
+            final Map<String, String> codecs = new LinkedHashMap<>();
+            admin.queryAll(FlowsSchema.liveCodecsQuery(database))
+                    .forEach(row -> codecs.put(row.getString("name"), row.getString("compression_codec")));
+            Assertions.assertThat(codecs)
+                    .containsEntry("bytes", "CODEC(T64, ZSTD(1))")
+                    .containsEntry("httpUri", "CODEC(ZSTD(6))");
+            Assertions.assertThat(admin.queryAll("SELECT name FROM system.data_skipping_indices WHERE database = '"
+                            + database + "' AND table = 'flows'"))
+                    .extracting(row -> row.getString("name"))
+                    .containsExactlyInAnyOrder("idx_src_addr", "idx_dst_addr");
+        }
     }
 
     /**

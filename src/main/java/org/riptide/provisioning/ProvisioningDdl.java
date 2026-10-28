@@ -106,8 +106,6 @@ public final class ProvisioningDdl {
      */
     public static List<String> bootstrapRollups(final String database) {
         final List<String> statements = new ArrayList<>();
-        // Columns only: the views below reference them. Codecs and indices are not a precondition
-        // of a view, and ensureShared() emits the full upgrade on the same onboard run.
         statements.addAll(FlowsSchema.addAdditiveColumns(database));
         statements.addAll(FlowsSchema.createRollupTables(database));
         return List.copyOf(statements);
@@ -306,11 +304,10 @@ public final class ProvisioningDdl {
         final String readerRole = quote(readerRole(database));
         final String quota = quote(qualified("flow_ingest", database));
         final List<String> statements = new ArrayList<>();
-        // In-place schema upgrades first (same precondition as the GRANTs below: the table
-        // exists): additive columns, column codecs, skipping indices. Emitted on every run so
-        // re-running onboard upgrades a pre-existing table in place; each statement is idempotent,
-        // so on a current table they are no-ops.
-        statements.addAll(FlowsSchema.upgradeFlowsTable(database));
+        // Additive schema upgrades first (same precondition as the GRANTs below: the table
+        // exists). Emitted on every run so re-running onboard upgrades a pre-existing table in
+        // place; IF NOT EXISTS makes them no-ops everywhere else.
+        statements.addAll(FlowsSchema.addAdditiveColumns(database));
         statements.addAll(List.of(
                 "CREATE ROLE IF NOT EXISTS " + writerRole,
                 "GRANT INSERT ON " + flows + " TO " + writerRole,

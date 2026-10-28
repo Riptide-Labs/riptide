@@ -170,12 +170,9 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS riptide.flows_by_application_1m_mv
 -- --create-schema only, when flows_dead_letter is absent; same TTL as the raw table, no CHECK.
 CREATE TABLE IF NOT EXISTS riptide.flows_dead_letter (tenant, failedAt, error, payload);
 
--- Once per database, on every run. In-place upgrades come first, so a re-run brings a
--- pre-existing table up to date: added columns, then column codecs, then skipping indices.
+-- Once per database, on every run. Additive column upgrades come first, so a re-run brings a
+-- pre-existing table up to date in place.
 ALTER TABLE riptide.flows ADD COLUMN IF NOT EXISTS … ;   -- one per column added since the table was created
-ALTER TABLE riptide.flows MODIFY COLUMN IF EXISTS timestamp CODEC(ZSTD(1)), … ;   -- one statement, every codec column
-ALTER TABLE riptide.flows ADD INDEX IF NOT EXISTS idx_src_addr srcAddr TYPE bloom_filter(0.01) GRANULARITY 1;
-ALTER TABLE riptide.flows ADD INDEX IF NOT EXISTS idx_dst_addr dstAddr TYPE bloom_filter(0.01) GRANULARITY 1;
 CREATE ROLE IF NOT EXISTS `flow_writer@riptide`;
 GRANT INSERT ON riptide.flows TO `flow_writer@riptide`;
 -- The writer also reads flows: a materialized view runs as the inserting user.
@@ -194,6 +191,11 @@ GRANT INSERT ON riptide.flows_dead_letter TO `flow_writer@riptide`;      -- INSE
 GRANT INSERT ON riptide.flows_by_application_1m TO `flow_writer@riptide`;   -- and the other three
 GRANT SELECT ON riptide.flows_by_application_1m TO `flow_reader@riptide`;
 GRANT SHOW TABLES ON riptide.flows_by_application_1m_mv TO `flow_writer@riptide`;   -- and the other three
+
+-- Storage gaps of a pre-existing flows table, read live before anything runs; none on a current
+-- table. A column that already has a codec, including one an operator set, is left alone.
+ALTER TABLE riptide.flows MODIFY COLUMN bytes CODEC(T64, ZSTD(1));   -- one per column with no codec
+ALTER TABLE riptide.flows ADD INDEX IF NOT EXISTS idx_dst_addr dstAddr TYPE bloom_filter(0.01) GRANULARITY 1;   -- per absent index
 
 -- Per tenant: two scoped users, two role grants, one row policy per table.
 CREATE USER IF NOT EXISTS `writer_acme@riptide` IDENTIFIED WITH sha256_password BY '…'

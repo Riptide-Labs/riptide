@@ -11,6 +11,7 @@ import org.riptide.mcp.service.QueryRouter;
 
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -1294,8 +1295,9 @@ class FlowsSchemaTest {
     @Test
     void everyCodecInTheCreateReachesAnUpgradedTable() {
         final String ddl = FlowsSchema.createFlowsTable("riptide");
-        final String modify = FlowsSchema.modifyCodecs("riptide");
-        assertThat(modify).startsWith("ALTER TABLE `riptide`.flows MODIFY COLUMN IF EXISTS ");
+        final List<String> modify = FlowsSchema.upgradeFlowsStorage("riptide", preCodecTable()).stream()
+                .filter(statement -> statement.contains(" MODIFY COLUMN "))
+                .toList();
 
         final Map<String, String> codecs = codecsOf(ddl);
         assertThat(codecs).hasSize(56)
@@ -1304,17 +1306,15 @@ class FlowsSchemaTest {
                 .containsEntry("samplingAlgorithm", "ZSTD(1)")
                 .containsEntry("bytes", "T64, ZSTD(1)")
                 .doesNotContainKeys("tenant", "organisation", "zone", "system", "exporterAddr");
-        codecs.forEach((column, codec) ->
-                assertThat(modify).contains("MODIFY COLUMN IF EXISTS " + column + " CODEC(" + codec + ")"));
-        assertThat(modify.split("MODIFY COLUMN IF EXISTS ")).hasSize(codecs.size() + 1);
-        for (final String plain : List.of("tenant", "organisation", "zone", "system", "exporterAddr")) {
-            assertThat(modify).doesNotContain("MODIFY COLUMN IF EXISTS " + plain + " ");
-        }
+        assertThat(modify).containsExactlyInAnyOrderElementsOf(codecs.entrySet().stream()
+                .map(codec -> "ALTER TABLE `riptide`.flows MODIFY COLUMN " + codec.getKey()
+                        + " CODEC(" + codec.getValue() + ")")
+                .toList());
     }
 
     /** Column name to codec text for every {@code CODEC(…)} in a CREATE body, by a line scan. */
     private static Map<String, String> codecsOf(final String ddl) {
-        final Map<String, String> codecs = new java.util.LinkedHashMap<>();
+        final Map<String, String> codecs = new LinkedHashMap<>();
         String pendingName = null;
         for (final String raw : between(ddl, "(\n", ") ENGINE").lines().toList()) {
             final String line = raw.strip();
@@ -1347,7 +1347,10 @@ class FlowsSchemaTest {
                 .doesNotContain("minmax")
                 .doesNotContain("tokenbf_v1");
 
-        assertThat(FlowsSchema.addSkippingIndices("riptide")).containsExactly(
+        final List<String> addIndex = FlowsSchema.upgradeFlowsStorage("riptide", preCodecTable()).stream()
+                .filter(statement -> statement.contains(" ADD INDEX "))
+                .toList();
+        assertThat(addIndex).containsExactly(
                 "ALTER TABLE `riptide`.flows ADD INDEX IF NOT EXISTS idx_src_addr srcAddr TYPE bloom_filter(0.01) GRANULARITY 1",
                 "ALTER TABLE `riptide`.flows ADD INDEX IF NOT EXISTS idx_dst_addr dstAddr TYPE bloom_filter(0.01) GRANULARITY 1");
 
@@ -1359,28 +1362,67 @@ class FlowsSchemaTest {
                 .toList();
         assertThat(createBodies).hasSize(2);
         for (final String body : createBodies) {
-            assertThat(FlowsSchema.addSkippingIndices("riptide"))
-                    .filteredOn(alter -> alter.endsWith("ADD INDEX IF NOT EXISTS " + body))
-                    .hasSize(1);
+            assertThat(addIndex).filteredOn(alter -> alter.endsWith("ADD INDEX IF NOT EXISTS " + body)).hasSize(1);
         }
     }
 
+    /** A table already carrying every codec and index gets no statement at all, so a restart issues no ALTER. */
+    @Test
+    void aCurrentTableGetsNoStorageUpgrade() {
+        final Map<String, String> codecs = new LinkedHashMap<>();
+        FlowsSchema.FLOWS_COLUMNS.forEach(column -> codecs.put(column.name(), column.codecClause().strip()));
+        assertThat(FlowsSchema.upgradeFlowsStorage("riptide",
+                new FlowsSchema.LiveStorage(codecs, Set.of("idx_src_addr", "idx_dst_addr")))).isEmpty();
+    }
+
+    /** A codec an operator set is theirs: only a column with no codec at all is given riptide's. */
+    @Test
+    void anOperatorCodecIsLeftAlone() {
+        final var live = preCodecTable();
+        live.codecs().put("bytes", "CODEC(T64, ZSTD(3))");
+        final List<String> upgrade = FlowsSchema.upgradeFlowsStorage("riptide", live);
+        assertThat(upgrade).noneMatch(statement -> statement.contains("MODIFY COLUMN bytes "));
+        assertThat(upgrade).contains("ALTER TABLE `riptide`.flows MODIFY COLUMN packets CODEC(T64, ZSTD(1))");
+    }
+
     /**
-     * The upgrade onboard runs: columns first (the later statements name them), then the storage
-     * half, which is the codecs followed by the indices. Manage mode runs the same two halves
-     * around its shape check ({@code ClickhouseRepositoryIT.columnCheckFailsFastWhenIdentityColumnMissing}
-     * pins why).
+     * A column the live table lacks gets neither a codec nor an index on it, and an index already
+     * present is not re-added, so onboard against a stale table cannot fail on a storage statement.
      */
     @Test
-    void upgradeFlowsTableAddsColumnsThenCodecsThenIndices() {
-        final List<String> storage = FlowsSchema.upgradeFlowsStorage("riptide");
-        assertThat(storage.get(0)).isEqualTo(FlowsSchema.modifyCodecs("riptide"));
-        assertThat(storage.subList(1, storage.size()))
-                .containsExactlyElementsOf(FlowsSchema.addSkippingIndices("riptide"));
+    void aMissingColumnOrPresentIndexGetsNoStatement() {
+        final var live = preCodecTable();
+        live.codecs().remove("srcAddr");
+        live.indices().add("idx_dst_addr");
+        final List<String> upgrade = FlowsSchema.upgradeFlowsStorage("riptide", live);
+        assertThat(upgrade).noneMatch(statement -> statement.contains("MODIFY COLUMN srcAddr "));
+        assertThat(upgrade).contains("ALTER TABLE `riptide`.flows MODIFY COLUMN srcAddrHostname CODEC(ZSTD(1))");
+        assertThat(upgrade).noneMatch(statement -> statement.contains("ADD INDEX"));
+        assertThat(upgrade).contains("ALTER TABLE `riptide`.flows MODIFY COLUMN dstAddr CODEC(ZSTD(3))");
+    }
 
-        final List<String> upgrade = FlowsSchema.upgradeFlowsTable("riptide");
-        final int additive = FlowsSchema.additiveColumnNames().size();
-        assertThat(upgrade.subList(0, additive)).containsExactlyElementsOf(FlowsSchema.addAdditiveColumns("riptide"));
-        assertThat(upgrade.subList(additive, upgrade.size())).containsExactlyElementsOf(storage);
+    @Test
+    void liveStorageQueriesRejectAnUnsafeDatabaseName() {
+        assertThat(FlowsSchema.liveCodecsQuery("riptide")).isEqualTo(
+                "SELECT name, compression_codec FROM system.columns WHERE database = 'riptide' AND table = 'flows'");
+        assertThatThrownBy(() -> FlowsSchema.liveIndicesQuery("x' OR '1'='1"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    /** Index presence is read off the server's CREATE text, whose INDEX clauses match riptide's own. */
+    @Test
+    void indicesInReadsRiptidesIndicesOffACreateQuery() {
+        assertThat(FlowsSchema.indicesIn(FlowsSchema.createFlowsTable("riptide")))
+                .containsExactly("idx_src_addr", "idx_dst_addr");
+        assertThat(FlowsSchema.indicesIn("CREATE TABLE t (srcAddr IPv6, INDEX idx_src_addr_old srcAddr TYPE minmax)"))
+                .isEmpty();
+        assertThat(FlowsSchema.indicesIn("")).isEmpty();
+    }
+
+    /** Every column of the CREATE present with no codec, and no index: a table from before #1038. */
+    private static FlowsSchema.LiveStorage preCodecTable() {
+        final Map<String, String> codecs = new LinkedHashMap<>();
+        FlowsSchema.FLOWS_COLUMNS.forEach(column -> codecs.put(column.name(), ""));
+        return new FlowsSchema.LiveStorage(codecs, new HashSet<>());
     }
 }

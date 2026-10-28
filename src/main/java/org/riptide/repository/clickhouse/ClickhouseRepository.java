@@ -427,8 +427,6 @@ public class ClickhouseRepository implements FlowRepository {
             this.client.execute(FlowsSchema.createSamplesView(this.config.getDatabase())).get();
             // Additive upgrades manage mode owns: a pre-existing table that IF NOT EXISTS no-oped
             // over gains the additive columns in place (no data loss); on a fresh table these no-op.
-            // The codecs and indices follow the shape check below, not here: they name columns a
-            // stale table may lack, and the check is what names such a column for the operator.
             for (final String ddl : FlowsSchema.addAdditiveColumns(this.config.getDatabase())) {
                 this.client.execute(ddl).get();
             }
@@ -441,22 +439,7 @@ public class ClickhouseRepository implements FlowRepository {
         final TableSchema schema = checkSchema();
 
         if (this.config.isManageSchema()) {
-            // The table has every column, so the storage upgrades can name them: column codecs
-            // and skipping indices, in place, without a row being touched. Idempotent on a fresh
-            // or already-upgraded table. Guarded like the rollups below: a codec or an index only
-            // saves disk and reads, so a missing ALTER MODIFY COLUMN or ALTER ADD INDEX grant, or a
-            // live column whose type rejects the codec, must not stop ingestion.
-            for (final String ddl : FlowsSchema.upgradeFlowsStorage(this.config.getDatabase())) {
-                try {
-                    this.client.execute(ddl).get();
-                } catch (final InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw e;
-                } catch (final Exception e) {
-                    log.warn("flows storage upgrade not applied: {}. Ingestion is unaffected; new parts keep"
-                            + " the previous codec or index until it is applied.", e.getMessage());
-                }
-            }
+            upgradeFlowsStorage();
         }
 
         // Rollups whose repair did not complete on this start. Every statement below is guarded, so
@@ -595,6 +578,52 @@ public class ClickhouseRepository implements FlowRepository {
         // From the same columns the client was just handed, so the check persist() makes and the
         // serialiser it protects cannot disagree about what the table is (#985).
         this.requiredColumns = RequiredColumns.of(schema.getColumns());
+    }
+
+    /**
+     * Fills the flows table's storage gaps in place: a codec on each column that carries none, and
+     * each absent skipping index ({@link FlowsSchema#upgradeFlowsStorage}). Nothing on a current
+     * table, and an operator's own codec is left alone.
+     *
+     * <p>Guarded like the rollups: a codec or an index only saves disk and reads, so an unreadable
+     * catalog, a missing ALTER MODIFY COLUMN or ALTER ADD INDEX grant, or a live column whose type
+     * rejects its codec costs that statement and a warning naming it, never ingestion.</p>
+     */
+    private void upgradeFlowsStorage() throws InterruptedException {
+        final List<String> statements;
+        try {
+            statements = FlowsSchema.upgradeFlowsStorage(this.config.getDatabase(), readLiveStorage());
+        } catch (final InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw e;
+        } catch (final Exception e) {
+            log.warn("flows storage upgrade skipped: the live codecs and indices could not be read: {}."
+                    + " Ingestion is unaffected.", e.getMessage());
+            return;
+        }
+        for (final String ddl : statements) {
+            try {
+                this.client.execute(ddl).get();
+            } catch (final InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw e;
+            } catch (final Exception e) {
+                log.warn("flows storage upgrade not applied: {}: {}. Ingestion is unaffected; new parts keep"
+                        + " the previous codec or index until it is applied.", ddl, e.getMessage());
+            }
+        }
+    }
+
+    private FlowsSchema.LiveStorage readLiveStorage() throws Exception {
+        final Map<String, String> codecs = new LinkedHashMap<>();
+        try (var records = this.client.queryRecords(FlowsSchema.liveCodecsQuery(this.config.getDatabase())).get()) {
+            records.forEach(record -> codecs.put(record.getString("name"), record.getString("compression_codec")));
+        }
+        final Set<String> indices = new LinkedHashSet<>();
+        try (var records = this.client.queryRecords(FlowsSchema.liveIndicesQuery(this.config.getDatabase())).get()) {
+            records.forEach(record -> indices.addAll(FlowsSchema.indicesIn(record.getString("create_table_query"))));
+        }
+        return new FlowsSchema.LiveStorage(codecs, indices);
     }
 
     /** Which rollups this start may build a view for, and which it must decline for not trying. */

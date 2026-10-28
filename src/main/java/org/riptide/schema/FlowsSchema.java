@@ -749,7 +749,8 @@ public final class FlowsSchema {
 
     /**
      * Splits the column list of a CREATE TABLE at depth-0 commas, ignoring {@code --} comments
-     * (which may hold commas and parentheses), and reads {@code name type [CODEC(…)]} from each.
+     * (which may hold commas and parentheses) and anything inside a {@code '…'} literal (an enum
+     * label may hold either, or {@code --}), and reads {@code name type [CODEC(…)]} from each.
      * Entries that are not columns ({@code INDEX …}, the {@code @@indices@@} token) are skipped.
      */
     private static List<FlowsColumn> parseColumns(final String ddl) {
@@ -761,8 +762,16 @@ public final class FlowsSchema {
         final List<FlowsColumn> columns = new ArrayList<>();
         final StringBuilder entry = new StringBuilder();
         int depth = 0;
+        boolean quoted = false;
         for (int i = open; i < close; i++) {
             final char c = ddl.charAt(i);
+            if (c == '\'') {
+                quoted = !quoted;
+            }
+            if (quoted || c == '\'') {
+                entry.append(c);
+                continue;
+            }
             if (c == '-' && ddl.startsWith("--", i)) {
                 final int newline = ddl.indexOf('\n', i);
                 i = newline < 0 || newline > close ? close : newline;
@@ -826,31 +835,11 @@ public final class FlowsSchema {
     }
 
     /**
-     * One {@code ALTER TABLE … MODIFY COLUMN IF EXISTS … CODEC(…)} statement covering every column
-     * the CREATE gives a codec, so a table created before the codecs existed stores new parts the
-     * same way a fresh one does. A codec-only MODIFY is a metadata change: no part is rewritten,
-     * existing parts keep their codec until a merge rewrites them (the TTL merges on this table do
-     * so within the retention window). Idempotent: re-declaring the current codec is a no-op.
-     *
-     * <p>{@code IF EXISTS} per column for {@code riptide onboard}, which emits this through
-     * {@link #upgradeFlowsTable} with no shape check in front of it: on a stale table missing a
-     * non-additive column, the server's "Cannot find column to modify" would otherwise fail the
-     * whole statement. Manage mode runs it only after the startup shape check has passed, so there
-     * every column exists.</p>
-     */
-    public static String modifyCodecs(final String database) {
-        return "ALTER TABLE " + qualifiedFlows(database) + " " + FLOWS_COLUMNS.stream()
-                .filter(column -> column.codec() != null)
-                .map(column -> "MODIFY COLUMN IF EXISTS " + column.name() + column.codecClause())
-                .collect(Collectors.joining(", "));
-    }
-
-    /**
      * The data skipping indices of the flows table, name to definition — the one home for both
-     * the CREATE ({@code @@indices@@}) and {@link #addSkippingIndices}. Only an index shown to
+     * the CREATE ({@code @@indices@@}) and {@link #upgradeFlowsStorage}. Only an index shown to
      * prune granules under this table's sort key belongs here. Measured on the flow-knee lab
-     * (one merged part of 20.55M rows, {@code EXPLAIN indexes = 1}, 2026-10-06;
-     * benchmark/runs/flow-knee/codec-measure-2026-10-06.log): a point query on {@code dstAddr}
+     * (one merged part of 20.55M rows, {@code EXPLAIN indexes = 1}, 2026-10-06; the raw log is
+     * attached to PR #1038): a point query on {@code dstAddr}
      * read 23 of 2,526 granules with the bloom filter and all 2,526 without it. {@code srcAddr}
      * sits earlier in the key and the lab's constant AS numbers let the primary key prune it to
      * one granule by itself; with real AS numbers ahead of it in the key that pruning stops, which
@@ -873,41 +862,69 @@ public final class FlowsSchema {
     }
 
     /**
-     * Idempotent index upgrade: {@code ALTER TABLE … ADD INDEX IF NOT EXISTS} per entry of
-     * {@link #SKIPPING_INDICES}. An index added this way covers parts written afterwards; existing
-     * parts gain it as they merge, or at once with {@code MATERIALIZE INDEX}.
+     * What the live flows table already has: each column's codec as
+     * {@code system.columns.compression_codec} reports it ({@code ''} where the server default
+     * applies), and the names of its skipping indices. An absent table is two empty collections.
+     * Read with {@link #liveCodecsQuery}, and {@link #liveIndicesQuery} through {@link #indicesIn}.
      */
-    public static List<String> addSkippingIndices(final String database) {
+    public record LiveStorage(Map<String, String> codecs, Set<String> indices) { }
+
+    /** Columns {@code name} and {@code compression_codec} of the live flows table. */
+    public static String liveCodecsQuery(final String database) {
+        return "SELECT name, compression_codec FROM system.columns WHERE database = "
+                + literal(database) + " AND table = 'flows'";
+    }
+
+    /**
+     * Column {@code create_table_query} of the live flows table, for {@link #indicesIn}. Not
+     * {@code system.data_skipping_indices}: on the pinned image (26.7.3) that table needs an
+     * explicit {@code SELECT} grant that neither the runbook's onboard admin nor a manage-mode user
+     * holds, while {@code system.tables} is readable for any table the user can see.
+     */
+    public static String liveIndicesQuery(final String database) {
+        return "SELECT create_table_query FROM system.tables WHERE database = "
+                + literal(database) + " AND name = 'flows'";
+    }
+
+    /** Which of riptide's skipping indices a {@code create_table_query} already declares. */
+    public static Set<String> indicesIn(final String createTableQuery) {
+        return SKIPPING_INDICES.keySet().stream()
+                .filter(name -> createTableQuery.contains("INDEX " + name + " "))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    /**
+     * Fills the storage gaps of a pre-existing flows table, and nothing else: one
+     * {@code ALTER TABLE … MODIFY COLUMN … CODEC(…)} per column the CREATE gives a codec and the
+     * live column carries none, and {@code ADD INDEX IF NOT EXISTS} per absent skipping index. A
+     * codec already on a column, riptide's or one an operator tuned, is left alone. A column the
+     * table lacks gets neither statement, so this is safe on a stale table. On a current table it
+     * emits nothing.
+     *
+     * <p>One statement per column, so a column the server refuses (a live type the codec does not
+     * apply to) costs that column only. Both are metadata changes: no part is rewritten; existing
+     * parts keep their codec and gain the index as merges rewrite them.</p>
+     */
+    public static List<String> upgradeFlowsStorage(final String database, final LiveStorage live) {
         final String flows = qualifiedFlows(database);
-        return SKIPPING_INDICES.entrySet().stream()
-                .map(index -> "ALTER TABLE " + flows + " ADD INDEX IF NOT EXISTS "
-                        + index.getKey() + " " + index.getValue())
-                .toList();
-    }
-
-    /**
-     * Everything that brings a pre-existing flows table up to {@link #createFlowsTable}'s shape
-     * without touching its rows: the additive columns, then {@link #upgradeFlowsStorage}. Every
-     * statement is idempotent, so onboard emits this on every run. Manage mode runs the two halves
-     * around its shape check instead (see {@code ClickhouseRepository.start}).
-     */
-    public static List<String> upgradeFlowsTable(final String database) {
-        final List<String> statements = new ArrayList<>(addAdditiveColumns(database));
-        statements.addAll(upgradeFlowsStorage(database));
-        return List.copyOf(statements);
-    }
-
-    /**
-     * The storage half of the upgrade: the codecs, then the skipping indices. Both name columns
-     * the table must already have; {@code ADD INDEX IF NOT EXISTS} does not tolerate a missing
-     * column, so manage mode emits this only after the shape check has passed, and a stale table
-     * fails that check with the column named rather than failing here with a server error.
-     */
-    public static List<String> upgradeFlowsStorage(final String database) {
         final List<String> statements = new ArrayList<>();
-        statements.add(modifyCodecs(database));
-        statements.addAll(addSkippingIndices(database));
+        FLOWS_COLUMNS.stream()
+                .filter(column -> column.codec() != null && "".equals(live.codecs().get(column.name())))
+                .forEach(column -> statements.add(
+                        "ALTER TABLE " + flows + " MODIFY COLUMN " + column.name() + column.codecClause()));
+        SKIPPING_INDICES.forEach((name, definition) -> {
+            final String column = definition.substring(0, definition.indexOf(' '));
+            if (!live.indices().contains(name) && live.codecs().containsKey(column)) {
+                statements.add("ALTER TABLE " + flows + " ADD INDEX IF NOT EXISTS " + name + " " + definition);
+            }
+        });
         return List.copyOf(statements);
+    }
+
+    /** A database name as a SQL string literal, held to the same charset as {@link #ident}. */
+    private static String literal(final String database) {
+        ident(database);
+        return "'" + database + "'";
     }
 
     /**
@@ -1524,7 +1541,7 @@ public final class FlowsSchema {
             -- UTC — the schema is timezone-explicit, not dependent on the server's local zone (#276).
             --
             -- Codecs, measured on the flow-knee lab (20.55M rows of one 5-minute slice, merged to
-            -- one part, 2026-10-06; benchmark/runs/flow-knee/codec-measure-2026-10-06.log): ZSTD(1)
+            -- one part, 2026-10-06; the raw log is attached to PR #1038): ZSTD(1)
             -- over the default LZ4 took the part from 881 MB to 558 MB, column data only: neither
             -- table carried a skipping index. A third table with five candidate indices (the two
             -- kept below plus three rejected) held 25.8 MB of index files, an upper bound for the
@@ -1534,7 +1551,7 @@ public final class FlowsSchema {
             -- near-constant String dimensions (tenant, organisation, zone, system, exporterAddr)
             -- keep the default: ZSTD(1) made each of them four times larger than LZ4 did. Limits of
             -- that measurement: nl6 traffic, one tenant, distinct conversations, no hostnames, no
-            -- GeoIP, no AVC. A codec change here reaches existing tables through modifyCodecs().
+            -- GeoIP, no AVC. upgradeFlowsStorage() gives an existing table these codecs only on columns that carry none.
             timestamp DateTime64(3, 'UTC') CODEC(ZSTD(1)),
 
             flowProtocol Enum8(
@@ -1618,7 +1635,7 @@ public final class FlowsSchema {
             clockCorrection Nullable(Int64) CODEC(ZSTD(1)),
 
             -- Additive columns (0.5.x); '' = unknown. Kept last so a pre-existing table
-            -- upgraded via upgradeFlowsTable() has the same column order as a fresh one
+            -- upgraded via addAdditiveColumns() has the same column order as a fresh one
             -- (addAdditiveColumns reads each type and codec from this CREATE).
             srcCountry LowCardinality(String) CODEC(ZSTD(1)),
             srcCity LowCardinality(String) CODEC(ZSTD(1)),
@@ -1652,7 +1669,7 @@ public final class FlowsSchema {
             -- existed.
             applicationDescription LowCardinality(String) CODEC(ZSTD(1)),
 
-            -- Data skipping indices, rendered from SKIPPING_INDICES (one home with addSkippingIndices).
+            -- Data skipping indices, rendered from SKIPPING_INDICES (one home with upgradeFlowsStorage).
             @@indices@@
         ) ENGINE = MergeTree()
         -- PRIMARY KEY declared, not derived, for the reason spelled out at rollupTable(): a later

@@ -16,7 +16,9 @@ In manage mode (`manage-schema=true`) riptide ensures the schema idempotently at
 `flows`, the rollups and `flows_dead_letter` use `CREATE TABLE IF NOT EXISTS`, so an existing table is never replaced and its rows survive a restart.
 The `samples` view uses `CREATE OR REPLACE VIEW` because a view holds no data: it is always refreshed and can never go stale.
 Columns added by a later release are appended with `ALTER TABLE … ADD COLUMN IF NOT EXISTS`.
-Column codecs (`ALTER TABLE … MODIFY COLUMN … CODEC(…)`) and data skipping indices (`ALTER TABLE … ADD INDEX IF NOT EXISTS`) are applied in place after the startup column check passes; a failure there is logged and does not stop ingestion.
+After the startup column check passes, riptide fills storage gaps in place: a codec (`ALTER TABLE … MODIFY COLUMN … CODEC(…)`) on each column that has none, and each absent data skipping index (`ALTER TABLE … ADD INDEX IF NOT EXISTS`).
+A codec already on a column, including one an operator set, is left alone.
+A failure there is logged per statement and does not stop ingestion.
 Anything else is not migrated, and the startup column check fails fast instead.
 
 In validate mode (`manage-schema=false`) riptide creates nothing.

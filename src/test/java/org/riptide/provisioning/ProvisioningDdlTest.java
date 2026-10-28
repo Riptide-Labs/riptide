@@ -151,13 +151,10 @@ class ProvisioningDdlTest {
     }
 
     @Test
-    void ensureSharedUpgradesTheFlowsTableFirst() {
-        // The in-place upgrades (additive columns, then codecs, then skipping indices) are emitted
-        // on every run, before the grants and under the same table-exists precondition, so
-        // re-running onboard upgrades a pre-existing table in place.
+    void ensureSharedUpgradesAdditiveColumnsFirst() {
+        // Additive column upgrades are emitted on every run (before the grants, same
+        // table-exists precondition) so re-running onboard upgrades a pre-existing table in place.
         final List<String> sql = ProvisioningDdl.ensureShared("riptide", 50_000_000_000L);
-        final List<String> upgrade = FlowsSchema.upgradeFlowsTable("riptide");
-        assertThat(sql.subList(0, upgrade.size())).containsExactlyElementsOf(upgrade);
         final int additive = FlowsSchema.additiveColumnNames().size();
         assertThat(sql.get(0)).isEqualTo(
                 "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS srcCountry LowCardinality(String) CODEC(ZSTD(1))");
@@ -165,9 +162,7 @@ class ProvisioningDdlTest {
         // one-line change in FlowsSchema and not a test edit.
         assertThat(sql.subList(0, additive)).allMatch(s -> s.contains("ADD COLUMN IF NOT EXISTS"));
         assertThat(sql).filteredOn(s -> s.contains("ADD COLUMN")).hasSize(additive);
-        assertThat(sql.get(additive)).startsWith("ALTER TABLE `riptide`.flows MODIFY COLUMN IF EXISTS ");
-        assertThat(sql).filteredOn(s -> s.contains("ADD INDEX IF NOT EXISTS")).hasSize(2);
-        assertThat(sql.get(upgrade.size())).startsWith("CREATE ROLE IF NOT EXISTS");
+        assertThat(sql.get(additive - 1)).contains("applicationDescription LowCardinality(String)");
     }
 
     @Test
