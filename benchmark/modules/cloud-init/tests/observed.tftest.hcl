@@ -32,7 +32,7 @@ variables {
     nl6             = "ghcr.io/labmonkeys-space/nl6:v0.33.0@sha256:nl6"
     prometheus      = "docker.io/prom/prometheus:v3.15.0@sha256:prom"
     pyroscope       = "docker.io/grafana/pyroscope:2.3.1@sha256:pyro"
-    grafana         = "docker.io/grafana/grafana:13.2.2-distroless-slim@sha256:graf"
+    grafana         = "docker.io/grafana/grafana:13.3.0-distroless-slim@sha256:graf"
   }
 }
 
@@ -89,7 +89,7 @@ run "observability_runs_three_pinned_containers" {
     error_message = "retention: ${try(output.units.prometheus, "")} / ${try(output.units.pyroscope, "")}"
   }
   assert {
-    condition     = strcontains(output.units.grafana, "docker.io/grafana/grafana:13.2.2-distroless-slim@sha256:graf") && strcontains(output.units.prometheus, "--network host")
+    condition     = strcontains(output.units.grafana, "docker.io/grafana/grafana:13.3.0-distroless-slim@sha256:graf") && strcontains(output.units.prometheus, "--network host")
     error_message = "grafana: ${try(output.units.grafana, "")}"
   }
 }
@@ -165,7 +165,7 @@ run "grafana_provisions_two_datasources_and_the_dashboards" {
   # GF_*__FILE variable is read, and grafana.db on the kept disk keeps the
   # password it was created with. Every start resets it from the file.
   assert {
-    condition     = strcontains(try(output.units.grafana, ""), "ExecStartPre=/bin/sh -c '/usr/bin/docker run --rm -i -v /var/lib/bench/grafana:/var/lib/grafana --entrypoint grafana docker.io/grafana/grafana:13.2.2-distroless-slim@sha256:graf cli admin reset-admin-password --password-from-stdin < /etc/bench/grafana/admin-password'") && !strcontains(try(output.units.grafana, ""), "__FILE")
+    condition     = strcontains(try(output.units.grafana, ""), "ExecStartPre=/bin/sh -c '/usr/bin/docker run --rm -i -v /var/lib/bench/grafana:/var/lib/grafana --entrypoint grafana docker.io/grafana/grafana:13.3.0-distroless-slim@sha256:graf cli admin reset-admin-password --password-from-stdin < /etc/bench/grafana/admin-password'") && !strcontains(try(output.units.grafana, ""), "__FILE")
     error_message = "grafana admin password reset: ${try(output.units.grafana, "")}"
   }
   assert {
