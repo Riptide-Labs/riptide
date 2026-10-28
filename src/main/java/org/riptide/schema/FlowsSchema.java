@@ -13,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -103,6 +104,7 @@ public final class FlowsSchema {
     public static String createFlowsTable(final String database, final int ttlDays) {
         return FLOWS_TABLE
                 .replace(FLOWS_TOKEN, qualifiedFlows(database))
+                .replace(INDICES_TOKEN, indexDeclarations())
                 .replace(TTL_DAYS_TOKEN, Integer.toString(ttlDays));
     }
 
@@ -700,42 +702,229 @@ public final class FlowsSchema {
     }
 
     /**
-     * Columns added after the 0.4.x schema, upgradeable in place — the one home for both
-     * CREATE and ALTER emission. Order matters: it is the trailing column order of
-     * {@link #createFlowsTable}, so a fresh and an upgraded table end up identical.
+     * Columns added after the 0.4.x schema, upgradeable in place. Their types and codecs are not
+     * repeated here: {@link #addAdditiveColumns} reads both from {@link #FLOWS_TABLE} through
+     * {@link #FLOWS_COLUMNS}, so a fresh and an upgraded table end up identical in type, codec
+     * and column order. The order holds because the static check below fails class load unless
+     * these are the CREATE's last columns, in this order.
      */
-    private static final Map<String, String> ADDITIVE_COLUMNS = new LinkedHashMap<>();
+    private static final Set<String> ADDITIVE_COLUMNS = new LinkedHashSet<>(List.of(
+            "srcCountry",
+            "srcCity",
+            "dstCountry",
+            "dstCity",
+            "exporterName",
+            "samplingProvenance",
+            "applicationId",
+            "applicationSource",
+            "httpHost",
+            "httpUri",
+            "applicationDescription"));
+
+    /** One column of {@link #FLOWS_TABLE}; {@code codec} is the text inside {@code CODEC(…)}, or null. */
+    public record FlowsColumn(String name, String type, String codec) {
+        public String codecClause() {
+            return this.codec == null ? "" : " CODEC(" + this.codec + ")";
+        }
+    }
+
+    /**
+     * The columns of {@link #FLOWS_TABLE} in declaration order, parsed once. The CREATE text is the
+     * one home for a column's type and codec; every ALTER this class emits is derived from it, so
+     * the two paths cannot disagree.
+     */
+    public static final List<FlowsColumn> FLOWS_COLUMNS = parseColumns(FlowsSchema.FLOWS_TABLE);
 
     static {
-        ADDITIVE_COLUMNS.put("srcCountry", "LowCardinality(String)");
-        ADDITIVE_COLUMNS.put("srcCity", "LowCardinality(String)");
-        ADDITIVE_COLUMNS.put("dstCountry", "LowCardinality(String)");
-        ADDITIVE_COLUMNS.put("dstCity", "LowCardinality(String)");
-        ADDITIVE_COLUMNS.put("exporterName", "LowCardinality(String)");
-        ADDITIVE_COLUMNS.put("samplingProvenance", "LowCardinality(String)");
-        ADDITIVE_COLUMNS.put("applicationId", "UInt32");
-        ADDITIVE_COLUMNS.put("applicationSource", "LowCardinality(String)");
-        ADDITIVE_COLUMNS.put("httpHost", "String");
-        ADDITIVE_COLUMNS.put("httpUri", "String");
-        ADDITIVE_COLUMNS.put("applicationDescription", "LowCardinality(String)");
+        // ALTER … ADD COLUMN appends, so an upgraded table matches a fresh one in column order only
+        // while the additive columns are the CREATE's last columns, in this order.
+        final List<String> declared = FLOWS_COLUMNS.stream().map(FlowsColumn::name).toList();
+        final List<String> trailing = declared.subList(
+                Math.max(0, declared.size() - ADDITIVE_COLUMNS.size()), declared.size());
+        if (!trailing.equals(List.copyOf(ADDITIVE_COLUMNS))) {
+            throw new IllegalStateException("the additive columns " + ADDITIVE_COLUMNS
+                    + " must be the last columns of the flows CREATE, in order; found " + trailing);
+        }
+    }
+
+    /**
+     * Splits the column list of a CREATE TABLE at depth-0 commas, ignoring {@code --} comments
+     * (which may hold commas and parentheses) and anything inside a {@code '…'} literal (an enum
+     * label may hold either, or {@code --}), and reads {@code name type [CODEC(…)]} from each.
+     * Entries that are not columns ({@code INDEX …}, the {@code @@indices@@} token) are skipped.
+     */
+    private static List<FlowsColumn> parseColumns(final String ddl) {
+        final int open = ddl.indexOf("(\n") + 2;
+        final int close = ddl.indexOf(") ENGINE", open);
+        if (open < 2 || close < 0) {
+            throw new IllegalStateException("flows CREATE has no column list");
+        }
+        final List<FlowsColumn> columns = new ArrayList<>();
+        final StringBuilder entry = new StringBuilder();
+        int depth = 0;
+        boolean quoted = false;
+        for (int i = open; i < close; i++) {
+            final char c = ddl.charAt(i);
+            if (c == '\'') {
+                quoted = !quoted;
+            }
+            if (quoted || c == '\'') {
+                entry.append(c);
+                continue;
+            }
+            if (c == '-' && ddl.startsWith("--", i)) {
+                final int newline = ddl.indexOf('\n', i);
+                i = newline < 0 || newline > close ? close : newline;
+                continue;
+            }
+            if (c == '(') {
+                depth++;
+            } else if (c == ')') {
+                depth--;
+            } else if (c == ',' && depth == 0) {
+                parseColumn(entry.toString()).ifPresent(columns::add);
+                entry.setLength(0);
+                continue;
+            }
+            entry.append(c);
+        }
+        parseColumn(entry.toString()).ifPresent(columns::add);
+        return List.copyOf(columns);
+    }
+
+    private static Optional<FlowsColumn> parseColumn(final String raw) {
+        final String text = raw.replaceAll("\\s+", " ").strip();
+        if (text.isEmpty() || text.startsWith("@@") || text.startsWith("INDEX ")) {
+            return Optional.empty();
+        }
+        final int space = text.indexOf(' ');
+        if (space < 0) {
+            throw new IllegalStateException("flows column without a type: " + text);
+        }
+        final String name = text.substring(0, space);
+        final String rest = text.substring(space + 1);
+        final int codec = rest.lastIndexOf(" CODEC(");
+        if (codec < 0) {
+            return Optional.of(new FlowsColumn(name, rest, null));
+        }
+        if (!rest.endsWith(")")) {
+            throw new IllegalStateException("flows column with a malformed codec: " + text);
+        }
+        return Optional.of(new FlowsColumn(name, rest.substring(0, codec),
+                rest.substring(codec + " CODEC(".length(), rest.length() - 1)));
     }
 
     /** The additive column names, for callers distinguishing in-place-upgradeable columns. */
     public static Set<String> additiveColumnNames() {
-        return Collections.unmodifiableSet(ADDITIVE_COLUMNS.keySet());
+        return Collections.unmodifiableSet(ADDITIVE_COLUMNS);
     }
 
     /**
      * Idempotent additive upgrade: {@code ALTER TABLE … ADD COLUMN IF NOT EXISTS} for each
-     * additive column. Safe on any table — a fresh one (columns exist, no-op) or a pre-upgrade
-     * one (columns appended in definition order, matching {@link #createFlowsTable}).
+     * additive column, with the type and codec the CREATE declares. Safe on any table — a fresh
+     * one (columns exist, no-op) or a pre-upgrade one (columns appended in definition order,
+     * matching {@link #createFlowsTable}).
      */
     public static List<String> addAdditiveColumns(final String database) {
         final String flows = qualifiedFlows(database);
-        return ADDITIVE_COLUMNS.entrySet().stream()
+        return FLOWS_COLUMNS.stream()
+                .filter(column -> ADDITIVE_COLUMNS.contains(column.name()))
                 .map(column -> "ALTER TABLE " + flows + " ADD COLUMN IF NOT EXISTS "
-                        + column.getKey() + " " + column.getValue())
+                        + column.name() + " " + column.type() + column.codecClause())
                 .toList();
+    }
+
+    /**
+     * The data skipping indices of the flows table, name to definition — the one home for both
+     * the CREATE ({@code @@indices@@}) and {@link #upgradeFlowsStorage}. Only an index shown to
+     * prune granules under this table's sort key belongs here. Measured on the flow-knee lab
+     * (one merged part of 20.55M rows, {@code EXPLAIN indexes = 1}, 2026-10-06; the raw log is
+     * attached to PR #1038): a point query on {@code dstAddr}
+     * read 23 of 2,526 granules with the bloom filter and all 2,526 without it. {@code srcAddr}
+     * sits earlier in the key and the lab's constant AS numbers let the primary key prune it to
+     * one granule by itself; with real AS numbers ahead of it in the key that pruning stops, which
+     * is the case its filter is for. Not here: {@code minmax} on the ports (last in the key, so a
+     * granule spans nearly the whole port range; 2,526 of 2,526 granules read) and a token filter
+     * on {@code httpHost} (the lab carries no AVC rows, so it could not be measured).
+     */
+    private static final Map<String, String> SKIPPING_INDICES = new LinkedHashMap<>();
+
+    static {
+        SKIPPING_INDICES.put("idx_src_addr", "srcAddr TYPE bloom_filter(0.01) GRANULARITY 1");
+        SKIPPING_INDICES.put("idx_dst_addr", "dstAddr TYPE bloom_filter(0.01) GRANULARITY 1");
+    }
+
+    /** The {@code INDEX …} entries of the CREATE, rendered from {@link #SKIPPING_INDICES}. */
+    private static String indexDeclarations() {
+        return SKIPPING_INDICES.entrySet().stream()
+                .map(index -> "INDEX " + index.getKey() + " " + index.getValue())
+                .collect(Collectors.joining(",\n    "));
+    }
+
+    /**
+     * What the live flows table already has: each column's codec as
+     * {@code system.columns.compression_codec} reports it ({@code ''} where the server default
+     * applies), and the names of its skipping indices. An absent table is two empty collections.
+     * Read with {@link #liveCodecsQuery}, and {@link #liveIndicesQuery} through {@link #indicesIn}.
+     */
+    public record LiveStorage(Map<String, String> codecs, Set<String> indices) { }
+
+    /** Columns {@code name} and {@code compression_codec} of the live flows table. */
+    public static String liveCodecsQuery(final String database) {
+        return "SELECT name, compression_codec FROM system.columns WHERE database = "
+                + literal(database) + " AND table = 'flows'";
+    }
+
+    /**
+     * Column {@code create_table_query} of the live flows table, for {@link #indicesIn}. Not
+     * {@code system.data_skipping_indices}: on the pinned image (26.7.3) that table needs an
+     * explicit {@code SELECT} grant that neither the runbook's onboard admin nor a manage-mode user
+     * holds, while {@code system.tables} is readable for any table the user can see.
+     */
+    public static String liveIndicesQuery(final String database) {
+        return "SELECT create_table_query FROM system.tables WHERE database = "
+                + literal(database) + " AND name = 'flows'";
+    }
+
+    /** Which of riptide's skipping indices a {@code create_table_query} already declares. */
+    public static Set<String> indicesIn(final String createTableQuery) {
+        return SKIPPING_INDICES.keySet().stream()
+                .filter(name -> createTableQuery.contains("INDEX " + name + " "))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    /**
+     * Fills the storage gaps of a pre-existing flows table, and nothing else: one
+     * {@code ALTER TABLE … MODIFY COLUMN … CODEC(…)} per column the CREATE gives a codec and the
+     * live column carries none, and {@code ADD INDEX IF NOT EXISTS} per absent skipping index. A
+     * codec already on a column, riptide's or one an operator tuned, is left alone. A column the
+     * table lacks gets neither statement, so this is safe on a stale table. On a current table it
+     * emits nothing.
+     *
+     * <p>One statement per column, so a column the server refuses (a live type the codec does not
+     * apply to) costs that column only. Both are metadata changes: no part is rewritten; existing
+     * parts keep their codec and gain the index as merges rewrite them.</p>
+     */
+    public static List<String> upgradeFlowsStorage(final String database, final LiveStorage live) {
+        final String flows = qualifiedFlows(database);
+        final List<String> statements = new ArrayList<>();
+        FLOWS_COLUMNS.stream()
+                .filter(column -> column.codec() != null && "".equals(live.codecs().get(column.name())))
+                .forEach(column -> statements.add(
+                        "ALTER TABLE " + flows + " MODIFY COLUMN " + column.name() + column.codecClause()));
+        SKIPPING_INDICES.forEach((name, definition) -> {
+            final String column = definition.substring(0, definition.indexOf(' '));
+            if (!live.indices().contains(name) && live.codecs().containsKey(column)) {
+                statements.add("ALTER TABLE " + flows + " ADD INDEX IF NOT EXISTS " + name + " " + definition);
+            }
+        });
+        return List.copyOf(statements);
+    }
+
+    /** A database name as a SQL string literal, held to the same charset as {@link #ident}. */
+    private static String literal(final String database) {
+        ident(database);
+        return "'" + database + "'";
     }
 
     /**
@@ -1295,6 +1484,7 @@ public final class FlowsSchema {
     private static final String SAMPLES_TOKEN = "@@samples@@";
     private static final String DEAD_LETTER_TOKEN = "@@deadLetter@@";
     private static final String TTL_DAYS_TOKEN = "@@ttlDays@@";
+    private static final String INDICES_TOKEN = "@@indices@@";
 
     /**
      * The dead-letter table (#548): what a batch {@code flows} refused carried, one row per flow.
@@ -1349,14 +1539,27 @@ public final class FlowsSchema {
         CREATE TABLE IF NOT EXISTS @@flows@@ (
             -- Time columns pin the UTC timezone so the stored instants also display and parse in
             -- UTC — the schema is timezone-explicit, not dependent on the server's local zone (#276).
-            timestamp DateTime64(3, 'UTC'),
+            --
+            -- Codecs, measured on the flow-knee lab (20.55M rows of one 5-minute slice, merged to
+            -- one part, 2026-10-06; the raw log is attached to PR #1038): ZSTD(1)
+            -- over the default LZ4 took the part from 881 MB to 558 MB, column data only: neither
+            -- table carried a skipping index. A third table with five candidate indices (the two
+            -- kept below plus three rejected) held 25.8 MB of index files, an upper bound for the
+            -- two that ship; they were not sized on their own. Rows inside a granule are
+            -- ordered by the sort key below, not by time, so DoubleDelta on the time columns was a
+            -- loss (receivedAt 65 -> 141 MB against 34 MB with ZSTD alone) and is not used. The
+            -- near-constant String dimensions (tenant, organisation, zone, system, exporterAddr)
+            -- keep the default: ZSTD(1) made each of them four times larger than LZ4 did. Limits of
+            -- that measurement: nl6 traffic, one tenant, distinct conversations, no hostnames, no
+            -- GeoIP, no AVC. upgradeFlowsStorage() gives an existing table these codecs only on columns that carry none.
+            timestamp DateTime64(3, 'UTC') CODEC(ZSTD(1)),
 
             flowProtocol Enum8(
                 'NetflowV5' = 1,
                 'NetflowV9' = 2,
                 'IPFIX' = 3,
                 'SFLOW' = 4
-            ),
+            ) CODEC(ZSTD(1)),
 
             tenant String,
             organisation String,
@@ -1364,52 +1567,52 @@ public final class FlowsSchema {
             system String,
             exporterAddr String,
 
-            receivedAt DateTime64(9, 'UTC'),
+            receivedAt DateTime64(9, 'UTC') CODEC(ZSTD(1)),
 
-            firstSwitched DateTime64(9, 'UTC'),
-            deltaSwitched DateTime64(9, 'UTC'),
-            lastSwitched DateTime64(9, 'UTC'),
+            firstSwitched DateTime64(9, 'UTC') CODEC(ZSTD(1)),
+            deltaSwitched DateTime64(9, 'UTC') CODEC(ZSTD(1)),
+            lastSwitched DateTime64(9, 'UTC') CODEC(ZSTD(1)),
 
-            inputSnmp UInt32,
-            inputSnmpIfName Nullable(String),
-            inputSnmpIfAlias Nullable(String),
-            inputSnmpIfSpeed Nullable(UInt32),
+            inputSnmp UInt32 CODEC(T64, ZSTD(1)),
+            inputSnmpIfName Nullable(String) CODEC(ZSTD(1)),
+            inputSnmpIfAlias Nullable(String) CODEC(ZSTD(1)),
+            inputSnmpIfSpeed Nullable(UInt32) CODEC(T64, ZSTD(1)),
 
-            outputSnmp UInt32,
-            outputSnmpIfName Nullable(String),
-            outputSnmpIfAlias Nullable(String),
-            outputSnmpIfSpeed Nullable(UInt32),
+            outputSnmp UInt32 CODEC(T64, ZSTD(1)),
+            outputSnmpIfName Nullable(String) CODEC(ZSTD(1)),
+            outputSnmpIfAlias Nullable(String) CODEC(ZSTD(1)),
+            outputSnmpIfSpeed Nullable(UInt32) CODEC(T64, ZSTD(1)),
 
-            srcAs UInt64,
-            srcAsOrg Nullable(String),
-            srcAddr IPv6,
-            srcMaskLen UInt8,
-            srcAddrHostname Nullable(String),
-            srcPort UInt16,
+            srcAs UInt64 CODEC(T64, ZSTD(1)),
+            srcAsOrg Nullable(String) CODEC(ZSTD(1)),
+            srcAddr IPv6 CODEC(ZSTD(3)),
+            srcMaskLen UInt8 CODEC(T64, ZSTD(1)),
+            srcAddrHostname Nullable(String) CODEC(ZSTD(1)),
+            srcPort UInt16 CODEC(T64, ZSTD(1)),
 
-            dstAs UInt64,
-            dstAsOrg Nullable(String),
-            dstAddr IPv6,
-            dstMaskLen UInt8,
-            dstAddrHostname Nullable(String),
-            dstPort UInt16,
+            dstAs UInt64 CODEC(T64, ZSTD(1)),
+            dstAsOrg Nullable(String) CODEC(ZSTD(1)),
+            dstAddr IPv6 CODEC(ZSTD(3)),
+            dstMaskLen UInt8 CODEC(T64, ZSTD(1)),
+            dstAddrHostname Nullable(String) CODEC(ZSTD(1)),
+            dstPort UInt16 CODEC(T64, ZSTD(1)),
 
-            nextHop Nullable(IPv6),
-            nextHopHostname Nullable(String),
+            nextHop Nullable(IPv6) CODEC(ZSTD(3)),
+            nextHopHostname Nullable(String) CODEC(ZSTD(1)),
 
-            bytes UInt64,
-            packets UInt64,
+            bytes UInt64 CODEC(T64, ZSTD(1)),
+            packets UInt64 CODEC(T64, ZSTD(1)),
 
-            direction Enum8('INGRESS' = 1, 'EGRESS' = 2, 'UNKNOWN' = 3),
+            direction Enum8('INGRESS' = 1, 'EGRESS' = 2, 'UNKNOWN' = 3) CODEC(ZSTD(1)),
 
-            engineId UInt32,
-            engineType UInt16,
+            engineId UInt32 CODEC(T64, ZSTD(1)),
+            engineType UInt16 CODEC(T64, ZSTD(1)),
 
-            vlan UInt16,
-            ipProtocolVersion UInt8,
-            protocol UInt8,
-            tcpFlags UInt8,
-            tos UInt8,
+            vlan UInt16 CODEC(T64, ZSTD(1)),
+            ipProtocolVersion UInt8 CODEC(T64, ZSTD(1)),
+            protocol UInt8 CODEC(T64, ZSTD(1)),
+            tcpFlags UInt8 CODEC(T64, ZSTD(1)),
+            tos UInt8 CODEC(T64, ZSTD(1)),
 
             samplingAlgorithm Enum8(
                 'Unassigned' = 1,
@@ -1420,50 +1623,54 @@ public final class FlowsSchema {
                 'PropertyMatchFiltering' = 6,
                 'HashBasedFiltering' = 7,
                 'FlowStateDependentIntermediateFlowSelectionProcess' = 8
-            ),\s
-            samplingInterval Float64,
+            ) CODEC(ZSTD(1)),\s
+            samplingInterval Float64 CODEC(Gorilla, ZSTD(1)),
 
-            application Nullable(String),
+            application Nullable(String) CODEC(ZSTD(1)),
 
-            srcLocality Enum8('PUBLIC' = 1, 'PRIVATE' = 2),
-            dstLocality Enum8('PUBLIC' = 1, 'PRIVATE' = 2),
-            flowLocality Enum8('PUBLIC' = 1, 'PRIVATE' = 2),
+            srcLocality Enum8('PUBLIC' = 1, 'PRIVATE' = 2) CODEC(ZSTD(1)),
+            dstLocality Enum8('PUBLIC' = 1, 'PRIVATE' = 2) CODEC(ZSTD(1)),
+            flowLocality Enum8('PUBLIC' = 1, 'PRIVATE' = 2) CODEC(ZSTD(1)),
 
-            clockCorrection Nullable(Int64),
+            clockCorrection Nullable(Int64) CODEC(ZSTD(1)),
 
             -- Additive columns (0.5.x); '' = unknown. Kept last so a pre-existing table
-            -- upgraded via addAdditiveColumns() has the same column order as a fresh one.
-            srcCountry LowCardinality(String),
-            srcCity LowCardinality(String),
-            dstCountry LowCardinality(String),
-            dstCity LowCardinality(String),
-            exporterName LowCardinality(String),
+            -- upgraded via addAdditiveColumns() has the same column order as a fresh one
+            -- (addAdditiveColumns reads each type and codec from this CREATE).
+            srcCountry LowCardinality(String) CODEC(ZSTD(1)),
+            srcCity LowCardinality(String) CODEC(ZSTD(1)),
+            dstCountry LowCardinality(String) CODEC(ZSTD(1)),
+            dstCity LowCardinality(String) CODEC(ZSTD(1)),
+            exporterName LowCardinality(String) CODEC(ZSTD(1)),
 
             -- Which rung of the resolution ladder supplied samplingInterval: 'record', 'options',
             -- 'header', 'derived', 'fallback' or 'assumed'. '' means the row was written before
             -- this column existed, which is distinct from 'assumed' and is not backfillable.
-            samplingProvenance LowCardinality(String),
+            samplingProvenance LowCardinality(String) CODEC(ZSTD(1)),
 
             -- The exporter's application id (IPFIX element 95 or NetFlow v9 field 95, RFC 6759), packed as
             -- engine << 24 | selector. 0 = the record carried none.
-            applicationId UInt32,
+            applicationId UInt32 CODEC(T64, ZSTD(1)),
 
             -- Which rung named `application`: 'exporter' (the exporter's application table),
             -- 'rules' (a port/address rule) or 'none'. '' = written before this column existed.
-            applicationSource LowCardinality(String),
+            applicationSource LowCardinality(String) CODEC(ZSTD(1)),
 
             -- Cisco AVC HTTP host (PEN 9 / 12235) with its application prefix stripped, and the
             -- HTTP URI (PEN 9 / 9357, the pair with the most hits; the router keeps the first path
             -- segment only). Only the ingress record of an HTTP request carries them, so the
             -- response record of the same conversation is ''. '' also = no such element, or
             -- written before these columns existed; the three cannot be told apart.
-            httpHost String,
-            httpUri String,
+            httpHost String CODEC(ZSTD(1)),
+            httpUri String CODEC(ZSTD(1)),
 
             -- The exporter table's applicationDescription for applicationId, set only when
             -- applicationSource = 'exporter'. '' = no description, or written before this column
             -- existed.
-            applicationDescription LowCardinality(String)
+            applicationDescription LowCardinality(String) CODEC(ZSTD(1)),
+
+            -- Data skipping indices, rendered from SKIPPING_INDICES (one home with upgradeFlowsStorage).
+            @@indices@@
         ) ENGINE = MergeTree()
         -- PRIMARY KEY declared, not derived, for the reason spelled out at rollupTable(): a later
         -- MODIFY ORDER BY appends to the sorting key alone, and a derived primary key would leave

@@ -11,6 +11,7 @@ import org.riptide.mcp.service.QueryRouter;
 
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -74,7 +75,7 @@ class FlowsSchemaTest {
         assertThat(FlowsSchema.additiveColumnNames()).contains("samplingProvenance");
         assertThat(create).contains("samplingProvenance LowCardinality(String)");
         assertThat(alters).contains(
-                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS samplingProvenance LowCardinality(String)");
+                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS samplingProvenance LowCardinality(String) CODEC(ZSTD(1))");
 
         // Every additive column is emitted by both paths, in the same relative order.
         final var declarationOrder = FlowsSchema.additiveColumnNames().stream()
@@ -1222,7 +1223,7 @@ class FlowsSchemaTest {
         assertThat(FlowsSchema.additiveColumnNames()).contains("applicationId");
         assertThat(FlowsSchema.createFlowsTable("riptide")).contains("applicationId UInt32");
         assertThat(FlowsSchema.addAdditiveColumns("riptide")).contains(
-                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS applicationId UInt32");
+                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS applicationId UInt32 CODEC(T64, ZSTD(1))");
     }
 
     @Test
@@ -1230,7 +1231,7 @@ class FlowsSchemaTest {
         assertThat(FlowsSchema.additiveColumnNames()).contains("applicationSource");
         assertThat(FlowsSchema.createFlowsTable("riptide")).contains("applicationSource LowCardinality(String)");
         assertThat(FlowsSchema.addAdditiveColumns("riptide")).contains(
-                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS applicationSource LowCardinality(String)");
+                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS applicationSource LowCardinality(String) CODEC(ZSTD(1))");
     }
 
     /** Exporter-supplied text with no cap and no dictionary: a plain String, never a dimension. */
@@ -1239,7 +1240,7 @@ class FlowsSchemaTest {
         assertThat(FlowsSchema.additiveColumnNames()).contains("httpHost");
         assertThat(FlowsSchema.createFlowsTable("riptide")).contains("httpHost String");
         assertThat(FlowsSchema.addAdditiveColumns("riptide")).contains(
-                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS httpHost String");
+                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS httpHost String CODEC(ZSTD(1))");
     }
 
     @Test
@@ -1247,7 +1248,7 @@ class FlowsSchemaTest {
         assertThat(FlowsSchema.additiveColumnNames()).contains("httpUri");
         assertThat(FlowsSchema.createFlowsTable("riptide")).contains("httpUri String");
         assertThat(FlowsSchema.addAdditiveColumns("riptide")).contains(
-                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS httpUri String");
+                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS httpUri String CODEC(ZSTD(1))");
     }
 
     /** One value per application-table row, so a dictionary the size of a protocol pack. */
@@ -1256,6 +1257,172 @@ class FlowsSchemaTest {
         assertThat(FlowsSchema.additiveColumnNames()).contains("applicationDescription");
         assertThat(FlowsSchema.createFlowsTable("riptide")).contains("applicationDescription LowCardinality(String)");
         assertThat(FlowsSchema.addAdditiveColumns("riptide")).contains(
-                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS applicationDescription LowCardinality(String)");
+                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS applicationDescription LowCardinality(String) CODEC(ZSTD(1))");
+    }
+
+    /**
+     * The codecs the lab measurement chose (FlowsSchema's CREATE comment, 2026-10-06): ZSTD over
+     * the default where it won, no DoubleDelta on the time columns because rows inside a granule
+     * are not time-ordered, and the default (LZ4) on the near-constant String dimensions where
+     * ZSTD(1) measured four times larger.
+     */
+    @Test
+    void flowsTableDeclaresTheMeasuredCompressionCodecs() {
+        final String ddl = FlowsSchema.createFlowsTable("riptide");
+        assertThat(ddl)
+                .contains("timestamp DateTime64(3, 'UTC') CODEC(ZSTD(1)),")
+                .contains("receivedAt DateTime64(9, 'UTC') CODEC(ZSTD(1)),")
+                .contains("bytes UInt64 CODEC(T64, ZSTD(1))")
+                .contains("packets UInt64 CODEC(T64, ZSTD(1))")
+                .contains("srcAddr IPv6 CODEC(ZSTD(3))")
+                .contains("dstAddr IPv6 CODEC(ZSTD(3))")
+                .contains("samplingInterval Float64 CODEC(Gorilla, ZSTD(1))")
+                .doesNotContain("CODEC(DoubleDelta")
+                .contains("tenant String,")
+                .contains("organisation String,")
+                .contains("zone String,")
+                .contains("system String,")
+                .contains("exporterAddr String,");
+    }
+
+    /**
+     * Every codec the CREATE declares reaches a table created before it existed: one
+     * {@code MODIFY COLUMN} per codec-bearing column, with the codec text the CREATE has, and
+     * nothing for a column the CREATE leaves on the default. Read off the rendered CREATE by a
+     * parser independent of FlowsSchema's own, so a column the schema parser dropped (the two
+     * multi-line enums are the ones at risk) would show up as a missing MODIFY.
+     */
+    @Test
+    void everyCodecInTheCreateReachesAnUpgradedTable() {
+        final String ddl = FlowsSchema.createFlowsTable("riptide");
+        final List<String> modify = FlowsSchema.upgradeFlowsStorage("riptide", preCodecTable()).stream()
+                .filter(statement -> statement.contains(" MODIFY COLUMN "))
+                .toList();
+
+        final Map<String, String> codecs = codecsOf(ddl);
+        assertThat(codecs).hasSize(56)
+                .containsEntry("timestamp", "ZSTD(1)")
+                .containsEntry("flowProtocol", "ZSTD(1)")
+                .containsEntry("samplingAlgorithm", "ZSTD(1)")
+                .containsEntry("bytes", "T64, ZSTD(1)")
+                .doesNotContainKeys("tenant", "organisation", "zone", "system", "exporterAddr");
+        assertThat(modify).containsExactlyInAnyOrderElementsOf(codecs.entrySet().stream()
+                .map(codec -> "ALTER TABLE `riptide`.flows MODIFY COLUMN " + codec.getKey()
+                        + " CODEC(" + codec.getValue() + ")")
+                .toList());
+    }
+
+    /** Column name to codec text for every {@code CODEC(…)} in a CREATE body, by a line scan. */
+    private static Map<String, String> codecsOf(final String ddl) {
+        final Map<String, String> codecs = new LinkedHashMap<>();
+        String pendingName = null;
+        for (final String raw : between(ddl, "(\n", ") ENGINE").lines().toList()) {
+            final String line = raw.strip();
+            if (line.isEmpty() || line.startsWith("--") || line.startsWith("INDEX ")) {
+                continue;
+            }
+            final Matcher column = Pattern.compile("^(\\w+) .*").matcher(line);
+            if (column.matches() && !line.startsWith("'")) {
+                pendingName = column.group(1);
+            }
+            final Matcher codec = Pattern.compile(".* CODEC\\((.+)\\),?\\s*$").matcher(line);
+            if (codec.matches()) {
+                codecs.put(pendingName, codec.group(1));
+            }
+        }
+        return codecs;
+    }
+
+    /**
+     * The CREATE and the ALTER path render the same index definitions from one map, in full: a
+     * definition retuned in one place cannot drift from the other, and a mangled ALTER body
+     * (wrong column, dropped GRANULARITY) fails here rather than shipping.
+     */
+    @Test
+    void skippingIndicesAreTheSameInTheCreateAndTheAlterPath() {
+        final String ddl = FlowsSchema.createFlowsTable("riptide");
+        assertThat(ddl)
+                .contains("INDEX idx_src_addr srcAddr TYPE bloom_filter(0.01) GRANULARITY 1,\n")
+                .contains("INDEX idx_dst_addr dstAddr TYPE bloom_filter(0.01) GRANULARITY 1\n")
+                .doesNotContain("minmax")
+                .doesNotContain("tokenbf_v1");
+
+        final List<String> addIndex = FlowsSchema.upgradeFlowsStorage("riptide", preCodecTable()).stream()
+                .filter(statement -> statement.contains(" ADD INDEX "))
+                .toList();
+        assertThat(addIndex).containsExactly(
+                "ALTER TABLE `riptide`.flows ADD INDEX IF NOT EXISTS idx_src_addr srcAddr TYPE bloom_filter(0.01) GRANULARITY 1",
+                "ALTER TABLE `riptide`.flows ADD INDEX IF NOT EXISTS idx_dst_addr dstAddr TYPE bloom_filter(0.01) GRANULARITY 1");
+
+        // Every INDEX body in the CREATE appears verbatim in exactly one ALTER.
+        final List<String> createBodies = between(ddl, "(\n", ") ENGINE").lines()
+                .map(String::strip)
+                .filter(line -> line.startsWith("INDEX "))
+                .map(line -> line.replaceFirst("^INDEX ", "").replaceFirst(",$", ""))
+                .toList();
+        assertThat(createBodies).hasSize(2);
+        for (final String body : createBodies) {
+            assertThat(addIndex).filteredOn(alter -> alter.endsWith("ADD INDEX IF NOT EXISTS " + body)).hasSize(1);
+        }
+    }
+
+    /** A table already carrying every codec and index gets no statement at all, so a restart issues no ALTER. */
+    @Test
+    void aCurrentTableGetsNoStorageUpgrade() {
+        final Map<String, String> codecs = new LinkedHashMap<>();
+        FlowsSchema.FLOWS_COLUMNS.forEach(column -> codecs.put(column.name(), column.codecClause().strip()));
+        assertThat(FlowsSchema.upgradeFlowsStorage("riptide",
+                new FlowsSchema.LiveStorage(codecs, Set.of("idx_src_addr", "idx_dst_addr")))).isEmpty();
+    }
+
+    /** A codec an operator set is theirs: only a column with no codec at all is given riptide's. */
+    @Test
+    void anOperatorCodecIsLeftAlone() {
+        final var live = preCodecTable();
+        live.codecs().put("bytes", "CODEC(T64, ZSTD(3))");
+        final List<String> upgrade = FlowsSchema.upgradeFlowsStorage("riptide", live);
+        assertThat(upgrade).noneMatch(statement -> statement.contains("MODIFY COLUMN bytes "));
+        assertThat(upgrade).contains("ALTER TABLE `riptide`.flows MODIFY COLUMN packets CODEC(T64, ZSTD(1))");
+    }
+
+    /**
+     * A column the live table lacks gets neither a codec nor an index on it, and an index already
+     * present is not re-added, so onboard against a stale table cannot fail on a storage statement.
+     */
+    @Test
+    void aMissingColumnOrPresentIndexGetsNoStatement() {
+        final var live = preCodecTable();
+        live.codecs().remove("srcAddr");
+        live.indices().add("idx_dst_addr");
+        final List<String> upgrade = FlowsSchema.upgradeFlowsStorage("riptide", live);
+        assertThat(upgrade).noneMatch(statement -> statement.contains("MODIFY COLUMN srcAddr "));
+        assertThat(upgrade).contains("ALTER TABLE `riptide`.flows MODIFY COLUMN srcAddrHostname CODEC(ZSTD(1))");
+        assertThat(upgrade).noneMatch(statement -> statement.contains("ADD INDEX"));
+        assertThat(upgrade).contains("ALTER TABLE `riptide`.flows MODIFY COLUMN dstAddr CODEC(ZSTD(3))");
+    }
+
+    @Test
+    void liveStorageQueriesRejectAnUnsafeDatabaseName() {
+        assertThat(FlowsSchema.liveCodecsQuery("riptide")).isEqualTo(
+                "SELECT name, compression_codec FROM system.columns WHERE database = 'riptide' AND table = 'flows'");
+        assertThatThrownBy(() -> FlowsSchema.liveIndicesQuery("x' OR '1'='1"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    /** Index presence is read off the server's CREATE text, whose INDEX clauses match riptide's own. */
+    @Test
+    void indicesInReadsRiptidesIndicesOffACreateQuery() {
+        assertThat(FlowsSchema.indicesIn(FlowsSchema.createFlowsTable("riptide")))
+                .containsExactly("idx_src_addr", "idx_dst_addr");
+        assertThat(FlowsSchema.indicesIn("CREATE TABLE t (srcAddr IPv6, INDEX idx_src_addr_old srcAddr TYPE minmax)"))
+                .isEmpty();
+        assertThat(FlowsSchema.indicesIn("")).isEmpty();
+    }
+
+    /** Every column of the CREATE present with no codec, and no index: a table from before #1038. */
+    private static FlowsSchema.LiveStorage preCodecTable() {
+        final Map<String, String> codecs = new LinkedHashMap<>();
+        FlowsSchema.FLOWS_COLUMNS.forEach(column -> codecs.put(column.name(), ""));
+        return new FlowsSchema.LiveStorage(codecs, new HashSet<>());
     }
 }

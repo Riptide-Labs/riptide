@@ -47,6 +47,8 @@ public class ClickhouseRepositoryIT {
             .withEnv("CLICKHOUSE_DB", "riptide")
             .withEnv("CLICKHOUSE_USER", "riptide")
             .withEnv("CLICKHOUSE_PASSWORD", "riptide")
+            // aRefusedStorageUpgradeDoesNotStopIngestion creates a user with fewer grants.
+            .withEnv("CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT", "1")
             .withExposedPorts(8123)
             .waitingFor(Wait.forHttp("/ping").forPort(8123).forStatusCode(200));
 
@@ -616,6 +618,116 @@ public class ClickhouseRepositoryIT {
         Assertions.assertThat(row.getString("srcCity")).isEqualTo("Fulda");
         Assertions.assertThat(row.getString("dstCountry")).isEqualTo("US");
         Assertions.assertThat(row.getString("dstCity")).isEqualTo("Ashburn");
+    }
+
+    /**
+     * The storage half of the in-place upgrade reaches a table created before codecs and indices
+     * existed: after a manage-mode start, every codec the CREATE declares is on the live table,
+     * the columns the CREATE leaves on the default stay plain, both skipping indices exist, and
+     * the rows written before the upgrade are still there and still readable. The codec MODIFY
+     * and ADD INDEX are metadata-only, so the upgrade queues no mutation.
+     */
+    @Test
+    void anOlderTableGainsTheCodecsAndIndicesInPlace() throws Exception {
+        final var database = "storage_upgrade";
+        final var config = configFor(database, true);
+        final var repo = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
+        repo.start();
+        repo.persist(List.of(testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 60011, 443, 100L)));
+
+        // What a fresh table looks like, in the server's canonical spelling (Gorilla reads back
+        // as Gorilla(8)): the upgraded table must match it exactly.
+        final var fresh = liveCodecs(database);
+        Assertions.assertThat(fresh.values()).filteredOn(codec -> !codec.isEmpty())
+                .hasSize((int) FlowsSchema.FLOWS_COLUMNS.stream().filter(column -> column.codec() != null).count());
+
+        // Simulate the pre-codec table: strip every codec and both indices from the live table.
+        for (final var column : fresh.entrySet()) {
+            if (!column.getValue().isEmpty()) {
+                queryClient.execute("ALTER TABLE " + database + ".flows MODIFY COLUMN "
+                        + column.getKey() + " REMOVE CODEC").get();
+            }
+        }
+        queryClient.execute("ALTER TABLE " + database + ".flows DROP INDEX idx_src_addr").get();
+        queryClient.execute("ALTER TABLE " + database + ".flows DROP INDEX idx_dst_addr").get();
+        Assertions.assertThat(queryClient.queryAll(
+                "SELECT name FROM system.columns WHERE database = '" + database
+                        + "' AND table = 'flows' AND compression_codec != ''")).isEmpty();
+
+        // DROP INDEX above is itself a mutation; the upgrade must add none (codec-only MODIFY and
+        // ADD INDEX are metadata changes that reach parts as they merge).
+        final long mutationsBefore = mutations(database);
+        final var upgraded = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
+        Assertions.assertThatCode(upgraded::start).doesNotThrowAnyException();
+        Assertions.assertThat(mutations(database)).isEqualTo(mutationsBefore);
+
+        final var upgradedCodecs = liveCodecs(database);
+        Assertions.assertThat(upgradedCodecs).containsExactlyInAnyOrderEntriesOf(fresh);
+        Assertions.assertThat(upgradedCodecs.get("tenant")).isEmpty();
+        Assertions.assertThat(upgradedCodecs.get("bytes")).isEqualTo("CODEC(T64, ZSTD(1))");
+
+        final var indices = queryClient.queryAll(
+                "SELECT name, type, expr FROM system.data_skipping_indices WHERE database = '" + database
+                        + "' AND table = 'flows' ORDER BY name");
+        Assertions.assertThat(indices).extracting(row -> row.getString("name") + " " + row.getString("type") + " " + row.getString("expr"))
+                .containsExactly("idx_dst_addr bloom_filter dstAddr", "idx_src_addr bloom_filter srcAddr");
+
+        Assertions.assertThat(queryClient.queryAll(
+                "SELECT srcPort FROM " + database + ".flows WHERE srcPort = 60011")).hasSize(1);
+    }
+
+    /**
+     * The storage upgrade only saves disk and reads, so a manage-mode user the server refuses it to
+     * still starts and ingests, and the refusal is logged. The user holds everything a start needed
+     * before codecs existed (ADD COLUMN included) but not ALTER MODIFY COLUMN or ALTER ADD INDEX.
+     * Each gap gets its own statement and its own warning; the stripped codec and the dropped
+     * index both staying missing proves each statement really failed, so the guard, not a no-op,
+     * is what kept the start alive.
+     */
+    @Test
+    void aRefusedStorageUpgradeDoesNotStopIngestion() throws Exception {
+        final var database = "storage_refused";
+        final var config = configFor(database, true);
+        new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS).start();
+        queryClient.execute("ALTER TABLE " + database + ".flows MODIFY COLUMN bytes REMOVE CODEC").get();
+        queryClient.execute("ALTER TABLE " + database + ".flows DROP INDEX idx_dst_addr").get();
+
+        queryClient.execute("DROP USER IF EXISTS noupgrade").get();
+        queryClient.execute("CREATE USER noupgrade IDENTIFIED WITH plaintext_password BY 'noupgrade'").get();
+        queryClient.execute("GRANT SELECT, INSERT, CREATE DATABASE, CREATE TABLE, DROP TABLE, CREATE VIEW, DROP VIEW,"
+                + " ALTER ADD COLUMN, SHOW ON " + database + ".* TO noupgrade").get();
+        config.setUsername(SecretRef.of("noupgrade"));
+        config.setPassword(SecretRef.of("noupgrade"));
+
+        final var restricted = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
+        final var logged = RollupShapeDriftIT.messages(RollupShapeDriftIT.captureRepositoryLog(restricted::start));
+        Assertions.assertThat(logged).filteredOn(message -> message.startsWith("flows storage upgrade not applied:"))
+                .hasSize(2)
+                .anyMatch(message -> message.contains("MODIFY COLUMN bytes CODEC(T64, ZSTD(1))"))
+                .anyMatch(message -> message.contains("ADD INDEX IF NOT EXISTS idx_dst_addr "));
+        Assertions.assertThat(liveCodecs(database).get("bytes")).isEmpty();
+        Assertions.assertThat(queryClient.queryAll("SELECT name FROM system.data_skipping_indices WHERE database = '"
+                        + database + "' AND table = 'flows'"))
+                .extracting(row -> row.getString("name"))
+                .containsExactly("idx_src_addr");
+
+        restricted.persist(List.of(testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 60012, 443, 100L)));
+        Assertions.assertThat(queryClient.queryAll(
+                "SELECT srcPort FROM " + database + ".flows WHERE srcPort = 60012")).hasSize(1);
+    }
+
+    private static long mutations(final String database) throws Exception {
+        return queryClient.queryAll("SELECT count() AS n FROM system.mutations WHERE database = '"
+                + database + "' AND table = 'flows'").getFirst().getLong("n");
+    }
+
+    /** Column name to the server's canonical codec text ('' where the default applies). */
+    private static java.util.Map<String, String> liveCodecs(final String database) throws Exception {
+        final var codecs = new java.util.HashMap<String, String>();
+        queryClient.queryAll("SELECT name, compression_codec FROM system.columns WHERE database = '"
+                        + database + "' AND table = 'flows'")
+                .forEach(row -> codecs.put(row.getString("name"), row.getString("compression_codec")));
+        return codecs;
     }
 
     /** Every rung round-trips to a readable token, and the two 1.0 rows stay distinguishable. */

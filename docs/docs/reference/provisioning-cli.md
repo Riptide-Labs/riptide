@@ -192,6 +192,11 @@ GRANT INSERT ON riptide.flows_by_application_1m TO `flow_writer@riptide`;   -- a
 GRANT SELECT ON riptide.flows_by_application_1m TO `flow_reader@riptide`;
 GRANT SHOW TABLES ON riptide.flows_by_application_1m_mv TO `flow_writer@riptide`;   -- and the other three
 
+-- Storage gaps of a pre-existing flows table, read live before anything runs; none on a current
+-- table. A column that already has a codec, including one an operator set, is left alone.
+ALTER TABLE riptide.flows MODIFY COLUMN bytes CODEC(T64, ZSTD(1));   -- one per column with no codec
+ALTER TABLE riptide.flows ADD INDEX IF NOT EXISTS idx_dst_addr dstAddr TYPE bloom_filter(0.01) GRANULARITY 1;   -- per absent index
+
 -- Per tenant: two scoped users, two role grants, one row policy per table.
 CREATE USER IF NOT EXISTS `writer_acme@riptide` IDENTIFIED WITH sha256_password BY '…'
   SETTINGS SQL_tenant = 'acme' CONST, SQL_org = 'acme-eu' CONST;

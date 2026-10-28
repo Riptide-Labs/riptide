@@ -157,7 +157,7 @@ class ProvisioningDdlTest {
         final List<String> sql = ProvisioningDdl.ensureShared("riptide", 50_000_000_000L);
         final int additive = FlowsSchema.additiveColumnNames().size();
         assertThat(sql.get(0)).isEqualTo(
-                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS srcCountry LowCardinality(String)");
+                "ALTER TABLE `riptide`.flows ADD COLUMN IF NOT EXISTS srcCountry LowCardinality(String) CODEC(ZSTD(1))");
         // Counted off the additive set rather than a literal, so adding a column here is a
         // one-line change in FlowsSchema and not a test edit.
         assertThat(sql.subList(0, additive)).allMatch(s -> s.contains("ADD COLUMN IF NOT EXISTS"));

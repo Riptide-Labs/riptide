@@ -165,6 +165,11 @@ public final class TenantProvisioner {
             statements.addAll(ProvisioningDdl.bootstrapDeadLetter(spec.database(), ttlDays));
         }
         statements.addAll(ProvisioningDdl.ensureShared(spec.database(), spec.quotaBytes()));
+        // Storage gaps of a pre-existing flows table: a codec on each column that carries none and
+        // each absent skipping index (FlowsSchema.upgradeFlowsStorage), never an operator's own codec.
+        // Read before anything executes, like the probes around it. On bootstrap the table does not
+        // exist yet, so this reads empty and adds nothing: the CREATE above carries both.
+        statements.addAll(FlowsSchema.upgradeFlowsStorage(spec.database(), readLiveStorage(spec.database())));
         // Probed BEFORE the statements are built, not after they run, and that ordering is the
         // whole fix: the row policies this run replaces must keep naming any pre-#649 account that
         // is still live, or the upgrade turns them into cross-tenant readers. It throws rather than
@@ -695,6 +700,22 @@ public final class TenantProvisioner {
                 .filter(rollup -> !refused.contains(rollup))
                 .allMatch(rollup -> exists("EXISTS TABLE " + FlowsSchema.qualifiedRollup(database, rollup))
                         && exists("EXISTS TABLE " + FlowsSchema.qualifiedRollupView(database, rollup)));
+    }
+
+    private FlowsSchema.LiveStorage readLiveStorage(final String database) {
+        final String codecsQuery = FlowsSchema.liveCodecsQuery(database);
+        final String indicesQuery = FlowsSchema.liveIndicesQuery(database);
+        try {
+            final Map<String, String> codecs = new LinkedHashMap<>();
+            this.admin.queryAll(codecsQuery)
+                    .forEach(row -> codecs.put(row.getString("name"), row.getString("compression_codec")));
+            final Set<String> indices = new LinkedHashSet<>();
+            this.admin.queryAll(indicesQuery)
+                    .forEach(row -> indices.addAll(FlowsSchema.indicesIn(row.getString("create_table_query"))));
+            return new FlowsSchema.LiveStorage(codecs, indices);
+        } catch (final Exception e) {
+            throw new ProvisioningException("Pre-flight schema check failed: " + codecsQuery + "; " + indicesQuery, e);
+        }
     }
 
     private boolean exists(final String sql) {
