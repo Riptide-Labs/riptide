@@ -705,7 +705,8 @@ public final class FlowsSchema {
      * Columns added after the 0.4.x schema, upgradeable in place. Their types and codecs are not
      * repeated here: {@link #addAdditiveColumns} reads both from {@link #FLOWS_TABLE} through
      * {@link #FLOWS_COLUMNS}, so a fresh and an upgraded table end up identical in type, codec
-     * and (since the additive columns trail the CREATE) column order.
+     * and column order. The order holds because the static check below fails class load unless
+     * these are the CREATE's last columns, in this order.
      */
     private static final Set<String> ADDITIVE_COLUMNS = new LinkedHashSet<>(List.of(
             "srcCountry",
@@ -735,10 +736,14 @@ public final class FlowsSchema {
     public static final List<FlowsColumn> FLOWS_COLUMNS = parseColumns(FlowsSchema.FLOWS_TABLE);
 
     static {
-        final Set<String> declared = FLOWS_COLUMNS.stream().map(FlowsColumn::name).collect(Collectors.toSet());
-        if (!declared.containsAll(ADDITIVE_COLUMNS)) {
-            throw new IllegalStateException("additive columns missing from the flows CREATE: "
-                    + ADDITIVE_COLUMNS.stream().filter(name -> !declared.contains(name)).toList());
+        // ALTER … ADD COLUMN appends, so an upgraded table matches a fresh one in column order only
+        // while the additive columns are the CREATE's last columns, in this order.
+        final List<String> declared = FLOWS_COLUMNS.stream().map(FlowsColumn::name).toList();
+        final List<String> trailing = declared.subList(
+                Math.max(0, declared.size() - ADDITIVE_COLUMNS.size()), declared.size());
+        if (!trailing.equals(List.copyOf(ADDITIVE_COLUMNS))) {
+            throw new IllegalStateException("the additive columns " + ADDITIVE_COLUMNS
+                    + " must be the last columns of the flows CREATE, in order; found " + trailing);
         }
     }
 
@@ -827,10 +832,11 @@ public final class FlowsSchema {
      * existing parts keep their codec until a merge rewrites them (the TTL merges on this table do
      * so within the retention window). Idempotent: re-declaring the current codec is a no-op.
      *
-     * <p>{@code IF EXISTS} per column, because this runs before the startup shape check. A stale
-     * table missing a non-additive column must still reach that check, which names the column and
-     * the remedy; without it the server's "Cannot find column to modify" would surface first
-     * ({@code ClickhouseRepositoryIT.columnCheckFailsFastWhenIdentityColumnMissing}).</p>
+     * <p>{@code IF EXISTS} per column for {@code riptide onboard}, which emits this through
+     * {@link #upgradeFlowsTable} with no shape check in front of it: on a stale table missing a
+     * non-additive column, the server's "Cannot find column to modify" would otherwise fail the
+     * whole statement. Manage mode runs it only after the startup shape check has passed, so there
+     * every column exists.</p>
      */
     public static String modifyCodecs(final String database) {
         return "ALTER TABLE " + qualifiedFlows(database) + " " + FLOWS_COLUMNS.stream()
@@ -1519,7 +1525,10 @@ public final class FlowsSchema {
             --
             -- Codecs, measured on the flow-knee lab (20.55M rows of one 5-minute slice, merged to
             -- one part, 2026-10-06; benchmark/runs/flow-knee/codec-measure-2026-10-06.log): ZSTD(1)
-            -- over the default LZ4 took the part from 881 MB to 558 MB. Rows inside a granule are
+            -- over the default LZ4 took the part from 881 MB to 558 MB, column data only: neither
+            -- table carried a skipping index. A third table with five candidate indices (the two
+            -- kept below plus three rejected) held 25.8 MB of index files, an upper bound for the
+            -- two that ship; they were not sized on their own. Rows inside a granule are
             -- ordered by the sort key below, not by time, so DoubleDelta on the time columns was a
             -- loss (receivedAt 65 -> 141 MB against 34 MB with ZSTD alone) and is not used. The
             -- near-constant String dimensions (tenant, organisation, zone, system, exporterAddr)

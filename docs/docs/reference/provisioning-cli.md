@@ -170,9 +170,12 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS riptide.flows_by_application_1m_mv
 -- --create-schema only, when flows_dead_letter is absent; same TTL as the raw table, no CHECK.
 CREATE TABLE IF NOT EXISTS riptide.flows_dead_letter (tenant, failedAt, error, payload);
 
--- Once per database, on every run. Additive column upgrades come first, so a re-run brings a
--- pre-existing table up to date in place.
+-- Once per database, on every run. In-place upgrades come first, so a re-run brings a
+-- pre-existing table up to date: added columns, then column codecs, then skipping indices.
 ALTER TABLE riptide.flows ADD COLUMN IF NOT EXISTS … ;   -- one per column added since the table was created
+ALTER TABLE riptide.flows MODIFY COLUMN IF EXISTS timestamp CODEC(ZSTD(1)), … ;   -- one statement, every codec column
+ALTER TABLE riptide.flows ADD INDEX IF NOT EXISTS idx_src_addr srcAddr TYPE bloom_filter(0.01) GRANULARITY 1;
+ALTER TABLE riptide.flows ADD INDEX IF NOT EXISTS idx_dst_addr dstAddr TYPE bloom_filter(0.01) GRANULARITY 1;
 CREATE ROLE IF NOT EXISTS `flow_writer@riptide`;
 GRANT INSERT ON riptide.flows TO `flow_writer@riptide`;
 -- The writer also reads flows: a materialized view runs as the inserting user.

@@ -443,9 +443,19 @@ public class ClickhouseRepository implements FlowRepository {
         if (this.config.isManageSchema()) {
             // The table has every column, so the storage upgrades can name them: column codecs
             // and skipping indices, in place, without a row being touched. Idempotent on a fresh
-            // or already-upgraded table.
+            // or already-upgraded table. Guarded like the rollups below: a codec or an index only
+            // saves disk and reads, so a missing ALTER MODIFY COLUMN or ALTER ADD INDEX grant, or a
+            // live column whose type rejects the codec, must not stop ingestion.
             for (final String ddl : FlowsSchema.upgradeFlowsStorage(this.config.getDatabase())) {
-                this.client.execute(ddl).get();
+                try {
+                    this.client.execute(ddl).get();
+                } catch (final InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                } catch (final Exception e) {
+                    log.warn("flows storage upgrade not applied: {}. Ingestion is unaffected; new parts keep"
+                            + " the previous codec or index until it is applied.", e.getMessage());
+                }
             }
         }
 

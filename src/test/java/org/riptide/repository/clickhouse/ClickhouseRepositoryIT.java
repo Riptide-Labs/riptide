@@ -47,6 +47,8 @@ public class ClickhouseRepositoryIT {
             .withEnv("CLICKHOUSE_DB", "riptide")
             .withEnv("CLICKHOUSE_USER", "riptide")
             .withEnv("CLICKHOUSE_PASSWORD", "riptide")
+            // aRefusedStorageUpgradeDoesNotStopIngestion creates a user with fewer grants.
+            .withEnv("CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT", "1")
             .withExposedPorts(8123)
             .waitingFor(Wait.forHttp("/ping").forPort(8123).forStatusCode(200));
 
@@ -672,6 +674,38 @@ public class ClickhouseRepositoryIT {
 
         Assertions.assertThat(queryClient.queryAll(
                 "SELECT srcPort FROM " + database + ".flows WHERE srcPort = 60011")).hasSize(1);
+    }
+
+    /**
+     * The storage upgrade only saves disk and reads, so a manage-mode user the server refuses it to
+     * still starts and ingests, and the refusal is logged. The user holds everything a start needed
+     * before codecs existed (ADD COLUMN included) but not ALTER MODIFY COLUMN or ALTER ADD INDEX.
+     * The stripped codec staying stripped proves the statement really failed, so the guard, not a
+     * no-op, is what kept the start alive.
+     */
+    @Test
+    void aRefusedStorageUpgradeDoesNotStopIngestion() throws Exception {
+        final var database = "storage_refused";
+        final var config = configFor(database, true);
+        new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS).start();
+        queryClient.execute("ALTER TABLE " + database + ".flows MODIFY COLUMN bytes REMOVE CODEC").get();
+        queryClient.execute("ALTER TABLE " + database + ".flows DROP INDEX idx_dst_addr").get();
+
+        queryClient.execute("DROP USER IF EXISTS noupgrade").get();
+        queryClient.execute("CREATE USER noupgrade IDENTIFIED WITH plaintext_password BY 'noupgrade'").get();
+        queryClient.execute("GRANT SELECT, INSERT, CREATE DATABASE, CREATE TABLE, DROP TABLE, CREATE VIEW, DROP VIEW,"
+                + " ALTER ADD COLUMN, SHOW ON " + database + ".* TO noupgrade").get();
+        config.setUsername(SecretRef.of("noupgrade"));
+        config.setPassword(SecretRef.of("noupgrade"));
+
+        final var restricted = new ClickhouseRepository(new ClickhouseRepository$FlowMapperImpl(), config, RESOLVERS);
+        final var logged = RollupShapeDriftIT.messages(RollupShapeDriftIT.captureRepositoryLog(restricted::start));
+        Assertions.assertThat(logged).anyMatch(message -> message.startsWith("flows storage upgrade not applied:"));
+        Assertions.assertThat(liveCodecs(database).get("bytes")).isEmpty();
+
+        restricted.persist(List.of(testFlow(Instant.now().truncatedTo(ChronoUnit.MILLIS), 60012, 443, 100L)));
+        Assertions.assertThat(queryClient.queryAll(
+                "SELECT srcPort FROM " + database + ".flows WHERE srcPort = 60012")).hasSize(1);
     }
 
     private static long mutations(final String database) throws Exception {

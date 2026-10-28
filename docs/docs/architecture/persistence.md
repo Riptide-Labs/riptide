@@ -15,7 +15,9 @@ The keys are on the [ClickHouse reference](../reference/clickhouse.md#settings);
 In manage mode (`manage-schema=true`) riptide ensures the schema idempotently at every start.
 `flows`, the rollups and `flows_dead_letter` use `CREATE TABLE IF NOT EXISTS`, so an existing table is never replaced and its rows survive a restart.
 The `samples` view uses `CREATE OR REPLACE VIEW` because a view holds no data: it is always refreshed and can never go stale.
-Columns added by a later release are appended with `ALTER TABLE … ADD COLUMN IF NOT EXISTS`; anything that is not an added column is not migrated, and the startup column check fails fast instead.
+Columns added by a later release are appended with `ALTER TABLE … ADD COLUMN IF NOT EXISTS`.
+Column codecs (`ALTER TABLE … MODIFY COLUMN … CODEC(…)`) and data skipping indices (`ALTER TABLE … ADD INDEX IF NOT EXISTS`) are applied in place after the startup column check passes; a failure there is logged and does not stop ingestion.
+Anything else is not migrated, and the startup column check fails fast instead.
 
 In validate mode (`manage-schema=false`) riptide creates nothing.
 An admin owns the schema and RBAC, and each collector connects as a narrowly scoped writer that only inserts.
