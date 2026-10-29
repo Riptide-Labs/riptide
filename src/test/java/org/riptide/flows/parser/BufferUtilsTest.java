@@ -45,12 +45,12 @@ public class BufferUtilsTest {
 
     @Test
     void verifyUnsignedInteger64() throws Exception {
-        Assertions.assertThat(UnsignedLong.valueOf(0L)).isEqualTo(uint64(from("0000000000000000")));
-        Assertions.assertThat(UnsignedLong.valueOf(1L)).isEqualTo(uint64(from("0000000000000001")));
-        Assertions.assertThat(UnsignedLong.valueOf(1024L)).isEqualTo(uint64(from("0000000000000400")));
-        Assertions.assertThat(UnsignedLong.valueOf(65536L - 1L)).isEqualTo(uint64(from("000000000000FFFF")));
-        Assertions.assertThat(UnsignedLong.valueOf(65536L * 65536L - 1L)).isEqualTo(uint64(from("00000000FFFFFFFF")));
-        Assertions.assertThat(UnsignedLong.MAX_VALUE).isEqualTo(uint64(from("FFFFFFFFFFFFFFFF")));
+        Assertions.assertThat(UnsignedLong.valueOf(0L)).isEqualTo(UnsignedLong.fromLongBits(uint64(from("0000000000000000"))));
+        Assertions.assertThat(UnsignedLong.valueOf(1L)).isEqualTo(UnsignedLong.fromLongBits(uint64(from("0000000000000001"))));
+        Assertions.assertThat(UnsignedLong.valueOf(1024L)).isEqualTo(UnsignedLong.fromLongBits(uint64(from("0000000000000400"))));
+        Assertions.assertThat(UnsignedLong.valueOf(65536L - 1L)).isEqualTo(UnsignedLong.fromLongBits(uint64(from("000000000000FFFF"))));
+        Assertions.assertThat(UnsignedLong.valueOf(65536L * 65536L - 1L)).isEqualTo(UnsignedLong.fromLongBits(uint64(from("00000000FFFFFFFF"))));
+        Assertions.assertThat(UnsignedLong.MAX_VALUE).isEqualTo(UnsignedLong.fromLongBits(uint64(from("FFFFFFFFFFFFFFFF"))));
     }
 
     @Test
@@ -63,19 +63,19 @@ public class BufferUtilsTest {
     @Test
     void verifyUnsigned() throws Exception {
         // This is random data chosen from the serial number of the finger print of the LDAP server of the university on the applied science of the fulda
-        Assertions.assertThat(UnsignedLong.valueOf(0x20L)).isEqualTo(uint(from("207138408FABED99"), 1));
-        Assertions.assertThat(UnsignedLong.valueOf(0x2071L)).isEqualTo(uint(from("207138408FABED99"), 2));
-        Assertions.assertThat(UnsignedLong.valueOf(0x207138L)).isEqualTo(uint(from("207138408FABED99"), 3));
-        Assertions.assertThat(UnsignedLong.valueOf(0x20713840L)).isEqualTo(uint(from("207138408FABED99"), 4));
-        Assertions.assertThat(UnsignedLong.valueOf(0x207138408fL)).isEqualTo(uint(from("207138408FABED99"), 5));
-        Assertions.assertThat(UnsignedLong.valueOf(0x207138408fabL)).isEqualTo(uint(from("207138408FABED99"), 6));
-        Assertions.assertThat(UnsignedLong.valueOf(0x207138408fabedL)).isEqualTo(uint(from("207138408FABED99"), 7));
-        Assertions.assertThat(UnsignedLong.valueOf(0x207138408fabed99L)).isEqualTo(uint(from("207138408FABED99"), 8));
+        Assertions.assertThat(UnsignedLong.valueOf(0x20L)).isEqualTo(UnsignedLong.fromLongBits(uint(from("207138408FABED99"), 1)));
+        Assertions.assertThat(UnsignedLong.valueOf(0x2071L)).isEqualTo(UnsignedLong.fromLongBits(uint(from("207138408FABED99"), 2)));
+        Assertions.assertThat(UnsignedLong.valueOf(0x207138L)).isEqualTo(UnsignedLong.fromLongBits(uint(from("207138408FABED99"), 3)));
+        Assertions.assertThat(UnsignedLong.valueOf(0x20713840L)).isEqualTo(UnsignedLong.fromLongBits(uint(from("207138408FABED99"), 4)));
+        Assertions.assertThat(UnsignedLong.valueOf(0x207138408fL)).isEqualTo(UnsignedLong.fromLongBits(uint(from("207138408FABED99"), 5)));
+        Assertions.assertThat(UnsignedLong.valueOf(0x207138408fabL)).isEqualTo(UnsignedLong.fromLongBits(uint(from("207138408FABED99"), 6)));
+        Assertions.assertThat(UnsignedLong.valueOf(0x207138408fabedL)).isEqualTo(UnsignedLong.fromLongBits(uint(from("207138408FABED99"), 7)));
+        Assertions.assertThat(UnsignedLong.valueOf(0x207138408fabed99L)).isEqualTo(UnsignedLong.fromLongBits(uint(from("207138408FABED99"), 8)));
 
-        Assertions.assertThat(uint8(from("207138408FABED99"))).isEqualTo(uint(from("207138408FABED99"), 1).intValue());
-        Assertions.assertThat(uint16(from("207138408FABED99"))).isEqualTo(uint(from("207138408FABED99"), 2).intValue());
-        Assertions.assertThat(uint24(from("207138408FABED99"))).isEqualTo(uint(from("207138408FABED99"), 3).intValue());
-        Assertions.assertThat(uint32(from("207138408FABED99"))).isEqualTo(uint(from("207138408FABED99"), 4).intValue());
+        Assertions.assertThat(uint8(from("207138408FABED99"))).isEqualTo((int) uint(from("207138408FABED99"), 1));
+        Assertions.assertThat(uint16(from("207138408FABED99"))).isEqualTo((int) uint(from("207138408FABED99"), 2));
+        Assertions.assertThat(uint24(from("207138408FABED99"))).isEqualTo((int) uint(from("207138408FABED99"), 3));
+        Assertions.assertThat(uint32(from("207138408FABED99"))).isEqualTo((int) uint(from("207138408FABED99"), 4));
         Assertions.assertThat(uint64(from("207138408FABED99"))).isEqualTo(uint(from("207138408FABED99"), 8));
     }
 

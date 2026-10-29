@@ -6,7 +6,6 @@
 package org.riptide.flows.utils;
 
 import com.google.common.base.Preconditions;
-import com.google.common.primitives.UnsignedLong;
 import io.netty.buffer.ByteBuf;
 
 import java.net.InetAddress;
@@ -45,7 +44,12 @@ public final class BufferUtils {
         return Float.intBitsToFloat(sint32(buffer));
     }
 
-    public static UnsignedLong uint(final ByteBuf buffer, final int octets) {
+    /**
+     * The next {@code octets} bytes as big-endian unsigned bits, in a primitive so a decoded field
+     * allocates nothing (#992). Read the result as unsigned: {@code UnsignedLong.fromLongBits} gives
+     * the boxed view where one is needed.
+     */
+    public static long uint(final ByteBuf buffer, final int octets) {
         Preconditions.checkArgument(0 <= octets && octets <= 8);
 
         long result = 0;
@@ -54,7 +58,7 @@ public final class BufferUtils {
             result = (result << 8L) | (buffer.readUnsignedByte() & 0xFFL);
         }
 
-        return UnsignedLong.fromLongBits(result);
+        return result;
     }
 
     public static Long sint(final ByteBuf buffer, final int octets) {
@@ -97,16 +101,16 @@ public final class BufferUtils {
              | ((buffer.readUnsignedByte() & 0xFFL) << 0);
     }
 
-    public static UnsignedLong uint64(final ByteBuf buffer) {
-        return UnsignedLong.fromLongBits(
-                ((buffer.readUnsignedByte() & 0xFFL) << 56)
+    /** Eight bytes as big-endian unsigned bits; see {@link #uint}. */
+    public static long uint64(final ByteBuf buffer) {
+        return ((buffer.readUnsignedByte() & 0xFFL) << 56)
               | ((buffer.readUnsignedByte() & 0xFFL) << 48)
               | ((buffer.readUnsignedByte() & 0xFFL) << 40)
               | ((buffer.readUnsignedByte() & 0xFFL) << 32)
               | ((buffer.readUnsignedByte() & 0xFFL) << 24)
               | ((buffer.readUnsignedByte() & 0xFFL) << 16)
               | ((buffer.readUnsignedByte() & 0xFFL) << 8)
-              | ((buffer.readUnsignedByte() & 0xFFL) << 0));
+              | ((buffer.readUnsignedByte() & 0xFFL) << 0);
     }
 
     public static Integer sint32(final ByteBuf buffer) {

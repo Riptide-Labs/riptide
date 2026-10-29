@@ -76,7 +76,7 @@ public class DateTimeValue extends Value<Instant> {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) {
-                return new DateTimeValue(name, semantics, unit, Instant.ofEpochMilli(uint64(buffer).longValue()));
+                return new DateTimeValue(name, semantics, unit, Instant.ofEpochMilli(uint64(buffer)));
             }
 
             @Override
