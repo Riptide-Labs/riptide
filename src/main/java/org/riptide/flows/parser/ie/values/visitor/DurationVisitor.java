@@ -21,10 +21,10 @@ public class DurationVisitor implements ValueVisitor<Duration> {
     @Override
     public Duration visit(final UnsignedValue value) {
         return switch (value.getUnit().orElse(null)) {
-            case "seconds" -> Duration.ofSeconds(value.getValue().longValue());
-            case "milliseconds" -> Duration.ofMillis(value.getValue().longValue());
-            case "microseconds" -> Duration.ofNanos(value.getValue().longValue() * 1_000);
-            case "nanoseconds" -> Duration.ofNanos(value.getValue().longValue());
+            case "seconds" -> Duration.ofSeconds(value.bits());
+            case "milliseconds" -> Duration.ofMillis(value.bits());
+            case "microseconds" -> Duration.ofNanos(value.bits() * 1_000);
+            case "nanoseconds" -> Duration.ofNanos(value.bits());
             case null, default -> null;
         };
     }

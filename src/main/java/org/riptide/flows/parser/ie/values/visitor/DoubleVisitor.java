@@ -29,6 +29,9 @@ public class DoubleVisitor implements ValueVisitor<Double> {
 
     @Override
     public Double visit(UnsignedValue value) {
-        return value.getValue().doubleValue();
+        // UnsignedLong.doubleValue() without the box (Guava, Apache-2.0): below 2^63 the bits are
+        // the value; above, halve with the low bit kept for rounding, convert, and double.
+        final long bits = value.bits();
+        return bits >= 0 ? (double) bits : (double) ((bits >>> 1) | (bits & 1)) * 2.0;
     }
 }

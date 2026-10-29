@@ -22,6 +22,6 @@ public class IntegerVisitor implements ValueVisitor<Integer> {
 
     @Override
     public Integer visit(UnsignedValue value) {
-        return value.getValue().intValue();
+        return (int) value.bits();
     }
 }

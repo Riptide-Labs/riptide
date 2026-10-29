@@ -5,7 +5,6 @@
 
 package org.riptide.flows.parser.ie.values;
 
-import com.google.common.primitives.UnsignedLong;
 import io.netty.buffer.ByteBuf;
 import org.riptide.flows.parser.ie.InformationElement;
 import org.riptide.flows.parser.ie.Semantics;
@@ -40,14 +39,14 @@ public final class ApplicationIdValue {
                 final int length = buffer.readableBytes();
                 if (length < 2 || length > 4) {
                     buffer.skipBytes(length);
-                    return new UnsignedValue(name, semantics, unit, UnsignedLong.ZERO);
+                    return UnsignedValue.fromBits(name, semantics, unit, 0L);
                 }
                 final int engineId = buffer.readUnsignedByte();
                 long selectorId = 0;
                 for (int i = 1; i < length; i++) {
                     selectorId = (selectorId << 8) | buffer.readUnsignedByte();
                 }
-                return new UnsignedValue(name, semantics, unit, UnsignedLong.valueOf(packed(engineId, selectorId)));
+                return UnsignedValue.fromBits(name, semantics, unit, packed(engineId, selectorId));
             }
 
             @Override

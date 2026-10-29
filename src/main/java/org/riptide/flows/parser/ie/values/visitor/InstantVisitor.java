@@ -28,8 +28,8 @@ public class InstantVisitor implements ValueVisitor<Instant> {
     @Override
     public Instant visit(final UnsignedValue value) {
         return switch (value.getUnit().orElse(null)) {
-            case "seconds" -> Instant.ofEpochSecond(value.getValue().longValue());
-            case "milliseconds" -> Instant.ofEpochMilli(value.getValue().longValue());
+            case "seconds" -> Instant.ofEpochSecond(value.bits());
+            case "milliseconds" -> Instant.ofEpochMilli(value.bits());
             case null, default -> null;
         };
     }

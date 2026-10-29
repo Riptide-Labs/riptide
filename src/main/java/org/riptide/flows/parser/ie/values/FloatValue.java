@@ -40,7 +40,7 @@ public class FloatValue extends Value<Double> {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) {
-                return new FloatValue(name, semantics, unit, Float.intBitsToFloat(uint(buffer, buffer.readableBytes()).intValue()));
+                return new FloatValue(name, semantics, unit, Float.intBitsToFloat((int) uint(buffer, buffer.readableBytes())));
             }
 
             @Override
@@ -64,7 +64,7 @@ public class FloatValue extends Value<Double> {
         return new InformationElement() {
             @Override
             public Value<?> parse(final Session.Resolver resolver, final ByteBuf buffer) {
-                return new FloatValue(name, semantics, unit, Double.longBitsToDouble(uint(buffer, buffer.readableBytes()).longValue()));
+                return new FloatValue(name, semantics, unit, Double.longBitsToDouble(uint(buffer, buffer.readableBytes())));
             }
 
             @Override

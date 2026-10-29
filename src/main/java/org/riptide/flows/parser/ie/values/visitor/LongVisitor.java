@@ -18,7 +18,7 @@ public class LongVisitor implements ValueVisitor<Long> {
 
     @Override
     public Long visit(UnsignedValue value) {
-        return value.getValue().longValue();
+        return value.bits();
     }
 
     @Override
