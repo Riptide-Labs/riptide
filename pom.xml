@@ -35,14 +35,6 @@
         <dnsjava.version>3.6.5</dnsjava.version>
         <guava.version>33.7.2-jre</guava.version>
         <ipaddress.version>5.6.2</ipaddress.version>
-        <!-- Overrides Spring Boot's managed jackson-2-bom.version (2.21.4), which governs every
-             Jackson 2 module. 2.22.1 patches GHSA-5jmj-h7xm-6q6v (Scorecard/osv-scanner finding).
-             Set on the BOM rather than pinning jackson-databind alone so core and annotations move
-             with it: Jackson expects databind and core on the same minor, and databind is a direct
-             dependency on a reachable path (the MCP components parse JSON-RPC frames and ClickHouse
-             JSONEachRow rows with it). Configuration binding no longer goes through Jackson, see
-             #434. Drop once the managing parent catches up. -->
-        <jackson-2-bom.version>2.22.1</jackson-2-bom.version>
         <jakarta-xml-bind-api.version>4.0.5</jakarta-xml-bind-api.version>
         <java.version>25</java.version>
         <jetbrains-annotations.version>26.1.0</jetbrains-annotations.version>
@@ -92,8 +84,10 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-            <!-- Jackson and Netty are patched by overriding the versions their BOMs are imported
-                 with (jackson-2-bom.version, netty.version), not by pinning single artifacts here. -->
+            <!-- Netty is patched by overriding the version its BOM is imported with
+                 (netty.version), not by pinning single artifacts here. Jackson 2 follows Spring
+                 Boot's jackson-2-bom.version: an override hides it from Dependabot, and 2.22.1
+                 went stale that way. -->
             <!-- Transitive-CVE pin (Scorecard/osv-scanner finding): lz4-java vulnerability (GHSA-xx22-p4ch-683r) -->
             <dependency>
                 <groupId>at.yawk.lz4</groupId>
