@@ -128,7 +128,6 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {page}  ({count} marker{plural})\n      …{excerpt}…", file=sys.stderr)
         return 1
 
-    print(f"admonition syntax: {scanned} rendered page(s) checked, no stray ':::'")
     return 0
 
 
