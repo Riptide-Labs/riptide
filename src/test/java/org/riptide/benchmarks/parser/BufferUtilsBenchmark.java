@@ -26,7 +26,7 @@ import org.riptide.flows.parser.ie.Value;
 import org.riptide.flows.parser.ie.values.UnsignedValue;
 import org.riptide.flows.parser.ie.values.visitor.LongVisitor;
 
-import java.util.Random;
+import java.util.SplittableRandom;
 import java.util.concurrent.TimeUnit;
 
 import static org.riptide.flows.utils.BufferUtils.slice;
@@ -45,8 +45,9 @@ import static org.riptide.flows.utils.BufferUtils.uint;
  *       an array before converting any, as {@code DataRecord} collects {@code parsedFields}, so the
  *       values escape as they do in riptide. Parsed and converted in one step, escape analysis
  *       removes the {@link UnsignedValue} and its box, and the mode would measure nothing. It
- *       still allocates the {@link UnsignedValue} and the {@link Long} the visitor returns (visitors are generic, and the raw flows hold boxed fields), so it
- *       shows the gain without overstating it.</li>
+ *       still allocates the {@link UnsignedValue} and the {@link Long} the visitor returns
+ *       (visitors are generic, and the raw flows hold boxed fields), so it shows the gain without
+ *       overstating it.</li>
  * </ul>
  *
  * <p>One op decodes {@value #FIELDS} fields, each result to the {@link Blackhole}. Run with
@@ -76,7 +77,8 @@ public class BufferUtilsBenchmark {
     @Setup(Level.Trial)
     public void setUp() {
         final byte[] bytes = new byte[FIELDS * this.width];
-        new Random(992).nextBytes(bytes);
+        // Seeded for the same bytes on every run; not a security use, so not java.util.Random.
+        new SplittableRandom(992).nextBytes(bytes);
         this.fields = "direct".equals(this.buffer) ? Unpooled.directBuffer(bytes.length) : Unpooled.buffer(bytes.length);
         this.fields.writeBytes(bytes);
     }
