@@ -50,7 +50,7 @@ services:
     # stage. Pinned by digest like the images around it. The image is distroless (no shell, no wget),
     # so it has no healthcheck; it reports ready on /ready about a minute after start, once its
     # ingester has joined the ring, and the smoke test waits on that from the host.
-    image: docker.io/grafana/pyroscope:2.4.1@sha256:8ade8d37ac58c20aca0054360fbcdef956a8242f48ad68e0ec67757f21d48e28
+    image: docker.io/grafana/pyroscope:2.4.2@sha256:ef9b48976386aa2781e84664dfdba7cc33a1b6793c0cc9d130812173a926ca1f
     volumes:
       - pyroscope-data:/data
     # Loopback only, like ClickHouse and Prometheus. A riptide on the host sends to
