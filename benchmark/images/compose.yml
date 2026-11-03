@@ -16,7 +16,7 @@ services:
   prometheus:
     image: docker.io/prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
   pyroscope:
-    image: docker.io/grafana/pyroscope:2.4.1@sha256:8ade8d37ac58c20aca0054360fbcdef956a8242f48ad68e0ec67757f21d48e28
+    image: docker.io/grafana/pyroscope:2.4.2@sha256:ef9b48976386aa2781e84664dfdba7cc33a1b6793c0cc9d130812173a926ca1f
   victoriametrics:
     image: docker.io/victoriametrics/victoria-metrics:v1.154.1@sha256:c7884f32920dd45a9d86542a717227e63af03e060e53bbf8031e6e6fd0e1e05d
   nl6:
