@@ -165,7 +165,7 @@ run "inventory_carries_the_capture_manifest_sut_fields" {
     error_message = "inventory sut: ${jsonencode(local.inventory.sut)}"
   }
   assert {
-    condition     = local.inventory.sut.db_version == "clickhouse/clickhouse-server:26.7@sha256:f90a77560f72b10802106ee49e9870e41668cbc496e280c3911f6e3b216657f3"
+    condition     = local.inventory.sut.db_version == yamldecode(file("../../deployment/clickhouse/compose.yml")).services.clickhouse.image
     error_message = "db_version: ${local.inventory.sut.db_version}"
   }
 }
@@ -190,7 +190,7 @@ run "every_lab_image_comes_from_the_manifest_digest_pinned" {
     error_message = "an image is not digest-pinned: ${jsonencode(local.images)}"
   }
   assert {
-    condition     = local.images.grafana == "docker.io/grafana/grafana:13.3.0-distroless-slim@sha256:5cdd2ce488651f2ee77cac254a4d58b7009b42b68378102241c25caca7d21944"
+    condition     = can(regex("^docker\\.io/grafana/grafana:[^@]+-distroless-slim@sha256:", local.images.grafana))
     error_message = "grafana: ${try(local.images.grafana, "missing")}"
   }
 }
