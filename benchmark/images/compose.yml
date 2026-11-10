@@ -20,4 +20,4 @@ services:
   victoriametrics:
     image: docker.io/victoriametrics/victoria-metrics:v1.155.0@sha256:f60dc268b54ecf87f6e09d740c2b732838aa9193090cc741417c9f6386a130df
   nl6:
-    image: ghcr.io/labmonkeys-space/nl6:v0.38.1@sha256:cc2f17b5ee30551293ccb4a71f792a46bb44d4588e5c6f255e795dae513ed863
+    image: ghcr.io/labmonkeys-space/nl6:v0.40.1@sha256:99d12e4fd3dee7e36942519ce8c59d274cf22933bb5b9eebab5a4e046de91296
