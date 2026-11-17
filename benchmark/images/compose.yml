@@ -12,12 +12,12 @@
 # none of them (built-in datasources only, readiness checked from the VM).
 services:
   grafana:
-    image: docker.io/grafana/grafana:13.3.0-distroless-slim@sha256:5cdd2ce488651f2ee77cac254a4d58b7009b42b68378102241c25caca7d21944
+    image: docker.io/grafana/grafana:13.3.1-distroless-slim@sha256:c18a355197217a972f5e05c42894be0528c862061b1a21c9aabaeaf43d161a34
   prometheus:
     image: docker.io/prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06
   pyroscope:
     image: docker.io/grafana/pyroscope:2.4.3@sha256:bf667534cd403320573063894e3faba20a5a5d1bfb92eddaecfabeb2446c502b
   victoriametrics:
-    image: docker.io/victoriametrics/victoria-metrics:v1.155.0@sha256:f60dc268b54ecf87f6e09d740c2b732838aa9193090cc741417c9f6386a130df
+    image: docker.io/victoriametrics/victoria-metrics:v1.156.0@sha256:da8a90ac0912f16589be2b96a6441a2fca4bca415c83783d972d92e3b5b66970
   nl6:
-    image: ghcr.io/labmonkeys-space/nl6:v0.40.1@sha256:99d12e4fd3dee7e36942519ce8c59d274cf22933bb5b9eebab5a4e046de91296
+    image: ghcr.io/labmonkeys-space/nl6:v0.40.2@sha256:d0bb5c0c8b7e7b74bea84e5e28c940263e0e1d14c0ddd7435205985e5bacd0dc
