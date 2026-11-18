@@ -29,7 +29,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <build-helper-maven-plugin.version>3.7.0</build-helper-maven-plugin.version>
+        <build-helper-maven-plugin.version>3.8.0</build-helper-maven-plugin.version>
         <caffeine.version>3.3.1</caffeine.version>
         <common-csv.version>1.14.1</common-csv.version>
         <dnsjava.version>3.7.1</dnsjava.version>
@@ -43,7 +43,7 @@
         <maxmind-db.version>4.2.0</maxmind-db.version>
         <maven-checkstyle-plugin.version>3.6.0</maven-checkstyle-plugin.version>
         <maven-compiler-plugin.version>3.16.0</maven-compiler-plugin.version>
-        <versions-maven-plugin.version>2.24.0</versions-maven-plugin.version>
+        <versions-maven-plugin.version>2.25.1</versions-maven-plugin.version>
         <!-- Overrides Spring Boot's managed netty.version (4.2.15.Final), which governs every
              io.netty:netty-* module and otherwise leaves them a patch behind netty-all. 4.2.16.Final
              patches the Netty advisories in Scorecard alert #120 (GHSA-hpcc-26xq-25fv and 15 more). -->
@@ -68,7 +68,7 @@
         <snmp4j-agent.version>3.10.1</snmp4j-agent.version>
         <spring-vault.version>4.1.1</spring-vault.version>
         <dropwizard-metrics.version>4.2.40</dropwizard-metrics.version>
-        <clickhouse.version>0.11.0</clickhouse.version>
+        <clickhouse.version>0.11.2</clickhouse.version>
         <jmh.version>1.37</jmh.version>
         <jacoco-maven-plugin.version>0.8.16</jacoco-maven-plugin.version>
         <testcontainers.version>2.0.5</testcontainers.version>
@@ -92,7 +92,7 @@
             <dependency>
                 <groupId>at.yawk.lz4</groupId>
                 <artifactId>lz4-java</artifactId>
-                <version>1.13.0</version>
+                <version>1.14.0</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
