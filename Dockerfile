@@ -1,5 +1,5 @@
 # Digest-pinned (Scorecard PinnedDependencies); Dependabot's docker ecosystem keeps it current.
-FROM eclipse-temurin:25-alpine@sha256:c7c3d0bdf7f2bbc5a05a6712ed334d198360105634ea9adf76fca94f381b1e3f
+FROM eclipse-temurin:25-alpine@sha256:22edbb1021420ae6e248519d1af07577742314d67d4c60fcbb2e285b7e47fa78
 
 ARG VERSION
 ARG GIT_SHORT_HASH
