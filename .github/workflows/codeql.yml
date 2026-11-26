@@ -51,7 +51,31 @@ jobs:
           languages: java-kotlin
           build-mode: none
           queries: security-and-quality
+      # `failure-only` holds the results back so the next step can read them
+      # before code scanning does. What it still uploads is the record of an
+      # analysis that itself failed, exactly as the default `always` does. A
+      # refusal by the next step uploads nothing, because the action's post step
+      # skips that record once the analysis has completed.
       - name: Analyze
+        id: analyze
         uses: github/codeql-action/analyze@f58f0d11ebf5dedd870fab2f999275f7602cfa46 # codeql-bundle-v2.26.0
         with:
           category: '/language:java-kotlin'
+          upload: failure-only
+      # `build-mode: none` downloads the dependency jars itself, and a scan that
+      # could not get them still exits 0 and reports the uses it cannot see as
+      # dead code. On 2026-11-25 Maven Central rate limited one scan of main and
+      # it opened 27 such alerts. A refusal here turns the job red and leaves
+      # this commit unscanned until the job is re-run, which Scorecard's SAST
+      # check counts against the repository just as a skipped commit would be.
+      - name: Refuse a scan that ran without its dependencies
+        env:
+          SARIF_DIR: ${{ steps.analyze.outputs.sarif-output }}
+        run: |
+          make codeql-degraded-scan SARIF="${SARIF_DIR}/java.sarif"
+      # The one file the step above read. `category` is left out because the
+      # analyze step already wrote it into the SARIF.
+      - name: Upload the scan
+        uses: github/codeql-action/upload-sarif@f58f0d11ebf5dedd870fab2f999275f7602cfa46 # codeql-bundle-v2.26.0
+        with:
+          sarif_file: ${{ steps.analyze.outputs.sarif-output }}/java.sarif
