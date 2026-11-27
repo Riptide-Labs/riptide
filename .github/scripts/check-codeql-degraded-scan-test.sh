@@ -9,10 +9,11 @@
 # and assert that each refusal fires, and that a file the checker cannot read
 # is never a pass.
 #
-# The fixtures are synthetic. Their shape is the one the codeql-action's own
-# checks read, and the ids and messages are the ones the 2026-11-25 scan of main
-# printed, but no file here was written by CodeQL. Whether a real scan carries
-# what these assume is only shown by the `analyze` job passing or refusing.
+# The fixtures are synthetic. No file here was written by CodeQL. The sound
+# fixture carries the ids the checker printed for the scan of pull request
+# #1089, which is the one real scan it has read. The refusals have only ever
+# fired here, on ids taken from CodeQL's sources and from the names the
+# 2026-11-25 scan of main printed in its log.
 #
 # The load-bearing case is "no diagnostics at all". A SARIF without them must
 # NOT pass. Dropping the CONTROL_ID check reads like a simplification and makes
@@ -37,12 +38,19 @@ DATABASE_QUALITY="java/diagnostic/database-quality"
 failures=0
 passes=0
 
-# What every build-mode none scan of this repository reports, sound or not.
-HEALTHY="${MODE_ACTIVE}
-java/autobuilder/buildless/using-build-tool-advice
+# The ids in the SARIF of the sound scan of pull request #1089, once each. The
+# real file carries 31 extraction errors and one extracted-file entry per source.
+HEALTHY="codeql-action/bundle-download-telemetry
+codeql-action/git-version-telemetry
+codeql-action/overlay-disabled
+codeql-action/zstd-availability
+java/autobuilder/buildless/complete
 java/autobuilder/buildless/depgraph-provided-by-maven
 java/autobuilder/buildless/jdk-system-default
-java/autobuilder/buildless/complete"
+${MODE_ACTIVE}
+java/autobuilder/buildless/using-build-tool-advice
+java/diagnostics/extraction-errors
+java/diagnostics/successfully-extracted-files"
 
 # Writes a SARIF whose one invocation carries one notification per line of $1.
 # Each message names its own position, so a test can tell which were printed.
@@ -124,22 +132,15 @@ expect_silent_on() {
 # ---------------------------------------------------------------- passes
 
 write_sarif "${HEALTHY}"
-expect "a scan with every dependency passes" 0 "${SARIF}"
+expect "a scan like the sound one of pull request 1089 passes" 0 "${SARIF}"
 expect_mentions "the pass does not claim the scan was complete" "does not say every type was resolved"
 expect_mentions "the pass lists what the scan reported" "${MODE_ACTIVE}"
 
-# Pins a stated limit, not a wish. The header of the checker says CodeQL's own
-# quality verdict is not refused, because nobody has measured how a healthy scan
-# of this repository scores. Refusing it is a decision to take with that number
-# in hand, and this fails when someone takes it without changing the header.
-write_sarif "${HEALTHY}
-${DATABASE_QUALITY}"
-expect "a low quality verdict alone is not refused" 0 "${SARIF}"
-
 # ---------------------------------------------------------------- refusals
 
-# The 2026-11-25 scan of main, with one diagnostic per jar and the summary. The five
-# healthy diagnostics come first, so the jar messages are numbered from 6.
+# The 2026-11-25 scan of main, with one diagnostic per jar, the summary and the
+# verdict. The eleven sound diagnostics come first, so the jar messages are
+# numbered from 12.
 write_sarif "${HEALTHY}
 $(times 49 "${JAR_FETCH_FAILED}")
 ${FETCHES_FAILED}
@@ -147,9 +148,10 @@ ${DATABASE_QUALITY}"
 expect "the 2026-11-25 scan is refused" 1 "${SARIF}"
 expect_mentions "the refusal counts the jars" "${JAR_FETCH_FAILED} (49)"
 expect_mentions "the refusal names the summary diagnostic" "${FETCHES_FAILED} (1)"
-expect_mentions "the refusal prints the first messages" "message 6 of ${JAR_FETCH_FAILED}"
-expect_mentions "the refusal prints up to the limit" "message 10 of ${JAR_FETCH_FAILED}"
-expect_silent_on "the refusal stops at the limit" "message 11 of ${JAR_FETCH_FAILED}"
+expect_mentions "the refusal names the verdict" "${DATABASE_QUALITY} (1)"
+expect_mentions "the refusal prints the first messages" "message 12 of ${JAR_FETCH_FAILED}"
+expect_mentions "the refusal prints up to the limit" "message 16 of ${JAR_FETCH_FAILED}"
+expect_silent_on "the refusal stops at the limit" "message 17 of ${JAR_FETCH_FAILED}"
 expect_mentions "the refusal says what to do" "re-run the job"
 
 # Each id on its own, so no one of them is carried by another.
@@ -167,6 +169,13 @@ write_sarif "${HEALTHY}
 ${TRANSFER_EXCEPTION}"
 expect "a dependency graph Maven could not resolve is refused" 1 "${SARIF}"
 expect_mentions "the refusal names the diagnostic" "${TRANSFER_EXCEPTION} (1)"
+
+# The only refusal that needs no failed download, so the only one that catches a
+# cause this file does not list.
+write_sarif "${HEALTHY}
+${DATABASE_QUALITY}"
+expect "a low quality verdict alone is refused" 1 "${SARIF}"
+expect_mentions "the refusal names the diagnostic" "${DATABASE_QUALITY} (1)"
 
 # ------------------------------------------------------- cannot determine
 

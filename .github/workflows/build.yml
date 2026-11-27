@@ -75,7 +75,7 @@ jobs:
         run: |
           make build-cost-docs-test
       # The degraded CodeQL scan check lives in codeql.yml and refuses nothing
-      # while Maven Central answers, so these are the only runs of its refusals.
+      # on a sound scan, so these are the only runs of its refusals.
       - name: Degraded CodeQL scan checker fixture tests
         run: |
           make codeql-degraded-scan-test

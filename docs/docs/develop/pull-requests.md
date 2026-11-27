@@ -59,7 +59,7 @@ These run as well, by path or on every pull request, and are not required by bra
 
 | Check | Runs when | Enforces | Run locally |
 | --- | --- | --- | --- |
-| **`analyze`** (CodeQL) | every pull request, while the repository is public | The `security-and-quality` query suite over the Java sources. The job fails, and uploads no results, when CodeQL could not download a dependency jar. Re-run it. | not available |
+| **`analyze`** (CodeQL) | every pull request, while the repository is public | The `security-and-quality` query suite over the Java sources. The job fails, and uploads no results, when CodeQL could not download a dependency jar or rates its own scan as low quality. Re-run it. | not available |
 | **`review`** (dependency review) | every pull request, while the repository is public | No new dependency with a known vulnerability of severity high or above. | not available |
 | **`code-scanning / check`** | before `analyze` and `review` | Whether the repository is public. A private repository needs GitHub Code Security for code scanning, so while it is private `analyze` and `review` show as skipped and nothing is scanned. | not available |
 | **`build`** (Docs) | `docs/`, `landing/`, `Makefile`, `docs.yml` | The site builds with broken links and anchors as errors, and no rendered page shows admonition markup as body copy. | `make docs` |

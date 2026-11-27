@@ -65,10 +65,11 @@ jobs:
       # `build-mode: none` downloads the dependency jars itself, and a scan that
       # could not get them still exits 0 and reports the uses it cannot see as
       # dead code. On 2026-11-25 Maven Central rate limited one scan of main and
-      # it opened 27 such alerts. A refusal here turns the job red and leaves
+      # it opened 27 such alerts. CodeQL's own low quality verdict is refused as
+      # well, whatever caused it. A refusal here turns the job red and leaves
       # this commit unscanned until the job is re-run, which Scorecard's SAST
       # check counts against the repository just as a skipped commit would be.
-      - name: Refuse a scan that ran without its dependencies
+      - name: Refuse a degraded scan
         env:
           SARIF_DIR: ${{ steps.analyze.outputs.sarif-output }}
         run: |

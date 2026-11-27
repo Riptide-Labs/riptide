@@ -2,7 +2,7 @@
 # Copyright 2026 Riptide Labs, <https://github.com/Riptide-Labs>
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Refuse to publish a CodeQL scan that ran without the project's dependencies.
+# Refuse to publish a CodeQL scan that CodeQL itself reports as degraded.
 #
 # codeql.yml scans with `build-mode: none`. CodeQL asks Maven for the dependency
 # graph and then downloads every jar itself. When a download fails the scan
@@ -18,11 +18,9 @@
 #
 # WHAT THIS DOES AND DOES NOT ESTABLISH. It reads the diagnostics CodeQL wrote
 # into its own SARIF and refuses the ones in DEGRADED_IDS. A pass means CodeQL
-# reported none of them. It does not mean the scan was complete. CodeQL's wider
-# verdict, `java/diagnostic/database-quality`, is not refused here, because how
-# a healthy scan of this repository scores against its thresholds has not been
-# measured. A cause of missing types that CodeQL reports under an id not listed
-# below still passes.
+# reported none of them. It does not mean every type was resolved. The quality
+# verdict among them only fires below CodeQL's own thresholds, and a scan can
+# lose types and stay above them.
 #
 # Usage: check-codeql-degraded-scan.sh <java.sarif>
 #
@@ -36,17 +34,31 @@ set -o nounset -o pipefail -o errexit -o noglob
 
 SARIF="${1:-}"
 
-# The diagnostics that mean "a dependency could not be transferred", space
-# separated. The ids and what each one means are taken from CodeQL's own
-# expectations for a scan with an unavailable dependency
+# The diagnostics that mean the scan is degraded, space separated.
+#
+# The first three mean "a dependency could not be transferred". Their ids and
+# meanings are taken from CodeQL's own expectations for a scan with an
+# unavailable dependency
 # (java/ql/integration-tests/java/buildless-maven-tolerate-unavailable-dependency/diagnostics.expected
-# in github/codeql). The first two are the ones the 2026-11-25 scan reported.
+# in github/codeql).
 #
 #   jar-fetch-failed                         one per jar that could not be downloaded
 #   suggested-classpath-fetches-failed       once per scan, if any jar could not be
 #   depgraph-maven-plugin-transfer-exception Maven could not resolve the graph itself,
 #                                            so CodeQL guessed jars from package names
-DEGRADED_IDS="java/extractor/buildless/jar-fetch-failed java/extractor/buildless/suggested-classpath-fetches-failed java/autobuilder/buildless/depgraph-maven-plugin-transfer-exception"
+#
+# The fourth is CodeQL's own verdict on the scan, whatever the cause
+# (java/ql/src/Telemetry/DatabaseQualityDiagnostics.ql in github/codeql).
+#
+#   database-quality                         fewer than 85 % of calls have a known target,
+#                                            or fewer than 85 % of expressions a known type
+#
+# The 2026-11-25 scan reported the first two and the fourth. The sound scan of
+# pull request #1089 reported none of the four. How far above the thresholds a
+# sound scan sits is not known, because CodeQL prints the figures only when one
+# is below. If the verdict ever refuses a scan that downloaded every jar, that
+# margin is the thing to measure before taking it off this list.
+DEGRADED_IDS="java/extractor/buildless/jar-fetch-failed java/extractor/buildless/suggested-classpath-fetches-failed java/autobuilder/buildless/depgraph-maven-plugin-transfer-exception java/diagnostic/database-quality"
 
 # Present in every `build-mode: none` scan, degraded or not. It is required
 # because "none of DEGRADED_IDS was found" is also what a SARIF with no
@@ -124,21 +136,22 @@ done
 
 if [ -n "${found}" ]; then
   refuse \
-    "Refusing to upload this CodeQL scan: it ran without all of the project's dependencies." \
+    "Refusing to upload this CodeQL scan: CodeQL reports it as degraded." \
     "" \
     "CodeQL reported, with at most ${MAX_MESSAGES} messages shown for each:" \
     "${found}" \
-    "Types from a jar that is missing are unknown to the analysis, and it then" \
-    "reports uses it cannot see as unused variables, parameters and classes." \
-    "Uploading that would open alerts against code with nothing wrong in it." \
+    "Types the analysis could not resolve are unknown to it, and it then reports" \
+    "uses it cannot see as unused variables, parameters and classes. Uploading" \
+    "that would open alerts against code with nothing wrong in it." \
     "" \
     "Nothing was uploaded and no alert changed. If the cause is an outage or a rate" \
-    "limit at the repository, re-run the job. If the same jar fails on every run," \
-    "the scan cannot resolve it at all and that needs fixing in pom.xml or here."
+    "limit at the repository, re-run the job. If the scan is refused on every run," \
+    "the cause is in pom.xml or in the ids this check refuses, which are listed" \
+    "with their meaning in .github/scripts/check-codeql-degraded-scan.sh."
 fi
 
 printf '%s\n' \
-  "CodeQL scan OK to upload: it reports none of the dependency transfer failures this check knows." \
+  "CodeQL scan OK to upload: it reports none of the diagnostics this check refuses." \
   "That is all this establishes. It does not say every type was resolved." \
   "" \
   "Diagnostics in ${SARIF}, by count:" \

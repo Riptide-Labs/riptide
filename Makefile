@@ -67,7 +67,7 @@ help:
 	@echo "  release-lineage-test: Run the release lineage checker's fixture tests"
 	@echo "  build-cost-docs: Check a tree-build change updates its published cost figures; COST_BASE_REF=<ref>"
 	@echo "  build-cost-docs-test: Run the build-cost docs checker's fixture tests"
-	@echo "  codeql-degraded-scan: Refuse a CodeQL scan that could not download its dependencies; SARIF=<path to java.sarif>"
+	@echo "  codeql-degraded-scan: Refuse a CodeQL scan that CodeQL reports as degraded; SARIF=<path to java.sarif>"
 	@echo "  codeql-degraded-scan-test: Run the degraded CodeQL scan checker's fixture tests"
 	@echo "  nix:          Build the flake package from source (requires Nix)"
 	@echo "  nix-check:    Run the flake checks incl. the NixOS module eval (requires Nix)"
@@ -479,7 +479,8 @@ build-cost-docs-test:
 
 # Run by codeql.yml between the analysis and the upload. A scan that could not
 # download its dependency jars exits 0 and reports uses it cannot see as dead
-# code. SARIF is the java.sarif the analyze step wrote.
+# code. Refuses that, and a scan CodeQL itself rates as low quality. SARIF is
+# the java.sarif the analyze step wrote.
 .PHONY: codeql-degraded-scan
 codeql-degraded-scan:
 	@test -n "$(SARIF)" || { echo "usage: make codeql-degraded-scan SARIF=<path to java.sarif>"; exit 1; }
